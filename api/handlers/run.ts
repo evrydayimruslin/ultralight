@@ -6,7 +6,7 @@ import type { RunRequest, RunResponse } from '../../shared/types/index.ts';
 import { executeInSandbox } from '../runtime/sandbox.ts';
 import { createR2Service } from '../services/storage.ts';
 import { createAppsService } from '../services/apps.ts';
-import { createMemoryService } from '../services/memory.ts';
+import { createAppDataService } from '../services/appdata.ts';
 
 export async function handleRun(request: Request, appId: string): Promise<Response> {
   try {
@@ -22,14 +22,15 @@ export async function handleRun(request: Request, appId: string): Promise<Respon
     // Initialize services
     const appsService = createAppsService();
     const r2Service = createR2Service();
-    const memoryService = createMemoryService();
+    // R2-based app data storage - zero config for users
+    const appDataService = createAppDataService(appId);
 
     // Fetch app from database
     const app = await appsService.findById(appId);
     if (!app) {
       return error('App not found', 404);
     }
-    
+
     if (app.visibility === 'private' && app.owner_id !== userId) {
       return error('Unauthorized', 403);
     }
@@ -63,14 +64,11 @@ export async function handleRun(request: Request, appId: string): Promise<Respon
         allowedDomains: ['api.openai.com', 'api.github.com', 'api.openrouter.ai'],
         permissions: ['memory:read', 'memory:write', 'ai:call', 'net:fetch'],
         userApiKey: null,
-        memoryService: {
-          remember: async (key: string, value: unknown) => {
-            await memoryService.remember(userId, `app:${appId}`, key, value);
-          },
-          recall: async (key: string) => {
-            return await memoryService.recall(userId, `app:${appId}`, key);
-          },
-        },
+        // R2-based app data - works out of the box, no user config needed
+        appDataService,
+        // User memory service - null for now (requires Supabase auth)
+        // Will be enabled when user is authenticated
+        memoryService: null,
         aiService: {
           call: async (request, apiKey) => ({
             content: 'AI placeholder - configure BYOK',
