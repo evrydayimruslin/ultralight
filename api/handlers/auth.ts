@@ -160,13 +160,14 @@ export async function authenticate(request: Request): Promise<{ id: string; emai
   }
 
   // Ensure user exists in public.users table
-  // Don't let this block authentication - log error but continue
+  // This MUST succeed for uploads to work (FK constraint)
   try {
     await ensureUserExists(user);
-    console.log('User record ensured');
+    console.log('User record ensured successfully');
   } catch (userErr) {
-    console.error('Failed to ensure user exists (continuing anyway):', userErr);
-    // Don't throw - let auth succeed even if user creation fails
+    console.error('Failed to ensure user exists:', userErr);
+    // Re-throw - user must exist for app creation to work
+    throw new Error('Failed to create user record');
   }
 
   return {
@@ -189,38 +190,33 @@ export async function getUserId(request: Request): Promise<string> {
  * Called after successful authentication - creates user if not exists
  */
 export async function ensureUserExists(authUser: { id: string; email: string; user_metadata?: { name?: string; avatar_url?: string; full_name?: string } }): Promise<void> {
+  console.log('ensureUserExists called for:', authUser.id, authUser.email);
+
   const supabase = await getSupabaseClient();
 
-  // First check if user exists
-  const { data: existingUser } = await supabase
-    .from('users')
-    .select('id')
-    .eq('id', authUser.id)
-    .single();
+  // Use upsert to handle race conditions - insert or do nothing if exists
+  const userData = {
+    id: authUser.id,
+    email: authUser.email,
+    display_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || authUser.email.split('@')[0],
+    avatar_url: authUser.user_metadata?.avatar_url || null,
+  };
 
-  if (existingUser) {
-    // User already exists
-    return;
-  }
+  console.log('Upserting user data:', JSON.stringify(userData));
 
-  // Insert new user
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('users')
-    .insert({
-      id: authUser.id,
-      email: authUser.email,
-      display_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || authUser.email.split('@')[0],
-      avatar_url: authUser.user_metadata?.avatar_url || null,
-    });
+    .upsert(userData, {
+      onConflict: 'id',
+    })
+    .select();
 
   if (error) {
-    // Log full error for debugging
-    console.error('Failed to create user:', JSON.stringify(error));
-    // Don't throw - user might have been created by another request
-    if (!error.message?.includes('duplicate') && !error.code?.includes('23505')) {
-      throw new Error(`Failed to create user: ${error.message}`);
-    }
+    console.error('Upsert failed:', JSON.stringify(error));
+    throw new Error(`Failed to create user: ${error.message}`);
   }
+
+  console.log('User upsert result:', JSON.stringify(data));
 }
 
 // Callback page HTML - handles Supabase's hash-based token return
