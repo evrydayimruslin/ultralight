@@ -18,12 +18,18 @@ const Deno = globalThis.Deno;
 
 export async function handleUpload(request: Request): Promise<Response> {
   try {
+    // Debug: Log all headers
+    console.log('=== UPLOAD REQUEST ===');
+    console.log('Headers:', Object.fromEntries(request.headers.entries()));
+
     // Authenticate user - required for upload
     let userId: string;
     try {
       const user = await authenticate(request);
       userId = user.id;
-    } catch (authErr) {
+      console.log('Auth successful, userId:', userId);
+    } catch (authErr: unknown) {
+      console.error('Auth failed:', authErr instanceof Error ? authErr.message : authErr);
       return error('Authentication required. Please sign in to upload.', 401);
     }
 

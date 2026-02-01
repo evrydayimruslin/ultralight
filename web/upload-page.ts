@@ -364,6 +364,7 @@ export function getUploadPageHTML(): string {
       }
 
       log('info', 'Starting upload...');
+      console.log('Token being sent:', currentToken.substring(0, 50) + '...');
 
       const formData = new FormData();
       files.forEach(f => formData.append('files', f));
@@ -374,6 +375,7 @@ export function getUploadPageHTML(): string {
         const headers = {
           'Authorization': \`Bearer \${currentToken}\`
         };
+        console.log('Authorization header:', headers.Authorization.substring(0, 60) + '...');
 
         const res = await fetch('/api/upload', {
           method: 'POST',
