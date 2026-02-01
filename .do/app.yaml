@@ -1,0 +1,36 @@
+name: ultralight-api
+region: nyc
+services:
+  - name: api
+    dockerfile_path: Dockerfile
+    github:
+      repo: evrydayimruslin/ultralight
+      branch: main
+      deploy_on_push: true
+    http_port: 8000
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    routes:
+      - path: /
+    envs:
+      - key: SUPABASE_URL
+        value: https://uavjzycsltdnwblwutmb.supabase.co
+        type: SECRET
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVhdmp6eWNzbHRkbndibHd1dG1iIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTkzODkxMiwiZXhwIjoyMDg1NTE0OTEyfQ.GzNEPFtUgAhXQpIg4UEDduqXs0UyTkUZAKhSjCVHuUA
+        type: SECRET
+      - key: R2_ACCOUNT_ID
+        value: 8d2df08dac65694aa1c6bf56233a2090
+        type: SECRET
+      - key: R2_ACCESS_KEY_ID
+        value: 62d9349158924c2a676fdeddbbb8e7c7
+        type: SECRET
+      - key: R2_SECRET_ACCESS_KEY
+        value: 7cd43a5fb64bea507bf1ea43961b6ebd7a6a30b200faade5dca7db32c4d6ed57
+        type: SECRET
+      - key: R2_BUCKET_NAME
+        value: ultralight-apps
+        type: SECRET
+    health_check:
+      http_path: /health
+      port: 8000

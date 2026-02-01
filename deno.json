@@ -1,0 +1,36 @@
+{
+  "name": "ultralight",
+  "version": "0.1.0",
+  "exports": "./api/main.ts",
+  "tasks": {
+    "dev": "deno run --allow-all --watch api/main.ts",
+    "start": "deno run --allow-all api/main.ts",
+    "deploy": "deno deploy --prod --include=./api --include=./shared --include=./web api/main.ts",
+    "check": "deno check api/main.ts",
+    "fmt": "deno fmt",
+    "lint": "deno lint"
+  },
+  "imports": {
+    "@std/": "https://deno.land/std@0.210.0/"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true
+  },
+  "fmt": {
+    "useTabs": false,
+    "lineWidth": 100,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": true,
+    "proseWrap": "preserve"
+  },
+  "lint": {
+    "include": ["api/", "shared/", "web/"],
+    "rules": {
+      "tags": ["recommended"]
+    }
+  }
+}
