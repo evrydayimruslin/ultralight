@@ -73,11 +73,17 @@ export async function handleUpload(request: Request): Promise<Response> {
       validatedFiles.push({ name: file.name, content });
     }
 
-    // Check for entry file
-    const entryFile = validatedFiles.find((f) => f.name === 'index.ts' || f.name === 'index.js');
+    // Check for entry file - handle both flat files and folder uploads
+    // When uploading a folder, file.name includes path like "myapp/index.ts"
+    const entryFile = validatedFiles.find((f) => {
+      const fileName = f.name.split('/').pop() || f.name;
+      return fileName === 'index.ts' || fileName === 'index.js';
+    });
     if (!entryFile) {
+      console.log('Files received:', validatedFiles.map(f => f.name));
       return error('Entry file (index.ts or index.js) required');
     }
+    console.log('Entry file found:', entryFile.name);
 
     // Build logs
     const buildLogs: BuildLogEntry[] = [];
