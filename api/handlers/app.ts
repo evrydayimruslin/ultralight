@@ -22,9 +22,24 @@ export function createApp() {
         });
       }
 
-      // Health check
+      // Health check - includes deploy timestamp to verify we're running latest code
       if (path === '/health') {
-        return json({ status: 'ok', version: '0.1.0' });
+        return json({ status: 'ok', version: '0.1.0', deployed: '2025-02-01T18:00:00Z' });
+      }
+
+      // Debug endpoint - test auth without upload
+      if (path === '/api/debug/auth' && method === 'GET') {
+        const authHeader = request.headers.get('Authorization');
+        if (!authHeader) {
+          return json({ error: 'No auth header', headers: Object.fromEntries(request.headers.entries()) });
+        }
+        try {
+          const { authenticate } = await import('./auth.ts');
+          const user = await authenticate(request);
+          return json({ success: true, user });
+        } catch (err: unknown) {
+          return json({ error: 'Auth failed', message: err instanceof Error ? err.message : String(err) });
+        }
       }
 
       // Upload page (HTML UI)
