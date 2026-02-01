@@ -11,15 +11,21 @@ import {
 import { createR2Service } from '../services/storage.ts';
 import { createAppsService } from '../services/apps.ts';
 import { bundleCode, quickBundle } from '../services/bundler.ts';
+import { authenticate } from './auth.ts';
 
 // @ts-ignore - Deno is available in Deno Deploy
 const Deno = globalThis.Deno;
 
 export async function handleUpload(request: Request): Promise<Response> {
   try {
-    // TODO: Authenticate user from JWT
-    // const userId = await authenticate(request);
-    const userId = '00000000-0000-0000-0000-000000000001'; // Placeholder UUID
+    // Authenticate user - required for upload
+    let userId: string;
+    try {
+      const user = await authenticate(request);
+      userId = user.id;
+    } catch (authErr) {
+      return error('Authentication required. Please sign in to upload.', 401);
+    }
 
     // Parse multipart form data
     const formData = await request.formData();
