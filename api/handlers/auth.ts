@@ -118,7 +118,14 @@ export async function authenticate(request: Request): Promise<{ id: string; emai
     if (parts.length !== 3) {
       throw new Error('Invalid JWT format');
     }
-    const payload = JSON.parse(atob(parts[1]));
+
+    // JWT uses base64url encoding - need to convert to standard base64
+    const base64Payload = parts[1]
+      .replace(/-/g, '+')
+      .replace(/_/g, '/');
+    // Add padding if needed
+    const padded = base64Payload + '='.repeat((4 - base64Payload.length % 4) % 4);
+    const payload = JSON.parse(atob(padded));
 
     // Check if token is expired
     if (payload.exp && payload.exp * 1000 < Date.now()) {
