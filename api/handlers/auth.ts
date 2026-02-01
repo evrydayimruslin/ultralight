@@ -160,11 +160,13 @@ export async function authenticate(request: Request): Promise<{ id: string; emai
   }
 
   // Ensure user exists in public.users table
+  // Don't let this block authentication - log error but continue
   try {
     await ensureUserExists(user);
+    console.log('User record ensured');
   } catch (userErr) {
-    console.error('Failed to ensure user exists:', userErr);
-    throw new Error('Failed to create user record');
+    console.error('Failed to ensure user exists (continuing anyway):', userErr);
+    // Don't throw - let auth succeed even if user creation fails
   }
 
   return {
