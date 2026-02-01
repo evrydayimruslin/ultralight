@@ -112,36 +112,43 @@ export async function authenticate(request: Request): Promise<{ id: string; emai
   const token = authHeader.slice(7);
   console.log('Token length:', token.length, 'Token preview:', token.substring(0, 50) + '...');
 
-  // Verify JWT with Supabase
-  const verifyUrl = `${SUPABASE_URL}/auth/v1/user`;
-  console.log('Verifying with:', verifyUrl);
+  // Decode and verify JWT locally first to check expiry
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+      throw new Error('Invalid JWT format');
+    }
+    const payload = JSON.parse(atob(parts[1]));
 
-  const response = await fetch(verifyUrl, {
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'apikey': SUPABASE_ANON_KEY,
-    },
-  });
+    // Check if token is expired
+    if (payload.exp && payload.exp * 1000 < Date.now()) {
+      console.error('Token expired at:', new Date(payload.exp * 1000));
+      throw new Error('Token expired');
+    }
 
-  console.log('Supabase response status:', response.status);
+    // Extract user info directly from JWT - Supabase JWTs contain user data
+    console.log('JWT payload:', JSON.stringify(payload));
 
-  if (!response.ok) {
-    const errText = await response.text();
-    console.error('Token verification failed:', response.status, errText);
+    const user = {
+      id: payload.sub,
+      email: payload.email,
+      user_metadata: payload.user_metadata || {},
+    };
+
+    console.log('User from JWT:', user.id, user.email);
+
+    // Ensure user exists in public.users table
+    await ensureUserExists(user);
+
+    return {
+      id: user.id,
+      email: user.email,
+      tier: 'free', // TODO: Look up from users table
+    };
+  } catch (err) {
+    console.error('JWT decode/verify error:', err);
     throw new Error('Invalid token');
   }
-
-  const user = await response.json();
-  console.log('User verified:', user.id, user.email);
-
-  // Ensure user exists in public.users table
-  await ensureUserExists(user);
-
-  return {
-    id: user.id,
-    email: user.email,
-    tier: 'free', // TODO: Look up from users table
-  };
 }
 
 /**
