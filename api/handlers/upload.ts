@@ -11,7 +11,7 @@ import {
 import { createR2Service } from '../services/storage.ts';
 import { createAppsService } from '../services/apps.ts';
 import { bundleCode, quickBundle } from '../services/bundler.ts';
-import { authenticate } from './auth.ts';
+import { authenticate, ensureUserExists } from './auth.ts';
 
 // @ts-ignore - Deno is available in Deno Deploy
 const Deno = globalThis.Deno;
@@ -24,13 +24,25 @@ export async function handleUpload(request: Request): Promise<Response> {
 
     // Authenticate user - required for upload
     let userId: string;
+    let userEmail: string;
+    let userMetadata: Record<string, string> = {};
     try {
       const user = await authenticate(request);
       userId = user.id;
+      userEmail = user.email;
       console.log('Auth successful, userId:', userId);
     } catch (authErr: unknown) {
       console.error('Auth failed:', authErr instanceof Error ? authErr.message : authErr);
       return error('Authentication required. Please sign in to upload.', 401);
+    }
+
+    // Ensure user exists in database (retry in case auth didn't create it)
+    try {
+      await ensureUserExists({ id: userId, email: userEmail, user_metadata: userMetadata });
+      console.log('User record confirmed');
+    } catch (userErr) {
+      console.error('Failed to ensure user exists:', userErr);
+      return error('Failed to create user record. Please try again.', 500);
     }
 
     // Parse multipart form data

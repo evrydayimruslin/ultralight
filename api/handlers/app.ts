@@ -24,7 +24,7 @@ export function createApp() {
 
       // Health check - includes deploy timestamp to verify we're running latest code
       if (path === '/health') {
-        return json({ status: 'ok', version: '0.1.0', deployed: '2025-02-01T18:00:00Z' });
+        return json({ status: 'ok', version: '0.1.0', deployed: '2025-02-01T18:15:00Z' });
       }
 
       // Debug endpoint - test auth without upload

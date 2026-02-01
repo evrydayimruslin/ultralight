@@ -160,14 +160,13 @@ export async function authenticate(request: Request): Promise<{ id: string; emai
   }
 
   // Ensure user exists in public.users table
-  // This MUST succeed for uploads to work (FK constraint)
+  // Don't block auth - user creation will be retried during upload
   try {
     await ensureUserExists(user);
     console.log('User record ensured successfully');
   } catch (userErr) {
-    console.error('Failed to ensure user exists:', userErr);
-    // Re-throw - user must exist for app creation to work
-    throw new Error('Failed to create user record');
+    console.error('Failed to ensure user exists (will retry on upload):', userErr);
+    // Don't throw - let auth succeed, user creation will be retried
   }
 
   return {
