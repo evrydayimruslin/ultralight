@@ -186,46 +186,74 @@ export async function getUserId(request: Request): Promise<string> {
 
 /**
  * Ensure user exists in public.users table
- * Uses RPC function with SECURITY DEFINER to bypass RLS
+ * Uses direct REST API to bypass any client library issues
  */
 export async function ensureUserExists(authUser: { id: string; email: string; user_metadata?: { name?: string; avatar_url?: string; full_name?: string } }): Promise<void> {
   console.log('ensureUserExists called for:', authUser.id, authUser.email);
 
-  const supabase = await getSupabaseClient();
-
   const displayName = authUser.user_metadata?.full_name || authUser.user_metadata?.name || authUser.email.split('@')[0];
   const avatarUrl = authUser.user_metadata?.avatar_url || null;
 
-  console.log('Calling ensure_user_exists RPC...');
+  // Use direct REST API with service role key (bypasses RLS)
+  const payload = {
+    id: authUser.id,
+    email: authUser.email,
+    display_name: displayName,
+    avatar_url: avatarUrl,
+  };
 
-  // Use RPC function to bypass RLS
-  const { error } = await supabase.rpc('ensure_user_exists', {
-    user_id: authUser.id,
-    user_email: authUser.email,
-    user_display_name: displayName,
-    user_avatar_url: avatarUrl,
-  });
+  console.log('Inserting user via REST API:', JSON.stringify(payload));
 
-  if (error) {
-    console.error('RPC ensure_user_exists failed:', JSON.stringify(error));
-    // Fallback: try direct insert (service role should bypass RLS)
-    console.log('Falling back to direct insert...');
-    const { error: insertError } = await supabase
-      .from('users')
-      .upsert({
-        id: authUser.id,
-        email: authUser.email,
-        display_name: displayName,
-        avatar_url: avatarUrl,
-      }, { onConflict: 'id' });
-
-    if (insertError) {
-      console.error('Direct insert also failed:', JSON.stringify(insertError));
-      throw new Error(`Failed to create user: ${insertError.message}`);
+  // First try to select to see if user exists
+  const checkResponse = await fetch(
+    `${SUPABASE_URL}/rest/v1/users?id=eq.${authUser.id}&select=id`,
+    {
+      headers: {
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
     }
+  );
+
+  const existingUsers = await checkResponse.json();
+  console.log('Existing users check:', JSON.stringify(existingUsers));
+
+  if (Array.isArray(existingUsers) && existingUsers.length > 0) {
+    console.log('User already exists, skipping insert');
+    return;
   }
 
-  console.log('User ensured successfully');
+  // Insert new user
+  const insertResponse = await fetch(
+    `${SUPABASE_URL}/rest/v1/users`,
+    {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal',
+      },
+      body: JSON.stringify(payload),
+    }
+  );
+
+  console.log('Insert response status:', insertResponse.status);
+
+  if (!insertResponse.ok) {
+    const errorText = await insertResponse.text();
+    console.error('Insert failed:', insertResponse.status, errorText);
+
+    // If it's a duplicate key error, that's fine
+    if (errorText.includes('duplicate') || errorText.includes('23505')) {
+      console.log('User already exists (duplicate key), continuing');
+      return;
+    }
+
+    throw new Error(`Failed to create user: ${errorText}`);
+  }
+
+  console.log('User created successfully');
 }
 
 // Callback page HTML - handles Supabase's hash-based token return
