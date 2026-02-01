@@ -150,26 +150,46 @@ export async function handleUpload(request: Request): Promise<Response> {
     const r2Service = createR2Service();
     const appsService = createAppsService();
 
+    // Normalize file names - strip folder prefix for consistent storage
+    // e.g., "myapp/index.ts" -> "index.ts", "myapp/lib/utils.ts" -> "lib/utils.ts"
+    const normalizeFileName = (name: string): string => {
+      const parts = name.split('/');
+      // If all files share a common prefix folder, strip it
+      if (parts.length > 1) {
+        // Check if this looks like a folder upload (has a common root folder)
+        const firstPart = validatedFiles[0]?.name.split('/')[0];
+        const allSameRoot = validatedFiles.every(f => f.name.startsWith(firstPart + '/'));
+        if (allSameRoot && parts[0] === firstPart) {
+          return parts.slice(1).join('/');
+        }
+      }
+      return name;
+    };
+
+    // Get normalized entry file name
+    const normalizedEntryName = normalizeFileName(entryFile.name);
+    log('info', `Entry file normalized: ${entryFile.name} -> ${normalizedEntryName}`);
+
     // Prepare files for upload
     const filesToUpload = bundleUsed
       ? [
           // Upload bundled code as the entry file
           {
-            name: entryFile.name,
+            name: normalizedEntryName,
             content: new TextEncoder().encode(bundledCode),
-            contentType: getContentType(entryFile.name),
+            contentType: getContentType(normalizedEntryName),
           },
           // Also upload original files for reference/debugging
           ...validatedFiles
             .filter(f => f.name !== entryFile.name)
             .map(f => ({
-              name: f.name,
+              name: normalizeFileName(f.name),
               content: new TextEncoder().encode(f.content),
               contentType: getContentType(f.name),
             })),
         ]
       : validatedFiles.map(f => ({
-          name: f.name,
+          name: normalizeFileName(f.name),
           content: new TextEncoder().encode(f.content),
           contentType: getContentType(f.name),
         }));
