@@ -79,8 +79,12 @@ export function getUploadPageHTML(): string {
     }
     .auth-btn.signout {
       background: transparent;
-      border-color: #444;
-      color: #888;
+      border-color: #666;
+      color: #ccc;
+    }
+    .auth-btn.signout:hover {
+      border-color: #f87171;
+      color: #f87171;
     }
     .google-icon {
       width: 18px;
