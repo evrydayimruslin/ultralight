@@ -84,7 +84,7 @@ export async function bundleCode(
     }
 
     // Run esbuild via Deno subprocess
-    // Use IIFE format so the bundle can be executed with AsyncFunction
+    // Use ESM format for storage - transformation happens at runtime for server apps
     const entryPath = `${tempDir}/${entryPoint}`;
     const outPath = `${tempDir}/bundle.js`;
 
@@ -93,8 +93,7 @@ export async function bundleCode(
         'esbuild',
         entryPath,
         '--bundle',
-        '--format=iife',
-        '--global-name=__ultralight_exports__',
+        '--format=esm',
         '--platform=neutral',
         '--target=esnext',
         `--outfile=${outPath}`,
@@ -201,28 +200,15 @@ function detectExternalImports(code: string): boolean {
  * Post-process bundled code for our runtime
  */
 function postProcessBundle(code: string): string {
-  // esbuild outputs IIFE format that assigns exports to __ultralight_exports__
-  // We need to make these exports accessible as a handler function
-
   // Remove any import.meta references that might cause issues
   let processed = code.replace(/import\.meta\.url/g, '"file://ultralight-app"');
-
-  // The IIFE wraps everything and assigns exports to __ultralight_exports__
-  // We add code to extract the handler function
-  processed = processed + `
-// Extract handler from IIFE exports
-var handler = typeof __ultralight_exports__ !== 'undefined'
-  ? (__ultralight_exports__.handler || __ultralight_exports__.default)
-  : (typeof exports !== 'undefined' ? (exports.handler || exports.default) : undefined);
-`;
-
   return processed;
 }
 
 /**
  * Quick bundle using in-memory transformation (no esbuild)
  * For simple cases without npm dependencies
- * Converts ES modules to plain JS that can run with AsyncFunction
+ * Keeps ESM format - transformation happens at runtime for server apps
  */
 export function quickBundle(files: FileInput[], entryPoint: string): BundleResult {
   const entryFile = files.find(f => f.name === entryPoint);
@@ -261,14 +247,9 @@ export function quickBundle(files: FileInput[], entryPoint: string): BundleResul
     if (localFile) {
       // Remove the import statement and prepend the file content
       bundledCode = bundledCode.replace(imp.statement, '');
-      // Also transform the local file's exports
-      let inlinedCode = transformExportsToVars(localFile.content);
-      bundledCode = `// Inlined from ${localPath}\n${inlinedCode}\n\n${bundledCode}`;
+      bundledCode = `// Inlined from ${localPath}\n${localFile.content}\n\n${bundledCode}`;
     }
   }
-
-  // Transform ES module syntax to plain JS
-  bundledCode = transformToPlainJS(bundledCode);
 
   return {
     success: true,
@@ -277,51 +258,4 @@ export function quickBundle(files: FileInput[], entryPoint: string): BundleResul
     warnings: [],
     hasExternalImports: detectExternalImports(entryFile.content),
   };
-}
-
-/**
- * Transform ES module exports to plain variable declarations
- */
-function transformExportsToVars(code: string): string {
-  let result = code;
-
-  // export function foo() -> function foo()
-  result = result.replace(/export\s+(async\s+)?function\s+/g, '$1function ');
-
-  // export const foo = -> const foo =
-  result = result.replace(/export\s+(const|let|var)\s+/g, '$1 ');
-
-  // export default function handler -> function handler (and track it)
-  result = result.replace(/export\s+default\s+(async\s+)?function\s+(\w+)/g, '$1function $2');
-
-  // export default handler -> (handler is already defined)
-  result = result.replace(/export\s+default\s+(\w+)\s*;?/g, 'var handler = $1;');
-
-  // export { foo, bar } -> (these are already defined)
-  result = result.replace(/export\s*\{[^}]*\}\s*;?/g, '');
-
-  return result;
-}
-
-/**
- * Transform ES module code to plain JS for AsyncFunction execution
- */
-function transformToPlainJS(code: string): string {
-  let result = code;
-
-  // Remove all remaining import statements
-  result = result.replace(/import\s+.*?from\s+['"][^'"]+['"];?\n?/g, '');
-  result = result.replace(/import\s+['"][^'"]+['"];?\n?/g, '');
-
-  // Transform exports
-  result = transformExportsToVars(result);
-
-  // Remove TypeScript type annotations (basic)
-  // : Type -> nothing (for parameters and return types)
-  result = result.replace(/:\s*\w+(\[\])?(\s*[,)\{=])/g, '$2');
-
-  // Remove interface/type declarations
-  result = result.replace(/^\s*(export\s+)?(interface|type)\s+\w+\s*(\{[^}]*\}|=[^;]+);?\s*$/gm, '');
-
-  return result;
 }

@@ -106,12 +106,20 @@ export function createApp() {
             }
           }
 
-          // Detect app type by checking for handler export pattern
-          // Server apps export: export default async function handler(req: Request)
-          // or: export async function handler(req: Request)
-          const isServerApp = /export\s+(default\s+)?(async\s+)?function\s+handler\s*\(/.test(code) ||
-                              /export\s+default\s+handler/.test(code) ||
-                              /export\s+\{\s*handler\s*\}/.test(code);
+          // Detect app type by checking for handler function
+          // After bundling, exports are transformed, so we check for:
+          // 1. Original export patterns (unbundled code)
+          // 2. Transformed handler function/variable (bundled code)
+          const isServerApp =
+            // Original export patterns
+            /export\s+(default\s+)?(async\s+)?function\s+handler\s*\(/.test(code) ||
+            /export\s+default\s+handler/.test(code) ||
+            /export\s+\{\s*handler\s*\}/.test(code) ||
+            // Bundled/transformed patterns - function named handler
+            /^(async\s+)?function\s+handler\s*\(/m.test(code) ||
+            // IIFE exports pattern from esbuild
+            /var\s+handler\s*=/.test(code) ||
+            /__ultralight_exports__/.test(code);
 
           if (isServerApp) {
             // Server-side execution: run the handler function
@@ -160,23 +168,24 @@ async function executeServerApp(
       body: originalRequest.body,
     });
 
+    // Transform ES module code to plain JS for AsyncFunction execution
+    const transformedCode = transformToPlainJS(code);
+
     // Build the execution context
     const AsyncFunction = Object.getPrototypeOf(async function() {}).constructor;
 
     // Wrap the code to extract and call the handler
     const wrappedCode = `
-      ${code}
+      ${transformedCode}
 
       // Find the handler function
       let handlerFn;
       if (typeof handler === 'function') {
         handlerFn = handler;
-      } else if (typeof exports !== 'undefined' && typeof exports.default === 'function') {
-        handlerFn = exports.default;
       }
 
       if (!handlerFn) {
-        throw new Error('No handler function found. Export a function named "handler" or use export default.');
+        throw new Error('No handler function found. Export a function named "handler".');
       }
 
       return await handlerFn(request);
@@ -231,6 +240,42 @@ async function executeServerApp(
       message: err instanceof Error ? err.message : String(err),
     }, 500);
   }
+}
+
+/**
+ * Transform ES module code to plain JS for AsyncFunction execution
+ */
+function transformToPlainJS(code: string): string {
+  let result = code;
+
+  // Remove all import statements
+  result = result.replace(/import\s+.*?from\s+['"][^'"]+['"];?\n?/g, '');
+  result = result.replace(/import\s+['"][^'"]+['"];?\n?/g, '');
+
+  // export async function handler -> async function handler
+  result = result.replace(/export\s+(async\s+)?function\s+/g, '$1function ');
+
+  // export const/let/var -> const/let/var
+  result = result.replace(/export\s+(const|let|var)\s+/g, '$1 ');
+
+  // export default async function handler -> async function handler
+  result = result.replace(/export\s+default\s+(async\s+)?function\s+(\w+)/g, '$1function $2');
+
+  // export default handler -> var handler = handler (no-op, handler already exists)
+  result = result.replace(/export\s+default\s+(\w+)\s*;?/g, '');
+
+  // export { foo, bar } -> remove
+  result = result.replace(/export\s*\{[^}]*\}\s*;?/g, '');
+
+  // Remove TypeScript type annotations (basic)
+  // : Type -> nothing (but be careful not to break object literals)
+  result = result.replace(/:\s*(Request|Response|Promise<[^>]+>|string|number|boolean|void|any|unknown)\s*([,)\{=])/g, '$2');
+  result = result.replace(/:\s*(Request|Response|Promise<[^>]+>|string|number|boolean|void|any|unknown)\s*$/gm, '');
+
+  // Remove interface/type declarations
+  result = result.replace(/^\s*(export\s+)?(interface|type)\s+\w+[\s\S]*?(?=\n\n|\nexport|\nfunction|\nconst|\nlet|\nvar|\nasync|$)/gm, '');
+
+  return result;
 }
 
 export function json(data: unknown, status = 200): Response {
