@@ -30,43 +30,44 @@ export async function handleAuth(request: Request): Promise<Response> {
     });
   }
 
-  // Google OAuth callback - exchange code for session
+  // Google OAuth callback - handle token from hash or code exchange
   if (path === '/auth/callback') {
-    const code = url.searchParams.get('code');
-
-    if (!code) {
-      // User may have cancelled or there's an error
-      const errorDesc = url.searchParams.get('error_description') || 'Authentication failed';
+    // Check for explicit error first
+    const errorDesc = url.searchParams.get('error_description');
+    if (errorDesc) {
       return new Response(getCallbackErrorHTML(errorDesc), {
         headers: { 'Content-Type': 'text/html' },
       });
     }
 
-    // Exchange code for session via Supabase
-    const tokenResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=authorization_code`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-      },
-      body: JSON.stringify({
-        auth_code: code,
-        code_verifier: '', // Not using PKCE for simplicity
-      }),
-    });
+    const code = url.searchParams.get('code');
 
-    if (!tokenResponse.ok) {
-      // Fallback: Try the hash-based flow by redirecting to frontend
-      // Supabase often returns tokens in URL hash
-      return new Response(getCallbackHTML(), {
-        headers: { 'Content-Type': 'text/html' },
+    if (code) {
+      // Try code exchange flow
+      const tokenResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=authorization_code`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        },
+        body: JSON.stringify({
+          auth_code: code,
+          code_verifier: '',
+        }),
       });
+
+      if (tokenResponse.ok) {
+        const tokens = await tokenResponse.json();
+        return new Response(getCallbackSuccessHTML(tokens.access_token), {
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
     }
 
-    const tokens = await tokenResponse.json();
-
-    // Return HTML that stores the token and redirects
-    return new Response(getCallbackSuccessHTML(tokens.access_token), {
+    // No code or code exchange failed - return HTML that handles hash-based tokens
+    // Supabase implicit flow returns tokens in URL hash (e.g., #access_token=...)
+    // The hash is only accessible client-side via JavaScript
+    return new Response(getCallbackHTML(), {
       headers: { 'Content-Type': 'text/html' },
     });
   }
