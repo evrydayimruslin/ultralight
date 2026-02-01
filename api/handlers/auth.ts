@@ -8,6 +8,7 @@ const Deno = globalThis.Deno;
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || SUPABASE_SERVICE_ROLE_KEY; // Fallback to service key
 
 // Supabase client for database operations (service role bypasses RLS)
 async function getSupabaseClient() {
@@ -101,25 +102,37 @@ export async function handleAuth(request: Request): Promise<Response> {
  */
 export async function authenticate(request: Request): Promise<{ id: string; email: string; tier: string }> {
   const authHeader = request.headers.get('Authorization');
+  console.log('Auth header present:', !!authHeader);
+
   if (!authHeader?.startsWith('Bearer ')) {
+    console.error('Missing or invalid auth header format');
     throw new Error('Missing or invalid authorization header');
   }
 
   const token = authHeader.slice(7);
+  console.log('Token length:', token.length, 'Token preview:', token.substring(0, 50) + '...');
 
   // Verify JWT with Supabase
-  const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+  const verifyUrl = `${SUPABASE_URL}/auth/v1/user`;
+  console.log('Verifying with:', verifyUrl);
+
+  const response = await fetch(verifyUrl, {
     headers: {
       'Authorization': `Bearer ${token}`,
-      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'apikey': SUPABASE_ANON_KEY,
     },
   });
 
+  console.log('Supabase response status:', response.status);
+
   if (!response.ok) {
+    const errText = await response.text();
+    console.error('Token verification failed:', response.status, errText);
     throw new Error('Invalid token');
   }
 
   const user = await response.json();
+  console.log('User verified:', user.id, user.email);
 
   // Ensure user exists in public.users table
   await ensureUserExists(user);
