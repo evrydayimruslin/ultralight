@@ -112,50 +112,66 @@ export async function authenticate(request: Request): Promise<{ id: string; emai
   const token = authHeader.slice(7);
   console.log('Token length:', token.length, 'Token preview:', token.substring(0, 50) + '...');
 
-  // Decode and verify JWT locally first to check expiry
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 3) {
-      throw new Error('Invalid JWT format');
-    }
+  // Decode and verify JWT locally
+  const parts = token.split('.');
+  console.log('JWT parts count:', parts.length);
 
-    // JWT uses base64url encoding - need to convert to standard base64
+  if (parts.length !== 3) {
+    console.error('Invalid JWT format - expected 3 parts, got', parts.length);
+    throw new Error('Invalid JWT format');
+  }
+
+  // JWT uses base64url encoding - need to convert to standard base64
+  let payload: Record<string, unknown>;
+  try {
     const base64Payload = parts[1]
       .replace(/-/g, '+')
       .replace(/_/g, '/');
     // Add padding if needed
     const padded = base64Payload + '='.repeat((4 - base64Payload.length % 4) % 4);
-    const payload = JSON.parse(atob(padded));
-
-    // Check if token is expired
-    if (payload.exp && payload.exp * 1000 < Date.now()) {
-      console.error('Token expired at:', new Date(payload.exp * 1000));
-      throw new Error('Token expired');
-    }
-
-    // Extract user info directly from JWT - Supabase JWTs contain user data
-    console.log('JWT payload:', JSON.stringify(payload));
-
-    const user = {
-      id: payload.sub,
-      email: payload.email,
-      user_metadata: payload.user_metadata || {},
-    };
-
-    console.log('User from JWT:', user.id, user.email);
-
-    // Ensure user exists in public.users table
-    await ensureUserExists(user);
-
-    return {
-      id: user.id,
-      email: user.email,
-      tier: 'free', // TODO: Look up from users table
-    };
-  } catch (err) {
-    console.error('JWT decode/verify error:', err);
-    throw new Error('Invalid token');
+    console.log('Base64 payload length:', padded.length);
+    const decoded = atob(padded);
+    console.log('Decoded payload:', decoded.substring(0, 100) + '...');
+    payload = JSON.parse(decoded);
+    console.log('Parsed payload keys:', Object.keys(payload));
+  } catch (decodeErr) {
+    console.error('Failed to decode JWT payload:', decodeErr);
+    throw new Error('Failed to decode token');
   }
+
+  // Check if token is expired
+  if (payload.exp && (payload.exp as number) * 1000 < Date.now()) {
+    console.error('Token expired at:', new Date((payload.exp as number) * 1000));
+    throw new Error('Token expired');
+  }
+
+  // Extract user info directly from JWT - Supabase JWTs contain user data
+  const user = {
+    id: payload.sub as string,
+    email: payload.email as string,
+    user_metadata: (payload.user_metadata || {}) as Record<string, string>,
+  };
+
+  console.log('User from JWT:', user.id, user.email);
+
+  if (!user.id || !user.email) {
+    console.error('Missing user id or email in token. Payload:', JSON.stringify(payload));
+    throw new Error('Invalid token payload');
+  }
+
+  // Ensure user exists in public.users table
+  try {
+    await ensureUserExists(user);
+  } catch (userErr) {
+    console.error('Failed to ensure user exists:', userErr);
+    throw new Error('Failed to create user record');
+  }
+
+  return {
+    id: user.id,
+    email: user.email,
+    tier: 'free',
+  };
 }
 
 /**
