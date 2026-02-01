@@ -6,6 +6,8 @@ import { handleRun } from './run.ts';
 import { handleAuth } from './auth.ts';
 import { handleApps } from './apps.ts';
 import { getUploadPageHTML } from '../../web/upload-page.ts';
+import { getAppViewerHTML } from '../../web/app-viewer.ts';
+import { createAppsService } from '../services/apps.ts';
 
 export function createApp() {
   return {
@@ -68,6 +70,25 @@ export function createApp() {
       // Apps listing
       if (path === '/api/apps') {
         return handleApps(request);
+      }
+
+      // App viewer page - /a/:appId
+      if (path.startsWith('/a/') && method === 'GET') {
+        const appId = path.slice(3); // Remove '/a/'
+        try {
+          const appsService = createAppsService();
+          const app = await appsService.findById(appId);
+          if (!app) {
+            return json({ error: 'App not found' }, 404);
+          }
+          const exports = Array.isArray(app.exports) ? app.exports : [];
+          return new Response(getAppViewerHTML(appId, app.name || app.slug, exports), {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        } catch (err) {
+          console.error('Error loading app:', err);
+          return json({ error: 'Failed to load app' }, 500);
+        }
       }
 
       // 404
