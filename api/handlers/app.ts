@@ -73,9 +73,16 @@ export function createApp() {
         return handleApps(request);
       }
 
-      // App runner page - /a/:appId - serves the actual deployed app
-      if (path.startsWith('/a/') && method === 'GET') {
-        const appId = path.slice(3); // Remove '/a/'
+      // App runner - /a/:appId/* - serves deployed apps
+      // Supports two patterns:
+      // 1. Browser apps: export default function(app, ultralight) - renders UI in browser
+      // 2. Server apps: export default async function handler(req) - handles HTTP requests
+      if (path.startsWith('/a/')) {
+        // Extract appId (first segment after /a/)
+        const pathParts = path.slice(3).split('/');
+        const appId = pathParts[0];
+        const subPath = '/' + pathParts.slice(1).join('/'); // Everything after appId
+
         try {
           const appsService = createAppsService();
           const r2Service = createR2Service();
@@ -99,10 +106,26 @@ export function createApp() {
             }
           }
 
-          // Serve the app runner with the code embedded
-          return new Response(getAppRunnerHTML(appId, app.name || app.slug, code), {
-            headers: { 'Content-Type': 'text/html' },
-          });
+          // Detect app type by checking for handler export pattern
+          // Server apps export: export default async function handler(req: Request)
+          // or: export async function handler(req: Request)
+          const isServerApp = /export\s+(default\s+)?(async\s+)?function\s+handler\s*\(/.test(code) ||
+                              /export\s+default\s+handler/.test(code) ||
+                              /export\s+\{\s*handler\s*\}/.test(code);
+
+          if (isServerApp) {
+            // Server-side execution: run the handler function
+            return await executeServerApp(code, request, appId, subPath);
+          } else {
+            // Browser app: serve the runner HTML (only for GET requests to root)
+            if (method === 'GET' && (subPath === '/' || subPath === '')) {
+              return new Response(getAppRunnerHTML(appId, app.name || app.slug, code), {
+                headers: { 'Content-Type': 'text/html' },
+              });
+            } else {
+              return json({ error: 'Browser apps only support GET requests to root' }, 400);
+            }
+          }
         } catch (err) {
           console.error('Error loading app:', err);
           return json({ error: 'Failed to load app' }, 500);
@@ -113,6 +136,101 @@ export function createApp() {
       return json({ error: 'Not found' }, 404);
     },
   };
+}
+
+/**
+ * Execute a server-side app handler
+ * Apps export: export default async function handler(req: Request): Promise<Response>
+ */
+async function executeServerApp(
+  code: string,
+  originalRequest: Request,
+  appId: string,
+  subPath: string
+): Promise<Response> {
+  try {
+    // Create a modified request with the subPath as the URL path
+    const originalUrl = new URL(originalRequest.url);
+    const appUrl = new URL(subPath + originalUrl.search, originalUrl.origin);
+
+    // Clone request with new URL for the app
+    const appRequest = new Request(appUrl.toString(), {
+      method: originalRequest.method,
+      headers: originalRequest.headers,
+      body: originalRequest.body,
+    });
+
+    // Build the execution context
+    const AsyncFunction = Object.getPrototypeOf(async function() {}).constructor;
+
+    // Wrap the code to extract and call the handler
+    const wrappedCode = `
+      ${code}
+
+      // Find the handler function
+      let handlerFn;
+      if (typeof handler === 'function') {
+        handlerFn = handler;
+      } else if (typeof exports !== 'undefined' && typeof exports.default === 'function') {
+        handlerFn = exports.default;
+      }
+
+      if (!handlerFn) {
+        throw new Error('No handler function found. Export a function named "handler" or use export default.');
+      }
+
+      return await handlerFn(request);
+    `;
+
+    // Create execution function with necessary globals
+    const executeFn = new AsyncFunction(
+      'request',
+      'Response',
+      'Headers',
+      'URL',
+      'URLSearchParams',
+      'fetch',
+      'console',
+      'JSON',
+      'TextEncoder',
+      'TextDecoder',
+      'crypto',
+      'atob',
+      'btoa',
+      wrappedCode
+    );
+
+    // Execute with sandboxed globals
+    const response = await executeFn(
+      appRequest,
+      Response,
+      Headers,
+      URL,
+      URLSearchParams,
+      fetch,
+      console, // TODO: capture logs
+      JSON,
+      TextEncoder,
+      TextDecoder,
+      crypto,
+      atob,
+      btoa
+    );
+
+    // Validate response
+    if (!(response instanceof Response)) {
+      return json({ error: 'Handler must return a Response object' }, 500);
+    }
+
+    return response;
+
+  } catch (err) {
+    console.error('Server app execution error:', err);
+    return json({
+      error: 'App execution failed',
+      message: err instanceof Error ? err.message : String(err),
+    }, 500);
+  }
 }
 
 export function json(data: unknown, status = 200): Response {
