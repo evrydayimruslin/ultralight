@@ -92,6 +92,24 @@ CREATE POLICY memory_own ON memory FOR ALL USING (auth.uid() = user_id);
 
 -- RPC Functions
 
+-- Ensure user exists (bypasses RLS)
+CREATE OR REPLACE FUNCTION ensure_user_exists(
+  user_id UUID,
+  user_email TEXT,
+  user_display_name TEXT DEFAULT NULL,
+  user_avatar_url TEXT DEFAULT NULL
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  INSERT INTO users (id, email, display_name, avatar_url)
+  VALUES (user_id, user_email, COALESCE(user_display_name, split_part(user_email, '@', 1)), user_avatar_url)
+  ON CONFLICT (id) DO NOTHING;
+END;
+$$;
+
 -- Atomic increment for app run counts
 CREATE OR REPLACE FUNCTION increment_app_runs(app_id UUID)
 RETURNS void

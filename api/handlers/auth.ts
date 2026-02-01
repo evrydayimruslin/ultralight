@@ -187,36 +187,46 @@ export async function getUserId(request: Request): Promise<string> {
 
 /**
  * Ensure user exists in public.users table
- * Called after successful authentication - creates user if not exists
+ * Uses RPC function with SECURITY DEFINER to bypass RLS
  */
 export async function ensureUserExists(authUser: { id: string; email: string; user_metadata?: { name?: string; avatar_url?: string; full_name?: string } }): Promise<void> {
   console.log('ensureUserExists called for:', authUser.id, authUser.email);
 
   const supabase = await getSupabaseClient();
 
-  // Use upsert to handle race conditions - insert or do nothing if exists
-  const userData = {
-    id: authUser.id,
-    email: authUser.email,
-    display_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || authUser.email.split('@')[0],
-    avatar_url: authUser.user_metadata?.avatar_url || null,
-  };
+  const displayName = authUser.user_metadata?.full_name || authUser.user_metadata?.name || authUser.email.split('@')[0];
+  const avatarUrl = authUser.user_metadata?.avatar_url || null;
 
-  console.log('Upserting user data:', JSON.stringify(userData));
+  console.log('Calling ensure_user_exists RPC...');
 
-  const { data, error } = await supabase
-    .from('users')
-    .upsert(userData, {
-      onConflict: 'id',
-    })
-    .select();
+  // Use RPC function to bypass RLS
+  const { error } = await supabase.rpc('ensure_user_exists', {
+    user_id: authUser.id,
+    user_email: authUser.email,
+    user_display_name: displayName,
+    user_avatar_url: avatarUrl,
+  });
 
   if (error) {
-    console.error('Upsert failed:', JSON.stringify(error));
-    throw new Error(`Failed to create user: ${error.message}`);
+    console.error('RPC ensure_user_exists failed:', JSON.stringify(error));
+    // Fallback: try direct insert (service role should bypass RLS)
+    console.log('Falling back to direct insert...');
+    const { error: insertError } = await supabase
+      .from('users')
+      .upsert({
+        id: authUser.id,
+        email: authUser.email,
+        display_name: displayName,
+        avatar_url: avatarUrl,
+      }, { onConflict: 'id' });
+
+    if (insertError) {
+      console.error('Direct insert also failed:', JSON.stringify(insertError));
+      throw new Error(`Failed to create user: ${insertError.message}`);
+    }
   }
 
-  console.log('User upsert result:', JSON.stringify(data));
+  console.log('User ensured successfully');
 }
 
 // Callback page HTML - handles Supabase's hash-based token return
