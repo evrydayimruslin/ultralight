@@ -90,6 +90,10 @@ CREATE POLICY apps_owner ON apps FOR ALL USING (auth.uid() = owner_id);
 CREATE POLICY apps_public ON apps FOR SELECT USING (visibility = 'public');
 CREATE POLICY memory_own ON memory FOR ALL USING (auth.uid() = user_id);
 
+-- DROP FK constraint on apps.owner_id to simplify user management
+-- Run this if you're having issues with user creation
+-- ALTER TABLE apps DROP CONSTRAINT IF EXISTS apps_owner_id_fkey;
+
 -- RPC Functions
 
 -- Ensure user exists (bypasses RLS)
