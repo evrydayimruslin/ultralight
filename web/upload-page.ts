@@ -32,9 +32,59 @@ export function getUploadPageHTML(): string {
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
     .tagline {
       color: #666;
       font-size: 0.875rem;
+    }
+    .user-info {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      color: #888;
+      font-size: 0.875rem;
+    }
+    .user-email {
+      color: #fff;
+    }
+    .auth-btn {
+      padding: 0.5rem 1rem;
+      background: #1a1a1a;
+      color: #fff;
+      border: 1px solid #333;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      text-decoration: none;
+    }
+    .auth-btn:hover {
+      background: #222;
+      border-color: #444;
+    }
+    .auth-btn.google {
+      background: #fff;
+      color: #333;
+      border-color: #ddd;
+    }
+    .auth-btn.google:hover {
+      background: #f5f5f5;
+    }
+    .auth-btn.signout {
+      background: transparent;
+      border-color: #444;
+      color: #888;
+    }
+    .google-icon {
+      width: 18px;
+      height: 18px;
     }
     main {
       flex: 1;
@@ -167,32 +217,45 @@ export function getUploadPageHTML(): string {
 <body>
   <header>
     <div class="logo">⚡ Ultralight</div>
-    <div class="tagline">The deployment target for vibecoders</div>
+    <div class="header-right">
+      <div class="tagline">The deployment target for vibecoders</div>
+      <div id="authSection">
+        <a href="/auth/login" class="auth-btn google">
+          <svg class="google-icon" viewBox="0 0 24 24">
+            <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+            <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+          </svg>
+          Sign in with Google
+        </a>
+      </div>
+    </div>
   </header>
-  
+
   <main>
     <h1>Upload your code</h1>
     <p class="subtitle">Drag your folder or select files to deploy instantly</p>
-    
+
     <div class="drop-zone" id="dropZone">
       <div class="drop-zone-icon">📁</div>
       <div class="drop-zone-text">Drop your code folder here</div>
       <div class="drop-zone-hint">or click to browse • Max 10MB • .ts .js .json .md</div>
       <input type="file" id="fileInput" webkitdirectory directory multiple>
     </div>
-    
+
     <div class="file-list" id="fileList"></div>
-    
+
     <button class="upload-btn" id="uploadBtn" disabled>Deploy App</button>
-    
+
     <div class="build-logs" id="buildLogs" style="display: none;"></div>
-    
+
     <div class="result" id="result" style="display: none;">
       <div class="result-title">Your app is live</div>
       <div class="result-url" id="resultUrl"></div>
     </div>
   </main>
-  
+
   <footer>
     Built for vibecoders • Powered by Deno • Stored on Cloudflare
   </footer>
@@ -205,32 +268,64 @@ export function getUploadPageHTML(): string {
     const buildLogs = document.getElementById('buildLogs');
     const result = document.getElementById('result');
     const resultUrl = document.getElementById('resultUrl');
-    
+    const authSection = document.getElementById('authSection');
+
     let files = [];
-    
+    let authToken = localStorage.getItem('ultralight_token');
+
+    // Check auth state and update UI
+    function updateAuthUI() {
+      if (authToken) {
+        // Decode JWT to get email (basic decode, not verification)
+        try {
+          const payload = JSON.parse(atob(authToken.split('.')[1]));
+          const email = payload.email || 'User';
+          authSection.innerHTML = \`
+            <div class="user-info">
+              <span class="user-email">\${email}</span>
+              <button class="auth-btn signout" onclick="signOut()">Sign out</button>
+            </div>
+          \`;
+        } catch {
+          // Invalid token, clear it
+          localStorage.removeItem('ultralight_token');
+          authToken = null;
+        }
+      }
+    }
+
+    function signOut() {
+      localStorage.removeItem('ultralight_token');
+      authToken = null;
+      window.location.reload();
+    }
+
+    // Initialize auth UI
+    updateAuthUI();
+
     dropZone.addEventListener('click', () => fileInput.click());
-    
+
     dropZone.addEventListener('dragover', (e) => {
       e.preventDefault();
       dropZone.classList.add('dragover');
     });
-    
+
     dropZone.addEventListener('dragleave', () => {
       dropZone.classList.remove('dragover');
     });
-    
+
     dropZone.addEventListener('drop', (e) => {
       e.preventDefault();
       dropZone.classList.remove('dragover');
       files = Array.from(e.dataTransfer.files);
       updateFileList();
     });
-    
+
     fileInput.addEventListener('change', () => {
       files = Array.from(fileInput.files);
       updateFileList();
     });
-    
+
     function updateFileList() {
       fileList.innerHTML = files.map(f => \`
         <div class="file-item">
@@ -240,7 +335,7 @@ export function getUploadPageHTML(): string {
       \`).join('');
       uploadBtn.disabled = files.length === 0;
     }
-    
+
     function log(level, message) {
       const entry = document.createElement('div');
       entry.className = \`log-entry log-\${level}\`;
@@ -248,31 +343,38 @@ export function getUploadPageHTML(): string {
       buildLogs.appendChild(entry);
       buildLogs.scrollTop = buildLogs.scrollHeight;
     }
-    
+
     uploadBtn.addEventListener('click', async () => {
       buildLogs.style.display = 'block';
       buildLogs.innerHTML = '';
       uploadBtn.disabled = true;
       result.style.display = 'none';
-      
+
       log('info', 'Starting upload...');
-      
+
       const formData = new FormData();
       files.forEach(f => formData.append('files', f));
-      
+
       try {
         log('info', 'Uploading files...');
+
+        const headers = {};
+        if (authToken) {
+          headers['Authorization'] = \`Bearer \${authToken}\`;
+        }
+
         const res = await fetch('/api/upload', {
           method: 'POST',
+          headers,
           body: formData
         });
-        
+
         const data = await res.json();
-        
+
         if (data.build_logs) {
           data.build_logs.forEach(l => log(l.level, l.message));
         }
-        
+
         if (data.app_id) {
           result.style.display = 'block';
           resultUrl.textContent = window.location.origin + data.url;

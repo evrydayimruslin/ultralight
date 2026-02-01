@@ -14,6 +14,14 @@ export function createApp() {
       const path = url.pathname;
       const method = request.method;
 
+      // Root redirect to upload page
+      if (path === '/' && method === 'GET') {
+        return new Response(null, {
+          status: 302,
+          headers: { 'Location': '/upload' },
+        });
+      }
+
       // Health check
       if (path === '/health') {
         return json({ status: 'ok', version: '0.1.0' });
