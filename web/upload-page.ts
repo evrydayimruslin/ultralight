@@ -354,6 +354,15 @@ export function getUploadPageHTML(): string {
       uploadBtn.disabled = true;
       result.style.display = 'none';
 
+      // Re-read token in case user just signed in
+      const currentToken = localStorage.getItem('ultralight_token');
+
+      if (!currentToken) {
+        log('error', 'Please sign in to upload');
+        uploadBtn.disabled = false;
+        return;
+      }
+
       log('info', 'Starting upload...');
 
       const formData = new FormData();
@@ -362,10 +371,9 @@ export function getUploadPageHTML(): string {
       try {
         log('info', 'Uploading files...');
 
-        const headers = {};
-        if (authToken) {
-          headers['Authorization'] = \`Bearer \${authToken}\`;
-        }
+        const headers = {
+          'Authorization': \`Bearer \${currentToken}\`
+        };
 
         const res = await fetch('/api/upload', {
           method: 'POST',
