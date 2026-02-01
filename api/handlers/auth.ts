@@ -9,10 +9,15 @@ const Deno = globalThis.Deno;
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
-// Supabase client for database operations
+// Supabase client for database operations (service role bypasses RLS)
 async function getSupabaseClient() {
   const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2');
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
 }
 
 export async function handleAuth(request: Request): Promise<Response> {
@@ -141,21 +146,35 @@ export async function getUserId(request: Request): Promise<string> {
 export async function ensureUserExists(authUser: { id: string; email: string; user_metadata?: { name?: string; avatar_url?: string; full_name?: string } }): Promise<void> {
   const supabase = await getSupabaseClient();
 
-  // Try to insert user, ignore if already exists
+  // First check if user exists
+  const { data: existingUser } = await supabase
+    .from('users')
+    .select('id')
+    .eq('id', authUser.id)
+    .single();
+
+  if (existingUser) {
+    // User already exists
+    return;
+  }
+
+  // Insert new user
   const { error } = await supabase
     .from('users')
-    .upsert({
+    .insert({
       id: authUser.id,
       email: authUser.email,
       display_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || authUser.email.split('@')[0],
       avatar_url: authUser.user_metadata?.avatar_url || null,
-    }, {
-      onConflict: 'id',
-      ignoreDuplicates: true,
     });
 
-  if (error && !error.message.includes('duplicate')) {
-    console.error('Failed to ensure user exists:', error);
+  if (error) {
+    // Log full error for debugging
+    console.error('Failed to create user:', JSON.stringify(error));
+    // Don't throw - user might have been created by another request
+    if (!error.message?.includes('duplicate') && !error.code?.includes('23505')) {
+      throw new Error(`Failed to create user: ${error.message}`);
+    }
   }
 }
 
