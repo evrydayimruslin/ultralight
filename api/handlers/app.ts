@@ -6,8 +6,9 @@ import { handleRun } from './run.ts';
 import { handleAuth } from './auth.ts';
 import { handleApps } from './apps.ts';
 import { getUploadPageHTML } from '../../web/upload-page.ts';
-import { getAppViewerHTML } from '../../web/app-viewer.ts';
+import { getAppRunnerHTML } from '../../web/app-runner.ts';
 import { createAppsService } from '../services/apps.ts';
+import { createR2Service } from '../services/storage.ts';
 
 export function createApp() {
   return {
@@ -72,17 +73,34 @@ export function createApp() {
         return handleApps(request);
       }
 
-      // App viewer page - /a/:appId
+      // App runner page - /a/:appId - serves the actual deployed app
       if (path.startsWith('/a/') && method === 'GET') {
         const appId = path.slice(3); // Remove '/a/'
         try {
           const appsService = createAppsService();
+          const r2Service = createR2Service();
+
           const app = await appsService.findById(appId);
           if (!app) {
             return json({ error: 'App not found' }, 404);
           }
-          const exports = Array.isArray(app.exports) ? app.exports : [];
-          return new Response(getAppViewerHTML(appId, app.name || app.slug, exports), {
+
+          // Fetch the app code from R2
+          const storageKey = app.storage_key;
+          let code: string | null = null;
+
+          try {
+            code = await r2Service.fetchTextFile(`${storageKey}index.ts`);
+          } catch {
+            try {
+              code = await r2Service.fetchTextFile(`${storageKey}index.js`);
+            } catch {
+              return json({ error: 'App code not found' }, 404);
+            }
+          }
+
+          // Serve the app runner with the code embedded
+          return new Response(getAppRunnerHTML(appId, app.name || app.slug, code), {
             headers: { 'Content-Type': 'text/html' },
           });
         } catch (err) {
