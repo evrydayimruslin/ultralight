@@ -1,13 +1,23 @@
 # Use Deno official image
 FROM denoland/deno:2.1.4
 
+# Install Node.js and npm for esbuild bundling
+RUN apt-get update && apt-get install -y \
+    curl \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install esbuild globally
+RUN npm install -g esbuild
+
 # Set working directory
 WORKDIR /app
 
 # Copy all files
 COPY . .
 
-# Cache dependencies (optional but recommended)
+# Cache Deno dependencies
 RUN deno cache api/main.ts
 
 # Expose port

@@ -1,5 +1,5 @@
 // Upload Handler
-// Processes file uploads, validates, stores to R2, creates app record
+// Processes file uploads, validates, bundles, stores to R2, creates app record
 
 import { error, json } from './app.ts';
 import type { BuildLogEntry, UploadResponse } from '../../shared/types/index.ts';
@@ -10,6 +10,7 @@ import {
 } from '../../shared/types/index.ts';
 import { createR2Service } from '../services/storage.ts';
 import { createAppsService } from '../services/apps.ts';
+import { bundleCode, quickBundle } from '../services/bundler.ts';
 
 // @ts-ignore - Deno is available in Deno Deploy
 const Deno = globalThis.Deno;
@@ -74,21 +75,51 @@ export async function handleUpload(request: Request): Promise<Response> {
 
     log('info', `Starting build for ${validatedFiles.length} files...`);
 
-    // Extract exports
+    // Extract exports from original code (before bundling)
     log('info', 'Parsing entry file...');
     const exports = extractExports(entryFile.content);
     log('success', `Found ${exports.length} exports: ${exports.join(', ')}`);
 
-    // Type check (if TypeScript)
-    if (entryFile.name.endsWith('.ts')) {
-      log('info', 'Running type check...');
-      // TODO: Run Deno check
-      // const typeCheckResult = await typeCheck(validatedFiles);
-      // if (!typeCheckResult.success) {
-      //   log('error', 'Type check failed');
-      //   return error('Build failed: Type errors', 400);
-      // }
-      log('success', 'Type check passed');
+    // Bundle the code
+    log('info', 'Bundling code...');
+    let bundledCode = entryFile.content;
+    let bundleUsed = false;
+
+    try {
+      // First try quick bundle (for local imports only, no npm)
+      const quickResult = quickBundle(validatedFiles, entryFile.name);
+
+      if (quickResult.hasExternalImports) {
+        // Has npm imports - use full esbuild bundling
+        log('info', 'Detected npm imports, running esbuild...');
+        const fullResult = await bundleCode(validatedFiles, entryFile.name);
+
+        if (!fullResult.success) {
+          for (const err of fullResult.errors) {
+            log('error', err);
+          }
+          return error('Build failed: ' + fullResult.errors.join(', '), 400);
+        }
+
+        for (const warn of fullResult.warnings) {
+          log('warn', warn);
+        }
+
+        bundledCode = fullResult.code;
+        bundleUsed = true;
+        log('success', 'Bundle complete (with npm dependencies)');
+      } else if (quickResult.code !== entryFile.content) {
+        // Has local imports - use quick bundle result
+        bundledCode = quickResult.code;
+        bundleUsed = true;
+        log('success', 'Bundle complete (local imports inlined)');
+      } else {
+        log('success', 'No bundling needed (no imports)');
+      }
+    } catch (bundleErr) {
+      // Bundling failed - try to continue with original code
+      log('warn', `Bundling skipped: ${bundleErr instanceof Error ? bundleErr.message : String(bundleErr)}`);
+      bundledCode = entryFile.content;
     }
 
     // Generate app ID and version
@@ -100,21 +131,37 @@ export async function handleUpload(request: Request): Promise<Response> {
     const r2Service = createR2Service();
     const appsService = createAppsService();
 
+    // Prepare files for upload
+    const filesToUpload = bundleUsed
+      ? [
+          // Upload bundled code as the entry file
+          {
+            name: entryFile.name,
+            content: new TextEncoder().encode(bundledCode),
+            contentType: getContentType(entryFile.name),
+          },
+          // Also upload original files for reference/debugging
+          ...validatedFiles
+            .filter(f => f.name !== entryFile.name)
+            .map(f => ({
+              name: f.name,
+              content: new TextEncoder().encode(f.content),
+              contentType: getContentType(f.name),
+            })),
+        ]
+      : validatedFiles.map(f => ({
+          name: f.name,
+          content: new TextEncoder().encode(f.content),
+          contentType: getContentType(f.name),
+        }));
+
     // Upload files to R2
     log('info', 'Uploading to storage...');
     const storageKey = `apps/${appId}/${version}/`;
-    await r2Service.uploadFiles(
-      storageKey,
-      validatedFiles.map(f => ({
-        name: f.name,
-        content: new TextEncoder().encode(f.content),
-        contentType: getContentType(f.name),
-      }))
-    );
+    await r2Service.uploadFiles(storageKey, filesToUpload);
     log('success', 'Upload complete');
 
     // Create app record in database
-    // Absolute minimum - only required fields
     log('info', 'Creating app record...');
     await appsService.create({
       id: appId,
