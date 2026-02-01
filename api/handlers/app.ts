@@ -248,9 +248,19 @@ async function executeServerApp(
 function transformToPlainJS(code: string): string {
   let result = code;
 
-  // Remove all import statements
-  result = result.replace(/import\s+.*?from\s+['"][^'"]+['"];?\n?/g, '');
-  result = result.replace(/import\s+['"][^'"]+['"];?\n?/g, '');
+  // Remove ALL import statements (including multiline and URL imports)
+  // Match: import ... from "..." or import "..."
+  result = result.replace(/^\s*import\s+[\s\S]*?from\s+['"][^'"]+['"];?\s*$/gm, '');
+  result = result.replace(/^\s*import\s+['"][^'"]+['"];?\s*$/gm, '');
+
+  // Also catch any remaining import statements that might be inline
+  result = result.replace(/import\s+\{[^}]*\}\s+from\s+['"][^'"]+['"];?/g, '');
+  result = result.replace(/import\s+\*\s+as\s+\w+\s+from\s+['"][^'"]+['"];?/g, '');
+  result = result.replace(/import\s+\w+\s+from\s+['"][^'"]+['"];?/g, '');
+  result = result.replace(/import\s+['"][^'"]+['"];?/g, '');
+
+  // export default async function handler -> async function handler
+  result = result.replace(/export\s+default\s+(async\s+)?function\s+(\w+)/g, '$1function $2');
 
   // export async function handler -> async function handler
   result = result.replace(/export\s+(async\s+)?function\s+/g, '$1function ');
@@ -258,22 +268,23 @@ function transformToPlainJS(code: string): string {
   // export const/let/var -> const/let/var
   result = result.replace(/export\s+(const|let|var)\s+/g, '$1 ');
 
-  // export default async function handler -> async function handler
-  result = result.replace(/export\s+default\s+(async\s+)?function\s+(\w+)/g, '$1function $2');
-
-  // export default handler -> var handler = handler (no-op, handler already exists)
-  result = result.replace(/export\s+default\s+(\w+)\s*;?/g, '');
+  // export default someVar -> (remove, the var is already defined)
+  result = result.replace(/export\s+default\s+\w+\s*;?/g, '');
 
   // export { foo, bar } -> remove
   result = result.replace(/export\s*\{[^}]*\}\s*;?/g, '');
 
   // Remove TypeScript type annotations (basic)
-  // : Type -> nothing (but be careful not to break object literals)
-  result = result.replace(/:\s*(Request|Response|Promise<[^>]+>|string|number|boolean|void|any|unknown)\s*([,)\{=])/g, '$2');
-  result = result.replace(/:\s*(Request|Response|Promise<[^>]+>|string|number|boolean|void|any|unknown)\s*$/gm, '');
+  // Handle function parameters and return types
+  result = result.replace(/:\s*(Request|Response|Promise<[^>]+>|string|number|boolean|void|any|unknown|Record<[^>]+>)\s*([,)\{=])/g, '$2');
+  result = result.replace(/:\s*(Request|Response|Promise<[^>]+>|string|number|boolean|void|any|unknown|Record<[^>]+>)\s*$/gm, '');
 
-  // Remove interface/type declarations
-  result = result.replace(/^\s*(export\s+)?(interface|type)\s+\w+[\s\S]*?(?=\n\n|\nexport|\nfunction|\nconst|\nlet|\nvar|\nasync|$)/gm, '');
+  // Remove interface/type declarations (be careful with multiline)
+  result = result.replace(/^\s*(export\s+)?(interface|type)\s+\w+\s*[^;]*;?\s*$/gm, '');
+  result = result.replace(/^\s*(export\s+)?(interface|type)\s+\w+\s*\{[\s\S]*?\}\s*$/gm, '');
+
+  // Clean up multiple empty lines
+  result = result.replace(/\n{3,}/g, '\n\n');
 
   return result;
 }
