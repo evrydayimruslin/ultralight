@@ -5,15 +5,27 @@
 const Deno = globalThis.Deno;
 
 import { createApp } from './handlers/app.ts';
+import { startCronScheduler } from './services/cron.ts';
 
 // Get port from environment or default to 8000
 // @ts-ignore
 const port = parseInt(Deno.env.get('PORT') || '8000');
 
+// Get base URL for cron job execution
+// @ts-ignore
+const baseUrl = Deno.env.get('BASE_URL') || `http://localhost:${port}`;
+
 console.log(`Starting Ultralight API on port ${port}...`);
+
+// Start the cron scheduler for background jobs
+console.log(`[CRON] Initializing scheduler with base URL: ${baseUrl}`);
+startCronScheduler(baseUrl);
 
 // Serve the API
 Deno.serve({ port, hostname: '0.0.0.0' }, async (request: Request) => {
+  const url = new URL(request.url);
+  console.log(`[REQ] ${request.method} ${url.pathname}`);
+
   // CORS headers
   const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -23,6 +35,7 @@ Deno.serve({ port, hostname: '0.0.0.0' }, async (request: Request) => {
 
   // Handle preflight
   if (request.method === 'OPTIONS') {
+    console.log('[REQ] Preflight request');
     return new Response(null, { headers: corsHeaders });
   }
 
