@@ -14,13 +14,17 @@ export async function handleApps(request: Request): Promise<Response> {
   const path = url.pathname;
   const method = request.method;
 
+  console.log('[APPS] handleApps called:', method, path);
+
   // GET /api/apps - List public apps
   if (path === '/api/apps' && method === 'GET') {
+    console.log('[APPS] Routing to handleListPublicApps');
     return handleListPublicApps(request);
   }
 
   // GET /api/apps/me - List user's own apps (authenticated)
   if (path === '/api/apps/me' && method === 'GET') {
+    console.log('[APPS] Routing to handleListMyApps');
     return handleListMyApps(request);
   }
 
