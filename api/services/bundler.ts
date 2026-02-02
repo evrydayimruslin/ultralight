@@ -60,7 +60,7 @@ export async function bundleCode(
   const tempDir = await Deno.makeTempDir({ prefix: 'ultralight-build-' });
 
   try {
-    // Write all files to temp directory
+    // Write all files to temp directory, transforming npm imports to CDN URLs
     for (const file of files) {
       const filePath = `${tempDir}/${file.name}`;
       const dirPath = filePath.substring(0, filePath.lastIndexOf('/'));
@@ -70,17 +70,9 @@ export async function bundleCode(
         await Deno.mkdir(dirPath, { recursive: true }).catch(() => {});
       }
 
-      await Deno.writeTextFile(filePath, file.content);
-    }
-
-    // Create a minimal package.json if not present
-    const hasPackageJson = files.some(f => f.name === 'package.json');
-    if (!hasPackageJson) {
-      await Deno.writeTextFile(`${tempDir}/package.json`, JSON.stringify({
-        name: 'ultralight-app',
-        type: 'module',
-        dependencies: {},
-      }));
+      // Transform npm imports to esm.sh CDN URLs for Deno compatibility
+      const transformedContent = transformNpmImportsToCdn(file.content);
+      await Deno.writeTextFile(filePath, transformedContent);
     }
 
     // Run esbuild via Deno subprocess
@@ -215,6 +207,44 @@ function postProcessBundle(code: string): string {
   // Remove any import.meta references that might cause issues
   let processed = code.replace(/import\.meta\.url/g, '"file://ultralight-app"');
   return processed;
+}
+
+/**
+ * Transform npm package imports to esm.sh CDN URLs
+ * This allows Deno/esbuild to fetch packages without npm install
+ *
+ * Examples:
+ *   import { S3Client } from "@aws-sdk/client-s3"
+ *   -> import { S3Client } from "https://esm.sh/@aws-sdk/client-s3"
+ *
+ *   import React from "react"
+ *   -> import React from "https://esm.sh/react"
+ */
+function transformNpmImportsToCdn(code: string): string {
+  // Match import statements with npm package names (not relative paths, not URLs)
+  // Handles: import x from "pkg", import { x } from "pkg", import * as x from "pkg"
+  const importRegex = /(import\s+(?:[^'"]+\s+from\s+)?['"])([^'"./][^'"]*?)(['"])/g;
+
+  return code.replace(importRegex, (match, prefix, packageName, suffix) => {
+    // Skip if already a URL
+    if (packageName.startsWith('http://') || packageName.startsWith('https://')) {
+      return match;
+    }
+
+    // Skip relative imports (shouldn't match due to regex, but be safe)
+    if (packageName.startsWith('./') || packageName.startsWith('../')) {
+      return match;
+    }
+
+    // Skip node: protocol imports
+    if (packageName.startsWith('node:')) {
+      return match;
+    }
+
+    // Transform to esm.sh URL
+    // esm.sh handles scoped packages like @aws-sdk/client-s3 correctly
+    return `${prefix}https://esm.sh/${packageName}${suffix}`;
+  });
 }
 
 /**
