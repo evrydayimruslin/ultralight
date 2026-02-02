@@ -150,6 +150,9 @@ export class AppsService {
   }
 }
 
+// @ts-ignore - Deno is available
+const Deno = globalThis.Deno;
+
 // Factory function
 export function createAppsService(): AppsService {
   const url = Deno.env.get('SUPABASE_URL');

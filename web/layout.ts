@@ -1625,13 +1625,35 @@ export function getLayoutHTML(options: {
         console.log('✨ App loaded successfully');
       } catch (err) {
         console.error('Failed to load app:', err);
-        appElement.innerHTML = \`
-          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;color:#f87171;text-align:center;padding:2rem;">
-            <div style="font-size:2rem;margin-bottom:1rem;">😕</div>
-            <div style="font-weight:600;margin-bottom:0.5rem;">Failed to load app</div>
-            <div style="color:#888;font-size:0.875rem;">\${err.message}</div>
-          </div>
-        \`;
+
+        // Check if this is a server-side only app (uses Deno/Node APIs)
+        const isServerSideError = err.message.includes('Deno') ||
+                                   err.message.includes('process') ||
+                                   err.message.includes('require') ||
+                                   err.message.includes('__dirname');
+
+        if (isServerSideError) {
+          appElement.innerHTML = \`
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;color:#f87171;text-align:center;padding:2rem;">
+              <div style="font-size:2rem;margin-bottom:1rem;">⚡</div>
+              <div style="font-weight:600;margin-bottom:0.5rem;">Server-Side App</div>
+              <div style="color:#888;font-size:0.875rem;max-width:400px;margin-bottom:1rem;">
+                This app uses server-side APIs (like Deno) and cannot run in the browser directly.
+              </div>
+              <a href="/a/\${appId}" target="_blank" style="color:#667eea;text-decoration:underline;font-size:0.875rem;">
+                Open in new tab →
+              </a>
+            </div>
+          \`;
+        } else {
+          appElement.innerHTML = \`
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;color:#f87171;text-align:center;padding:2rem;">
+              <div style="font-size:2rem;margin-bottom:1rem;">😕</div>
+              <div style="font-weight:600;margin-bottom:0.5rem;">Failed to load app</div>
+              <div style="color:#888;font-size:0.875rem;">\${err.message}</div>
+            </div>
+          \`;
+        }
       }
     }
 
@@ -1875,7 +1897,15 @@ export function getLayoutHTML(options: {
         console.log('✨ App loaded successfully');
       } catch (err) {
         console.error('Failed to load app:', err);
-        showError('Failed to Load App', err.message);
+        const isServerSideError = err.message.includes('Deno') ||
+                                   err.message.includes('process') ||
+                                   err.message.includes('require') ||
+                                   err.message.includes('__dirname');
+        if (isServerSideError) {
+          showError('Server-Side App', 'This app uses server-side APIs and cannot run in the browser. It may work when accessed directly via its URL.');
+        } else {
+          showError('Failed to Load App', err.message);
+        }
       }
     })();
     ` : ''}

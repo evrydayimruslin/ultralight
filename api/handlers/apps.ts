@@ -88,6 +88,7 @@ async function handleListPublicApps(request: Request): Promise<Response> {
  */
 async function handleListMyApps(request: Request): Promise<Response> {
   try {
+    console.log('handleListMyApps: starting auth check');
     const user = await authenticate(request);
     console.log('handleListMyApps: authenticated user:', user.id);
     const appsService = createAppsService();
@@ -98,11 +99,16 @@ async function handleListMyApps(request: Request): Promise<Response> {
   } catch (err) {
     console.error('handleListMyApps error:', err);
     if (err instanceof Error) {
+      const msg = err.message.toLowerCase();
       // Check for various auth-related error messages
-      if (err.message.includes('Authentication') ||
-          err.message.includes('authorization') ||
-          err.message.includes('token') ||
-          err.message.includes('expired')) {
+      if (msg.includes('authentication') ||
+          msg.includes('authorization') ||
+          msg.includes('token') ||
+          msg.includes('expired') ||
+          msg.includes('jwt') ||
+          msg.includes('missing') ||
+          msg.includes('invalid')) {
+        console.log('handleListMyApps: returning 401 for auth error');
         return error('Authentication required', 401);
       }
     }
