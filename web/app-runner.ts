@@ -14,6 +14,47 @@ export function getAppRunnerHTML(appId: string, appName: string, code: string): 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${appName} - Ultralight</title>
+
+  <!-- React Runtime (for JSX apps) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "react": "https://esm.sh/react@18",
+      "react/": "https://esm.sh/react@18/",
+      "react-dom": "https://esm.sh/react-dom@18",
+      "react-dom/": "https://esm.sh/react-dom@18/",
+      "react/jsx-runtime": "https://esm.sh/react@18/jsx-runtime",
+      "react/jsx-dev-runtime": "https://esm.sh/react@18/jsx-dev-runtime"
+    }
+  }
+  </script>
+
+  <!-- Tailwind CSS (for utility classes) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            'ultralight': {
+              50: '#f5f3ff',
+              100: '#ede9fe',
+              200: '#ddd6fe',
+              300: '#c4b5fd',
+              400: '#a78bfa',
+              500: '#8b5cf6',
+              600: '#7c3aed',
+              700: '#6d28d9',
+              800: '#5b21b6',
+              900: '#4c1d95',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {

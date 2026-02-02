@@ -1625,77 +1625,28 @@ export function getLayoutHTML(options: {
     });
 
     // ============================================
-    // App Runner
+    // App Runner - Uses iframe to ensure identical rendering
     // ============================================
-    async function loadAndRunApp(appId) {
+    function loadAndRunApp(appId) {
       const appElement = document.getElementById('app');
-      appElement.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#888;">Loading app...</div>';
 
-      try {
-        const headers = {};
-        if (authToken) {
-          headers['Authorization'] = \`Bearer \${authToken}\`;
-        }
-        const res = await fetch(\`/api/apps/\${appId}/code\`, { headers });
-        if (!res.ok) throw new Error('Failed to load app code');
+      // Use iframe to load the app at its dedicated URL
+      // This ensures the app runs exactly the same way as when accessed directly
+      appElement.innerHTML = \`
+        <iframe
+          src="/a/\${appId}?embed=1"
+          style="width:100%;height:100%;border:none;background:#0a0a0a;"
+          allow="clipboard-read; clipboard-write; camera; microphone; geolocation"
+        ></iframe>
+      \`;
 
-        const { code, name } = await res.json();
-        document.title = \`\${name} - Ultralight\`;
-        appElement.innerHTML = '';
-
-        const ultralightRuntime = createRuntime(appId);
-        window.ultralight = ultralightRuntime;
-
-        const blob = new Blob([code], { type: 'application/javascript' });
-        const url = URL.createObjectURL(blob);
-        const module = await import(url);
-        URL.revokeObjectURL(url);
-
-        if (typeof module.default === 'function') {
-          await module.default(appElement, ultralightRuntime);
-        } else if (typeof module.render === 'function') {
-          await module.render(appElement, ultralightRuntime);
-        } else if (typeof module.mount === 'function') {
-          await module.mount(appElement, ultralightRuntime);
-        } else if (typeof module.init === 'function') {
-          await module.init(appElement, ultralightRuntime);
-        } else if (typeof module.main === 'function') {
-          await module.main(appElement, ultralightRuntime);
-        }
-
-        console.log('✨ App loaded successfully');
-      } catch (err) {
-        console.error('Failed to load app:', err);
-
-        // Check if this is a server-side only app (uses Deno/Node APIs)
-        const isServerSideError = err.message.includes('Deno') ||
-                                   err.message.includes('process') ||
-                                   err.message.includes('require') ||
-                                   err.message.includes('__dirname');
-
-        if (isServerSideError) {
-          appElement.innerHTML = \`
-            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;color:#f87171;text-align:center;padding:2rem;">
-              <div style="font-size:2rem;margin-bottom:1rem;">⚡</div>
-              <div style="font-weight:600;margin-bottom:0.5rem;">Server-Side App</div>
-              <div style="color:#888;font-size:0.875rem;max-width:400px;margin-bottom:1rem;">
-                This app uses server-side APIs (like Deno) and cannot run in the browser directly.
-              </div>
-              <a href="/a/\${appId}" target="_blank" style="color:#667eea;text-decoration:underline;font-size:0.875rem;">
-                Open in new tab →
-              </a>
-            </div>
-          \`;
-        } else {
-          appElement.innerHTML = \`
-            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;color:#f87171;text-align:center;padding:2rem;">
-              <div style="font-size:2rem;margin-bottom:1rem;">😕</div>
-              <div style="font-weight:600;margin-bottom:0.5rem;">Failed to load app</div>
-              <div style="color:#888;font-size:0.875rem;">\${err.message}</div>
-            </div>
-          \`;
-        }
+      // Update page title based on the app
+      const app = apps.find(a => a.id === appId);
+      if (app) {
+        document.title = \`\${app.name || app.slug} - Ultralight\`;
       }
+
+      console.log('✨ App loaded in iframe');
     }
 
     function createRuntime(appId) {

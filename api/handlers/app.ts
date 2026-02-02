@@ -5,6 +5,7 @@ import { handleUpload } from './upload.ts';
 import { handleRun } from './run.ts';
 import { handleAuth } from './auth.ts';
 import { handleApps } from './apps.ts';
+import { handleCron } from './cron.ts';
 import { getLayoutHTML } from '../../web/layout.ts';
 import { getAppRunnerHTML } from '../../web/app-runner.ts';
 import { createAppsService } from '../services/apps.ts';
@@ -76,6 +77,11 @@ export function createApp() {
         return handleApps(request);
       }
 
+      // Cron API routes - handle all /api/cron/* paths
+      if (path.startsWith('/api/cron')) {
+        return handleCron(request);
+      }
+
       // App runner - /a/:appId/* - serves deployed apps
       // Supports two patterns:
       // 1. Browser apps: export default function(app, ultralight) - renders UI in browser
@@ -130,15 +136,26 @@ export function createApp() {
           } else {
             // Browser app: serve the layout HTML with app embedded (only for GET requests to root)
             if (method === 'GET' && (subPath === '/' || subPath === '')) {
-              return new Response(getLayoutHTML({
-                title: app.name || app.slug,
-                activeAppId: appId,
-                initialView: 'app',
-                appCode: code,
-                appName: app.name || app.slug,
-              }), {
-                headers: { 'Content-Type': 'text/html' },
-              });
+              // Check for embed mode (used by iframe in sidebar)
+              const isEmbed = url.searchParams.get('embed') === '1';
+
+              if (isEmbed) {
+                // Embed mode: serve app without sidebar using app-runner
+                return new Response(getAppRunnerHTML(appId, app.name || app.slug, code), {
+                  headers: { 'Content-Type': 'text/html' },
+                });
+              } else {
+                // Normal mode: serve with sidebar layout
+                return new Response(getLayoutHTML({
+                  title: app.name || app.slug,
+                  activeAppId: appId,
+                  initialView: 'app',
+                  appCode: code,
+                  appName: app.name || app.slug,
+                }), {
+                  headers: { 'Content-Type': 'text/html' },
+                });
+              }
             } else {
               return json({ error: 'Browser apps only support GET requests to root' }, 400);
             }
