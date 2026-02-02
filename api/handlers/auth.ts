@@ -192,15 +192,19 @@ export async function ensureUserExists(authUser: { id: string; email: string; us
   console.log('ensureUserExists called for:', authUser.id, authUser.email);
 
   const displayName = authUser.user_metadata?.full_name || authUser.user_metadata?.name || authUser.email.split('@')[0];
-  const avatarUrl = authUser.user_metadata?.avatar_url || null;
+  // Note: avatar_url column doesn't exist in DB yet, so we don't include it
+  // const avatarUrl = authUser.user_metadata?.avatar_url || null;
 
   // Use direct REST API with service role key (bypasses RLS)
-  const payload = {
+  // Only include columns that exist in the users table
+  const payload: Record<string, unknown> = {
     id: authUser.id,
     email: authUser.email,
-    display_name: displayName,
-    avatar_url: avatarUrl,
   };
+
+  // Only add display_name if the column exists (it might not)
+  // For now, let's try with minimal fields
+  // payload.display_name = displayName;
 
   console.log('Inserting user via REST API:', JSON.stringify(payload));
 
