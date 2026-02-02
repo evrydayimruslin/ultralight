@@ -3,10 +3,73 @@
 
 import { error, json } from './app.ts';
 import type { RunRequest, RunResponse } from '../../shared/types/index.ts';
-import { executeInSandbox } from '../runtime/sandbox.ts';
+import { executeInSandbox, type UserContext } from '../runtime/sandbox.ts';
 import { createR2Service } from '../services/storage.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createAppDataService } from '../services/appdata.ts';
+
+// Decode JWT payload without verification (verification done by Supabase)
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+
+    // Convert base64url to base64
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(atob(base64));
+
+    // Check expiration
+    if (payload.exp && payload.exp * 1000 < Date.now()) {
+      return null; // Token expired
+    }
+
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+// Extract user context from request Authorization header
+function extractUserContext(request: Request): { userId: string; user: UserContext | null } {
+  const authHeader = request.headers.get('Authorization');
+
+  if (!authHeader?.startsWith('Bearer ')) {
+    return {
+      userId: '00000000-0000-0000-0000-000000000000', // Anonymous user ID
+      user: null,
+    };
+  }
+
+  const token = authHeader.slice(7);
+  const payload = decodeJwtPayload(token);
+
+  if (!payload) {
+    return {
+      userId: '00000000-0000-0000-0000-000000000000',
+      user: null,
+    };
+  }
+
+  // Extract user info from JWT
+  const userId = payload.sub as string;
+  const email = payload.email as string;
+  const userMetadata = payload.user_metadata as Record<string, unknown> | undefined;
+
+  const user: UserContext = {
+    id: userId,
+    email: email || '',
+    displayName: (userMetadata?.full_name as string) ||
+                 (userMetadata?.name as string) ||
+                 email?.split('@')[0] ||
+                 null,
+    avatarUrl: (userMetadata?.avatar_url as string) ||
+               (userMetadata?.picture as string) ||
+               null,
+    tier: 'free', // Default to free, could look up from database if needed
+  };
+
+  return { userId, user };
+}
 
 export async function handleRun(request: Request, appId: string): Promise<Response> {
   try {
@@ -17,7 +80,8 @@ export async function handleRun(request: Request, appId: string): Promise<Respon
       return error('Function name required');
     }
 
-    const userId = '00000000-0000-0000-0000-000000000001';
+    // Extract user context from request
+    const { userId, user } = extractUserContext(request);
 
     // Initialize services
     const appsService = createAppsService();
@@ -31,27 +95,29 @@ export async function handleRun(request: Request, appId: string): Promise<Respon
       return error('App not found', 404);
     }
 
+    // Check visibility permissions
     if (app.visibility === 'private' && app.owner_id !== userId) {
       return error('Unauthorized', 403);
     }
 
     // Fetch code from R2
-    // Try index.ts first, fall back to index.js
+    // Try different entry file extensions
     const storageKey = app.storage_key;
     let code: string | null = null;
-    let entryFileName = 'index.ts';
+    const entryFiles = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
 
-    try {
-      code = await r2Service.fetchTextFile(`${storageKey}index.ts`);
-    } catch {
-      // index.ts not found, try index.js
+    for (const entryFile of entryFiles) {
       try {
-        entryFileName = 'index.js';
-        code = await r2Service.fetchTextFile(`${storageKey}index.js`);
+        code = await r2Service.fetchTextFile(`${storageKey}${entryFile}`);
+        break;
       } catch {
-        console.error('No entry file found in R2');
-        return error('No entry file found (index.ts or index.js)', 404);
+        // Try next extension
       }
+    }
+
+    if (!code) {
+      console.error('No entry file found in R2');
+      return error('No entry file found (index.tsx, index.ts, index.jsx, or index.js)', 404);
     }
 
     // Execute in sandbox
@@ -61,9 +127,10 @@ export async function handleRun(request: Request, appId: string): Promise<Respon
         userId,
         executionId: crypto.randomUUID(),
         code,
-        allowedDomains: ['api.openai.com', 'api.github.com', 'api.openrouter.ai'],
-        permissions: ['memory:read', 'memory:write', 'ai:call', 'net:fetch'],
+        permissions: ['memory:read', 'memory:write', 'ai:call', 'net:fetch', 'cron:read', 'cron:write'],
         userApiKey: null,
+        // Authenticated user context (null if anonymous)
+        user,
         // R2-based app data - works out of the box, no user config needed
         appDataService,
         // User memory service - null for now (requires Supabase auth)

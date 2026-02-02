@@ -284,3 +284,122 @@ export const TIER_LIMITS = {
 export const ALLOWED_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.json', '.md', '.css'] as const;
 export const MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 export const MAX_FILES_PER_UPLOAD = 50;
+
+// ============================================
+// CRON JOBS
+// ============================================
+
+export interface CronJob {
+  id: string;
+  appId: string;
+  name: string;
+  schedule: string;
+  handler: string;
+  enabled: boolean;
+  lastRunAt: string | null;
+  lastRunResult: 'success' | 'error' | null;
+  lastRunError: string | null;
+  lastRunDurationMs: number | null;
+  runCount: number;
+  errorCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CronRunLog {
+  jobId: string;
+  appId: string;
+  startedAt: string;
+  endedAt: string;
+  durationMs: number;
+  success: boolean;
+  error: string | null;
+  result: unknown;
+}
+
+// Common cron expression presets
+export const CRON_PRESETS = {
+  EVERY_MINUTE: '* * * * *',
+  EVERY_5_MINUTES: '*/5 * * * *',
+  EVERY_15_MINUTES: '*/15 * * * *',
+  EVERY_30_MINUTES: '*/30 * * * *',
+  EVERY_HOUR: '0 * * * *',
+  EVERY_6_HOURS: '0 */6 * * *',
+  EVERY_12_HOURS: '0 */12 * * *',
+  DAILY_MIDNIGHT: '0 0 * * *',
+  DAILY_9AM: '0 9 * * *',
+  DAILY_6PM: '0 18 * * *',
+  WEEKLY_SUNDAY: '0 0 * * 0',
+  WEEKLY_MONDAY: '0 0 * * 1',
+  MONTHLY_FIRST: '0 0 1 * *',
+} as const;
+
+// ============================================
+// USER CONTEXT (exposed to apps)
+// ============================================
+
+export interface UserContext {
+  id: string;
+  email: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  tier: 'free' | 'pro';
+}
+
+// ============================================
+// QUERY HELPERS
+// ============================================
+
+export interface QueryOptions {
+  filter?: (value: unknown) => boolean;
+  sort?: { field: string; order: 'asc' | 'desc' };
+  limit?: number;
+  offset?: number;
+}
+
+export interface QueryResult {
+  key: string;
+  value: unknown;
+  updatedAt?: string;
+}
+
+// ============================================
+// SDK INTERFACE (for TypeScript apps)
+// ============================================
+
+export interface UltralightSDK {
+  // User context
+  user: UserContext | null;
+  isAuthenticated(): boolean;
+  requireAuth(): UserContext;
+
+  // Data storage (basic)
+  store(key: string, value: unknown): Promise<void>;
+  load(key: string): Promise<unknown>;
+  remove(key: string): Promise<void>;
+  list(prefix?: string): Promise<string[]>;
+
+  // Data storage (query helpers)
+  query(prefix: string, options?: QueryOptions): Promise<QueryResult[]>;
+  batchStore(items: Array<{ key: string; value: unknown }>): Promise<void>;
+  batchLoad(keys: string[]): Promise<Array<{ key: string; value: unknown }>>;
+  batchRemove(keys: string[]): Promise<void>;
+
+  // User memory (cross-app)
+  remember(key: string, value: unknown): Promise<void>;
+  recall(key: string): Promise<unknown>;
+
+  // AI
+  ai(request: AIRequest): Promise<AIResponse>;
+
+  // Cron
+  cron: {
+    register(name: string, schedule: string, handler: string): Promise<CronJob>;
+    unregister(name: string): Promise<void>;
+    update(name: string, updates: Partial<{ schedule: string; handler: string; enabled: boolean }>): Promise<CronJob>;
+    list(): Promise<CronJob[]>;
+    validate(expression: string): boolean;
+    describe(expression: string): string;
+    presets: typeof CRON_PRESETS;
+  };
+}

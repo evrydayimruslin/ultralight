@@ -7,6 +7,26 @@ import type {
   LogEntry,
 } from '../../shared/types/index.ts';
 
+import {
+  createCronJob,
+  getAppCronJobs,
+  updateCronJob,
+  deleteCronJob,
+  isValidCronExpression,
+  describeCronExpression,
+  CRON_PRESETS,
+  type CronJob,
+} from '../services/cron.ts';
+
+// User context passed to apps (subset of full user, safe to expose)
+export interface UserContext {
+  id: string;
+  email: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  tier: 'free' | 'pro';
+}
+
 export interface RuntimeConfig {
   appId: string;
   userId: string;
@@ -14,6 +34,8 @@ export interface RuntimeConfig {
   code: string;
   permissions: string[];
   userApiKey: string | null;
+  // Authenticated user context (null if anonymous)
+  user: UserContext | null;
   // App data storage (R2-based, zero config)
   appDataService: AppDataService;
   // User memory (for unified Memory.md - optional, can be null)
@@ -26,6 +48,24 @@ export interface AppDataService {
   load(key: string): Promise<unknown>;
   remove(key: string): Promise<void>;
   list(prefix?: string): Promise<string[]>;
+  // Query helpers
+  query(prefix: string, options?: QueryOptions): Promise<QueryResult[]>;
+  batchStore(items: Array<{ key: string; value: unknown }>): Promise<void>;
+  batchLoad(keys: string[]): Promise<Array<{ key: string; value: unknown }>>;
+  batchRemove(keys: string[]): Promise<void>;
+}
+
+export interface QueryOptions {
+  filter?: (value: unknown) => boolean;
+  sort?: { field: string; order: 'asc' | 'desc' };
+  limit?: number;
+  offset?: number;
+}
+
+export interface QueryResult {
+  key: string;
+  value: unknown;
+  updatedAt?: string;
 }
 
 export interface MemoryService {
@@ -167,8 +207,8 @@ const _ = {
     return [...arr].sort((a, b) => {
       const aVal = typeof key === 'function' ? key(a) : a[key];
       const bVal = typeof key === 'function' ? key(b) : b[key];
-      if (aVal < bVal) return -1;
-      if (aVal > bVal) return 1;
+      if ((aVal as number | string) < (bVal as number | string)) return -1;
+      if ((aVal as number | string) > (bVal as number | string)) return 1;
       return 0;
     });
   },
@@ -430,6 +470,20 @@ export async function executeInSandbox(
   try {
     // Create SDK with both app data (R2) and user memory (Supabase)
     const sdk = {
+      // USER CONTEXT - Authenticated user info (null if anonymous)
+      user: config.user,
+
+      // Check if user is authenticated
+      isAuthenticated: (): boolean => config.user !== null,
+
+      // Require authentication - throws if not authenticated
+      requireAuth: (): UserContext => {
+        if (!config.user) {
+          throw new Error('Authentication required. Please sign in to use this feature.');
+        }
+        return config.user;
+      },
+
       // APP DATA - R2-based, zero config
       store: async (key: string, value: unknown) => {
         await config.appDataService.store(key, value);
@@ -448,6 +502,24 @@ export async function executeInSandbox(
         const keys = await config.appDataService.list(prefix);
         capturedConsole.log(`[SDK] list(${prefix ? `"${prefix}"` : ''})`);
         return keys;
+      },
+
+      // QUERY HELPERS - Advanced data operations
+      query: async (prefix: string, options?: QueryOptions) => {
+        capturedConsole.log(`[SDK] query("${prefix}", ${JSON.stringify(options || {})})`);
+        return await config.appDataService.query(prefix, options);
+      },
+      batchStore: async (items: Array<{ key: string; value: unknown }>) => {
+        capturedConsole.log(`[SDK] batchStore(${items.length} items)`);
+        return await config.appDataService.batchStore(items);
+      },
+      batchLoad: async (keys: string[]) => {
+        capturedConsole.log(`[SDK] batchLoad(${keys.length} keys)`);
+        return await config.appDataService.batchLoad(keys);
+      },
+      batchRemove: async (keys: string[]) => {
+        capturedConsole.log(`[SDK] batchRemove(${keys.length} keys)`);
+        return await config.appDataService.batchRemove(keys);
       },
 
       // USER MEMORY - For unified Memory.md
@@ -483,6 +555,71 @@ export async function executeInSandbox(
         }
         capturedConsole.log(`[SDK] ai()`);
         return await config.aiService.call(request, config.userApiKey);
+      },
+
+      // CRON - Background scheduled tasks
+      cron: {
+        // Register a new cron job
+        // name: Unique name for this job within your app
+        // schedule: Cron expression like "0 9 * * *" for daily at 9am
+        // handler: Name of the exported function to call
+        register: async (name: string, schedule: string, handler: string): Promise<CronJob> => {
+          if (!config.permissions.includes('cron:write')) {
+            throw new Error('cron:write permission required');
+          }
+          capturedConsole.log(`[SDK] cron.register("${name}", "${schedule}", "${handler}")`);
+          return await createCronJob({
+            appId: config.appId,
+            name,
+            schedule,
+            handler,
+          });
+        },
+
+        // Unregister (delete) a cron job by name
+        unregister: async (name: string): Promise<void> => {
+          if (!config.permissions.includes('cron:write')) {
+            throw new Error('cron:write permission required');
+          }
+          const jobId = `${config.appId}:${name}`;
+          capturedConsole.log(`[SDK] cron.unregister("${name}")`);
+          await deleteCronJob(jobId);
+        },
+
+        // Update an existing cron job (schedule, handler, or enabled)
+        update: async (
+          name: string,
+          updates: Partial<{ schedule: string; handler: string; enabled: boolean }>
+        ): Promise<CronJob> => {
+          if (!config.permissions.includes('cron:write')) {
+            throw new Error('cron:write permission required');
+          }
+          const jobId = `${config.appId}:${name}`;
+          capturedConsole.log(`[SDK] cron.update("${name}", ${JSON.stringify(updates)})`);
+          return await updateCronJob(jobId, updates);
+        },
+
+        // List all cron jobs for this app
+        list: async (): Promise<CronJob[]> => {
+          if (!config.permissions.includes('cron:read')) {
+            throw new Error('cron:read permission required');
+          }
+          capturedConsole.log(`[SDK] cron.list()`);
+          return await getAppCronJobs(config.appId);
+        },
+
+        // Validate a cron expression (returns true if valid)
+        validate: (expression: string): boolean => {
+          return isValidCronExpression(expression);
+        },
+
+        // Get human-readable description of a cron expression
+        describe: (expression: string): string => {
+          return describeCronExpression(expression);
+        },
+
+        // Common cron expression presets
+        presets: CRON_PRESETS,
       },
     };
 
