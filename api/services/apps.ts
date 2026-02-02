@@ -1,6 +1,9 @@
 // Apps Service
 // Handles app CRUD operations via Supabase
 
+// @ts-ignore - Deno is available in Deno Deploy
+const Deno = globalThis.Deno;
+
 import type { App } from '../../shared/types/index.ts';
 
 export interface SupabaseConfig {
@@ -149,9 +152,6 @@ export class AppsService {
     }
   }
 }
-
-// @ts-ignore - Deno is available
-const Deno = globalThis.Deno;
 
 // Factory function
 export function createAppsService(): AppsService {
