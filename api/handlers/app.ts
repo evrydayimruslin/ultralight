@@ -168,8 +168,23 @@ export function createApp() {
             /__ultralight_exports__/.test(code);
 
           if (isServerApp) {
-            // Server-side execution: run the handler function
-            return await executeServerApp(code, request, appId, subPath);
+            // Check for embed mode (used by iframe in sidebar)
+            const isEmbed = url.searchParams.get('embed') === '1';
+
+            if (isEmbed || method !== 'GET' || (subPath !== '/' && subPath !== '')) {
+              // Embed mode OR non-GET request OR subpath: execute server app directly
+              return await executeServerApp(code, request, appId, subPath);
+            } else {
+              // Normal GET to root: serve with sidebar layout, app loads via iframe
+              return new Response(getLayoutHTML({
+                title: app.name || app.slug,
+                activeAppId: appId,
+                initialView: 'app',
+                appName: app.name || app.slug,
+              }), {
+                headers: { 'Content-Type': 'text/html' },
+              });
+            }
           } else {
             // Browser app: serve the layout HTML with app embedded (only for GET requests to root)
             if (method === 'GET' && (subPath === '/' || subPath === '')) {
