@@ -31,19 +31,56 @@ export function createApp() {
         return json({ status: 'ok', version: '0.2.0', deployed: new Date().toISOString() });
       }
 
-      // Debug endpoint - test auth without upload
+      // Debug endpoint - test auth and database connection
       if (path === '/api/debug/auth' && method === 'GET') {
         const authHeader = request.headers.get('Authorization');
-        if (!authHeader) {
-          return json({ error: 'No auth header', headers: Object.fromEntries(request.headers.entries()) });
+        const result: Record<string, unknown> = {
+          hasAuthHeader: !!authHeader,
+          authHeaderPreview: authHeader ? authHeader.substring(0, 30) + '...' : null,
+        };
+
+        // Test auth
+        if (authHeader) {
+          try {
+            const { authenticate } = await import('./auth.ts');
+            const user = await authenticate(request);
+            result.authSuccess = true;
+            result.user = user;
+          } catch (err: unknown) {
+            result.authSuccess = false;
+            result.authError = err instanceof Error ? err.message : String(err);
+          }
         }
+
+        // Test Supabase connection
         try {
-          const { authenticate } = await import('./auth.ts');
-          const user = await authenticate(request);
-          return json({ success: true, user });
+          const appsService = createAppsService();
+          result.supabaseConfigured = true;
+
+          // Try a simple query
+          if (result.user && typeof result.user === 'object' && 'id' in result.user) {
+            const apps = await appsService.listByOwner((result.user as { id: string }).id);
+            result.appsCount = apps.length;
+            result.dbQuerySuccess = true;
+          }
         } catch (err: unknown) {
-          return json({ error: 'Auth failed', message: err instanceof Error ? err.message : String(err) });
+          result.supabaseConfigured = false;
+          result.supabaseError = err instanceof Error ? err.message : String(err);
         }
+
+        // Check env vars (without exposing values)
+        // @ts-ignore
+        const Deno = globalThis.Deno;
+        result.envVars = {
+          SUPABASE_URL: !!Deno?.env?.get('SUPABASE_URL'),
+          SUPABASE_SERVICE_ROLE_KEY: !!Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY'),
+          R2_ACCOUNT_ID: !!Deno?.env?.get('R2_ACCOUNT_ID'),
+          R2_ACCESS_KEY_ID: !!Deno?.env?.get('R2_ACCESS_KEY_ID'),
+          R2_SECRET_ACCESS_KEY: !!Deno?.env?.get('R2_SECRET_ACCESS_KEY'),
+          R2_BUCKET_NAME: !!Deno?.env?.get('R2_BUCKET_NAME'),
+        };
+
+        return json(result);
       }
 
       // Upload page (HTML UI with sidebar)
