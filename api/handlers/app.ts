@@ -147,8 +147,11 @@ export function createApp() {
 }
 
 /**
- * Execute a server-side app handler
+ * Execute a server-side app handler using native ES modules
  * Apps export: export default async function handler(req: Request): Promise<Response>
+ *
+ * This uses dynamic import() with data URLs to execute ES modules natively.
+ * Deno supports importing TypeScript directly via data URLs!
  */
 async function executeServerApp(
   code: string,
@@ -168,63 +171,27 @@ async function executeServerApp(
       body: originalRequest.body,
     });
 
-    // Transform ES module code to plain JS for AsyncFunction execution
-    const transformedCode = transformToPlainJS(code);
+    // Deno can import TypeScript directly via data URLs!
+    // Use application/typescript MIME type for TypeScript code
+    // This completely eliminates the need for any transpilation or regex hacks
+    const mimeType = 'application/typescript';
+    const dataUrl = `data:${mimeType};base64,${btoa(unescape(encodeURIComponent(code)))}`;
 
-    // Build the execution context
-    const AsyncFunction = Object.getPrototypeOf(async function() {}).constructor;
+    // Import the module - Deno handles TypeScript natively
+    const module = await import(dataUrl);
 
-    // Wrap the code to extract and call the handler
-    const wrappedCode = `
-      ${transformedCode}
+    // Find the handler function
+    const handlerFn = module.handler || module.default;
 
-      // Find the handler function
-      let handlerFn;
-      if (typeof handler === 'function') {
-        handlerFn = handler;
-      }
+    if (typeof handlerFn !== 'function') {
+      return json({
+        error: 'No handler function found',
+        message: 'Server apps must export a function named "handler" or use export default'
+      }, 500);
+    }
 
-      if (!handlerFn) {
-        throw new Error('No handler function found. Export a function named "handler".');
-      }
-
-      return await handlerFn(request);
-    `;
-
-    // Create execution function with necessary globals
-    const executeFn = new AsyncFunction(
-      'request',
-      'Response',
-      'Headers',
-      'URL',
-      'URLSearchParams',
-      'fetch',
-      'console',
-      'JSON',
-      'TextEncoder',
-      'TextDecoder',
-      'crypto',
-      'atob',
-      'btoa',
-      wrappedCode
-    );
-
-    // Execute with sandboxed globals
-    const response = await executeFn(
-      appRequest,
-      Response,
-      Headers,
-      URL,
-      URLSearchParams,
-      fetch,
-      console, // TODO: capture logs
-      JSON,
-      TextEncoder,
-      TextDecoder,
-      crypto,
-      atob,
-      btoa
-    );
+    // Execute the handler with the request
+    const response = await handlerFn(appRequest);
 
     // Validate response
     if (!(response instanceof Response)) {
@@ -240,92 +207,6 @@ async function executeServerApp(
       message: err instanceof Error ? err.message : String(err),
     }, 500);
   }
-}
-
-/**
- * Transform ES module code to plain JS for AsyncFunction execution
- * Strips TypeScript syntax and ES module syntax to produce executable JS
- */
-function transformToPlainJS(code: string): string {
-  let result = code;
-
-  // Remove ALL import statements (including multiline and URL imports)
-  // Match: import ... from "..." or import "..."
-  result = result.replace(/^\s*import\s+[\s\S]*?from\s+['"][^'"]+['"];?\s*$/gm, '');
-  result = result.replace(/^\s*import\s+['"][^'"]+['"];?\s*$/gm, '');
-
-  // Also catch any remaining import statements that might be inline
-  result = result.replace(/import\s+\{[^}]*\}\s+from\s+['"][^'"]+['"];?/g, '');
-  result = result.replace(/import\s+\*\s+as\s+\w+\s+from\s+['"][^'"]+['"];?/g, '');
-  result = result.replace(/import\s+\w+\s+from\s+['"][^'"]+['"];?/g, '');
-  result = result.replace(/import\s+['"][^'"]+['"];?/g, '');
-
-  // Remove interface/type declarations FIRST (before other transformations)
-  // Single-line type alias: type Foo = string; or type Foo = { ... };
-  result = result.replace(/^\s*(export\s+)?(type)\s+\w+\s*=\s*[^;]+;\s*$/gm, '');
-  // Multi-line interface/type with braces
-  result = result.replace(/^\s*(export\s+)?(interface|type)\s+\w+\s*\{[\s\S]*?\}\s*$/gm, '');
-  // Simple interface declaration
-  result = result.replace(/^\s*(export\s+)?interface\s+\w+\s*[^{]*\{[\s\S]*?\}\s*$/gm, '');
-
-  // export default async function handler -> async function handler
-  result = result.replace(/export\s+default\s+(async\s+)?function\s+(\w+)/g, '$1function $2');
-
-  // export async function handler -> async function handler
-  result = result.replace(/export\s+(async\s+)?function\s+/g, '$1function ');
-
-  // export const/let/var -> const/let/var
-  result = result.replace(/export\s+(const|let|var)\s+/g, '$1 ');
-
-  // export default someVar -> (remove, the var is already defined)
-  result = result.replace(/export\s+default\s+\w+\s*;?/g, '');
-
-  // export { foo, bar } -> remove
-  result = result.replace(/export\s*\{[^}]*\}\s*;?/g, '');
-
-  // Remove TypeScript type annotations
-  // IMPORTANT: Be careful not to remove object literal properties or ternary operators!
-
-  // Step 1: Remove function return type annotations
-  // Match ): Type { or ): Type => but NOT ternary operators
-  // Use negative lookahead to avoid matching after ? in ternary
-  result = result.replace(/\)\s*:\s*(?!.*\?)([A-Z]\w*(?:<[^>]+>)?(?:\[\])?(?:\s*\|\s*\w+(?:<[^>]+>)?(?:\[\])?)*)\s*(?=[{=])/g, ')');
-
-  // Step 2: Remove type annotations in function parameters
-  // Match (param: Type) or , param: Type) - only when followed by , or )
-  // Be careful: only match when there's a ( or , before the param name
-  result = result.replace(/(\(\s*)(\w+)\s*:\s*[A-Z]\w*(?:<[^>]+>)?(?:\[\])?(?:\s*\|\s*\w+(?:<[^>]+>)?(?:\[\])?)*/g, '$1$2');
-  result = result.replace(/(,\s*)(\w+)\s*:\s*[A-Z]\w*(?:<[^>]+>)?(?:\[\])?(?:\s*\|\s*\w+(?:<[^>]+>)?(?:\[\])?)*/g, '$1$2');
-
-  // Step 3: Remove type annotations on variable declarations (only simple identifier on left side)
-  // Match: const foo: Type = but NOT: const { foo }: Type = (destructuring)
-  result = result.replace(/(const|let|var)\s+(\w+)\s*:\s*[A-Z]\w*(?:<[^>]+>)?(?:\[\])?(?:\s*\|\s*\w+(?:<[^>]+>)?(?:\[\])?)*\s*(?==)/g, '$1 $2 ');
-
-  // Step 4: Remove type annotations on destructuring declarations
-  // Match: const { foo }: Type = or const [foo]: Type =
-  result = result.replace(/(const|let|var)\s+(\{[^}]+\}|\[[^\]]+\])\s*:\s*[A-Z]\w*(?:<[^>]+>)?(?:\[\])?(?:\s*\|\s*\w+(?:<[^>]+>)?(?:\[\])?)*\s*(?==)/g, '$1 $2 ');
-
-  // Step 5: Remove type assertions (as Type)
-  result = result.replace(/\s+as\s+[A-Z]\w*(?:<[^>]+>)?/g, '');
-
-  // Step 6: Remove angle bracket type assertions (<Type>value) - but not JSX
-  result = result.replace(/<([A-Z]\w*)>(?=\w|\()/g, '');
-
-  // Step 7: Remove generic type parameters on function declarations
-  // function foo<T, U>( -> function foo(
-  result = result.replace(/(function\s+\w+)\s*<[^>]+>\s*(?=\()/g, '$1');
-
-  // Step 8: Remove non-null assertions (!) - but not !== or !=
-  result = result.replace(/!(?=[.\[\)\s;,])/g, '');
-
-  // Step 9: Handle arrow function type annotations
-  // const fn: () => Type = () => ... -> const fn = () => ...
-  result = result.replace(/(const|let|var)\s+(\w+)\s*:\s*\([^)]*\)\s*=>\s*\w+(?:<[^>]+>)?\s*(?==)/g, '$1 $2 ');
-
-  // Clean up multiple empty lines
-  result = result.replace(/\n{3,}/g, '\n\n');
-
-  return result;
 }
 
 export function json(data: unknown, status = 200): Response {
