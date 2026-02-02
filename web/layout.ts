@@ -1339,7 +1339,22 @@ export function getLayoutHTML(options: {
           headers: { 'Authorization': \`Bearer \${authToken}\` }
         });
 
-        if (!res.ok) throw new Error('Failed to load apps');
+        if (!res.ok) {
+          // Try debug endpoint to get more info
+          console.error('loadApps failed with status:', res.status);
+          try {
+            const debugRes = await fetch('/api/debug/auth', {
+              headers: { 'Authorization': \`Bearer \${authToken}\` }
+            });
+            const debugInfo = await debugRes.json();
+            console.error('=== DEBUG INFO ===');
+            console.error(JSON.stringify(debugInfo, null, 2));
+            console.error('==================');
+          } catch (debugErr) {
+            console.error('Debug endpoint also failed:', debugErr);
+          }
+          throw new Error(\`Failed to load apps (status: \${res.status})\`);
+        }
 
         apps = await res.json();
         renderAppsList();
