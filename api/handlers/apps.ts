@@ -89,13 +89,22 @@ async function handleListPublicApps(request: Request): Promise<Response> {
 async function handleListMyApps(request: Request): Promise<Response> {
   try {
     const user = await authenticate(request);
+    console.log('handleListMyApps: authenticated user:', user.id);
     const appsService = createAppsService();
     const apps = await appsService.listByOwner(user.id);
+    console.log('handleListMyApps: found', apps.length, 'apps');
 
     return json(apps);
   } catch (err) {
-    if (err instanceof Error && err.message.includes('Authentication')) {
-      return error('Authentication required', 401);
+    console.error('handleListMyApps error:', err);
+    if (err instanceof Error) {
+      // Check for various auth-related error messages
+      if (err.message.includes('Authentication') ||
+          err.message.includes('authorization') ||
+          err.message.includes('token') ||
+          err.message.includes('expired')) {
+        return error('Authentication required', 401);
+      }
     }
     console.error('Failed to list apps:', err);
     return error('Failed to list apps', 500);
@@ -138,37 +147,49 @@ async function handleGetApp(request: Request, appId: string): Promise<Response> 
  */
 async function handleGetAppCode(request: Request, appId: string): Promise<Response> {
   try {
+    console.log('handleGetAppCode: fetching app', appId);
     const appsService = createAppsService();
     const r2Service = createR2Service();
 
     const app = await appsService.findById(appId);
+    console.log('handleGetAppCode: app found:', !!app, app?.visibility);
 
     if (!app) {
+      console.log('handleGetAppCode: app not found in database');
       return error('App not found', 404);
     }
 
     // Check visibility - only owner can access private apps
     if (app.visibility === 'private') {
+      console.log('handleGetAppCode: app is private, checking auth');
       try {
         const user = await authenticate(request);
+        console.log('handleGetAppCode: authenticated user:', user.id, 'owner:', app.owner_id);
         if (user.id !== app.owner_id) {
+          console.log('handleGetAppCode: user is not owner');
           return error('App not found', 404);
         }
-      } catch {
+      } catch (authErr) {
+        console.log('handleGetAppCode: auth failed for private app:', authErr);
         return error('App not found', 404);
       }
     }
 
     // Fetch code from R2
     const storageKey = app.storage_key;
+    console.log('handleGetAppCode: fetching code from R2, storageKey:', storageKey);
     let code: string | null = null;
 
     try {
       code = await r2Service.fetchTextFile(`${storageKey}index.ts`);
-    } catch {
+      console.log('handleGetAppCode: loaded index.ts, length:', code?.length);
+    } catch (tsErr) {
+      console.log('handleGetAppCode: index.ts not found, trying index.js');
       try {
         code = await r2Service.fetchTextFile(`${storageKey}index.js`);
-      } catch {
+        console.log('handleGetAppCode: loaded index.js, length:', code?.length);
+      } catch (jsErr) {
+        console.log('handleGetAppCode: index.js also not found');
         return error('App code not found', 404);
       }
     }

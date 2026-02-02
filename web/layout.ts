@@ -1591,7 +1591,11 @@ export function getLayoutHTML(options: {
       appElement.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#888;">Loading app...</div>';
 
       try {
-        const res = await fetch(\`/api/apps/\${appId}/code\`);
+        const headers = {};
+        if (authToken) {
+          headers['Authorization'] = \`Bearer \${authToken}\`;
+        }
+        const res = await fetch(\`/api/apps/\${appId}/code\`, { headers });
         if (!res.ok) throw new Error('Failed to load app code');
 
         const { code, name } = await res.json();
