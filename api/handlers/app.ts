@@ -183,11 +183,13 @@ export function createApp() {
                 });
               } else {
                 // Normal mode: serve with sidebar layout
+                // The app will be loaded via iframe for consistency (single source of truth)
+                // This ensures apps render the same whether accessed directly or via sidebar navigation
                 return new Response(getLayoutHTML({
                   title: app.name || app.slug,
                   activeAppId: appId,
                   initialView: 'app',
-                  appCode: code,
+                  // Don't pass appCode - the layout will load it via iframe instead
                   appName: app.name || app.slug,
                 }), {
                   headers: { 'Content-Type': 'text/html' },

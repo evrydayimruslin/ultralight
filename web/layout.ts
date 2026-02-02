@@ -105,6 +105,52 @@ export function getLayoutHTML(options: {
       left: 0;
       top: 0;
       z-index: 100;
+      transition: transform 0.3s ease;
+    }
+
+    .sidebar.collapsed {
+      transform: translateX(calc(-1 * var(--sidebar-width)));
+    }
+
+    .sidebar-toggle {
+      position: fixed;
+      top: 12px;
+      left: calc(var(--sidebar-width) + 12px);
+      width: 32px;
+      height: 32px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 101;
+      transition: left 0.3s ease, background 0.2s;
+    }
+
+    .sidebar-toggle:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .sidebar-toggle.collapsed {
+      left: 12px;
+    }
+
+    .sidebar-toggle svg {
+      width: 18px;
+      height: 18px;
+      transition: transform 0.3s ease;
+    }
+
+    .sidebar-toggle.collapsed svg {
+      transform: rotate(180deg);
+    }
+
+    .main-content.sidebar-collapsed {
+      margin-left: 0;
     }
 
     .sidebar-header {
@@ -1042,8 +1088,15 @@ export function getLayoutHTML(options: {
   </style>
 </head>
 <body>
+  <!-- Sidebar Toggle Button -->
+  <button class="sidebar-toggle" id="sidebarToggle" title="Toggle sidebar">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="15 18 9 12 15 6"></polyline>
+    </svg>
+  </button>
+
   <!-- Sidebar -->
-  <aside class="sidebar">
+  <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
       <div class="logo">
         <span>⚡</span>
@@ -1264,6 +1317,35 @@ export function getLayoutHTML(options: {
     const settingsModal = document.getElementById('settingsModal');
     const deleteConfirmModal = document.getElementById('deleteConfirmModal');
     const toast = document.getElementById('toast');
+    const sidebar = document.getElementById('sidebar');
+    const sidebarToggle = document.getElementById('sidebarToggle');
+    const mainContent = document.querySelector('.main-content');
+
+    // ============================================
+    // Sidebar Toggle
+    // ============================================
+    let sidebarCollapsed = localStorage.getItem('sidebar_collapsed') === 'true';
+
+    function updateSidebarState() {
+      if (sidebarCollapsed) {
+        sidebar.classList.add('collapsed');
+        sidebarToggle.classList.add('collapsed');
+        mainContent.classList.add('sidebar-collapsed');
+      } else {
+        sidebar.classList.remove('collapsed');
+        sidebarToggle.classList.remove('collapsed');
+        mainContent.classList.remove('sidebar-collapsed');
+      }
+    }
+
+    sidebarToggle.addEventListener('click', () => {
+      sidebarCollapsed = !sidebarCollapsed;
+      localStorage.setItem('sidebar_collapsed', sidebarCollapsed);
+      updateSidebarState();
+    });
+
+    // Initialize sidebar state
+    updateSidebarState();
 
     // ============================================
     // Toast Notifications
@@ -1882,38 +1964,12 @@ export function getLayoutHTML(options: {
     // ============================================
     updateAuthUI();
 
-    ${initialView === 'app' && appCode ? `
+    // If we're in app view and have an appId, load the app via iframe
+    // This ensures consistent rendering whether accessed directly via URL or via sidebar navigation
+    ${initialView === 'app' && activeAppId ? `
     (async () => {
-      const appElement = document.getElementById('app');
-      const ultralightRuntime = createRuntime('${activeAppId}');
-      window.ultralight = ultralightRuntime;
-
-      try {
-        const appCode = \`${escapedCode}\`;
-        const blob = new Blob([appCode], { type: 'application/javascript' });
-        const url = URL.createObjectURL(blob);
-        const module = await import(url);
-        URL.revokeObjectURL(url);
-
-        if (typeof module.default === 'function') await module.default(appElement, ultralightRuntime);
-        else if (typeof module.render === 'function') await module.render(appElement, ultralightRuntime);
-        else if (typeof module.mount === 'function') await module.mount(appElement, ultralightRuntime);
-        else if (typeof module.init === 'function') await module.init(appElement, ultralightRuntime);
-        else if (typeof module.main === 'function') await module.main(appElement, ultralightRuntime);
-
-        console.log('✨ App loaded successfully');
-      } catch (err) {
-        console.error('Failed to load app:', err);
-        const isServerSideError = err.message.includes('Deno') ||
-                                   err.message.includes('process') ||
-                                   err.message.includes('require') ||
-                                   err.message.includes('__dirname');
-        if (isServerSideError) {
-          showError('Server-Side App', 'This app uses server-side APIs and cannot run in the browser. It may work when accessed directly via its URL.');
-        } else {
-          showError('Failed to Load App', err.message);
-        }
-      }
+      console.log('📱 Initial app load via iframe for appId: ${activeAppId}');
+      loadAndRunApp('${activeAppId}');
     })();
     ` : ''}
   </script>
