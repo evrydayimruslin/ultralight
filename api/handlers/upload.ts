@@ -100,38 +100,33 @@ export async function handleUpload(request: Request): Promise<Response> {
     log('success', `Found ${exports.length} exports: ${exports.join(', ')}`);
 
     // Bundle the code
+    // IMPORTANT: We must bundle ALL imports (relative and external) into a single file
+    // because data URL imports cannot resolve relative paths
     log('info', 'Bundling code...');
     let bundledCode = entryFile.content;
     let bundleUsed = false;
 
     try {
-      // First try quick bundle (for local imports only, no npm)
-      const quickResult = quickBundle(validatedFiles, entryFile.name);
+      // Always use esbuild for proper bundling - it handles all import types correctly
+      log('info', 'Running esbuild bundler...');
+      const bundleResult = await bundleCode(validatedFiles, entryFile.name);
 
-      if (quickResult.hasExternalImports) {
-        // Has npm imports - use full esbuild bundling
-        log('info', 'Detected npm imports, running esbuild...');
-        const fullResult = await bundleCode(validatedFiles, entryFile.name);
-
-        if (!fullResult.success) {
-          for (const err of fullResult.errors) {
-            log('error', err);
-          }
-          return error('Build failed: ' + fullResult.errors.join(', '), 400);
+      if (!bundleResult.success) {
+        for (const err of bundleResult.errors) {
+          log('error', err);
         }
+        return error('Build failed: ' + bundleResult.errors.join(', '), 400);
+      }
 
-        for (const warn of fullResult.warnings) {
-          log('warn', warn);
-        }
+      for (const warn of bundleResult.warnings) {
+        log('warn', warn);
+      }
 
-        bundledCode = fullResult.code;
+      // Only use bundled code if bundling actually changed something
+      if (bundleResult.code !== entryFile.content) {
+        bundledCode = bundleResult.code;
         bundleUsed = true;
-        log('success', 'Bundle complete (with npm dependencies)');
-      } else if (quickResult.code !== entryFile.content) {
-        // Has local imports - use quick bundle result
-        bundledCode = quickResult.code;
-        bundleUsed = true;
-        log('success', 'Bundle complete (local imports inlined)');
+        log('success', 'Bundle complete');
       } else {
         log('success', 'No bundling needed (no imports)');
       }

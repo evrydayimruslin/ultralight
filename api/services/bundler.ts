@@ -20,9 +20,9 @@ export interface FileInput {
 
 /**
  * Bundle user code using esbuild
- * - Resolves and inlines npm imports
- * - Handles local file imports
- * - Outputs a single bundled file
+ * - Resolves and inlines ALL imports (npm and relative)
+ * - Outputs a single self-contained bundled file
+ * - Critical: Data URL imports can't resolve relative paths, so we MUST bundle
  */
 export async function bundleCode(
   files: FileInput[],
@@ -31,7 +31,6 @@ export async function bundleCode(
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  // Check if code has external imports
   const entryFile = files.find(f => f.name === entryPoint);
   if (!entryFile) {
     return {
@@ -44,9 +43,10 @@ export async function bundleCode(
   }
 
   const hasExternalImports = detectExternalImports(entryFile.content);
+  const hasAnyImports = detectAnyImports(entryFile.content);
 
-  // If no external imports, skip bundling (faster)
-  if (!hasExternalImports) {
+  // If no imports at all, return code as-is (no bundling needed)
+  if (!hasAnyImports) {
     return {
       success: true,
       code: entryFile.content,
@@ -161,6 +161,18 @@ export async function bundleCode(
     // Cleanup temp directory
     await Deno.remove(tempDir, { recursive: true }).catch(() => {});
   }
+}
+
+/**
+ * Detect if code has ANY imports (relative or external)
+ * Used to determine if bundling is needed at all
+ */
+function detectAnyImports(code: string): boolean {
+  // Match any import statement
+  const importRegex = /import\s+.*?\s+from\s+['"][^'"]+['"]/;
+  const bareImportRegex = /import\s+['"][^'"]+['"]/;
+
+  return importRegex.test(code) || bareImportRegex.test(code);
 }
 
 /**
