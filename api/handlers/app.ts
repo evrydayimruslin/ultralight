@@ -244,6 +244,7 @@ async function executeServerApp(
 
 /**
  * Transform ES module code to plain JS for AsyncFunction execution
+ * Strips TypeScript syntax and ES module syntax to produce executable JS
  */
 function transformToPlainJS(code: string): string {
   let result = code;
@@ -258,6 +259,14 @@ function transformToPlainJS(code: string): string {
   result = result.replace(/import\s+\*\s+as\s+\w+\s+from\s+['"][^'"]+['"];?/g, '');
   result = result.replace(/import\s+\w+\s+from\s+['"][^'"]+['"];?/g, '');
   result = result.replace(/import\s+['"][^'"]+['"];?/g, '');
+
+  // Remove interface/type declarations FIRST (before other transformations)
+  // Single-line type alias: type Foo = string; or type Foo = { ... };
+  result = result.replace(/^\s*(export\s+)?(type)\s+\w+\s*=\s*[^;]+;\s*$/gm, '');
+  // Multi-line interface/type with braces
+  result = result.replace(/^\s*(export\s+)?(interface|type)\s+\w+\s*\{[\s\S]*?\}\s*$/gm, '');
+  // Simple interface declaration
+  result = result.replace(/^\s*(export\s+)?interface\s+\w+\s*[^{]*\{[\s\S]*?\}\s*$/gm, '');
 
   // export default async function handler -> async function handler
   result = result.replace(/export\s+default\s+(async\s+)?function\s+(\w+)/g, '$1function $2');
@@ -274,14 +283,44 @@ function transformToPlainJS(code: string): string {
   // export { foo, bar } -> remove
   result = result.replace(/export\s*\{[^}]*\}\s*;?/g, '');
 
-  // Remove TypeScript type annotations (basic)
-  // Handle function parameters and return types
-  result = result.replace(/:\s*(Request|Response|Promise<[^>]+>|string|number|boolean|void|any|unknown|Record<[^>]+>)\s*([,)\{=])/g, '$2');
-  result = result.replace(/:\s*(Request|Response|Promise<[^>]+>|string|number|boolean|void|any|unknown|Record<[^>]+>)\s*$/gm, '');
+  // Remove TypeScript type annotations
+  // IMPORTANT: Be careful not to remove object literal properties or ternary operators!
 
-  // Remove interface/type declarations (be careful with multiline)
-  result = result.replace(/^\s*(export\s+)?(interface|type)\s+\w+\s*[^;]*;?\s*$/gm, '');
-  result = result.replace(/^\s*(export\s+)?(interface|type)\s+\w+\s*\{[\s\S]*?\}\s*$/gm, '');
+  // Step 1: Remove function return type annotations
+  // Match ): Type { or ): Type => but NOT ternary operators
+  // Use negative lookahead to avoid matching after ? in ternary
+  result = result.replace(/\)\s*:\s*(?!.*\?)([A-Z]\w*(?:<[^>]+>)?(?:\[\])?(?:\s*\|\s*\w+(?:<[^>]+>)?(?:\[\])?)*)\s*(?=[{=])/g, ')');
+
+  // Step 2: Remove type annotations in function parameters
+  // Match (param: Type) or , param: Type) - only when followed by , or )
+  // Be careful: only match when there's a ( or , before the param name
+  result = result.replace(/(\(\s*)(\w+)\s*:\s*[A-Z]\w*(?:<[^>]+>)?(?:\[\])?(?:\s*\|\s*\w+(?:<[^>]+>)?(?:\[\])?)*/g, '$1$2');
+  result = result.replace(/(,\s*)(\w+)\s*:\s*[A-Z]\w*(?:<[^>]+>)?(?:\[\])?(?:\s*\|\s*\w+(?:<[^>]+>)?(?:\[\])?)*/g, '$1$2');
+
+  // Step 3: Remove type annotations on variable declarations (only simple identifier on left side)
+  // Match: const foo: Type = but NOT: const { foo }: Type = (destructuring)
+  result = result.replace(/(const|let|var)\s+(\w+)\s*:\s*[A-Z]\w*(?:<[^>]+>)?(?:\[\])?(?:\s*\|\s*\w+(?:<[^>]+>)?(?:\[\])?)*\s*(?==)/g, '$1 $2 ');
+
+  // Step 4: Remove type annotations on destructuring declarations
+  // Match: const { foo }: Type = or const [foo]: Type =
+  result = result.replace(/(const|let|var)\s+(\{[^}]+\}|\[[^\]]+\])\s*:\s*[A-Z]\w*(?:<[^>]+>)?(?:\[\])?(?:\s*\|\s*\w+(?:<[^>]+>)?(?:\[\])?)*\s*(?==)/g, '$1 $2 ');
+
+  // Step 5: Remove type assertions (as Type)
+  result = result.replace(/\s+as\s+[A-Z]\w*(?:<[^>]+>)?/g, '');
+
+  // Step 6: Remove angle bracket type assertions (<Type>value) - but not JSX
+  result = result.replace(/<([A-Z]\w*)>(?=\w|\()/g, '');
+
+  // Step 7: Remove generic type parameters on function declarations
+  // function foo<T, U>( -> function foo(
+  result = result.replace(/(function\s+\w+)\s*<[^>]+>\s*(?=\()/g, '$1');
+
+  // Step 8: Remove non-null assertions (!) - but not !== or !=
+  result = result.replace(/!(?=[.\[\)\s;,])/g, '');
+
+  // Step 9: Handle arrow function type annotations
+  // const fn: () => Type = () => ... -> const fn = () => ...
+  result = result.replace(/(const|let|var)\s+(\w+)\s*:\s*\([^)]*\)\s*=>\s*\w+(?:<[^>]+>)?\s*(?==)/g, '$1 $2 ');
 
   // Clean up multiple empty lines
   result = result.replace(/\n{3,}/g, '\n\n');
