@@ -7,6 +7,7 @@ import { handleAuth } from './auth.ts';
 import { handleApps } from './apps.ts';
 import { handleCron } from './cron.ts';
 import { handleMcp, handleMcpDiscovery } from './mcp.ts';
+import { handlePlatformMcp, handlePlatformMcpDiscovery } from './platform-mcp.ts';
 import { handleDiscover } from './discover.ts';
 import { getLayoutHTML } from '../../web/layout.ts';
 import { getAppRunnerHTML } from '../../web/app-runner.ts';
@@ -126,7 +127,17 @@ export function createApp() {
         return handleDiscover(request);
       }
 
-      // MCP routes - POST /mcp/:appId for JSON-RPC
+      // Platform MCP well-known discovery
+      if (path === '/.well-known/mcp.json' && method === 'GET') {
+        return handlePlatformMcpDiscovery();
+      }
+
+      // Platform MCP routes - POST /mcp/platform for JSON-RPC
+      if (path === '/mcp/platform') {
+        return handlePlatformMcp(request);
+      }
+
+      // App-specific MCP routes - POST /mcp/:appId for JSON-RPC
       if (path.startsWith('/mcp/')) {
         const appId = path.slice(5); // Remove '/mcp/'
         return handleMcp(request, appId);

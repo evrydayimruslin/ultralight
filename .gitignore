@@ -25,3 +25,8 @@ coverage/
 # Build outputs
 dist/
 build/
+
+# Node
+node_modules/
+package-lock.json
+*.tgz

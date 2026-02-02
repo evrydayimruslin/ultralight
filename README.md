@@ -1,6 +1,6 @@
 # Ultralight
 
-The deployment target for vibecoders.
+The deployment target for vibecoders. Zero-config serverless apps with AI integration.
 
 ## What is this?
 
@@ -8,129 +8,315 @@ Ultralight lets you deploy TypeScript/JavaScript apps instantly. No servers to c
 
 Built something cool with Cursor or Claude Code? Drag your folder, get a URL, done.
 
-## Quick Start
+## Features
+
+- **Instant Deployment** - Upload code, get a URL
+- **AI Integration** - Built-in AI capabilities with BYOK support
+- **MCP Protocol** - Every app is an MCP server
+- **Skills.md** - Auto-generated documentation from code
+- **Semantic Discovery** - Find apps by capability
+- **Draft/Publish** - Safe deployments with version control
+
+---
+
+## Installation
+
+### CLI (Recommended)
 
 ```bash
-# Install dependencies (Deno)
-deno --version  # Need 2.0+
+# Option 1: Using npm (requires Deno to be installed)
+npm install -g ultralightpro
+ultralight --help
 
-# Set environment variables
-export SUPABASE_URL="your-supabase-url"
+# Option 2: Using Deno directly
+deno install --allow-net --allow-read --allow-write --allow-env \
+  -n ultralight https://ultralight.dev/cli/mod.ts
+
+# Option 3: Run without installing
+deno run --allow-net --allow-read --allow-write --allow-env \
+  https://ultralight.dev/cli/mod.ts --help
+```
+
+### SDK (TypeScript/JavaScript)
+
+```bash
+# npm
+npm install ultralightpro-sdk
+
+# Deno
+import { Ultralight } from 'https://ultralight.dev/sdk/mod.ts';
+```
+
+---
+
+## Quick Start
+
+### 1. Authenticate
+
+```bash
+ultralight login
+```
+
+### 2. Create an App
+
+```typescript
+// index.ts
+export function hello(name: string = "World") {
+  return `Hello, ${name}!`;
+}
+
+export function getWeather(city: string) {
+  return {
+    city,
+    temp: 72,
+    conditions: "Sunny"
+  };
+}
+```
+
+### 3. Deploy
+
+```bash
+ultralight upload ./my-app --name "My First App"
+```
+
+### 4. Use Your App
+
+**Via MCP:**
+```bash
+# Your app is now available at:
+# POST /mcp/{app-id}
+```
+
+**Via SDK:**
+```typescript
+import { Ultralight } from 'ultralightpro-sdk';
+
+const ul = new Ultralight({ token: 'your-token' });
+const result = await ul.run('my-app-id', 'hello', { name: 'Claude' });
+// { result: "Hello, Claude!" }
+```
+
+---
+
+## CLI Commands
+
+```bash
+ultralight login              # Authenticate with Ultralight
+ultralight logout             # Clear credentials
+ultralight whoami             # Show current user
+
+ultralight upload [dir]       # Upload new app or update existing
+  --name "App Name"           # Set display name
+  --visibility public         # Set visibility (private/unlisted/public)
+  --draft                     # Upload as draft
+
+ultralight apps list          # List your apps
+ultralight apps get <app>     # Get app details
+ultralight apps delete <app>  # Delete an app
+
+ultralight draft status <app> # Check draft status
+ultralight draft publish <app># Publish draft to production
+ultralight draft discard <app># Discard draft
+
+ultralight docs generate <app># Generate Skills.md documentation
+ultralight docs get <app>     # View documentation
+
+ultralight run <app> <fn>     # Execute a function
+  --draft                     # Run against draft code
+
+ultralight discover "query"   # Search for apps by capability
+```
+
+---
+
+## SDK Usage
+
+```typescript
+import { Ultralight } from 'ultralightpro-sdk';
+
+const ul = new Ultralight({
+  token: process.env.ULTRALIGHT_TOKEN
+});
+
+// List your apps
+const { apps } = await ul.apps.list();
+
+// Create an app
+const app = await ul.apps.create({
+  name: 'Weather API',
+  files: [{
+    path: 'index.ts',
+    content: `
+      export function getWeather(city: string) {
+        return { city, temp: 72, conditions: "Sunny" };
+      }
+    `
+  }]
+});
+
+// Run a function
+const result = await ul.run(app.app_id, 'getWeather', { city: 'NYC' });
+
+// Work with drafts
+await ul.drafts.upload(app.app_id, {
+  files: [{ path: 'index.ts', content: '...' }]
+});
+await ul.drafts.publish(app.app_id, { versionBump: 'minor' });
+
+// Discover apps
+const weatherApps = await ul.discover('weather API');
+
+// Call any app's MCP tools
+const mcp = ul.mcp('some-app-id');
+const tools = await mcp.listTools();
+const output = await mcp.callTool('functionName', { arg: 'value' });
+```
+
+---
+
+## MCP Protocol
+
+Every Ultralight app is automatically an MCP (Model Context Protocol) server.
+
+### Discovery
+
+```bash
+# Platform discovery
+GET /.well-known/mcp.json
+
+# App-specific discovery
+GET /a/{appId}/.well-known/mcp.json
+```
+
+### Platform MCP
+
+```bash
+POST /mcp/platform
+
+# Available tools:
+# - platform.apps.list
+# - platform.apps.get
+# - platform.apps.create
+# - platform.apps.update
+# - platform.apps.delete
+# - platform.draft.upload
+# - platform.draft.publish
+# - platform.docs.generate
+# - platform.discover
+# - platform.run
+# ... and more
+```
+
+### App MCP
+
+```bash
+POST /mcp/{appId}
+
+# Your exported functions + SDK tools:
+# - ultralight.store
+# - ultralight.load
+# - ultralight.ai
+# - ultralight.cron.*
+```
+
+---
+
+## Project Structure
+
+```
+ultralight/
+├── api/                    # Deno Deploy API
+│   ├── handlers/
+│   │   ├── app.ts          # Router
+│   │   ├── platform-mcp.ts # Platform MCP server
+│   │   ├── mcp.ts          # Per-app MCP server
+│   │   ├── upload.ts       # File upload
+│   │   ├── apps.ts         # App management
+│   │   └── auth.ts         # Authentication
+│   ├── runtime/
+│   │   └── sandbox.ts      # Deno sandbox execution
+│   ├── services/
+│   │   ├── storage.ts      # Cloudflare R2
+│   │   ├── docgen.ts       # Skills.md generation
+│   │   ├── embedding.ts    # Vector embeddings
+│   │   └── apps.ts         # App CRUD
+│   └── main.ts             # Entry point
+├── cli/                    # CLI tool
+│   ├── mod.ts              # CLI entry point
+│   ├── api.ts              # API client
+│   └── config.ts           # Configuration
+├── sdk/                    # TypeScript SDK
+│   └── src/index.ts        # SDK implementation
+├── shared/                 # Shared types
+│   └── types/index.ts
+└── docs/                   # Documentation
+    ├── PLATFORM-MCP-CLI-DESIGN.md
+    └── IN-APP-SDK-DESIGN.md
+```
+
+---
+
+## Self-Hosting
+
+### Prerequisites
+
+- Deno 2.0+
+- Supabase account
+- Cloudflare R2 bucket
+- OpenRouter API key (for embeddings)
+
+### Environment Variables
+
+```bash
+export SUPABASE_URL="https://xxx.supabase.co"
 export SUPABASE_SERVICE_ROLE_KEY="your-key"
 export R2_ACCOUNT_ID="your-cloudflare-account"
 export R2_ACCESS_KEY_ID="your-r2-key"
 export R2_SECRET_ACCESS_KEY="your-r2-secret"
 export R2_BUCKET_NAME="ultralight-apps"
 export OPENROUTER_API_KEY="your-openrouter-key"
-
-# Run locally
-cd api
-deno run --allow-all main.ts
-
-# Or deploy to Deno Deploy
-deno deploy --prod main.ts
 ```
 
-## Project Structure
+### Database Setup
 
-```
-ultralight/
-├── api/                  # Deno Deploy API
-│   ├── handlers/         # HTTP route handlers
-│   │   ├── app.ts       # Router
-│   │   ├── upload.ts    # File upload
-│   │   ├── run.ts       # Code execution
-│   │   ├── auth.ts      # Authentication
-│   │   └── apps.ts      # App listing
-│   ├── runtime/         # Sandbox execution
-│   │   └── sandbox.ts   # Deno isolate wrapper
-│   ├── services/        # External integrations
-│   │   ├── storage.ts   # Cloudflare R2
-│   │   ├── memory.ts    # Supabase memory
-│   │   └── ai.ts        # OpenRouter AI
-│   └── main.ts          # Entry point
-├── web/                 # Frontend components
-│   └── upload-page.ts   # Upload UI
-├── shared/              # Shared types/utils
-│   └── types/
-│       └── index.ts     # TypeScript definitions
-└── memory/              # Project documentation
-    ├── ultralight-mvp-spec.md
-    ├── ultralight-schema-final.sql
-    └── ...
+```bash
+# Run migrations in Supabase SQL Editor
+# 1. migration.sql (base schema)
+# 2. migration-mcp-skills.sql (MCP + docs features)
+
+# Important: After migrations, reload PostgREST schema:
+# Supabase Dashboard → Settings → API → Reload Schema
 ```
 
-## How it Works
+### Run Locally
 
-1. **Upload**: User drags code folder → validated → stored in R2
-2. **Parse**: Entry file analyzed → exports extracted → metadata saved
-3. **Run**: HTTP request → code fetched from R2 → executed in Deno sandbox
-4. **SDK**: Injected `remember()`, `recall()`, `ai()` available to user code
+```bash
+deno task dev
+```
+
+### Deploy
+
+```bash
+# Deno Deploy
+deno task deploy
+
+# Or Docker
+docker build -t ultralight .
+docker run -p 8000:8000 ultralight
+```
+
+---
 
 ## Architecture
 
-- **Runtime**: DigitalOcean App Platform (Docker) or any container host
-  - Note: Deno Deploy blocks dynamic code execution (`new Function()`), so use Docker deployment
-- **Storage**: Cloudflare R2 (zero egress)
-- **Database**: Supabase PostgreSQL
+- **Runtime**: Deno Deploy or Docker
+- **Storage**: Cloudflare R2 (code + app data)
+- **Database**: Supabase PostgreSQL + pgvector
 - **Auth**: Supabase Auth (Google OAuth)
-- **AI**: OpenRouter API
+- **AI**: OpenRouter API (embeddings + BYOK)
 
-## Database Setup
-
-1. Run `migration.sql` in Supabase SQL Editor
-2. **Important**: After running migrations, go to Supabase Dashboard → Settings → API → Click "Reload Schema"
-   - This refreshes PostgREST's schema cache so it recognizes new tables and RPC functions
-
-## Development
-
-### Milestone 1: Hello Vibe
-
-- [x] Project scaffolding
-- [x] Type definitions
-- [x] Sandbox runtime
-- [ ] Database setup
-- [ ] R2 integration
-- [ ] Upload endpoint
-- [ ] Run endpoint
-- [ ] Frontend UI
-
-### Milestone 2: Smart Memory
-
-- [ ] `remember()` implementation
-- [ ] `recall()` implementation
-- [ ] Unified memory model
-
-### Milestone 3: AI Powered
-
-- [ ] OpenRouter integration
-- [ ] Credit tracking
-- [ ] BYOK support
-
-### Milestone 4: Permissions & Polish
-
-- [ ] iOS-style permissions
-- [ ] Tier enforcement
-- [ ] App visibility
-
-### Milestone 5: App Store
-
-- [ ] Discovery page
-- [ ] Search
-- [ ] Popular rankings
-
-## Environment Variables
-
-| Variable                    | Description               |
-| --------------------------- | ------------------------- |
-| `SUPABASE_URL`              | Supabase project URL      |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key |
-| `R2_ACCOUNT_ID`             | Cloudflare account ID     |
-| `R2_ACCESS_KEY_ID`          | R2 API token key          |
-| `R2_SECRET_ACCESS_KEY`      | R2 API token secret       |
-| `R2_BUCKET_NAME`            | R2 bucket name            |
-| `OPENROUTER_API_KEY`        | OpenRouter API key        |
-| `DENO_DEPLOY_TOKEN`         | For CLI deployment        |
+---
 
 ## License
 

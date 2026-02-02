@@ -14,6 +14,13 @@ import { createAppsService } from '../services/apps.ts';
 import { bundleCode, quickBundle } from '../services/bundler.ts';
 import { authenticate } from './auth.ts';
 
+// Export file type for programmatic uploads
+export interface UploadFile {
+  name: string;
+  content: string;
+  size: number;
+}
+
 // Draft upload response type
 interface DraftUploadResponse {
   app_id: string;
@@ -516,4 +523,374 @@ export async function handleDraftUpload(request: Request, appId: string): Promis
     console.error('Draft upload error:', err);
     return error(err instanceof Error ? err.message : 'Draft upload failed', 500);
   }
+}
+
+// ============================================
+// PROGRAMMATIC UPLOAD FUNCTIONS
+// For use by Platform MCP and CLI
+// ============================================
+
+interface UploadOptions {
+  name?: string;
+  slug?: string;
+  description?: string;
+  visibility?: 'private' | 'unlisted' | 'public';
+}
+
+/**
+ * Programmatic upload handler for Platform MCP
+ * Creates a new app from file array
+ */
+export async function handleUploadFiles(
+  userId: string,
+  files: UploadFile[],
+  options: UploadOptions = {}
+): Promise<UploadResponse & { docs_generated?: boolean; docs_error?: string }> {
+  // Validate file count
+  if (files.length === 0) {
+    throw new Error('No files provided');
+  }
+  if (files.length > MAX_FILES_PER_UPLOAD) {
+    throw new Error(`Maximum ${MAX_FILES_PER_UPLOAD} files allowed`);
+  }
+
+  // Validate file types and size
+  let totalSize = 0;
+  const validatedFiles: Array<{ name: string; content: string }> = [];
+
+  for (const file of files) {
+    const hasValidExt = ALLOWED_EXTENSIONS.some((ext) => file.name.toLowerCase().endsWith(ext));
+    if (!hasValidExt) {
+      throw new Error(`File type not allowed: ${file.name}`);
+    }
+
+    totalSize += file.size;
+    if (totalSize > MAX_UPLOAD_SIZE_BYTES) {
+      throw new Error(`Total upload size exceeds ${MAX_UPLOAD_SIZE_BYTES / 1024 / 1024}MB limit`);
+    }
+
+    validatedFiles.push({ name: file.name, content: file.content });
+  }
+
+  // Check for entry file
+  const entryFileNames = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
+  const entryFile = validatedFiles.find((f) => {
+    const fileName = f.name.split('/').pop() || f.name;
+    return entryFileNames.includes(fileName);
+  });
+  if (!entryFile) {
+    throw new Error('Entry file (index.ts, index.tsx, index.js, or index.jsx) required');
+  }
+
+  // Build logs
+  const buildLogs: BuildLogEntry[] = [];
+  const log = (level: BuildLogEntry['level'], message: string) => {
+    buildLogs.push({ time: new Date().toISOString(), level, message });
+  };
+
+  log('info', `Starting build for ${validatedFiles.length} files...`);
+
+  // Extract exports
+  log('info', 'Parsing entry file...');
+  const exports = extractExports(entryFile.content);
+  log('success', `Found ${exports.length} exports: ${exports.join(', ')}`);
+
+  // Bundle the code
+  log('info', 'Bundling code...');
+  let bundledCode = entryFile.content;
+  let bundleUsed = false;
+
+  try {
+    log('info', 'Running esbuild bundler...');
+    const bundleResult = await bundleCode(validatedFiles, entryFile.name);
+
+    if (!bundleResult.success) {
+      for (const err of bundleResult.errors) {
+        log('error', err);
+      }
+      throw new Error('Build failed: ' + bundleResult.errors.join(', '));
+    }
+
+    for (const warn of bundleResult.warnings) {
+      log('warn', warn);
+    }
+
+    if (bundleResult.code !== entryFile.content) {
+      bundledCode = bundleResult.code;
+      bundleUsed = true;
+      log('success', 'Bundle complete');
+    } else {
+      log('success', 'No bundling needed (no imports)');
+    }
+  } catch (bundleErr) {
+    log('warn', `Bundling skipped: ${bundleErr instanceof Error ? bundleErr.message : String(bundleErr)}`);
+    bundledCode = entryFile.content;
+  }
+
+  // Generate app ID and version
+  const appId = crypto.randomUUID();
+  const version = '1.0.0';
+  const slug = options.slug || generateSlug(validatedFiles.find((f) => f.name === 'package.json')?.content);
+  const appName = options.name || slug;
+
+  // Initialize services
+  const r2Service = createR2Service();
+  const appsService = createAppsService();
+
+  // Normalize file names
+  const normalizeFileName = (name: string): string => {
+    const parts = name.split('/');
+    if (parts.length > 1) {
+      const firstPart = validatedFiles[0]?.name.split('/')[0];
+      const allSameRoot = validatedFiles.every(f => f.name.startsWith(firstPart + '/'));
+      if (allSameRoot && parts[0] === firstPart) {
+        return parts.slice(1).join('/');
+      }
+    }
+    return name;
+  };
+
+  const normalizedEntryName = normalizeFileName(entryFile.name);
+  log('info', `Entry file normalized: ${entryFile.name} -> ${normalizedEntryName}`);
+
+  // Prepare files for upload
+  const filesToUpload = bundleUsed
+    ? [
+        {
+          name: normalizedEntryName,
+          content: new TextEncoder().encode(bundledCode),
+          contentType: getContentType(normalizedEntryName),
+        },
+        ...validatedFiles
+          .filter(f => f.name !== entryFile.name)
+          .map(f => ({
+            name: normalizeFileName(f.name),
+            content: new TextEncoder().encode(f.content),
+            contentType: getContentType(f.name),
+          })),
+      ]
+    : validatedFiles.map(f => ({
+        name: normalizeFileName(f.name),
+        content: new TextEncoder().encode(f.content),
+        contentType: getContentType(f.name),
+      }));
+
+  // Upload files to R2
+  log('info', 'Uploading to storage...');
+  const storageKey = `apps/${appId}/${version}/`;
+  await r2Service.uploadFiles(storageKey, filesToUpload);
+  log('success', 'Upload complete');
+
+  // Create app record in database
+  log('info', 'Creating app record...');
+  await appsService.create({
+    id: appId,
+    owner_id: userId,
+    slug,
+    name: appName,
+    description: options.description || null,
+    visibility: options.visibility || 'private',
+    storage_key: storageKey,
+    exports,
+  });
+  log('success', 'App record created');
+
+  log('success', 'Build complete!');
+
+  return {
+    app_id: appId,
+    slug,
+    version,
+    url: `/a/${appId}`,
+    exports,
+    build_success: true,
+    build_logs: buildLogs,
+  };
+}
+
+/**
+ * Programmatic draft upload handler for Platform MCP
+ * Uploads files as draft for an existing app
+ */
+export async function handleDraftUploadFiles(
+  appId: string,
+  userId: string,
+  files: UploadFile[]
+): Promise<{
+  app_id: string;
+  draft_version: string;
+  draft_storage_key: string;
+  exports: string[];
+  build_success: boolean;
+  build_logs: BuildLogEntry[];
+  message: string;
+}> {
+  // Get the app and verify ownership
+  const appsService = createAppsService();
+  const app = await appsService.findById(appId);
+
+  if (!app) {
+    throw new Error('App not found');
+  }
+
+  if (app.owner_id !== userId) {
+    throw new Error('Unauthorized');
+  }
+
+  // Validate file count
+  if (files.length === 0) {
+    throw new Error('No files provided');
+  }
+  if (files.length > MAX_FILES_PER_UPLOAD) {
+    throw new Error(`Maximum ${MAX_FILES_PER_UPLOAD} files allowed`);
+  }
+
+  // Validate file types and size
+  let totalSize = 0;
+  const validatedFiles: Array<{ name: string; content: string }> = [];
+
+  for (const file of files) {
+    const hasValidExt = ALLOWED_EXTENSIONS.some((ext) => file.name.toLowerCase().endsWith(ext));
+    if (!hasValidExt) {
+      throw new Error(`File type not allowed: ${file.name}`);
+    }
+
+    totalSize += file.size;
+    if (totalSize > MAX_UPLOAD_SIZE_BYTES) {
+      throw new Error(`Total upload size exceeds ${MAX_UPLOAD_SIZE_BYTES / 1024 / 1024}MB limit`);
+    }
+
+    validatedFiles.push({ name: file.name, content: file.content });
+  }
+
+  // Check for entry file
+  const entryFileNames = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
+  const entryFile = validatedFiles.find((f) => {
+    const fileName = f.name.split('/').pop() || f.name;
+    return entryFileNames.includes(fileName);
+  });
+  if (!entryFile) {
+    throw new Error('Entry file (index.ts, index.tsx, index.js, or index.jsx) required');
+  }
+
+  // Build logs
+  const buildLogs: BuildLogEntry[] = [];
+  const log = (level: BuildLogEntry['level'], message: string) => {
+    buildLogs.push({ time: new Date().toISOString(), level, message });
+  };
+
+  const hasDraft = !!(app as Record<string, unknown>).draft_storage_key;
+  if (hasDraft) {
+    log('warn', 'Overwriting existing draft');
+  }
+
+  log('info', `Starting draft build for ${validatedFiles.length} files...`);
+
+  // Extract exports
+  log('info', 'Parsing entry file...');
+  const exports = extractExports(entryFile.content);
+  log('success', `Found ${exports.length} exports: ${exports.join(', ')}`);
+
+  // Bundle the code
+  log('info', 'Bundling code...');
+  let bundledCode = entryFile.content;
+  let bundleUsed = false;
+
+  try {
+    log('info', 'Running esbuild bundler...');
+    const bundleResult = await bundleCode(validatedFiles, entryFile.name);
+
+    if (!bundleResult.success) {
+      for (const err of bundleResult.errors) {
+        log('error', err);
+      }
+      throw new Error('Build failed: ' + bundleResult.errors.join(', '));
+    }
+
+    for (const warn of bundleResult.warnings) {
+      log('warn', warn);
+    }
+
+    if (bundleResult.code !== entryFile.content) {
+      bundledCode = bundleResult.code;
+      bundleUsed = true;
+      log('success', 'Bundle complete');
+    } else {
+      log('success', 'No bundling needed (no imports)');
+    }
+  } catch (bundleErr) {
+    log('warn', `Bundling skipped: ${bundleErr instanceof Error ? bundleErr.message : String(bundleErr)}`);
+    bundledCode = entryFile.content;
+  }
+
+  // Generate draft version
+  const draftVersion = `draft-${Date.now()}`;
+
+  // Initialize R2 service
+  const r2Service = createR2Service();
+
+  // Normalize file names
+  const normalizeFileName = (name: string): string => {
+    const parts = name.split('/');
+    if (parts.length > 1) {
+      const firstPart = validatedFiles[0]?.name.split('/')[0];
+      const allSameRoot = validatedFiles.every(f => f.name.startsWith(firstPart + '/'));
+      if (allSameRoot && parts[0] === firstPart) {
+        return parts.slice(1).join('/');
+      }
+    }
+    return name;
+  };
+
+  const normalizedEntryName = normalizeFileName(entryFile.name);
+
+  // Prepare files for upload
+  const filesToUpload = bundleUsed
+    ? [
+        {
+          name: normalizedEntryName,
+          content: new TextEncoder().encode(bundledCode),
+          contentType: getContentType(normalizedEntryName),
+        },
+        ...validatedFiles
+          .filter(f => f.name !== entryFile.name)
+          .map(f => ({
+            name: normalizeFileName(f.name),
+            content: new TextEncoder().encode(f.content),
+            contentType: getContentType(f.name),
+          })),
+      ]
+    : validatedFiles.map(f => ({
+        name: normalizeFileName(f.name),
+        content: new TextEncoder().encode(f.content),
+        contentType: getContentType(f.name),
+      }));
+
+  // Upload to draft storage location
+  log('info', 'Uploading draft to storage...');
+  const draftStorageKey = `apps/${appId}/draft/`;
+  await r2Service.uploadFiles(draftStorageKey, filesToUpload);
+  log('success', 'Draft upload complete');
+
+  // Update app record with draft info
+  log('info', 'Updating app record...');
+  await appsService.update(appId, {
+    draft_storage_key: draftStorageKey,
+    draft_version: draftVersion,
+    draft_uploaded_at: new Date().toISOString(),
+    draft_exports: exports,
+  });
+  log('success', 'Draft record updated');
+
+  log('success', 'Draft build complete!');
+
+  return {
+    app_id: appId,
+    draft_version: draftVersion,
+    draft_storage_key: draftStorageKey,
+    exports,
+    build_success: true,
+    build_logs: buildLogs,
+    message: 'Draft uploaded successfully. Publish when ready.',
+  };
 }
