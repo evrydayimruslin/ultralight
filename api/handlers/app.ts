@@ -5,7 +5,7 @@ import { handleUpload } from './upload.ts';
 import { handleRun } from './run.ts';
 import { handleAuth } from './auth.ts';
 import { handleApps } from './apps.ts';
-import { getUploadPageHTML } from '../../web/upload-page.ts';
+import { getLayoutHTML } from '../../web/layout.ts';
 import { getAppRunnerHTML } from '../../web/app-runner.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
@@ -27,7 +27,7 @@ export function createApp() {
 
       // Health check - includes deploy timestamp to verify we're running latest code
       if (path === '/health') {
-        return json({ status: 'ok', version: '0.1.0', deployed: '2025-02-01T18:15:00Z' });
+        return json({ status: 'ok', version: '0.2.0', deployed: new Date().toISOString() });
       }
 
       // Debug endpoint - test auth without upload
@@ -45,9 +45,12 @@ export function createApp() {
         }
       }
 
-      // Upload page (HTML UI)
+      // Upload page (HTML UI with sidebar)
       if (path === '/upload' && method === 'GET') {
-        return new Response(getUploadPageHTML(), {
+        return new Response(getLayoutHTML({
+          title: 'Upload',
+          initialView: 'upload',
+        }), {
           headers: { 'Content-Type': 'text/html' },
         });
       }
@@ -68,8 +71,8 @@ export function createApp() {
         return handleRun(request, appId);
       }
 
-      // Apps listing
-      if (path === '/api/apps') {
+      // Apps API routes - handle all /api/apps/* paths
+      if (path.startsWith('/api/apps')) {
         return handleApps(request);
       }
 
@@ -125,9 +128,15 @@ export function createApp() {
             // Server-side execution: run the handler function
             return await executeServerApp(code, request, appId, subPath);
           } else {
-            // Browser app: serve the runner HTML (only for GET requests to root)
+            // Browser app: serve the layout HTML with app embedded (only for GET requests to root)
             if (method === 'GET' && (subPath === '/' || subPath === '')) {
-              return new Response(getAppRunnerHTML(appId, app.name || app.slug, code), {
+              return new Response(getLayoutHTML({
+                title: app.name || app.slug,
+                activeAppId: appId,
+                initialView: 'app',
+                appCode: code,
+                appName: app.name || app.slug,
+              }), {
                 headers: { 'Content-Type': 'text/html' },
               });
             } else {

@@ -57,6 +57,7 @@ export interface App {
   description: string | null;
   icon_url: string | null;
   visibility: 'private' | 'unlisted' | 'public';
+  download_access: 'owner' | 'public';
   current_version: string;
   versions: string[];
   storage_key: string;

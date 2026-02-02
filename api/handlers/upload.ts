@@ -37,10 +37,13 @@ export async function handleUpload(request: Request): Promise<Response> {
     // Parse multipart form data
     const formData = await request.formData();
     const files: File[] = [];
+    let providedName: string | null = null;
 
     for (const [name, value] of formData.entries()) {
       if (value instanceof File) {
         files.push(value);
+      } else if (name === 'name' && typeof value === 'string') {
+        providedName = value.trim();
       }
     }
 
@@ -140,6 +143,8 @@ export async function handleUpload(request: Request): Promise<Response> {
     const appId = crypto.randomUUID();
     const version = '1.0.0';
     const slug = generateSlug(validatedFiles.find((f) => f.name === 'package.json')?.content);
+    // Use provided name or fall back to slug
+    const appName = providedName || slug;
 
     // Initialize services
     const r2Service = createR2Service();
@@ -201,7 +206,7 @@ export async function handleUpload(request: Request): Promise<Response> {
       id: appId,
       owner_id: userId,
       slug,
-      name: slug,
+      name: appName,
       storage_key: storageKey,
       exports,
     });
