@@ -707,6 +707,231 @@ export function getLayoutHTML(options: {
       transition: transform 0.2s;
     }
 
+    .modal.wide {
+      max-width: 700px;
+    }
+
+    /* Tabs */
+    .settings-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border-color);
+      padding: 0 1rem;
+    }
+
+    .settings-tab {
+      padding: 0.875rem 1rem;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      position: relative;
+      transition: color 0.2s;
+    }
+
+    .settings-tab:hover {
+      color: var(--text-secondary);
+    }
+
+    .settings-tab.active {
+      color: var(--text-primary);
+    }
+
+    .settings-tab.active::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--accent-gradient);
+    }
+
+    .settings-tab-content {
+      display: none;
+    }
+
+    .settings-tab-content.active {
+      display: block;
+    }
+
+    /* MCP Endpoint */
+    .mcp-endpoint {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1rem;
+      background: var(--bg-tertiary);
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 0.8125rem;
+      margin-bottom: 1rem;
+    }
+
+    .mcp-endpoint-url {
+      flex: 1;
+      word-break: break-all;
+    }
+
+    .mcp-endpoint-copy {
+      padding: 0.375rem;
+      background: transparent;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .mcp-endpoint-copy:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .mcp-endpoint-copy svg {
+      width: 14px;
+      height: 14px;
+      display: block;
+    }
+
+    /* Skills Editor */
+    .skills-editor {
+      width: 100%;
+      min-height: 300px;
+      padding: 1rem;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      color: var(--text-primary);
+      font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      resize: vertical;
+    }
+
+    .skills-editor:focus {
+      outline: none;
+      border-color: var(--accent-color);
+    }
+
+    .skills-status {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 0;
+      font-size: 0.8125rem;
+    }
+
+    .skills-status.success { color: var(--success-color); }
+    .skills-status.error { color: var(--error-color); }
+    .skills-status.warning { color: var(--warning-color); }
+    .skills-status.info { color: var(--text-muted); }
+
+    /* Draft Banner */
+    .draft-banner {
+      padding: 0.875rem 1rem;
+      background: rgba(251, 191, 36, 0.1);
+      border: 1px solid var(--warning-color);
+      border-radius: 8px;
+      margin-bottom: 1rem;
+    }
+
+    .draft-banner-title {
+      font-weight: 600;
+      color: var(--warning-color);
+      margin-bottom: 0.25rem;
+      font-size: 0.875rem;
+    }
+
+    .draft-banner-info {
+      font-size: 0.8125rem;
+      color: var(--text-secondary);
+    }
+
+    .draft-actions {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+    }
+
+    .draft-actions button {
+      padding: 0.5rem 0.875rem;
+      border-radius: 6px;
+      font-size: 0.8125rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .btn-publish {
+      background: var(--success-color);
+      border: none;
+      color: #000;
+      font-weight: 500;
+    }
+
+    .btn-publish:hover {
+      opacity: 0.9;
+    }
+
+    .btn-discard {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-secondary);
+    }
+
+    .btn-discard:hover {
+      border-color: var(--error-color);
+      color: var(--error-color);
+    }
+
+    /* Generate Button */
+    .generate-docs-btn {
+      width: 100%;
+      padding: 0.75rem 1rem;
+      background: var(--accent-gradient);
+      border: none;
+      border-radius: 6px;
+      color: white;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+
+    .generate-docs-btn:hover {
+      opacity: 0.9;
+    }
+
+    .generate-docs-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .generate-docs-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    /* Info Box */
+    .info-box {
+      padding: 0.75rem 1rem;
+      background: rgba(102, 126, 234, 0.1);
+      border: 1px solid var(--accent-color);
+      border-radius: 6px;
+      font-size: 0.8125rem;
+      color: var(--text-secondary);
+      margin-bottom: 1rem;
+    }
+
+    .info-box a {
+      color: var(--accent-color);
+    }
+
     .modal-overlay.open .modal {
       transform: scale(1);
     }
@@ -1182,7 +1407,7 @@ export function getLayoutHTML(options: {
 
   <!-- Settings Modal -->
   <div class="modal-overlay" id="settingsModal">
-    <div class="modal">
+    <div class="modal wide">
       <div class="modal-header">
         <h2 class="modal-title">App Settings</h2>
         <button class="modal-close" onclick="closeSettingsModal()">
@@ -1192,69 +1417,186 @@ export function getLayoutHTML(options: {
           </svg>
         </button>
       </div>
+
+      <!-- Tabs -->
+      <div class="settings-tabs">
+        <button class="settings-tab active" data-tab="general">General</button>
+        <button class="settings-tab" data-tab="mcp">MCP & Skills</button>
+        <button class="settings-tab" data-tab="draft">Draft & Publish</button>
+      </div>
+
       <div class="modal-body">
-        <!-- General Settings -->
-        <div class="settings-section">
-          <div class="settings-section-title">General</div>
-          <div class="settings-field">
-            <label for="settingsAppName">App Name</label>
-            <input type="text" id="settingsAppName" class="settings-input" placeholder="My App" />
+        <!-- General Tab -->
+        <div class="settings-tab-content active" id="tab-general">
+          <!-- Draft Banner (shown when draft exists) -->
+          <div class="draft-banner" id="draftBannerGeneral" style="display: none;">
+            <div class="draft-banner-title">📝 Draft Available</div>
+            <div class="draft-banner-info">You have unpublished changes. Go to "Draft & Publish" tab to manage.</div>
           </div>
-          <div class="settings-field">
-            <label>App Icon</label>
-            <div class="icon-upload-container">
-              <div class="icon-preview" id="iconPreview">🚀</div>
-              <div class="icon-upload-actions">
-                <button class="icon-upload-btn" id="iconUploadBtn">Upload Icon</button>
-                <input type="file" id="iconFileInput" accept="image/png,image/jpeg,image/webp" style="display:none">
-                <div class="icon-upload-hint">PNG, JPG or WebP. Max 1MB.</div>
+
+          <div class="settings-section">
+            <div class="settings-section-title">General</div>
+            <div class="settings-field">
+              <label for="settingsAppName">App Name</label>
+              <input type="text" id="settingsAppName" class="settings-input" placeholder="My App" />
+            </div>
+            <div class="settings-field">
+              <label>App Icon</label>
+              <div class="icon-upload-container">
+                <div class="icon-preview" id="iconPreview">🚀</div>
+                <div class="icon-upload-actions">
+                  <button class="icon-upload-btn" id="iconUploadBtn">Upload Icon</button>
+                  <input type="file" id="iconFileInput" accept="image/png,image/jpeg,image/webp" style="display:none">
+                  <div class="icon-upload-hint">PNG, JPG or WebP. Max 1MB.</div>
+                </div>
               </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-section-title">Visibility</div>
+            <div class="settings-field">
+              <label for="settingsVisibility">App Visibility</label>
+              <select id="settingsVisibility" class="settings-select">
+                <option value="private">Private - Only you can access</option>
+                <option value="unlisted">Unlisted - Anyone with link can access</option>
+                <option value="public">Public - Listed in app directory</option>
+              </select>
+            </div>
+            <div class="settings-field">
+              <label for="settingsDownloadAccess">Code Download Access</label>
+              <select id="settingsDownloadAccess" class="settings-select">
+                <option value="owner">Owner Only - Only you can download</option>
+                <option value="public">Public - Anyone can download code</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-section-title">Actions</div>
+            <div class="settings-actions">
+              <button class="settings-action-btn" id="downloadCodeBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="7 10 12 15 17 10"></polyline>
+                  <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                Download Code
+              </button>
+              <button class="settings-action-btn danger" id="deleteAppBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="3 6 5 6 21 6"></polyline>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+                Delete App
+              </button>
             </div>
           </div>
         </div>
 
-        <!-- Visibility Settings -->
-        <div class="settings-section">
-          <div class="settings-section-title">Visibility</div>
-          <div class="settings-field">
-            <label for="settingsVisibility">App Visibility</label>
-            <select id="settingsVisibility" class="settings-select">
-              <option value="private">Private - Only you can access</option>
-              <option value="unlisted">Unlisted - Anyone with link can access</option>
-              <option value="public">Public - Listed in app directory</option>
-            </select>
+        <!-- MCP & Skills Tab -->
+        <div class="settings-tab-content" id="tab-mcp">
+          <div class="settings-section">
+            <div class="settings-section-title">MCP Endpoint</div>
+            <div class="info-box">
+              Connect this app to AI agents via the Model Context Protocol (MCP).
+              Use the endpoint below in Claude Desktop, Cursor, or other MCP clients.
+            </div>
+            <div class="mcp-endpoint">
+              <span class="mcp-endpoint-url" id="mcpEndpointUrl">Loading...</span>
+              <button class="mcp-endpoint-copy" id="copyMcpBtn" title="Copy endpoint">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+              </button>
+            </div>
           </div>
-          <div class="settings-field">
-            <label for="settingsDownloadAccess">Code Download Access</label>
-            <select id="settingsDownloadAccess" class="settings-select">
-              <option value="owner">Owner Only - Only you can download</option>
-              <option value="public">Public - Anyone can download code</option>
-            </select>
+
+          <div class="settings-section">
+            <div class="settings-section-title">Skills Documentation</div>
+            <div class="info-box" id="skillsInfoBox">
+              Skills.md describes what your app can do. Generate from code or edit manually.
+            </div>
+
+            <div class="skills-status info" id="skillsStatus">
+              <span>No documentation generated yet</span>
+            </div>
+
+            <button class="generate-docs-btn" id="generateDocsBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
+              </svg>
+              Generate Documentation
+            </button>
+
+            <div class="settings-field" style="margin-top: 1rem;">
+              <label for="skillsEditor">Skills.md Editor</label>
+              <textarea class="skills-editor" id="skillsEditor" placeholder="# App Name\n\n## Functions\n\n### functionName\nDescription of the function..."></textarea>
+            </div>
+
+            <div class="skills-status" id="skillsValidation" style="display: none;"></div>
           </div>
         </div>
 
-        <!-- Actions -->
-        <div class="settings-section">
-          <div class="settings-section-title">Actions</div>
-          <div class="settings-actions">
-            <button class="settings-action-btn" id="downloadCodeBtn">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                <polyline points="7 10 12 15 17 10"></polyline>
-                <line x1="12" y1="15" x2="12" y2="3"></line>
-              </svg>
-              Download Code
-            </button>
-            <button class="settings-action-btn danger" id="deleteAppBtn">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="3 6 5 6 21 6"></polyline>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-              </svg>
-              Delete App
+        <!-- Draft & Publish Tab -->
+        <div class="settings-tab-content" id="tab-draft">
+          <div class="settings-section">
+            <div class="settings-section-title">Version Management</div>
+
+            <!-- Published Version Info -->
+            <div class="settings-field">
+              <label>Published Version</label>
+              <div style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-secondary); font-size: 0.875rem;">
+                <span id="publishedVersion">1.0.0</span>
+                <span style="color: var(--success-color);">● Live</span>
+              </div>
+            </div>
+
+            <!-- Draft Section -->
+            <div id="draftSection">
+              <div class="draft-banner" id="draftBanner" style="display: none;">
+                <div class="draft-banner-title">📝 Draft Ready</div>
+                <div class="draft-banner-info">
+                  Version: <strong id="draftVersion">-</strong><br>
+                  Uploaded: <span id="draftUploadedAt">-</span>
+                </div>
+                <div class="draft-actions">
+                  <button class="btn-publish" id="publishDraftBtn">
+                    Publish Draft
+                  </button>
+                  <button class="btn-discard" id="discardDraftBtn">
+                    Discard
+                  </button>
+                </div>
+              </div>
+
+              <div id="noDraftMessage" class="info-box">
+                No draft available. Upload new code to create a draft.
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-section-title">Upload New Version</div>
+            <div class="info-box">
+              Upload new code as a draft. Review and test before publishing to replace the live version.
+            </div>
+
+            <div class="drop-zone" id="draftDropZone" style="min-height: 120px; margin-bottom: 0.75rem;">
+              <div class="drop-zone-icon" style="font-size: 2rem;">📁</div>
+              <div class="drop-zone-text" style="font-size: 0.875rem;">Drop files or click to upload draft</div>
+              <input type="file" id="draftFileInput" webkitdirectory directory multiple style="display: none;">
+            </div>
+
+            <div id="draftFileList" class="file-list"></div>
+            <button class="settings-action-btn" id="uploadDraftBtn" style="width: 100%; margin-top: 0.5rem;" disabled>
+              Upload as Draft
             </button>
           </div>
         </div>
       </div>
+
       <div class="modal-footer">
         <button class="modal-btn secondary" onclick="closeSettingsModal()">Cancel</button>
         <button class="modal-btn primary" id="saveSettingsBtn">Save Changes</button>
@@ -1494,12 +1836,17 @@ export function getLayoutHTML(options: {
     // ============================================
     // Settings Modal
     // ============================================
+    let draftFiles = [];
+
     window.openSettings = async function(event, appId) {
       event.stopPropagation();
       settingsAppId = appId;
       settingsApp = apps.find(a => a.id === appId);
 
       if (!settingsApp) return;
+
+      // Reset to first tab
+      switchSettingsTab('general');
 
       // Populate form
       document.getElementById('settingsAppName').value = settingsApp.name || '';
@@ -1514,8 +1861,339 @@ export function getLayoutHTML(options: {
         iconPreview.innerHTML = getAppEmoji(settingsApp.name);
       }
 
+      // Set MCP endpoint URL
+      const mcpUrl = \`\${window.location.origin}/mcp/\${appId}\`;
+      document.getElementById('mcpEndpointUrl').textContent = mcpUrl;
+
+      // Load skills.md
+      loadSkillsMd(appId);
+
+      // Load draft info
+      loadDraftInfo(appId);
+
+      // Published version
+      document.getElementById('publishedVersion').textContent = settingsApp.current_version || '1.0.0';
+
+      // Reset draft upload
+      draftFiles = [];
+      document.getElementById('draftFileList').innerHTML = '';
+      document.getElementById('uploadDraftBtn').disabled = true;
+
       settingsModal.classList.add('open');
     };
+
+    // Tab switching
+    function switchSettingsTab(tabName) {
+      // Update tab buttons
+      document.querySelectorAll('.settings-tab').forEach(tab => {
+        tab.classList.toggle('active', tab.dataset.tab === tabName);
+      });
+
+      // Update tab content
+      document.querySelectorAll('.settings-tab-content').forEach(content => {
+        content.classList.toggle('active', content.id === \`tab-\${tabName}\`);
+      });
+    }
+
+    document.querySelectorAll('.settings-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        switchSettingsTab(tab.dataset.tab);
+      });
+    });
+
+    // Load Skills.md
+    async function loadSkillsMd(appId) {
+      const editor = document.getElementById('skillsEditor');
+      const status = document.getElementById('skillsStatus');
+
+      try {
+        const res = await fetch(\`/api/apps/\${appId}/skills.md\`, {
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+
+        if (res.ok) {
+          const text = await res.text();
+          editor.value = text;
+          status.className = 'skills-status success';
+          status.innerHTML = '✓ Documentation loaded';
+        } else if (res.status === 404) {
+          editor.value = '';
+          status.className = 'skills-status info';
+          status.innerHTML = 'No documentation generated yet. Click "Generate Documentation" to create.';
+        } else {
+          throw new Error('Failed to load');
+        }
+      } catch (err) {
+        status.className = 'skills-status error';
+        status.innerHTML = '✗ Failed to load documentation';
+      }
+    }
+
+    // Load Draft Info
+    async function loadDraftInfo(appId) {
+      const draftBanner = document.getElementById('draftBanner');
+      const draftBannerGeneral = document.getElementById('draftBannerGeneral');
+      const noDraftMessage = document.getElementById('noDraftMessage');
+
+      try {
+        const res = await fetch(\`/api/apps/\${appId}/draft\`, {
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+
+        if (!res.ok) throw new Error('Failed to load draft');
+
+        const data = await res.json();
+
+        if (data.has_draft) {
+          draftBanner.style.display = 'block';
+          draftBannerGeneral.style.display = 'block';
+          noDraftMessage.style.display = 'none';
+          document.getElementById('draftVersion').textContent = data.draft_version;
+          document.getElementById('draftUploadedAt').textContent = new Date(data.draft_uploaded_at).toLocaleString();
+        } else {
+          draftBanner.style.display = 'none';
+          draftBannerGeneral.style.display = 'none';
+          noDraftMessage.style.display = 'block';
+        }
+      } catch (err) {
+        console.error('Failed to load draft info:', err);
+        draftBanner.style.display = 'none';
+        draftBannerGeneral.style.display = 'none';
+        noDraftMessage.style.display = 'block';
+      }
+    }
+
+    // Copy MCP Endpoint
+    document.getElementById('copyMcpBtn')?.addEventListener('click', async () => {
+      const url = document.getElementById('mcpEndpointUrl').textContent;
+      try {
+        await navigator.clipboard.writeText(url);
+        showToast('MCP endpoint copied');
+      } catch (err) {
+        showToast('Failed to copy', 'error');
+      }
+    });
+
+    // Generate Documentation
+    document.getElementById('generateDocsBtn')?.addEventListener('click', async () => {
+      if (!settingsAppId || !authToken) return;
+
+      const btn = document.getElementById('generateDocsBtn');
+      const status = document.getElementById('skillsStatus');
+
+      btn.disabled = true;
+      btn.innerHTML = '<span>Generating...</span>';
+      status.className = 'skills-status info';
+      status.innerHTML = 'Generating documentation from code...';
+
+      try {
+        const res = await fetch(\`/api/apps/\${settingsAppId}/generate-docs\`, {
+          method: 'POST',
+          headers: {
+            'Authorization': \`Bearer \${authToken}\`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ ai_enhance: false })
+        });
+
+        const data = await res.json();
+
+        if (data.success || data.partial) {
+          document.getElementById('skillsEditor').value = data.skills_md || '';
+          status.className = 'skills-status success';
+          let msg = '✓ Documentation generated';
+          if (data.embedding_generated) msg += ' • Embedding updated';
+          if (data.warnings?.length) msg += \` • \${data.warnings.length} warning(s)\`;
+          status.innerHTML = msg;
+          showToast('Documentation generated');
+        } else {
+          status.className = 'skills-status error';
+          const errors = data.errors?.map(e => e.message).join(', ') || 'Unknown error';
+          status.innerHTML = \`✗ Generation failed: \${errors}\`;
+          showToast('Failed to generate docs', 'error');
+        }
+      } catch (err) {
+        status.className = 'skills-status error';
+        status.innerHTML = '✗ Failed to generate documentation';
+        showToast('Failed to generate docs', 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = \`
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
+          </svg>
+          Generate Documentation
+        \`;
+      }
+    });
+
+    // Validate Skills.md on edit
+    let skillsValidationTimeout;
+    document.getElementById('skillsEditor')?.addEventListener('input', () => {
+      clearTimeout(skillsValidationTimeout);
+      skillsValidationTimeout = setTimeout(() => {
+        // Show validation is pending
+        const validation = document.getElementById('skillsValidation');
+        validation.style.display = 'block';
+        validation.className = 'skills-status info';
+        validation.innerHTML = 'Validating...';
+      }, 500);
+    });
+
+    // Publish Draft
+    document.getElementById('publishDraftBtn')?.addEventListener('click', async () => {
+      if (!settingsAppId || !authToken) return;
+
+      const btn = document.getElementById('publishDraftBtn');
+      btn.disabled = true;
+      btn.textContent = 'Publishing...';
+
+      try {
+        const res = await fetch(\`/api/apps/\${settingsAppId}/publish\`, {
+          method: 'POST',
+          headers: {
+            'Authorization': \`Bearer \${authToken}\`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ regenerate_docs: true })
+        });
+
+        if (!res.ok) throw new Error('Failed to publish');
+
+        const data = await res.json();
+        showToast(\`Published version \${data.new_version}\`);
+
+        // Update version display
+        document.getElementById('publishedVersion').textContent = data.new_version;
+
+        // Refresh draft info
+        await loadDraftInfo(settingsAppId);
+        await loadApps();
+      } catch (err) {
+        showToast('Failed to publish draft', 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Publish Draft';
+      }
+    });
+
+    // Discard Draft
+    document.getElementById('discardDraftBtn')?.addEventListener('click', async () => {
+      if (!settingsAppId || !authToken) return;
+
+      if (!confirm('Are you sure you want to discard this draft? This cannot be undone.')) {
+        return;
+      }
+
+      const btn = document.getElementById('discardDraftBtn');
+      btn.disabled = true;
+      btn.textContent = 'Discarding...';
+
+      try {
+        const res = await fetch(\`/api/apps/\${settingsAppId}/draft\`, {
+          method: 'DELETE',
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+
+        if (!res.ok) throw new Error('Failed to discard');
+
+        showToast('Draft discarded');
+        await loadDraftInfo(settingsAppId);
+      } catch (err) {
+        showToast('Failed to discard draft', 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Discard';
+      }
+    });
+
+    // Draft File Upload
+    const draftDropZone = document.getElementById('draftDropZone');
+    const draftFileInput = document.getElementById('draftFileInput');
+
+    draftDropZone?.addEventListener('click', () => draftFileInput?.click());
+
+    draftDropZone?.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      draftDropZone.classList.add('dragover');
+    });
+
+    draftDropZone?.addEventListener('dragleave', () => {
+      draftDropZone.classList.remove('dragover');
+    });
+
+    draftDropZone?.addEventListener('drop', (e) => {
+      e.preventDefault();
+      draftDropZone.classList.remove('dragover');
+      draftFiles = Array.from(e.dataTransfer.files);
+      updateDraftFileList();
+    });
+
+    draftFileInput?.addEventListener('change', () => {
+      draftFiles = Array.from(draftFileInput.files);
+      updateDraftFileList();
+    });
+
+    function updateDraftFileList() {
+      const list = document.getElementById('draftFileList');
+      const btn = document.getElementById('uploadDraftBtn');
+
+      if (draftFiles.length === 0) {
+        list.innerHTML = '';
+        btn.disabled = true;
+        return;
+      }
+
+      list.innerHTML = draftFiles.slice(0, 5).map(f => \`
+        <div class="file-item">
+          <span>\${f.name}</span>
+          <span>\${(f.size / 1024).toFixed(1)} KB</span>
+        </div>
+      \`).join('');
+
+      if (draftFiles.length > 5) {
+        list.innerHTML += \`<div class="file-item" style="color: var(--text-muted);">+ \${draftFiles.length - 5} more files</div>\`;
+      }
+
+      btn.disabled = false;
+    }
+
+    // Upload Draft
+    document.getElementById('uploadDraftBtn')?.addEventListener('click', async () => {
+      if (!settingsAppId || !authToken || draftFiles.length === 0) return;
+
+      const btn = document.getElementById('uploadDraftBtn');
+      btn.disabled = true;
+      btn.textContent = 'Uploading...';
+
+      const formData = new FormData();
+      draftFiles.forEach(f => formData.append('files', f));
+
+      try {
+        const res = await fetch(\`/api/apps/\${settingsAppId}/draft\`, {
+          method: 'POST',
+          headers: { 'Authorization': \`Bearer \${authToken}\` },
+          body: formData
+        });
+
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || 'Upload failed');
+        }
+
+        showToast('Draft uploaded successfully');
+
+        // Reset and refresh
+        draftFiles = [];
+        document.getElementById('draftFileList').innerHTML = '';
+        await loadDraftInfo(settingsAppId);
+      } catch (err) {
+        showToast(err.message || 'Failed to upload draft', 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Upload as Draft';
+      }
+    });
 
     window.closeSettingsModal = function() {
       settingsModal.classList.remove('open');
@@ -1537,6 +2215,7 @@ export function getLayoutHTML(options: {
       btn.textContent = 'Saving...';
 
       try {
+        // Save general settings
         const updates = {
           name: document.getElementById('settingsAppName').value.trim(),
           visibility: document.getElementById('settingsVisibility').value,
@@ -1553,6 +2232,36 @@ export function getLayoutHTML(options: {
         });
 
         if (!res.ok) throw new Error('Failed to save settings');
+
+        // Also save Skills.md if it has content
+        const skillsEditor = document.getElementById('skillsEditor');
+        const skillsMd = skillsEditor.value.trim();
+
+        if (skillsMd) {
+          try {
+            const skillsRes = await fetch(\`/api/apps/\${settingsAppId}/skills\`, {
+              method: 'PATCH',
+              headers: {
+                'Authorization': \`Bearer \${authToken}\`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ skills_md: skillsMd })
+            });
+
+            if (!skillsRes.ok) {
+              const skillsData = await skillsRes.json();
+              if (skillsData.errors) {
+                const validation = document.getElementById('skillsValidation');
+                validation.style.display = 'block';
+                validation.className = 'skills-status error';
+                validation.innerHTML = '✗ Validation errors: ' + skillsData.errors.map(e => e.message).join(', ');
+                throw new Error('Skills.md validation failed');
+              }
+            }
+          } catch (skillsErr) {
+            showToast('Skills.md has errors - check the editor', 'warning');
+          }
+        }
 
         showToast('Settings saved successfully');
         closeSettingsModal();

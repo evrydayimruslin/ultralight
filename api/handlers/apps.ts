@@ -5,6 +5,24 @@ import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
+import { parseTypeScript, toSkillsParsed } from '../services/parser.ts';
+import {
+  generateSkillsMd,
+  validateAndParseSkillsMd,
+  generateEmbeddingText
+} from '../services/docgen.ts';
+import {
+  createEmbeddingService,
+  isEmbeddingAvailable,
+  storeAppEmbedding
+} from '../services/embedding.ts';
+import type { GenerationResult, GenerationError } from '../../shared/types/index.ts';
+
+// Type for user with optional API key
+interface User {
+  id: string;
+  openrouter_api_key?: string;
+}
 
 /**
  * Handle /api/apps routes
@@ -67,6 +85,43 @@ export async function handleApps(request: Request): Promise<Response> {
     // GET /api/apps/:appId/download - Download app code as zip
     if (subPath === '/download' && method === 'GET') {
       return handleDownloadCode(request, appId);
+    }
+
+    // POST /api/apps/:appId/generate-docs - Generate Skills.md and parse skills
+    if (subPath === '/generate-docs' && method === 'POST') {
+      return handleGenerateDocs(request, appId);
+    }
+
+    // GET /api/apps/:appId/skills.md - Get Skills.md documentation
+    if (subPath === '/skills.md' && method === 'GET') {
+      return handleGetSkillsMd(request, appId);
+    }
+
+    // PATCH /api/apps/:appId/skills - Update skills (with validation)
+    if (subPath === '/skills' && method === 'PATCH') {
+      return handleUpdateSkills(request, appId);
+    }
+
+    // POST /api/apps/:appId/draft - Upload new code as draft
+    if (subPath === '/draft' && method === 'POST') {
+      // Import and call draft upload handler
+      const { handleDraftUpload } = await import('./upload.ts');
+      return handleDraftUpload(request, appId);
+    }
+
+    // POST /api/apps/:appId/publish - Publish draft to production
+    if (subPath === '/publish' && method === 'POST') {
+      return handlePublishDraft(request, appId);
+    }
+
+    // DELETE /api/apps/:appId/draft - Discard draft
+    if (subPath === '/draft' && method === 'DELETE') {
+      return handleDiscardDraft(request, appId);
+    }
+
+    // GET /api/apps/:appId/draft - Get draft info
+    if (subPath === '/draft' && method === 'GET') {
+      return handleGetDraft(request, appId);
     }
   }
 
@@ -596,4 +651,640 @@ function crc32(data: Uint8Array): number {
     crc = table[(crc ^ data[i]) & 0xFF] ^ (crc >>> 8);
   }
   return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+// ============================================
+// DOCUMENTATION GENERATION HANDLERS
+// ============================================
+
+/**
+ * Generate Skills.md documentation from app code
+ * POST /api/apps/:appId/generate-docs
+ */
+async function handleGenerateDocs(request: Request, appId: string): Promise<Response> {
+  const errors: GenerationError[] = [];
+  const warnings: string[] = [];
+
+  try {
+    // Authenticate - only owner can generate docs
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+    const r2Service = createR2Service();
+
+    const app = await appsService.findById(appId);
+    if (!app) {
+      return error('App not found', 404);
+    }
+
+    if (app.owner_id !== user.id) {
+      return error('Unauthorized', 403);
+    }
+
+    // Check if generation is already in progress (debounce/lock)
+    if ((app as Record<string, unknown>).generation_in_progress) {
+      return error('Documentation generation already in progress', 409);
+    }
+
+    // Set generation lock
+    await appsService.update(appId, { generation_in_progress: true });
+
+    try {
+      // Parse request body for options
+      let options = { ai_enhance: false };
+      try {
+        const body = await request.json();
+        options = { ...options, ...body };
+      } catch {
+        // No body or invalid JSON - use defaults
+      }
+
+      // Fetch app code from R2
+      const storageKey = app.storage_key;
+      let code: string | null = null;
+      let filename = 'index.ts';
+
+      const entryFiles = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
+      for (const entryFile of entryFiles) {
+        try {
+          code = await r2Service.fetchTextFile(`${storageKey}${entryFile}`);
+          filename = entryFile;
+          break;
+        } catch {
+          // Try next
+        }
+      }
+
+      if (!code) {
+        errors.push({
+          phase: 'parse',
+          message: 'No entry file found (index.ts, index.tsx, index.js, or index.jsx)',
+          suggestion: 'Make sure your app has an entry file named index.ts or similar.',
+        });
+
+        const result: GenerationResult = {
+          success: false,
+          partial: false,
+          skills_md: null,
+          skills_parsed: null,
+          embedding_text: null,
+          errors,
+          warnings,
+        };
+
+        return json(result, 400);
+      }
+
+      // Phase 1: Parse TypeScript code
+      console.log('[GENERATE] Parsing code...');
+      const parseResult = parseTypeScript(code, filename);
+
+      // Collect parse errors and warnings
+      for (const err of parseResult.parseErrors) {
+        errors.push({
+          phase: 'parse',
+          message: err,
+          suggestion: 'Check your TypeScript syntax.',
+        });
+      }
+      warnings.push(...parseResult.parseWarnings);
+
+      if (parseResult.functions.length === 0) {
+        warnings.push('No exported functions found. Make sure to export your functions with `export` keyword.');
+      }
+
+      // Phase 2: Generate Skills.md
+      console.log('[GENERATE] Generating Skills.md...');
+      let skills_md: string;
+      try {
+        skills_md = generateSkillsMd(app.name || app.slug, parseResult, {
+          includeExamples: true,
+          includePermissions: true,
+        });
+      } catch (genErr) {
+        errors.push({
+          phase: 'generate_skills',
+          message: `Failed to generate Skills.md: ${genErr instanceof Error ? genErr.message : String(genErr)}`,
+        });
+
+        const result: GenerationResult = {
+          success: false,
+          partial: parseResult.functions.length > 0,
+          skills_md: null,
+          skills_parsed: parseResult.functions.length > 0 ? toSkillsParsed(parseResult) : null,
+          embedding_text: null,
+          errors,
+          warnings,
+        };
+
+        return json(result, 500);
+      }
+
+      // Phase 3: Convert to ParsedSkills for storage
+      const skills_parsed = toSkillsParsed(parseResult);
+
+      // Phase 4: Generate embedding text
+      console.log('[GENERATE] Generating embedding text...');
+      const embedding_text = generateEmbeddingText(
+        app.name || app.slug,
+        app.description,
+        skills_parsed
+      );
+
+      // Phase 5: AI Enhancement (if requested and user has BYOK)
+      if (options.ai_enhance) {
+        // Check if user has BYOK enabled
+        if (!user.openrouter_api_key) {
+          warnings.push('AI enhancement requested but BYOK not enabled. Enable BYOK for AI-enhanced descriptions.');
+        } else {
+          // TODO: Implement AI enhancement using OpenRouter
+          warnings.push('AI enhancement is not yet implemented.');
+        }
+      }
+
+      // Phase 6: Generate and store embedding
+      console.log('[GENERATE] Generating embedding...');
+      let embeddingGenerated = false;
+      const embeddingService = createEmbeddingService((user as User).openrouter_api_key);
+
+      if (embeddingService && embedding_text) {
+        try {
+          const embeddingResult = await embeddingService.embed(embedding_text);
+          await storeAppEmbedding(appId, embeddingResult.embedding);
+          embeddingGenerated = true;
+          console.log('[GENERATE] Embedding stored successfully');
+        } catch (embErr) {
+          console.error('[GENERATE] Failed to generate/store embedding:', embErr);
+          warnings.push(`Failed to generate embedding: ${embErr instanceof Error ? embErr.message : String(embErr)}. App will not appear in semantic search.`);
+        }
+      } else if (!embeddingService) {
+        warnings.push('Embedding service not available. Enable BYOK or contact admin to enable semantic search.');
+      }
+
+      // Phase 7: Save to database
+      console.log('[GENERATE] Saving to database...');
+      await appsService.update(appId, {
+        skills_md,
+        skills_parsed,
+        docs_generated_at: new Date().toISOString(),
+        generation_in_progress: false,
+      });
+
+      // Success response
+      const result: GenerationResult = {
+        success: errors.length === 0,
+        partial: errors.length > 0 && parseResult.functions.length > 0,
+        skills_md,
+        skills_parsed,
+        embedding_text,
+        embedding_generated: embeddingGenerated,
+        errors,
+        warnings,
+      };
+
+      return json(result);
+
+    } finally {
+      // Always release the lock
+      await appsService.update(appId, { generation_in_progress: false }).catch(console.error);
+    }
+
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Authentication')) {
+      return error('Authentication required', 401);
+    }
+    console.error('Failed to generate docs:', err);
+    return error('Failed to generate documentation', 500);
+  }
+}
+
+/**
+ * Get Skills.md documentation
+ * GET /api/apps/:appId/skills.md
+ */
+async function handleGetSkillsMd(request: Request, appId: string): Promise<Response> {
+  try {
+    const appsService = createAppsService();
+    const app = await appsService.findById(appId);
+
+    if (!app) {
+      return error('App not found', 404);
+    }
+
+    // Check visibility - only owner can access private app docs
+    if (app.visibility === 'private') {
+      try {
+        const user = await authenticate(request);
+        if (user.id !== app.owner_id) {
+          return error('App not found', 404);
+        }
+      } catch {
+        return error('App not found', 404);
+      }
+    }
+
+    if (!app.skills_md) {
+      return error('Skills documentation not generated yet. Use POST /api/apps/:appId/generate-docs to generate.', 404);
+    }
+
+    // Return as markdown
+    return new Response(app.skills_md, {
+      headers: {
+        'Content-Type': 'text/markdown; charset=utf-8',
+      },
+    });
+
+  } catch (err) {
+    console.error('Failed to get skills.md:', err);
+    return error('Failed to get skills documentation', 500);
+  }
+}
+
+/**
+ * Update skills documentation (with validation)
+ * PATCH /api/apps/:appId/skills
+ */
+async function handleUpdateSkills(request: Request, appId: string): Promise<Response> {
+  try {
+    // Authenticate - only owner can update
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+
+    const app = await appsService.findById(appId);
+    if (!app) {
+      return error('App not found', 404);
+    }
+
+    if (app.owner_id !== user.id) {
+      return error('Unauthorized', 403);
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const { skills_md } = body;
+
+    if (!skills_md || typeof skills_md !== 'string') {
+      return error('skills_md field is required and must be a string', 400);
+    }
+
+    // Validate the markdown and parse back to structured data
+    console.log('[UPDATE_SKILLS] Validating markdown...');
+    const validation = validateAndParseSkillsMd(skills_md);
+
+    if (!validation.valid) {
+      return json({
+        success: false,
+        errors: validation.errors,
+        warnings: validation.warnings,
+      }, 400);
+    }
+
+    // Generate new embedding text from updated skills
+    const embedding_text = validation.skills_parsed
+      ? generateEmbeddingText(app.name || app.slug, app.description, validation.skills_parsed)
+      : null;
+
+    // Regenerate embedding if embedding text changed
+    let embeddingGenerated = false;
+    const embeddingService = createEmbeddingService((user as User).openrouter_api_key);
+
+    if (embeddingService && embedding_text) {
+      try {
+        console.log('[UPDATE_SKILLS] Regenerating embedding...');
+        const embeddingResult = await embeddingService.embed(embedding_text);
+        await storeAppEmbedding(appId, embeddingResult.embedding);
+        embeddingGenerated = true;
+        console.log('[UPDATE_SKILLS] Embedding updated successfully');
+      } catch (embErr) {
+        console.error('[UPDATE_SKILLS] Failed to regenerate embedding:', embErr);
+        validation.warnings.push(`Failed to regenerate embedding: ${embErr instanceof Error ? embErr.message : String(embErr)}`);
+      }
+    } else if (!embeddingService) {
+      validation.warnings.push('Embedding service not available. Enable BYOK to update semantic search indexing.');
+    }
+
+    // Update database with both markdown and parsed data
+    console.log('[UPDATE_SKILLS] Saving to database...');
+    await appsService.update(appId, {
+      skills_md,
+      skills_parsed: validation.skills_parsed,
+    });
+
+    return json({
+      success: true,
+      skills_parsed: validation.skills_parsed,
+      embedding_text,
+      embedding_generated: embeddingGenerated,
+      warnings: validation.warnings,
+    });
+
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Authentication')) {
+      return error('Authentication required', 401);
+    }
+    console.error('Failed to update skills:', err);
+    return error('Failed to update skills documentation', 500);
+  }
+}
+
+// ============================================
+// DRAFT/PUBLISH HANDLERS
+// ============================================
+
+/**
+ * Get draft info for an app
+ * GET /api/apps/:appId/draft
+ */
+async function handleGetDraft(request: Request, appId: string): Promise<Response> {
+  try {
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+
+    const app = await appsService.findById(appId);
+    if (!app) {
+      return error('App not found', 404);
+    }
+
+    if (app.owner_id !== user.id) {
+      return error('Unauthorized', 403);
+    }
+
+    const appWithDraft = app as Record<string, unknown>;
+
+    if (!appWithDraft.draft_storage_key) {
+      return json({
+        has_draft: false,
+        message: 'No draft available',
+      });
+    }
+
+    return json({
+      has_draft: true,
+      draft_version: appWithDraft.draft_version,
+      draft_uploaded_at: appWithDraft.draft_uploaded_at,
+      draft_exports: appWithDraft.draft_exports,
+      published_version: app.current_version,
+      published_storage_key: app.storage_key,
+    });
+
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Authentication')) {
+      return error('Authentication required', 401);
+    }
+    console.error('Failed to get draft:', err);
+    return error('Failed to get draft info', 500);
+  }
+}
+
+/**
+ * Publish draft to production
+ * POST /api/apps/:appId/publish
+ *
+ * This replaces the published version with the draft and optionally regenerates docs.
+ */
+async function handlePublishDraft(request: Request, appId: string): Promise<Response> {
+  try {
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+    const r2Service = createR2Service();
+
+    const app = await appsService.findById(appId);
+    if (!app) {
+      return error('App not found', 404);
+    }
+
+    if (app.owner_id !== user.id) {
+      return error('Unauthorized', 403);
+    }
+
+    const appWithDraft = app as Record<string, unknown>;
+
+    if (!appWithDraft.draft_storage_key) {
+      return error('No draft to publish', 400);
+    }
+
+    // Parse request options
+    let options = { regenerate_docs: true };
+    try {
+      const body = await request.json();
+      options = { ...options, ...body };
+    } catch {
+      // Use defaults
+    }
+
+    console.log('[PUBLISH] Starting publish for app:', appId);
+
+    // Generate new version number
+    const currentVersion = app.current_version || '1.0.0';
+    const newVersion = incrementVersion(currentVersion);
+    const newStorageKey = `apps/${appId}/${newVersion}/`;
+
+    // Copy draft files to new version location
+    console.log('[PUBLISH] Copying draft files to new version...');
+    const draftStorageKey = appWithDraft.draft_storage_key as string;
+    const draftFiles = await r2Service.listFiles(draftStorageKey);
+
+    for (const fileKey of draftFiles) {
+      const fileName = fileKey.replace(draftStorageKey, '');
+      if (fileName) {
+        const content = await r2Service.fetchFile(fileKey);
+        await r2Service.uploadFile(`${newStorageKey}${fileName}`, {
+          name: fileName,
+          content,
+          contentType: getContentTypeFromName(fileName),
+        });
+      }
+    }
+
+    // Update app record with new version
+    console.log('[PUBLISH] Updating app record...');
+    await appsService.update(appId, {
+      storage_key: newStorageKey,
+      current_version: newVersion,
+      versions: [...(app.versions || []), newVersion],
+      exports: appWithDraft.draft_exports,
+      // Clear draft fields
+      draft_storage_key: null,
+      draft_version: null,
+      draft_uploaded_at: null,
+      draft_exports: null,
+    });
+
+    // Optionally regenerate docs
+    let docsResult = null;
+    if (options.regenerate_docs && app.skills_md) {
+      console.log('[PUBLISH] Regenerating documentation...');
+      try {
+        // Fetch the new code
+        let code: string | null = null;
+        const entryFiles = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
+        for (const entryFile of entryFiles) {
+          try {
+            code = await r2Service.fetchTextFile(`${newStorageKey}${entryFile}`);
+            break;
+          } catch {
+            // Try next
+          }
+        }
+
+        if (code) {
+          const parseResult = parseTypeScript(code, 'index.ts');
+          const skills_md = generateSkillsMd(app.name || app.slug, parseResult);
+          const skills_parsed = toSkillsParsed(parseResult);
+          const embedding_text = generateEmbeddingText(app.name || app.slug, app.description, skills_parsed);
+
+          // Generate embedding
+          let embeddingGenerated = false;
+          const embeddingService = createEmbeddingService((user as User).openrouter_api_key);
+          if (embeddingService && embedding_text) {
+            try {
+              const embeddingResult = await embeddingService.embed(embedding_text);
+              await storeAppEmbedding(appId, embeddingResult.embedding);
+              embeddingGenerated = true;
+            } catch (embErr) {
+              console.error('[PUBLISH] Failed to generate embedding:', embErr);
+            }
+          }
+
+          await appsService.update(appId, {
+            skills_md,
+            skills_parsed,
+            docs_generated_at: new Date().toISOString(),
+          });
+
+          docsResult = {
+            regenerated: true,
+            embedding_generated: embeddingGenerated,
+          };
+        }
+      } catch (docsErr) {
+        console.error('[PUBLISH] Failed to regenerate docs:', docsErr);
+        docsResult = {
+          regenerated: false,
+          error: docsErr instanceof Error ? docsErr.message : String(docsErr),
+        };
+      }
+    }
+
+    // Clean up old draft files (optional, could be done async)
+    try {
+      console.log('[PUBLISH] Cleaning up draft files...');
+      for (const fileKey of draftFiles) {
+        await r2Service.deleteFile(fileKey);
+      }
+    } catch (cleanupErr) {
+      console.error('[PUBLISH] Failed to cleanup draft files:', cleanupErr);
+      // Non-fatal, continue
+    }
+
+    console.log('[PUBLISH] Publish complete!');
+
+    return json({
+      success: true,
+      app_id: appId,
+      new_version: newVersion,
+      storage_key: newStorageKey,
+      url: `/a/${appId}`,
+      docs: docsResult,
+      message: 'Draft published successfully',
+    });
+
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Authentication')) {
+      return error('Authentication required', 401);
+    }
+    console.error('Failed to publish draft:', err);
+    return error('Failed to publish draft', 500);
+  }
+}
+
+/**
+ * Discard draft without publishing
+ * DELETE /api/apps/:appId/draft
+ */
+async function handleDiscardDraft(request: Request, appId: string): Promise<Response> {
+  try {
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+    const r2Service = createR2Service();
+
+    const app = await appsService.findById(appId);
+    if (!app) {
+      return error('App not found', 404);
+    }
+
+    if (app.owner_id !== user.id) {
+      return error('Unauthorized', 403);
+    }
+
+    const appWithDraft = app as Record<string, unknown>;
+
+    if (!appWithDraft.draft_storage_key) {
+      return json({
+        success: true,
+        message: 'No draft to discard',
+      });
+    }
+
+    console.log('[DISCARD] Discarding draft for app:', appId);
+
+    // Delete draft files from R2
+    const draftStorageKey = appWithDraft.draft_storage_key as string;
+    try {
+      const draftFiles = await r2Service.listFiles(draftStorageKey);
+      for (const fileKey of draftFiles) {
+        await r2Service.deleteFile(fileKey);
+      }
+    } catch (deleteErr) {
+      console.error('[DISCARD] Failed to delete draft files:', deleteErr);
+      // Continue - clear the database record anyway
+    }
+
+    // Clear draft fields in database
+    await appsService.update(appId, {
+      draft_storage_key: null,
+      draft_version: null,
+      draft_uploaded_at: null,
+      draft_exports: null,
+    });
+
+    console.log('[DISCARD] Draft discarded');
+
+    return json({
+      success: true,
+      message: 'Draft discarded',
+    });
+
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Authentication')) {
+      return error('Authentication required', 401);
+    }
+    console.error('Failed to discard draft:', err);
+    return error('Failed to discard draft', 500);
+  }
+}
+
+/**
+ * Increment version number (semver minor bump)
+ */
+function incrementVersion(version: string): string {
+  const parts = version.split('.');
+  if (parts.length !== 3) {
+    return '1.0.1';
+  }
+  const [major, minor, patch] = parts.map(Number);
+  return `${major}.${minor}.${patch + 1}`;
+}
+
+/**
+ * Get content type from file name
+ */
+function getContentTypeFromName(filename: string): string {
+  if (filename.endsWith('.tsx')) return 'text/typescript-jsx';
+  if (filename.endsWith('.ts')) return 'text/typescript';
+  if (filename.endsWith('.jsx')) return 'text/javascript-jsx';
+  if (filename.endsWith('.js')) return 'application/javascript';
+  if (filename.endsWith('.json')) return 'application/json';
+  if (filename.endsWith('.md')) return 'text/markdown';
+  if (filename.endsWith('.css')) return 'text/css';
+  return 'text/plain';
 }

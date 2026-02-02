@@ -1,5 +1,6 @@
 // Upload Handler
 // Processes file uploads, validates, bundles, stores to R2, creates app record
+// Supports both new app creation and draft uploads for existing apps
 
 import { error, json } from './app.ts';
 import type { BuildLogEntry, UploadResponse } from '../../shared/types/index.ts';
@@ -12,6 +13,17 @@ import { createR2Service } from '../services/storage.ts';
 import { createAppsService } from '../services/apps.ts';
 import { bundleCode, quickBundle } from '../services/bundler.ts';
 import { authenticate } from './auth.ts';
+
+// Draft upload response type
+interface DraftUploadResponse {
+  app_id: string;
+  draft_version: string;
+  draft_storage_key: string;
+  exports: string[];
+  build_success: boolean;
+  build_logs: BuildLogEntry[];
+  message: string;
+}
 
 // @ts-ignore - Deno is available in Deno Deploy
 const Deno = globalThis.Deno;
@@ -296,4 +308,212 @@ function getContentType(filename: string): string {
   if (filename.endsWith('.md')) return 'text/markdown';
   if (filename.endsWith('.css')) return 'text/css';
   return 'text/plain';
+}
+
+/**
+ * Handle draft upload for an existing app
+ * POST /api/apps/:appId/draft
+ *
+ * This uploads new code as a draft without replacing the published version.
+ * The draft can then be published via POST /api/apps/:appId/publish
+ */
+export async function handleDraftUpload(request: Request, appId: string): Promise<Response> {
+  try {
+    // Authenticate user
+    let userId: string;
+    try {
+      const user = await authenticate(request);
+      userId = user.id;
+    } catch (authErr: unknown) {
+      console.error('Auth failed:', authErr instanceof Error ? authErr.message : authErr);
+      return error('Authentication required', 401);
+    }
+
+    // Get the app and verify ownership
+    const appsService = createAppsService();
+    const app = await appsService.findById(appId);
+
+    if (!app) {
+      return error('App not found', 404);
+    }
+
+    if (app.owner_id !== userId) {
+      return error('Unauthorized', 403);
+    }
+
+    // Check if there's already a draft - warn but allow overwrite
+    const hasDraft = !!(app as Record<string, unknown>).draft_storage_key;
+
+    // Parse multipart form data
+    const formData = await request.formData();
+    const files: File[] = [];
+
+    for (const [name, value] of formData.entries()) {
+      if (value instanceof File) {
+        files.push(value);
+      }
+    }
+
+    // Validate file count
+    if (files.length === 0) {
+      return error('No files uploaded');
+    }
+    if (files.length > MAX_FILES_PER_UPLOAD) {
+      return error(`Maximum ${MAX_FILES_PER_UPLOAD} files allowed`);
+    }
+
+    // Validate file types and size
+    let totalSize = 0;
+    const validatedFiles: Array<{ name: string; content: string }> = [];
+
+    for (const file of files) {
+      const hasValidExt = ALLOWED_EXTENSIONS.some((ext) => file.name.toLowerCase().endsWith(ext));
+      if (!hasValidExt) {
+        return error(`File type not allowed: ${file.name}`);
+      }
+
+      totalSize += file.size;
+      if (totalSize > MAX_UPLOAD_SIZE_BYTES) {
+        return error(`Total upload size exceeds ${MAX_UPLOAD_SIZE_BYTES / 1024 / 1024}MB limit`);
+      }
+
+      const content = await file.text();
+      validatedFiles.push({ name: file.name, content });
+    }
+
+    // Check for entry file
+    const entryFileNames = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
+    const entryFile = validatedFiles.find((f) => {
+      const fileName = f.name.split('/').pop() || f.name;
+      return entryFileNames.includes(fileName);
+    });
+    if (!entryFile) {
+      return error('Entry file (index.ts, index.tsx, index.js, or index.jsx) required');
+    }
+
+    // Build logs
+    const buildLogs: BuildLogEntry[] = [];
+    const log = (level: BuildLogEntry['level'], message: string) => {
+      buildLogs.push({ time: new Date().toISOString(), level, message });
+    };
+
+    if (hasDraft) {
+      log('warn', 'Overwriting existing draft');
+    }
+
+    log('info', `Starting draft build for ${validatedFiles.length} files...`);
+
+    // Extract exports
+    log('info', 'Parsing entry file...');
+    const exports = extractExports(entryFile.content);
+    log('success', `Found ${exports.length} exports: ${exports.join(', ')}`);
+
+    // Bundle the code
+    log('info', 'Bundling code...');
+    let bundledCode = entryFile.content;
+    let bundleUsed = false;
+
+    try {
+      log('info', 'Running esbuild bundler...');
+      const bundleResult = await bundleCode(validatedFiles, entryFile.name);
+
+      if (!bundleResult.success) {
+        for (const err of bundleResult.errors) {
+          log('error', err);
+        }
+        return error('Build failed: ' + bundleResult.errors.join(', '), 400);
+      }
+
+      for (const warn of bundleResult.warnings) {
+        log('warn', warn);
+      }
+
+      if (bundleResult.code !== entryFile.content) {
+        bundledCode = bundleResult.code;
+        bundleUsed = true;
+        log('success', 'Bundle complete');
+      } else {
+        log('success', 'No bundling needed (no imports)');
+      }
+    } catch (bundleErr) {
+      log('warn', `Bundling skipped: ${bundleErr instanceof Error ? bundleErr.message : String(bundleErr)}`);
+      bundledCode = entryFile.content;
+    }
+
+    // Generate draft version
+    const draftVersion = `draft-${Date.now()}`;
+
+    // Initialize R2 service
+    const r2Service = createR2Service();
+
+    // Normalize file names
+    const normalizeFileName = (name: string): string => {
+      const parts = name.split('/');
+      if (parts.length > 1) {
+        const firstPart = validatedFiles[0]?.name.split('/')[0];
+        const allSameRoot = validatedFiles.every(f => f.name.startsWith(firstPart + '/'));
+        if (allSameRoot && parts[0] === firstPart) {
+          return parts.slice(1).join('/');
+        }
+      }
+      return name;
+    };
+
+    const normalizedEntryName = normalizeFileName(entryFile.name);
+
+    // Prepare files for upload
+    const filesToUpload = bundleUsed
+      ? [
+          {
+            name: normalizedEntryName,
+            content: new TextEncoder().encode(bundledCode),
+            contentType: getContentType(normalizedEntryName),
+          },
+          ...validatedFiles
+            .filter(f => f.name !== entryFile.name)
+            .map(f => ({
+              name: normalizeFileName(f.name),
+              content: new TextEncoder().encode(f.content),
+              contentType: getContentType(f.name),
+            })),
+        ]
+      : validatedFiles.map(f => ({
+          name: normalizeFileName(f.name),
+          content: new TextEncoder().encode(f.content),
+          contentType: getContentType(f.name),
+        }));
+
+    // Upload to draft storage location
+    log('info', 'Uploading draft to storage...');
+    const draftStorageKey = `apps/${appId}/draft/`;
+    await r2Service.uploadFiles(draftStorageKey, filesToUpload);
+    log('success', 'Draft upload complete');
+
+    // Update app record with draft info
+    log('info', 'Updating app record...');
+    await appsService.update(appId, {
+      draft_storage_key: draftStorageKey,
+      draft_version: draftVersion,
+      draft_uploaded_at: new Date().toISOString(),
+      draft_exports: exports,
+    });
+    log('success', 'Draft record updated');
+
+    log('success', 'Draft build complete! Use POST /api/apps/:appId/publish to publish.');
+
+    const response: DraftUploadResponse = {
+      app_id: appId,
+      draft_version: draftVersion,
+      draft_storage_key: draftStorageKey,
+      exports,
+      build_success: true,
+      build_logs: buildLogs,
+      message: 'Draft uploaded successfully. Publish when ready to update the app and regenerate documentation.',
+    };
+
+    return json(response, 200);
+  } catch (err) {
+    console.error('Draft upload error:', err);
+    return error(err instanceof Error ? err.message : 'Draft upload failed', 500);
+  }
 }

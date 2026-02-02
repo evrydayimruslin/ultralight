@@ -403,3 +403,167 @@ export interface UltralightSDK {
     presets: typeof CRON_PRESETS;
   };
 }
+
+// ============================================
+// DOCUMENTATION GENERATION
+// ============================================
+
+export interface GenerationConfig {
+  ai_enhance: boolean;
+}
+
+export interface GenerationResult {
+  success: boolean;
+  partial: boolean;
+  skills_md: string | null;
+  skills_parsed: ParsedSkills | null;
+  embedding_text: string | null;
+  embedding_generated?: boolean;
+  errors: GenerationError[];
+  warnings: string[];
+}
+
+export interface GenerationError {
+  phase: 'parse' | 'generate_skills' | 'validate' | 'embed';
+  message: string;
+  line?: number;
+  suggestion?: string;
+}
+
+export interface ValidationResult {
+  valid: boolean;
+  skills_parsed: ParsedSkills | null;
+  errors: ValidationError[];
+  warnings: string[];
+}
+
+export interface ValidationError {
+  line?: number;
+  message: string;
+  suggestion?: string;
+}
+
+// ============================================
+// DRAFT/PUBLISH SYSTEM
+// ============================================
+
+export interface AppDraft {
+  storage_key: string;
+  version: string;
+  uploaded_at: string;
+  exports: string[];
+}
+
+// Extended App interface with draft fields
+export interface AppWithDraft extends App {
+  draft_storage_key: string | null;
+  draft_version: string | null;
+  draft_uploaded_at: string | null;
+  draft_exports: string[] | null;
+  docs_generated_at: string | null;
+  generation_in_progress: boolean;
+  generation_config: GenerationConfig;
+  // pgvector embedding stored as array (for reference, actual storage is vector type)
+  skills_embedding?: number[] | null;
+}
+
+// ============================================
+// MCP (Model Context Protocol)
+// ============================================
+
+export interface MCPTool {
+  name: string;
+  title?: string;
+  description: string;
+  inputSchema: MCPJsonSchema;
+  outputSchema?: MCPJsonSchema;
+}
+
+export interface MCPJsonSchema {
+  type?: string;
+  properties?: Record<string, MCPJsonSchema>;
+  items?: MCPJsonSchema;
+  required?: string[];
+  description?: string;
+  enum?: unknown[];
+  default?: unknown;
+  additionalProperties?: boolean | MCPJsonSchema;
+  $ref?: string;
+  oneOf?: MCPJsonSchema[];
+  allOf?: MCPJsonSchema[];
+  nullable?: boolean;
+  format?: string;
+  [key: string]: unknown;
+}
+
+export interface MCPToolsListResponse {
+  tools: MCPTool[];
+  nextCursor?: string;
+}
+
+export interface MCPToolCallRequest {
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+export interface MCPToolCallResponse {
+  content: MCPContent[];
+  structuredContent?: unknown;
+  isError?: boolean;
+}
+
+export interface MCPContent {
+  type: 'text' | 'image' | 'audio' | 'resource' | 'resource_link';
+  text?: string;
+  data?: string;
+  mimeType?: string;
+  uri?: string;
+  resource?: MCPResource;
+}
+
+export interface MCPResource {
+  uri: string;
+  mimeType?: string;
+  text?: string;
+  blob?: string;
+}
+
+export interface MCPServerInfo {
+  name: string;
+  version: string;
+  description?: string;
+  capabilities: {
+    tools?: { listChanged?: boolean };
+  };
+  endpoints?: {
+    mcp: string;
+  };
+}
+
+// ============================================
+// DISCOVERY
+// ============================================
+
+export interface DiscoverRequest {
+  query: string;
+  limit?: number;
+  threshold?: number;
+}
+
+export interface DiscoverResult {
+  apps: DiscoveredApp[];
+  total: number;
+  query: string;
+  model?: string;
+}
+
+export interface DiscoveredApp {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  isPublic: boolean;
+  isOwner: boolean;
+  similarity: number;
+  mcpEndpoint: string;
+}

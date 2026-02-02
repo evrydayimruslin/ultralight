@@ -41,11 +41,20 @@ export interface AppDataService {
 
 /**
  * Create an app data service backed by R2
- * Data is stored at: apps/{appId}/data/{key}.json
+ *
+ * Storage paths:
+ * - With userId (MCP): apps/{appId}/users/{userId}/data/{key}.json (user-partitioned)
+ * - Without userId (legacy): apps/{appId}/data/{key}.json (shared app data)
+ *
+ * The user-partitioned storage ensures each user's data is isolated within an app.
  */
-export function createAppDataService(appId: string): AppDataService {
+export function createAppDataService(appId: string, userId?: string): AppDataService {
   const r2 = createR2Service();
-  const dataPrefix = `apps/${appId}/data/`;
+
+  // Use user-partitioned path if userId is provided
+  const dataPrefix = userId
+    ? `apps/${appId}/users/${userId}/data/`
+    : `apps/${appId}/data/`;
 
   // Internal helper to load raw data (includes metadata)
   async function loadRaw(key: string): Promise<{ key: string; value: unknown; updated_at: string } | null> {
