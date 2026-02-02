@@ -181,23 +181,26 @@ async function handleGetAppCode(request: Request, appId: string): Promise<Respon
       }
     }
 
-    // Fetch code from R2
+    // Fetch code from R2 - try different entry file extensions
     const storageKey = app.storage_key;
     console.log('handleGetAppCode: fetching code from R2, storageKey:', storageKey);
     let code: string | null = null;
 
-    try {
-      code = await r2Service.fetchTextFile(`${storageKey}index.ts`);
-      console.log('handleGetAppCode: loaded index.ts, length:', code?.length);
-    } catch (tsErr) {
-      console.log('handleGetAppCode: index.ts not found, trying index.js');
+    // Try entry files in order of preference: tsx, ts, jsx, js
+    const entryFiles = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
+    for (const entryFile of entryFiles) {
       try {
-        code = await r2Service.fetchTextFile(`${storageKey}index.js`);
-        console.log('handleGetAppCode: loaded index.js, length:', code?.length);
-      } catch (jsErr) {
-        console.log('handleGetAppCode: index.js also not found');
-        return error('App code not found', 404);
+        code = await r2Service.fetchTextFile(`${storageKey}${entryFile}`);
+        console.log(`handleGetAppCode: loaded ${entryFile}, length:`, code?.length);
+        break;
+      } catch {
+        console.log(`handleGetAppCode: ${entryFile} not found, trying next...`);
       }
+    }
+
+    if (!code) {
+      console.log('handleGetAppCode: no entry file found');
+      return error('App code not found', 404);
     }
 
     return json({

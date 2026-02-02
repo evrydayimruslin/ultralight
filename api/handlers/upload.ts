@@ -79,13 +79,15 @@ export async function handleUpload(request: Request): Promise<Response> {
 
     // Check for entry file - handle both flat files and folder uploads
     // When uploading a folder, file.name includes path like "myapp/index.ts"
+    // Support: index.ts, index.tsx, index.js, index.jsx
+    const entryFileNames = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
     const entryFile = validatedFiles.find((f) => {
       const fileName = f.name.split('/').pop() || f.name;
-      return fileName === 'index.ts' || fileName === 'index.js';
+      return entryFileNames.includes(fileName);
     });
     if (!entryFile) {
       console.log('Files received:', validatedFiles.map(f => f.name));
-      return error('Entry file (index.ts or index.js) required');
+      return error('Entry file (index.ts, index.tsx, index.js, or index.jsx) required');
     }
     console.log('Entry file found:', entryFile.name);
 
@@ -286,9 +288,12 @@ function generateSlug(packageJson?: string): string {
 }
 
 function getContentType(filename: string): string {
+  if (filename.endsWith('.tsx')) return 'text/typescript-jsx';
   if (filename.endsWith('.ts')) return 'text/typescript';
+  if (filename.endsWith('.jsx')) return 'text/javascript-jsx';
   if (filename.endsWith('.js')) return 'application/javascript';
   if (filename.endsWith('.json')) return 'application/json';
   if (filename.endsWith('.md')) return 'text/markdown';
+  if (filename.endsWith('.css')) return 'text/css';
   return 'text/plain';
 }

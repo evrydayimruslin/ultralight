@@ -80,19 +80,36 @@ export async function bundleCode(
     const entryPath = `${tempDir}/${entryPoint}`;
     const outPath = `${tempDir}/bundle.js`;
 
+    // Detect if this is a React/JSX project
+    const isReactProject = entryPoint.endsWith('.tsx') || entryPoint.endsWith('.jsx') ||
+      files.some(f => f.name.endsWith('.tsx') || f.name.endsWith('.jsx')) ||
+      files.some(f => f.content.includes('from "react"') || f.content.includes("from 'react'"));
+
+    const esbuildArgs = [
+      'esbuild',
+      entryPath,
+      '--bundle',
+      '--format=esm',
+      '--platform=browser',  // Use browser platform for client-side apps
+      '--target=esnext',
+      `--outfile=${outPath}`,
+      '--minify-syntax',
+      // Don't bundle these - they're provided by the runtime
+      '--external:ultralight',
+    ];
+
+    // Add JSX support if this looks like a React project
+    if (isReactProject) {
+      esbuildArgs.push(
+        '--jsx=automatic',
+        '--jsx-import-source=https://esm.sh/react',
+        '--loader:.tsx=tsx',
+        '--loader:.jsx=jsx',
+      );
+    }
+
     const command = new Deno.Command('npx', {
-      args: [
-        'esbuild',
-        entryPath,
-        '--bundle',
-        '--format=esm',
-        '--platform=neutral',
-        '--target=esnext',
-        `--outfile=${outPath}`,
-        '--minify-syntax',
-        // Don't bundle these - they're provided by the runtime
-        '--external:ultralight',
-      ],
+      args: esbuildArgs,
       cwd: tempDir,
       stdout: 'piped',
       stderr: 'piped',
