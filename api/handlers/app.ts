@@ -190,17 +190,24 @@ export function createApp() {
           }
 
           // Fetch the app code from R2
+          // Try entry files in order of preference: tsx, ts, jsx, js
           const storageKey = app.storage_key;
           let code: string | null = null;
 
-          try {
-            code = await r2Service.fetchTextFile(`${storageKey}index.ts`);
-          } catch {
+          const entryFiles = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
+          for (const entryFile of entryFiles) {
             try {
-              code = await r2Service.fetchTextFile(`${storageKey}index.js`);
+              code = await r2Service.fetchTextFile(`${storageKey}${entryFile}`);
+              console.log(`App runner: loaded ${entryFile} for app ${appId}`);
+              break;
             } catch {
-              return json({ error: 'App code not found' }, 404);
+              // Try next entry file
             }
+          }
+
+          if (!code) {
+            console.error(`App runner: no entry file found for app ${appId}, storageKey: ${storageKey}`);
+            return json({ error: 'App code not found' }, 404);
           }
 
           // Detect app type:

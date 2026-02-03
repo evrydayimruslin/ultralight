@@ -1,7 +1,6 @@
 // Main API Entry Point
-// Works on both Deno Deploy and DigitalOcean App Platform
+// Deployed on DigitalOcean App Platform
 
-// @ts-ignore - Deno is available in Deno Deploy
 const Deno = globalThis.Deno;
 
 import { createApp } from './handlers/app.ts';

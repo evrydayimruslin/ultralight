@@ -316,10 +316,10 @@ deno task dev
 ### Deploy
 
 ```bash
-# Deno Deploy
-deno task deploy
+# DigitalOcean App Platform (via GitHub auto-deploy)
+# Push to main branch triggers automatic deployment
 
-# Or Docker
+# Or Docker locally
 docker build -t ultralight .
 docker run -p 8000:8000 ultralight
 ```
@@ -328,7 +328,7 @@ docker run -p 8000:8000 ultralight
 
 ## Architecture
 
-- **Runtime**: Deno Deploy or Docker
+- **Runtime**: DigitalOcean App Platform (Docker)
 - **Storage**: Cloudflare R2 (code + app data)
 - **Database**: Supabase PostgreSQL + pgvector
 - **Auth**: Supabase Auth (Google OAuth)
