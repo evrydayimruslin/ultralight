@@ -3192,7 +3192,7 @@ await hash.sha256('data')</div>
       if (!settingsApp) return;
 
       // Reset to first tab
-      switchSettingsTab('general');
+      switchAppSettingsTab('general');
 
       // Populate form
       document.getElementById('settingsAppName').value = settingsApp.name || '';
@@ -3234,22 +3234,22 @@ await hash.sha256('data')</div>
       settingsModal.classList.add('open');
     };
 
-    // Tab switching
-    function switchSettingsTab(tabName) {
-      // Update tab buttons
-      document.querySelectorAll('.settings-tab').forEach(tab => {
+    // Tab switching for app settings modal
+    function switchAppSettingsTab(tabName) {
+      // Update tab buttons within app settings modal only
+      settingsModal.querySelectorAll('.settings-tab').forEach(tab => {
         tab.classList.toggle('active', tab.dataset.tab === tabName);
       });
 
       // Update tab content
-      document.querySelectorAll('.settings-tab-content').forEach(content => {
+      settingsModal.querySelectorAll('.settings-tab-content').forEach(content => {
         content.classList.toggle('active', content.id === \`tab-\${tabName}\`);
       });
     }
 
-    document.querySelectorAll('.settings-tab').forEach(tab => {
+    settingsModal.querySelectorAll('.settings-tab').forEach(tab => {
       tab.addEventListener('click', () => {
-        switchSettingsTab(tab.dataset.tab);
+        switchAppSettingsTab(tab.dataset.tab);
       });
     });
 
