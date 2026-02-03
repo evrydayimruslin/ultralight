@@ -79,9 +79,7 @@ export class AppsService {
     const url = new URL(`${this.supabaseUrl}/rest/v1/apps`);
     url.searchParams.set('owner_id', `eq.${userId}`);
     url.searchParams.set('select', '*');
-    // Note: removed deleted_at filter - column doesn't exist in DB yet
-    // TODO: Add deleted_at column to Supabase and re-enable this filter
-    // url.searchParams.set('deleted_at', 'is.null');
+    url.searchParams.set('deleted_at', 'is.null');
     url.searchParams.set('order', 'created_at.desc');
 
     const response = await fetch(url.toString(), {
