@@ -5,6 +5,7 @@ import { handleUpload } from './upload.ts';
 import { handleRun } from './run.ts';
 import { handleAuth } from './auth.ts';
 import { handleApps } from './apps.ts';
+import { handleUser } from './user.ts';
 import { handleCron } from './cron.ts';
 import { handleMcp, handleMcpDiscovery } from './mcp.ts';
 import { handlePlatformMcp, handlePlatformMcpDiscovery } from './platform-mcp.ts';
@@ -110,6 +111,11 @@ export function createApp() {
       if (path.startsWith('/api/run/') && method === 'POST') {
         const appId = path.replace('/api/run/', '');
         return handleRun(request, appId);
+      }
+
+      // User API routes - handle all /api/user/* paths (must be before /api/apps)
+      if (path.startsWith('/api/user')) {
+        return handleUser(request);
       }
 
       // Apps API routes - handle all /api/apps/* paths

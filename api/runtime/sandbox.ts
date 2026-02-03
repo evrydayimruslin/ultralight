@@ -550,11 +550,15 @@ export async function executeInSandbox(
         if (!config.permissions.includes('ai:call')) {
           throw new Error('ai:call permission required');
         }
-        if (!config.userApiKey) {
-          throw new Error('No API key configured - add your OpenRouter key in settings');
-        }
         capturedConsole.log(`[SDK] ai()`);
-        return await config.aiService.call(request, config.userApiKey);
+        // The AI service now has the API key bound to it, so we just pass the request
+        // If BYOK is not configured, the service will return an error in the response
+        const response = await config.aiService.call(request, config.userApiKey || '');
+        // Check for error in response (returned by placeholder service when BYOK not configured)
+        if ((response as { error?: string }).error) {
+          throw new Error((response as { error: string }).error);
+        }
+        return response;
       },
 
       // CRON - Background scheduled tasks

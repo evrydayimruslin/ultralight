@@ -9,6 +9,8 @@ import { createAppDataService } from '../services/appdata.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
 import { executeInSandbox, type UserContext } from '../runtime/sandbox.ts';
 import { createR2Service } from '../services/storage.ts';
+import { createUserService } from '../services/user.ts';
+import { createAIService } from '../services/ai.ts';
 import type {
   MCPTool,
   MCPJsonSchema,
@@ -19,6 +21,7 @@ import type {
   MCPServerInfo,
   ParsedSkills,
   SkillFunction,
+  BYOKProvider,
 } from '../../shared/types/index.ts';
 
 // ============================================
@@ -605,14 +608,55 @@ async function executeSDKTool(
         break;
 
       // AI
-      case 'ultralight.ai':
-        // TODO: Implement AI call via AI service
-        result = {
-          content: 'AI service requires BYOK. Please configure your API key.',
-          model: 'none',
-          usage: { input_tokens: 0, output_tokens: 0, cost_cents: 0 },
-        };
+      case 'ultralight.ai': {
+        // Get user's BYOK configuration
+        const userService = createUserService();
+        const userProfile = await userService.getUser(userId);
+
+        if (!userProfile?.byok_enabled || !userProfile.byok_provider) {
+          result = {
+            content: '',
+            model: 'none',
+            usage: { input_tokens: 0, output_tokens: 0, cost_cents: 0 },
+            error: 'BYOK not configured. Please add your API key in Settings.',
+          };
+          break;
+        }
+
+        // Get the decrypted API key for the user's primary provider
+        const apiKey = await userService.getDecryptedApiKey(userId, userProfile.byok_provider);
+        if (!apiKey) {
+          result = {
+            content: '',
+            model: 'none',
+            usage: { input_tokens: 0, output_tokens: 0, cost_cents: 0 },
+            error: 'API key not found. Please re-add your API key in Settings.',
+          };
+          break;
+        }
+
+        // Create AI service with user's provider and key
+        const aiService = createAIService(userProfile.byok_provider, apiKey);
+
+        // Make the AI call
+        try {
+          result = await aiService.call({
+            messages: args.messages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+            model: args.model as string | undefined,
+            temperature: args.temperature as number | undefined,
+            max_tokens: args.max_tokens as number | undefined,
+            tools: args.tools as Array<{ name: string; description: string; parameters: Record<string, unknown> }> | undefined,
+          });
+        } catch (aiError) {
+          result = {
+            content: '',
+            model: args.model || 'unknown',
+            usage: { input_tokens: 0, output_tokens: 0, cost_cents: 0 },
+            error: aiError instanceof Error ? aiError.message : 'AI call failed',
+          };
+        }
         break;
+      }
 
       // Cron
       case 'ultralight.cron.list':
@@ -661,6 +705,7 @@ async function executeAppFunction(
   try {
     const r2Service = createR2Service();
     const appDataService = createAppDataService(app.id, userId);
+    const userService = createUserService();
 
     // Fetch app code from R2
     let code: string | null = null;
@@ -679,6 +724,39 @@ async function executeAppFunction(
       return jsonRpcErrorResponse(id, INTERNAL_ERROR, 'App code not found');
     }
 
+    // Get user's BYOK configuration for AI service
+    const userProfile = await userService.getUser(userId);
+    let userApiKey: string | null = null;
+    let aiServiceInstance: { call: (request: unknown) => Promise<unknown> };
+
+    if (userProfile?.byok_enabled && userProfile.byok_provider) {
+      userApiKey = await userService.getDecryptedApiKey(userId, userProfile.byok_provider);
+      if (userApiKey) {
+        const actualAiService = createAIService(userProfile.byok_provider, userApiKey);
+        aiServiceInstance = {
+          call: async (request: unknown) => actualAiService.call(request as Parameters<typeof actualAiService.call>[0]),
+        };
+      } else {
+        aiServiceInstance = {
+          call: async () => ({
+            content: '',
+            model: 'none',
+            usage: { input_tokens: 0, output_tokens: 0, cost_cents: 0 },
+            error: 'API key not found. Please re-add your API key in Settings.',
+          }),
+        };
+      }
+    } else {
+      aiServiceInstance = {
+        call: async () => ({
+          content: '',
+          model: 'none',
+          usage: { input_tokens: 0, output_tokens: 0, cost_cents: 0 },
+          error: 'BYOK not configured. Please add your API key in Settings.',
+        }),
+      };
+    }
+
     // Convert args object to array (positional arguments)
     // For now, pass as single object argument
     const argsArray = Object.keys(args).length > 0 ? [args] : [];
@@ -691,17 +769,11 @@ async function executeAppFunction(
         executionId: crypto.randomUUID(),
         code,
         permissions: ['memory:read', 'memory:write', 'ai:call', 'net:fetch', 'cron:read', 'cron:write'],
-        userApiKey: null,
+        userApiKey,
         user,
         appDataService,
         memoryService: null,
-        aiService: {
-          call: async (request, apiKey) => ({
-            content: 'AI placeholder - configure BYOK',
-            model: request.model || 'gpt-4',
-            usage: { input_tokens: 0, output_tokens: 0, cost_cents: 0 },
-          }),
-        },
+        aiService: aiServiceInstance as { call: (request: import('../../shared/types/index.ts').AIRequest, apiKey: string) => Promise<import('../../shared/types/index.ts').AIResponse> },
       },
       functionName,
       argsArray

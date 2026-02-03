@@ -1310,6 +1310,214 @@ export function getLayoutHTML(options: {
     ::-webkit-scrollbar-thumb:hover {
       background: var(--text-muted);
     }
+
+    /* Settings Button (next to sign out) */
+    .settings-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 0.25rem;
+      border-radius: 4px;
+      transition: color 0.2s;
+    }
+
+    .settings-btn:hover {
+      color: var(--accent-color);
+    }
+
+    /* BYOK Settings */
+    .byok-providers {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .byok-provider-card {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 1rem;
+      transition: border-color 0.2s;
+    }
+
+    .byok-provider-card:hover {
+      border-color: var(--text-muted);
+    }
+
+    .byok-provider-card.configured {
+      border-color: var(--success-color);
+    }
+
+    .byok-provider-card.primary {
+      border-color: var(--accent-color);
+      background: rgba(102, 126, 234, 0.1);
+    }
+
+    .byok-provider-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.5rem;
+    }
+
+    .byok-provider-info {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .byok-provider-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      background: var(--bg-secondary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+    }
+
+    .byok-provider-name {
+      font-weight: 500;
+    }
+
+    .byok-provider-desc {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .byok-provider-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .byok-status {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+    }
+
+    .byok-status.configured {
+      background: rgba(74, 222, 128, 0.15);
+      color: var(--success-color);
+    }
+
+    .byok-status.primary {
+      background: rgba(102, 126, 234, 0.15);
+      color: var(--accent-color);
+    }
+
+    .byok-key-input {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+    }
+
+    .byok-key-input input {
+      flex: 1;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 0.5rem 0.75rem;
+      color: var(--text-primary);
+      font-size: 0.875rem;
+      font-family: monospace;
+    }
+
+    .byok-key-input input:focus {
+      outline: none;
+      border-color: var(--accent-color);
+    }
+
+    .byok-key-input input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .byok-btn {
+      padding: 0.5rem 0.75rem;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .byok-btn-primary {
+      background: var(--accent-gradient);
+      border: none;
+      color: white;
+    }
+
+    .byok-btn-primary:hover {
+      opacity: 0.9;
+    }
+
+    .byok-btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .byok-btn-secondary {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-secondary);
+    }
+
+    .byok-btn-secondary:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .byok-btn-danger {
+      background: transparent;
+      border: 1px solid var(--error-color);
+      color: var(--error-color);
+    }
+
+    .byok-btn-danger:hover {
+      background: rgba(248, 113, 113, 0.1);
+    }
+
+    .byok-help {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+    }
+
+    .byok-help a {
+      color: var(--accent-color);
+      text-decoration: none;
+    }
+
+    .byok-help a:hover {
+      text-decoration: underline;
+    }
+
+    .byok-loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      color: var(--text-muted);
+    }
+
+    .byok-message {
+      padding: 0.75rem 1rem;
+      border-radius: 6px;
+      margin-bottom: 1rem;
+      font-size: 0.875rem;
+    }
+
+    .byok-message.success {
+      background: rgba(74, 222, 128, 0.15);
+      color: var(--success-color);
+    }
+
+    .byok-message.error {
+      background: rgba(248, 113, 113, 0.15);
+      color: var(--error-color);
+    }
   </style>
 </head>
 <body>
@@ -1604,6 +1812,40 @@ export function getLayoutHTML(options: {
     </div>
   </div>
 
+  <!-- User Settings Modal (BYOK) -->
+  <div class="modal-overlay" id="userSettingsModal">
+    <div class="modal" style="max-width: 600px;">
+      <div class="modal-header">
+        <h2 class="modal-title">Settings</h2>
+        <button class="modal-close" onclick="closeUserSettings()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <div class="settings-section">
+          <div class="settings-section-title">🔑 AI API Keys (BYOK)</div>
+          <div class="info-box">
+            Add your own API keys to use AI features. Your keys are encrypted and stored securely.
+            Choose a primary provider for your apps to use.
+          </div>
+
+          <div id="byokMessage" class="byok-message" style="display: none;"></div>
+          <div id="byokProviders" class="byok-providers">
+            <div class="byok-loading">Loading providers...</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="modal-btn secondary" onclick="closeUserSettings()">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Delete Confirmation Modal -->
   <div class="modal-overlay" id="deleteConfirmModal">
     <div class="modal" style="max-width: 400px;">
@@ -1726,6 +1968,12 @@ export function getLayoutHTML(options: {
                 <div class="user-email">\${email}</div>
                 <div class="user-tier">Free tier</div>
               </div>
+              <button class="settings-btn" onclick="openUserSettings()" title="Settings">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="3"></circle>
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>
+              </button>
               <button class="signout-btn" onclick="signOut()" title="Sign out">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
@@ -1749,6 +1997,207 @@ export function getLayoutHTML(options: {
       localStorage.removeItem('ultralight_token');
       window.location.reload();
     };
+
+    // ============================================
+    // User Settings (BYOK)
+    // ============================================
+    const userSettingsModal = document.getElementById('userSettingsModal');
+    const byokProviders = document.getElementById('byokProviders');
+    const byokMessage = document.getElementById('byokMessage');
+    let byokData = null;
+
+    // Provider icons
+    const PROVIDER_ICONS = {
+      openrouter: '🌐',
+      openai: '🤖',
+      anthropic: '🧠',
+      deepseek: '🔍',
+      moonshot: '🌙'
+    };
+
+    window.openUserSettings = async function() {
+      userSettingsModal.classList.add('open');
+      await loadBYOKConfig();
+    };
+
+    window.closeUserSettings = function() {
+      userSettingsModal.classList.remove('open');
+      byokMessage.style.display = 'none';
+    };
+
+    async function loadBYOKConfig() {
+      if (!authToken) return;
+
+      byokProviders.innerHTML = '<div class="byok-loading">Loading providers...</div>';
+
+      try {
+        const res = await fetch('/api/user/byok', {
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+
+        if (!res.ok) throw new Error('Failed to load BYOK config');
+
+        byokData = await res.json();
+        renderBYOKProviders();
+      } catch (err) {
+        console.error('Failed to load BYOK config:', err);
+        byokProviders.innerHTML = '<div class="byok-loading" style="color: var(--error-color);">Failed to load providers</div>';
+      }
+    }
+
+    function renderBYOKProviders() {
+      if (!byokData) return;
+
+      const { enabled, primary_provider, configs, available_providers } = byokData;
+
+      // Create a map of configured providers
+      const configuredMap = {};
+      configs.forEach(c => { configuredMap[c.provider] = c; });
+
+      const html = available_providers.map(provider => {
+        const isConfigured = !!configuredMap[provider.id];
+        const isPrimary = primary_provider === provider.id;
+        const config = configuredMap[provider.id];
+
+        return \`
+          <div class="byok-provider-card \${isConfigured ? 'configured' : ''} \${isPrimary ? 'primary' : ''}" data-provider="\${provider.id}">
+            <div class="byok-provider-header">
+              <div class="byok-provider-info">
+                <div class="byok-provider-icon">\${PROVIDER_ICONS[provider.id] || '🔑'}</div>
+                <div>
+                  <div class="byok-provider-name">\${provider.name}</div>
+                  <div class="byok-provider-desc">\${provider.description}</div>
+                </div>
+              </div>
+              <div class="byok-provider-actions">
+                \${isPrimary ? '<span class="byok-status primary">Primary</span>' : ''}
+                \${isConfigured && !isPrimary ? '<span class="byok-status configured">Configured</span>' : ''}
+              </div>
+            </div>
+
+            \${isConfigured ? \`
+              <div class="byok-key-input">
+                <input type="password" placeholder="••••••••••••••••" disabled value="configured" />
+                \${!isPrimary ? \`<button class="byok-btn byok-btn-secondary" onclick="setPrimaryProvider('\${provider.id}')">Set Primary</button>\` : ''}
+                <button class="byok-btn byok-btn-danger" onclick="removeProvider('\${provider.id}')">Remove</button>
+              </div>
+              <div class="byok-help">
+                Added \${config.added_at ? new Date(config.added_at).toLocaleDateString() : 'recently'} ·
+                <a href="\${provider.docsUrl}" target="_blank">Docs</a>
+              </div>
+            \` : \`
+              <div class="byok-key-input">
+                <input type="password" id="key-\${provider.id}" placeholder="Paste your API key here" />
+                <button class="byok-btn byok-btn-primary" onclick="addProvider('\${provider.id}')">Add Key</button>
+              </div>
+              <div class="byok-help">
+                <a href="\${provider.apiKeyUrl}" target="_blank">Get your API key →</a>
+              </div>
+            \`}
+          </div>
+        \`;
+      }).join('');
+
+      byokProviders.innerHTML = html;
+    }
+
+    window.addProvider = async function(providerId) {
+      const input = document.getElementById(\`key-\${providerId}\`);
+      const apiKey = input?.value?.trim();
+
+      if (!apiKey) {
+        showBYOKMessage('Please enter an API key', 'error');
+        return;
+      }
+
+      const btn = input.nextElementSibling;
+      btn.disabled = true;
+      btn.textContent = 'Adding...';
+
+      try {
+        const res = await fetch('/api/user/byok', {
+          method: 'POST',
+          headers: {
+            'Authorization': \`Bearer \${authToken}\`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ provider: providerId, api_key: apiKey })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || 'Failed to add provider');
+        }
+
+        showBYOKMessage(data.message || 'Provider added successfully', 'success');
+        await loadBYOKConfig();
+      } catch (err) {
+        showBYOKMessage(err.message, 'error');
+        btn.disabled = false;
+        btn.textContent = 'Add Key';
+      }
+    };
+
+    window.removeProvider = async function(providerId) {
+      if (!confirm('Remove this API key? You can add it again later.')) return;
+
+      try {
+        const res = await fetch(\`/api/user/byok/\${providerId}\`, {
+          method: 'DELETE',
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || 'Failed to remove provider');
+        }
+
+        showBYOKMessage(data.message || 'Provider removed', 'success');
+        await loadBYOKConfig();
+      } catch (err) {
+        showBYOKMessage(err.message, 'error');
+      }
+    };
+
+    window.setPrimaryProvider = async function(providerId) {
+      try {
+        const res = await fetch('/api/user/byok/primary', {
+          method: 'POST',
+          headers: {
+            'Authorization': \`Bearer \${authToken}\`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ provider: providerId })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || 'Failed to set primary provider');
+        }
+
+        showBYOKMessage(data.message || 'Primary provider updated', 'success');
+        await loadBYOKConfig();
+      } catch (err) {
+        showBYOKMessage(err.message, 'error');
+      }
+    };
+
+    function showBYOKMessage(message, type) {
+      byokMessage.textContent = message;
+      byokMessage.className = \`byok-message \${type}\`;
+      byokMessage.style.display = 'block';
+      setTimeout(() => { byokMessage.style.display = 'none'; }, 5000);
+    }
+
+    // Close modal on overlay click
+    userSettingsModal.addEventListener('click', (e) => {
+      if (e.target === userSettingsModal) {
+        closeUserSettings();
+      }
+    });
 
     // ============================================
     // Apps List
