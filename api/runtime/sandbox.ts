@@ -1565,15 +1565,37 @@ export async function executeInSandbox(
       const contextKeys = Object.keys(context);
       const contextValues = Object.values(context);
 
+      // The bundled code uses IIFE format with --global-name=__exports
+      // This means exports are available on the __exports object, e.g.:
+      // var __exports = (() => { ... return { addTweet, getTweet, ... }; })();
+      //
+      // We need to check both direct scope (for legacy/unbundled code) and __exports
       const wrapperCode = `
         "use strict";
         ${config.code}
 
-        if (typeof ${functionName} !== 'function') {
-          throw new Error('Function "${functionName}" not found');
+        // Check for the function - could be a direct variable or on __exports (IIFE bundle)
+        let __targetFn = null;
+
+        // First check __exports (IIFE bundled code)
+        if (typeof __exports !== 'undefined' && __exports !== null && typeof __exports["${functionName}"] === 'function') {
+          __targetFn = __exports["${functionName}"];
+        }
+        // Then check if it's a direct variable (unbundled or simple code)
+        else if (typeof ${functionName} === 'function') {
+          __targetFn = ${functionName};
         }
 
-        return ${functionName}(...args);
+        if (!__targetFn) {
+          // List available functions for debugging
+          let available = [];
+          if (typeof __exports !== 'undefined' && __exports !== null) {
+            available = Object.keys(__exports).filter(k => typeof __exports[k] === 'function');
+          }
+          throw new Error('Function "${functionName}" not found. Available functions: ' + (available.length > 0 ? available.join(', ') : 'none'));
+        }
+
+        return __targetFn(...args);
       `;
 
       const AsyncFunction = Object.getPrototypeOf(async function() {}).constructor;

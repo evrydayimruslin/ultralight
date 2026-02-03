@@ -78,7 +78,8 @@ export async function bundleCode(
     }
 
     // Run esbuild via Deno subprocess
-    // Use ESM format for storage - transformation happens at runtime for server apps
+    // Use IIFE format - this is critical for sandbox execution via AsyncFunction
+    // ESM format produces import statements which AsyncFunction cannot execute
     const entryPath = `${tempDir}/${entryPoint}`;
     const outPath = `${tempDir}/bundle.js`;
 
@@ -91,7 +92,8 @@ export async function bundleCode(
       'esbuild',
       entryPath,
       '--bundle',
-      '--format=esm',
+      '--format=iife',  // IIFE format for AsyncFunction compatibility (no import statements)
+      '--global-name=__exports',  // Put exports on __exports object so we can extract them
       '--platform=browser',  // Use browser platform for client-side apps
       '--target=esnext',
       `--outfile=${outPath}`,
@@ -221,10 +223,33 @@ function detectExternalImports(code: string): boolean {
 
 /**
  * Post-process bundled code for our runtime
+ *
+ * IIFE bundles with --global-name=__exports produce code like:
+ * var __exports = (() => { ... return { funcA, funcB }; })();
+ *
+ * We need to extract those exports so they're accessible as top-level variables
+ * for the sandbox's AsyncFunction execution context.
+ *
+ * The sandbox wrapper looks like:
+ * ```
+ * "use strict";
+ * ${bundledCode}       <- this is what we're post-processing
+ * return functionName(...args);
+ * ```
+ *
+ * So we need exports to be available as variables at that scope level.
+ * We achieve this by dynamically assigning __exports properties to the
+ * function's scope using eval-free techniques.
  */
 function postProcessBundle(code: string): string {
   // Remove any import.meta references that might cause issues
   let processed = code.replace(/import\.meta\.url/g, '"file://ultralight-app"');
+
+  // For IIFE format with --global-name=__exports, the exports are on __exports object.
+  // The sandbox will handle extracting these to the execution scope.
+  // We don't need to do anything extra here - the sandbox wrapper will be updated
+  // to handle __exports.
+
   return processed;
 }
 
