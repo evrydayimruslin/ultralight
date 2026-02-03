@@ -1321,10 +1321,36 @@ export async function executeInSandbox(
       },
 
       // APP DATA - R2-based, zero config
-      store: async (key: string, value: unknown) => {
-        await config.appDataService.store(key, value);
-        capturedConsole.log(`[SDK] store("${key}")`);
-      },
+      // Support both direct functions (store, load, remove, list) and
+      // object notation (store.set, store.get, store.list, store.remove)
+      // for backwards compatibility with different app implementations
+      store: Object.assign(
+        async (key: string, value: unknown) => {
+          await config.appDataService.store(key, value);
+          capturedConsole.log(`[SDK] store("${key}")`);
+        },
+        {
+          // Object notation: ultralight.store.set(), ultralight.store.get(), etc.
+          set: async (key: string, value: unknown) => {
+            await config.appDataService.store(key, value);
+            capturedConsole.log(`[SDK] store.set("${key}")`);
+          },
+          get: async (key: string) => {
+            const value = await config.appDataService.load(key);
+            capturedConsole.log(`[SDK] store.get("${key}")`);
+            return value;
+          },
+          remove: async (key: string) => {
+            await config.appDataService.remove(key);
+            capturedConsole.log(`[SDK] store.remove("${key}")`);
+          },
+          list: async (prefix?: string) => {
+            const keys = await config.appDataService.list(prefix);
+            capturedConsole.log(`[SDK] store.list(${prefix ? `"${prefix}"` : ''})`);
+            return keys;
+          },
+        }
+      ),
       load: async (key: string) => {
         const value = await config.appDataService.load(key);
         capturedConsole.log(`[SDK] load("${key}")`);
