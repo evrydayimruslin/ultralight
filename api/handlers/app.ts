@@ -33,7 +33,7 @@ export function createApp() {
 
       // Health check - includes deploy timestamp to verify we're running latest code
       if (path === '/health') {
-        return json({ status: 'ok', version: '0.2.1', deployed: new Date().toISOString(), tsx_fix: true });
+        return json({ status: 'ok', version: '0.2.2', deployed: new Date().toISOString(), app_type_fix: true });
       }
 
       // Debug endpoint - test auth and database connection
@@ -211,30 +211,26 @@ export function createApp() {
           }
 
           // Detect app type:
-          // - Server/MCP apps: Have exported functions but no default export (or default is not a UI component)
-          // - Browser apps: Have a default export that's a function/component for rendering UI
+          // - HTTP Server apps: Have a handler function for direct HTTP request handling
+          // - Browser apps: Have a default export (React UI component)
+          // - MCP-only apps: Only have named function exports, no default export, no handler
           //
-          // Server apps are detected by:
-          // 1. Explicit handler function pattern
-          // 2. Named exports without a default export (MCP functions)
-          // 3. Uses server-only APIs (supabase, ultralight.ai, etc.)
+          // Priority: handler function > default export (UI) > named exports only (MCP)
           const hasDefaultExport = /export\s+default\s+/.test(code) || /export\s*\{[^}]*default[^}]*\}/.test(code);
-          const hasNamedExports = /export\s*\{/.test(code);
           const hasHandlerFunction =
             /export\s+(default\s+)?(async\s+)?function\s+handler\s*\(/.test(code) ||
             /export\s+default\s+handler/.test(code) ||
             /export\s+\{\s*handler\s*\}/.test(code) ||
             /^(async\s+)?function\s+handler\s*\(/m.test(code) ||
             /var\s+handler\s*=/.test(code);
-          const usesServerApis = /supabase\.|ultralight\.ai\(|ultralight\.remember\(/.test(code);
 
-          // Determine app type:
-          // 1. HTTP Server app - has handler function
-          // 2. MCP-only app - has named exports but no handler (pure MCP functions)
-          // 3. Browser app - has default export (UI component)
+          // Determine app type with clear priority:
+          // 1. HTTP Server app - has handler function (highest priority)
+          // 2. Browser app - has default export (React/UI component)
+          // 3. MCP-only app - everything else (only named exports, no UI)
           const isHttpServerApp = hasHandlerFunction;
-          const isMcpOnlyApp = !hasHandlerFunction && (hasNamedExports && !hasDefaultExport || usesServerApis);
-          const isBrowserApp = !isHttpServerApp && !isMcpOnlyApp;
+          const isBrowserApp = !isHttpServerApp && hasDefaultExport;
+          const isMcpOnlyApp = !isHttpServerApp && !isBrowserApp;
 
           if (isHttpServerApp) {
             // HTTP Server app - execute handler function
