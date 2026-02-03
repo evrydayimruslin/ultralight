@@ -221,21 +221,41 @@ export function createApp() {
             /var\s+handler\s*=/.test(code);
           const usesServerApis = /supabase\.|ultralight\.ai\(|ultralight\.remember\(/.test(code);
 
-          // Server app if: has handler, OR (has named exports without default export), OR uses server APIs
-          const isServerApp = hasHandlerFunction ||
-            (hasNamedExports && !hasDefaultExport) ||
-            usesServerApis ||
-            /__ultralight_exports__/.test(code);
+          // Determine app type:
+          // 1. HTTP Server app - has handler function
+          // 2. MCP-only app - has named exports but no handler (pure MCP functions)
+          // 3. Browser app - has default export (UI component)
+          const isHttpServerApp = hasHandlerFunction;
+          const isMcpOnlyApp = !hasHandlerFunction && (hasNamedExports && !hasDefaultExport || usesServerApis);
+          const isBrowserApp = !isHttpServerApp && !isMcpOnlyApp;
 
-          if (isServerApp) {
-            // Check for embed mode (used by iframe in sidebar)
+          if (isHttpServerApp) {
+            // HTTP Server app - execute handler function
             const isEmbed = url.searchParams.get('embed') === '1';
 
             if (isEmbed || method !== 'GET' || (subPath !== '/' && subPath !== '')) {
-              // Embed mode OR non-GET request OR subpath: execute server app directly
               return await executeServerApp(code, request, appId, subPath);
             } else {
-              // Normal GET to root: serve with sidebar layout, app loads via iframe
+              return new Response(getLayoutHTML({
+                title: app.name || app.slug,
+                activeAppId: appId,
+                initialView: 'app',
+                appName: app.name || app.slug,
+              }), {
+                headers: { 'Content-Type': 'text/html' },
+              });
+            }
+          } else if (isMcpOnlyApp) {
+            // MCP-only app - show info page with available tools
+            const isEmbed = url.searchParams.get('embed') === '1';
+
+            if (isEmbed) {
+              // Return an info page for the iframe showing MCP tools
+              return new Response(getMcpAppInfoHTML(appId, app.name || app.slug, app.skills_parsed || []), {
+                headers: { 'Content-Type': 'text/html' },
+              });
+            } else {
+              // Normal view with sidebar
               return new Response(getLayoutHTML({
                 title: app.name || app.slug,
                 activeAppId: appId,
@@ -347,6 +367,145 @@ async function executeServerApp(
       message: err instanceof Error ? err.message : String(err),
     }, 500);
   }
+}
+
+/**
+ * Generate an info page for MCP-only apps
+ * Shows available tools and how to use them
+ */
+function getMcpAppInfoHTML(appId: string, appName: string, skills: Array<{ name: string; description?: string; parameters?: unknown[] }>): string {
+  const toolsList = skills.length > 0
+    ? skills.map(s => `
+      <div class="tool-item">
+        <div class="tool-name">${s.name}</div>
+        ${s.description ? `<div class="tool-desc">${s.description}</div>` : ''}
+      </div>
+    `).join('')
+    : '<p class="no-tools">No tools documented yet. Generate documentation in app settings.</p>';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${appName} - MCP App</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0a0f;
+      color: #e4e4e7;
+      padding: 2rem;
+      min-height: 100vh;
+    }
+    .container { max-width: 600px; margin: 0 auto; }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    .icon {
+      width: 48px;
+      height: 48px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+    }
+    h1 { font-size: 1.5rem; font-weight: 600; }
+    .badge {
+      display: inline-block;
+      background: rgba(139, 92, 246, 0.2);
+      color: #a78bfa;
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      margin-top: 0.5rem;
+    }
+    .section {
+      background: #18181b;
+      border: 1px solid #27272a;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .section-title {
+      font-size: 0.875rem;
+      color: #71717a;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 1rem;
+    }
+    .mcp-url {
+      background: #09090b;
+      border: 1px solid #27272a;
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      font-family: monospace;
+      font-size: 0.875rem;
+      color: #a78bfa;
+      word-break: break-all;
+    }
+    .tool-item {
+      padding: 0.75rem 0;
+      border-bottom: 1px solid #27272a;
+    }
+    .tool-item:last-child { border-bottom: none; }
+    .tool-name {
+      font-family: monospace;
+      color: #22c55e;
+      font-weight: 500;
+    }
+    .tool-desc {
+      font-size: 0.875rem;
+      color: #71717a;
+      margin-top: 0.25rem;
+    }
+    .no-tools { color: #71717a; font-style: italic; }
+    .info-text {
+      font-size: 0.875rem;
+      color: #71717a;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="icon">🔧</div>
+      <div>
+        <h1>${appName}</h1>
+        <span class="badge">MCP Server</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">MCP Endpoint</div>
+      <div class="mcp-url">${typeof location !== 'undefined' ? location.origin : ''}/mcp/${appId}</div>
+      <p class="info-text" style="margin-top: 1rem;">
+        Connect to this app using any MCP-compatible client (Claude Desktop, Cursor, etc.)
+      </p>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Available Tools (${skills.length})</div>
+      ${toolsList}
+    </div>
+
+    <div class="section">
+      <p class="info-text">
+        This is an MCP (Model Context Protocol) app. It provides tools that AI assistants
+        can use to perform actions. Add the MCP endpoint URL to your client's configuration
+        to start using these tools.
+      </p>
+    </div>
+  </div>
+</body>
+</html>`;
 }
 
 export function json(data: unknown, status = 200): Response {
