@@ -1628,10 +1628,9 @@ export async function executeInSandbox(
       http,        // HTTP response helpers
     };
 
-    // Add Supabase client if configured
-    if (supabaseClient) {
-      context.supabase = supabaseClient;
-    }
+    // Add Supabase client if configured (or null placeholder)
+    // Always include in context so wrapper code can reference it
+    context.supabase = supabaseClient || null;
 
     // Create a custom globalThis that has ultralight, supabase, uuid, and _ set
     // This is needed because app code often does: const ultralight = globalThis.ultralight
@@ -1705,8 +1704,8 @@ export async function executeInSandbox(
         globalThis.console = console;
         globalThis.fetch = fetch;
         globalThis.require = require;
-        // Only set supabase if it's configured (it might be undefined for apps using R2 storage)
-        if (typeof supabase !== 'undefined') {
+        // Only set supabase if it's configured (it might be null for apps using R2 storage)
+        if (supabase !== null) {
           globalThis.supabase = supabase;
         }
 
