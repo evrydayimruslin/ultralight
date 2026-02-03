@@ -92,6 +92,11 @@ export interface App {
   // HTTP endpoint settings
   http_rate_limit: number;
   http_enabled: boolean;
+  // Supabase integration (BYOS - Bring Your Own Supabase)
+  supabase_url: string | null;
+  supabase_anon_key_encrypted: string | null;
+  supabase_service_key_encrypted: string | null;
+  supabase_enabled: boolean;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;

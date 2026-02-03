@@ -11,7 +11,7 @@ import { executeInSandbox, type UserContext } from '../runtime/sandbox.ts';
 import { createR2Service } from '../services/storage.ts';
 import { createUserService } from '../services/user.ts';
 import { createAIService } from '../services/ai.ts';
-import { decryptEnvVars } from '../services/envvars.ts';
+import { decryptEnvVars, decryptEnvVar } from '../services/envvars.ts';
 import type {
   MCPTool,
   MCPJsonSchema,
@@ -772,6 +772,24 @@ async function executeAppFunction(
       // Continue with empty env vars
     }
 
+    // Decrypt Supabase config if enabled
+    const appRecord = app as Record<string, unknown>;
+    let supabaseConfig: { url: string; anonKey: string; serviceKey?: string } | undefined;
+    if (appRecord.supabase_enabled && appRecord.supabase_url && appRecord.supabase_anon_key_encrypted) {
+      try {
+        const anonKey = await decryptEnvVar(appRecord.supabase_anon_key_encrypted as string);
+        supabaseConfig = {
+          url: appRecord.supabase_url as string,
+          anonKey,
+        };
+        if (appRecord.supabase_service_key_encrypted) {
+          supabaseConfig.serviceKey = await decryptEnvVar(appRecord.supabase_service_key_encrypted as string);
+        }
+      } catch (err) {
+        console.error('Failed to decrypt Supabase config:', err);
+      }
+    }
+
     // Execute in sandbox
     const result = await executeInSandbox(
       {
@@ -786,6 +804,7 @@ async function executeAppFunction(
         memoryService: null,
         aiService: aiServiceInstance as { call: (request: import('../../shared/types/index.ts').AIRequest, apiKey: string) => Promise<import('../../shared/types/index.ts').AIResponse> },
         envVars,
+        supabase: supabaseConfig,
       },
       functionName,
       argsArray

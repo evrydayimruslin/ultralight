@@ -1895,6 +1895,7 @@ export function getLayoutHTML(options: {
       <div class="settings-tabs">
         <button class="settings-tab active" data-tab="general">General</button>
         <button class="settings-tab" data-tab="env">Environment</button>
+        <button class="settings-tab" data-tab="database">Database</button>
         <button class="settings-tab" data-tab="mcp">MCP & Skills</button>
         <button class="settings-tab" data-tab="draft">Draft & Publish</button>
       </div>
@@ -2005,6 +2006,86 @@ const dbUrl = ultralight.env.DATABASE_URL;
 if (ultralight.env.FEATURE_FLAG) {
   // Feature enabled
 }</div>
+          </div>
+        </div>
+
+        <!-- Database Tab (Supabase) -->
+        <div class="settings-tab-content" id="tab-database">
+          <div class="settings-section">
+            <div class="settings-section-title">Supabase Integration</div>
+            <div class="info-box">
+              Connect your own Supabase project to enable real database access with SQL, auth, and real-time features.
+              Your credentials are encrypted and only accessible at runtime.
+            </div>
+
+            <div class="settings-field">
+              <label for="supabaseUrl">Supabase URL</label>
+              <input type="text" id="supabaseUrl" class="settings-input" placeholder="https://xxxxx.supabase.co" />
+            </div>
+
+            <div class="settings-field">
+              <label for="supabaseAnonKey">Anon Key (public)</label>
+              <div style="display: flex; gap: 0.5rem;">
+                <input type="password" id="supabaseAnonKey" class="settings-input" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." style="flex: 1;" />
+                <button class="env-var-toggle-visibility" onclick="toggleSupabaseKeyVisibility('supabaseAnonKey')" title="Toggle visibility">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                </button>
+              </div>
+              <span class="env-vars-limits">Required for client-side operations. Safe to expose.</span>
+            </div>
+
+            <div class="settings-field">
+              <label for="supabaseServiceKey">Service Role Key (optional)</label>
+              <div style="display: flex; gap: 0.5rem;">
+                <input type="password" id="supabaseServiceKey" class="settings-input" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." style="flex: 1;" />
+                <button class="env-var-toggle-visibility" onclick="toggleSupabaseKeyVisibility('supabaseServiceKey')" title="Toggle visibility">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                </button>
+              </div>
+              <span class="env-vars-limits" style="color: var(--warning-color);">⚠️ Grants full database access. Only use for admin operations.</span>
+            </div>
+
+            <div class="settings-field">
+              <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                <input type="checkbox" id="supabaseEnabled" style="width: 16px; height: 16px;" />
+                <span>Enable Supabase</span>
+              </label>
+              <span class="env-vars-limits">When enabled, a pre-configured Supabase client is available as <code>supabase</code> in your code.</span>
+            </div>
+
+            <div id="supabaseStatus" class="skills-status" style="display: none;"></div>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-section-title">Usage in Code</div>
+            <div class="quick-ref-code" style="font-size: 0.8125rem; padding: 1rem;">// Option 1: Use the pre-configured client (recommended)
+const { data, error } = await supabase
+  .from('posts')
+  .select('*')
+  .eq('user_id', ultralight.user.id);
+
+// Option 2: Import and configure manually
+import { createClient } from '@supabase/supabase-js';
+const client = createClient(
+  ultralight.env.SUPABASE_URL,
+  ultralight.env.SUPABASE_ANON_KEY
+);</div>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-action-btn danger" id="removeSupabaseBtn" style="width: fit-content;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+              Remove Supabase Configuration
+            </div>
           </div>
         </div>
 
@@ -2737,6 +2818,9 @@ await hash.sha256('data')</div>
       // Load environment variables
       loadEnvVars(appId);
 
+      // Load Supabase configuration
+      loadSupabaseConfig(appId);
+
       // Published version
       document.getElementById('publishedVersion').textContent = settingsApp.current_version || '1.0.0';
 
@@ -3070,6 +3154,166 @@ await hash.sha256('data')</div>
       }
     }
 
+    // ============================================
+    // Supabase Configuration
+    // ============================================
+    let supabaseConfigLoaded = false;
+    let supabaseConfigChanged = false;
+
+    async function loadSupabaseConfig(appId) {
+      const urlInput = document.getElementById('supabaseUrl');
+      const anonKeyInput = document.getElementById('supabaseAnonKey');
+      const serviceKeyInput = document.getElementById('supabaseServiceKey');
+      const enabledCheckbox = document.getElementById('supabaseEnabled');
+      const status = document.getElementById('supabaseStatus');
+
+      try {
+        const res = await fetch(\`/api/apps/\${appId}/supabase\`, {
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+
+        if (!res.ok) {
+          if (res.status === 403) {
+            status.textContent = 'You don\\'t have permission to manage Supabase for this app.';
+            status.className = 'skills-status error';
+            status.style.display = 'block';
+            return;
+          }
+          throw new Error('Failed to load Supabase config');
+        }
+
+        const data = await res.json();
+
+        urlInput.value = data.url || '';
+        anonKeyInput.value = ''; // Don't show actual key
+        anonKeyInput.placeholder = data.has_anon_key ? '••••••••••••••••' : 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...';
+        serviceKeyInput.value = '';
+        serviceKeyInput.placeholder = data.has_service_key ? '••••••••••••••••' : 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...';
+        enabledCheckbox.checked = data.enabled || false;
+
+        supabaseConfigLoaded = true;
+        supabaseConfigChanged = false;
+
+        // Show status if configured
+        if (data.url && data.has_anon_key) {
+          status.textContent = '✓ Supabase configured' + (data.enabled ? ' and enabled' : ' (disabled)');
+          status.className = 'skills-status ' + (data.enabled ? 'success' : 'info');
+          status.style.display = 'block';
+        } else {
+          status.style.display = 'none';
+        }
+
+      } catch (err) {
+        console.error('Failed to load Supabase config:', err);
+        status.textContent = 'Failed to load Supabase configuration';
+        status.className = 'skills-status error';
+        status.style.display = 'block';
+      }
+    }
+
+    // Track changes to Supabase config
+    ['supabaseUrl', 'supabaseAnonKey', 'supabaseServiceKey', 'supabaseEnabled'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener('change', () => { supabaseConfigChanged = true; });
+        el.addEventListener('input', () => { supabaseConfigChanged = true; });
+      }
+    });
+
+    async function saveSupabaseConfig() {
+      if (!settingsAppId || !supabaseConfigChanged) {
+        return true; // Nothing to save
+      }
+
+      const urlInput = document.getElementById('supabaseUrl');
+      const anonKeyInput = document.getElementById('supabaseAnonKey');
+      const serviceKeyInput = document.getElementById('supabaseServiceKey');
+      const enabledCheckbox = document.getElementById('supabaseEnabled');
+
+      const payload = {
+        enabled: enabledCheckbox.checked,
+      };
+
+      // Only include URL if it changed
+      const url = urlInput.value.trim();
+      if (url) {
+        payload.url = url;
+      }
+
+      // Only include keys if they were entered (not placeholder)
+      if (anonKeyInput.value && anonKeyInput.value !== '') {
+        payload.anon_key = anonKeyInput.value;
+      }
+      if (serviceKeyInput.value && serviceKeyInput.value !== '') {
+        payload.service_key = serviceKeyInput.value;
+      }
+
+      try {
+        const res = await fetch(\`/api/apps/\${settingsAppId}/supabase\`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': \`Bearer \${authToken}\`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || 'Failed to save Supabase config');
+        }
+
+        supabaseConfigChanged = false;
+        return true;
+      } catch (err) {
+        console.error('Failed to save Supabase config:', err);
+        showToast(err.message || 'Failed to save Supabase configuration', 'error');
+        return false;
+      }
+    }
+
+    window.toggleSupabaseKeyVisibility = function(inputId) {
+      const input = document.getElementById(inputId);
+      if (input.type === 'password') {
+        input.type = 'text';
+      } else {
+        input.type = 'password';
+      }
+    };
+
+    // Remove Supabase configuration
+    document.getElementById('removeSupabaseBtn')?.addEventListener('click', async () => {
+      if (!settingsAppId || !authToken) return;
+
+      if (!confirm('Are you sure you want to remove Supabase configuration? This cannot be undone.')) {
+        return;
+      }
+
+      try {
+        const res = await fetch(\`/api/apps/\${settingsAppId}/supabase\`, {
+          method: 'DELETE',
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+
+        if (!res.ok) throw new Error('Failed to remove Supabase config');
+
+        // Clear form
+        document.getElementById('supabaseUrl').value = '';
+        document.getElementById('supabaseAnonKey').value = '';
+        document.getElementById('supabaseServiceKey').value = '';
+        document.getElementById('supabaseEnabled').checked = false;
+
+        const status = document.getElementById('supabaseStatus');
+        status.textContent = 'Supabase configuration removed';
+        status.className = 'skills-status info';
+        status.style.display = 'block';
+
+        showToast('Supabase configuration removed');
+      } catch (err) {
+        showToast('Failed to remove Supabase configuration', 'error');
+      }
+    });
+
     // Copy MCP Endpoint
     document.getElementById('copyMcpBtn')?.addEventListener('click', async () => {
       const url = document.getElementById('mcpEndpointUrl').textContent;
@@ -3374,6 +3618,12 @@ await hash.sha256('data')</div>
         const envSaved = await saveEnvVars();
         if (!envSaved) {
           throw new Error('Failed to save environment variables');
+        }
+
+        // Save Supabase configuration
+        const supabaseSaved = await saveSupabaseConfig();
+        if (!supabaseSaved) {
+          throw new Error('Failed to save Supabase configuration');
         }
 
         showToast('Settings saved successfully');

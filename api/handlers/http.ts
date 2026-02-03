@@ -7,7 +7,7 @@ import { createAppDataService } from '../services/appdata.ts';
 import { createR2Service } from '../services/storage.ts';
 import { createUserService } from '../services/user.ts';
 import { createAIService } from '../services/ai.ts';
-import { decryptEnvVars } from '../services/envvars.ts';
+import { decryptEnvVars, decryptEnvVar } from '../services/envvars.ts';
 import { executeInSandbox, type UserContext } from '../runtime/sandbox.ts';
 
 // @ts-ignore - Deno is available in Deno Deploy
@@ -96,6 +96,24 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
       envVars = await decryptEnvVars(encryptedEnvVars);
     } catch (err) {
       console.error('Failed to decrypt env vars:', err);
+    }
+
+    // Decrypt Supabase config if enabled
+    const appRecord = app as Record<string, unknown>;
+    let supabaseConfig: { url: string; anonKey: string; serviceKey?: string } | undefined;
+    if (appRecord.supabase_enabled && appRecord.supabase_url && appRecord.supabase_anon_key_encrypted) {
+      try {
+        const anonKey = await decryptEnvVar(appRecord.supabase_anon_key_encrypted as string);
+        supabaseConfig = {
+          url: appRecord.supabase_url as string,
+          anonKey,
+        };
+        if (appRecord.supabase_service_key_encrypted) {
+          supabaseConfig.serviceKey = await decryptEnvVar(appRecord.supabase_service_key_encrypted as string);
+        }
+      } catch (err) {
+        console.error('Failed to decrypt Supabase config:', err);
+      }
     }
 
     // Extract basic user context from Authorization header if present
@@ -199,6 +217,7 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
         memoryService: null,
         aiService: aiService as { call: (request: import('../../shared/types/index.ts').AIRequest, apiKey: string) => Promise<import('../../shared/types/index.ts').AIResponse> },
         envVars,
+        supabase: supabaseConfig,
       },
       functionName,
       [ultralightRequest]

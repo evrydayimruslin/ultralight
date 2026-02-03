@@ -43,6 +43,12 @@ export interface RuntimeConfig {
   aiService: AIService;
   // Decrypted environment variables (injected as ultralight.env)
   envVars: Record<string, string>;
+  // Supabase configuration (decrypted)
+  supabase?: {
+    url: string;
+    anonKey: string;
+    serviceKey?: string;
+  };
 }
 
 export interface AppDataService {
@@ -964,6 +970,301 @@ const http = {
   },
 };
 
+/**
+ * Create a lightweight Supabase client
+ * Provides core functionality compatible with @supabase/supabase-js
+ */
+function createSupabaseClient(
+  supabaseUrl: string,
+  anonKey: string,
+  serviceKey: string | undefined,
+  fetchFn: typeof fetch
+) {
+  const apiUrl = `${supabaseUrl}/rest/v1`;
+  const authUrl = `${supabaseUrl}/auth/v1`;
+
+  // Use service key if available, otherwise anon key
+  const apiKey = serviceKey || anonKey;
+
+  const headers = {
+    'apikey': anonKey, // Always use anon key for apikey header
+    'Authorization': `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+    'Prefer': 'return=representation',
+  };
+
+  // Query builder for .from() calls
+  function createQueryBuilder(table: string) {
+    let queryParts: string[] = [];
+    let selectColumns = '*';
+    let bodyData: unknown = null;
+    let method = 'GET';
+    let singleResult = false;
+    let countOption: string | null = null;
+    let preferHeaders: string[] = ['return=representation'];
+
+    const builder = {
+      select: (columns = '*', options?: { count?: 'exact' | 'planned' | 'estimated' }) => {
+        selectColumns = columns;
+        method = 'GET';
+        if (options?.count) {
+          countOption = options.count;
+          preferHeaders.push(`count=${options.count}`);
+        }
+        return builder;
+      },
+      insert: (data: unknown, options?: { defaultToNull?: boolean }) => {
+        bodyData = data;
+        method = 'POST';
+        if (options?.defaultToNull === false) {
+          preferHeaders.push('missing=default');
+        }
+        return builder;
+      },
+      update: (data: unknown) => {
+        bodyData = data;
+        method = 'PATCH';
+        return builder;
+      },
+      upsert: (data: unknown, options?: { onConflict?: string; ignoreDuplicates?: boolean }) => {
+        bodyData = data;
+        method = 'POST';
+        preferHeaders.push('resolution=merge-duplicates');
+        if (options?.onConflict) {
+          preferHeaders.push(`on_conflict=${options.onConflict}`);
+        }
+        if (options?.ignoreDuplicates) {
+          preferHeaders.push('resolution=ignore-duplicates');
+        }
+        return builder;
+      },
+      delete: () => {
+        method = 'DELETE';
+        return builder;
+      },
+      eq: (column: string, value: unknown) => {
+        queryParts.push(`${column}=eq.${encodeURIComponent(String(value))}`);
+        return builder;
+      },
+      neq: (column: string, value: unknown) => {
+        queryParts.push(`${column}=neq.${encodeURIComponent(String(value))}`);
+        return builder;
+      },
+      gt: (column: string, value: unknown) => {
+        queryParts.push(`${column}=gt.${encodeURIComponent(String(value))}`);
+        return builder;
+      },
+      gte: (column: string, value: unknown) => {
+        queryParts.push(`${column}=gte.${encodeURIComponent(String(value))}`);
+        return builder;
+      },
+      lt: (column: string, value: unknown) => {
+        queryParts.push(`${column}=lt.${encodeURIComponent(String(value))}`);
+        return builder;
+      },
+      lte: (column: string, value: unknown) => {
+        queryParts.push(`${column}=lte.${encodeURIComponent(String(value))}`);
+        return builder;
+      },
+      like: (column: string, pattern: string) => {
+        queryParts.push(`${column}=like.${encodeURIComponent(pattern)}`);
+        return builder;
+      },
+      ilike: (column: string, pattern: string) => {
+        queryParts.push(`${column}=ilike.${encodeURIComponent(pattern)}`);
+        return builder;
+      },
+      is: (column: string, value: null | boolean) => {
+        queryParts.push(`${column}=is.${value}`);
+        return builder;
+      },
+      in: (column: string, values: unknown[]) => {
+        queryParts.push(`${column}=in.(${values.map(v => encodeURIComponent(String(v))).join(',')})`);
+        return builder;
+      },
+      contains: (column: string, value: unknown) => {
+        queryParts.push(`${column}=cs.${encodeURIComponent(JSON.stringify(value))}`);
+        return builder;
+      },
+      containedBy: (column: string, value: unknown) => {
+        queryParts.push(`${column}=cd.${encodeURIComponent(JSON.stringify(value))}`);
+        return builder;
+      },
+      order: (column: string, options?: { ascending?: boolean; nullsFirst?: boolean }) => {
+        const direction = options?.ascending === false ? 'desc' : 'asc';
+        const nulls = options?.nullsFirst ? 'nullsfirst' : 'nullslast';
+        queryParts.push(`order=${column}.${direction}.${nulls}`);
+        return builder;
+      },
+      limit: (count: number) => {
+        queryParts.push(`limit=${count}`);
+        return builder;
+      },
+      range: (from: number, to: number) => {
+        preferHeaders.push(`offset=${from}`);
+        queryParts.push(`limit=${to - from + 1}`);
+        return builder;
+      },
+      single: () => {
+        singleResult = true;
+        preferHeaders.push('return=representation');
+        return builder;
+      },
+      maybeSingle: () => {
+        singleResult = true;
+        return builder;
+      },
+      // Execute the query
+      then: async (resolve: (result: { data: unknown; error: unknown; count?: number }) => void) => {
+        try {
+          let url = `${apiUrl}/${table}`;
+          if (method === 'GET' && selectColumns !== '*') {
+            queryParts.unshift(`select=${encodeURIComponent(selectColumns)}`);
+          }
+          if (queryParts.length > 0) {
+            url += '?' + queryParts.join('&');
+          }
+
+          const reqHeaders: Record<string, string> = {
+            ...headers,
+            'Prefer': preferHeaders.join(', '),
+          };
+
+          if (singleResult && method === 'GET') {
+            reqHeaders['Accept'] = 'application/vnd.pgrst.object+json';
+          }
+
+          const response = await fetchFn(url, {
+            method,
+            headers: reqHeaders,
+            body: bodyData ? JSON.stringify(bodyData) : undefined,
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ message: response.statusText }));
+            resolve({ data: null, error: errorData });
+            return;
+          }
+
+          let data = await response.json().catch(() => null);
+
+          // Handle count header
+          let count: number | undefined;
+          const contentRange = response.headers.get('content-range');
+          if (contentRange && countOption) {
+            const match = contentRange.match(/\/(\d+|\*)/);
+            if (match && match[1] !== '*') {
+              count = parseInt(match[1], 10);
+            }
+          }
+
+          // Handle single result
+          if (singleResult && Array.isArray(data)) {
+            data = data[0] || null;
+          }
+
+          resolve({ data, error: null, count });
+        } catch (err) {
+          resolve({ data: null, error: err });
+        }
+      },
+    };
+
+    return builder;
+  }
+
+  // RPC (stored procedures) builder
+  function createRpcBuilder(fnName: string, params?: Record<string, unknown>) {
+    return {
+      then: async (resolve: (result: { data: unknown; error: unknown }) => void) => {
+        try {
+          const url = `${apiUrl}/rpc/${fnName}`;
+          const response = await fetchFn(url, {
+            method: 'POST',
+            headers,
+            body: params ? JSON.stringify(params) : '{}',
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ message: response.statusText }));
+            resolve({ data: null, error: errorData });
+            return;
+          }
+
+          const data = await response.json().catch(() => null);
+          resolve({ data, error: null });
+        } catch (err) {
+          resolve({ data: null, error: err });
+        }
+      },
+    };
+  }
+
+  return {
+    from: (table: string) => createQueryBuilder(table),
+    rpc: (fnName: string, params?: Record<string, unknown>) => createRpcBuilder(fnName, params),
+
+    // Auth helpers (limited - mainly for reading user from JWT)
+    auth: {
+      getUser: async () => {
+        // In Ultralight context, user is available via ultralight.user
+        // This is a placeholder for compatibility
+        return { data: { user: null }, error: null };
+      },
+    },
+
+    // Storage helpers (basic)
+    storage: {
+      from: (bucket: string) => ({
+        upload: async (path: string, file: Blob | ArrayBuffer) => {
+          const storageUrl = `${supabaseUrl}/storage/v1/object/${bucket}/${path}`;
+          try {
+            const response = await fetchFn(storageUrl, {
+              method: 'POST',
+              headers: {
+                'apikey': anonKey,
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': file instanceof Blob ? file.type : 'application/octet-stream',
+              },
+              body: file,
+            });
+            if (!response.ok) {
+              const error = await response.json().catch(() => ({ message: response.statusText }));
+              return { data: null, error };
+            }
+            const data = await response.json();
+            return { data, error: null };
+          } catch (err) {
+            return { data: null, error: err };
+          }
+        },
+        download: async (path: string) => {
+          const storageUrl = `${supabaseUrl}/storage/v1/object/${bucket}/${path}`;
+          try {
+            const response = await fetchFn(storageUrl, {
+              headers: {
+                'apikey': anonKey,
+                'Authorization': `Bearer ${apiKey}`,
+              },
+            });
+            if (!response.ok) {
+              const error = await response.json().catch(() => ({ message: response.statusText }));
+              return { data: null, error };
+            }
+            const blob = await response.blob();
+            return { data: blob, error: null };
+          } catch (err) {
+            return { data: null, error: err };
+          }
+        },
+        getPublicUrl: (path: string) => {
+          return { data: { publicUrl: `${supabaseUrl}/storage/v1/object/public/${bucket}/${path}` } };
+        },
+      }),
+    },
+  };
+}
+
 // ============================================
 // SANDBOX EXECUTION
 // ============================================
@@ -1175,8 +1476,20 @@ export async function executeInSandbox(
       return await fetch(input, init);
     };
 
+    // Create Supabase client if configured
+    let supabaseClient: unknown = null;
+    if (config.supabase?.url && config.supabase?.anonKey) {
+      supabaseClient = createSupabaseClient(
+        config.supabase.url,
+        config.supabase.anonKey,
+        config.supabase.serviceKey,
+        openFetch
+      );
+      capturedConsole.log('[SDK] Supabase client initialized');
+    }
+
     // Build execution context with pre-bundled stdlib
-    const context = {
+    const context: Record<string, unknown> = {
       // SDK
       ultralight: sdk,
 
@@ -1239,6 +1552,11 @@ export async function executeInSandbox(
       jwt,         // JWT decoding (read-only)
       http,        // HTTP response helpers
     };
+
+    // Add Supabase client if configured
+    if (supabaseClient) {
+      context.supabase = supabaseClient;
+    }
 
     // Try to execute using Function constructor
     let userFunc: Function;

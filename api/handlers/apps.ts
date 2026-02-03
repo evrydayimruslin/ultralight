@@ -158,6 +158,21 @@ export async function handleApps(request: Request): Promise<Response> {
     if (envKeyMatch && method === 'DELETE') {
       return handleDeleteEnvVar(request, appId, envKeyMatch[1]);
     }
+
+    // GET /api/apps/:appId/supabase - Get Supabase configuration (masked)
+    if (subPath === '/supabase' && method === 'GET') {
+      return handleGetSupabaseConfig(request, appId);
+    }
+
+    // PUT /api/apps/:appId/supabase - Set Supabase configuration
+    if (subPath === '/supabase' && method === 'PUT') {
+      return handleSetSupabaseConfig(request, appId);
+    }
+
+    // DELETE /api/apps/:appId/supabase - Remove Supabase configuration
+    if (subPath === '/supabase' && method === 'DELETE') {
+      return handleDeleteSupabaseConfig(request, appId);
+    }
   }
 
   return error('Not found', 404);
@@ -1579,5 +1594,171 @@ async function handleDeleteEnvVar(request: Request, appId: string, key: string):
     }
     console.error('Failed to delete env var:', err);
     return error('Failed to delete environment variable', 500);
+  }
+}
+
+// ============================================
+// SUPABASE CONFIGURATION HANDLERS
+// ============================================
+
+/**
+ * Get Supabase configuration (masked)
+ * GET /api/apps/:appId/supabase
+ */
+async function handleGetSupabaseConfig(request: Request, appId: string): Promise<Response> {
+  try {
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+
+    const app = await appsService.findById(appId);
+    if (!app) {
+      return error('App not found', 404);
+    }
+
+    // Only owner can view Supabase config
+    if (app.owner_id !== user.id) {
+      return error('Unauthorized', 403);
+    }
+
+    const appRecord = app as Record<string, unknown>;
+
+    return json({
+      enabled: appRecord.supabase_enabled || false,
+      url: appRecord.supabase_url || null,
+      has_anon_key: !!appRecord.supabase_anon_key_encrypted,
+      has_service_key: !!appRecord.supabase_service_key_encrypted,
+    });
+
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Authentication')) {
+      return error('Authentication required', 401);
+    }
+    console.error('Failed to get Supabase config:', err);
+    return error('Failed to get Supabase configuration', 500);
+  }
+}
+
+/**
+ * Set Supabase configuration
+ * PUT /api/apps/:appId/supabase
+ */
+async function handleSetSupabaseConfig(request: Request, appId: string): Promise<Response> {
+  try {
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+
+    const app = await appsService.findById(appId);
+    if (!app) {
+      return error('App not found', 404);
+    }
+
+    // Only owner can set Supabase config
+    if (app.owner_id !== user.id) {
+      return error('Unauthorized', 403);
+    }
+
+    const body = await request.json();
+    const { url, anon_key, service_key, enabled } = body;
+
+    // Validate URL if provided
+    if (url !== undefined) {
+      if (url && typeof url !== 'string') {
+        return error('Invalid URL format', 400);
+      }
+      if (url && !url.match(/^https:\/\/[a-z0-9-]+\.supabase\.co$/)) {
+        return error('Invalid Supabase URL format. Expected: https://xxxxx.supabase.co', 400);
+      }
+    }
+
+    // Build update object
+    const updates: Record<string, unknown> = {};
+
+    if (url !== undefined) {
+      updates.supabase_url = url || null;
+    }
+
+    if (anon_key !== undefined) {
+      if (anon_key) {
+        // Validate anon key format (should be a JWT)
+        if (typeof anon_key !== 'string' || !anon_key.includes('.')) {
+          return error('Invalid anon key format', 400);
+        }
+        updates.supabase_anon_key_encrypted = await encryptEnvVar(anon_key);
+      } else {
+        updates.supabase_anon_key_encrypted = null;
+      }
+    }
+
+    if (service_key !== undefined) {
+      if (service_key) {
+        // Validate service key format (should be a JWT)
+        if (typeof service_key !== 'string' || !service_key.includes('.')) {
+          return error('Invalid service key format', 400);
+        }
+        updates.supabase_service_key_encrypted = await encryptEnvVar(service_key);
+      } else {
+        updates.supabase_service_key_encrypted = null;
+      }
+    }
+
+    if (enabled !== undefined) {
+      updates.supabase_enabled = !!enabled;
+    }
+
+    // Update app
+    await appsService.update(appId, updates);
+
+    return json({
+      success: true,
+      message: 'Supabase configuration updated',
+    });
+
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Authentication')) {
+      return error('Authentication required', 401);
+    }
+    console.error('Failed to set Supabase config:', err);
+    return error('Failed to set Supabase configuration', 500);
+  }
+}
+
+/**
+ * Remove Supabase configuration
+ * DELETE /api/apps/:appId/supabase
+ */
+async function handleDeleteSupabaseConfig(request: Request, appId: string): Promise<Response> {
+  try {
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+
+    const app = await appsService.findById(appId);
+    if (!app) {
+      return error('App not found', 404);
+    }
+
+    // Only owner can delete Supabase config
+    if (app.owner_id !== user.id) {
+      return error('Unauthorized', 403);
+    }
+
+    // Clear all Supabase config
+    await appsService.update(appId, {
+      supabase_url: null,
+      supabase_anon_key_encrypted: null,
+      supabase_service_key_encrypted: null,
+      supabase_enabled: false,
+    });
+
+    return json({
+      success: true,
+      message: 'Supabase configuration removed',
+    });
+
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Authentication')) {
+      return error('Authentication required', 401);
+    }
+    console.error('Failed to delete Supabase config:', err);
+    return error('Failed to delete Supabase configuration', 500);
   }
 }
