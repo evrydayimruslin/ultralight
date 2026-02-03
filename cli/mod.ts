@@ -29,6 +29,7 @@ const VERSION = '1.0.0';
 
 // Command handlers
 const commands: Record<string, (args: string[], client: ApiClient, config: Config) => Promise<void>> = {
+  init,
   login,
   logout,
   whoami,
@@ -92,6 +93,7 @@ ${colors.dim('USAGE')}
   ultralight <command> [options]
 
 ${colors.dim('COMMANDS')}
+  ${colors.cyan('init')} [name]     Create a new Ultralight app project
   ${colors.cyan('login')}           Authenticate with Ultralight
   ${colors.cyan('logout')}          Clear stored credentials
   ${colors.cyan('whoami')}          Show current user
@@ -113,6 +115,8 @@ ${colors.dim('OPTIONS')}
   --version, -v   Show version
 
 ${colors.dim('EXAMPLES')}
+  ultralight init my-app
+  ultralight init my-app --react
   ultralight login
   ultralight upload ./my-app
   ultralight apps list
@@ -127,6 +131,391 @@ ${colors.dim('DOCUMENTATION')}
 
 async function version(_args: string[], _client: ApiClient, _config: Config) {
   console.log(`ultralight v${VERSION}`);
+}
+
+// ============================================
+// INIT COMMAND
+// ============================================
+
+async function init(args: string[], _client: ApiClient, _config: Config) {
+  const parsed = parseArgs(args, {
+    boolean: ['react', 'help'],
+    alias: { r: 'react', h: 'help' },
+  });
+
+  if (parsed.help) {
+    console.log(`
+${colors.bold('ultralight init')} [name]
+
+Create a new Ultralight app project with TypeScript types and starter template.
+
+${colors.dim('OPTIONS')}
+  --react, -r     Use React template instead of basic TypeScript
+
+${colors.dim('EXAMPLES')}
+  ultralight init my-app          # Create basic TypeScript app
+  ultralight init my-app --react  # Create React app
+
+${colors.dim('WHAT IT CREATES')}
+  my-app/
+  ├── index.ts         # Entry point with example functions
+  ├── tsconfig.json    # TypeScript config
+  ├── package.json     # Dependencies (types only)
+  └── README.md        # Quick reference
+`);
+    return;
+  }
+
+  const projectName = parsed._[0] as string || 'ultralight-app';
+  const useReact = parsed.react as boolean;
+
+  // Check if directory already exists
+  try {
+    const stat = await Deno.stat(projectName);
+    if (stat.isDirectory) {
+      console.error(colors.red(`Error: Directory '${projectName}' already exists`));
+      Deno.exit(1);
+    }
+  } catch {
+    // Directory doesn't exist, which is good
+  }
+
+  console.log(colors.cyan(`Creating ${useReact ? 'React' : 'TypeScript'} app: ${projectName}`));
+
+  // Create directory
+  await Deno.mkdir(projectName, { recursive: true });
+
+  // Create files based on template
+  if (useReact) {
+    await createReactTemplate(projectName);
+  } else {
+    await createBasicTemplate(projectName);
+  }
+
+  console.log(colors.green('\n✓ Project created successfully!\n'));
+  console.log(`${colors.dim('Next steps:')}`);
+  console.log(`  cd ${projectName}`);
+  console.log(`  npm install`);
+  console.log(`  ${colors.cyan('ultralight upload .')}`);
+  console.log('');
+}
+
+async function createBasicTemplate(dir: string) {
+  // index.ts
+  const indexTs = `/// <reference types="@ultralightpro/types" />
+
+/**
+ * Hello World function
+ * @param name - Name to greet
+ * @returns Greeting message
+ */
+export function hello(name: string = 'World') {
+  return \`Hello, \${name}!\`;
+}
+
+/**
+ * Example using AI (requires BYOK setup in Settings)
+ * @param question - Question to ask the AI
+ * @returns AI response
+ */
+export async function ask(question: string) {
+  const response = await ultralight.ai({
+    messages: [{ role: 'user', content: question }],
+  });
+  return response.content;
+}
+
+/**
+ * Example using data storage
+ * @param title - Note title
+ * @param content - Note content
+ */
+export async function saveNote(title: string, content: string) {
+  await ultralight.store(\`notes/\${title}\`, {
+    content,
+    createdAt: new Date().toISOString(),
+  });
+  return { saved: true, title };
+}
+
+/**
+ * Load a note by title
+ * @param title - Note title to load
+ */
+export async function getNote(title: string) {
+  return await ultralight.load(\`notes/\${title}\`);
+}
+
+/**
+ * List all notes
+ * @returns Array of note titles
+ */
+export async function listNotes() {
+  const keys = await ultralight.list('notes/');
+  return keys.map(k => k.replace('notes/', ''));
+}
+`;
+
+  // package.json
+  const packageJson = {
+    name: dir,
+    version: '1.0.0',
+    type: 'module',
+    devDependencies: {
+      '@ultralightpro/types': '^1.0.0',
+      'typescript': '^5.0.0',
+    },
+  };
+
+  // tsconfig.json
+  const tsConfig = {
+    compilerOptions: {
+      target: 'ES2022',
+      module: 'ESNext',
+      moduleResolution: 'bundler',
+      strict: true,
+      esModuleInterop: true,
+      skipLibCheck: true,
+      types: ['@ultralightpro/types'],
+    },
+    include: ['*.ts', '*.tsx'],
+  };
+
+  // README.md
+  const readme = `# ${dir}
+
+An Ultralight app.
+
+## Development
+
+\`\`\`bash
+npm install
+\`\`\`
+
+## Deploy
+
+\`\`\`bash
+ultralight upload .
+\`\`\`
+
+## SDK Reference
+
+The \`ultralight\` global is available in all functions:
+
+\`\`\`typescript
+// Data storage
+await ultralight.store('key', value);
+await ultralight.load('key');
+await ultralight.list('prefix/');
+
+// AI (requires BYOK in Settings)
+await ultralight.ai({ messages: [{ role: 'user', content: 'Hi' }] });
+
+// User context
+if (ultralight.isAuthenticated()) {
+  const user = ultralight.user;
+}
+\`\`\`
+
+## Learn More
+
+- [Ultralight Documentation](https://ultralight.dev/docs)
+- [SDK Types](https://www.npmjs.com/package/@ultralightpro/types)
+`;
+
+  // Write files
+  await Deno.writeTextFile(`${dir}/index.ts`, indexTs);
+  await Deno.writeTextFile(`${dir}/package.json`, JSON.stringify(packageJson, null, 2));
+  await Deno.writeTextFile(`${dir}/tsconfig.json`, JSON.stringify(tsConfig, null, 2));
+  await Deno.writeTextFile(`${dir}/README.md`, readme);
+  await Deno.writeTextFile(`${dir}/.gitignore`, 'node_modules/\n.ultralight/\n');
+
+  console.log(colors.dim(`  Created ${dir}/index.ts`));
+  console.log(colors.dim(`  Created ${dir}/package.json`));
+  console.log(colors.dim(`  Created ${dir}/tsconfig.json`));
+  console.log(colors.dim(`  Created ${dir}/README.md`));
+  console.log(colors.dim(`  Created ${dir}/.gitignore`));
+}
+
+async function createReactTemplate(dir: string) {
+  // index.tsx
+  const indexTsx = `/// <reference types="@ultralightpro/types" />
+import React, { useState, useEffect } from 'react';
+import ReactDOM from 'react-dom/client';
+
+/**
+ * Main App Component
+ */
+function App({ sdk }: UltralightProps) {
+  const [notes, setNotes] = useState<string[]>([]);
+  const [newNote, setNewNote] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadNotes();
+  }, []);
+
+  async function loadNotes() {
+    setLoading(true);
+    const keys = await sdk.list('notes/');
+    setNotes(keys.map(k => k.replace('notes/', '')));
+    setLoading(false);
+  }
+
+  async function addNote() {
+    if (!newNote.trim()) return;
+    await sdk.store(\`notes/\${newNote}\`, {
+      title: newNote,
+      createdAt: new Date().toISOString(),
+    });
+    setNewNote('');
+    await loadNotes();
+  }
+
+  return (
+    <div style={{ padding: '2rem', fontFamily: 'system-ui' }}>
+      <h1>My Notes</h1>
+
+      <div style={{ marginBottom: '1rem' }}>
+        <input
+          type="text"
+          value={newNote}
+          onChange={(e) => setNewNote(e.target.value)}
+          placeholder="New note title..."
+          style={{ padding: '0.5rem', marginRight: '0.5rem' }}
+        />
+        <button onClick={addNote} style={{ padding: '0.5rem 1rem' }}>
+          Add Note
+        </button>
+      </div>
+
+      {loading ? (
+        <p>Loading...</p>
+      ) : notes.length === 0 ? (
+        <p>No notes yet. Create your first note!</p>
+      ) : (
+        <ul>
+          {notes.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Ultralight entry point
+ * This function is called when the app loads
+ */
+const UltralightApp: UltralightApp = (container, sdk) => {
+  const root = ReactDOM.createRoot(container);
+  root.render(<App sdk={sdk} />);
+};
+
+export default UltralightApp;
+
+// Also export server-side functions for MCP
+export async function getNotes() {
+  const keys = await ultralight.list('notes/');
+  return keys.map(k => k.replace('notes/', ''));
+}
+
+export async function saveNote(title: string, content: string) {
+  await ultralight.store(\`notes/\${title}\`, { title, content, createdAt: new Date().toISOString() });
+  return { saved: true };
+}
+`;
+
+  // package.json
+  const packageJson = {
+    name: dir,
+    version: '1.0.0',
+    type: 'module',
+    devDependencies: {
+      '@ultralightpro/types': '^1.0.0',
+      '@types/react': '^18.0.0',
+      '@types/react-dom': '^18.0.0',
+      'typescript': '^5.0.0',
+    },
+    dependencies: {
+      'react': '^18.0.0',
+      'react-dom': '^18.0.0',
+    },
+  };
+
+  // tsconfig.json
+  const tsConfig = {
+    compilerOptions: {
+      target: 'ES2022',
+      module: 'ESNext',
+      moduleResolution: 'bundler',
+      strict: true,
+      esModuleInterop: true,
+      skipLibCheck: true,
+      jsx: 'react-jsx',
+      types: ['@ultralightpro/types'],
+    },
+    include: ['*.ts', '*.tsx'],
+  };
+
+  // README.md
+  const readme = `# ${dir}
+
+A React app running on Ultralight.
+
+## Development
+
+\`\`\`bash
+npm install
+\`\`\`
+
+## Deploy
+
+\`\`\`bash
+ultralight upload .
+\`\`\`
+
+## How It Works
+
+This app exports a default function that receives:
+- \`container\`: The DOM element to render into
+- \`sdk\`: The Ultralight SDK (\`ultralight\` global)
+
+\`\`\`tsx
+const App: UltralightApp = (container, sdk) => {
+  const root = ReactDOM.createRoot(container);
+  root.render(<MyComponent sdk={sdk} />);
+};
+export default App;
+\`\`\`
+
+You can also export server-side functions for MCP:
+
+\`\`\`typescript
+export async function myServerFunction() {
+  return await ultralight.load('data');
+}
+\`\`\`
+
+## Learn More
+
+- [Ultralight Documentation](https://ultralight.dev/docs)
+- [SDK Types](https://www.npmjs.com/package/@ultralightpro/types)
+`;
+
+  // Write files
+  await Deno.writeTextFile(`${dir}/index.tsx`, indexTsx);
+  await Deno.writeTextFile(`${dir}/package.json`, JSON.stringify(packageJson, null, 2));
+  await Deno.writeTextFile(`${dir}/tsconfig.json`, JSON.stringify(tsConfig, null, 2));
+  await Deno.writeTextFile(`${dir}/README.md`, readme);
+  await Deno.writeTextFile(`${dir}/.gitignore`, 'node_modules/\n.ultralight/\n');
+
+  console.log(colors.dim(`  Created ${dir}/index.tsx`));
+  console.log(colors.dim(`  Created ${dir}/package.json`));
+  console.log(colors.dim(`  Created ${dir}/tsconfig.json`));
+  console.log(colors.dim(`  Created ${dir}/README.md`));
+  console.log(colors.dim(`  Created ${dir}/.gitignore`));
 }
 
 async function login(args: string[], client: ApiClient, config: Config) {

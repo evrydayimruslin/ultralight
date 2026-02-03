@@ -1518,6 +1518,101 @@ export function getLayoutHTML(options: {
       background: rgba(248, 113, 113, 0.15);
       color: var(--error-color);
     }
+
+    /* Developer Resources */
+    .dev-resources {
+      margin-top: 2rem;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border-color);
+      width: 100%;
+    }
+
+    .dev-resources-title {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+      text-align: center;
+    }
+
+    .dev-resources-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.75rem;
+    }
+
+    @media (max-width: 600px) {
+      .dev-resources-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .dev-resource-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 0.875rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      text-decoration: none;
+      color: inherit;
+      transition: all 0.2s;
+    }
+
+    .dev-resource-card:hover {
+      border-color: var(--accent-color);
+      background: var(--bg-tertiary);
+    }
+
+    .dev-resource-icon {
+      font-size: 1.25rem;
+    }
+
+    .dev-resource-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .dev-resource-name {
+      font-weight: 500;
+      font-size: 0.875rem;
+      margin-bottom: 0.125rem;
+    }
+
+    .dev-resource-desc {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-family: monospace;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Quick Reference Modal */
+    .quick-ref-content {
+      font-family: monospace;
+      font-size: 0.8125rem;
+      line-height: 1.6;
+    }
+
+    .quick-ref-section {
+      margin-bottom: 1.5rem;
+    }
+
+    .quick-ref-section-title {
+      font-weight: 600;
+      color: var(--accent-color);
+      margin-bottom: 0.5rem;
+      font-family: system-ui;
+    }
+
+    .quick-ref-code {
+      background: var(--bg-tertiary);
+      padding: 0.75rem;
+      border-radius: 6px;
+      overflow-x: auto;
+      white-space: pre;
+    }
   </style>
 </head>
 <body>
@@ -1603,6 +1698,34 @@ export function getLayoutHTML(options: {
         <div class="result-actions">
           <button id="openAppBtn">Open App</button>
           <button id="newUploadBtn">Upload Another</button>
+        </div>
+      </div>
+
+      <!-- Developer Resources -->
+      <div class="dev-resources">
+        <div class="dev-resources-title">Developer Resources</div>
+        <div class="dev-resources-grid">
+          <a href="https://www.npmjs.com/package/@ultralightpro/types" target="_blank" class="dev-resource-card">
+            <div class="dev-resource-icon">📦</div>
+            <div class="dev-resource-content">
+              <div class="dev-resource-name">TypeScript Types</div>
+              <div class="dev-resource-desc">npm i -D @ultralightpro/types</div>
+            </div>
+          </a>
+          <a href="https://www.npmjs.com/package/ultralightpro" target="_blank" class="dev-resource-card">
+            <div class="dev-resource-icon">⌨️</div>
+            <div class="dev-resource-content">
+              <div class="dev-resource-name">CLI Tool</div>
+              <div class="dev-resource-desc">npm i -g ultralightpro</div>
+            </div>
+          </a>
+          <div class="dev-resource-card" onclick="showQuickRef()" style="cursor: pointer;">
+            <div class="dev-resource-icon">📖</div>
+            <div class="dev-resource-content">
+              <div class="dev-resource-name">SDK Reference</div>
+              <div class="dev-resource-desc">ultralight.ai(), store(), load()...</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1846,6 +1969,95 @@ export function getLayoutHTML(options: {
     </div>
   </div>
 
+  <!-- Quick Reference Modal -->
+  <div class="modal-overlay" id="quickRefModal">
+    <div class="modal" style="max-width: 650px;">
+      <div class="modal-header">
+        <h2 class="modal-title">SDK Quick Reference</h2>
+        <button class="modal-close" onclick="closeQuickRef()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body quick-ref-content">
+        <div class="quick-ref-section">
+          <div class="quick-ref-section-title">Setup (for TypeScript autocomplete)</div>
+          <div class="quick-ref-code">npm install -D @ultralightpro/types
+
+// Then add to your file:
+/// &lt;reference types="@ultralightpro/types" /&gt;</div>
+        </div>
+
+        <div class="quick-ref-section">
+          <div class="quick-ref-section-title">Data Storage</div>
+          <div class="quick-ref-code">await ultralight.store('key', { any: 'value' });
+await ultralight.load('key');
+await ultralight.list('prefix/');
+await ultralight.remove('key');
+
+// Advanced queries
+await ultralight.query('notes/', {
+  sort: { field: 'createdAt', order: 'desc' },
+  limit: 10
+});</div>
+        </div>
+
+        <div class="quick-ref-section">
+          <div class="quick-ref-section-title">AI (uses your BYOK key from Settings)</div>
+          <div class="quick-ref-code">const response = await ultralight.ai({
+  messages: [
+    { role: 'system', content: 'You are helpful.' },
+    { role: 'user', content: 'Hello!' }
+  ],
+  temperature: 0.7,
+  max_tokens: 1000
+});
+console.log(response.content);</div>
+        </div>
+
+        <div class="quick-ref-section">
+          <div class="quick-ref-section-title">User Context</div>
+          <div class="quick-ref-code">// Check auth
+if (ultralight.isAuthenticated()) {
+  const user = ultralight.user;
+  console.log(user.email, user.tier);
+}
+
+// Require auth (throws if not logged in)
+const user = ultralight.requireAuth();</div>
+        </div>
+
+        <div class="quick-ref-section">
+          <div class="quick-ref-section-title">Cron Jobs</div>
+          <div class="quick-ref-code">// Register a scheduled task
+await ultralight.cron.register(
+  'daily-report',
+  '0 9 * * *',  // Every day at 9am
+  'generateReport'  // Function to call
+);
+
+// Use presets
+ultralight.cron.presets.DAILY_9AM  // "0 9 * * *"</div>
+        </div>
+
+        <div class="quick-ref-section">
+          <div class="quick-ref-section-title">Global Utilities</div>
+          <div class="quick-ref-code">_.groupBy(items, 'category')
+_.sortBy(items, 'date')
+uuid.v4()
+dateFns.format(new Date(), 'yyyy-MM-dd')
+await hash.sha256('data')</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <a href="https://www.npmjs.com/package/@ultralightpro/types" target="_blank" class="modal-btn secondary">View on npm</a>
+        <button class="modal-btn primary" onclick="closeQuickRef()">Got it</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Delete Confirmation Modal -->
   <div class="modal-overlay" id="deleteConfirmModal">
     <div class="modal" style="max-width: 400px;">
@@ -1997,6 +2209,25 @@ export function getLayoutHTML(options: {
       localStorage.removeItem('ultralight_token');
       window.location.reload();
     };
+
+    // ============================================
+    // Quick Reference Modal
+    // ============================================
+    const quickRefModal = document.getElementById('quickRefModal');
+
+    window.showQuickRef = function() {
+      quickRefModal.classList.add('open');
+    };
+
+    window.closeQuickRef = function() {
+      quickRefModal.classList.remove('open');
+    };
+
+    quickRefModal.addEventListener('click', (e) => {
+      if (e.target === quickRefModal) {
+        closeQuickRef();
+      }
+    });
 
     // ============================================
     // User Settings (BYOK)
