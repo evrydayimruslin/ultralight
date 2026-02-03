@@ -17,6 +17,16 @@ import {
   storeAppEmbedding
 } from '../services/embedding.ts';
 import type { GenerationResult, GenerationError } from '../../shared/types/index.ts';
+import {
+  validateEnvVarKey,
+  validateEnvVarValue,
+  ENV_VAR_LIMITS,
+} from '../../shared/types/index.ts';
+import {
+  encryptEnvVar,
+  decryptEnvVars,
+  getEnvVarsSummary,
+} from '../services/envvars.ts';
 
 // Type for user with optional API key
 interface User {
@@ -122,6 +132,31 @@ export async function handleApps(request: Request): Promise<Response> {
     // GET /api/apps/:appId/draft - Get draft info
     if (subPath === '/draft' && method === 'GET') {
       return handleGetDraft(request, appId);
+    }
+
+    // ============================================
+    // ENV VARS ENDPOINTS
+    // ============================================
+
+    // GET /api/apps/:appId/env - List env var keys (masked values)
+    if (subPath === '/env' && method === 'GET') {
+      return handleGetEnvVars(request, appId);
+    }
+
+    // PUT /api/apps/:appId/env - Set all env vars (replaces existing)
+    if (subPath === '/env' && method === 'PUT') {
+      return handleSetEnvVars(request, appId);
+    }
+
+    // PATCH /api/apps/:appId/env - Update specific env vars
+    if (subPath === '/env' && method === 'PATCH') {
+      return handleUpdateEnvVars(request, appId);
+    }
+
+    // DELETE /api/apps/:appId/env/:key - Delete a specific env var
+    const envKeyMatch = subPath.match(/^\/env\/([^\/]+)$/);
+    if (envKeyMatch && method === 'DELETE') {
+      return handleDeleteEnvVar(request, appId, envKeyMatch[1]);
     }
   }
 
@@ -1287,4 +1322,262 @@ function getContentTypeFromName(filename: string): string {
   if (filename.endsWith('.md')) return 'text/markdown';
   if (filename.endsWith('.css')) return 'text/css';
   return 'text/plain';
+}
+
+// ============================================
+// ENVIRONMENT VARIABLES HANDLERS
+// ============================================
+
+/**
+ * Get environment variable keys with masked values
+ * GET /api/apps/:appId/env
+ */
+async function handleGetEnvVars(request: Request, appId: string): Promise<Response> {
+  try {
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+
+    const app = await appsService.findById(appId);
+    if (!app) {
+      return error('App not found', 404);
+    }
+
+    // Only owner can view env vars
+    if (app.owner_id !== user.id) {
+      return error('Unauthorized', 403);
+    }
+
+    const envVars = (app as Record<string, unknown>).env_vars as Record<string, string> || {};
+
+    // Decrypt for summary (to get actual lengths)
+    let decrypted: Record<string, string> = {};
+    try {
+      decrypted = await decryptEnvVars(envVars);
+    } catch {
+      // If decryption fails, return keys only
+      return json({
+        env_vars: Object.keys(envVars).map(key => ({ key, masked: '••••', length: 0 })),
+        count: Object.keys(envVars).length,
+        limits: ENV_VAR_LIMITS,
+      });
+    }
+
+    return json({
+      env_vars: getEnvVarsSummary(decrypted),
+      count: Object.keys(decrypted).length,
+      limits: ENV_VAR_LIMITS,
+    });
+
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Authentication')) {
+      return error('Authentication required', 401);
+    }
+    console.error('Failed to get env vars:', err);
+    return error('Failed to get environment variables', 500);
+  }
+}
+
+/**
+ * Set all environment variables (replaces existing)
+ * PUT /api/apps/:appId/env
+ */
+async function handleSetEnvVars(request: Request, appId: string): Promise<Response> {
+  try {
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+
+    const app = await appsService.findById(appId);
+    if (!app) {
+      return error('App not found', 404);
+    }
+
+    // Only owner can set env vars
+    if (app.owner_id !== user.id) {
+      return error('Unauthorized', 403);
+    }
+
+    const body = await request.json();
+    const { env_vars } = body;
+
+    if (!env_vars || typeof env_vars !== 'object') {
+      return error('env_vars object is required', 400);
+    }
+
+    // Validate all keys and values
+    const errors: string[] = [];
+    const entries = Object.entries(env_vars as Record<string, string>);
+
+    // Check count limit
+    if (entries.length > ENV_VAR_LIMITS.max_vars_per_app) {
+      return error(`Maximum ${ENV_VAR_LIMITS.max_vars_per_app} environment variables allowed`, 400);
+    }
+
+    for (const [key, value] of entries) {
+      const keyValidation = validateEnvVarKey(key);
+      if (!keyValidation.valid) {
+        errors.push(`${key}: ${keyValidation.error}`);
+        continue;
+      }
+
+      const valueValidation = validateEnvVarValue(value);
+      if (!valueValidation.valid) {
+        errors.push(`${key}: ${valueValidation.error}`);
+      }
+    }
+
+    if (errors.length > 0) {
+      return json({ success: false, errors }, 400);
+    }
+
+    // Encrypt all values
+    const encryptedEnvVars: Record<string, string> = {};
+    for (const [key, value] of entries) {
+      encryptedEnvVars[key] = await encryptEnvVar(value);
+    }
+
+    // Update app
+    await appsService.update(appId, { env_vars: encryptedEnvVars });
+
+    return json({
+      success: true,
+      count: entries.length,
+      keys: entries.map(([key]) => key),
+    });
+
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Authentication')) {
+      return error('Authentication required', 401);
+    }
+    console.error('Failed to set env vars:', err);
+    return error('Failed to set environment variables', 500);
+  }
+}
+
+/**
+ * Update specific environment variables (merge with existing)
+ * PATCH /api/apps/:appId/env
+ */
+async function handleUpdateEnvVars(request: Request, appId: string): Promise<Response> {
+  try {
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+
+    const app = await appsService.findById(appId);
+    if (!app) {
+      return error('App not found', 404);
+    }
+
+    // Only owner can update env vars
+    if (app.owner_id !== user.id) {
+      return error('Unauthorized', 403);
+    }
+
+    const body = await request.json();
+    const { env_vars } = body;
+
+    if (!env_vars || typeof env_vars !== 'object') {
+      return error('env_vars object is required', 400);
+    }
+
+    // Get existing env vars
+    const existingEnvVars = (app as Record<string, unknown>).env_vars as Record<string, string> || {};
+
+    // Validate new keys and values
+    const errors: string[] = [];
+    const newEntries = Object.entries(env_vars as Record<string, string>);
+
+    // Check total count after merge
+    const totalKeys = new Set([...Object.keys(existingEnvVars), ...newEntries.map(([k]) => k)]);
+    if (totalKeys.size > ENV_VAR_LIMITS.max_vars_per_app) {
+      return error(`Maximum ${ENV_VAR_LIMITS.max_vars_per_app} environment variables allowed`, 400);
+    }
+
+    for (const [key, value] of newEntries) {
+      const keyValidation = validateEnvVarKey(key);
+      if (!keyValidation.valid) {
+        errors.push(`${key}: ${keyValidation.error}`);
+        continue;
+      }
+
+      const valueValidation = validateEnvVarValue(value);
+      if (!valueValidation.valid) {
+        errors.push(`${key}: ${valueValidation.error}`);
+      }
+    }
+
+    if (errors.length > 0) {
+      return json({ success: false, errors }, 400);
+    }
+
+    // Encrypt new values and merge with existing
+    const mergedEnvVars = { ...existingEnvVars };
+    for (const [key, value] of newEntries) {
+      mergedEnvVars[key] = await encryptEnvVar(value);
+    }
+
+    // Update app
+    await appsService.update(appId, { env_vars: mergedEnvVars });
+
+    return json({
+      success: true,
+      updated: newEntries.map(([key]) => key),
+      total_count: Object.keys(mergedEnvVars).length,
+    });
+
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Authentication')) {
+      return error('Authentication required', 401);
+    }
+    console.error('Failed to update env vars:', err);
+    return error('Failed to update environment variables', 500);
+  }
+}
+
+/**
+ * Delete a specific environment variable
+ * DELETE /api/apps/:appId/env/:key
+ */
+async function handleDeleteEnvVar(request: Request, appId: string, key: string): Promise<Response> {
+  try {
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+
+    const app = await appsService.findById(appId);
+    if (!app) {
+      return error('App not found', 404);
+    }
+
+    // Only owner can delete env vars
+    if (app.owner_id !== user.id) {
+      return error('Unauthorized', 403);
+    }
+
+    // Get existing env vars
+    const existingEnvVars = (app as Record<string, unknown>).env_vars as Record<string, string> || {};
+
+    // Check if key exists
+    if (!(key in existingEnvVars)) {
+      return error(`Environment variable "${key}" not found`, 404);
+    }
+
+    // Remove the key
+    const updatedEnvVars = { ...existingEnvVars };
+    delete updatedEnvVars[key];
+
+    // Update app
+    await appsService.update(appId, { env_vars: updatedEnvVars });
+
+    return json({
+      success: true,
+      deleted: key,
+      remaining_count: Object.keys(updatedEnvVars).length,
+    });
+
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Authentication')) {
+      return error('Authentication required', 401);
+    }
+    console.error('Failed to delete env var:', err);
+    return error('Failed to delete environment variable', 500);
+  }
 }

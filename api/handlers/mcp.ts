@@ -11,6 +11,7 @@ import { executeInSandbox, type UserContext } from '../runtime/sandbox.ts';
 import { createR2Service } from '../services/storage.ts';
 import { createUserService } from '../services/user.ts';
 import { createAIService } from '../services/ai.ts';
+import { decryptEnvVars } from '../services/envvars.ts';
 import type {
   MCPTool,
   MCPJsonSchema,
@@ -761,6 +762,16 @@ async function executeAppFunction(
     // For now, pass as single object argument
     const argsArray = Object.keys(args).length > 0 ? [args] : [];
 
+    // Decrypt environment variables for the app
+    const encryptedEnvVars = (app as Record<string, unknown>).env_vars as Record<string, string> || {};
+    let envVars: Record<string, string> = {};
+    try {
+      envVars = await decryptEnvVars(encryptedEnvVars);
+    } catch (err) {
+      console.error('Failed to decrypt env vars:', err);
+      // Continue with empty env vars
+    }
+
     // Execute in sandbox
     const result = await executeInSandbox(
       {
@@ -774,6 +785,7 @@ async function executeAppFunction(
         appDataService,
         memoryService: null,
         aiService: aiServiceInstance as { call: (request: import('../../shared/types/index.ts').AIRequest, apiKey: string) => Promise<import('../../shared/types/index.ts').AIResponse> },
+        envVars,
       },
       functionName,
       argsArray

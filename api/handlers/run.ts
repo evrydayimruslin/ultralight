@@ -7,6 +7,7 @@ import { executeInSandbox, type UserContext } from '../runtime/sandbox.ts';
 import { createR2Service } from '../services/storage.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createAppDataService } from '../services/appdata.ts';
+import { decryptEnvVars } from '../services/envvars.ts';
 
 // Decode JWT payload without verification (verification done by Supabase)
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
@@ -120,6 +121,16 @@ export async function handleRun(request: Request, appId: string): Promise<Respon
       return error('No entry file found (index.tsx, index.ts, index.jsx, or index.js)', 404);
     }
 
+    // Decrypt environment variables for the app
+    const encryptedEnvVars = (app as Record<string, unknown>).env_vars as Record<string, string> || {};
+    let envVars: Record<string, string> = {};
+    try {
+      envVars = await decryptEnvVars(encryptedEnvVars);
+    } catch (err) {
+      console.error('Failed to decrypt env vars:', err);
+      // Continue with empty env vars
+    }
+
     // Execute in sandbox
     const result = await executeInSandbox(
       {
@@ -143,6 +154,7 @@ export async function handleRun(request: Request, appId: string): Promise<Respon
             usage: { input_tokens: 0, output_tokens: 0, cost_cents: 0 },
           }),
         },
+        envVars,
       },
       functionName,
       args,

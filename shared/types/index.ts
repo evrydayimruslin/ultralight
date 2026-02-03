@@ -87,6 +87,11 @@ export interface App {
   runs_30d: number;
   category: string | null;
   tags: string[];
+  // Environment variables (encrypted, keys only exposed to owner)
+  env_vars: Record<string, string>;
+  // HTTP endpoint settings
+  http_rate_limit: number;
+  http_enabled: boolean;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -116,6 +121,66 @@ export interface BuildLogEntry {
   time: string;
   level: 'info' | 'warn' | 'error' | 'success';
   message: string;
+}
+
+// ============================================
+// ENVIRONMENT VARIABLES
+// ============================================
+
+export interface EnvVarLimits {
+  max_vars_per_app: number;
+  max_key_length: number;
+  max_value_length: number;
+  reserved_prefixes: string[];
+}
+
+export const ENV_VAR_LIMITS: EnvVarLimits = {
+  max_vars_per_app: 50,
+  max_key_length: 64,
+  max_value_length: 4096,
+  reserved_prefixes: ['ULTRALIGHT'],
+};
+
+/**
+ * Validate an environment variable key
+ */
+export function validateEnvVarKey(key: string): { valid: boolean; error?: string } {
+  if (!key || typeof key !== 'string') {
+    return { valid: false, error: 'Key is required' };
+  }
+
+  if (key.length > ENV_VAR_LIMITS.max_key_length) {
+    return { valid: false, error: `Key must be ${ENV_VAR_LIMITS.max_key_length} characters or less` };
+  }
+
+  // Check reserved prefixes
+  for (const prefix of ENV_VAR_LIMITS.reserved_prefixes) {
+    if (key.toUpperCase().startsWith(prefix)) {
+      return { valid: false, error: `Keys starting with "${prefix}" are reserved` };
+    }
+  }
+
+  // Must be valid env var format (uppercase, underscores, numbers)
+  if (!/^[A-Z][A-Z0-9_]*$/.test(key)) {
+    return { valid: false, error: 'Key must be uppercase letters, numbers, and underscores, starting with a letter' };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Validate an environment variable value
+ */
+export function validateEnvVarValue(value: string): { valid: boolean; error?: string } {
+  if (typeof value !== 'string') {
+    return { valid: false, error: 'Value must be a string' };
+  }
+
+  if (value.length > ENV_VAR_LIMITS.max_value_length) {
+    return { valid: false, error: `Value must be ${ENV_VAR_LIMITS.max_value_length} characters or less` };
+  }
+
+  return { valid: true };
 }
 
 // ============================================

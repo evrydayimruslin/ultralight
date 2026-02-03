@@ -10,6 +10,7 @@ import { handleCron } from './cron.ts';
 import { handleMcp, handleMcpDiscovery } from './mcp.ts';
 import { handlePlatformMcp, handlePlatformMcpDiscovery } from './platform-mcp.ts';
 import { handleDiscover } from './discover.ts';
+import { handleHttpEndpoint, handleHttpOptions } from './http.ts';
 import { getLayoutHTML } from '../../web/layout.ts';
 import { getAppRunnerHTML } from '../../web/app-runner.ts';
 import { createAppsService } from '../services/apps.ts';
@@ -147,6 +148,21 @@ export function createApp() {
       if (path.startsWith('/mcp/')) {
         const appId = path.slice(5); // Remove '/mcp/'
         return handleMcp(request, appId);
+      }
+
+      // HTTP endpoints - /http/:appId/:functionName/* - direct HTTP access to app functions
+      // Enables webhooks, public APIs, mobile app backends, etc.
+      if (path.startsWith('/http/')) {
+        const pathParts = path.slice(6).split('/'); // Remove '/http/'
+        const appId = pathParts[0];
+        const subPath = pathParts.slice(1).join('/');
+
+        // Handle CORS preflight
+        if (method === 'OPTIONS') {
+          return handleHttpOptions(appId);
+        }
+
+        return handleHttpEndpoint(request, appId, subPath);
       }
 
       // App runner - /a/:appId/* - serves deployed apps

@@ -41,6 +41,8 @@ export interface RuntimeConfig {
   // User memory (for unified Memory.md - optional, can be null)
   memoryService: MemoryService | null;
   aiService: AIService;
+  // Decrypted environment variables (injected as ultralight.env)
+  envVars: Record<string, string>;
 }
 
 export interface AppDataService {
@@ -432,6 +434,536 @@ const dateFns = {
   parseISO: (dateString: string): Date => new Date(dateString),
 };
 
+/**
+ * Simple schema validation (Zod-like API)
+ * Not a full Zod implementation, but covers common use cases
+ */
+const schema = {
+  string: () => new StringSchema(),
+  number: () => new NumberSchema(),
+  boolean: () => new BooleanSchema(),
+  array: <T>(itemSchema: BaseSchema<T>) => new ArraySchema(itemSchema),
+  object: <T extends Record<string, BaseSchema<unknown>>>(shape: T) => new ObjectSchema(shape),
+  optional: <T>(innerSchema: BaseSchema<T>) => new OptionalSchema(innerSchema),
+  union: <T extends BaseSchema<unknown>[]>(...schemas: T) => new UnionSchema(schemas),
+  literal: <T extends string | number | boolean>(value: T) => new LiteralSchema(value),
+  enum: <T extends string[]>(...values: T) => new EnumSchema(values),
+  any: () => new AnySchema(),
+};
+
+class BaseSchema<T> {
+  protected _optional = false;
+  protected _default: T | undefined;
+
+  parse(value: unknown): T {
+    const result = this.safeParse(value);
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+    return result.data;
+  }
+
+  safeParse(value: unknown): { success: true; data: T } | { success: false; error: string } {
+    return { success: true, data: value as T };
+  }
+
+  optional(): OptionalSchema<T> {
+    return new OptionalSchema(this);
+  }
+
+  default(defaultValue: T): this {
+    this._default = defaultValue;
+    return this;
+  }
+}
+
+class StringSchema extends BaseSchema<string> {
+  private _minLength?: number;
+  private _maxLength?: number;
+  private _pattern?: RegExp;
+  private _email = false;
+  private _url = false;
+
+  safeParse(value: unknown): { success: true; data: string } | { success: false; error: string } {
+    if (value === undefined && this._default !== undefined) {
+      return { success: true, data: this._default };
+    }
+    if (typeof value !== 'string') {
+      return { success: false, error: 'Expected string' };
+    }
+    if (this._minLength !== undefined && value.length < this._minLength) {
+      return { success: false, error: `String must be at least ${this._minLength} characters` };
+    }
+    if (this._maxLength !== undefined && value.length > this._maxLength) {
+      return { success: false, error: `String must be at most ${this._maxLength} characters` };
+    }
+    if (this._pattern && !this._pattern.test(value)) {
+      return { success: false, error: 'String does not match pattern' };
+    }
+    if (this._email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+      return { success: false, error: 'Invalid email format' };
+    }
+    if (this._url && !/^https?:\/\/.+/.test(value)) {
+      return { success: false, error: 'Invalid URL format' };
+    }
+    return { success: true, data: value };
+  }
+
+  min(length: number): this { this._minLength = length; return this; }
+  max(length: number): this { this._maxLength = length; return this; }
+  length(length: number): this { this._minLength = length; this._maxLength = length; return this; }
+  regex(pattern: RegExp): this { this._pattern = pattern; return this; }
+  email(): this { this._email = true; return this; }
+  url(): this { this._url = true; return this; }
+}
+
+class NumberSchema extends BaseSchema<number> {
+  private _min?: number;
+  private _max?: number;
+  private _int = false;
+
+  safeParse(value: unknown): { success: true; data: number } | { success: false; error: string } {
+    if (value === undefined && this._default !== undefined) {
+      return { success: true, data: this._default };
+    }
+    if (typeof value !== 'number' || isNaN(value)) {
+      return { success: false, error: 'Expected number' };
+    }
+    if (this._int && !Number.isInteger(value)) {
+      return { success: false, error: 'Expected integer' };
+    }
+    if (this._min !== undefined && value < this._min) {
+      return { success: false, error: `Number must be >= ${this._min}` };
+    }
+    if (this._max !== undefined && value > this._max) {
+      return { success: false, error: `Number must be <= ${this._max}` };
+    }
+    return { success: true, data: value };
+  }
+
+  min(value: number): this { this._min = value; return this; }
+  max(value: number): this { this._max = value; return this; }
+  int(): this { this._int = true; return this; }
+  positive(): this { this._min = 0; return this; }
+  negative(): this { this._max = 0; return this; }
+}
+
+class BooleanSchema extends BaseSchema<boolean> {
+  safeParse(value: unknown): { success: true; data: boolean } | { success: false; error: string } {
+    if (value === undefined && this._default !== undefined) {
+      return { success: true, data: this._default };
+    }
+    if (typeof value !== 'boolean') {
+      return { success: false, error: 'Expected boolean' };
+    }
+    return { success: true, data: value };
+  }
+}
+
+class ArraySchema<T> extends BaseSchema<T[]> {
+  private _minLength?: number;
+  private _maxLength?: number;
+
+  constructor(private itemSchema: BaseSchema<T>) { super(); }
+
+  safeParse(value: unknown): { success: true; data: T[] } | { success: false; error: string } {
+    if (!Array.isArray(value)) {
+      return { success: false, error: 'Expected array' };
+    }
+    if (this._minLength !== undefined && value.length < this._minLength) {
+      return { success: false, error: `Array must have at least ${this._minLength} items` };
+    }
+    if (this._maxLength !== undefined && value.length > this._maxLength) {
+      return { success: false, error: `Array must have at most ${this._maxLength} items` };
+    }
+    const results: T[] = [];
+    for (let i = 0; i < value.length; i++) {
+      const result = this.itemSchema.safeParse(value[i]);
+      if (!result.success) {
+        return { success: false, error: `[${i}]: ${result.error}` };
+      }
+      results.push(result.data);
+    }
+    return { success: true, data: results };
+  }
+
+  min(length: number): this { this._minLength = length; return this; }
+  max(length: number): this { this._maxLength = length; return this; }
+  nonempty(): this { this._minLength = 1; return this; }
+}
+
+class ObjectSchema<T extends Record<string, BaseSchema<unknown>>> extends BaseSchema<{ [K in keyof T]: T[K] extends BaseSchema<infer U> ? U : never }> {
+  constructor(private shape: T) { super(); }
+
+  safeParse(value: unknown): { success: true; data: { [K in keyof T]: T[K] extends BaseSchema<infer U> ? U : never } } | { success: false; error: string } {
+    if (typeof value !== 'object' || value === null) {
+      return { success: false, error: 'Expected object' };
+    }
+    const result: Record<string, unknown> = {};
+    for (const [key, schema] of Object.entries(this.shape)) {
+      const fieldResult = schema.safeParse((value as Record<string, unknown>)[key]);
+      if (!fieldResult.success) {
+        return { success: false, error: `${key}: ${fieldResult.error}` };
+      }
+      result[key] = fieldResult.data;
+    }
+    return { success: true, data: result as { [K in keyof T]: T[K] extends BaseSchema<infer U> ? U : never } };
+  }
+}
+
+class OptionalSchema<T> extends BaseSchema<T | undefined> {
+  constructor(private innerSchema: BaseSchema<T>) { super(); }
+
+  safeParse(value: unknown): { success: true; data: T | undefined } | { success: false; error: string } {
+    if (value === undefined || value === null) {
+      return { success: true, data: undefined };
+    }
+    return this.innerSchema.safeParse(value);
+  }
+}
+
+class UnionSchema<T extends BaseSchema<unknown>[]> extends BaseSchema<T[number] extends BaseSchema<infer U> ? U : never> {
+  constructor(private schemas: T) { super(); }
+
+  safeParse(value: unknown): { success: true; data: T[number] extends BaseSchema<infer U> ? U : never } | { success: false; error: string } {
+    for (const schema of this.schemas) {
+      const result = schema.safeParse(value);
+      if (result.success) {
+        return result as { success: true; data: T[number] extends BaseSchema<infer U> ? U : never };
+      }
+    }
+    return { success: false, error: 'Value does not match any schema in union' };
+  }
+}
+
+class LiteralSchema<T extends string | number | boolean> extends BaseSchema<T> {
+  constructor(private literalValue: T) { super(); }
+
+  safeParse(value: unknown): { success: true; data: T } | { success: false; error: string } {
+    if (value !== this.literalValue) {
+      return { success: false, error: `Expected ${JSON.stringify(this.literalValue)}` };
+    }
+    return { success: true, data: value as T };
+  }
+}
+
+class EnumSchema<T extends string[]> extends BaseSchema<T[number]> {
+  constructor(private values: T) { super(); }
+
+  safeParse(value: unknown): { success: true; data: T[number] } | { success: false; error: string } {
+    if (!this.values.includes(value as string)) {
+      return { success: false, error: `Expected one of: ${this.values.join(', ')}` };
+    }
+    return { success: true, data: value as T[number] };
+  }
+}
+
+class AnySchema extends BaseSchema<unknown> {
+  safeParse(value: unknown): { success: true; data: unknown } {
+    return { success: true, data: value };
+  }
+}
+
+/**
+ * Simple markdown parser (basic features)
+ */
+const markdown = {
+  /**
+   * Parse markdown to HTML
+   */
+  toHtml: (md: string): string => {
+    let html = md;
+
+    // Escape HTML
+    html = html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    // Headers
+    html = html.replace(/^######\s+(.+)$/gm, '<h6>$1</h6>');
+    html = html.replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>');
+    html = html.replace(/^####\s+(.+)$/gm, '<h4>$1</h4>');
+    html = html.replace(/^###\s+(.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^##\s+(.+)$/gm, '<h2>$1</h2>');
+    html = html.replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
+
+    // Bold and italic
+    html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    html = html.replace(/___(.+?)___/g, '<strong><em>$1</em></strong>');
+    html = html.replace(/__(.+?)__/g, '<strong>$1</strong>');
+    html = html.replace(/_(.+?)_/g, '<em>$1</em>');
+
+    // Code blocks
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>');
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    // Links and images
+    html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2">');
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+
+    // Lists
+    html = html.replace(/^\s*[-*]\s+(.+)$/gm, '<li>$1</li>');
+    html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+    html = html.replace(/^\s*(\d+)\.\s+(.+)$/gm, '<li>$2</li>');
+
+    // Blockquotes
+    html = html.replace(/^>\s+(.+)$/gm, '<blockquote>$1</blockquote>');
+
+    // Horizontal rules
+    html = html.replace(/^---+$/gm, '<hr>');
+    html = html.replace(/^\*\*\*+$/gm, '<hr>');
+
+    // Paragraphs (lines not already wrapped)
+    html = html.replace(/^(?!<[a-z]|$)(.+)$/gm, '<p>$1</p>');
+
+    // Clean up extra paragraph tags around block elements
+    html = html.replace(/<p>(<(?:h[1-6]|ul|ol|li|blockquote|pre|hr)[^>]*>)/g, '$1');
+    html = html.replace(/(<\/(?:h[1-6]|ul|ol|li|blockquote|pre)>)<\/p>/g, '$1');
+
+    return html;
+  },
+
+  /**
+   * Strip markdown to plain text
+   */
+  toText: (md: string): string => {
+    let text = md;
+    // Remove headers markers
+    text = text.replace(/^#+\s+/gm, '');
+    // Remove emphasis
+    text = text.replace(/\*\*\*(.+?)\*\*\*/g, '$1');
+    text = text.replace(/\*\*(.+?)\*\*/g, '$1');
+    text = text.replace(/\*(.+?)\*/g, '$1');
+    text = text.replace(/___(.+?)___/g, '$1');
+    text = text.replace(/__(.+?)__/g, '$1');
+    text = text.replace(/_(.+?)_/g, '$1');
+    // Remove code blocks
+    text = text.replace(/```[\s\S]*?```/g, '');
+    text = text.replace(/`([^`]+)`/g, '$1');
+    // Remove links but keep text
+    text = text.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1');
+    text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+    // Remove blockquotes
+    text = text.replace(/^>\s+/gm, '');
+    // Remove list markers
+    text = text.replace(/^\s*[-*]\s+/gm, '');
+    text = text.replace(/^\s*\d+\.\s+/gm, '');
+    // Remove horizontal rules
+    text = text.replace(/^---+$/gm, '');
+    text = text.replace(/^\*\*\*+$/gm, '');
+    return text.trim();
+  },
+};
+
+/**
+ * String manipulation utilities
+ */
+const str = {
+  /**
+   * Convert string to URL-friendly slug
+   */
+  slugify: (text: string): string => {
+    return text
+      .toString()
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, '-')        // Replace spaces with -
+      .replace(/[^\w\-]+/g, '')    // Remove non-word chars
+      .replace(/\-\-+/g, '-')      // Replace multiple - with single -
+      .replace(/^-+/, '')          // Trim - from start
+      .replace(/-+$/, '');         // Trim - from end
+  },
+
+  /**
+   * Pluralize a word based on count
+   */
+  pluralize: (word: string, count: number, plural?: string): string => {
+    if (count === 1) return word;
+    return plural || (word + 's');
+  },
+
+  /**
+   * Convert to title case
+   */
+  titleCase: (text: string): string => {
+    return text.replace(/\w\S*/g, (word) =>
+      word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+    );
+  },
+
+  /**
+   * Escape HTML special characters
+   */
+  escapeHtml: (text: string): string => {
+    const escapes: Record<string, string> = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+    };
+    return text.replace(/[&<>"']/g, c => escapes[c]);
+  },
+
+  /**
+   * Unescape HTML entities
+   */
+  unescapeHtml: (text: string): string => {
+    const unescapes: Record<string, string> = {
+      '&amp;': '&',
+      '&lt;': '<',
+      '&gt;': '>',
+      '&quot;': '"',
+      '&#39;': "'",
+    };
+    return text.replace(/&(?:amp|lt|gt|quot|#39);/g, m => unescapes[m]);
+  },
+
+  /**
+   * Word count
+   */
+  wordCount: (text: string): number => {
+    return text.trim().split(/\s+/).filter(Boolean).length;
+  },
+
+  /**
+   * Truncate to word boundary
+   */
+  truncateWords: (text: string, count: number, suffix = '...'): string => {
+    const words = text.trim().split(/\s+/);
+    if (words.length <= count) return text;
+    return words.slice(0, count).join(' ') + suffix;
+  },
+
+  /**
+   * Generate a random string
+   */
+  random: (length: number, charset = 'alphanumeric'): string => {
+    const charsets: Record<string, string> = {
+      alphanumeric: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
+      alpha: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
+      numeric: '0123456789',
+      hex: '0123456789abcdef',
+    };
+    const chars = charsets[charset] || charset;
+    let result = '';
+    for (let i = 0; i < length; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  },
+};
+
+/**
+ * Simple JWT utilities (decode only - no signing for security)
+ */
+const jwt = {
+  /**
+   * Decode a JWT without verification
+   * WARNING: This does NOT verify the signature. Only use for reading claims
+   * from tokens that have already been verified by your auth system.
+   */
+  decode: (token: string): { header: Record<string, unknown>; payload: Record<string, unknown> } | null => {
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) return null;
+
+      const header = JSON.parse(atob(parts[0].replace(/-/g, '+').replace(/_/g, '/')));
+      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+
+      return { header, payload };
+    } catch {
+      return null;
+    }
+  },
+
+  /**
+   * Check if a JWT is expired
+   */
+  isExpired: (token: string): boolean => {
+    const decoded = jwt.decode(token);
+    if (!decoded) return true;
+    const exp = decoded.payload.exp as number | undefined;
+    if (!exp) return false;
+    return exp * 1000 < Date.now();
+  },
+
+  /**
+   * Get expiration date from JWT
+   */
+  getExpiration: (token: string): Date | null => {
+    const decoded = jwt.decode(token);
+    if (!decoded) return null;
+    const exp = decoded.payload.exp as number | undefined;
+    if (!exp) return null;
+    return new Date(exp * 1000);
+  },
+};
+
+/**
+ * HTTP helper utilities for building responses
+ */
+const http = {
+  /**
+   * Create a JSON response
+   */
+  json: (data: unknown, status = 200, headers: Record<string, string> = {}): Response => {
+    return new Response(JSON.stringify(data), {
+      status,
+      headers: {
+        'Content-Type': 'application/json',
+        ...headers,
+      },
+    });
+  },
+
+  /**
+   * Create a text response
+   */
+  text: (data: string, status = 200, headers: Record<string, string> = {}): Response => {
+    return new Response(data, {
+      status,
+      headers: {
+        'Content-Type': 'text/plain',
+        ...headers,
+      },
+    });
+  },
+
+  /**
+   * Create an HTML response
+   */
+  html: (data: string, status = 200, headers: Record<string, string> = {}): Response => {
+    return new Response(data, {
+      status,
+      headers: {
+        'Content-Type': 'text/html',
+        ...headers,
+      },
+    });
+  },
+
+  /**
+   * Create a redirect response
+   */
+  redirect: (url: string, status = 302): Response => {
+    return new Response(null, {
+      status,
+      headers: { Location: url },
+    });
+  },
+
+  /**
+   * Create an error response
+   */
+  error: (message: string, status = 400, details?: unknown): Response => {
+    return new Response(JSON.stringify({ error: message, details }), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  },
+};
+
 // ============================================
 // SANDBOX EXECUTION
 // ============================================
@@ -470,6 +1002,9 @@ export async function executeInSandbox(
   try {
     // Create SDK with both app data (R2) and user memory (Supabase)
     const sdk = {
+      // ENVIRONMENT VARIABLES - Decrypted, read-only
+      env: Object.freeze({ ...config.envVars }),
+
       // USER CONTEXT - Authenticated user info (null if anonymous)
       user: config.user,
 
@@ -698,6 +1233,11 @@ export async function executeInSandbox(
       base64,      // Base64 encoding/decoding
       hash,        // SHA-256, SHA-512, MD5
       dateFns,     // Date formatting and manipulation
+      schema,      // Zod-like validation
+      markdown,    // Markdown to HTML/text
+      str,         // String utilities (slugify, pluralize, etc.)
+      jwt,         // JWT decoding (read-only)
+      http,        // HTTP response helpers
     };
 
     // Try to execute using Function constructor

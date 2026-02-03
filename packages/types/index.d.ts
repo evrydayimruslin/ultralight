@@ -64,6 +64,42 @@ declare global {
    * @example dateFns.format(new Date(), 'yyyy-MM-dd')
    */
   const dateFns: DateFnsLike;
+
+  /**
+   * Schema validation utilities (Zod-like API).
+   * @example
+   * const userSchema = schema.object({
+   *   name: schema.string().min(1),
+   *   email: schema.string().email(),
+   *   age: schema.number().min(0).optional()
+   * });
+   * const result = userSchema.safeParse(data);
+   */
+  const schema: SchemaBuilder;
+
+  /**
+   * Markdown parsing utilities.
+   * @example markdown.toHtml('# Hello') // '<h1>Hello</h1>'
+   */
+  const markdown: MarkdownUtils;
+
+  /**
+   * String manipulation utilities.
+   * @example str.slugify('Hello World') // 'hello-world'
+   */
+  const str: StringUtils;
+
+  /**
+   * JWT decoding utilities (read-only, no signing).
+   * @example jwt.decode(token) // { header, payload }
+   */
+  const jwt: JwtUtils;
+
+  /**
+   * HTTP response builder utilities.
+   * @example http.json({ success: true })
+   */
+  const http: HttpUtils;
 }
 
 // ============================================
@@ -71,6 +107,15 @@ declare global {
 // ============================================
 
 interface UltralightSDK {
+  // ---- Environment Variables ----
+
+  /**
+   * App environment variables (read-only, decrypted).
+   * Set these in your app settings on ultralight.dev.
+   * @example const apiKey = ultralight.env.STRIPE_KEY
+   */
+  env: Readonly<Record<string, string>>;
+
   // ---- User Context ----
 
   /**
@@ -538,6 +583,150 @@ interface DateFnsLike {
 }
 
 // ============================================
+// SCHEMA VALIDATION (Zod-like)
+// ============================================
+
+interface SchemaBuilder {
+  string(): StringSchema;
+  number(): NumberSchema;
+  boolean(): BooleanSchema;
+  array<T>(itemSchema: Schema<T>): ArraySchema<T>;
+  object<T extends Record<string, Schema<unknown>>>(shape: T): ObjectSchema<T>;
+  optional<T>(innerSchema: Schema<T>): Schema<T | undefined>;
+  union<T extends Schema<unknown>[]>(...schemas: T): Schema<T[number] extends Schema<infer U> ? U : never>;
+  literal<T extends string | number | boolean>(value: T): Schema<T>;
+  enum<T extends string[]>(...values: T): Schema<T[number]>;
+  any(): Schema<unknown>;
+}
+
+interface Schema<T> {
+  parse(value: unknown): T;
+  safeParse(value: unknown): { success: true; data: T } | { success: false; error: string };
+  optional(): Schema<T | undefined>;
+  default(defaultValue: T): Schema<T>;
+}
+
+interface StringSchema extends Schema<string> {
+  min(length: number): StringSchema;
+  max(length: number): StringSchema;
+  length(length: number): StringSchema;
+  regex(pattern: RegExp): StringSchema;
+  email(): StringSchema;
+  url(): StringSchema;
+}
+
+interface NumberSchema extends Schema<number> {
+  min(value: number): NumberSchema;
+  max(value: number): NumberSchema;
+  int(): NumberSchema;
+  positive(): NumberSchema;
+  negative(): NumberSchema;
+}
+
+interface BooleanSchema extends Schema<boolean> {}
+
+interface ArraySchema<T> extends Schema<T[]> {
+  min(length: number): ArraySchema<T>;
+  max(length: number): ArraySchema<T>;
+  nonempty(): ArraySchema<T>;
+}
+
+interface ObjectSchema<T extends Record<string, Schema<unknown>>> extends Schema<{
+  [K in keyof T]: T[K] extends Schema<infer U> ? U : never;
+}> {}
+
+// ============================================
+// MARKDOWN UTILITIES
+// ============================================
+
+interface MarkdownUtils {
+  /** Parse markdown to HTML */
+  toHtml(md: string): string;
+  /** Strip markdown to plain text */
+  toText(md: string): string;
+}
+
+// ============================================
+// STRING UTILITIES
+// ============================================
+
+interface StringUtils {
+  /** Convert string to URL-friendly slug */
+  slugify(text: string): string;
+  /** Pluralize a word based on count */
+  pluralize(word: string, count: number, plural?: string): string;
+  /** Convert to title case */
+  titleCase(text: string): string;
+  /** Escape HTML special characters */
+  escapeHtml(text: string): string;
+  /** Unescape HTML entities */
+  unescapeHtml(text: string): string;
+  /** Count words in text */
+  wordCount(text: string): number;
+  /** Truncate to word boundary */
+  truncateWords(text: string, count: number, suffix?: string): string;
+  /** Generate a random string */
+  random(length: number, charset?: 'alphanumeric' | 'alpha' | 'numeric' | 'hex' | string): string;
+}
+
+// ============================================
+// JWT UTILITIES
+// ============================================
+
+interface JwtUtils {
+  /** Decode a JWT without verification (read-only) */
+  decode(token: string): { header: Record<string, unknown>; payload: Record<string, unknown> } | null;
+  /** Check if a JWT is expired */
+  isExpired(token: string): boolean;
+  /** Get expiration date from JWT */
+  getExpiration(token: string): Date | null;
+}
+
+// ============================================
+// HTTP UTILITIES
+// ============================================
+
+interface HttpUtils {
+  /** Create a JSON response */
+  json(data: unknown, status?: number, headers?: Record<string, string>): Response;
+  /** Create a text response */
+  text(data: string, status?: number, headers?: Record<string, string>): Response;
+  /** Create an HTML response */
+  html(data: string, status?: number, headers?: Record<string, string>): Response;
+  /** Create a redirect response */
+  redirect(url: string, status?: number): Response;
+  /** Create an error response */
+  error(message: string, status?: number, details?: unknown): Response;
+}
+
+// ============================================
+// HTTP REQUEST (for HTTP endpoints)
+// ============================================
+
+/**
+ * Request object passed to HTTP endpoint functions.
+ * Simplified Request-like object with useful properties.
+ */
+interface UltralightRequest {
+  /** HTTP method (GET, POST, etc.) */
+  method: string;
+  /** Full URL path with query string */
+  url: string;
+  /** Path portion after the function name */
+  path: string;
+  /** Parsed query parameters */
+  query: Record<string, string>;
+  /** Request headers */
+  headers: Record<string, string>;
+  /** Parse body as JSON */
+  json(): Promise<unknown>;
+  /** Get body as text */
+  text(): Promise<string>;
+  /** Parse body as form data */
+  formData(): Promise<Record<string, unknown>>;
+}
+
+// ============================================
 // REACT APP TYPES
 // ============================================
 
@@ -585,6 +774,18 @@ export {
   CronPresets,
   LodashLike,
   DateFnsLike,
+  SchemaBuilder,
+  Schema,
+  StringSchema,
+  NumberSchema,
+  BooleanSchema,
+  ArraySchema,
+  ObjectSchema,
+  MarkdownUtils,
+  StringUtils,
+  JwtUtils,
+  HttpUtils,
+  UltralightRequest,
   UltralightApp,
   UltralightProps,
 };
