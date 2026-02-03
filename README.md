@@ -13,6 +13,10 @@ Built something cool with Cursor or Claude Code? Drag your folder, get a URL, do
 - **Instant Deployment** - Upload code, get a URL
 - **AI Integration** - Built-in AI capabilities with BYOK support
 - **MCP Protocol** - Every app is an MCP server
+- **HTTP Endpoints** - Public APIs for webhooks and mobile backends
+- **Supabase Integration** - BYOS (Bring Your Own Supabase) for real databases
+- **Environment Variables** - Encrypted secrets management
+- **NPM Support** - Import any npm package, bundled automatically
 - **Skills.md** - Auto-generated documentation from code
 - **Semantic Discovery** - Find apps by capability
 - **Draft/Publish** - Safe deployments with version control
@@ -217,7 +221,18 @@ POST /mcp/{appId}
 # - ultralight.store
 # - ultralight.load
 # - ultralight.ai
+# - ultralight.env
 # - ultralight.cron.*
+```
+
+### HTTP Endpoints
+
+```bash
+# Call any exported function via HTTP
+POST /http/{appId}/{functionName}
+
+# Example: POST /http/abc123/createUser
+# Body: { "name": "John", "email": "john@example.com" }
 ```
 
 ---
@@ -276,6 +291,7 @@ export R2_ACCESS_KEY_ID="your-r2-key"
 export R2_SECRET_ACCESS_KEY="your-r2-secret"
 export R2_BUCKET_NAME="ultralight-apps"
 export OPENROUTER_API_KEY="your-openrouter-key"
+export BYOK_ENCRYPTION_KEY="your-32-byte-encryption-key"  # For encrypting secrets
 ```
 
 ### Database Setup
@@ -284,6 +300,8 @@ export OPENROUTER_API_KEY="your-openrouter-key"
 # Run migrations in Supabase SQL Editor
 # 1. migration.sql (base schema)
 # 2. migration-mcp-skills.sql (MCP + docs features)
+# 3. migration-phase1.sql (env vars + HTTP endpoints)
+# 4. migration-supabase.sql (Supabase integration)
 
 # Important: After migrations, reload PostgREST schema:
 # Supabase Dashboard → Settings → API → Reload Schema
