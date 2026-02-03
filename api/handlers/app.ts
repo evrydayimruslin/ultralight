@@ -33,7 +33,7 @@ export function createApp() {
 
       // Health check - includes deploy timestamp to verify we're running latest code
       if (path === '/health') {
-        return json({ status: 'ok', version: '0.2.0', deployed: new Date().toISOString() });
+        return json({ status: 'ok', version: '0.2.1', deployed: new Date().toISOString(), tsx_fix: true });
       }
 
       // Debug endpoint - test auth and database connection
