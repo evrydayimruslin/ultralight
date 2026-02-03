@@ -1139,6 +1139,148 @@ export function getLayoutHTML(options: {
       height: 16px;
     }
 
+    /* Environment Variables */
+    .env-vars-container {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .env-var-row {
+      display: flex;
+      gap: 0.5rem;
+      align-items: flex-start;
+    }
+
+    .env-var-key {
+      flex: 0 0 180px;
+      padding: 0.625rem 0.75rem;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      color: var(--text-primary);
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.8125rem;
+    }
+
+    .env-var-key:focus {
+      outline: none;
+      border-color: var(--accent-color);
+    }
+
+    .env-var-key::placeholder {
+      color: var(--text-muted);
+      text-transform: none;
+    }
+
+    .env-var-value {
+      flex: 1;
+      padding: 0.625rem 0.75rem;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      color: var(--text-primary);
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.8125rem;
+    }
+
+    .env-var-value:focus {
+      outline: none;
+      border-color: var(--accent-color);
+    }
+
+    .env-var-value::placeholder {
+      color: var(--text-muted);
+    }
+
+    .env-var-delete {
+      flex: 0 0 auto;
+      padding: 0.625rem;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .env-var-delete:hover {
+      background: rgba(248, 113, 113, 0.1);
+      border-color: var(--error-color);
+      color: var(--error-color);
+    }
+
+    .env-var-delete svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .env-var-add-btn {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      background: transparent;
+      border: 1px dashed var(--border-color);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      font-size: 0.8125rem;
+      cursor: pointer;
+      transition: all 0.15s;
+      width: fit-content;
+    }
+
+    .env-var-add-btn:hover {
+      border-color: var(--accent-color);
+      color: var(--accent-color);
+    }
+
+    .env-var-add-btn svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .env-vars-empty {
+      padding: 1.5rem;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.875rem;
+      border: 1px dashed var(--border-color);
+      border-radius: 8px;
+    }
+
+    .env-vars-limits {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+    }
+
+    .env-var-masked {
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    .env-var-toggle-visibility {
+      flex: 0 0 auto;
+      padding: 0.625rem;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .env-var-toggle-visibility:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .env-var-toggle-visibility svg {
+      width: 16px;
+      height: 16px;
+    }
+
     .modal-footer {
       padding: 1rem 1.5rem;
       border-top: 1px solid var(--border-color);
@@ -1752,6 +1894,7 @@ export function getLayoutHTML(options: {
       <!-- Tabs -->
       <div class="settings-tabs">
         <button class="settings-tab active" data-tab="general">General</button>
+        <button class="settings-tab" data-tab="env">Environment</button>
         <button class="settings-tab" data-tab="mcp">MCP & Skills</button>
         <button class="settings-tab" data-tab="draft">Draft & Publish</button>
       </div>
@@ -1822,6 +1965,46 @@ export function getLayoutHTML(options: {
                 Delete App
               </button>
             </div>
+          </div>
+        </div>
+
+        <!-- Environment Variables Tab -->
+        <div class="settings-tab-content" id="tab-env">
+          <div class="settings-section">
+            <div class="settings-section-title">Environment Variables</div>
+            <div class="info-box">
+              Store secrets and configuration for your app. These are encrypted and only accessible by your app at runtime via <code>ultralight.env</code>.
+            </div>
+
+            <div id="envVarsContainer" class="env-vars-container">
+              <div class="env-vars-empty" id="envVarsEmpty">
+                No environment variables configured. Add one to get started.
+              </div>
+            </div>
+
+            <button class="env-var-add-btn" id="addEnvVarBtn" style="margin-top: 0.75rem;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              Add Variable
+            </button>
+
+            <div class="env-vars-limits">
+              Max 50 variables • Keys: uppercase, underscores (max 64 chars) • Values: max 4KB
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-section-title">Usage in Code</div>
+            <div class="quick-ref-code" style="font-size: 0.8125rem; padding: 1rem;">// Access environment variables
+const apiKey = ultralight.env.MY_API_KEY;
+const dbUrl = ultralight.env.DATABASE_URL;
+
+// Check if variable exists
+if (ultralight.env.FEATURE_FLAG) {
+  // Feature enabled
+}</div>
           </div>
         </div>
 
@@ -2551,6 +2734,9 @@ await hash.sha256('data')</div>
       // Load draft info
       loadDraftInfo(appId);
 
+      // Load environment variables
+      loadEnvVars(appId);
+
       // Published version
       document.getElementById('publishedVersion').textContent = settingsApp.current_version || '1.0.0';
 
@@ -2640,6 +2826,247 @@ await hash.sha256('data')</div>
         draftBanner.style.display = 'none';
         draftBannerGeneral.style.display = 'none';
         noDraftMessage.style.display = 'block';
+      }
+    }
+
+    // ============================================
+    // Environment Variables
+    // ============================================
+    let currentEnvVars = {}; // { key: { masked, length, value? } }
+    let pendingEnvVarChanges = {}; // Track changes to be saved
+
+    async function loadEnvVars(appId) {
+      const container = document.getElementById('envVarsContainer');
+      const emptyState = document.getElementById('envVarsEmpty');
+
+      try {
+        const res = await fetch(\`/api/apps/\${appId}/env\`, {
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+
+        if (!res.ok) {
+          if (res.status === 403) {
+            container.innerHTML = '<div class="env-vars-empty">You don\\'t have permission to manage environment variables for this app.</div>';
+            return;
+          }
+          throw new Error('Failed to load env vars');
+        }
+
+        const data = await res.json();
+        currentEnvVars = {};
+        pendingEnvVarChanges = {};
+
+        // Convert array to object
+        if (data.env_vars && Array.isArray(data.env_vars)) {
+          data.env_vars.forEach(v => {
+            currentEnvVars[v.key] = { masked: v.masked, length: v.length };
+          });
+        }
+
+        renderEnvVars();
+      } catch (err) {
+        console.error('Failed to load env vars:', err);
+        container.innerHTML = '<div class="env-vars-empty">Failed to load environment variables.</div>';
+      }
+    }
+
+    function renderEnvVars() {
+      const container = document.getElementById('envVarsContainer');
+      const emptyState = document.getElementById('envVarsEmpty');
+      const keys = Object.keys(currentEnvVars);
+
+      if (keys.length === 0 && Object.keys(pendingEnvVarChanges).length === 0) {
+        container.innerHTML = '<div class="env-vars-empty" id="envVarsEmpty">No environment variables configured. Add one to get started.</div>';
+        return;
+      }
+
+      // Merge existing vars with pending new vars
+      const allKeys = new Set([...keys, ...Object.keys(pendingEnvVarChanges).filter(k => pendingEnvVarChanges[k] !== null)]);
+
+      let html = '';
+      allKeys.forEach(key => {
+        const existing = currentEnvVars[key];
+        const pending = pendingEnvVarChanges[key];
+        const isNew = !existing;
+        const isModified = pending !== undefined && pending !== null;
+        const isDeleted = pending === null;
+
+        if (isDeleted) return; // Skip deleted vars
+
+        const displayValue = isModified ? pending : (existing?.masked || '');
+        const placeholder = isNew ? 'value' : (existing?.masked || '••••');
+
+        html += \`
+          <div class="env-var-row" data-key="\${escapeHtml(key)}">
+            <input type="text"
+              class="env-var-key"
+              value="\${escapeHtml(key)}"
+              placeholder="KEY_NAME"
+              \${!isNew ? 'readonly' : ''}
+              data-original-key="\${escapeHtml(key)}"
+              onchange="handleEnvKeyChange(this)"
+            />
+            <input type="\${isModified || isNew ? 'text' : 'password'}"
+              class="env-var-value"
+              value="\${isModified ? escapeHtml(pending) : ''}"
+              placeholder="\${escapeHtml(placeholder)}"
+              data-key="\${escapeHtml(key)}"
+              onchange="handleEnvValueChange(this)"
+            />
+            <button class="env-var-toggle-visibility" onclick="toggleEnvVarVisibility(this)" title="Toggle visibility">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </button>
+            <button class="env-var-delete" onclick="deleteEnvVar('\${escapeHtml(key)}')" title="Delete variable">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+            </button>
+          </div>
+        \`;
+      });
+
+      container.innerHTML = html;
+    }
+
+    window.handleEnvKeyChange = function(input) {
+      const originalKey = input.dataset.originalKey;
+      const newKey = input.value.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '');
+      input.value = newKey;
+
+      // If this is a new var being renamed
+      if (pendingEnvVarChanges[originalKey] !== undefined && !currentEnvVars[originalKey]) {
+        const value = pendingEnvVarChanges[originalKey];
+        delete pendingEnvVarChanges[originalKey];
+        pendingEnvVarChanges[newKey] = value;
+        input.dataset.originalKey = newKey;
+
+        // Update the value input's data-key
+        const row = input.closest('.env-var-row');
+        const valueInput = row.querySelector('.env-var-value');
+        if (valueInput) valueInput.dataset.key = newKey;
+      }
+    };
+
+    window.handleEnvValueChange = function(input) {
+      const key = input.dataset.key;
+      const value = input.value;
+      pendingEnvVarChanges[key] = value;
+    };
+
+    window.toggleEnvVarVisibility = function(btn) {
+      const row = btn.closest('.env-var-row');
+      const input = row.querySelector('.env-var-value');
+      if (input.type === 'password') {
+        input.type = 'text';
+      } else {
+        input.type = 'password';
+      }
+    };
+
+    window.deleteEnvVar = function(key) {
+      if (!confirm(\`Delete environment variable "\${key}"?\`)) return;
+
+      if (currentEnvVars[key]) {
+        // Mark existing var for deletion
+        pendingEnvVarChanges[key] = null;
+      } else {
+        // Remove pending new var
+        delete pendingEnvVarChanges[key];
+      }
+
+      renderEnvVars();
+    };
+
+    // Add new env var
+    document.getElementById('addEnvVarBtn')?.addEventListener('click', () => {
+      // Generate a unique placeholder key
+      let counter = 1;
+      let newKey = 'NEW_VAR';
+      while (currentEnvVars[newKey] || pendingEnvVarChanges[newKey] !== undefined) {
+        newKey = \`NEW_VAR_\${counter++}\`;
+      }
+
+      pendingEnvVarChanges[newKey] = '';
+      renderEnvVars();
+
+      // Focus the new key input
+      setTimeout(() => {
+        const newRow = document.querySelector(\`.env-var-row[data-key="\${newKey}"]\`);
+        if (newRow) {
+          const keyInput = newRow.querySelector('.env-var-key');
+          if (keyInput) {
+            keyInput.focus();
+            keyInput.select();
+          }
+        }
+      }, 50);
+    });
+
+    // Save env vars (called from save settings)
+    async function saveEnvVars() {
+      if (!settingsAppId || Object.keys(pendingEnvVarChanges).length === 0) {
+        return true; // Nothing to save
+      }
+
+      // Build the updates
+      const updates = {};
+      const deletions = [];
+
+      for (const [key, value] of Object.entries(pendingEnvVarChanges)) {
+        if (value === null) {
+          deletions.push(key);
+        } else if (value !== undefined) {
+          // Validate key format
+          if (!/^[A-Z][A-Z0-9_]*$/.test(key)) {
+            showToast(\`Invalid key format: \${key}\`, 'error');
+            return false;
+          }
+          if (key.startsWith('ULTRALIGHT')) {
+            showToast(\`Reserved key prefix: \${key}\`, 'error');
+            return false;
+          }
+          updates[key] = value;
+        }
+      }
+
+      try {
+        // Handle deletions first
+        for (const key of deletions) {
+          const res = await fetch(\`/api/apps/\${settingsAppId}/env/\${key}\`, {
+            method: 'DELETE',
+            headers: { 'Authorization': \`Bearer \${authToken}\` }
+          });
+          if (!res.ok) throw new Error(\`Failed to delete \${key}\`);
+        }
+
+        // Update/add vars if there are any
+        if (Object.keys(updates).length > 0) {
+          const res = await fetch(\`/api/apps/\${settingsAppId}/env\`, {
+            method: 'PATCH',
+            headers: {
+              'Authorization': \`Bearer \${authToken}\`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ env_vars: updates })
+          });
+
+          if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || 'Failed to save env vars');
+          }
+        }
+
+        // Clear pending changes
+        pendingEnvVarChanges = {};
+        return true;
+      } catch (err) {
+        console.error('Failed to save env vars:', err);
+        showToast(err.message || 'Failed to save environment variables', 'error');
+        return false;
       }
     }
 
@@ -2941,6 +3368,12 @@ await hash.sha256('data')</div>
           } catch (skillsErr) {
             showToast('Skills.md has errors - check the editor', 'warning');
           }
+        }
+
+        // Save environment variables
+        const envSaved = await saveEnvVars();
+        if (!envSaved) {
+          throw new Error('Failed to save environment variables');
         }
 
         showToast('Settings saved successfully');
