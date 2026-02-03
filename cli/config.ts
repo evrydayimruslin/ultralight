@@ -93,8 +93,9 @@ export function parseArgs(args: string[], options: ParseOptions = {}): ParsedArg
   const numberSet = new Set(options.number || []);
   const aliasMap = new Map<string, string>();
 
-  // Build alias map (reverse: alias -> canonical)
-  for (const [canonical, alias] of Object.entries(options.alias || {})) {
+  // Build alias map (alias -> canonical)
+  // Input format: { shortAlias: canonicalName } e.g., { t: 'token' }
+  for (const [alias, canonical] of Object.entries(options.alias || {})) {
     aliasMap.set(alias, canonical);
   }
 
