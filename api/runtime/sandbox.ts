@@ -1662,9 +1662,26 @@ export async function executeInSandbox(
       // This means exports are available on the __exports object, e.g.:
       // var __exports = (() => { ... return { addTweet, getTweet, ... }; })();
       //
+      // CRITICAL: The bundled IIFE code often reads from globalThis at the top level:
+      //   const ultralight = globalThis.ultralight;
+      // This happens BEFORE our context variables are available in the function scope.
+      // So we MUST set up globalThis properties BEFORE the bundled code runs.
+      //
       // We need to check both direct scope (for legacy/unbundled code) and __exports
       const wrapperCode = `
         "use strict";
+
+        // Set up globalThis properties BEFORE bundled code runs
+        // This is critical because bundled code captures these at module init time
+        globalThis.ultralight = ultralight;
+        globalThis.uuid = uuid;
+        globalThis._ = _;
+        globalThis.supabase = supabase;
+        globalThis.console = console;
+        globalThis.fetch = fetch;
+        globalThis.require = require;
+
+        // Now run the bundled code - it will find ultralight etc. on globalThis
         ${config.code}
 
         // Check for the function - could be a direct variable or on __exports (IIFE bundle)
