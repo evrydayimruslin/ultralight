@@ -203,19 +203,28 @@ export function createApp() {
             }
           }
 
-          // Detect app type by checking for handler function
-          // After bundling, exports are transformed, so we check for:
-          // 1. Original export patterns (unbundled code)
-          // 2. Transformed handler function/variable (bundled code)
-          const isServerApp =
-            // Original export patterns
+          // Detect app type:
+          // - Server/MCP apps: Have exported functions but no default export (or default is not a UI component)
+          // - Browser apps: Have a default export that's a function/component for rendering UI
+          //
+          // Server apps are detected by:
+          // 1. Explicit handler function pattern
+          // 2. Named exports without a default export (MCP functions)
+          // 3. Uses server-only APIs (supabase, ultralight.ai, etc.)
+          const hasDefaultExport = /export\s+default\s+/.test(code) || /export\s*\{[^}]*default[^}]*\}/.test(code);
+          const hasNamedExports = /export\s*\{/.test(code);
+          const hasHandlerFunction =
             /export\s+(default\s+)?(async\s+)?function\s+handler\s*\(/.test(code) ||
             /export\s+default\s+handler/.test(code) ||
             /export\s+\{\s*handler\s*\}/.test(code) ||
-            // Bundled/transformed patterns - function named handler
             /^(async\s+)?function\s+handler\s*\(/m.test(code) ||
-            // IIFE exports pattern from esbuild
-            /var\s+handler\s*=/.test(code) ||
+            /var\s+handler\s*=/.test(code);
+          const usesServerApis = /supabase\.|ultralight\.ai\(|ultralight\.remember\(/.test(code);
+
+          // Server app if: has handler, OR (has named exports without default export), OR uses server APIs
+          const isServerApp = hasHandlerFunction ||
+            (hasNamedExports && !hasDefaultExport) ||
+            usesServerApis ||
             /__ultralight_exports__/.test(code);
 
           if (isServerApp) {
