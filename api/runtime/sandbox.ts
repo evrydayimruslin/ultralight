@@ -1702,10 +1702,13 @@ export async function executeInSandbox(
         globalThis.ultralight = ultralight;
         globalThis.uuid = uuid;
         globalThis._ = _;
-        globalThis.supabase = supabase;
         globalThis.console = console;
         globalThis.fetch = fetch;
         globalThis.require = require;
+        // Only set supabase if it's configured (it might be undefined for apps using R2 storage)
+        if (typeof supabase !== 'undefined') {
+          globalThis.supabase = supabase;
+        }
 
         // Now run the bundled code - it will find ultralight etc. on globalThis
         ${config.code}
