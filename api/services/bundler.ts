@@ -44,9 +44,11 @@ export async function bundleCode(
 
   const hasExternalImports = detectExternalImports(entryFile.content);
   const hasAnyImports = detectAnyImports(entryFile.content);
+  const isTypeScript = entryPoint.endsWith('.ts') || entryPoint.endsWith('.tsx');
 
-  // If no imports at all, return code as-is (no bundling needed)
-  if (!hasAnyImports) {
+  // If no imports AND not TypeScript, return code as-is (no bundling needed)
+  // TypeScript files always need transpilation even without imports
+  if (!hasAnyImports && !isTypeScript) {
     return {
       success: true,
       code: entryFile.content,
