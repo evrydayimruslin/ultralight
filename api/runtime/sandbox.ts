@@ -1488,8 +1488,57 @@ export async function executeInSandbox(
       capturedConsole.log('[SDK] Supabase client initialized');
     }
 
+    // Mock React/ReactDOM for MCP function execution
+    // These are only used by the UI rendering code, not MCP functions
+    // Providing stubs prevents "Dynamic require" errors when bundled code loads
+    const mockReact = {
+      createElement: () => null,
+      useState: () => [null, () => {}],
+      useEffect: () => {},
+      useCallback: (fn: unknown) => fn,
+      useMemo: (fn: () => unknown) => fn(),
+      useRef: () => ({ current: null }),
+      useContext: () => null,
+      createContext: () => ({ Provider: () => null, Consumer: () => null }),
+      Fragment: Symbol('Fragment'),
+      StrictMode: Symbol('StrictMode'),
+      // JSX runtime
+      jsx: () => null,
+      jsxs: () => null,
+      jsxDEV: () => null,
+    };
+
+    const mockReactDOM = {
+      createRoot: () => ({
+        render: () => {},
+        unmount: () => {},
+      }),
+      render: () => {},
+    };
+
+    // Require function for IIFE-bundled code that has external dependencies
+    // This provides mock implementations for browser-only modules
+    const sandboxRequire = (moduleName: string) => {
+      // React ecosystem - provide mocks since MCP functions don't need actual React
+      if (moduleName === 'react' || moduleName.startsWith('https://esm.sh/react')) {
+        return mockReact;
+      }
+      if (moduleName === 'react/jsx-runtime' || moduleName.includes('react') && moduleName.includes('jsx-runtime')) {
+        return mockReact;
+      }
+      if (moduleName === 'react-dom' || moduleName === 'react-dom/client' || moduleName.startsWith('https://esm.sh/react-dom')) {
+        return mockReactDOM;
+      }
+
+      // Unknown module - throw helpful error
+      throw new Error(`Module "${moduleName}" is not available in the MCP sandbox. Only backend functions are supported.`);
+    };
+
     // Build execution context with pre-bundled stdlib
     const context: Record<string, unknown> = {
+      // Require function for IIFE bundles with external deps
+      require: sandboxRequire,
+
       // SDK
       ultralight: sdk,
 

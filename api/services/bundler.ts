@@ -98,8 +98,15 @@ export async function bundleCode(
       '--target=esnext',
       `--outfile=${outPath}`,
       '--minify-syntax',
-      // Don't bundle these - they're provided by the runtime
+      // Don't bundle these - they're provided by the runtime or loaded separately
       '--external:ultralight',
+      // React/ReactDOM are loaded separately in browser via esm.sh import map
+      // Marking as external prevents "Dynamic require" errors when running MCP functions in sandbox
+      '--external:react',
+      '--external:react-dom',
+      '--external:react-dom/client',
+      '--external:https://esm.sh/react*',
+      '--external:https://esm.sh/react-dom*',
     ];
 
     // Add JSX support if this looks like a React project
