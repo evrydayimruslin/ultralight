@@ -117,7 +117,7 @@ ${colors.dim('OPTIONS')}
 ${colors.dim('EXAMPLES')}
   ultralight init my-app
   ultralight init my-app --react
-  ultralight login
+  ultralight login --token ul_abc123...
   ultralight upload ./my-app
   ultralight apps list
   ultralight draft publish my-app
@@ -528,36 +528,56 @@ async function login(args: string[], client: ApiClient, config: Config) {
     console.log(`
 ${colors.bold('ultralight login')}
 
-Authenticate with Ultralight using OAuth or a token.
+Authenticate with Ultralight using an API token.
 
 ${colors.dim('OPTIONS')}
-  --token, -t <token>   Use a specific auth token
+  --token, -t <token>   Your API token (create one in User Settings → API Tokens)
+
+${colors.dim('TOKEN TYPES')}
+  API Token (ul_xxx)    Long-lived token for CLI/API access
+  JWT Token             Short-lived session token (from browser)
 
 ${colors.dim('EXAMPLES')}
-  ultralight login                    # Interactive OAuth login
-  ultralight login --token <token>    # Use existing token
+  ultralight login --token ul_abc123...   # Use API token (recommended)
+  ultralight login                         # Show instructions
 `);
     return;
   }
 
   if (parsed.token) {
+    const token = parsed.token as string;
+    const isApiToken = token.startsWith('ul_');
+
     // Token-based login
     config.auth = {
-      token: parsed.token as string,
-      expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+      token,
+      is_api_token: isApiToken,
+      // API tokens don't need client-side expiry tracking
+      expires_at: isApiToken ? undefined : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
     };
     await saveConfig(config);
-    console.log(colors.green('✓ Logged in successfully'));
+
+    if (isApiToken) {
+      console.log(colors.green('✓ Logged in with API token'));
+      console.log(colors.dim('  Token starts with: ' + token.substring(0, 10) + '...'));
+    } else {
+      console.log(colors.green('✓ Logged in with session token'));
+    }
     return;
   }
 
-  // Interactive OAuth login
-  console.log(colors.dim('Opening browser for authentication...'));
-  console.log();
-  console.log(`Visit: ${colors.cyan(config.api_url + '/auth/login?cli=1')}`);
-  console.log();
-  console.log('After logging in, copy the token and run:');
-  console.log(colors.cyan('  ultralight login --token <your-token>'));
+  // No token provided - show instructions
+  console.log(`
+${colors.bold('How to get an API token:')}
+
+  1. Go to ${colors.cyan(config.api_url)}
+  2. Sign in and click your profile icon
+  3. Go to ${colors.cyan('Settings → API Tokens')}
+  4. Create a new token and copy it
+  5. Run: ${colors.cyan('ultralight login --token <your-token>')}
+
+${colors.dim('API tokens start with ul_ and can be used for CLI and API access.')}
+`);
 }
 
 async function logout(_args: string[], _client: ApiClient, _config: Config) {

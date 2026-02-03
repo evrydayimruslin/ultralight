@@ -10,8 +10,9 @@ export interface Config {
   api_url: string;
   auth?: {
     token: string;
-    expires_at: string;
+    expires_at?: string;  // Optional - API tokens may not have expiry
     refresh_token?: string;
+    is_api_token?: boolean;  // True for ul_xxx tokens
   };
   defaults?: {
     visibility?: 'private' | 'unlisted' | 'public';

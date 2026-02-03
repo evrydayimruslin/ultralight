@@ -1661,6 +1661,170 @@ export function getLayoutHTML(options: {
       color: var(--error-color);
     }
 
+    /* Settings Tabs */
+    .settings-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border-color);
+      padding: 0 1.5rem;
+      background: var(--bg-secondary);
+    }
+
+    .settings-tab {
+      padding: 0.75rem 1.25rem;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      transition: all 0.2s;
+    }
+
+    .settings-tab:hover {
+      color: var(--text-secondary);
+    }
+
+    .settings-tab.active {
+      color: var(--accent-color);
+      border-bottom-color: var(--accent-color);
+    }
+
+    .settings-tab-content {
+      display: none;
+    }
+
+    .settings-tab-content.active {
+      display: block;
+    }
+
+    /* API Tokens */
+    .token-create-form {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .token-create-form input {
+      flex: 1;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 0.5rem 0.75rem;
+      color: var(--text-primary);
+      font-size: 0.875rem;
+    }
+
+    .token-create-form input:focus {
+      outline: none;
+      border-color: var(--accent-color);
+    }
+
+    .token-create-form select {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 0.5rem 0.75rem;
+      color: var(--text-primary);
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+
+    .new-token-display {
+      background: rgba(251, 191, 36, 0.1);
+      border: 1px solid rgba(251, 191, 36, 0.3);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .new-token-warning {
+      font-size: 0.875rem;
+      color: #fbbf24;
+      margin-bottom: 0.75rem;
+      font-weight: 500;
+    }
+
+    .new-token-value {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .new-token-value code {
+      flex: 1;
+      background: var(--bg-tertiary);
+      padding: 0.75rem;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 0.875rem;
+      word-break: break-all;
+      color: var(--text-primary);
+    }
+
+    .tokens-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .token-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 1rem;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+    }
+
+    .token-item.expired {
+      opacity: 0.6;
+    }
+
+    .token-info {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      flex: 1;
+    }
+
+    .token-name {
+      font-weight: 500;
+      font-size: 0.875rem;
+    }
+
+    .token-meta {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .token-prefix {
+      font-family: monospace;
+      color: var(--accent-color);
+    }
+
+    .token-expired-badge {
+      background: rgba(239, 68, 68, 0.2);
+      color: #ef4444;
+      padding: 0.125rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.625rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .tokens-empty {
+      text-align: center;
+      padding: 2rem;
+      color: var(--text-muted);
+      font-size: 0.875rem;
+    }
+
     /* Developer Resources */
     .dev-resources {
       margin-top: 2rem;
@@ -2199,9 +2363,9 @@ const client = createClient(
     </div>
   </div>
 
-  <!-- User Settings Modal (BYOK) -->
+  <!-- User Settings Modal (BYOK + API Tokens) -->
   <div class="modal-overlay" id="userSettingsModal">
-    <div class="modal" style="max-width: 600px;">
+    <div class="modal" style="max-width: 650px;">
       <div class="modal-header">
         <h2 class="modal-title">Settings</h2>
         <button class="modal-close" onclick="closeUserSettings()">
@@ -2212,17 +2376,69 @@ const client = createClient(
         </button>
       </div>
 
-      <div class="modal-body">
-        <div class="settings-section">
-          <div class="settings-section-title">🔑 AI API Keys (BYOK)</div>
-          <div class="info-box">
-            Add your own API keys to use AI features. Your keys are encrypted and stored securely.
-            Choose a primary provider for your apps to use.
-          </div>
+      <!-- Settings Tabs -->
+      <div class="settings-tabs">
+        <button class="settings-tab active" data-tab="byok" onclick="switchSettingsTab('byok')">
+          🔑 AI Keys
+        </button>
+        <button class="settings-tab" data-tab="tokens" onclick="switchSettingsTab('tokens')">
+          🎫 API Tokens
+        </button>
+      </div>
 
-          <div id="byokMessage" class="byok-message" style="display: none;"></div>
-          <div id="byokProviders" class="byok-providers">
-            <div class="byok-loading">Loading providers...</div>
+      <div class="modal-body">
+        <!-- BYOK Tab -->
+        <div id="byokTab" class="settings-tab-content active">
+          <div class="settings-section">
+            <div class="settings-section-title">🔑 AI API Keys (BYOK)</div>
+            <div class="info-box">
+              Add your own API keys to use AI features. Your keys are encrypted and stored securely.
+              Choose a primary provider for your apps to use.
+            </div>
+
+            <div id="byokMessage" class="byok-message" style="display: none;"></div>
+            <div id="byokProviders" class="byok-providers">
+              <div class="byok-loading">Loading providers...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- API Tokens Tab -->
+        <div id="tokensTab" class="settings-tab-content">
+          <div class="settings-section">
+            <div class="settings-section-title">🎫 API Tokens</div>
+            <div class="info-box">
+              Create personal access tokens for CLI and API access. Tokens are shown only once when created.
+            </div>
+
+            <div id="tokensMessage" class="byok-message" style="display: none;"></div>
+
+            <!-- Create Token Form -->
+            <div class="token-create-form">
+              <input type="text" id="newTokenName" placeholder="Token name (e.g., CLI, Corin Bot)" maxlength="50" />
+              <select id="newTokenExpiry">
+                <option value="">Never expires</option>
+                <option value="7">7 days</option>
+                <option value="30">30 days</option>
+                <option value="90">90 days</option>
+                <option value="365">1 year</option>
+              </select>
+              <button class="byok-btn byok-btn-primary" onclick="createToken()">Create Token</button>
+            </div>
+
+            <!-- New Token Display (shown after creation) -->
+            <div id="newTokenDisplay" class="new-token-display" style="display: none;">
+              <div class="new-token-warning">⚠️ Copy this token now! You won't be able to see it again.</div>
+              <div class="new-token-value">
+                <code id="newTokenValue"></code>
+                <button class="byok-btn byok-btn-secondary" onclick="copyToken()">Copy</button>
+              </div>
+            </div>
+
+            <!-- Tokens List -->
+            <div id="tokensList" class="tokens-list">
+              <div class="byok-loading">Loading tokens...</div>
+            </div>
           </div>
         </div>
       </div>
@@ -2513,11 +2729,29 @@ await hash.sha256('data')</div>
     window.openUserSettings = async function() {
       userSettingsModal.classList.add('open');
       await loadBYOKConfig();
+      await loadTokens();
     };
 
     window.closeUserSettings = function() {
       userSettingsModal.classList.remove('open');
       byokMessage.style.display = 'none';
+      document.getElementById('tokensMessage').style.display = 'none';
+      document.getElementById('newTokenDisplay').style.display = 'none';
+    };
+
+    window.switchSettingsTab = function(tabId) {
+      // Update tab buttons
+      document.querySelectorAll('.settings-tab').forEach(tab => {
+        tab.classList.toggle('active', tab.dataset.tab === tabId);
+      });
+
+      // Update tab content
+      document.querySelectorAll('.settings-tab-content').forEach(content => {
+        content.classList.toggle('active', content.id === tabId + 'Tab');
+      });
+
+      // Hide new token display when switching tabs
+      document.getElementById('newTokenDisplay').style.display = 'none';
     };
 
     async function loadBYOKConfig() {
@@ -2693,6 +2927,174 @@ await hash.sha256('data')</div>
         closeUserSettings();
       }
     });
+
+    // ============================================
+    // API Tokens
+    // ============================================
+    let currentTokens = [];
+    let newlyCreatedToken = null;
+
+    async function loadTokens() {
+      if (!authToken) return;
+
+      const tokensList = document.getElementById('tokensList');
+      tokensList.innerHTML = '<div class="byok-loading">Loading tokens...</div>';
+
+      try {
+        const res = await fetch('/api/user/tokens', {
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+
+        if (!res.ok) throw new Error('Failed to load tokens');
+
+        const data = await res.json();
+        currentTokens = data.tokens || [];
+        renderTokensList();
+      } catch (err) {
+        console.error('Failed to load tokens:', err);
+        tokensList.innerHTML = '<div class="byok-loading" style="color: var(--error-color);">Failed to load tokens</div>';
+      }
+    }
+
+    function renderTokensList() {
+      const tokensList = document.getElementById('tokensList');
+
+      if (currentTokens.length === 0) {
+        tokensList.innerHTML = '<div class="tokens-empty">No API tokens yet. Create one to get started.</div>';
+        return;
+      }
+
+      const html = currentTokens.map(token => {
+        const createdAt = new Date(token.created_at).toLocaleDateString();
+        const lastUsed = token.last_used_at
+          ? new Date(token.last_used_at).toLocaleDateString()
+          : 'Never';
+        const expiresAt = token.expires_at
+          ? new Date(token.expires_at).toLocaleDateString()
+          : 'Never';
+        const isExpired = token.expires_at && new Date(token.expires_at) < new Date();
+
+        return \`
+          <div class="token-item \${isExpired ? 'expired' : ''}">
+            <div class="token-info">
+              <div class="token-name">\${escapeHtml(token.name)}</div>
+              <div class="token-meta">
+                <span class="token-prefix">\${token.token_prefix}...</span>
+                <span>Created: \${createdAt}</span>
+                <span>Last used: \${lastUsed}</span>
+                <span>Expires: \${expiresAt}</span>
+                \${isExpired ? '<span class="token-expired-badge">Expired</span>' : ''}
+              </div>
+            </div>
+            <button class="byok-btn byok-btn-danger" onclick="revokeToken('\${token.id}')">Revoke</button>
+          </div>
+        \`;
+      }).join('');
+
+      tokensList.innerHTML = html;
+    }
+
+    window.createToken = async function() {
+      const nameInput = document.getElementById('newTokenName');
+      const expirySelect = document.getElementById('newTokenExpiry');
+      const name = nameInput.value.trim();
+
+      if (!name) {
+        showTokensMessage('Please enter a token name', 'error');
+        return;
+      }
+
+      const btn = event.target;
+      btn.disabled = true;
+      btn.textContent = 'Creating...';
+
+      try {
+        const body = { name };
+        if (expirySelect.value) {
+          body.expires_in_days = parseInt(expirySelect.value);
+        }
+
+        const res = await fetch('/api/user/tokens', {
+          method: 'POST',
+          headers: {
+            'Authorization': \`Bearer \${authToken}\`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(body)
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || 'Failed to create token');
+        }
+
+        // Show the new token
+        newlyCreatedToken = data.plaintext_token;
+        document.getElementById('newTokenValue').textContent = newlyCreatedToken;
+        document.getElementById('newTokenDisplay').style.display = 'block';
+
+        // Clear form
+        nameInput.value = '';
+        expirySelect.value = '';
+
+        showTokensMessage('Token created! Copy it now.', 'success');
+        await loadTokens();
+      } catch (err) {
+        showTokensMessage(err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Create Token';
+      }
+    };
+
+    window.copyToken = async function() {
+      if (!newlyCreatedToken) return;
+
+      try {
+        await navigator.clipboard.writeText(newlyCreatedToken);
+        showTokensMessage('Token copied to clipboard!', 'success');
+      } catch (err) {
+        // Fallback for older browsers
+        const textArea = document.createElement('textarea');
+        textArea.value = newlyCreatedToken;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        showTokensMessage('Token copied to clipboard!', 'success');
+      }
+    };
+
+    window.revokeToken = async function(tokenId) {
+      if (!confirm('Revoke this token? Any applications using it will stop working.')) return;
+
+      try {
+        const res = await fetch(\`/api/user/tokens/\${tokenId}\`, {
+          method: 'DELETE',
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || 'Failed to revoke token');
+        }
+
+        showTokensMessage('Token revoked', 'success');
+        await loadTokens();
+      } catch (err) {
+        showTokensMessage(err.message, 'error');
+      }
+    };
+
+    function showTokensMessage(message, type) {
+      const tokensMessage = document.getElementById('tokensMessage');
+      tokensMessage.textContent = message;
+      tokensMessage.className = \`byok-message \${type}\`;
+      tokensMessage.style.display = 'block';
+      setTimeout(() => { tokensMessage.style.display = 'none'; }, 5000);
+    }
 
     // ============================================
     // Apps List

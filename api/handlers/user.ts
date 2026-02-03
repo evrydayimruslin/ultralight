@@ -1,11 +1,17 @@
 // User Settings Handler
-// Handles user profile and BYOK configuration API endpoints
+// Handles user profile, BYOK configuration, and API token management
 
 import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
 import { createUserService } from '../services/user.ts';
 import { validateAPIKey } from '../services/ai.ts';
 import { BYOK_PROVIDERS, type BYOKProvider } from '../../shared/types/index.ts';
+import {
+  createToken,
+  listTokens,
+  revokeToken,
+  revokeAllTokens,
+} from '../services/tokens.ts';
 
 export async function handleUser(request: Request): Promise<Response> {
   const url = new URL(request.url);
@@ -215,6 +221,110 @@ export async function handleUser(request: Request): Promise<Response> {
     } catch (err) {
       console.error('Set primary provider error:', err);
       return error('Failed to set primary provider', 500);
+    }
+  }
+
+  // ============================================
+  // API TOKENS
+  // ============================================
+
+  // GET /api/user/tokens - List all tokens
+  if (path === '/api/user/tokens' && method === 'GET') {
+    try {
+      const tokens = await listTokens(userId);
+      return json({
+        tokens: tokens.map((t) => ({
+          id: t.id,
+          name: t.name,
+          token_prefix: t.token_prefix,
+          scopes: t.scopes,
+          last_used_at: t.last_used_at,
+          expires_at: t.expires_at,
+          created_at: t.created_at,
+        })),
+      });
+    } catch (err) {
+      console.error('List tokens error:', err);
+      return error('Failed to list tokens', 500);
+    }
+  }
+
+  // POST /api/user/tokens - Create a new token
+  if (path === '/api/user/tokens' && method === 'POST') {
+    try {
+      const body = await request.json();
+      const { name, expires_in_days } = body;
+
+      if (!name || typeof name !== 'string' || name.trim().length === 0) {
+        return error('Token name is required', 400);
+      }
+
+      if (name.length > 50) {
+        return error('Token name must be 50 characters or less', 400);
+      }
+
+      // Validate expires_in_days if provided
+      if (expires_in_days !== undefined) {
+        if (typeof expires_in_days !== 'number' || expires_in_days < 1 || expires_in_days > 365) {
+          return error('expires_in_days must be between 1 and 365', 400);
+        }
+      }
+
+      const result = await createToken(userId, name.trim(), {
+        expiresInDays: expires_in_days,
+      });
+
+      return json({
+        success: true,
+        token: {
+          id: result.token.id,
+          name: result.token.name,
+          token_prefix: result.token.token_prefix,
+          expires_at: result.token.expires_at,
+          created_at: result.token.created_at,
+        },
+        // IMPORTANT: This is the only time the full token is returned!
+        plaintext_token: result.plaintext_token,
+        message: 'Token created. Copy it now - you won\'t be able to see it again!',
+      });
+    } catch (err) {
+      console.error('Create token error:', err);
+      if (err instanceof Error && err.message.includes('already exists')) {
+        return error(err.message, 409);
+      }
+      return error('Failed to create token', 500);
+    }
+  }
+
+  // DELETE /api/user/tokens/:id - Revoke a specific token
+  const tokenMatch = path.match(/^\/api\/user\/tokens\/([a-f0-9-]+)$/);
+  if (tokenMatch && method === 'DELETE') {
+    const tokenId = tokenMatch[1];
+
+    try {
+      await revokeToken(userId, tokenId);
+      return json({
+        success: true,
+        message: 'Token revoked',
+      });
+    } catch (err) {
+      console.error('Revoke token error:', err);
+      return error('Failed to revoke token', 500);
+    }
+  }
+
+  // DELETE /api/user/tokens - Revoke all tokens
+  if (path === '/api/user/tokens' && method === 'DELETE') {
+    try {
+      const count = await revokeAllTokens(userId);
+      return json({
+        success: true,
+        revoked_count: count,
+        message: `Revoked ${count} token(s)`,
+      });
+    } catch (err) {
+      console.error('Revoke all tokens error:', err);
+      return error('Failed to revoke tokens', 500);
     }
   }
 

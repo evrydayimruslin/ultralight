@@ -1,7 +1,8 @@
 // Auth Handler
-// Handles authentication via Supabase Google OAuth
+// Handles authentication via Supabase Google OAuth and API tokens
 
 import { error, json } from './app.ts';
+import { isApiToken, getUserFromToken } from '../services/tokens.ts';
 
 // @ts-ignore - Deno is available
 const Deno = globalThis.Deno;
@@ -97,7 +98,7 @@ export async function handleAuth(request: Request): Promise<Response> {
 }
 
 /**
- * Extract and verify JWT from request
+ * Extract and verify JWT or API token from request
  * Also ensures user exists in public.users table
  */
 export async function authenticate(request: Request): Promise<{ id: string; email: string; tier: string }> {
@@ -110,7 +111,27 @@ export async function authenticate(request: Request): Promise<{ id: string; emai
   }
 
   const token = authHeader.slice(7);
-  console.log('Token length:', token.length, 'Token preview:', token.substring(0, 50) + '...');
+  console.log('Token length:', token.length, 'Token preview:', token.substring(0, 20) + '...');
+
+  // Check if this is an API token (starts with "ul_")
+  if (isApiToken(token)) {
+    console.log('Detected API token, validating...');
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+                     request.headers.get('x-real-ip') ||
+                     undefined;
+
+    const user = await getUserFromToken(token, clientIp);
+    if (!user) {
+      console.error('Invalid or expired API token');
+      throw new Error('Invalid or expired API token');
+    }
+
+    console.log('API token validated for user:', user.id, user.email);
+    return user;
+  }
+
+  // Otherwise, treat as JWT
+  console.log('Treating as JWT...');
 
   // Decode and verify JWT locally
   const parts = token.split('.');

@@ -38,8 +38,8 @@ export class ApiClient {
     this.apiUrl = config.api_url;
     this.token = config.auth?.token || null;
 
-    // Check token expiration
-    if (config.auth?.expires_at) {
+    // Check token expiration (skip for API tokens - they handle their own expiry)
+    if (config.auth?.expires_at && !config.auth?.is_api_token) {
       const expiresAt = new Date(config.auth.expires_at);
       if (expiresAt < new Date()) {
         this.token = null;
