@@ -127,7 +127,8 @@ export async function handleUpload(request: Request): Promise<Response> {
     // IMPORTANT: We must bundle ALL imports (relative and external) into a single file
     // because data URL imports cannot resolve relative paths
     log('info', 'Bundling code...');
-    let bundledCode = entryFile.content;
+    let bundledCode = entryFile.content;  // IIFE format for MCP sandbox
+    let esmBundledCode: string | undefined;  // ESM format for browser UI
     let bundleUsed = false;
 
     try {
@@ -149,8 +150,9 @@ export async function handleUpload(request: Request): Promise<Response> {
       // Only use bundled code if bundling actually changed something
       if (bundleResult.code !== entryFile.content) {
         bundledCode = bundleResult.code;
+        esmBundledCode = bundleResult.esmCode;
         bundleUsed = true;
-        log('success', 'Bundle complete');
+        log('success', 'Bundle complete (IIFE + ESM)');
       } else {
         log('success', 'No bundling needed (no imports)');
       }
@@ -192,14 +194,24 @@ export async function handleUpload(request: Request): Promise<Response> {
     log('info', `Entry file normalized: ${entryFile.name} -> ${normalizedEntryName}`);
 
     // Prepare files for upload
+    // We store multiple versions:
+    // - index.tsx (IIFE bundle) - for MCP sandbox execution
+    // - index.esm.js (ESM bundle) - for browser UI rendering
+    // - _source_index.tsx - original source for generate-docs
     const filesToUpload = bundleUsed
       ? [
-          // Upload bundled code as the entry file
+          // Upload IIFE bundled code as the entry file (for MCP sandbox)
           {
             name: normalizedEntryName,
             content: new TextEncoder().encode(bundledCode),
             contentType: getContentType(normalizedEntryName),
           },
+          // Upload ESM bundled code for browser UI rendering
+          ...(esmBundledCode ? [{
+            name: normalizedEntryName.replace(/\.(tsx?|jsx?)$/, '.esm.js'),
+            content: new TextEncoder().encode(esmBundledCode),
+            contentType: 'application/javascript',
+          }] : []),
           // Upload original entry file with _source_ prefix for generate-docs parsing
           // This preserves the original TypeScript code with export statements
           {
@@ -425,6 +437,7 @@ export async function handleDraftUpload(request: Request, appId: string): Promis
     // Bundle the code
     log('info', 'Bundling code...');
     let bundledCode = entryFile.content;
+    let esmBundledCode: string | undefined;
     let bundleUsed = false;
 
     try {
@@ -444,8 +457,9 @@ export async function handleDraftUpload(request: Request, appId: string): Promis
 
       if (bundleResult.code !== entryFile.content) {
         bundledCode = bundleResult.code;
+        esmBundledCode = bundleResult.esmCode;
         bundleUsed = true;
-        log('success', 'Bundle complete');
+        log('success', 'Bundle complete (IIFE + ESM)');
       } else {
         log('success', 'No bundling needed (no imports)');
       }
@@ -483,6 +497,12 @@ export async function handleDraftUpload(request: Request, appId: string): Promis
             content: new TextEncoder().encode(bundledCode),
             contentType: getContentType(normalizedEntryName),
           },
+          // Upload ESM bundle for browser rendering
+          ...(esmBundledCode ? [{
+            name: normalizedEntryName.replace(/\.(tsx?|jsx?)$/, '.esm.js'),
+            content: new TextEncoder().encode(esmBundledCode),
+            contentType: 'application/javascript',
+          }] : []),
           // Upload original entry file with _source_ prefix for generate-docs parsing
           {
             name: `_source_${normalizedEntryName}`,
@@ -611,6 +631,7 @@ export async function handleUploadFiles(
   // Bundle the code
   log('info', 'Bundling code...');
   let bundledCode = entryFile.content;
+  let esmBundledCode: string | undefined;
   let bundleUsed = false;
 
   try {
@@ -630,8 +651,9 @@ export async function handleUploadFiles(
 
     if (bundleResult.code !== entryFile.content) {
       bundledCode = bundleResult.code;
+      esmBundledCode = bundleResult.esmCode;
       bundleUsed = true;
-      log('success', 'Bundle complete');
+      log('success', 'Bundle complete (IIFE + ESM)');
     } else {
       log('success', 'No bundling needed (no imports)');
     }
@@ -674,6 +696,12 @@ export async function handleUploadFiles(
           content: new TextEncoder().encode(bundledCode),
           contentType: getContentType(normalizedEntryName),
         },
+        // Upload ESM bundle for browser rendering
+        ...(esmBundledCode ? [{
+          name: normalizedEntryName.replace(/\.(tsx?|jsx?)$/, '.esm.js'),
+          content: new TextEncoder().encode(esmBundledCode),
+          contentType: 'application/javascript',
+        }] : []),
         // Upload original entry file with _source_ prefix for generate-docs parsing
         {
           name: `_source_${normalizedEntryName}`,
@@ -813,6 +841,7 @@ export async function handleDraftUploadFiles(
   // Bundle the code
   log('info', 'Bundling code...');
   let bundledCode = entryFile.content;
+  let esmBundledCode: string | undefined;
   let bundleUsed = false;
 
   try {
@@ -832,8 +861,9 @@ export async function handleDraftUploadFiles(
 
     if (bundleResult.code !== entryFile.content) {
       bundledCode = bundleResult.code;
+      esmBundledCode = bundleResult.esmCode;
       bundleUsed = true;
-      log('success', 'Bundle complete');
+      log('success', 'Bundle complete (IIFE + ESM)');
     } else {
       log('success', 'No bundling needed (no imports)');
     }
@@ -871,6 +901,12 @@ export async function handleDraftUploadFiles(
           content: new TextEncoder().encode(bundledCode),
           contentType: getContentType(normalizedEntryName),
         },
+        // Upload ESM bundle for browser rendering
+        ...(esmBundledCode ? [{
+          name: normalizedEntryName.replace(/\.(tsx?|jsx?)$/, '.esm.js'),
+          content: new TextEncoder().encode(esmBundledCode),
+          contentType: 'application/javascript',
+        }] : []),
         // Upload original entry file with _source_ prefix for generate-docs parsing
         {
           name: `_source_${normalizedEntryName}`,

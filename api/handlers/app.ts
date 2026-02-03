@@ -190,10 +190,22 @@ export function createApp() {
           }
 
           // Fetch the app code from R2
-          // Try entry files in order of preference: tsx, ts, jsx, js
+          // We have two bundles:
+          // - IIFE bundle (index.tsx) - for MCP sandbox execution
+          // - ESM bundle (index.esm.js) - for browser UI rendering
           const storageKey = app.storage_key;
-          let code: string | null = null;
+          let code: string | null = null;  // IIFE bundle for type detection & MCP
+          let esmCode: string | null = null;  // ESM bundle for browser UI
 
+          // First try to load ESM bundle (for browser rendering)
+          try {
+            esmCode = await r2Service.fetchTextFile(`${storageKey}index.esm.js`);
+            console.log(`App runner: loaded ESM bundle for app ${appId}`);
+          } catch {
+            // ESM bundle not available (older apps or unbundled)
+          }
+
+          // Try entry files in order of preference for IIFE/type detection
           const entryFiles = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
           for (const entryFile of entryFiles) {
             try {
@@ -209,6 +221,9 @@ export function createApp() {
             console.error(`App runner: no entry file found for app ${appId}, storageKey: ${storageKey}`);
             return json({ error: 'App code not found' }, 404);
           }
+
+          // Use ESM code for browser if available, otherwise fall back to IIFE
+          const browserCode = esmCode || code;
 
           // Detect app type:
           // - HTTP Server apps: Have a handler function for direct HTTP request handling
@@ -276,7 +291,8 @@ export function createApp() {
 
               if (isEmbed) {
                 // Embed mode: serve app without sidebar using app-runner
-                return new Response(getAppRunnerHTML(appId, app.name || app.slug, code), {
+                // Use ESM bundle for browser rendering (falls back to IIFE if no ESM)
+                return new Response(getAppRunnerHTML(appId, app.name || app.slug, browserCode), {
                   headers: { 'Content-Type': 'text/html' },
                 });
               } else {

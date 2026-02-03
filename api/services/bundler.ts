@@ -7,7 +7,8 @@ const Deno = globalThis.Deno;
 
 export interface BundleResult {
   success: boolean;
-  code: string;
+  code: string;           // IIFE format for MCP sandbox execution
+  esmCode?: string;       // ESM format for browser UI rendering
   errors: string[];
   warnings: string[];
   hasExternalImports: boolean;
@@ -154,15 +155,61 @@ export async function bundleCode(
       };
     }
 
-    // Read the bundled output
-    const bundledCode = await Deno.readTextFile(outPath);
+    // Read the IIFE bundled output
+    const iifeCode = await Deno.readTextFile(outPath);
 
     // Post-process: wrap exports for our runtime
-    const processedCode = postProcessBundle(bundledCode);
+    const processedIifeCode = postProcessBundle(iifeCode);
+
+    // Now build ESM version for browser UI
+    const esmOutPath = `${tempDir}/bundle.esm.js`;
+    const esmEsbuildArgs = [
+      'esbuild',
+      entryPath,
+      '--bundle',
+      '--format=esm',  // ESM format for browser dynamic import()
+      '--platform=browser',
+      '--target=esnext',
+      `--outfile=${esmOutPath}`,
+      '--minify-syntax',
+      '--external:ultralight',
+      '--external:react',
+      '--external:react-dom',
+      '--external:react-dom/client',
+      '--external:https://esm.sh/react*',
+      '--external:https://esm.sh/react-dom*',
+    ];
+
+    if (isReactProject) {
+      esmEsbuildArgs.push(
+        '--jsx=automatic',
+        '--jsx-import-source=react',  // Use bare 'react' for import map resolution
+        '--loader:.tsx=tsx',
+        '--loader:.jsx=jsx',
+      );
+    }
+
+    const esmCommand = new Deno.Command('npx', {
+      args: esmEsbuildArgs,
+      cwd: tempDir,
+      stdout: 'piped',
+      stderr: 'piped',
+    });
+
+    const esmProcess = esmCommand.spawn();
+    const { code: esmExitCode } = await esmProcess.output();
+
+    let esmCode: string | undefined;
+    if (esmExitCode === 0) {
+      esmCode = await Deno.readTextFile(esmOutPath);
+      // Post-process ESM code
+      esmCode = postProcessBundle(esmCode);
+    }
 
     return {
       success: true,
-      code: processedCode,
+      code: processedIifeCode,
+      esmCode,
       errors: [],
       warnings,
       hasExternalImports: true,
