@@ -1607,6 +1607,50 @@ export async function executeInSandbox(
       context.supabase = supabaseClient;
     }
 
+    // Create a custom globalThis that has ultralight, supabase, uuid, and _ set
+    // This is needed because app code often does: const ultralight = globalThis.ultralight
+    // which executes before our context variables are available
+    const sandboxGlobalThis: Record<string, unknown> = {
+      ultralight: sdk,
+      uuid,
+      _,
+      console: capturedConsole,
+      fetch: openFetch,
+      setTimeout: context.setTimeout,
+      clearTimeout: context.clearTimeout,
+      setInterval: context.setInterval,
+      clearInterval: context.clearInterval,
+      URL,
+      URLSearchParams,
+      JSON,
+      Math,
+      Date,
+      Array,
+      Object,
+      String,
+      Number,
+      Boolean,
+      Promise,
+      Error,
+      RegExp,
+      Map,
+      Set,
+      crypto,
+      TextEncoder,
+      TextDecoder,
+      atob,
+      btoa,
+      require: sandboxRequire,
+    };
+
+    // Add supabase to globalThis if configured
+    if (supabaseClient) {
+      sandboxGlobalThis.supabase = supabaseClient;
+    }
+
+    // Add globalThis to context
+    context.globalThis = sandboxGlobalThis;
+
     // Try to execute using Function constructor
     let userFunc: Function;
 
