@@ -231,13 +231,25 @@ export function createApp() {
           // - MCP-only apps: Only have named function exports, no default export, no handler
           //
           // Priority: handler function > default export (UI) > named exports only (MCP)
-          const hasDefaultExport = /export\s+default\s+/.test(code) || /export\s*\{[^}]*default[^}]*\}/.test(code);
+          // Detection works for both ESM and IIFE bundles:
+          // - ESM: export default function render(...)
+          // - IIFE: __export(exports, { default: () => render, ... })
+          const hasDefaultExport =
+            // ESM patterns
+            /export\s+default\s+/.test(code) ||
+            /export\s*\{[^}]*default[^}]*\}/.test(code) ||
+            // IIFE bundle patterns (esbuild output)
+            /default:\s*\(\)\s*=>/.test(code) ||  // __export(x, { default: () => fn })
+            /["']default["']\s*:\s*\(\)\s*=>/.test(code);  // Quoted version
+
           const hasHandlerFunction =
             /export\s+(default\s+)?(async\s+)?function\s+handler\s*\(/.test(code) ||
             /export\s+default\s+handler/.test(code) ||
             /export\s+\{\s*handler\s*\}/.test(code) ||
             /^(async\s+)?function\s+handler\s*\(/m.test(code) ||
-            /var\s+handler\s*=/.test(code);
+            /var\s+handler\s*=/.test(code) ||
+            // IIFE bundle pattern
+            /handler:\s*\(\)\s*=>/.test(code);
 
           // Determine app type with clear priority:
           // 1. HTTP Server app - has handler function (highest priority)
