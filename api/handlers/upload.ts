@@ -200,6 +200,13 @@ export async function handleUpload(request: Request): Promise<Response> {
             content: new TextEncoder().encode(bundledCode),
             contentType: getContentType(normalizedEntryName),
           },
+          // Upload original entry file with _source_ prefix for generate-docs parsing
+          // This preserves the original TypeScript code with export statements
+          {
+            name: `_source_${normalizedEntryName}`,
+            content: new TextEncoder().encode(entryFile.content),
+            contentType: getContentType(normalizedEntryName),
+          },
           // Also upload original files for reference/debugging
           ...validatedFiles
             .filter(f => f.name !== entryFile.name)
@@ -476,6 +483,12 @@ export async function handleDraftUpload(request: Request, appId: string): Promis
             content: new TextEncoder().encode(bundledCode),
             contentType: getContentType(normalizedEntryName),
           },
+          // Upload original entry file with _source_ prefix for generate-docs parsing
+          {
+            name: `_source_${normalizedEntryName}`,
+            content: new TextEncoder().encode(entryFile.content),
+            contentType: getContentType(normalizedEntryName),
+          },
           ...validatedFiles
             .filter(f => f.name !== entryFile.name)
             .map(f => ({
@@ -659,6 +672,12 @@ export async function handleUploadFiles(
         {
           name: normalizedEntryName,
           content: new TextEncoder().encode(bundledCode),
+          contentType: getContentType(normalizedEntryName),
+        },
+        // Upload original entry file with _source_ prefix for generate-docs parsing
+        {
+          name: `_source_${normalizedEntryName}`,
+          content: new TextEncoder().encode(entryFile.content),
           contentType: getContentType(normalizedEntryName),
         },
         ...validatedFiles
@@ -850,6 +869,12 @@ export async function handleDraftUploadFiles(
         {
           name: normalizedEntryName,
           content: new TextEncoder().encode(bundledCode),
+          contentType: getContentType(normalizedEntryName),
+        },
+        // Upload original entry file with _source_ prefix for generate-docs parsing
+        {
+          name: `_source_${normalizedEntryName}`,
+          content: new TextEncoder().encode(entryFile.content),
           contentType: getContentType(normalizedEntryName),
         },
         ...validatedFiles

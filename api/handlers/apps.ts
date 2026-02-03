@@ -749,18 +749,37 @@ async function handleGenerateDocs(request: Request, appId: string): Promise<Resp
       }
 
       // Fetch app code from R2
+      // Prefer _source_ prefixed files (original source before bundling) for parsing
+      // Fall back to bundled entry file if source not available
       const storageKey = app.storage_key;
       let code: string | null = null;
       let filename = 'index.ts';
 
       const entryFiles = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
+
+      // First try to find original source file (unbundled, with ES module exports)
       for (const entryFile of entryFiles) {
         try {
-          code = await r2Service.fetchTextFile(`${storageKey}${entryFile}`);
+          code = await r2Service.fetchTextFile(`${storageKey}_source_${entryFile}`);
           filename = entryFile;
+          console.log('[GENERATE] Found original source file:', `_source_${entryFile}`);
           break;
         } catch {
           // Try next
+        }
+      }
+
+      // Fall back to bundled entry file if no source file found
+      if (!code) {
+        for (const entryFile of entryFiles) {
+          try {
+            code = await r2Service.fetchTextFile(`${storageKey}${entryFile}`);
+            filename = entryFile;
+            console.log('[GENERATE] Using bundled entry file:', entryFile);
+            break;
+          } catch {
+            // Try next
+          }
         }
       }
 
