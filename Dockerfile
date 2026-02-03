@@ -1,5 +1,5 @@
-# Use Deno official image
-FROM denoland/deno:2.1.4
+# Use Deno official image - v2.2+ for lockfile v5 support
+FROM denoland/deno:2.2.0
 
 # Install Node.js and npm for esbuild bundling
 RUN apt-get update && apt-get install -y \
