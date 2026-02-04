@@ -15,6 +15,7 @@ import { getLayoutHTML } from '../../web/layout.ts';
 import { getAppRunnerHTML } from '../../web/app-runner.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
+import type { AppManifest } from '../../shared/types/index.ts';
 
 export function createApp() {
   return {
@@ -225,39 +226,70 @@ export function createApp() {
           // Use ESM code for browser if available, otherwise fall back to IIFE
           const browserCode = esmCode || code;
 
-          // Detect app type:
-          // - HTTP Server apps: Have a handler function for direct HTTP request handling
-          // - Browser apps: Have a default export (React UI component)
-          // - MCP-only apps: Only have named function exports, no default export, no handler
-          //
-          // Priority: handler function > default export (UI) > named exports only (MCP)
-          // Detection works for both ESM and IIFE bundles:
-          // - ESM: export default function render(...)
-          // - IIFE: __export(exports, { default: () => render, ... })
-          const hasDefaultExport =
-            // ESM patterns
-            /export\s+default\s+/.test(code) ||
-            /export\s*\{[^}]*default[^}]*\}/.test(code) ||
-            // IIFE bundle patterns (esbuild output)
-            /default:\s*\(\)\s*=>/.test(code) ||  // __export(x, { default: () => fn })
-            /["']default["']\s*:\s*\(\)\s*=>/.test(code);  // Quoted version
+          // Determine app type from manifest (v2 architecture) or fall back to code detection
+          let isHttpServerApp = false;
+          let isBrowserApp = false;
+          let isMcpOnlyApp = false;
 
-          const hasHandlerFunction =
-            /export\s+(default\s+)?(async\s+)?function\s+handler\s*\(/.test(code) ||
-            /export\s+default\s+handler/.test(code) ||
-            /export\s+\{\s*handler\s*\}/.test(code) ||
-            /^(async\s+)?function\s+handler\s*\(/m.test(code) ||
-            /var\s+handler\s*=/.test(code) ||
-            // IIFE bundle pattern
-            /handler:\s*\(\)\s*=>/.test(code);
+          // First check manifest if available
+          if (app.manifest) {
+            try {
+              const manifest = JSON.parse(app.manifest) as AppManifest;
+              console.log(`App runner: using manifest type "${manifest.type}" for app ${appId}`);
 
-          // Determine app type with clear priority:
-          // 1. HTTP Server app - has handler function (highest priority)
-          // 2. Browser app - has default export (React/UI component)
-          // 3. MCP-only app - everything else (only named exports, no UI)
-          const isHttpServerApp = hasHandlerFunction;
-          const isBrowserApp = !isHttpServerApp && hasDefaultExport;
-          const isMcpOnlyApp = !isHttpServerApp && !isBrowserApp;
+              switch (manifest.type) {
+                case 'mcp':
+                  isMcpOnlyApp = true;
+                  break;
+                case 'ui':
+                  isBrowserApp = true;
+                  break;
+                case 'hybrid':
+                  // Hybrid apps have both UI and MCP - serve UI by default
+                  isBrowserApp = true;
+                  break;
+              }
+            } catch (err) {
+              console.error('Failed to parse manifest for app type detection:', err);
+            }
+          }
+
+          // Fall back to code-based detection (legacy behavior)
+          if (!isMcpOnlyApp && !isBrowserApp && !isHttpServerApp) {
+            // Detect app type:
+            // - HTTP Server apps: Have a handler function for direct HTTP request handling
+            // - Browser apps: Have a default export (React UI component)
+            // - MCP-only apps: Only have named function exports, no default export, no handler
+            //
+            // Priority: handler function > default export (UI) > named exports only (MCP)
+            // Detection works for both ESM and IIFE bundles:
+            // - ESM: export default function render(...)
+            // - IIFE: __export(exports, { default: () => render, ... })
+            const hasDefaultExport =
+              // ESM patterns
+              /export\s+default\s+/.test(code) ||
+              /export\s*\{[^}]*default[^}]*\}/.test(code) ||
+              // IIFE bundle patterns (esbuild output)
+              /default:\s*\(\)\s*=>/.test(code) ||  // __export(x, { default: () => fn })
+              /["']default["']\s*:\s*\(\)\s*=>/.test(code);  // Quoted version
+
+            const hasHandlerFunction =
+              /export\s+(default\s+)?(async\s+)?function\s+handler\s*\(/.test(code) ||
+              /export\s+default\s+handler/.test(code) ||
+              /export\s+\{\s*handler\s*\}/.test(code) ||
+              /^(async\s+)?function\s+handler\s*\(/m.test(code) ||
+              /var\s+handler\s*=/.test(code) ||
+              // IIFE bundle pattern
+              /handler:\s*\(\)\s*=>/.test(code);
+
+            // Determine app type with clear priority:
+            // 1. HTTP Server app - has handler function (highest priority)
+            // 2. Browser app - has default export (React/UI component)
+            // 3. MCP-only app - everything else (only named exports, no UI)
+            isHttpServerApp = hasHandlerFunction;
+            isBrowserApp = !isHttpServerApp && hasDefaultExport;
+            isMcpOnlyApp = !isHttpServerApp && !isBrowserApp;
+          }
 
           if (isHttpServerApp) {
             // HTTP Server app - execute handler function

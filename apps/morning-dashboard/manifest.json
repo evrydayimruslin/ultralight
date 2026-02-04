@@ -1,0 +1,214 @@
+{
+  "name": "Morning Dashboard",
+  "version": "1.0.0",
+  "description": "Personal life hub with health tracking, crypto prices, reminders, and goals",
+  "type": "hybrid",
+  "entry": {
+    "functions": "index.tsx",
+    "ui": "index.tsx"
+  },
+  "functions": {
+    "logWeight": {
+      "description": "Log your weight for a given date",
+      "parameters": {
+        "weight": {
+          "type": "number",
+          "description": "Weight in pounds"
+        },
+        "date": {
+          "type": "string",
+          "description": "Date in YYYY-MM-DD format (defaults to today)",
+          "required": false
+        }
+      },
+      "returns": {
+        "type": "object",
+        "description": "Success status"
+      }
+    },
+    "logSleep": {
+      "description": "Log your sleep hours for a given date",
+      "parameters": {
+        "hours": {
+          "type": "number",
+          "description": "Hours of sleep"
+        },
+        "quality": {
+          "type": "number",
+          "description": "Sleep quality (1-10)",
+          "required": false
+        },
+        "date": {
+          "type": "string",
+          "description": "Date in YYYY-MM-DD format (defaults to today)",
+          "required": false
+        }
+      },
+      "returns": {
+        "type": "object",
+        "description": "Success status"
+      }
+    },
+    "logEnergy": {
+      "description": "Log your energy level for a given date",
+      "parameters": {
+        "level": {
+          "type": "number",
+          "description": "Energy level (1-10)"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Optional notes",
+          "required": false
+        },
+        "date": {
+          "type": "string",
+          "description": "Date in YYYY-MM-DD format (defaults to today)",
+          "required": false
+        }
+      },
+      "returns": {
+        "type": "object",
+        "description": "Success status"
+      }
+    },
+    "getHealthTrends": {
+      "description": "Get health metrics trends over a period of days",
+      "parameters": {
+        "days": {
+          "type": "number",
+          "description": "Number of days to look back (default: 30)",
+          "required": false,
+          "default": 30
+        }
+      },
+      "returns": {
+        "type": "object",
+        "description": "Health trends with weight, sleep, and energy data"
+      }
+    },
+    "getCryptoPrices": {
+      "description": "Get current cryptocurrency prices",
+      "parameters": {
+        "symbols": {
+          "type": "array",
+          "description": "Crypto symbols to get prices for (e.g., BTC, ETH, SOL)",
+          "required": false,
+          "default": ["BTC", "ETH"]
+        }
+      },
+      "returns": {
+        "type": "object",
+        "description": "Current prices and 24h change"
+      }
+    },
+    "addReminder": {
+      "description": "Add a new reminder",
+      "parameters": {
+        "text": {
+          "type": "string",
+          "description": "Reminder text"
+        },
+        "dueAt": {
+          "type": "string",
+          "description": "Optional due date in ISO format",
+          "required": false
+        }
+      },
+      "returns": {
+        "type": "object",
+        "description": "Created reminder"
+      }
+    },
+    "completeReminder": {
+      "description": "Mark a reminder as completed",
+      "parameters": {
+        "id": {
+          "type": "string",
+          "description": "Reminder ID"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "description": "Success status"
+      }
+    },
+    "getReminders": {
+      "description": "Get all reminders",
+      "parameters": {
+        "includeCompleted": {
+          "type": "boolean",
+          "description": "Include completed reminders",
+          "required": false,
+          "default": false
+        }
+      },
+      "returns": {
+        "type": "object",
+        "description": "List of reminders"
+      }
+    },
+    "createGoal": {
+      "description": "Create a new goal to track",
+      "parameters": {
+        "title": {
+          "type": "string",
+          "description": "Goal title"
+        },
+        "target": {
+          "type": "number",
+          "description": "Target value to achieve"
+        },
+        "unit": {
+          "type": "string",
+          "description": "Unit of measurement (e.g., 'lbs', 'miles', 'books')"
+        },
+        "deadline": {
+          "type": "string",
+          "description": "Optional deadline in ISO format",
+          "required": false
+        }
+      },
+      "returns": {
+        "type": "object",
+        "description": "Created goal"
+      }
+    },
+    "updateGoalProgress": {
+      "description": "Update progress on a goal",
+      "parameters": {
+        "id": {
+          "type": "string",
+          "description": "Goal ID"
+        },
+        "current": {
+          "type": "number",
+          "description": "Current progress value"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "description": "Success status"
+      }
+    },
+    "getGoals": {
+      "description": "Get all goals",
+      "parameters": {},
+      "returns": {
+        "type": "object",
+        "description": "List of goals"
+      }
+    },
+    "healthCheck": {
+      "description": "Check if the app's backend services are healthy",
+      "parameters": {},
+      "returns": {
+        "type": "object",
+        "description": "Health status and checks"
+      }
+    }
+  },
+  "permissions": [
+    "net:api.coingecko.com"
+  ]
+}

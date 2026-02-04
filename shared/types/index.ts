@@ -97,6 +97,9 @@ export interface App {
   supabase_anon_key_encrypted: string | null;
   supabase_service_key_encrypted: string | null;
   supabase_enabled: boolean;
+  // Manifest-based configuration (v2 architecture)
+  manifest: string | null;  // JSON stringified AppManifest
+  app_type: 'mcp' | 'ui' | 'hybrid' | null;  // null means legacy auto-detect
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -749,3 +752,244 @@ export const BYOK_PROVIDERS: Record<BYOKProvider, BYOKProviderInfo> = {
     apiKeyUrl: 'https://platform.moonshot.cn/console/api-keys',
   },
 } as const;
+
+// ============================================
+// APP MANIFEST (v2 Architecture)
+// ============================================
+
+/**
+ * App manifest schema for explicit app configuration.
+ * Replaces auto-detection with explicit declarations.
+ *
+ * Example manifest.json:
+ * {
+ *   "name": "Todo App",
+ *   "version": "1.0.0",
+ *   "description": "A simple todo list manager",
+ *   "type": "hybrid",
+ *   "entry": {
+ *     "functions": "functions.ts",
+ *     "ui": "ui.tsx"
+ *   },
+ *   "functions": {
+ *     "addTodo": {
+ *       "description": "Add a new todo item",
+ *       "parameters": {
+ *         "text": { "type": "string", "description": "The todo text" },
+ *         "priority": { "type": "string", "enum": ["low", "medium", "high"], "default": "medium" }
+ *       },
+ *       "returns": { "type": "object", "description": "The created todo" }
+ *     }
+ *   }
+ * }
+ */
+export interface AppManifest {
+  // Required
+  name: string;
+  version: string;
+
+  // Optional metadata
+  description?: string;
+  author?: string;
+  icon?: string;
+
+  // App type - determines how the app is served
+  // - "mcp": MCP functions only (no UI)
+  // - "ui": UI only (default export renders React component)
+  // - "hybrid": Both MCP functions and UI (recommended)
+  type: 'mcp' | 'ui' | 'hybrid';
+
+  // Entry points
+  entry: {
+    // File containing MCP-callable functions (required for mcp/hybrid)
+    functions?: string;
+    // File containing UI component (required for ui/hybrid)
+    ui?: string;
+  };
+
+  // Function declarations for MCP tools
+  // Key is function name, value is function metadata
+  functions?: Record<string, ManifestFunction>;
+
+  // Permissions this app requires
+  permissions?: string[];
+
+  // Environment variables this app expects
+  env?: Record<string, ManifestEnvVar>;
+}
+
+export interface ManifestFunction {
+  description: string;
+  parameters?: Record<string, ManifestParameter>;
+  returns?: ManifestReturn;
+  examples?: string[];
+}
+
+export interface ManifestParameter {
+  type: 'string' | 'number' | 'boolean' | 'object' | 'array';
+  description?: string;
+  required?: boolean;
+  default?: unknown;
+  enum?: unknown[];
+  items?: ManifestParameter; // For array types
+  properties?: Record<string, ManifestParameter>; // For object types
+}
+
+export interface ManifestReturn {
+  type: 'string' | 'number' | 'boolean' | 'object' | 'array' | 'void';
+  description?: string;
+}
+
+export interface ManifestEnvVar {
+  description?: string;
+  required?: boolean;
+  default?: string;
+}
+
+// Validation result for manifest
+export interface ManifestValidationResult {
+  valid: boolean;
+  manifest?: AppManifest;
+  errors: ManifestValidationError[];
+  warnings: string[];
+}
+
+export interface ManifestValidationError {
+  path: string;
+  message: string;
+}
+
+/**
+ * Validate an app manifest
+ */
+export function validateManifest(input: unknown): ManifestValidationResult {
+  const errors: ManifestValidationError[] = [];
+  const warnings: string[] = [];
+
+  if (!input || typeof input !== 'object') {
+    return { valid: false, errors: [{ path: '', message: 'Manifest must be an object' }], warnings };
+  }
+
+  const manifest = input as Record<string, unknown>;
+
+  // Required fields
+  if (!manifest.name || typeof manifest.name !== 'string') {
+    errors.push({ path: 'name', message: 'name is required and must be a string' });
+  }
+
+  if (!manifest.version || typeof manifest.version !== 'string') {
+    errors.push({ path: 'version', message: 'version is required and must be a string' });
+  }
+
+  // Type validation
+  const validTypes = ['mcp', 'ui', 'hybrid'];
+  if (!manifest.type || !validTypes.includes(manifest.type as string)) {
+    errors.push({ path: 'type', message: `type must be one of: ${validTypes.join(', ')}` });
+  }
+
+  // Entry validation
+  if (!manifest.entry || typeof manifest.entry !== 'object') {
+    errors.push({ path: 'entry', message: 'entry is required and must be an object' });
+  } else {
+    const entry = manifest.entry as Record<string, unknown>;
+    const appType = manifest.type as string;
+
+    if ((appType === 'mcp' || appType === 'hybrid') && !entry.functions) {
+      errors.push({ path: 'entry.functions', message: `entry.functions is required for type "${appType}"` });
+    }
+
+    if ((appType === 'ui' || appType === 'hybrid') && !entry.ui) {
+      errors.push({ path: 'entry.ui', message: `entry.ui is required for type "${appType}"` });
+    }
+  }
+
+  // Functions validation (optional but must be valid if present)
+  if (manifest.functions !== undefined) {
+    if (typeof manifest.functions !== 'object' || manifest.functions === null) {
+      errors.push({ path: 'functions', message: 'functions must be an object' });
+    } else {
+      const functions = manifest.functions as Record<string, unknown>;
+      for (const [fnName, fnDef] of Object.entries(functions)) {
+        if (!fnDef || typeof fnDef !== 'object') {
+          errors.push({ path: `functions.${fnName}`, message: 'function definition must be an object' });
+          continue;
+        }
+
+        const fn = fnDef as Record<string, unknown>;
+        if (!fn.description || typeof fn.description !== 'string') {
+          errors.push({ path: `functions.${fnName}.description`, message: 'description is required' });
+        }
+
+        // Validate parameters if present
+        if (fn.parameters !== undefined && typeof fn.parameters !== 'object') {
+          errors.push({ path: `functions.${fnName}.parameters`, message: 'parameters must be an object' });
+        }
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    return { valid: false, errors, warnings };
+  }
+
+  return {
+    valid: true,
+    manifest: input as AppManifest,
+    errors: [],
+    warnings,
+  };
+}
+
+/**
+ * Convert manifest functions to MCP tools format
+ */
+export function manifestToMCPTools(manifest: AppManifest, appId: string, appSlug: string): MCPTool[] {
+  if (!manifest.functions) return [];
+
+  const tools: MCPTool[] = [];
+
+  for (const [fnName, fnDef] of Object.entries(manifest.functions)) {
+    const tool: MCPTool = {
+      name: `${appSlug}_${fnName}`,
+      title: fnName,
+      description: fnDef.description,
+      inputSchema: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    };
+
+    // Convert parameters to JSON Schema
+    if (fnDef.parameters) {
+      const properties: Record<string, MCPJsonSchema> = {};
+      const required: string[] = [];
+
+      for (const [paramName, paramDef] of Object.entries(fnDef.parameters)) {
+        properties[paramName] = {
+          type: paramDef.type,
+          description: paramDef.description,
+        };
+
+        if (paramDef.enum) {
+          properties[paramName].enum = paramDef.enum;
+        }
+
+        if (paramDef.default !== undefined) {
+          properties[paramName].default = paramDef.default;
+        }
+
+        if (paramDef.required !== false) {
+          required.push(paramName);
+        }
+      }
+
+      tool.inputSchema.properties = properties;
+      tool.inputSchema.required = required;
+    }
+
+    tools.push(tool);
+  }
+
+  return tools;
+}

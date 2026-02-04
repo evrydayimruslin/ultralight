@@ -3,11 +3,12 @@
 // Supports both new app creation and draft uploads for existing apps
 
 import { error, json } from './app.ts';
-import type { BuildLogEntry, UploadResponse } from '../../shared/types/index.ts';
+import type { BuildLogEntry, UploadResponse, AppManifest } from '../../shared/types/index.ts';
 import {
   ALLOWED_EXTENSIONS,
   MAX_FILES_PER_UPLOAD,
   MAX_UPLOAD_SIZE_BYTES,
+  validateManifest,
 } from '../../shared/types/index.ts';
 import { createR2Service } from '../services/storage.ts';
 import { createAppsService } from '../services/apps.ts';
@@ -57,12 +58,27 @@ export async function handleUpload(request: Request): Promise<Response> {
     const formData = await request.formData();
     const files: File[] = [];
     let providedName: string | null = null;
+    let providedDescription: string | null = null;
+    let providedAppType: 'mcp' | 'ui' | 'hybrid' | null = null;
+    let providedFunctionsEntry: string | null = null;
+    let providedUiEntry: string | null = null;
 
     for (const [name, value] of formData.entries()) {
       if (value instanceof File) {
         files.push(value);
       } else if (name === 'name' && typeof value === 'string') {
         providedName = value.trim();
+      } else if (name === 'description' && typeof value === 'string') {
+        providedDescription = value.trim();
+      } else if (name === 'app_type' && typeof value === 'string') {
+        const validTypes = ['mcp', 'ui', 'hybrid'];
+        if (validTypes.includes(value)) {
+          providedAppType = value as 'mcp' | 'ui' | 'hybrid';
+        }
+      } else if (name === 'functions_entry' && typeof value === 'string') {
+        providedFunctionsEntry = value.trim();
+      } else if (name === 'ui_entry' && typeof value === 'string') {
+        providedUiEntry = value.trim();
       }
     }
 
@@ -96,17 +112,99 @@ export async function handleUpload(request: Request): Promise<Response> {
       validatedFiles.push({ name: file.name, content });
     }
 
-    // Check for entry file - handle both flat files and folder uploads
-    // When uploading a folder, file.name includes path like "myapp/index.ts"
-    // Support: index.ts, index.tsx, index.js, index.jsx
-    const entryFileNames = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
-    const entryFile = validatedFiles.find((f) => {
+    // Check for manifest.json (v2 architecture)
+    const manifestFile = validatedFiles.find((f) => {
       const fileName = f.name.split('/').pop() || f.name;
-      return entryFileNames.includes(fileName);
+      return fileName === 'manifest.json';
     });
+
+    let manifest: AppManifest | null = null;
+    if (manifestFile) {
+      try {
+        const manifestJson = JSON.parse(manifestFile.content);
+        const validation = validateManifest(manifestJson);
+        if (!validation.valid) {
+          return error(`Invalid manifest.json: ${validation.errors.map(e => `${e.path}: ${e.message}`).join(', ')}`, 400);
+        }
+        manifest = validation.manifest!;
+        console.log('Manifest found:', manifest.name, 'type:', manifest.type);
+      } catch (parseErr) {
+        return error(`Failed to parse manifest.json: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`, 400);
+      }
+    }
+
+    // Override manifest with form fields if provided (form fields take precedence)
+    // This allows users to specify entry points without creating a manifest.json
+    if (providedAppType || providedFunctionsEntry || providedUiEntry) {
+      const formManifest: AppManifest = manifest ? { ...manifest } : {
+        name: providedName || 'Untitled App',
+        version: '1.0.0',
+        type: providedAppType || 'hybrid',
+        entry: {},
+      };
+
+      // Override with form field values
+      if (providedAppType) {
+        formManifest.type = providedAppType;
+      }
+      if (providedFunctionsEntry) {
+        formManifest.entry.functions = providedFunctionsEntry;
+      }
+      if (providedUiEntry) {
+        formManifest.entry.ui = providedUiEntry;
+      }
+      if (providedDescription) {
+        formManifest.description = providedDescription;
+      }
+
+      manifest = formManifest;
+      console.log('Using form-provided manifest override:', manifest.type, manifest.entry);
+    }
+
+    // Determine entry file based on manifest, form fields, or fallback to auto-detection
+    let entryFile: { name: string; content: string } | undefined;
+    let functionsFile: { name: string; content: string } | undefined;
+    let uiFile: { name: string; content: string } | undefined;
+
+    if (manifest) {
+      // Use manifest-specified entry points
+      if (manifest.entry.functions) {
+        functionsFile = validatedFiles.find((f) => {
+          const fileName = f.name.split('/').pop() || f.name;
+          return fileName === manifest!.entry.functions;
+        });
+        if (!functionsFile && (manifest.type === 'mcp' || manifest.type === 'hybrid')) {
+          return error(`Functions entry file not found: ${manifest.entry.functions}`);
+        }
+      }
+
+      if (manifest.entry.ui) {
+        uiFile = validatedFiles.find((f) => {
+          const fileName = f.name.split('/').pop() || f.name;
+          return fileName === manifest!.entry.ui;
+        });
+        if (!uiFile && (manifest.type === 'ui' || manifest.type === 'hybrid')) {
+          return error(`UI entry file not found: ${manifest.entry.ui}`);
+        }
+      }
+
+      // For bundling, use the functions file as primary entry (or ui file for ui-only apps)
+      entryFile = functionsFile || uiFile;
+    } else {
+      // Legacy: auto-detect entry file
+      // Check for entry file - handle both flat files and folder uploads
+      // When uploading a folder, file.name includes path like "myapp/index.ts"
+      // Support: index.ts, index.tsx, index.js, index.jsx
+      const entryFileNames = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
+      entryFile = validatedFiles.find((f) => {
+        const fileName = f.name.split('/').pop() || f.name;
+        return entryFileNames.includes(fileName);
+      });
+    }
+
     if (!entryFile) {
       console.log('Files received:', validatedFiles.map(f => f.name));
-      return error('Entry file (index.ts, index.tsx, index.js, or index.jsx) required');
+      return error('Entry file required. Either provide manifest.json or include index.ts/index.tsx');
     }
     console.log('Entry file found:', entryFile.name);
 
@@ -118,10 +216,22 @@ export async function handleUpload(request: Request): Promise<Response> {
 
     log('info', `Starting build for ${validatedFiles.length} files...`);
 
-    // Extract exports from original code (before bundling)
-    log('info', 'Parsing entry file...');
-    const exports = extractExports(entryFile.content);
-    log('success', `Found ${exports.length} exports: ${exports.join(', ')}`);
+    if (manifest) {
+      log('info', `Using manifest.json (type: ${manifest.type})`);
+    }
+
+    // Extract exports - prefer manifest declarations over code parsing
+    log('info', 'Determining exports...');
+    let exports: string[];
+    if (manifest?.functions) {
+      // Use manifest-declared functions
+      exports = Object.keys(manifest.functions);
+      log('success', `Found ${exports.length} functions from manifest: ${exports.join(', ')}`);
+    } else {
+      // Fallback to parsing code (legacy behavior)
+      exports = extractExports(entryFile.content);
+      log('success', `Found ${exports.length} exports from code: ${exports.join(', ')}`);
+    }
 
     // Bundle the code
     // IMPORTANT: We must bundle ALL imports (relative and external) into a single file
@@ -164,10 +274,13 @@ export async function handleUpload(request: Request): Promise<Response> {
 
     // Generate app ID and version
     const appId = crypto.randomUUID();
-    const version = '1.0.0';
+    const version = manifest?.version || '1.0.0';
+    // Use manifest name, provided name, or generate slug
     const slug = generateSlug(validatedFiles.find((f) => f.name === 'package.json')?.content);
-    // Use provided name or fall back to slug
-    const appName = providedName || slug;
+    const appName = manifest?.name || providedName || slug;
+    // Form field description takes precedence over manifest
+    const appDescription = providedDescription || manifest?.description || null;
+    const appType = manifest?.type || null; // null means legacy auto-detect
 
     // Initialize services
     const r2Service = createR2Service();
@@ -247,8 +360,12 @@ export async function handleUpload(request: Request): Promise<Response> {
       owner_id: userId,
       slug,
       name: appName,
+      description: appDescription,
       storage_key: storageKey,
       exports,
+      // Store manifest data for later use
+      manifest: manifest ? JSON.stringify(manifest) : null,
+      app_type: appType,
     });
     log('success', 'App record created');
 
@@ -568,6 +685,10 @@ interface UploadOptions {
   slug?: string;
   description?: string;
   visibility?: 'private' | 'unlisted' | 'public';
+  // v2 architecture: explicit entry points and app type
+  app_type?: 'mcp' | 'ui' | 'hybrid';
+  functions_entry?: string;  // e.g., "functions.ts"
+  ui_entry?: string;         // e.g., "ui.tsx"
 }
 
 /**
@@ -605,14 +726,88 @@ export async function handleUploadFiles(
     validatedFiles.push({ name: file.name, content: file.content });
   }
 
-  // Check for entry file
-  const entryFileNames = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
-  const entryFile = validatedFiles.find((f) => {
+  // Check for manifest.json
+  const manifestFile = validatedFiles.find((f) => {
     const fileName = f.name.split('/').pop() || f.name;
-    return entryFileNames.includes(fileName);
+    return fileName === 'manifest.json';
   });
+
+  let manifest: AppManifest | null = null;
+  if (manifestFile) {
+    try {
+      const manifestJson = JSON.parse(manifestFile.content);
+      const validation = validateManifest(manifestJson);
+      if (validation.valid) {
+        manifest = validation.manifest!;
+      }
+    } catch {
+      // Ignore parse errors, fall back to options/auto-detect
+    }
+  }
+
+  // Override manifest with options if provided (options take precedence)
+  if (options.app_type || options.functions_entry || options.ui_entry) {
+    const optionsManifest: AppManifest = manifest ? { ...manifest } : {
+      name: options.name || 'Untitled App',
+      version: '1.0.0',
+      type: options.app_type || 'hybrid',
+      entry: {},
+    };
+
+    if (options.app_type) {
+      optionsManifest.type = options.app_type;
+    }
+    if (options.functions_entry) {
+      optionsManifest.entry.functions = options.functions_entry;
+    }
+    if (options.ui_entry) {
+      optionsManifest.entry.ui = options.ui_entry;
+    }
+    if (options.description) {
+      optionsManifest.description = options.description;
+    }
+
+    manifest = optionsManifest;
+  }
+
+  // Determine entry file based on manifest or fallback to auto-detection
+  let entryFile: { name: string; content: string } | undefined;
+  let functionsFile: { name: string; content: string } | undefined;
+  let uiFile: { name: string; content: string } | undefined;
+
+  if (manifest) {
+    if (manifest.entry.functions) {
+      functionsFile = validatedFiles.find((f) => {
+        const fileName = f.name.split('/').pop() || f.name;
+        return fileName === manifest!.entry.functions;
+      });
+      if (!functionsFile && (manifest.type === 'mcp' || manifest.type === 'hybrid')) {
+        throw new Error(`Functions entry file not found: ${manifest.entry.functions}`);
+      }
+    }
+
+    if (manifest.entry.ui) {
+      uiFile = validatedFiles.find((f) => {
+        const fileName = f.name.split('/').pop() || f.name;
+        return fileName === manifest!.entry.ui;
+      });
+      if (!uiFile && (manifest.type === 'ui' || manifest.type === 'hybrid')) {
+        throw new Error(`UI entry file not found: ${manifest.entry.ui}`);
+      }
+    }
+
+    entryFile = functionsFile || uiFile;
+  } else {
+    // Legacy: auto-detect entry file
+    const entryFileNames = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
+    entryFile = validatedFiles.find((f) => {
+      const fileName = f.name.split('/').pop() || f.name;
+      return entryFileNames.includes(fileName);
+    });
+  }
+
   if (!entryFile) {
-    throw new Error('Entry file (index.ts, index.tsx, index.js, or index.jsx) required');
+    throw new Error('Entry file required. Either provide manifest.json, options.functions_entry/ui_entry, or include index.ts/index.tsx');
   }
 
   // Build logs
@@ -623,10 +818,20 @@ export async function handleUploadFiles(
 
   log('info', `Starting build for ${validatedFiles.length} files...`);
 
-  // Extract exports
-  log('info', 'Parsing entry file...');
-  const exports = extractExports(entryFile.content);
-  log('success', `Found ${exports.length} exports: ${exports.join(', ')}`);
+  if (manifest) {
+    log('info', `Using manifest (type: ${manifest.type})`);
+  }
+
+  // Extract exports - prefer manifest declarations over code parsing
+  log('info', 'Determining exports...');
+  let exports: string[];
+  if (manifest?.functions) {
+    exports = Object.keys(manifest.functions);
+    log('success', `Found ${exports.length} functions from manifest: ${exports.join(', ')}`);
+  } else {
+    exports = extractExports(entryFile.content);
+    log('success', `Found ${exports.length} exports from code: ${exports.join(', ')}`);
+  }
 
   // Bundle the code
   log('info', 'Bundling code...');
@@ -664,9 +869,11 @@ export async function handleUploadFiles(
 
   // Generate app ID and version
   const appId = crypto.randomUUID();
-  const version = '1.0.0';
+  const version = manifest?.version || '1.0.0';
   const slug = options.slug || generateSlug(validatedFiles.find((f) => f.name === 'package.json')?.content);
-  const appName = options.name || slug;
+  const appName = manifest?.name || options.name || slug;
+  const appDescription = options.description || manifest?.description || null;
+  const appType = manifest?.type || null;
 
   // Initialize services
   const r2Service = createR2Service();
@@ -735,10 +942,13 @@ export async function handleUploadFiles(
     owner_id: userId,
     slug,
     name: appName,
-    description: options.description || null,
+    description: appDescription,
     visibility: options.visibility || 'private',
     storage_key: storageKey,
     exports,
+    // Store manifest data for later use
+    manifest: manifest ? JSON.stringify(manifest) : null,
+    app_type: appType,
   });
   log('success', 'App record created');
 

@@ -405,51 +405,110 @@ export default function render(container: HTMLElement) {
 
 const supabase = (globalThis as any).supabase;
 const uuid = (globalThis as any).uuid;
-const _ = (globalThis as any)._;
+
+// Helper to get today's date in YYYY-MM-DD format
+function getToday(): string {
+  return new Date().toISOString().split('T')[0];
+}
 
 export async function logWeight(weight: number, date?: string): Promise<{ success: boolean }> {
-  const targetDate = date || new Date().toISOString().split('T')[0];
-  const { error } = await supabase.from('weight_logs').upsert({
-    date: targetDate,
-    weight,
-    created_at: new Date().toISOString(),
-  }, { onConflict: 'date' });
-  if (error) throw new Error(`Failed to log weight: ${error.message}`);
+  const targetDate = date || getToday();
+
+  // Check if entry exists for this date
+  const { data: existing } = await supabase
+    .from('weight_logs')
+    .select('id')
+    .eq('date', targetDate)
+    .single();
+
+  if (existing) {
+    // Update existing
+    const { error } = await supabase
+      .from('weight_logs')
+      .update({ weight, updated_at: new Date().toISOString() })
+      .eq('date', targetDate);
+    if (error) throw new Error(`Failed to update weight: ${error.message}`);
+  } else {
+    // Insert new
+    const { error } = await supabase.from('weight_logs').insert({
+      id: uuid.v4(),
+      date: targetDate,
+      weight,
+      created_at: new Date().toISOString(),
+    });
+    if (error) throw new Error(`Failed to log weight: ${error.message}`);
+  }
+
   return { success: true };
 }
 
 export async function logSleep(hours: number, quality?: number, date?: string): Promise<{ success: boolean }> {
-  const targetDate = date || new Date().toISOString().split('T')[0];
-  const { error } = await supabase.from('sleep_logs').upsert({
-    date: targetDate,
-    hours,
-    quality: quality || null,
-    created_at: new Date().toISOString(),
-  }, { onConflict: 'date' });
-  if (error) throw new Error(`Failed to log sleep: ${error.message}`);
+  const targetDate = date || getToday();
+
+  const { data: existing } = await supabase
+    .from('sleep_logs')
+    .select('id')
+    .eq('date', targetDate)
+    .single();
+
+  if (existing) {
+    const { error } = await supabase
+      .from('sleep_logs')
+      .update({ hours, quality: quality || null, updated_at: new Date().toISOString() })
+      .eq('date', targetDate);
+    if (error) throw new Error(`Failed to update sleep: ${error.message}`);
+  } else {
+    const { error } = await supabase.from('sleep_logs').insert({
+      id: uuid.v4(),
+      date: targetDate,
+      hours,
+      quality: quality || null,
+      created_at: new Date().toISOString(),
+    });
+    if (error) throw new Error(`Failed to log sleep: ${error.message}`);
+  }
+
   return { success: true };
 }
 
 export async function logEnergy(level: number, notes?: string, date?: string): Promise<{ success: boolean }> {
-  const targetDate = date || new Date().toISOString().split('T')[0];
-  const { error } = await supabase.from('energy_logs').upsert({
-    date: targetDate,
-    level,
-    notes: notes || null,
-    created_at: new Date().toISOString(),
-  }, { onConflict: 'date' });
-  if (error) throw new Error(`Failed to log energy: ${error.message}`);
+  const targetDate = date || getToday();
+
+  const { data: existing } = await supabase
+    .from('energy_logs')
+    .select('id')
+    .eq('date', targetDate)
+    .single();
+
+  if (existing) {
+    const { error } = await supabase
+      .from('energy_logs')
+      .update({ level, notes: notes || null, updated_at: new Date().toISOString() })
+      .eq('date', targetDate);
+    if (error) throw new Error(`Failed to update energy: ${error.message}`);
+  } else {
+    const { error } = await supabase.from('energy_logs').insert({
+      id: uuid.v4(),
+      date: targetDate,
+      level,
+      notes: notes || null,
+      created_at: new Date().toISOString(),
+    });
+    if (error) throw new Error(`Failed to log energy: ${error.message}`);
+  }
+
   return { success: true };
 }
 
 export async function getHealthTrends(days: number = 30): Promise<{ trends: HealthMetric[] }> {
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - days);
+  const startDateStr = startDate.toISOString().split('T')[0];
 
   const [weights, sleeps, energies] = await Promise.all([
-    supabase.from('weight_logs').select('*').gte('date', startDate.toISOString().split('T')[0]).order('date', { ascending: false }),
-    supabase.from('sleep_logs').select('*').gte('date', startDate.toISOString().split('T')[0]).order('date', { ascending: false }),
-    supabase.from('energy_logs').select('*').gte('date', startDate.toISOString().split('T')[0]).order('date', { ascending: false }),
+    supabase.from('weight_logs').select('*').gte('date', startDateStr).order('date', { ascending: false }),
+    supabase.from('sleep_logs').select('*').gte('date', startDateStr).order('date', { ascending: false }),
+    supabase.from('energy_logs').select('*').gte('date', startDateStr).order('date', { ascending: false }),
   ]);
 
   const dateMap = new Map<string, HealthMetric>();
@@ -476,7 +535,6 @@ export async function getHealthTrends(days: number = 30): Promise<{ trends: Heal
 }
 
 export async function getCryptoPrices(symbols: string[] = ['BTC', 'ETH']): Promise<{ prices: CryptoPrice[] }> {
-  // Use CoinGecko free API
   const ids = symbols.map(s => {
     const map: Record<string, string> = { BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana' };
     return map[s] || s.toLowerCase();
@@ -505,7 +563,7 @@ export async function addReminder(text: string, dueAt?: string): Promise<{ succe
   const reminder: Reminder = {
     id: uuid.v4(),
     text,
-    due_at: dueAt,
+    due_at: dueAt || null,
     completed: false,
     created_at: new Date().toISOString(),
   };
@@ -539,7 +597,7 @@ export async function createGoal(title: string, target: number, unit: string, de
     target,
     current: 0,
     unit,
-    deadline,
+    deadline: deadline || null,
   };
 
   const { error } = await supabase.from('goals').insert(goal);

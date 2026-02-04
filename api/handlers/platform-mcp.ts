@@ -179,6 +179,19 @@ const PLATFORM_TOOLS: MCPTool[] = [
           type: 'boolean',
           description: 'Automatically generate Skills.md documentation (default: true)',
         },
+        app_type: {
+          type: 'string',
+          enum: ['mcp', 'ui', 'hybrid'],
+          description: 'App type: mcp (functions only), ui (React UI only), hybrid (both). Auto-detected if not specified.',
+        },
+        functions_entry: {
+          type: 'string',
+          description: 'Entry file for MCP functions (e.g., "functions.ts"). Required for mcp/hybrid if not using index.ts',
+        },
+        ui_entry: {
+          type: 'string',
+          description: 'Entry file for UI component (e.g., "ui.tsx"). Required for ui/hybrid if not using index.tsx',
+        },
       },
       required: ['files'],
     },
@@ -266,6 +279,19 @@ const PLATFORM_TOOLS: MCPTool[] = [
             required: ['path', 'content'],
           },
           description: 'Source files for the draft',
+        },
+        app_type: {
+          type: 'string',
+          enum: ['mcp', 'ui', 'hybrid'],
+          description: 'App type override for the draft',
+        },
+        functions_entry: {
+          type: 'string',
+          description: 'Entry file for MCP functions',
+        },
+        ui_entry: {
+          type: 'string',
+          description: 'Entry file for UI component',
         },
       },
       required: ['app_id', 'files'],
@@ -924,11 +950,14 @@ async function executeAppsCreate(
     throw new ToolError(INVALID_PARAMS, 'files array is required and must not be empty');
   }
 
-  // Check for entry file
+  // Check for entry file - either manifest.json, explicit entry options, or default index files
+  const hasManifest = files.some(f => f.path === 'manifest.json');
+  const hasExplicitEntry = args.functions_entry || args.ui_entry;
   const entryFiles = ['index.ts', 'index.tsx', 'index.js', 'index.jsx'];
-  const hasEntry = files.some(f => entryFiles.includes(f.path));
-  if (!hasEntry) {
-    throw new ToolError(VALIDATION_ERROR, 'Must include an entry file: index.ts, index.tsx, index.js, or index.jsx');
+  const hasDefaultEntry = files.some(f => entryFiles.includes(f.path));
+
+  if (!hasManifest && !hasExplicitEntry && !hasDefaultEntry) {
+    throw new ToolError(VALIDATION_ERROR, 'Must include entry file(s). Options: manifest.json, functions_entry/ui_entry params, or index.ts/tsx');
   }
 
   // Convert files to upload format
@@ -944,12 +973,16 @@ async function executeAppsCreate(
     };
   });
 
-  // Use the upload handler
+  // Use the upload handler with all options
   const result = await handleUploadFiles(userId, uploadFiles, {
     name: args.name as string,
     slug: args.slug as string,
     description: args.description as string,
     visibility: args.visibility as 'private' | 'unlisted' | 'public',
+    // v2 architecture options
+    app_type: args.app_type as 'mcp' | 'ui' | 'hybrid' | undefined,
+    functions_entry: args.functions_entry as string | undefined,
+    ui_entry: args.ui_entry as string | undefined,
   });
 
   // Auto-generate docs if requested (default true)

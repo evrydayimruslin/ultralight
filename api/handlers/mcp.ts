@@ -23,7 +23,10 @@ import type {
   ParsedSkills,
   SkillFunction,
   BYOKProvider,
+  AppManifest,
+  App,
 } from '../../shared/types/index.ts';
+import { manifestToMCPTools } from '../../shared/types/index.ts';
 
 // ============================================
 // TYPES
@@ -492,13 +495,26 @@ function handleInitialize(
  */
 function handleToolsList(
   id: string | number,
-  app: { skills_parsed: ParsedSkills | null },
+  app: { id: string; slug: string; skills_parsed: ParsedSkills | null; manifest?: string | null },
   params?: { cursor?: string }
 ): Response {
   const tools: MCPTool[] = [];
 
-  // Add app-specific tools from skills_parsed
-  if (app.skills_parsed?.functions) {
+  // First, try to get tools from manifest (v2 architecture)
+  if (app.manifest) {
+    try {
+      const manifest = JSON.parse(app.manifest) as AppManifest;
+      if (manifest.functions && (manifest.type === 'mcp' || manifest.type === 'hybrid')) {
+        const manifestTools = manifestToMCPTools(manifest, app.id, app.slug);
+        tools.push(...manifestTools);
+      }
+    } catch (err) {
+      console.error('Failed to parse manifest for tools list:', err);
+    }
+  }
+
+  // Fall back to skills_parsed if no manifest tools found (legacy behavior)
+  if (tools.length === 0 && app.skills_parsed?.functions) {
     for (const fn of app.skills_parsed.functions) {
       tools.push(skillFunctionToMCPTool(fn));
     }
@@ -520,7 +536,7 @@ function handleToolsList(
  */
 async function handleToolsCall(
   id: string | number,
-  app: { id: string; storage_key: string; skills_parsed: ParsedSkills | null },
+  app: { id: string; slug: string; storage_key: string; skills_parsed: ParsedSkills | null; manifest?: string | null },
   params: unknown,
   userId: string,
   user: UserContext | null,
@@ -539,14 +555,37 @@ async function handleToolsCall(
     return await executeSDKTool(id, name, args || {}, app.id, userId, user);
   }
 
-  // Check if it's an app-specific tool
-  const appFunction = app.skills_parsed?.functions.find(f => f.name === name);
-  if (!appFunction) {
-    return jsonRpcErrorResponse(id, INVALID_PARAMS, `Unknown tool: ${name}`);
+  // Determine the actual function name to execute
+  let functionName = name;
+  let isManifestFunction = false;
+
+  // Check if it's a manifest-based tool (format: appSlug_functionName)
+  if (app.manifest) {
+    try {
+      const manifest = JSON.parse(app.manifest) as AppManifest;
+      const prefix = `${app.slug}_`;
+      if (name.startsWith(prefix) && manifest.functions) {
+        const fnName = name.slice(prefix.length);
+        if (fnName in manifest.functions) {
+          functionName = fnName;
+          isManifestFunction = true;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to parse manifest for tool call:', err);
+    }
+  }
+
+  // Fall back to skills_parsed check (legacy behavior)
+  if (!isManifestFunction) {
+    const appFunction = app.skills_parsed?.functions.find(f => f.name === name);
+    if (!appFunction) {
+      return jsonRpcErrorResponse(id, INVALID_PARAMS, `Unknown tool: ${name}`);
+    }
   }
 
   // Execute app function via sandbox
-  return await executeAppFunction(id, name, args || {}, app, userId, user);
+  return await executeAppFunction(id, functionName, args || {}, app, userId, user);
 }
 
 // ============================================
