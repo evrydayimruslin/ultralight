@@ -1296,45 +1296,27 @@ async function handleRebuild(request: Request, appId: string): Promise<Response>
 
     console.log(`[REBUILD] Starting rebuild for app ${appId}, storage: ${storageKey}`);
 
-    // List all files in the app's storage
-    const allKeys = await r2Service.listFiles(storageKey);
-    console.log(`[REBUILD] Found ${allKeys.length} files in R2:`, allKeys);
+    // Try standard source file names (avoids needing listFiles)
+    const candidateEntries = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
+    let sourceCode: string | null = null;
+    let entryFileName = '';
 
-    // Find the original source file (_source_ prefixed)
-    const sourceKey = allKeys.find(k => k.includes('/_source_'));
-    if (!sourceKey) {
-      return error('No original source file found. App may need to be re-uploaded manually.', 400);
-    }
-
-    // Extract the original entry filename from the _source_ prefix
-    const sourceFileName = sourceKey.split('/').pop()!;
-    const entryFileName = sourceFileName.replace(/^_source_/, '');
-    console.log(`[REBUILD] Source file: ${sourceFileName}, entry: ${entryFileName}`);
-
-    // Fetch the original source code
-    const sourceCode = await r2Service.fetchTextFile(sourceKey);
-    console.log(`[REBUILD] Fetched source code: ${sourceCode.length} chars`);
-
-    // Also fetch any other source files (non-bundled, non-source-prefixed, non-esm)
-    const otherSourceKeys = allKeys.filter(k => {
-      const name = k.split('/').pop()!;
-      return !name.startsWith('_source_') &&
-        !name.endsWith('.esm.js') &&
-        name !== entryFileName && // skip IIFE bundle (same name as entry)
-        !name.endsWith('.map');
-    });
-
-    const files = [{ name: entryFileName, content: sourceCode }];
-
-    for (const key of otherSourceKeys) {
+    for (const candidate of candidateEntries) {
       try {
-        const content = await r2Service.fetchTextFile(key);
-        const name = key.replace(storageKey, '');
-        files.push({ name, content });
+        sourceCode = await r2Service.fetchTextFile(`${storageKey}_source_${candidate}`);
+        entryFileName = candidate;
+        console.log(`[REBUILD] Found source: _source_${candidate} (${sourceCode.length} chars)`);
+        break;
       } catch {
-        // Skip files that can't be read as text (icons, etc.)
+        // Try next candidate
       }
     }
+
+    if (!sourceCode || !entryFileName) {
+      return error('No original source file found (_source_index.tsx/ts/jsx/js). App may need to be re-uploaded.', 400);
+    }
+
+    const files = [{ name: entryFileName, content: sourceCode }];
 
     console.log(`[REBUILD] Bundling ${files.length} files, entry: ${entryFileName}`);
 

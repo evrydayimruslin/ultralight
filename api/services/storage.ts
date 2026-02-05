@@ -62,7 +62,8 @@ export class R2Service {
     method: string,
     path: string,
     headers: Record<string, string> = {},
-    body?: Uint8Array
+    body?: Uint8Array,
+    queryString: string = '',
   ): Promise<Record<string, string>> {
     const now = new Date();
     const dateStamp = now.toISOString().slice(0, 10).replace(/-/g, '');
@@ -73,7 +74,7 @@ export class R2Service {
     // Create canonical request
     const host = `${this.config.accountId}.r2.cloudflarestorage.com`;
     const payloadHash = body ? await sha256(new TextDecoder().decode(body)) : await sha256('');
-    
+
     const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
     const canonicalHeaders = [
       `host:${host}`,
@@ -81,10 +82,15 @@ export class R2Service {
       `x-amz-date:${amzDate}`,
     ].join('\n') + '\n';
 
+    // For AWS Sig V4, query parameters must be sorted and included in canonical request
+    const canonicalQueryString = queryString
+      ? queryString.split('&').sort().join('&')
+      : '';
+
     const canonicalRequest = [
       method,
       `/${this.config.bucketName}${path}`,
-      '', // query string
+      canonicalQueryString,
       canonicalHeaders,
       signedHeaders,
       payloadHash,
@@ -208,9 +214,9 @@ export class R2Service {
    * List files with prefix
    */
   async listFiles(prefix: string): Promise<string[]> {
-    const queryString = `?list-type=2&prefix=${encodeURIComponent(prefix)}`;
-    const headers = await this.signRequest('GET', `/`);
-    const url = `${this.endpoint}/${this.config.bucketName}${queryString}`;
+    const queryParams = `list-type=2&prefix=${encodeURIComponent(prefix)}`;
+    const headers = await this.signRequest('GET', '/', {}, undefined, queryParams);
+    const url = `${this.endpoint}/${this.config.bucketName}?${queryParams}`;
 
     const response = await fetch(url, {
       method: 'GET',
