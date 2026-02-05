@@ -5,6 +5,7 @@ import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
+import { bundleCode } from '../services/bundler.ts';
 import { parseTypeScript, toSkillsParsed } from '../services/parser.ts';
 import {
   generateSkillsMd,
@@ -132,6 +133,11 @@ export async function handleApps(request: Request): Promise<Response> {
     // GET /api/apps/:appId/draft - Get draft info
     if (subPath === '/draft' && method === 'GET') {
       return handleGetDraft(request, appId);
+    }
+
+    // POST /api/apps/:appId/rebuild - Re-bundle app code from stored source
+    if (subPath === '/rebuild' && method === 'POST') {
+      return handleRebuild(request, appId);
     }
 
     // ============================================
@@ -1263,6 +1269,118 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
     }
     console.error('Failed to publish draft:', err);
     return error('Failed to publish draft', 500);
+  }
+}
+
+/**
+ * Rebuild app code from stored source files
+ * POST /api/apps/:appId/rebuild
+ *
+ * Re-fetches the original source from R2, re-bundles with esbuild,
+ * and uploads the new IIFE + ESM bundles. Useful when the bundler
+ * or runtime changes and existing apps need their bundles regenerated.
+ */
+async function handleRebuild(request: Request, appId: string): Promise<Response> {
+  try {
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+    const r2Service = createR2Service();
+
+    // Verify ownership
+    const app = await appsService.findById(appId);
+    if (!app) return error('App not found', 404);
+    if (app.owner_id !== user.id) return error('Not authorized', 403);
+
+    const storageKey = app.storage_key;
+    if (!storageKey) return error('App has no stored code', 400);
+
+    console.log(`[REBUILD] Starting rebuild for app ${appId}, storage: ${storageKey}`);
+
+    // List all files in the app's storage
+    const allKeys = await r2Service.listFiles(storageKey);
+    console.log(`[REBUILD] Found ${allKeys.length} files in R2:`, allKeys);
+
+    // Find the original source file (_source_ prefixed)
+    const sourceKey = allKeys.find(k => k.includes('/_source_'));
+    if (!sourceKey) {
+      return error('No original source file found. App may need to be re-uploaded manually.', 400);
+    }
+
+    // Extract the original entry filename from the _source_ prefix
+    const sourceFileName = sourceKey.split('/').pop()!;
+    const entryFileName = sourceFileName.replace(/^_source_/, '');
+    console.log(`[REBUILD] Source file: ${sourceFileName}, entry: ${entryFileName}`);
+
+    // Fetch the original source code
+    const sourceCode = await r2Service.fetchTextFile(sourceKey);
+    console.log(`[REBUILD] Fetched source code: ${sourceCode.length} chars`);
+
+    // Also fetch any other source files (non-bundled, non-source-prefixed, non-esm)
+    const otherSourceKeys = allKeys.filter(k => {
+      const name = k.split('/').pop()!;
+      return !name.startsWith('_source_') &&
+        !name.endsWith('.esm.js') &&
+        name !== entryFileName && // skip IIFE bundle (same name as entry)
+        !name.endsWith('.map');
+    });
+
+    const files = [{ name: entryFileName, content: sourceCode }];
+
+    for (const key of otherSourceKeys) {
+      try {
+        const content = await r2Service.fetchTextFile(key);
+        const name = key.replace(storageKey, '');
+        files.push({ name, content });
+      } catch {
+        // Skip files that can't be read as text (icons, etc.)
+      }
+    }
+
+    console.log(`[REBUILD] Bundling ${files.length} files, entry: ${entryFileName}`);
+
+    // Re-bundle with esbuild
+    const bundleResult = await bundleCode(files, entryFileName);
+
+    if (!bundleResult.success) {
+      console.error(`[REBUILD] Bundle failed:`, bundleResult.errors);
+      return error(`Rebuild failed: ${bundleResult.errors.join(', ')}`, 500);
+    }
+
+    console.log(`[REBUILD] Bundle succeeded. IIFE: ${bundleResult.code.length} chars, ESM: ${bundleResult.esmCode?.length || 0} chars`);
+
+    // Upload new bundles to R2 (overwrite existing)
+    const filesToUpload = [
+      {
+        name: entryFileName,
+        content: new TextEncoder().encode(bundleResult.code),
+        contentType: 'application/javascript',
+      },
+    ];
+
+    if (bundleResult.esmCode) {
+      filesToUpload.push({
+        name: entryFileName.replace(/\.(tsx?|jsx?)$/, '.esm.js'),
+        content: new TextEncoder().encode(bundleResult.esmCode),
+        contentType: 'application/javascript',
+      });
+    }
+
+    await r2Service.uploadFiles(storageKey, filesToUpload);
+    console.log(`[REBUILD] Uploaded ${filesToUpload.length} rebuilt files to ${storageKey}`);
+
+    return json({
+      success: true,
+      message: 'App rebuilt successfully',
+      details: {
+        entryFile: entryFileName,
+        iifeSize: bundleResult.code.length,
+        esmSize: bundleResult.esmCode?.length || 0,
+        warnings: bundleResult.warnings,
+      },
+    });
+  } catch (err) {
+    console.error('[REBUILD] Error:', err);
+    return error(err instanceof Error ? err.message : 'Rebuild failed', 500);
   }
 }
 

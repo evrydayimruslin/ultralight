@@ -143,6 +143,10 @@ export function getAppRunnerHTML(appId: string, appSlug: string, appName: string
   <div id="app"></div>
 
   <script type="module">
+    // Build version marker - helps verify deployments
+    const __ULTRALIGHT_BUILD__ = '${new Date().toISOString()}';
+    console.log('[ultralight] Runtime v2.0 | Built:', __ULTRALIGHT_BUILD__, '| App:', '${appSlug}');
+
     // ============================================
     // Token Manager - handles JWT lifecycle
     // ============================================
