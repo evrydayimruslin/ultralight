@@ -4,6 +4,7 @@
 
 import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
+import { isApiToken } from '../services/tokens.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createAppDataService } from '../services/appdata.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
@@ -397,18 +398,58 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
   try {
     const authUser = await authenticate(request);
     userId = authUser.id;
+
+    // Extract display name and avatar from JWT user_metadata (not available on authenticate() return type)
+    let displayName: string | null = authUser.email.split('@')[0];
+    let avatarUrl: string | null = null;
+    const token = request.headers.get('Authorization')?.slice(7) || '';
+    if (token && !isApiToken(token)) {
+      try {
+        const parts = token.split('.');
+        if (parts.length === 3) {
+          const base64Payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+          const padded = base64Payload + '='.repeat((4 - base64Payload.length % 4) % 4);
+          const payload = JSON.parse(atob(padded));
+          const meta = payload.user_metadata || {};
+          displayName = meta.full_name || meta.name || displayName;
+          avatarUrl = meta.avatar_url || meta.picture || null;
+        }
+      } catch { /* JWT metadata extraction is best-effort */ }
+    }
+
     user = {
       id: authUser.id,
       email: authUser.email,
-      displayName: authUser.display_name,
-      avatarUrl: authUser.avatar_url,
+      displayName,
+      avatarUrl,
       tier: authUser.tier as 'free' | 'pro',
     };
-  } catch {
+  } catch (authErr) {
+    const message = authErr instanceof Error ? authErr.message : 'Authentication required';
+
+    // Classify the auth error for client-side handling
+    let errorType = 'AUTH_REQUIRED';
+    if (message.includes('expired')) {
+      errorType = 'AUTH_TOKEN_EXPIRED';
+    } else if (message.includes('Missing') || message.includes('invalid authorization')) {
+      errorType = 'AUTH_MISSING_TOKEN';
+    } else if (message.includes('Invalid JWT') || message.includes('decode')) {
+      errorType = 'AUTH_INVALID_TOKEN';
+    } else if (message.includes('Invalid or expired API token')) {
+      errorType = 'AUTH_API_TOKEN_INVALID';
+    }
+
+    console.error(`MCP auth failed [${errorType}]:`, message, {
+      appId,
+      method: rpcRequest.method,
+      hasAuthHeader: !!request.headers.get('Authorization'),
+    });
+
     return jsonRpcErrorResponse(
       rpcRequest.id,
       -32001,
-      'Authentication required'
+      message,
+      { type: errorType }
     );
   }
 

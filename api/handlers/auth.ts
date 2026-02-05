@@ -65,7 +65,7 @@ export async function handleAuth(request: Request): Promise<Response> {
 
       if (tokenResponse.ok) {
         const tokens = await tokenResponse.json();
-        return new Response(getCallbackSuccessHTML(tokens.access_token), {
+        return new Response(getCallbackSuccessHTML(tokens.access_token, tokens.refresh_token), {
           headers: { 'Content-Type': 'text/html' },
         });
       }
@@ -92,6 +92,51 @@ export async function handleAuth(request: Request): Promise<Response> {
   // Sign out - just returns instruction to clear local storage
   if (path === '/auth/signout') {
     return json({ message: 'Clear localStorage.ultralight_token to sign out' });
+  }
+
+  // Refresh token - exchange refresh_token for new access_token
+  if (path === '/auth/refresh' && request.method === 'POST') {
+    try {
+      const body = await request.json();
+      const refreshToken = body.refresh_token;
+
+      if (!refreshToken) {
+        console.error('[auth/refresh] Missing refresh_token in request body');
+        return error('Missing refresh_token', 400);
+      }
+
+      console.log('[auth/refresh] Attempting token refresh...');
+
+      const tokenResponse = await fetch(
+        `${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        }
+      );
+
+      if (!tokenResponse.ok) {
+        const errText = await tokenResponse.text();
+        console.error('[auth/refresh] Supabase refresh failed:', tokenResponse.status, errText);
+        return error('Token refresh failed', 401);
+      }
+
+      const tokens = await tokenResponse.json();
+      console.log('[auth/refresh] Token refreshed successfully');
+
+      return json({
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        expires_in: tokens.expires_in,
+      });
+    } catch (err) {
+      console.error('[auth/refresh] Error:', err);
+      return error('Token refresh failed', 500);
+    }
   }
 
   return error('Auth endpoint not found', 404);
@@ -304,9 +349,13 @@ function getCallbackHTML(): string {
     const hash = window.location.hash.substring(1);
     const params = new URLSearchParams(hash);
     const accessToken = params.get('access_token');
+    const refreshToken = params.get('refresh_token');
 
     if (accessToken) {
       localStorage.setItem('ultralight_token', accessToken);
+      if (refreshToken) {
+        localStorage.setItem('ultralight_refresh_token', refreshToken);
+      }
       window.location.href = '/upload';
     } else {
       // Check query params as fallback
@@ -324,13 +373,14 @@ function getCallbackHTML(): string {
 </html>`;
 }
 
-function getCallbackSuccessHTML(token: string): string {
+function getCallbackSuccessHTML(token: string, refreshToken?: string): string {
   return `<!DOCTYPE html>
 <html>
 <head><title>Signed in!</title></head>
 <body>
   <script>
     localStorage.setItem('ultralight_token', '${token}');
+    ${refreshToken ? `localStorage.setItem('ultralight_refresh_token', '${refreshToken}');` : ''}
     window.location.href = '/upload';
   </script>
 </body>

@@ -94,13 +94,167 @@ export function getAppRunnerHTML(appId: string, appSlug: string, appName: string
       cursor: pointer;
       font-size: 1.25rem;
     }
+    /* Auth overlay */
+    .ultralight-auth-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10001;
+    }
+    .ultralight-auth-box {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 12px;
+      padding: 2rem;
+      max-width: 400px;
+      text-align: center;
+      color: #fff;
+    }
+    .ultralight-auth-box h2 {
+      margin-bottom: 0.5rem;
+      font-size: 1.25rem;
+    }
+    .ultralight-auth-box p {
+      color: #888;
+      margin-bottom: 1.5rem;
+      font-size: 0.875rem;
+    }
+    .ultralight-auth-btn {
+      display: inline-block;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 0.75rem 2rem;
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    .ultralight-auth-btn:hover {
+      opacity: 0.9;
+    }
   </style>
 </head>
 <body>
   <div id="app"></div>
 
   <script type="module">
+    // ============================================
+    // Token Manager - handles JWT lifecycle
+    // ============================================
+    const tokenManager = {
+      _refreshPromise: null,
+      _retried: false,
+
+      getToken() {
+        return localStorage.getItem('ultralight_token');
+      },
+
+      isExpired(token) {
+        if (!token) return true;
+        try {
+          const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+          const padded = base64 + '='.repeat((4 - base64.length % 4) % 4);
+          const payload = JSON.parse(atob(padded));
+          // Treat as expired if less than 60 seconds remaining
+          return !payload.exp || (payload.exp * 1000) < (Date.now() + 60000);
+        } catch {
+          return true;
+        }
+      },
+
+      getExpiry(token) {
+        if (!token) return null;
+        try {
+          const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+          const padded = base64 + '='.repeat((4 - base64.length % 4) % 4);
+          const payload = JSON.parse(atob(padded));
+          return payload.exp ? new Date(payload.exp * 1000).toISOString() : 'no-exp';
+        } catch { return 'decode-error'; }
+      },
+
+      async ensureValidToken() {
+        const token = this.getToken();
+        if (token && !this.isExpired(token)) {
+          return token;
+        }
+
+        // Token missing or expired — try refresh
+        console.log('[ultralight] Token expired or missing, attempting refresh...');
+        if (!this._refreshPromise) {
+          this._refreshPromise = this._doRefresh().finally(() => {
+            this._refreshPromise = null;
+          });
+        }
+        return this._refreshPromise;
+      },
+
+      async _doRefresh() {
+        const refreshToken = localStorage.getItem('ultralight_refresh_token');
+        if (!refreshToken) {
+          console.warn('[ultralight] No refresh_token available');
+          this.showLoginPrompt('Please sign in to use this app.');
+          throw new Error('AUTH_NO_REFRESH_TOKEN');
+        }
+
+        try {
+          const res = await fetch('/auth/refresh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refresh_token: refreshToken }),
+          });
+
+          if (!res.ok) {
+            console.error('[ultralight] Token refresh failed:', res.status);
+            localStorage.removeItem('ultralight_token');
+            localStorage.removeItem('ultralight_refresh_token');
+            this.showLoginPrompt('Your session has expired. Please sign in again.');
+            throw new Error('AUTH_REFRESH_FAILED');
+          }
+
+          const data = await res.json();
+          localStorage.setItem('ultralight_token', data.access_token);
+          if (data.refresh_token) {
+            localStorage.setItem('ultralight_refresh_token', data.refresh_token);
+          }
+          console.log('[ultralight] Token refreshed, new expiry:', this.getExpiry(data.access_token));
+          return data.access_token;
+        } catch (err) {
+          if (err.message !== 'AUTH_REFRESH_FAILED' && err.message !== 'AUTH_NO_REFRESH_TOKEN') {
+            console.error('[ultralight] Token refresh error:', err);
+            this.showLoginPrompt('Session error. Please sign in again.');
+          }
+          throw err;
+        }
+      },
+
+      showLoginPrompt(message) {
+        if (document.querySelector('.ultralight-auth-overlay')) return;
+        const overlay = document.createElement('div');
+        overlay.className = 'ultralight-auth-overlay';
+        overlay.innerHTML = \`
+          <div class="ultralight-auth-box">
+            <h2>Sign In Required</h2>
+            <p>\${message || 'Please sign in to continue.'}</p>
+            <a href="/auth/login" class="ultralight-auth-btn">Sign In with Google</a>
+          </div>
+        \`;
+        document.body.appendChild(overlay);
+      },
+
+      dismissLoginPrompt() {
+        const overlay = document.querySelector('.ultralight-auth-overlay');
+        if (overlay) overlay.remove();
+      }
+    };
+
+    // ============================================
     // Ultralight Runtime - provides APIs to the running app
+    // ============================================
     const ultralightRuntime = {
       appId: '${appId}',
       appSlug: '${appSlug}',
@@ -170,11 +324,27 @@ export function getAppRunnerHTML(appId: string, appSlug: string, appName: string
         }
       },
 
-      // MCP API - call app's own functions
+      // MCP API - call app's own functions (with auth + token refresh)
       async call(functionName, args = {}) {
-        const token = localStorage.getItem('ultralight_token');
+        const callId = Date.now();
+        console.log('[ultralight.call] #' + callId, functionName, JSON.stringify(args).substring(0, 200));
+
+        // Ensure we have a valid token (refreshes automatically if expired)
+        let token;
+        try {
+          token = await tokenManager.ensureValidToken();
+        } catch (authErr) {
+          console.error('[ultralight.call] #' + callId, 'Auth failed before call:', authErr.message);
+          throw authErr;
+        }
+
         const headers = { 'Content-Type': 'application/json' };
-        if (token) headers['Authorization'] = 'Bearer ' + token;
+        if (token) {
+          headers['Authorization'] = 'Bearer ' + token;
+          console.log('[ultralight.call] #' + callId, 'token present, expires:', tokenManager.getExpiry(token));
+        } else {
+          console.warn('[ultralight.call] #' + callId, 'No token available');
+        }
 
         // Auto-prefix function name with app slug for MCP protocol
         const prefixedName = functionName.includes('_') ? functionName : '${appSlug}_' + functionName;
@@ -184,14 +354,43 @@ export function getAppRunnerHTML(appId: string, appSlug: string, appName: string
           headers,
           body: JSON.stringify({
             jsonrpc: '2.0',
-            id: Date.now(),
+            id: callId,
             method: 'tools/call',
             params: { name: prefixedName, arguments: args }
           })
         });
 
+        console.log('[ultralight.call] #' + callId, 'response status:', res.status);
+
         const data = await res.json();
-        if (data.error) throw new Error(data.error.message);
+
+        if (data.error) {
+          const errorType = data.error.data?.type;
+          console.error('[ultralight.call] #' + callId, 'error:', errorType, data.error.message);
+
+          // If token expired on server side, try one refresh+retry cycle
+          if (errorType === 'AUTH_TOKEN_EXPIRED' && !tokenManager._retried) {
+            console.log('[ultralight.call] #' + callId, 'Token expired on server, attempting refresh+retry...');
+            tokenManager._retried = true;
+            try {
+              await tokenManager._doRefresh();
+              const result = await this.call(functionName, args);
+              tokenManager._retried = false;
+              return result;
+            } catch (retryErr) {
+              tokenManager._retried = false;
+              throw retryErr;
+            }
+          }
+
+          if (errorType?.startsWith('AUTH_')) {
+            tokenManager.showLoginPrompt(data.error.message);
+          }
+
+          throw new Error(data.error.message);
+        }
+
+        console.log('[ultralight.call] #' + callId, 'success');
         return data.result?.structuredContent || data.result || {};
       }
     };
@@ -221,6 +420,16 @@ export function getAppRunnerHTML(appId: string, appSlug: string, appName: string
     window.onunhandledrejection = (e) => {
       showError('Unhandled Promise Rejection', e.reason?.message || String(e.reason));
     };
+
+    // Check auth state before running app — attempt refresh if expired
+    try {
+      await tokenManager.ensureValidToken();
+      console.log('[ultralight] Auth ready, token valid');
+    } catch (authErr) {
+      // Login prompt is already shown by tokenManager if needed
+      console.warn('[ultralight] No valid auth token at startup:', authErr.message);
+      // Don't block app loading — the app may show public content or handle auth errors in call()
+    }
 
     // Execute the app code
     try {

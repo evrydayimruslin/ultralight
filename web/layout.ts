@@ -2646,7 +2646,7 @@ await hash.sha256('data')</div>
       }
     }
 
-    function updateAuthUI() {
+    async function updateAuthUI() {
       if (authToken) {
         const payload = decodeJWT(authToken);
         if (payload && payload.exp * 1000 > Date.now()) {
@@ -2678,8 +2678,38 @@ await hash.sha256('data')</div>
           loadApps();
           return;
         }
+
+        // Token expired — try refresh before clearing
+        const refreshToken = localStorage.getItem('ultralight_refresh_token');
+        if (refreshToken) {
+          console.log('[layout] Token expired, attempting refresh...');
+          try {
+            const res = await fetch('/auth/refresh', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ refresh_token: refreshToken }),
+            });
+            if (res.ok) {
+              const data = await res.json();
+              localStorage.setItem('ultralight_token', data.access_token);
+              if (data.refresh_token) {
+                localStorage.setItem('ultralight_refresh_token', data.refresh_token);
+              }
+              authToken = data.access_token;
+              console.log('[layout] Token refreshed successfully');
+              // Re-run with the new token
+              await updateAuthUI();
+              return;
+            } else {
+              console.warn('[layout] Token refresh failed:', res.status);
+            }
+          } catch (e) {
+            console.error('[layout] Token refresh error:', e);
+          }
+        }
       }
       localStorage.removeItem('ultralight_token');
+      localStorage.removeItem('ultralight_refresh_token');
       authToken = null;
       currentUser = null;
       appsList.innerHTML = '<div class="apps-empty">Sign in to see your apps</div>';
@@ -2687,6 +2717,7 @@ await hash.sha256('data')</div>
 
     window.signOut = function() {
       localStorage.removeItem('ultralight_token');
+      localStorage.removeItem('ultralight_refresh_token');
       window.location.reload();
     };
 
@@ -4436,7 +4467,7 @@ await hash.sha256('data')</div>
     // ============================================
     // Initial Load
     // ============================================
-    updateAuthUI();
+    await updateAuthUI();
 
     // If we're in app view and have an appId, load the app via iframe
     // This ensures consistent rendering whether accessed directly via URL or via sidebar navigation

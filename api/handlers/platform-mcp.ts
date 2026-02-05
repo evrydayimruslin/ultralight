@@ -5,6 +5,7 @@
 
 import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
+import { isApiToken } from '../services/tokens.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
@@ -595,18 +596,46 @@ export async function handlePlatformMcp(request: Request): Promise<Response> {
   try {
     const authUser = await authenticate(request);
     userId = authUser.id;
+
+    // Extract display name and avatar from JWT user_metadata
+    let displayName: string | null = authUser.email.split('@')[0];
+    let avatarUrl: string | null = null;
+    const token = request.headers.get('Authorization')?.slice(7) || '';
+    if (token && !isApiToken(token)) {
+      try {
+        const parts = token.split('.');
+        if (parts.length === 3) {
+          const base64Payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+          const padded = base64Payload + '='.repeat((4 - base64Payload.length % 4) % 4);
+          const payload = JSON.parse(atob(padded));
+          const meta = payload.user_metadata || {};
+          displayName = meta.full_name || meta.name || displayName;
+          avatarUrl = meta.avatar_url || meta.picture || null;
+        }
+      } catch { /* JWT metadata extraction is best-effort */ }
+    }
+
     user = {
       id: authUser.id,
       email: authUser.email,
-      displayName: authUser.display_name,
-      avatarUrl: authUser.avatar_url,
+      displayName,
+      avatarUrl,
       tier: authUser.tier as 'free' | 'pro',
     };
-  } catch {
+  } catch (authErr) {
+    const message = authErr instanceof Error ? authErr.message : 'Authentication required';
+    let errorType = 'AUTH_REQUIRED';
+    if (message.includes('expired')) errorType = 'AUTH_TOKEN_EXPIRED';
+    else if (message.includes('Missing')) errorType = 'AUTH_MISSING_TOKEN';
+    else if (message.includes('Invalid JWT') || message.includes('decode')) errorType = 'AUTH_INVALID_TOKEN';
+
+    console.error(`Platform MCP auth failed [${errorType}]:`, message);
+
     return jsonRpcErrorResponse(
       rpcRequest.id,
       AUTH_REQUIRED,
-      'Authentication required. Provide a valid Bearer token.'
+      message,
+      { type: errorType }
     );
   }
 
