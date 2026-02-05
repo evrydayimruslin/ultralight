@@ -1738,7 +1738,8 @@ export async function executeInSandbox(
 
       const AsyncFunction = Object.getPrototypeOf(async function() {}).constructor;
       const fn = new AsyncFunction('args', ...contextKeys, wrapperCode);
-      userFunc = (...callArgs: unknown[]) => fn(callArgs, ...contextValues);
+      // Pass args directly, not as rest parameter (which would wrap in another array)
+      userFunc = (callArgs: unknown[]) => fn(callArgs, ...contextValues);
 
     } catch (compileErr) {
       throw new Error(`Code compilation failed: ${compileErr instanceof Error ? compileErr.message : String(compileErr)}`);

@@ -411,7 +411,15 @@ function getToday(): string {
   return new Date().toISOString().split('T')[0];
 }
 
-export async function logWeight(weight: number, date?: string): Promise<{ success: boolean }> {
+export async function logWeight(args: { weight: number; date?: string }): Promise<{ success: boolean }> {
+  console.log('logWeight called with:', JSON.stringify(args));
+  const { weight, date } = args || {};
+  console.log('Destructured weight:', weight, 'date:', date);
+
+  if (weight === undefined || weight === null) {
+    throw new Error(`Invalid weight value: ${weight}. Args received: ${JSON.stringify(args)}`);
+  }
+
   const targetDate = date || getToday();
 
   // Check if entry exists for this date
@@ -442,7 +450,7 @@ export async function logWeight(weight: number, date?: string): Promise<{ succes
   return { success: true };
 }
 
-export async function logSleep(hours: number, quality?: number, date?: string): Promise<{ success: boolean }> {
+export async function logSleep({ hours, quality, date }: { hours: number; quality?: number; date?: string }): Promise<{ success: boolean }> {
   const targetDate = date || getToday();
 
   const { data: existing } = await supabase
@@ -471,7 +479,7 @@ export async function logSleep(hours: number, quality?: number, date?: string): 
   return { success: true };
 }
 
-export async function logEnergy(level: number, notes?: string, date?: string): Promise<{ success: boolean }> {
+export async function logEnergy({ level, notes, date }: { level: number; notes?: string; date?: string }): Promise<{ success: boolean }> {
   const targetDate = date || getToday();
 
   const { data: existing } = await supabase
@@ -500,7 +508,7 @@ export async function logEnergy(level: number, notes?: string, date?: string): P
   return { success: true };
 }
 
-export async function getHealthTrends(days: number = 30): Promise<{ trends: HealthMetric[] }> {
+export async function getHealthTrends({ days = 30 }: { days?: number } = {}): Promise<{ trends: HealthMetric[] }> {
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - days);
   const startDateStr = startDate.toISOString().split('T')[0];
@@ -534,7 +542,7 @@ export async function getHealthTrends(days: number = 30): Promise<{ trends: Heal
   return { trends: Array.from(dateMap.values()).sort((a, b) => b.date.localeCompare(a.date)) };
 }
 
-export async function getCryptoPrices(symbols: string[] = ['BTC', 'ETH']): Promise<{ prices: CryptoPrice[] }> {
+export async function getCryptoPrices({ symbols = ['BTC', 'ETH'] }: { symbols?: string[] } = {}): Promise<{ prices: CryptoPrice[] }> {
   const ids = symbols.map(s => {
     const map: Record<string, string> = { BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana' };
     return map[s] || s.toLowerCase();
@@ -559,7 +567,7 @@ export async function getCryptoPrices(symbols: string[] = ['BTC', 'ETH']): Promi
   }
 }
 
-export async function addReminder(text: string, dueAt?: string): Promise<{ success: boolean; reminder: Reminder }> {
+export async function addReminder({ text, dueAt }: { text: string; dueAt?: string }): Promise<{ success: boolean; reminder: Reminder }> {
   const reminder: Reminder = {
     id: uuid.v4(),
     text,
@@ -574,13 +582,13 @@ export async function addReminder(text: string, dueAt?: string): Promise<{ succe
   return { success: true, reminder };
 }
 
-export async function completeReminder(id: string): Promise<{ success: boolean }> {
+export async function completeReminder({ id }: { id: string }): Promise<{ success: boolean }> {
   const { error } = await supabase.from('reminders').update({ completed: true }).eq('id', id);
   if (error) throw new Error(`Failed to complete reminder: ${error.message}`);
   return { success: true };
 }
 
-export async function getReminders(includeCompleted: boolean = false): Promise<{ reminders: Reminder[] }> {
+export async function getReminders({ includeCompleted = false }: { includeCompleted?: boolean } = {}): Promise<{ reminders: Reminder[] }> {
   let query = supabase.from('reminders').select('*').order('created_at', { ascending: false });
   if (!includeCompleted) {
     query = query.eq('completed', false);
@@ -590,7 +598,7 @@ export async function getReminders(includeCompleted: boolean = false): Promise<{
   return { reminders: data || [] };
 }
 
-export async function createGoal(title: string, target: number, unit: string, deadline?: string): Promise<{ success: boolean; goal: Goal }> {
+export async function createGoal({ title, target, unit, deadline }: { title: string; target: number; unit: string; deadline?: string }): Promise<{ success: boolean; goal: Goal }> {
   const goal: Goal = {
     id: uuid.v4(),
     title,
@@ -606,19 +614,19 @@ export async function createGoal(title: string, target: number, unit: string, de
   return { success: true, goal };
 }
 
-export async function updateGoalProgress(id: string, current: number): Promise<{ success: boolean }> {
+export async function updateGoalProgress({ id, current }: { id: string; current: number }): Promise<{ success: boolean }> {
   const { error } = await supabase.from('goals').update({ current }).eq('id', id);
   if (error) throw new Error(`Failed to update goal: ${error.message}`);
   return { success: true };
 }
 
-export async function getGoals(): Promise<{ goals: Goal[] }> {
+export async function getGoals(_args?: Record<string, never>): Promise<{ goals: Goal[] }> {
   const { data, error } = await supabase.from('goals').select('*').order('created_at', { ascending: false });
   if (error) throw new Error(`Failed to get goals: ${error.message}`);
   return { goals: data || [] };
 }
 
-export async function healthCheck(): Promise<{ status: string; checks: Record<string, any> }> {
+export async function healthCheck(_args?: Record<string, never>): Promise<{ status: string; checks: Record<string, any> }> {
   const checks: Record<string, any> = {};
 
   try {
