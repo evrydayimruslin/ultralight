@@ -2,9 +2,9 @@
 // Parses TypeScript/JavaScript code to extract exported functions with full type information
 // Uses the TypeScript compiler API for accurate AST parsing
 
-// Note: TypeScript compiler is loaded from esm.sh CDN
+// Note: TypeScript compiler is loaded via npm: specifier (Deno 2.x native support)
 // This adds ~2MB to the bundle but provides accurate type extraction
-import ts from 'https://esm.sh/typescript@5.3.3';
+import ts from 'npm:typescript@5.3.3';
 
 import type { ParsedSkills, SkillFunction, PermissionDeclaration } from '../../shared/types/index.ts';
 
