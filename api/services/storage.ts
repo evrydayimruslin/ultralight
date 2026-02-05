@@ -215,7 +215,8 @@ export class R2Service {
    */
   async listFiles(prefix: string): Promise<string[]> {
     const queryParams = `list-type=2&prefix=${encodeURIComponent(prefix)}`;
-    const headers = await this.signRequest('GET', '/', {}, undefined, queryParams);
+    // Note: S3 ListObjectsV2 uses the bucket root path (empty string, not '/')
+    const headers = await this.signRequest('GET', '', {}, undefined, queryParams);
     const url = `${this.endpoint}/${this.config.bucketName}?${queryParams}`;
 
     const response = await fetch(url, {
