@@ -183,7 +183,8 @@ export async function bundleCode(
     if (isReactProject) {
       esmEsbuildArgs.push(
         '--jsx=automatic',
-        '--jsx-import-source=react',  // Use bare 'react' for import map resolution
+        // Use full esm.sh URL for JSX runtime - import maps don't work with Blob URLs
+        '--jsx-import-source=https://esm.sh/react@18',
         '--loader:.tsx=tsx',
         '--loader:.jsx=jsx',
       );
@@ -202,8 +203,10 @@ export async function bundleCode(
     let esmCode: string | undefined;
     if (esmExitCode === 0) {
       esmCode = await Deno.readTextFile(esmOutPath);
-      // Post-process ESM code
+      // Post-process ESM code and transform bare specifiers to full URLs
+      // This is critical because Blob URL imports don't use import maps
       esmCode = postProcessBundle(esmCode);
+      esmCode = transformBareSpecifiersToUrls(esmCode);
     }
 
     return {
@@ -305,6 +308,59 @@ function postProcessBundle(code: string): string {
   // to handle __exports.
 
   return processed;
+}
+
+/**
+ * Transform bare specifier imports to full esm.sh URLs
+ * This is CRITICAL for ESM code that will be loaded via Blob URLs,
+ * because import maps don't apply to Blob URL origins.
+ *
+ * Transforms imports like:
+ *   import { jsx } from "react/jsx-runtime"
+ *   -> import { jsx } from "https://esm.sh/react@18/jsx-runtime"
+ *
+ *   import React from "react"
+ *   -> import React from "https://esm.sh/react@18"
+ */
+function transformBareSpecifiersToUrls(code: string): string {
+  // Transform react and react-dom imports to pinned esm.sh URLs
+  // Using @18 to pin to React 18.x for consistency
+  let result = code;
+
+  // Handle dynamic imports: import("react") -> import("https://esm.sh/react@18")
+  result = result.replace(
+    /import\s*\(\s*["']react["']\s*\)/g,
+    'import("https://esm.sh/react@18")'
+  );
+  result = result.replace(
+    /import\s*\(\s*["']react-dom["']\s*\)/g,
+    'import("https://esm.sh/react-dom@18")'
+  );
+  result = result.replace(
+    /import\s*\(\s*["']react-dom\/client["']\s*\)/g,
+    'import("https://esm.sh/react-dom@18/client")'
+  );
+
+  // Handle static imports with various patterns
+  // Pattern: import X from "react"
+  // Pattern: import { X } from "react"
+  // Pattern: import * as X from "react"
+  const importPatterns = [
+    // react core - match exact "react" (not react-dom, react/jsx-runtime, etc.)
+    { from: /(from\s+["'])react(["'])/g, to: '$1https://esm.sh/react@18$2' },
+    // react subpaths like react/jsx-runtime, react/jsx-dev-runtime
+    { from: /(from\s+["'])react\/([\w-]+)(["'])/g, to: '$1https://esm.sh/react@18/$2$3' },
+    // react-dom core
+    { from: /(from\s+["'])react-dom(["'])/g, to: '$1https://esm.sh/react-dom@18$2' },
+    // react-dom subpaths like react-dom/client
+    { from: /(from\s+["'])react-dom\/([\w-]+)(["'])/g, to: '$1https://esm.sh/react-dom@18/$2$3' },
+  ];
+
+  for (const pattern of importPatterns) {
+    result = result.replace(pattern.from, pattern.to);
+  }
+
+  return result;
 }
 
 /**
