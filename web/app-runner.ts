@@ -1,7 +1,7 @@
 // App Runner Page
 // Renders deployed apps with full UI - actual deployment, not just function execution
 
-export function getAppRunnerHTML(appId: string, appName: string, code: string): string {
+export function getAppRunnerHTML(appId: string, appSlug: string, appName: string, code: string): string {
   // Escape the code for embedding in a script tag
   const escapedCode = code
     .replace(/\\/g, '\\\\')
@@ -103,6 +103,7 @@ export function getAppRunnerHTML(appId: string, appName: string, code: string): 
     // Ultralight Runtime - provides APIs to the running app
     const ultralightRuntime = {
       appId: '${appId}',
+      appSlug: '${appSlug}',
 
       // Memory API - persisted key-value storage
       memory: {
@@ -175,6 +176,9 @@ export function getAppRunnerHTML(appId: string, appName: string, code: string): 
         const headers = { 'Content-Type': 'application/json' };
         if (token) headers['Authorization'] = 'Bearer ' + token;
 
+        // Auto-prefix function name with app slug for MCP protocol
+        const prefixedName = functionName.includes('_') ? functionName : '${appSlug}_' + functionName;
+
         const res = await fetch('/mcp/${appId}', {
           method: 'POST',
           headers,
@@ -182,7 +186,7 @@ export function getAppRunnerHTML(appId: string, appName: string, code: string): 
             jsonrpc: '2.0',
             id: Date.now(),
             method: 'tools/call',
-            params: { name: functionName, arguments: args }
+            params: { name: prefixedName, arguments: args }
           })
         });
 

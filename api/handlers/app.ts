@@ -336,7 +336,7 @@ export function createApp() {
               if (isEmbed) {
                 // Embed mode: serve app without sidebar using app-runner
                 // Use ESM bundle for browser rendering (falls back to IIFE if no ESM)
-                return new Response(getAppRunnerHTML(appId, app.name || app.slug, browserCode), {
+                return new Response(getAppRunnerHTML(appId, app.slug, app.name || app.slug, browserCode), {
                   headers: { 'Content-Type': 'text/html' },
                 });
               } else {
