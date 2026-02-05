@@ -79,19 +79,13 @@ function App() {
   }
 
   async function callFunction(name: string, args: Record<string, unknown>) {
-    const res = await fetch(`/mcp/${window.ultralight?.appId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: Date.now(),
-        method: 'tools/call',
-        params: { name, arguments: args }
-      })
-    });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
-    return data.result?.structuredContent || {};
+    // Use the ultralight runtime's call method which handles auth
+    const ultralight = (window as any).ultralight;
+    if (ultralight?.call) {
+      return await ultralight.call(name, args);
+    }
+    // Fallback for older runtimes (shouldn't happen)
+    throw new Error('Ultralight runtime not available');
   }
 
   return (
@@ -144,16 +138,10 @@ function HealthTab({ data, onRefresh }: { data: HealthMetric[]; onRefresh: () =>
 
   async function logMetric(type: string, value: number) {
     try {
-      await fetch(`/mcp/${window.ultralight?.appId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: Date.now(),
-          method: 'tools/call',
-          params: { name: `log${type}`, arguments: { [type.toLowerCase()]: value } }
-        })
-      });
+      const ultralight = (window as any).ultralight;
+      if (ultralight?.call) {
+        await ultralight.call(`log${type}`, { [type.toLowerCase()]: value });
+      }
       onRefresh();
     } catch (err) {
       console.error('Failed to log metric:', err);
@@ -290,16 +278,10 @@ function RemindersTab({ reminders, onRefresh }: { reminders: Reminder[]; onRefre
   async function addReminder() {
     if (!newReminder.trim()) return;
     try {
-      await fetch(`/mcp/${window.ultralight?.appId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: Date.now(),
-          method: 'tools/call',
-          params: { name: 'addReminder', arguments: { text: newReminder } }
-        })
-      });
+      const ultralight = (window as any).ultralight;
+      if (ultralight?.call) {
+        await ultralight.call('addReminder', { text: newReminder });
+      }
       setNewReminder('');
       onRefresh();
     } catch (err) {

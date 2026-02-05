@@ -167,6 +167,28 @@ export function getAppRunnerHTML(appId: string, appName: string, code: string): 
           if (!res.ok) return [];
           return res.json();
         }
+      },
+
+      // MCP API - call app's own functions
+      async call(functionName, args = {}) {
+        const token = localStorage.getItem('ultralight_token');
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = 'Bearer ' + token;
+
+        const res = await fetch('/mcp/${appId}', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: Date.now(),
+            method: 'tools/call',
+            params: { name: functionName, arguments: args }
+          })
+        });
+
+        const data = await res.json();
+        if (data.error) throw new Error(data.error.message);
+        return data.result?.structuredContent || data.result || {};
       }
     };
 
