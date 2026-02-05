@@ -321,13 +321,21 @@ function postProcessBundle(code: string): string {
  *
  *   import React from "react"
  *   -> import React from "https://esm.sh/react@18"
+ *
+ * IMPORTANT: Must NOT match already-transformed URLs like "https://esm.sh/react"
  */
 function transformBareSpecifiersToUrls(code: string): string {
   // Transform react and react-dom imports to pinned esm.sh URLs
   // Using @18 to pin to React 18.x for consistency
   let result = code;
 
+  // Strategy: Use negative lookbehind to avoid matching URLs that already have esm.sh
+  // But since JS doesn't have great lookbehind support in all environments,
+  // we'll use a different approach: match the full import statement and only transform
+  // if the specifier is a bare specifier (no http/https prefix)
+
   // Handle dynamic imports: import("react") -> import("https://esm.sh/react@18")
+  // Only match if NOT preceded by esm.sh/
   result = result.replace(
     /import\s*\(\s*["']react["']\s*\)/g,
     'import("https://esm.sh/react@18")'
@@ -341,24 +349,48 @@ function transformBareSpecifiersToUrls(code: string): string {
     'import("https://esm.sh/react-dom@18/client")'
   );
 
-  // Handle static imports with various patterns
-  // Pattern: import X from "react"
-  // Pattern: import { X } from "react"
-  // Pattern: import * as X from "react"
-  const importPatterns = [
-    // react core - match exact "react" (not react-dom, react/jsx-runtime, etc.)
-    { from: /(from\s+["'])react(["'])/g, to: '$1https://esm.sh/react@18$2' },
-    // react subpaths like react/jsx-runtime, react/jsx-dev-runtime
-    { from: /(from\s+["'])react\/([\w-]+)(["'])/g, to: '$1https://esm.sh/react@18/$2$3' },
-    // react-dom core
-    { from: /(from\s+["'])react-dom(["'])/g, to: '$1https://esm.sh/react-dom@18$2' },
-    // react-dom subpaths like react-dom/client
-    { from: /(from\s+["'])react-dom\/([\w-]+)(["'])/g, to: '$1https://esm.sh/react-dom@18/$2$3' },
-  ];
+  // First pass: Fix any esm.sh URLs that are missing version pins
+  // e.g., "https://esm.sh/react" -> "https://esm.sh/react@18"
+  // e.g., "https://esm.sh/react-dom/client" -> "https://esm.sh/react-dom@18/client"
+  result = result.replace(
+    /https:\/\/esm\.sh\/react(?!@)(?=["'\s\/]|$)/g,
+    'https://esm.sh/react@18'
+  );
+  result = result.replace(
+    /https:\/\/esm\.sh\/react-dom(?!@)(?=["'\s\/]|$)/g,
+    'https://esm.sh/react-dom@18'
+  );
 
-  for (const pattern of importPatterns) {
-    result = result.replace(pattern.from, pattern.to);
-  }
+  // Handle static imports with bare specifiers ONLY
+  // Use a capture group approach: match "from" followed by quote, then the package name
+  // Critical: The regex must ensure we're matching a BARE specifier (no slashes before the package name)
+
+  // react core - match exactly 'from "react"' or "from 'react'" (bare specifier only)
+  // The negative lookbehind (?<!/) ensures we don't match URLs like "esm.sh/react"
+  // But since lookbehinds can be tricky, we use word boundary and quote matching instead
+  result = result.replace(
+    /from\s+(["'])react\1(?=[\s;,)]|$)/g,
+    'from $1https://esm.sh/react@18$1'
+  );
+
+  // react subpaths like react/jsx-runtime, react/jsx-dev-runtime (bare specifier only)
+  // Must match "react/" at the START of the specifier
+  result = result.replace(
+    /from\s+(["'])react\/([\w-]+)\1/g,
+    'from $1https://esm.sh/react@18/$2$1'
+  );
+
+  // react-dom core (bare specifier only)
+  result = result.replace(
+    /from\s+(["'])react-dom\1(?=[\s;,)]|$)/g,
+    'from $1https://esm.sh/react-dom@18$1'
+  );
+
+  // react-dom subpaths like react-dom/client (bare specifier only)
+  result = result.replace(
+    /from\s+(["'])react-dom\/([\w-]+)\1/g,
+    'from $1https://esm.sh/react-dom@18/$2$1'
+  );
 
   return result;
 }
