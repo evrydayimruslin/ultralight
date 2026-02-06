@@ -889,16 +889,16 @@ export function getLayoutHTML(options: {
       padding: 1rem 2.5rem;
       background: transparent;
       color: var(--text-primary);
-      border: 1px solid var(--border-color);
+      border: 1px solid var(--text-muted);
       border-radius: 12px;
       font-size: 1.05rem;
       font-weight: 600;
       cursor: pointer;
-      transition: border-color 0.2s, color 0.2s;
+      transition: border-color 0.2s;
     }
 
     .deploy-btn:hover {
-      border-color: var(--text-muted);
+      border-color: var(--text-secondary);
     }
 
     .deploy-btn:active {
@@ -906,7 +906,7 @@ export function getLayoutHTML(options: {
     }
 
     .deploy-btn:disabled {
-      color: var(--text-muted);
+      color: var(--text-primary);
       cursor: not-allowed;
     }
 
@@ -2285,26 +2285,11 @@ export function getLayoutHTML(options: {
     html.dark .theme-toggle .moon-icon { display: none; }
 
     /* ===== Hero / Landing Section ===== */
-    .hero-glow {
-      position: absolute;
-      top: -80px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 500px;
-      height: 300px;
-      background: radial-gradient(ellipse, rgba(59, 130, 246, 0.07) 0%, transparent 70%);
-      pointer-events: none;
-      z-index: 0;
-    }
-    html.dark .hero-glow {
-      background: radial-gradient(ellipse, rgba(59, 130, 246, 0.14) 0%, transparent 70%);
-    }
-
     .hero-title {
       font-size: clamp(3rem, 7vw, 4.5rem);
       font-weight: 800;
       letter-spacing: -0.03em;
-      line-height: 1.05;
+      line-height: 1.15;
       text-align: center;
       color: var(--text-primary);
     }
@@ -2455,10 +2440,9 @@ export function getLayoutHTML(options: {
     <!-- Upload View -->
     <div class="upload-view" id="uploadView" style="display: ${initialView === 'upload' ? 'flex' : 'none'};">
       <!-- Hero -->
-      <div style="position: relative; width: 100%;">
-        <div class="hero-glow"></div>
+      <div style="width: 100%;">
         <h1 class="hero-title">Deploy apps<br><span class="accent">Instantly</span></h1>
-        <p class="hero-subtitle">Drop your code, get a live URL + MCP server</p>
+        <p class="hero-subtitle">Get a live URL + MCP server</p>
       </div>
 
       <input type="hidden" id="appName" value="" />
