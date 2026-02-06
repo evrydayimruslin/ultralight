@@ -2442,7 +2442,7 @@ export function getLayoutHTML(options: {
       <!-- Hero -->
       <div style="width: 100%;">
         <h1 class="hero-title">Deploy apps<br><span class="accent">Instantly</span></h1>
-        <p class="hero-subtitle">Get a live URL + MCP server</p>
+        <p class="hero-subtitle">Live URL &amp; MCP Server In Seconds</p>
       </div>
 
       <input type="hidden" id="appName" value="" />
