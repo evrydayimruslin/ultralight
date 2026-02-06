@@ -2450,7 +2450,7 @@ export function getLayoutHTML(options: {
       <div class="drop-zone" id="dropZone">
         <div class="drop-zone-icon">↑</div>
         <div class="drop-zone-text">Drop your code here</div>
-        <div class="drop-zone-hint">or click to browse • Max 50MB • .ts .tsx .js .jsx .json .md .css</div>
+        <div class="drop-zone-hint">or click to browse • Max 50MB • Most file types supported</div>
         <input type="file" id="fileInput" webkitdirectory directory multiple>
       </div>
 

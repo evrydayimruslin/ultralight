@@ -384,7 +384,24 @@ export const TIER_LIMITS = {
 // ALLOWED FILE TYPES
 // ============================================
 
-export const ALLOWED_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.json', '.md', '.css'] as const;
+export const ALLOWED_EXTENSIONS = [
+  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
+  '.json', '.jsonc',
+  '.css', '.scss', '.less',
+  '.html', '.htm', '.xml', '.svg',
+  '.md', '.mdx', '.txt', '.csv',
+  '.sql',
+  '.yaml', '.yml', '.toml', '.ini', '.conf',
+  '.env', '.env.example', '.env.local',
+  '.sh', '.bash',
+  '.py', '.rb', '.go', '.rs', '.java', '.kt',
+  '.c', '.cpp', '.h', '.hpp',
+  '.wasm',
+  '.graphql', '.gql',
+  '.prisma',
+  '.lock', '.gitignore', '.dockerignore',
+  '.dockerfile', '.editorconfig',
+] as const;
 export const MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
 export const MAX_FILES_PER_UPLOAD = 50;
 
