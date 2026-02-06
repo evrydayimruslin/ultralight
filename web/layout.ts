@@ -54,16 +54,16 @@ export function getLayoutHTML(options: {
         extend: {
           colors: {
             'ultralight': {
-              50: '#f5f3ff',
-              100: '#ede9fe',
-              200: '#ddd6fe',
-              300: '#c4b5fd',
-              400: '#a78bfa',
-              500: '#8b5cf6',
-              600: '#7c3aed',
-              700: '#6d28d9',
-              800: '#5b21b6',
-              900: '#4c1d95',
+              50: '#eff6ff',
+              100: '#dbeafe',
+              200: '#bfdbfe',
+              300: '#93c5fd',
+              400: '#60a5fa',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+              800: '#1e40af',
+              900: '#1e3a8a',
             }
           }
         }
@@ -84,6 +84,17 @@ export function getLayoutHTML(options: {
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
+    /* ===== Liquid Metal Animation ===== */
+    @property --border-angle {
+      syntax: "<angle>";
+      initial-value: 0deg;
+      inherits: false;
+    }
+
+    @keyframes spin-border {
+      to { --border-angle: 360deg; }
+    }
+
     /* ===== Light mode (default) ===== */
     :root {
       --sidebar-width: 260px;
@@ -95,8 +106,8 @@ export function getLayoutHTML(options: {
       --text-primary: #18181b;
       --text-secondary: #71717a;
       --text-muted: #a1a1aa;
-      --accent-gradient: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
-      --accent-color: #8b5cf6;
+      --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+      --accent-color: #3b82f6;
       --success-color: #22c55e;
       --error-color: #ef4444;
       --warning-color: #f59e0b;
@@ -112,8 +123,8 @@ export function getLayoutHTML(options: {
       --text-primary: #ffffff;
       --text-secondary: #888888;
       --text-muted: #555555;
-      --accent-gradient: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
-      --accent-color: #8b5cf6;
+      --accent-gradient: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+      --accent-color: #60a5fa;
       --success-color: #4ade80;
       --error-color: #f87171;
       --warning-color: #fbbf24;
@@ -539,7 +550,7 @@ export function getLayoutHTML(options: {
       color: var(--text-muted);
     }
     .tier-badge.pro {
-      background: rgba(139, 92, 246, 0.15);
+      background: rgba(59, 130, 246, 0.15);
       color: var(--accent-color);
     }
 
@@ -670,8 +681,8 @@ export function getLayoutHTML(options: {
     /* Upgrade CTA */
     .upgrade-cta {
       padding: 0.75rem 1rem;
-      background: rgba(139, 92, 246, 0.08);
-      border: 1px solid rgba(139, 92, 246, 0.25);
+      background: rgba(59, 130, 246, 0.08);
+      border: 1px solid rgba(59, 130, 246, 0.25);
       border-radius: 6px;
       font-size: 0.8125rem;
       color: var(--text-secondary);
@@ -813,37 +824,73 @@ export function getLayoutHTML(options: {
 
     .drop-zone {
       width: 100%;
-      min-height: 280px;
-      border: 2px dashed var(--border-color);
+      min-height: 260px;
+      border: 2px solid transparent;
       border-radius: 16px;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       padding: 2rem;
-      transition: all 0.2s;
       cursor: pointer;
+      position: relative;
+      background:
+        linear-gradient(var(--bg-primary), var(--bg-primary)) padding-box,
+        conic-gradient(
+          from var(--border-angle),
+          transparent 0%,
+          transparent 25%,
+          #94a3b8 35%,
+          #e2e8f0 42%,
+          #fff 50%,
+          #e2e8f0 58%,
+          #94a3b8 65%,
+          transparent 75%,
+          transparent 100%
+        ) border-box;
+      animation: spin-border 4s linear infinite;
+      transition: box-shadow 0.3s ease;
+    }
+
+    html.dark .drop-zone {
+      background:
+        linear-gradient(var(--bg-primary), var(--bg-primary)) padding-box,
+        conic-gradient(
+          from var(--border-angle),
+          transparent 0%,
+          transparent 25%,
+          #374151 35%,
+          #9ca3af 42%,
+          #e5e7eb 50%,
+          #9ca3af 58%,
+          #374151 65%,
+          transparent 75%,
+          transparent 100%
+        ) border-box;
     }
 
     .drop-zone:hover, .drop-zone.dragover {
-      border-color: var(--accent-color);
-      background: rgba(102, 126, 234, 0.05);
+      box-shadow: 0 0 24px rgba(148, 163, 184, 0.15);
+    }
+
+    html.dark .drop-zone:hover, html.dark .drop-zone.dragover {
+      box-shadow: 0 0 24px rgba(229, 231, 235, 0.08);
     }
 
     .drop-zone-icon {
-      font-size: 3rem;
-      margin-bottom: 1rem;
-      opacity: 0.5;
+      font-size: 2rem;
+      margin-bottom: 0.75rem;
+      color: var(--text-muted);
     }
 
     .drop-zone-text {
       font-size: 1.125rem;
       color: var(--text-secondary);
-      margin-bottom: 0.5rem;
+      margin-bottom: 0.375rem;
     }
 
     .drop-zone-hint {
-      font-size: 0.875rem;
+      font-size: 0.8125rem;
       color: var(--text-muted);
     }
 
@@ -874,18 +921,34 @@ export function getLayoutHTML(options: {
       margin-top: 1.5rem;
       width: 100%;
       padding: 0.875rem 2.5rem;
-      background: var(--accent-gradient);
+      background:
+        linear-gradient(var(--accent-gradient), var(--accent-gradient)) padding-box,
+        conic-gradient(
+          from var(--border-angle),
+          transparent 0%,
+          transparent 30%,
+          rgba(255,255,255,0.5) 45%,
+          rgba(255,255,255,0.8) 50%,
+          rgba(255,255,255,0.5) 55%,
+          transparent 70%,
+          transparent 100%
+        ) border-box;
       color: white;
-      border: none;
-      border-radius: 8px;
+      border: 1.5px solid transparent;
+      border-radius: 10px;
       font-size: 1rem;
       font-weight: 600;
       cursor: pointer;
-      transition: opacity 0.2s, transform 0.1s;
+      animation: spin-border 6s linear infinite;
+      transition: transform 0.1s, box-shadow 0.3s;
     }
 
     .deploy-btn:hover {
-      opacity: 0.9;
+      box-shadow: 0 0 20px rgba(59, 130, 246, 0.25);
+    }
+
+    html.dark .deploy-btn:hover {
+      box-shadow: 0 0 20px rgba(96, 165, 250, 0.2);
     }
 
     .deploy-btn:active {
@@ -893,9 +956,13 @@ export function getLayoutHTML(options: {
     }
 
     .deploy-btn:disabled {
-      opacity: 0.5;
+      opacity: 0.4;
       cursor: not-allowed;
       transform: none;
+      animation: none;
+      background: var(--bg-tertiary);
+      color: var(--text-muted);
+      border: 1.5px solid var(--border-color);
     }
 
     .build-logs {
@@ -2280,12 +2347,12 @@ export function getLayoutHTML(options: {
       transform: translateX(-50%);
       width: 500px;
       height: 300px;
-      background: radial-gradient(ellipse, rgba(139, 92, 246, 0.07) 0%, transparent 70%);
+      background: radial-gradient(ellipse, rgba(59, 130, 246, 0.07) 0%, transparent 70%);
       pointer-events: none;
       z-index: 0;
     }
     html.dark .hero-glow {
-      background: radial-gradient(ellipse, rgba(139, 92, 246, 0.14) 0%, transparent 70%);
+      background: radial-gradient(ellipse, rgba(59, 130, 246, 0.14) 0%, transparent 70%);
     }
 
     .hero-title {
@@ -2337,7 +2404,7 @@ export function getLayoutHTML(options: {
 
     /* ===== Smooth transitions for theme switch ===== */
     .main-content, .sidebar-header, .sidebar-footer,
-    .modal, .modal-overlay, .drop-zone, .deploy-btn, .result,
+    .modal, .modal-overlay, .result,
     .app-item, .build-logs, .toast, .settings-input, .settings-select,
     .hero-title, .hero-subtitle {
       transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
@@ -2445,16 +2512,16 @@ export function getLayoutHTML(options: {
       <!-- Hero -->
       <div style="position: relative; width: 100%;">
         <div class="hero-glow"></div>
-        <h1 class="hero-title">Deploy apps<br><span class="accent">in seconds</span></h1>
-        <p class="hero-subtitle">Drop your code, get a live URL</p>
+        <h1 class="hero-title">Deploy apps<br><span class="accent">Instantly</span></h1>
+        <p class="hero-subtitle">Drop your code, get a live URL + MCP server</p>
       </div>
 
       <input type="hidden" id="appName" value="" />
 
       <div class="drop-zone" id="dropZone">
-        <div class="drop-zone-icon">📁</div>
-        <div class="drop-zone-text">Drop your code folder here</div>
-        <div class="drop-zone-hint">or click to browse • Max 10MB • .ts .js .json .md</div>
+        <div class="drop-zone-icon">↑</div>
+        <div class="drop-zone-text">Drop your code here</div>
+        <div class="drop-zone-hint">or click to browse • Max 50MB • .ts .tsx .js .jsx .json .md .css</div>
         <input type="file" id="fileInput" webkitdirectory directory multiple>
       </div>
 

@@ -385,7 +385,7 @@ export const TIER_LIMITS = {
 // ============================================
 
 export const ALLOWED_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.json', '.md', '.css'] as const;
-export const MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
+export const MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
 export const MAX_FILES_PER_UPLOAD = 50;
 
 // ============================================
