@@ -887,36 +887,23 @@ export function getLayoutHTML(options: {
       margin-top: 1.5rem;
       width: 100%;
       padding: 1rem 2.5rem;
-      background:
-        linear-gradient(var(--accent-gradient), var(--accent-gradient)) padding-box,
-        conic-gradient(
-          from var(--border-angle),
-          transparent 0%,
-          transparent 25%,
-          #94a3b8 35%,
-          #e2e8f0 42%,
-          #fff 50%,
-          #e2e8f0 58%,
-          #94a3b8 65%,
-          transparent 75%,
-          transparent 100%
-        ) border-box;
-      color: white;
-      border: 2px solid transparent;
+      background: var(--accent-color);
+      color: #fff;
+      border: none;
       border-radius: 12px;
       font-size: 1.05rem;
       font-weight: 600;
       cursor: pointer;
-      animation: spin-border 4s linear infinite;
-      transition: transform 0.1s, box-shadow 0.3s;
+      transition: background 0.2s, transform 0.1s, box-shadow 0.3s;
     }
 
     .deploy-btn:hover {
-      box-shadow: 0 0 28px rgba(59, 130, 246, 0.3);
+      background: var(--accent-color);
+      box-shadow: 0 0 24px rgba(59, 130, 246, 0.35);
     }
 
     html.dark .deploy-btn:hover {
-      box-shadow: 0 0 28px rgba(96, 165, 250, 0.2);
+      box-shadow: 0 0 24px rgba(96, 165, 250, 0.25);
     }
 
     .deploy-btn:active {
@@ -924,13 +911,9 @@ export function getLayoutHTML(options: {
     }
 
     .deploy-btn:disabled {
-      opacity: 1;
-      cursor: not-allowed;
-      transform: none;
-      animation: none;
-      background: var(--bg-secondary);
+      background: var(--border-color);
       color: var(--text-muted);
-      border: 2px solid var(--border-color);
+      cursor: not-allowed;
       box-shadow: none;
     }
 
