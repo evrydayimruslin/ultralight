@@ -140,57 +140,78 @@ export function getLayoutHTML(options: {
       left: 0;
       top: 0;
       z-index: 100;
-      transition: transform 0.3s ease;
+      transition: width 0.3s ease;
+      overflow: hidden;
     }
 
     .sidebar.collapsed {
-      transform: translateX(calc(-1 * var(--sidebar-width)));
+      width: 56px;
     }
 
-    .sidebar-toggle {
-      position: fixed;
-      top: 12px;
-      left: calc(var(--sidebar-width) + 12px);
+    /* Sidebar top toolbar: holds toggle + theme on the right */
+    .sidebar-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 4px;
+      padding: 10px 10px 6px;
+      flex-shrink: 0;
+    }
+
+    .sidebar-toolbar-btn {
       width: 32px;
       height: 32px;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
+      background: transparent;
+      border: 1px solid transparent;
       border-radius: 6px;
       color: var(--text-secondary);
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      z-index: 101;
-      transition: left 0.3s ease, background 0.2s;
+      transition: background 0.2s, color 0.2s, border-color 0.2s;
+      flex-shrink: 0;
     }
 
-    .sidebar-toggle:hover {
+    .sidebar-toolbar-btn:hover {
       background: var(--bg-hover);
       color: var(--text-primary);
+      border-color: var(--border-color);
     }
 
-    .sidebar-toggle.collapsed {
-      left: 12px;
-    }
-
-    .sidebar-toggle svg {
+    .sidebar-toolbar-btn svg {
       width: 18px;
       height: 18px;
+    }
+
+    /* Rotate chevron when collapsed */
+    .sidebar.collapsed #sidebarToggle svg {
+      transform: rotate(180deg);
+    }
+    #sidebarToggle svg {
       transition: transform 0.3s ease;
     }
 
-    .sidebar-toggle.collapsed svg {
-      transform: rotate(180deg);
+    /* Collapsed toolbar: stack vertically & center */
+    .sidebar.collapsed .sidebar-toolbar {
+      flex-direction: column;
+      align-items: center;
+      padding: 8px 0 4px;
+      gap: 2px;
     }
 
     .main-content.sidebar-collapsed {
-      margin-left: 0;
+      margin-left: 56px;
     }
 
     .sidebar-header {
-      padding: 1rem;
+      padding: 0.75rem 0.75rem 0.75rem 1rem;
       border-bottom: 1px solid var(--border-color);
+    }
+
+    /* Hide header content when collapsed */
+    .sidebar.collapsed .sidebar-header {
+      display: none;
     }
 
     .logo {
@@ -203,12 +224,13 @@ export function getLayoutHTML(options: {
       display: flex;
       align-items: center;
       gap: 0.5rem;
+      white-space: nowrap;
     }
 
     .upload-btn {
       width: 100%;
-      margin-top: 1rem;
-      padding: 0.75rem 1rem;
+      margin-top: 0.75rem;
+      padding: 0.625rem 0.75rem;
       background: var(--bg-tertiary);
       color: var(--text-primary);
       border: 1px solid var(--border-color);
@@ -233,11 +255,104 @@ export function getLayoutHTML(options: {
       height: 18px;
     }
 
+    /* Collapsed rail: icon-only buttons */
+    .sidebar-rail {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      padding: 6px 0;
+      gap: 2px;
+      flex-shrink: 0;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .sidebar.collapsed .sidebar-rail {
+      display: flex;
+    }
+
+    .sidebar-rail-btn {
+      width: 38px;
+      height: 38px;
+      background: transparent;
+      border: none;
+      border-radius: 8px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, color 0.15s;
+      font-size: 1rem;
+      flex-shrink: 0;
+    }
+
+    .sidebar-rail-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .sidebar-rail-btn svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    /* Collapsed rail apps list */
+    .sidebar-rail-apps {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      padding: 6px 0;
+      gap: 2px;
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    .sidebar.collapsed .sidebar-rail-apps {
+      display: flex;
+    }
+
+    .sidebar-rail-app {
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      background: var(--bg-tertiary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: background 0.15s;
+      flex-shrink: 0;
+      border: none;
+      color: var(--text-primary);
+    }
+
+    .sidebar-rail-app:hover {
+      background: var(--bg-hover);
+    }
+
+    .sidebar-rail-app.active {
+      background: var(--accent-color);
+      color: #fff;
+    }
+
+    .sidebar-rail-app img {
+      width: 100%;
+      height: 100%;
+      border-radius: 8px;
+      object-fit: cover;
+    }
+
     /* Apps List */
     .apps-section {
       flex: 1;
       overflow-y: auto;
       padding: 0.5rem;
+    }
+
+    /* Hide expanded apps section when collapsed */
+    .sidebar.collapsed .apps-section {
+      display: none;
     }
 
     .apps-section-title {
@@ -256,8 +371,8 @@ export function getLayoutHTML(options: {
     .app-item {
       display: flex;
       align-items: center;
-      gap: 0.75rem;
-      padding: 0.625rem 0.75rem;
+      gap: 0.625rem;
+      padding: 0.5rem 0.5rem;
       border-radius: 8px;
       cursor: pointer;
       transition: background 0.15s;
@@ -357,11 +472,15 @@ export function getLayoutHTML(options: {
 
     /* User Section */
     .sidebar-footer {
-      padding: 1rem;
+      padding: 0.75rem;
       border-top: 1px solid var(--border-color);
       display: flex;
       flex-direction: column;
       gap: 0.75rem;
+    }
+
+    .sidebar.collapsed .sidebar-footer {
+      display: none;
     }
 
     .user-section {
@@ -1960,22 +2079,6 @@ export function getLayoutHTML(options: {
     }
 
     /* ===== Theme Toggle ===== */
-    .theme-toggle {
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
-      color: var(--text-muted);
-      cursor: pointer;
-      padding: 0.4rem;
-      border-radius: 6px;
-      transition: color 0.2s, border-color 0.2s, background 0.2s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .theme-toggle:hover {
-      color: var(--accent-color);
-      border-color: var(--accent-color);
-    }
     .theme-toggle .sun-icon { display: none; }
     .theme-toggle .moon-icon { display: block; }
     html.dark .theme-toggle .sun-icon { display: block; }
@@ -2043,24 +2146,42 @@ export function getLayoutHTML(options: {
     .footer-links { display: flex; gap: 1.5rem; flex-wrap: wrap; }
 
     /* ===== Smooth transitions for theme switch ===== */
-    .sidebar, .main-content, .sidebar-header, .sidebar-footer,
+    .main-content, .sidebar-header, .sidebar-footer,
     .modal, .modal-overlay, .drop-zone, .deploy-btn, .result,
     .app-item, .build-logs, .toast, .settings-input, .settings-select,
     .hero-title, .hero-subtitle {
       transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
     }
+    /* Sidebar needs width transition + theme color transitions */
+    .sidebar {
+      transition: width 0.3s ease, background-color 0.3s ease, border-color 0.3s ease;
+    }
+    .main-content {
+      transition: margin-left 0.3s ease, background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+    }
   </style>
 </head>
 <body>
-  <!-- Sidebar Toggle Button -->
-  <button class="sidebar-toggle" id="sidebarToggle" title="Toggle sidebar">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <polyline points="15 18 9 12 15 6"></polyline>
-    </svg>
-  </button>
-
   <!-- Sidebar -->
   <aside class="sidebar" id="sidebar">
+    <!-- Toolbar: theme toggle + collapse toggle (top right) -->
+    <div class="sidebar-toolbar">
+      <button class="sidebar-toolbar-btn theme-toggle" id="themeToggle" title="Toggle light/dark mode">
+        <svg class="sun-icon" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+        </svg>
+        <svg class="moon-icon" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+      </button>
+      <button class="sidebar-toolbar-btn" id="sidebarToggle" title="Toggle sidebar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="15 18 9 12 15 6"></polyline>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Expanded: header with logo + new app -->
     <div class="sidebar-header">
       <div class="logo">
         <span>⚡</span>
@@ -2075,20 +2196,27 @@ export function getLayoutHTML(options: {
       </button>
     </div>
 
+    <!-- Collapsed rail: icon buttons -->
+    <div class="sidebar-rail">
+      <button class="sidebar-rail-btn" id="railNewApp" title="Upload new app">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Collapsed rail: app icons -->
+    <div class="sidebar-rail-apps" id="railAppsList"></div>
+
+    <!-- Expanded: full apps list -->
     <div class="apps-section">
       <div class="apps-section-title">Your Apps</div>
       <div id="appsList" class="apps-loading">Loading...</div>
     </div>
 
+    <!-- Expanded: footer with auth -->
     <div class="sidebar-footer">
-      <button class="theme-toggle" id="themeToggle" title="Toggle light/dark mode">
-        <svg class="sun-icon" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-        </svg>
-        <svg class="moon-icon" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-        </svg>
-      </button>
       <div id="authSection">
         <a href="/auth/login" class="auth-btn google">
           <svg width="18" height="18" viewBox="0 0 24 24">
@@ -2728,13 +2856,12 @@ await hash.sha256('data')</div>
     function updateSidebarState() {
       if (sidebarCollapsed) {
         sidebar.classList.add('collapsed');
-        sidebarToggle.classList.add('collapsed');
         mainContent.classList.add('sidebar-collapsed');
       } else {
         sidebar.classList.remove('collapsed');
-        sidebarToggle.classList.remove('collapsed');
         mainContent.classList.remove('sidebar-collapsed');
       }
+      renderRailApps();
     }
 
     sidebarToggle.addEventListener('click', () => {
@@ -2742,6 +2869,28 @@ await hash.sha256('data')</div>
       localStorage.setItem('sidebar_collapsed', sidebarCollapsed);
       updateSidebarState();
     });
+
+    // Rail "New App" button
+    document.getElementById('railNewApp')?.addEventListener('click', () => {
+      navigateToUpload();
+    });
+
+    // Render collapsed rail app icons
+    function renderRailApps() {
+      const rail = document.getElementById('railAppsList');
+      if (!rail) return;
+      if (!apps || apps.length === 0) {
+        rail.innerHTML = '';
+        return;
+      }
+      rail.innerHTML = apps.map(app => {
+        const isActive = app.id === currentAppId;
+        const icon = app.icon_url
+          ? \`<img src="\${app.icon_url}" alt="">\`
+          : getAppEmoji(app.name);
+        return \`<button class="sidebar-rail-app \${isActive ? 'active' : ''}" onclick="navigateToApp(event, '\${app.id}')" title="\${escapeHtml(app.name)}">\${icon}</button>\`;
+      }).join('');
+    }
 
     // Initialize sidebar state
     updateSidebarState();
@@ -3308,6 +3457,7 @@ await hash.sha256('data')</div>
     function renderAppsList() {
       if (apps.length === 0) {
         appsList.innerHTML = '<div class="apps-empty">No apps yet. Create your first app!</div>';
+        renderRailApps();
         return;
       }
 
@@ -3336,6 +3486,7 @@ await hash.sha256('data')</div>
       }).join('');
 
       appsList.innerHTML = \`<div class="app-list">\${listHTML}</div>\`;
+      renderRailApps();
     }
 
     function getAppEmoji(name) {
