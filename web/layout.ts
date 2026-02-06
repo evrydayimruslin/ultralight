@@ -481,13 +481,15 @@ export function getLayoutHTML(options: {
 
     /* User Section — exact height matches .site-footer */
     .sidebar-footer {
-      padding: 0 0.75rem;
+      padding: 0 0.5rem;
       border-top: 1px solid var(--border-color);
       display: flex;
       flex-direction: column;
       justify-content: center;
       height: 64px;
       flex-shrink: 0;
+      position: relative;
+      overflow: visible;
     }
 
     .sidebar.collapsed .sidebar-footer {
@@ -498,6 +500,15 @@ export function getLayoutHTML(options: {
       display: flex;
       align-items: center;
       gap: 0.5rem;
+      cursor: pointer;
+      padding: 0.375rem 0.5rem;
+      border-radius: 8px;
+      transition: background 0.15s;
+      position: relative;
+    }
+
+    .user-section:hover {
+      background: var(--bg-hover);
     }
 
     .user-avatar {
@@ -517,39 +528,116 @@ export function getLayoutHTML(options: {
       min-width: 0;
     }
 
-    .user-email {
+    .user-name {
       font-size: 0.8125rem;
+      font-weight: 500;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
       line-height: 1.2;
     }
 
-    .user-tier {
-      font-size: 0.75rem;
+    .user-tier-text {
+      font-size: 0.6875rem;
       color: var(--text-muted);
-      display: flex;
-      align-items: center;
-      gap: 0.375rem;
       line-height: 1.2;
     }
 
-    .tier-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.25rem;
-      font-size: 0.6875rem;
-      font-weight: 600;
-      padding: 0.125rem 0.375rem;
-      border-radius: 4px;
-    }
-    .tier-badge.free {
-      background: var(--bg-tertiary);
+    .user-chevron {
+      flex-shrink: 0;
       color: var(--text-muted);
+      transition: transform 0.2s;
     }
-    .tier-badge.pro {
-      background: rgba(59, 130, 246, 0.15);
-      color: var(--accent-color);
+
+    .user-section.menu-open .user-chevron {
+      transform: rotate(180deg);
+    }
+
+    /* Profile Dropdown Menu */
+    .profile-dropdown {
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 0;
+      right: 0;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(4px);
+      transition: opacity 0.15s, visibility 0.15s, transform 0.15s;
+      z-index: 100;
+      overflow: hidden;
+    }
+
+    html.dark .profile-dropdown {
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+    }
+
+    .profile-dropdown.open {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+    }
+
+    .profile-dropdown-email {
+      padding: 0.75rem 1rem 0.5rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border-color);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .profile-dropdown-items {
+      padding: 0.375rem;
+    }
+
+    .profile-dropdown-item {
+      display: flex;
+      align-items: center;
+      gap: 0.625rem;
+      padding: 0.5rem 0.625rem;
+      font-size: 0.8125rem;
+      color: var(--text-primary);
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.12s;
+      border: none;
+      background: none;
+      width: 100%;
+      text-align: left;
+    }
+
+    .profile-dropdown-item:hover {
+      background: var(--bg-hover);
+    }
+
+    .profile-dropdown-item svg {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+      color: var(--text-secondary);
+    }
+
+    .profile-dropdown-divider {
+      height: 1px;
+      background: var(--border-color);
+      margin: 0.25rem 0.375rem;
+    }
+
+    .profile-dropdown-item.logout {
+      color: var(--text-secondary);
+    }
+
+    .profile-dropdown-item.logout:hover {
+      color: var(--error-color);
+    }
+
+    .profile-dropdown-item.logout svg {
+      color: inherit;
     }
 
     /* Sidebar compact storage bar */
@@ -741,18 +829,7 @@ export function getLayoutHTML(options: {
       background: #f5f5f5;
     }
 
-    .signout-btn {
-      background: transparent;
-      border: none;
-      color: var(--text-muted);
-      cursor: pointer;
-      padding: 0.25rem;
-      border-radius: 4px;
-    }
-
-    .signout-btn:hover {
-      color: var(--error-color);
-    }
+    /* (signout-btn removed — now in profile dropdown) */
 
     /* Main Content */
     .main-content {
@@ -1811,20 +1888,7 @@ export function getLayoutHTML(options: {
       background: var(--text-muted);
     }
 
-    /* Settings Button (next to sign out) */
-    .settings-btn {
-      background: transparent;
-      border: none;
-      color: var(--text-muted);
-      cursor: pointer;
-      padding: 0.25rem;
-      border-radius: 4px;
-      transition: color 0.2s;
-    }
-
-    .settings-btn:hover {
-      color: var(--accent-color);
-    }
+    /* (settings-btn removed from profile — now in profile dropdown) */
 
     /* BYOK Settings */
     .byok-providers {
@@ -2832,112 +2896,100 @@ const client = createClient(
   </div>
 
   <!-- User Settings Modal (BYOK + API Tokens) -->
-  <div class="modal-overlay" id="userSettingsModal">
+  <!-- API Keys Modal -->
+  <div class="modal-overlay" id="apiKeysModal">
     <div class="modal" style="max-width: 650px;">
       <div class="modal-header">
-        <h2 class="modal-title">Settings</h2>
-        <button class="modal-close" onclick="closeUserSettings()">
+        <h2 class="modal-title">API Keys</h2>
+        <button class="modal-close" onclick="closeApiKeysModal()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="18" y1="6" x2="6" y2="18"></line>
             <line x1="6" y1="6" x2="18" y2="18"></line>
           </svg>
         </button>
       </div>
-
-      <!-- Settings Tabs -->
-      <div class="settings-tabs">
-        <button class="settings-tab active" data-tab="byok" onclick="switchSettingsTab('byok')">
-          🔑 AI Keys
-        </button>
-        <button class="settings-tab" data-tab="tokens" onclick="switchSettingsTab('tokens')">
-          🎫 API Tokens
-        </button>
-        <button class="settings-tab" data-tab="storage" onclick="switchSettingsTab('storage')">
-          📦 Storage
-        </button>
-      </div>
-
       <div class="modal-body">
-        <!-- BYOK Tab -->
-        <div id="byokTab" class="settings-tab-content active">
-          <div class="settings-section">
-            <div class="settings-section-title">🔑 AI API Keys (BYOK)</div>
-            <div class="info-box">
-              Add your own API keys to use AI features. Your keys are encrypted and stored securely.
-              Choose a primary provider for your apps to use.
-            </div>
+        <div class="settings-section">
+          <div class="info-box">
+            Create personal access tokens for CLI and API access. Tokens are shown only once when created.
+          </div>
 
-            <div id="byokMessage" class="byok-message" style="display: none;"></div>
-            <div id="byokProviders" class="byok-providers">
-              <div class="byok-loading">Loading providers...</div>
+          <div id="tokensMessage" class="byok-message" style="display: none;"></div>
+
+          <!-- Create Token Form -->
+          <div class="token-create-form">
+            <input type="text" id="newTokenName" placeholder="Token name (e.g., CLI, Corin Bot)" maxlength="50" />
+            <select id="newTokenExpiry">
+              <option value="">Never expires</option>
+              <option value="7">7 days</option>
+              <option value="30">30 days</option>
+              <option value="90">90 days</option>
+              <option value="365">1 year</option>
+            </select>
+            <button class="byok-btn byok-btn-primary" onclick="createToken()">Create Token</button>
+          </div>
+
+          <!-- New Token Display (shown after creation) -->
+          <div id="newTokenDisplay" class="new-token-display" style="display: none;">
+            <div class="new-token-warning">⚠️ Copy this token now! You won't be able to see it again.</div>
+            <div class="new-token-value">
+              <code id="newTokenValue"></code>
+              <button class="byok-btn byok-btn-secondary" onclick="copyToken()">Copy</button>
             </div>
           </div>
-        </div>
 
-        <!-- API Tokens Tab -->
-        <div id="tokensTab" class="settings-tab-content">
-          <div class="settings-section">
-            <div class="settings-section-title">🎫 API Tokens</div>
-            <div class="info-box">
-              Create personal access tokens for CLI and API access. Tokens are shown only once when created.
-            </div>
+          <!-- Token Limit Info -->
+          <div id="tokenLimitInfo" class="token-limit-info" style="display: none;"></div>
 
-            <div id="tokensMessage" class="byok-message" style="display: none;"></div>
-
-            <!-- Create Token Form -->
-            <div class="token-create-form">
-              <input type="text" id="newTokenName" placeholder="Token name (e.g., CLI, Corin Bot)" maxlength="50" />
-              <select id="newTokenExpiry">
-                <option value="">Never expires</option>
-                <option value="7">7 days</option>
-                <option value="30">30 days</option>
-                <option value="90">90 days</option>
-                <option value="365">1 year</option>
-              </select>
-              <button class="byok-btn byok-btn-primary" onclick="createToken()">Create Token</button>
-            </div>
-
-            <!-- New Token Display (shown after creation) -->
-            <div id="newTokenDisplay" class="new-token-display" style="display: none;">
-              <div class="new-token-warning">⚠️ Copy this token now! You won't be able to see it again.</div>
-              <div class="new-token-value">
-                <code id="newTokenValue"></code>
-                <button class="byok-btn byok-btn-secondary" onclick="copyToken()">Copy</button>
-              </div>
-            </div>
-
-            <!-- Token Limit Info -->
-            <div id="tokenLimitInfo" class="token-limit-info" style="display: none;"></div>
-
-            <!-- Tokens List -->
-            <div id="tokensList" class="tokens-list">
-              <div class="byok-loading">Loading tokens...</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Storage Tab -->
-        <div id="storageTab" class="settings-tab-content">
-          <div class="settings-section">
-            <div class="settings-section-title">📦 Storage Usage</div>
-            <div id="storageOverview" class="storage-overview">
-              <div class="byok-loading">Loading storage info...</div>
-            </div>
-            <div id="storageUpgradeCta" style="display: none;"></div>
-          </div>
-          <div class="settings-section">
-            <div class="settings-section-title">Per-App Breakdown</div>
-            <div id="storageBreakdown">
-              <div class="byok-loading">Loading...</div>
-            </div>
+          <!-- Tokens List -->
+          <div id="tokensList" class="tokens-list">
+            <div class="byok-loading">Loading tokens...</div>
           </div>
         </div>
       </div>
-
       <div class="modal-footer">
-        <button class="modal-btn secondary" onclick="closeUserSettings()">Close</button>
+        <button class="modal-btn secondary" onclick="closeApiKeysModal()">Close</button>
       </div>
     </div>
+  </div>
+
+  <!-- Storage Modal -->
+  <div class="modal-overlay" id="storageModal">
+    <div class="modal" style="max-width: 650px;">
+      <div class="modal-header">
+        <h2 class="modal-title">Storage</h2>
+        <button class="modal-close" onclick="closeStorageModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="settings-section">
+          <div class="settings-section-title">Usage</div>
+          <div id="storageOverview" class="storage-overview">
+            <div class="byok-loading">Loading storage info...</div>
+          </div>
+          <div id="storageUpgradeCta" style="display: none;"></div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-section-title">Per-App Breakdown</div>
+          <div id="storageBreakdown">
+            <div class="byok-loading">Loading...</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn secondary" onclick="closeStorageModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hidden BYOK container (deprecated from UI but keeping data layer) -->
+  <div style="display: none;">
+    <div id="byokMessage" class="byok-message"></div>
+    <div id="byokProviders" class="byok-providers"></div>
   </div>
 
   <!-- Quick Reference Modal -->
@@ -3190,7 +3242,6 @@ await hash.sha256('data')</div>
         if (payload && payload.exp * 1000 > Date.now()) {
           currentUser = payload;
           const email = payload.email || 'User';
-          const initial = email.charAt(0).toUpperCase();
 
           // Fetch full user profile (tier, storage) from DB
           try {
@@ -3205,28 +3256,50 @@ await hash.sha256('data')</div>
           }
 
           const tier = userProfile?.tier || 'free';
-          const tierLabel = tier === 'pro' ? '<span class="tier-badge pro">Pro ✦</span>' : '<span class="tier-badge free">Free</span>';
+          const tierText = tier === 'pro' ? 'Pro plan' : 'Free plan';
+
+          // Extract first name from Supabase Google Auth user_metadata
+          const userMeta = payload.user_metadata || {};
+          const fullName = userMeta.full_name || userMeta.name || '';
+          const firstName = fullName.split(' ')[0] || email.split('@')[0];
+          const initial = (firstName || email).charAt(0).toUpperCase();
 
           authSection.innerHTML = \`
-            <div class="user-section">
+            <div class="user-section" onclick="toggleProfileDropdown(event)">
               <div class="user-avatar">\${initial}</div>
               <div class="user-info">
-                <div class="user-email">\${email}</div>
-                <div class="user-tier">\${tierLabel}</div>
+                <div class="user-name">\${firstName}</div>
+                <div class="user-tier-text">\${tierText}</div>
               </div>
-              <button class="settings-btn" onclick="openUserSettings()" title="Settings">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="12" cy="12" r="3"></circle>
-                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-                </svg>
-              </button>
-              <button class="signout-btn" onclick="signOut()" title="Sign out">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-                  <polyline points="16 17 21 12 16 7"></polyline>
-                  <line x1="21" y1="12" x2="9" y2="12"></line>
-                </svg>
-              </button>
+              <svg class="user-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 15 12 9 18 15"></polyline>
+              </svg>
+              <div class="profile-dropdown" id="profileDropdown">
+                <div class="profile-dropdown-email">\${email}</div>
+                <div class="profile-dropdown-items">
+                  <button class="profile-dropdown-item" onclick="event.stopPropagation(); openApiKeysModal();">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path>
+                    </svg>
+                    API Keys
+                  </button>
+                  <button class="profile-dropdown-item" onclick="event.stopPropagation(); openStorageModal();">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                    </svg>
+                    Storage
+                  </button>
+                  <div class="profile-dropdown-divider"></div>
+                  <button class="profile-dropdown-item logout" onclick="event.stopPropagation(); signOut();">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                      <polyline points="16 17 21 12 16 7"></polyline>
+                      <line x1="21" y1="12" x2="9" y2="12"></line>
+                    </svg>
+                    Log out
+                  </button>
+                </div>
+              </div>
             </div>
           \`;
           loadApps();
@@ -3276,6 +3349,43 @@ await hash.sha256('data')</div>
     };
 
     // ============================================
+    // Profile Dropdown
+    // ============================================
+    window.toggleProfileDropdown = function(e) {
+      e.stopPropagation();
+      const dropdown = document.getElementById('profileDropdown');
+      const userSection = dropdown?.closest('.user-section');
+      if (!dropdown) return;
+
+      const isOpen = dropdown.classList.contains('open');
+      if (isOpen) {
+        closeProfileDropdown();
+      } else {
+        dropdown.classList.add('open');
+        userSection?.classList.add('menu-open');
+      }
+    };
+
+    function closeProfileDropdown() {
+      const dropdown = document.getElementById('profileDropdown');
+      const userSection = dropdown?.closest('.user-section');
+      if (dropdown) {
+        dropdown.classList.remove('open');
+        userSection?.classList.remove('menu-open');
+      }
+    }
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+      const dropdown = document.getElementById('profileDropdown');
+      if (dropdown && dropdown.classList.contains('open')) {
+        if (!e.target.closest('.user-section')) {
+          closeProfileDropdown();
+        }
+      }
+    });
+
+    // ============================================
     // Quick Reference Modal
     // ============================================
     const quickRefModal = document.getElementById('quickRefModal');
@@ -3295,9 +3405,10 @@ await hash.sha256('data')</div>
     });
 
     // ============================================
-    // User Settings (BYOK)
+    // User Settings (Individual Modals)
     // ============================================
-    const userSettingsModal = document.getElementById('userSettingsModal');
+    const apiKeysModal = document.getElementById('apiKeysModal');
+    const storageModalEl = document.getElementById('storageModal');
     const byokProviders = document.getElementById('byokProviders');
     const byokMessage = document.getElementById('byokMessage');
     let byokData = null;
@@ -3483,34 +3594,31 @@ await hash.sha256('data')</div>
       }
     };
 
-    window.openUserSettings = async function() {
-      userSettingsModal.classList.add('open');
-      await loadBYOKConfig();
+    window.openApiKeysModal = async function() {
+      closeProfileDropdown();
+      apiKeysModal.classList.add('open');
       await loadTokens();
-      loadStorageInfo();
     };
 
-    window.closeUserSettings = function() {
-      userSettingsModal.classList.remove('open');
-      byokMessage.style.display = 'none';
+    window.closeApiKeysModal = function() {
+      apiKeysModal.classList.remove('open');
       document.getElementById('tokensMessage').style.display = 'none';
       document.getElementById('newTokenDisplay').style.display = 'none';
     };
 
-    window.switchSettingsTab = function(tabId) {
-      // Update tab buttons
-      document.querySelectorAll('.settings-tab').forEach(tab => {
-        tab.classList.toggle('active', tab.dataset.tab === tabId);
-      });
-
-      // Update tab content
-      document.querySelectorAll('.settings-tab-content').forEach(content => {
-        content.classList.toggle('active', content.id === tabId + 'Tab');
-      });
-
-      // Hide new token display when switching tabs
-      document.getElementById('newTokenDisplay').style.display = 'none';
+    window.openStorageModal = async function() {
+      closeProfileDropdown();
+      storageModalEl.classList.add('open');
+      loadStorageInfo();
     };
+
+    window.closeStorageModal = function() {
+      storageModalEl.classList.remove('open');
+    };
+
+    // Legacy alias (in case anything still references it)
+    window.openUserSettings = function() { openApiKeysModal(); };
+    window.closeUserSettings = function() { closeApiKeysModal(); };
 
     async function loadBYOKConfig() {
       if (!authToken) return;
@@ -3679,11 +3787,12 @@ await hash.sha256('data')</div>
       setTimeout(() => { byokMessage.style.display = 'none'; }, 5000);
     }
 
-    // Close modal on overlay click
-    userSettingsModal.addEventListener('click', (e) => {
-      if (e.target === userSettingsModal) {
-        closeUserSettings();
-      }
+    // Close modals on overlay click
+    apiKeysModal.addEventListener('click', (e) => {
+      if (e.target === apiKeysModal) closeApiKeysModal();
+    });
+    storageModalEl.addEventListener('click', (e) => {
+      if (e.target === storageModalEl) closeStorageModal();
     });
 
     // ============================================
