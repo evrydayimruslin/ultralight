@@ -12,6 +12,7 @@ import {
   revokeToken,
   revokeAllTokens,
 } from '../services/tokens.ts';
+import { createAppsService } from '../services/apps.ts';
 
 export async function handleUser(request: Request): Promise<Response> {
   const url = new URL(request.url);
@@ -42,6 +43,61 @@ export async function handleUser(request: Request): Promise<Response> {
     } catch (err) {
       console.error('Get user error:', err);
       return error('Failed to get user profile', 500);
+    }
+  }
+
+  // ============================================
+  // GET /api/user/storage - Get storage usage breakdown
+  // ============================================
+  if (path === '/api/user/storage' && method === 'GET') {
+    try {
+      const user = await userService.getUser(userId);
+      if (!user) {
+        return error('User not found', 404);
+      }
+
+      // Get all user's apps (non-deleted) for per-app breakdown
+      const appsService = createAppsService();
+      const apps = await appsService.listByOwner(userId);
+
+      const breakdown = apps.map((app) => {
+        const versionMetadata = (app as Record<string, unknown>).version_metadata as Array<{
+          version: string;
+          size_bytes: number;
+          created_at: string;
+        }> || [];
+
+        const totalBytes = versionMetadata.reduce((sum, v) => sum + (v.size_bytes || 0), 0)
+          || (app as Record<string, unknown>).storage_bytes as number || 0;
+
+        return {
+          app_id: app.id,
+          app_name: app.name,
+          slug: app.slug,
+          total_bytes: totalBytes,
+          current_version: app.current_version,
+          versions: versionMetadata.map((v) => ({
+            version: v.version,
+            size_bytes: v.size_bytes,
+            created_at: v.created_at,
+            is_current: v.version === app.current_version,
+          })),
+        };
+      });
+
+      const usedBytes = user.storage_used_bytes || 0;
+      const limitBytes = user.storage_limit_bytes || 0;
+
+      return json({
+        used_bytes: usedBytes,
+        limit_bytes: limitBytes,
+        used_percent: limitBytes > 0 ? Math.round((usedBytes / limitBytes) * 1000) / 10 : 0,
+        tier: user.tier,
+        breakdown,
+      });
+    } catch (err) {
+      console.error('Get storage error:', err);
+      return error('Failed to get storage usage', 500);
     }
   }
 

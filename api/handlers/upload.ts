@@ -14,6 +14,11 @@ import { createR2Service } from '../services/storage.ts';
 import { createAppsService } from '../services/apps.ts';
 import { bundleCode, quickBundle } from '../services/bundler.ts';
 import { authenticate } from './auth.ts';
+import {
+  checkStorageQuota,
+  recordUploadStorage,
+  formatBytes,
+} from '../services/storage-quota.ts';
 
 // Export file type for programmatic uploads
 export interface UploadFile {
@@ -110,6 +115,17 @@ export async function handleUpload(request: Request): Promise<Response> {
       // Read content
       const content = await file.text();
       validatedFiles.push({ name: file.name, content });
+    }
+
+    // Check storage quota before proceeding
+    const quotaResult = await checkStorageQuota(userId, totalSize);
+    if (!quotaResult.allowed) {
+      return error(
+        `Storage limit exceeded. Using ${formatBytes(quotaResult.used_bytes)} of ${formatBytes(quotaResult.limit_bytes)}. ` +
+        `This upload requires ${formatBytes(totalSize)} but only ${formatBytes(quotaResult.remaining_bytes)} remaining. ` +
+        `Delete old app versions or upgrade to Pro for more storage.`,
+        413
+      );
     }
 
     // Check for manifest.json (v2 architecture)
@@ -369,6 +385,11 @@ export async function handleUpload(request: Request): Promise<Response> {
     });
     log('success', 'App record created');
 
+    // Record storage usage (fire-and-forget — don't fail the upload)
+    recordUploadStorage(userId, appId, version, totalSize).catch((err) => {
+      console.error('Failed to record storage:', err);
+    });
+
     log('success', 'Build complete!');
 
     const response: UploadResponse = {
@@ -522,6 +543,18 @@ export async function handleDraftUpload(request: Request, appId: string): Promis
 
       const content = await file.text();
       validatedFiles.push({ name: file.name, content });
+    }
+
+    // Check storage quota before proceeding
+    // For drafts: check quota but don't double-count (draft replaces previous draft, not additive)
+    const quotaResult = await checkStorageQuota(userId, totalSize);
+    if (!quotaResult.allowed) {
+      return error(
+        `Storage limit exceeded. Using ${formatBytes(quotaResult.used_bytes)} of ${formatBytes(quotaResult.limit_bytes)}. ` +
+        `This upload requires ${formatBytes(totalSize)} but only ${formatBytes(quotaResult.remaining_bytes)} remaining. ` +
+        `Delete old app versions or upgrade to Pro for more storage.`,
+        413
+      );
     }
 
     // Check for entry file
@@ -724,6 +757,16 @@ export async function handleUploadFiles(
     }
 
     validatedFiles.push({ name: file.name, content: file.content });
+  }
+
+  // Check storage quota before proceeding
+  const quotaResult = await checkStorageQuota(userId, totalSize);
+  if (!quotaResult.allowed) {
+    throw new Error(
+      `Storage limit exceeded. Using ${formatBytes(quotaResult.used_bytes)} of ${formatBytes(quotaResult.limit_bytes)}. ` +
+      `This upload requires ${formatBytes(totalSize)} but only ${formatBytes(quotaResult.remaining_bytes)} remaining. ` +
+      `Delete old app versions or upgrade to Pro for more storage.`
+    );
   }
 
   // Check for manifest.json
@@ -952,6 +995,11 @@ export async function handleUploadFiles(
   });
   log('success', 'App record created');
 
+  // Record storage usage (fire-and-forget)
+  recordUploadStorage(userId, appId, version, totalSize).catch((err) => {
+    console.error('Failed to record storage:', err);
+  });
+
   log('success', 'Build complete!');
 
   return {
@@ -1018,6 +1066,16 @@ export async function handleDraftUploadFiles(
     }
 
     validatedFiles.push({ name: file.name, content: file.content });
+  }
+
+  // Check storage quota before proceeding
+  const quotaResult = await checkStorageQuota(userId, totalSize);
+  if (!quotaResult.allowed) {
+    throw new Error(
+      `Storage limit exceeded. Using ${formatBytes(quotaResult.used_bytes)} of ${formatBytes(quotaResult.limit_bytes)}. ` +
+      `This upload requires ${formatBytes(totalSize)} but only ${formatBytes(quotaResult.remaining_bytes)} remaining. ` +
+      `Delete old app versions or upgrade to Pro for more storage.`
+    );
   }
 
   // Check for entry file

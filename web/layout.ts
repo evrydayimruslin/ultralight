@@ -569,6 +569,7 @@ export function getLayoutHTML(options: {
 
     .deploy-btn {
       margin-top: 1.5rem;
+      width: 100%;
       padding: 0.875rem 2.5rem;
       background: var(--accent-gradient);
       color: white;
@@ -1997,10 +1998,10 @@ export function getLayoutHTML(options: {
     }
 
     .hero-title {
-      font-size: clamp(2rem, 5vw, 3rem);
+      font-size: clamp(2.5rem, 6vw, 3.75rem);
       font-weight: 800;
-      letter-spacing: -0.02em;
-      line-height: 1.1;
+      letter-spacing: -0.025em;
+      line-height: 1.08;
       text-align: center;
       color: var(--text-primary);
     }
@@ -2017,35 +2018,6 @@ export function getLayoutHTML(options: {
       max-width: 520px;
       margin: 0.75rem auto 0;
       line-height: 1.6;
-    }
-
-    .feature-pills {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: 0.75rem;
-      margin-top: 1.5rem;
-    }
-    .feature-pill {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.5rem 1.1rem;
-      border-radius: 999px;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      font-size: 0.85rem;
-      font-weight: 500;
-      color: var(--text-secondary);
-      animation: pillFloat 3s ease-in-out infinite;
-    }
-    .feature-pill:nth-child(2) { animation-delay: 0.4s; }
-    .feature-pill:nth-child(3) { animation-delay: 0.8s; }
-    .feature-pill svg { width: 16px; height: 16px; color: var(--accent-color); }
-
-    @keyframes pillFloat {
-      0%, 100% { transform: translateY(0); }
-      50% { transform: translateY(-3px); }
     }
 
     /* ===== Footer ===== */
@@ -2074,7 +2046,7 @@ export function getLayoutHTML(options: {
     .sidebar, .main-content, .sidebar-header, .sidebar-footer,
     .modal, .modal-overlay, .drop-zone, .deploy-btn, .result,
     .app-item, .build-logs, .toast, .settings-input, .settings-select,
-    .feature-pill, .hero-title, .hero-subtitle {
+    .hero-title, .hero-subtitle {
       transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
     }
   </style>
@@ -2138,14 +2110,11 @@ export function getLayoutHTML(options: {
       <!-- Hero -->
       <div style="position: relative; width: 100%;">
         <div class="hero-glow"></div>
-        <h1 class="hero-title">Deploy AI-powered apps<br><span class="accent">in seconds</span></h1>
-        <p class="hero-subtitle">Drop your code, get a live URL. Every app is an MCP server, an API endpoint, and a web app — instantly.</p>
+        <h1 class="hero-title">Deploy apps<br><span class="accent">in seconds</span></h1>
+        <p class="hero-subtitle">Drop your code, get a live URL</p>
       </div>
 
-      <div class="name-input-container">
-        <label for="appName">App Name</label>
-        <input type="text" id="appName" class="name-input" placeholder="my-awesome-app" />
-      </div>
+      <input type="hidden" id="appName" value="" />
 
       <div class="drop-zone" id="dropZone">
         <div class="drop-zone-icon">📁</div>
@@ -2177,21 +2146,6 @@ export function getLayoutHTML(options: {
         </div>
       </div>
 
-      <!-- Feature Pills -->
-      <div class="feature-pills">
-        <div class="feature-pill">
-          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-1.03a4.5 4.5 0 00-1.242-7.244l-4.5-4.5a4.5 4.5 0 00-6.364 6.364L4.34 8.342"/></svg>
-          Instant URL
-        </div>
-        <div class="feature-pill">
-          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25z"/></svg>
-          MCP Server
-        </div>
-        <div class="feature-pill">
-          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5a17.92 17.92 0 01-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418"/></svg>
-          Edge Deploy
-        </div>
-      </div>
     </div>
 
     <!-- App View -->

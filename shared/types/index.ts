@@ -23,6 +23,8 @@ export interface User {
   avatar_url: string | null;
   tier: 'free' | 'pro';
   tier_expires_at: string | null;
+  storage_used_bytes: number;
+  storage_limit_bytes: number;
   ai_credit_balance: number; // cents
   ai_credit_resets_at: string | null;
   byok_enabled: boolean;
@@ -61,6 +63,12 @@ export interface UserPreferences {
 // APPS
 // ============================================
 
+export interface VersionMetadata {
+  version: string;
+  size_bytes: number;
+  created_at: string;
+}
+
 export interface App {
   id: string;
   owner_id: string;
@@ -72,7 +80,9 @@ export interface App {
   download_access: 'owner' | 'public';
   current_version: string;
   versions: string[];
+  version_metadata: VersionMetadata[];
   storage_key: string;
+  storage_bytes: number;
   skills_md: string | null;
   skills_parsed: ParsedSkills | null;
   exports: string[];
@@ -344,21 +354,29 @@ export interface AppPermission {
 export const TIER_LIMITS = {
   free: {
     max_apps: 5,
+    max_api_tokens: 1,
+    storage_limit_bytes: 100 * 1024 * 1024, // 100MB
     daily_ai_credit_cents: 5, // $0.05
     monthly_ai_credit_cents: 150, // ~$1.50
     max_file_size_mb: 10,
     max_files_per_app: 50,
     execution_timeout_ms: 30000, // 30s
     log_retention_days: 7,
+    allowed_visibility: ['private'] as const,
+    max_mcp_users: 1, // Informational: enforced via private visibility
   },
   pro: {
     max_apps: Infinity,
+    max_api_tokens: Infinity,
+    storage_limit_bytes: 10 * 1024 * 1024 * 1024, // 10GB
     daily_ai_credit_cents: 50, // $0.50
     monthly_ai_credit_cents: 1500, // $15
     max_file_size_mb: 10,
     max_files_per_app: 50,
     execution_timeout_ms: 60000, // 60s
     log_retention_days: 30,
+    allowed_visibility: ['private', 'unlisted', 'public'] as const,
+    max_mcp_users: Infinity,
   },
 } as const;
 

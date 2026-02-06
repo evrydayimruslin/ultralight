@@ -29,6 +29,12 @@ import {
   decryptEnvVars,
   getEnvVarsSummary,
 } from '../services/envvars.ts';
+import {
+  recordUploadStorage,
+  reclaimAppStorage,
+  reclaimVersionStorage,
+  formatBytes,
+} from '../services/storage-quota.ts';
 
 // Type for user with optional API key
 interface User {
@@ -164,6 +170,12 @@ export async function handleApps(request: Request): Promise<Response> {
     const envKeyMatch = subPath.match(/^\/env\/([^\/]+)$/);
     if (envKeyMatch && method === 'DELETE') {
       return handleDeleteEnvVar(request, appId, envKeyMatch[1]);
+    }
+
+    // DELETE /api/apps/:appId/versions/:version - Delete a specific version
+    const versionMatch = subPath.match(/^\/versions\/([^\/]+)$/);
+    if (versionMatch && method === 'DELETE') {
+      return handleDeleteVersion(request, appId, versionMatch[1]);
     }
 
     // GET /api/apps/:appId/supabase - Get Supabase configuration (masked)
@@ -438,13 +450,81 @@ async function handleDeleteApp(request: Request, appId: string): Promise<Respons
       deleted_at: new Date().toISOString(),
     });
 
-    return json({ success: true, message: 'App deleted' });
+    // Reclaim storage quota immediately (don't wait for R2 cleanup)
+    const bytesReclaimed = await reclaimAppStorage(user.id, appId);
+    console.log(`[DELETE] Reclaimed ${formatBytes(bytesReclaimed)} for app ${appId}`);
+
+    return json({ success: true, message: 'App deleted', bytes_reclaimed: bytesReclaimed });
   } catch (err) {
     if (err instanceof Error && err.message.includes('Authentication')) {
       return error('Authentication required', 401);
     }
     console.error('Failed to delete app:', err);
     return error('Failed to delete app', 500);
+  }
+}
+
+/**
+ * Delete a specific app version
+ * DELETE /api/apps/:appId/versions/:version
+ *
+ * Removes version files from R2 and reclaims storage quota.
+ * Cannot delete the current (active) version.
+ */
+async function handleDeleteVersion(request: Request, appId: string, version: string): Promise<Response> {
+  try {
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+    const r2Service = createR2Service();
+
+    const app = await appsService.findById(appId);
+
+    if (!app) {
+      return error('App not found', 404);
+    }
+
+    if (app.owner_id !== user.id) {
+      return error('Unauthorized', 403);
+    }
+
+    // Cannot delete the current active version
+    if (app.current_version === version) {
+      return error('Cannot delete the current active version. Deploy a new version first.', 400);
+    }
+
+    // Check version exists
+    if (!app.versions?.includes(version)) {
+      return error(`Version "${version}" not found`, 404);
+    }
+
+    // Reclaim storage quota via RPC (updates version_metadata, versions array, and user quota)
+    const bytesReclaimed = await reclaimVersionStorage(user.id, appId, version);
+
+    // Delete version files from R2 (fire-and-forget)
+    const versionStorageKey = `apps/${appId}/${version}/`;
+    try {
+      const versionFiles = await r2Service.listFiles(versionStorageKey);
+      for (const fileKey of versionFiles) {
+        await r2Service.deleteFile(fileKey);
+      }
+      console.log(`[DELETE_VERSION] Cleaned up ${versionFiles.length} files for ${appId}/${version}`);
+    } catch (cleanupErr) {
+      console.error(`[DELETE_VERSION] R2 cleanup failed for ${appId}/${version}:`, cleanupErr);
+      // Non-fatal: quota already reclaimed, R2 files can be cleaned up later
+    }
+
+    return json({
+      success: true,
+      version_deleted: version,
+      bytes_reclaimed: bytesReclaimed,
+      message: `Version ${version} deleted. ${formatBytes(bytesReclaimed)} reclaimed.`,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Authentication')) {
+      return error('Authentication required', 401);
+    }
+    console.error('Failed to delete version:', err);
+    return error('Failed to delete version', 500);
   }
 }
 
@@ -1185,15 +1265,17 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
     const newVersion = incrementVersion(currentVersion);
     const newStorageKey = `apps/${appId}/${newVersion}/`;
 
-    // Copy draft files to new version location
+    // Copy draft files to new version location, tracking total size
     console.log('[PUBLISH] Copying draft files to new version...');
     const draftStorageKey = appWithDraft.draft_storage_key as string;
     const draftFiles = await r2Service.listFiles(draftStorageKey);
+    let publishedSizeBytes = 0;
 
     for (const fileKey of draftFiles) {
       const fileName = fileKey.replace(draftStorageKey, '');
       if (fileName) {
         const content = await r2Service.fetchFile(fileKey);
+        publishedSizeBytes += content.byteLength;
         await r2Service.uploadFile(`${newStorageKey}${fileName}`, {
           name: fileName,
           content,
@@ -1214,6 +1296,11 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
       draft_version: null,
       draft_uploaded_at: null,
       draft_exports: null,
+    });
+
+    // Record storage for the new version (fire-and-forget)
+    recordUploadStorage(user.id, appId, newVersion, publishedSizeBytes).catch((err) => {
+      console.error('[PUBLISH] Failed to record storage:', err);
     });
 
     // Invalidate code cache so next request fetches new version

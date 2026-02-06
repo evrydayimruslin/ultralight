@@ -100,6 +100,8 @@ export interface UserProfile {
   display_name: string | null;
   avatar_url: string | null;
   tier: 'free' | 'pro';
+  storage_used_bytes: number;
+  storage_limit_bytes: number;
   byok_enabled: boolean;
   byok_provider: BYOKProvider | null;
   byok_configs: BYOKConfig[];
@@ -112,6 +114,8 @@ interface UserRow {
   display_name: string | null;
   avatar_url: string | null;
   tier: string;
+  storage_used_bytes: number;
+  storage_limit_bytes: number;
   byok_enabled: boolean;
   byok_provider: string | null;
   byok_keys: Record<string, { encrypted_key: string; model?: string; added_at: string }> | null;
@@ -122,7 +126,7 @@ export function createUserService(): UserService {
 
   async function getUser(userId: string): Promise<UserProfile | null> {
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=id,email,display_name,avatar_url,tier,byok_enabled,byok_provider,byok_keys`,
+      `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=id,email,display_name,avatar_url,tier,storage_used_bytes,storage_limit_bytes,byok_enabled,byok_provider,byok_keys`,
       {
         headers: {
           'apikey': SUPABASE_SERVICE_ROLE_KEY,
@@ -145,6 +149,8 @@ export function createUserService(): UserService {
       display_name: user.display_name,
       avatar_url: user.avatar_url,
       tier: user.tier as 'free' | 'pro',
+      storage_used_bytes: user.storage_used_bytes || 0,
+      storage_limit_bytes: user.storage_limit_bytes || 0,
       byok_enabled: user.byok_enabled || false,
       byok_provider: user.byok_provider as BYOKProvider | null,
       byok_configs: parseByokConfigs(user.byok_keys),
