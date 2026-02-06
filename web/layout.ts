@@ -24,6 +24,12 @@ export function getLayoutHTML(options: {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${title} - Ultralight</title>
+  <meta name="description" content="The fastest way to deploy AI-powered apps. Drop your code, get a live URL instantly.">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
   <!-- React Runtime (for JSX apps) -->
   <script type="importmap">
@@ -65,11 +71,39 @@ export function getLayoutHTML(options: {
     }
   </script>
 
+  <!-- Theme: apply dark class before paint to prevent flash -->
+  <script>
+    (function(){
+      var t = localStorage.getItem('ultralight_theme');
+      if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark');
+      }
+    })();
+  </script>
+
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
+    /* ===== Light mode (default) ===== */
     :root {
       --sidebar-width: 260px;
+      --bg-primary: #fafafa;
+      --bg-secondary: #ffffff;
+      --bg-tertiary: #f4f4f5;
+      --bg-hover: #e4e4e7;
+      --border-color: #e4e4e7;
+      --text-primary: #18181b;
+      --text-secondary: #71717a;
+      --text-muted: #a1a1aa;
+      --accent-gradient: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+      --accent-color: #8b5cf6;
+      --success-color: #22c55e;
+      --error-color: #ef4444;
+      --warning-color: #f59e0b;
+    }
+
+    /* ===== Dark mode ===== */
+    html.dark {
       --bg-primary: #0a0a0a;
       --bg-secondary: #111111;
       --bg-tertiary: #1a1a1a;
@@ -78,19 +112,20 @@ export function getLayoutHTML(options: {
       --text-primary: #ffffff;
       --text-secondary: #888888;
       --text-muted: #555555;
-      --accent-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      --accent-color: #667eea;
+      --accent-gradient: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+      --accent-color: #8b5cf6;
       --success-color: #4ade80;
       --error-color: #f87171;
       --warning-color: #fbbf24;
     }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: var(--bg-primary);
       color: var(--text-primary);
       min-height: 100vh;
       display: flex;
+      transition: background-color 0.3s ease, color 0.3s ease;
     }
 
     /* Sidebar */
@@ -324,6 +359,9 @@ export function getLayoutHTML(options: {
     .sidebar-footer {
       padding: 1rem;
       border-top: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
     }
 
     .user-section {
@@ -1919,6 +1957,126 @@ export function getLayoutHTML(options: {
       overflow-x: auto;
       white-space: pre;
     }
+
+    /* ===== Theme Toggle ===== */
+    .theme-toggle {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 0.4rem;
+      border-radius: 6px;
+      transition: color 0.2s, border-color 0.2s, background 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .theme-toggle:hover {
+      color: var(--accent-color);
+      border-color: var(--accent-color);
+    }
+    .theme-toggle .sun-icon { display: none; }
+    .theme-toggle .moon-icon { display: block; }
+    html.dark .theme-toggle .sun-icon { display: block; }
+    html.dark .theme-toggle .moon-icon { display: none; }
+
+    /* ===== Hero / Landing Section ===== */
+    .hero-glow {
+      position: absolute;
+      top: -80px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 500px;
+      height: 300px;
+      background: radial-gradient(ellipse, rgba(139, 92, 246, 0.07) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+    html.dark .hero-glow {
+      background: radial-gradient(ellipse, rgba(139, 92, 246, 0.14) 0%, transparent 70%);
+    }
+
+    .hero-title {
+      font-size: clamp(2rem, 5vw, 3rem);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+      text-align: center;
+      color: var(--text-primary);
+    }
+    .hero-title .accent {
+      background: var(--accent-gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hero-subtitle {
+      text-align: center;
+      color: var(--text-secondary);
+      font-size: 1.1rem;
+      max-width: 520px;
+      margin: 0.75rem auto 0;
+      line-height: 1.6;
+    }
+
+    .feature-pills {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 0.75rem;
+      margin-top: 1.5rem;
+    }
+    .feature-pill {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1.1rem;
+      border-radius: 999px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      animation: pillFloat 3s ease-in-out infinite;
+    }
+    .feature-pill:nth-child(2) { animation-delay: 0.4s; }
+    .feature-pill:nth-child(3) { animation-delay: 0.8s; }
+    .feature-pill svg { width: 16px; height: 16px; color: var(--accent-color); }
+
+    @keyframes pillFloat {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-3px); }
+    }
+
+    /* ===== Footer ===== */
+    .site-footer {
+      width: 100%;
+      border-top: 1px solid var(--border-color);
+      padding: 1.25rem 2rem;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      margin-top: auto;
+    }
+    .site-footer a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+    .site-footer a:hover { color: var(--accent-color); }
+    .footer-links { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+
+    /* ===== Smooth transitions for theme switch ===== */
+    .sidebar, .main-content, .sidebar-header, .sidebar-footer,
+    .modal, .modal-overlay, .drop-zone, .deploy-btn, .result,
+    .app-item, .build-logs, .toast, .settings-input, .settings-select,
+    .feature-pill, .hero-title, .hero-subtitle {
+      transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+    }
   </style>
 </head>
 <body>
@@ -1951,6 +2109,14 @@ export function getLayoutHTML(options: {
     </div>
 
     <div class="sidebar-footer">
+      <button class="theme-toggle" id="themeToggle" title="Toggle light/dark mode">
+        <svg class="sun-icon" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+        </svg>
+        <svg class="moon-icon" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+      </button>
       <div id="authSection">
         <a href="/auth/login" class="auth-btn google">
           <svg width="18" height="18" viewBox="0 0 24 24">
@@ -1969,8 +2135,12 @@ export function getLayoutHTML(options: {
   <main class="main-content">
     <!-- Upload View -->
     <div class="upload-view" id="uploadView" style="display: ${initialView === 'upload' ? 'flex' : 'none'};">
-      <h1>Upload your code</h1>
-      <p class="subtitle">Deploy your app instantly with a simple drag and drop</p>
+      <!-- Hero -->
+      <div style="position: relative; width: 100%;">
+        <div class="hero-glow"></div>
+        <h1 class="hero-title">Deploy AI-powered apps<br><span class="accent">in seconds</span></h1>
+        <p class="hero-subtitle">Drop your code, get a live URL. Every app is an MCP server, an API endpoint, and a web app — instantly.</p>
+      </div>
 
       <div class="name-input-container">
         <label for="appName">App Name</label>
@@ -2007,31 +2177,19 @@ export function getLayoutHTML(options: {
         </div>
       </div>
 
-      <!-- Developer Resources -->
-      <div class="dev-resources">
-        <div class="dev-resources-title">Developer Resources</div>
-        <div class="dev-resources-grid">
-          <a href="https://www.npmjs.com/package/@ultralightpro/types" target="_blank" class="dev-resource-card">
-            <div class="dev-resource-icon">📦</div>
-            <div class="dev-resource-content">
-              <div class="dev-resource-name">TypeScript Types</div>
-              <div class="dev-resource-desc">npm i -D @ultralightpro/types</div>
-            </div>
-          </a>
-          <a href="https://www.npmjs.com/package/ultralightpro" target="_blank" class="dev-resource-card">
-            <div class="dev-resource-icon">⌨️</div>
-            <div class="dev-resource-content">
-              <div class="dev-resource-name">CLI Tool</div>
-              <div class="dev-resource-desc">npm i -g ultralightpro</div>
-            </div>
-          </a>
-          <div class="dev-resource-card" onclick="showQuickRef()" style="cursor: pointer;">
-            <div class="dev-resource-icon">📖</div>
-            <div class="dev-resource-content">
-              <div class="dev-resource-name">SDK Reference</div>
-              <div class="dev-resource-desc">ultralight.ai(), store(), load()...</div>
-            </div>
-          </div>
+      <!-- Feature Pills -->
+      <div class="feature-pills">
+        <div class="feature-pill">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-1.03a4.5 4.5 0 00-1.242-7.244l-4.5-4.5a4.5 4.5 0 00-6.364 6.364L4.34 8.342"/></svg>
+          Instant URL
+        </div>
+        <div class="feature-pill">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25z"/></svg>
+          MCP Server
+        </div>
+        <div class="feature-pill">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5a17.92 17.92 0 01-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418"/></svg>
+          Edge Deploy
         </div>
       </div>
     </div>
@@ -2039,6 +2197,17 @@ export function getLayoutHTML(options: {
     <!-- App View -->
     <div class="app-view" id="appView" style="display: ${initialView === 'app' ? 'flex' : 'none'};">
       <div id="app"></div>
+    </div>
+
+    <!-- Footer -->
+    <div class="site-footer" id="siteFooter" style="display: ${initialView === 'upload' ? 'flex' : 'none'}">
+      <span>&copy; 2026 Ultralight</span>
+      <div class="footer-links">
+        <a href="https://www.npmjs.com/package/@ultralightpro/types" target="_blank">SDK Reference</a>
+        <a href="https://www.npmjs.com/package/ultralightpro" target="_blank">CLI Tool</a>
+        <a href="/mcp/platform">API / MCP</a>
+        <a href="#" onclick="showQuickRef(); return false;">Quick Ref</a>
+      </div>
     </div>
   </main>
 
@@ -2622,6 +2791,23 @@ await hash.sha256('data')</div>
 
     // Initialize sidebar state
     updateSidebarState();
+
+    // ============================================
+    // Theme Toggle
+    // ============================================
+    const themeToggle = document.getElementById('themeToggle');
+    themeToggle?.addEventListener('click', () => {
+      const isDark = document.documentElement.classList.toggle('dark');
+      localStorage.setItem('ultralight_theme', isDark ? 'dark' : 'light');
+    });
+
+    // ============================================
+    // Footer visibility (hide when viewing app)
+    // ============================================
+    function updateFooterVisibility(view) {
+      const footer = document.getElementById('siteFooter');
+      if (footer) footer.style.display = view === 'upload' ? 'flex' : 'none';
+    }
 
     // ============================================
     // Toast Notifications
@@ -4200,10 +4386,11 @@ await hash.sha256('data')</div>
       uploadView.style.display = view === 'upload' ? 'flex' : 'none';
       appView.style.display = view === 'app' ? 'flex' : 'none';
       currentView = view;
+      updateFooterVisibility(view);
     }
 
     function navigateToUpload() {
-      history.pushState({}, '', '/upload');
+      history.pushState({}, '', '/');
       currentAppId = null;
       showView('upload');
       renderAppsList();
@@ -4237,7 +4424,7 @@ await hash.sha256('data')</div>
       appElement.innerHTML = \`
         <iframe
           src="/a/\${appId}?embed=1"
-          style="width:100%;height:100%;border:none;background:#0a0a0a;"
+          style="width:100%;height:100%;border:none;background:var(--bg-primary);"
           allow="clipboard-read; clipboard-write; camera; microphone; geolocation"
         ></iframe>
       \`;

@@ -13,7 +13,6 @@ import { handleDiscover } from './discover.ts';
 import { handleHttpEndpoint, handleHttpOptions } from './http.ts';
 import { getLayoutHTML } from '../../web/layout.ts';
 import { getAppRunnerHTML } from '../../web/app-runner.ts';
-import { getLandingPageHTML } from '../../web/landing-page.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
 import { getCodeCache } from '../services/codecache.ts';
@@ -87,9 +86,9 @@ export function createApp() {
       const path = url.pathname;
       const method = request.method;
 
-      // Landing page (unified landing + upload)
+      // Home page (unified landing + upload + dashboard)
       if (path === '/' && method === 'GET') {
-        return new Response(getLandingPageHTML(), {
+        return new Response(getLayoutHTML({ initialView: 'upload' }), {
           headers: { 'Content-Type': 'text/html' },
         });
       }
@@ -158,12 +157,11 @@ export function createApp() {
       }
 
       // Upload page (HTML UI with sidebar)
+      // Legacy /upload redirects to home
       if (path === '/upload' && method === 'GET') {
-        return new Response(getLayoutHTML({
-          title: 'Upload',
-          initialView: 'upload',
-        }), {
-          headers: { 'Content-Type': 'text/html' },
+        return new Response(null, {
+          status: 302,
+          headers: { 'Location': '/' },
         });
       }
 
