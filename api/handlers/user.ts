@@ -348,6 +348,9 @@ export async function handleUser(request: Request): Promise<Response> {
       if (err instanceof Error && err.message.includes('already exists')) {
         return error(err.message, 409);
       }
+      if (err instanceof Error && err.message.includes('Token limit reached')) {
+        return error(err.message, 403);
+      }
       return error('Failed to create token', 500);
     }
   }

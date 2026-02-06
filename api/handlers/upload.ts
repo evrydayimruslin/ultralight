@@ -19,6 +19,10 @@ import {
   recordUploadStorage,
   formatBytes,
 } from '../services/storage-quota.ts';
+import {
+  checkVisibilityAllowed,
+  getUserTier,
+} from '../services/tier-enforcement.ts';
 
 // Export file type for programmatic uploads
 export interface UploadFile {
@@ -978,6 +982,16 @@ export async function handleUploadFiles(
   await r2Service.uploadFiles(storageKey, filesToUpload);
   log('success', 'Upload complete');
 
+  // Gate visibility by tier before creating app
+  const requestedVisibility = options.visibility || 'private';
+  if (requestedVisibility !== 'private') {
+    const userTier = await getUserTier(userId);
+    const visibilityErr = checkVisibilityAllowed(userTier, requestedVisibility);
+    if (visibilityErr) {
+      throw new Error(visibilityErr);
+    }
+  }
+
   // Create app record in database
   log('info', 'Creating app record...');
   await appsService.create({
@@ -986,7 +1000,7 @@ export async function handleUploadFiles(
     slug,
     name: appName,
     description: appDescription,
-    visibility: options.visibility || 'private',
+    visibility: requestedVisibility,
     storage_key: storageKey,
     exports,
     // Store manifest data for later use

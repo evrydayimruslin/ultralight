@@ -11,6 +11,7 @@ import { handleMcp, handleMcpDiscovery } from './mcp.ts';
 import { handlePlatformMcp, handlePlatformMcpDiscovery } from './platform-mcp.ts';
 import { handleDiscover } from './discover.ts';
 import { handleHttpEndpoint, handleHttpOptions } from './http.ts';
+import { handleTierChange } from './tier.ts';
 import { getLayoutHTML } from '../../web/layout.ts';
 import { getAppRunnerHTML } from '../../web/app-runner.ts';
 import { createAppsService } from '../services/apps.ts';
@@ -194,6 +195,11 @@ export function createApp() {
       // Cron API routes - handle all /api/cron/* paths
       if (path.startsWith('/api/cron')) {
         return handleCron(request);
+      }
+
+      // Tier change route (service-to-service, secured by secret)
+      if (path === '/api/tier/change' && method === 'POST') {
+        return handleTierChange(request);
       }
 
       // Discovery API routes - semantic search for apps

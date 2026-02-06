@@ -66,7 +66,8 @@ async function hashToken(token: string): Promise<string> {
 }
 
 /**
- * Create a new API token for a user
+ * Create a new API token for a user.
+ * Enforces per-tier token limits (free: 1, pro: unlimited).
  */
 export async function createToken(
   userId: string,
@@ -76,6 +77,31 @@ export async function createToken(
     scopes?: string[];
   }
 ): Promise<CreateTokenResult> {
+  // Check tier-based token limit
+  const { data: userRow } = await supabase
+    .from('users')
+    .select('tier')
+    .eq('id', userId)
+    .single();
+
+  const tier = (userRow?.tier || 'free') as 'free' | 'pro';
+  const { TIER_LIMITS } = await import('../../shared/types/index.ts');
+  const maxTokens = TIER_LIMITS[tier].max_api_tokens;
+
+  if (maxTokens !== Infinity) {
+    const { count, error: countErr } = await supabase
+      .from('user_api_tokens')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId);
+
+    if (!countErr && (count ?? 0) >= maxTokens) {
+      throw new Error(
+        `Token limit reached. Your ${tier} plan allows ${maxTokens} API token${maxTokens === 1 ? '' : 's'}. ` +
+        `Revoke an existing token or upgrade to Pro for unlimited tokens.`
+      );
+    }
+  }
+
   // Check if token with this name already exists
   const { data: existing } = await supabase
     .from('user_api_tokens')
@@ -172,6 +198,56 @@ export async function revokeAllTokens(userId: string): Promise<number> {
   }
 
   return data?.length || 0;
+}
+
+/**
+ * Revoke excess tokens when a user downgrades tier.
+ * Keeps the most recently created tokens up to maxTokens,
+ * revokes the rest. Returns the number of tokens revoked.
+ */
+export async function revokeExcessTokens(
+  userId: string,
+  maxTokens: number
+): Promise<{ revoked_count: number; kept_count: number; revoked_names: string[] }> {
+  // Get all tokens ordered by created_at descending (newest first)
+  const { data: tokens, error: listErr } = await supabase
+    .from('user_api_tokens')
+    .select('id, name, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+
+  if (listErr || !tokens) {
+    console.error('revokeExcessTokens: failed to list tokens:', listErr);
+    return { revoked_count: 0, kept_count: 0, revoked_names: [] };
+  }
+
+  if (tokens.length <= maxTokens) {
+    return { revoked_count: 0, kept_count: tokens.length, revoked_names: [] };
+  }
+
+  // Keep the newest maxTokens, revoke the rest
+  const tokensToRevoke = tokens.slice(maxTokens);
+  const revokedNames: string[] = [];
+
+  for (const token of tokensToRevoke) {
+    const { error: revokeErr } = await supabase
+      .from('user_api_tokens')
+      .delete()
+      .eq('id', token.id)
+      .eq('user_id', userId);
+
+    if (!revokeErr) {
+      revokedNames.push(token.name);
+    } else {
+      console.error(`revokeExcessTokens: failed to revoke token ${token.id}:`, revokeErr);
+    }
+  }
+
+  return {
+    revoked_count: revokedNames.length,
+    kept_count: maxTokens,
+    revoked_names: revokedNames,
+  };
 }
 
 /**

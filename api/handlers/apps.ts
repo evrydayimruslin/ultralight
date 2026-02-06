@@ -35,6 +35,10 @@ import {
   reclaimVersionStorage,
   formatBytes,
 } from '../services/storage-quota.ts';
+import {
+  checkVisibilityAllowed,
+  getUserTier,
+} from '../services/tier-enforcement.ts';
 
 // Type for user with optional API key
 interface User {
@@ -412,6 +416,18 @@ async function handleUpdateApp(request: Request, appId: string): Promise<Respons
 
     if (Object.keys(filteredUpdates).length === 0) {
       return error('No valid fields to update', 400);
+    }
+
+    // Gate visibility changes by tier
+    if ('visibility' in filteredUpdates) {
+      const userTier = await getUserTier(user.id);
+      const visibilityErr = checkVisibilityAllowed(
+        userTier,
+        filteredUpdates.visibility as 'private' | 'unlisted' | 'public'
+      );
+      if (visibilityErr) {
+        return error(visibilityErr, 403);
+      }
     }
 
     const updatedApp = await appsService.update(appId, filteredUpdates);
@@ -1247,6 +1263,18 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
 
     if (!appWithDraft.draft_storage_key) {
       return error('No draft to publish', 400);
+    }
+
+    // Gate: free tier cannot publish non-private apps
+    if (app.visibility !== 'private') {
+      const userTier = await getUserTier(user.id);
+      const visibilityErr = checkVisibilityAllowed(userTier, app.visibility as 'private' | 'unlisted' | 'public');
+      if (visibilityErr) {
+        return error(
+          `Cannot publish: ${visibilityErr} Change the app to private first, or upgrade to Pro.`,
+          403
+        );
+      }
     }
 
     // Parse request options

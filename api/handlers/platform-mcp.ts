@@ -21,6 +21,7 @@ import { handleDiscover as discoverApps } from './discover.ts';
 import { executeInSandbox, type UserContext } from '../runtime/sandbox.ts';
 import { createAppDataService } from '../services/appdata.ts';
 import { decryptEnvVars, decryptEnvVar } from '../services/envvars.ts';
+import { checkVisibilityAllowed } from '../services/tier-enforcement.ts';
 import type {
   MCPTool,
   MCPJsonSchema,
@@ -731,10 +732,10 @@ async function handleToolsCall(
         result = await executeAppsGet(userId, toolArgs);
         break;
       case 'platform.apps.create':
-        result = await executeAppsCreate(userId, toolArgs);
+        result = await executeAppsCreate(userId, toolArgs, user.tier);
         break;
       case 'platform.apps.update':
-        result = await executeAppsUpdate(userId, toolArgs);
+        result = await executeAppsUpdate(userId, toolArgs, user.tier);
         break;
       case 'platform.apps.delete':
         result = await executeAppsDelete(userId, toolArgs);
@@ -748,7 +749,7 @@ async function handleToolsCall(
         result = await executeDraftGet(userId, toolArgs);
         break;
       case 'platform.draft.publish':
-        result = await executeDraftPublish(userId, toolArgs);
+        result = await executeDraftPublish(userId, toolArgs, user.tier);
         break;
       case 'platform.draft.discard':
         result = await executeDraftDiscard(userId, toolArgs);
@@ -972,11 +973,24 @@ async function executeAppsGet(
 
 async function executeAppsCreate(
   userId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  userTier: 'free' | 'pro' = 'free'
 ): Promise<unknown> {
   const files = args.files as Array<{ path: string; content: string; encoding?: string }>;
   if (!files || !Array.isArray(files) || files.length === 0) {
     throw new ToolError(INVALID_PARAMS, 'files array is required and must not be empty');
+  }
+
+  // Gate visibility by tier before creating
+  const requestedVisibility = (args.visibility as string) || 'private';
+  if (requestedVisibility !== 'private') {
+    const visibilityErr = checkVisibilityAllowed(
+      userTier,
+      requestedVisibility as 'private' | 'unlisted' | 'public'
+    );
+    if (visibilityErr) {
+      throw new ToolError(FORBIDDEN, visibilityErr);
+    }
   }
 
   // Check for entry file - either manifest.json, explicit entry options, or default index files
@@ -1031,7 +1045,8 @@ async function executeAppsCreate(
 
 async function executeAppsUpdate(
   userId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  userTier: 'free' | 'pro' = 'free'
 ): Promise<unknown> {
   const appId = args.app_id as string;
   if (!appId) {
@@ -1050,6 +1065,14 @@ async function executeAppsUpdate(
 
   if (Object.keys(updates).length === 0) {
     throw new ToolError(INVALID_PARAMS, 'No update fields provided');
+  }
+
+  // Gate visibility changes by user tier
+  if (updates.visibility) {
+    const visibilityErr = checkVisibilityAllowed(userTier, updates.visibility);
+    if (visibilityErr) {
+      throw new ToolError(FORBIDDEN, visibilityErr);
+    }
   }
 
   await appsService.update(app.id, updates);
@@ -1163,7 +1186,8 @@ async function executeDraftGet(
 
 async function executeDraftPublish(
   userId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  userTier: 'free' | 'pro' = 'free'
 ): Promise<unknown> {
   const appId = args.app_id as string;
   if (!appId) {
@@ -1174,6 +1198,14 @@ async function executeDraftPublish(
 
   if (!app.draft_storage_key) {
     throw new ToolError(VALIDATION_ERROR, 'No draft exists to publish');
+  }
+
+  // Gate: free tier cannot publish non-private apps
+  if (app.visibility !== 'private') {
+    const visibilityErr = checkVisibilityAllowed(userTier, app.visibility as 'private' | 'unlisted' | 'public');
+    if (visibilityErr) {
+      throw new ToolError(FORBIDDEN, `Cannot publish: ${visibilityErr} Change the app to private first, or upgrade to Pro.`);
+    }
   }
 
   const appsService = createAppsService();
