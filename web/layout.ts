@@ -887,23 +887,18 @@ export function getLayoutHTML(options: {
       margin-top: 1.5rem;
       width: 100%;
       padding: 1rem 2.5rem;
-      background: var(--accent-color);
-      color: #fff;
-      border: none;
+      background: transparent;
+      color: var(--text-primary);
+      border: 1px solid var(--border-color);
       border-radius: 12px;
       font-size: 1.05rem;
       font-weight: 600;
       cursor: pointer;
-      transition: background 0.2s, transform 0.1s, box-shadow 0.3s;
+      transition: border-color 0.2s, color 0.2s;
     }
 
     .deploy-btn:hover {
-      background: var(--accent-color);
-      box-shadow: 0 0 24px rgba(59, 130, 246, 0.35);
-    }
-
-    html.dark .deploy-btn:hover {
-      box-shadow: 0 0 24px rgba(96, 165, 250, 0.25);
+      border-color: var(--text-muted);
     }
 
     .deploy-btn:active {
@@ -911,10 +906,8 @@ export function getLayoutHTML(options: {
     }
 
     .deploy-btn:disabled {
-      background: var(--border-color);
       color: var(--text-muted);
       cursor: not-allowed;
-      box-shadow: none;
     }
 
     .build-logs {
