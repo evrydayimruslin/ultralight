@@ -5,6 +5,7 @@ import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
+import { getCodeCache } from '../services/codecache.ts';
 import { bundleCode } from '../services/bundler.ts';
 import { parseTypeScript, toSkillsParsed } from '../services/parser.ts';
 import {
@@ -324,11 +325,42 @@ async function handleGetAppCode(request: Request, appId: string): Promise<Respon
       return error('App code not found', 404);
     }
 
-    return json({
-      code,
-      name: app.name || app.slug,
-      appId: app.id,
-    });
+    // Generate ETag for code endpoint caching
+    const version = app.current_version || '0';
+    const updated = (app as Record<string, unknown>).updated_at || '0';
+    let hashVal = 0;
+    const hashStr = `code:${version}:${updated}:${app.storage_key}`;
+    for (let i = 0; i < hashStr.length; i++) {
+      const char = hashStr.charCodeAt(i);
+      hashVal = ((hashVal << 5) - hashVal) + char;
+      hashVal = hashVal & hashVal;
+    }
+    const codeEtag = `"code-${Math.abs(hashVal).toString(36)}"`;
+
+    // Check If-None-Match for 304
+    const ifNoneMatch = request.headers.get('If-None-Match');
+    if (ifNoneMatch && (ifNoneMatch === codeEtag || ifNoneMatch === `W/${codeEtag}`)) {
+      return new Response(null, {
+        status: 304,
+        headers: { 'ETag': codeEtag, 'Cache-Control': 'public, max-age=3600' },
+      });
+    }
+
+    return new Response(
+      JSON.stringify({
+        code,
+        name: app.name || app.slug,
+        appId: app.id,
+      }),
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'public, max-age=3600',
+          'ETag': codeEtag,
+          'Vary': 'Accept-Encoding',
+        },
+      },
+    );
   } catch (err) {
     console.error('Failed to get app code:', err);
     return error('Failed to get app code', 500);
@@ -1184,6 +1216,9 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
       draft_exports: null,
     });
 
+    // Invalidate code cache so next request fetches new version
+    getCodeCache().invalidate(appId);
+
     // Optionally regenerate docs
     let docsResult = null;
     if (options.regenerate_docs && app.skills_md) {
@@ -1349,6 +1384,9 @@ async function handleRebuild(request: Request, appId: string): Promise<Response>
 
     await r2Service.uploadFiles(storageKey, filesToUpload);
     console.log(`[REBUILD] Uploaded ${filesToUpload.length} rebuilt files to ${storageKey}`);
+
+    // Invalidate code cache so next request picks up rebuilt bundles
+    getCodeCache().invalidate(appId);
 
     return json({
       success: true,

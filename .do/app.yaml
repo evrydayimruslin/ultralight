@@ -13,26 +13,22 @@ services:
     routes:
       - path: /
     envs:
+      # All secret values are injected via DigitalOcean App Platform dashboard.
+      # Do NOT commit actual values here. Set them in:
+      #   DigitalOcean > Apps > ultralight-api > Settings > Environment Variables
       - key: SUPABASE_URL
-        value: https://uavjzycsltdnwblwutmb.supabase.co
         type: SECRET
       - key: SUPABASE_SERVICE_ROLE_KEY
-        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVhdmp6eWNzbHRkbndibHd1dG1iIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTkzODkxMiwiZXhwIjoyMDg1NTE0OTEyfQ.GzNEPFtUgAhXQpIg4UEDduqXs0UyTkUZAKhSjCVHuUA
         type: SECRET
       - key: SUPABASE_ANON_KEY
-        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVhdmp6eWNzbHRkbndibHd1dG1iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk5Mzg5MTIsImV4cCI6MjA4NTUxNDkxMn0.WrAd4958GrshlFWViIefa-08W1tFlRJhiv_L9N2JrFM
         type: SECRET
       - key: R2_ACCOUNT_ID
-        value: 8d2df08dac65694aa1c6bf56233a2090
         type: SECRET
       - key: R2_ACCESS_KEY_ID
-        value: 62d9349158924c2a676fdeddbbb8e7c7
         type: SECRET
       - key: R2_SECRET_ACCESS_KEY
-        value: 7cd43a5fb64bea507bf1ea43961b6ebd7a6a30b200faade5dca7db32c4d6ed57
         type: SECRET
       - key: R2_BUCKET_NAME
-        value: ultralight-apps
         type: SECRET
     health_check:
       http_path: /health

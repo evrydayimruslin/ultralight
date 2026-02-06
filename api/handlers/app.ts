@@ -13,9 +13,72 @@ import { handleDiscover } from './discover.ts';
 import { handleHttpEndpoint, handleHttpOptions } from './http.ts';
 import { getLayoutHTML } from '../../web/layout.ts';
 import { getAppRunnerHTML } from '../../web/app-runner.ts';
+import { getLandingPageHTML } from '../../web/landing-page.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
+import { getCodeCache } from '../services/codecache.ts';
 import type { AppManifest } from '../../shared/types/index.ts';
+
+// ============================================
+// CACHE HELPERS
+// ============================================
+
+/**
+ * Generate a strong ETag from app version and update timestamp.
+ * This changes whenever the app is published or updated.
+ */
+function generateAppETag(app: { current_version?: string; updated_at?: string; storage_key: string }): string {
+  const version = app.current_version || '0';
+  const updated = app.updated_at || '0';
+  // Use a short hash of version + timestamp for the ETag
+  let hash = 0;
+  const str = `${version}:${updated}:${app.storage_key}`;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return `"app-${Math.abs(hash).toString(36)}"`;
+}
+
+/**
+ * Check If-None-Match and return 304 if ETag matches.
+ * Returns null if no match (caller should serve full response).
+ */
+function checkConditionalRequest(request: Request, etag: string): Response | null {
+  const ifNoneMatch = request.headers.get('If-None-Match');
+  if (ifNoneMatch && (ifNoneMatch === etag || ifNoneMatch === `W/${etag}`)) {
+    return new Response(null, {
+      status: 304,
+      headers: {
+        'ETag': etag,
+        'Cache-Control': 'public, max-age=3600',
+      },
+    });
+  }
+  return null;
+}
+
+/**
+ * Add standard cache headers to an app response.
+ * - HTML pages: 1 hour cache with ETag for revalidation
+ * - Versioned assets: 1 year immutable cache
+ */
+function addCacheHeaders(headers: Record<string, string>, etag: string, immutable = false): Record<string, string> {
+  if (immutable) {
+    return {
+      ...headers,
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'ETag': etag,
+    };
+  }
+  return {
+    ...headers,
+    'Cache-Control': 'public, max-age=3600',
+    'ETag': etag,
+    'Vary': 'Accept-Encoding',
+  };
+}
 
 export function createApp() {
   return {
@@ -24,17 +87,22 @@ export function createApp() {
       const path = url.pathname;
       const method = request.method;
 
-      // Root redirect to upload page
+      // Landing page (unified landing + upload)
       if (path === '/' && method === 'GET') {
-        return new Response(null, {
-          status: 302,
-          headers: { 'Location': '/upload' },
+        return new Response(getLandingPageHTML(), {
+          headers: { 'Content-Type': 'text/html' },
         });
       }
 
-      // Health check - includes deploy timestamp to verify we're running latest code
+      // Health check - includes deploy timestamp and cache stats
       if (path === '/health') {
-        return json({ status: 'ok', version: '0.2.2', deployed: new Date().toISOString(), app_type_fix: true });
+        const cacheStats = getCodeCache().stats;
+        return json({
+          status: 'ok',
+          version: '0.2.3',
+          deployed: new Date().toISOString(),
+          cache: cacheStats,
+        });
       }
 
       // Debug endpoint - test auth and database connection
@@ -190,31 +258,54 @@ export function createApp() {
             return json({ error: 'App not found' }, 404);
           }
 
-          // Fetch the app code from R2
+          // Generate ETag and check for conditional request (304)
+          const etag = generateAppETag(app as { current_version?: string; updated_at?: string; storage_key: string });
+          const conditionalResponse = checkConditionalRequest(request, etag);
+          if (conditionalResponse) {
+            console.log(`App runner: 304 Not Modified for app ${appId}`);
+            return conditionalResponse;
+          }
+
+          // Fetch the app code — check in-memory cache first, then R2
           // We have two bundles:
           // - IIFE bundle (index.tsx) - for MCP sandbox execution
           // - ESM bundle (index.esm.js) - for browser UI rendering
           const storageKey = app.storage_key;
+          const codeCache = getCodeCache();
           let code: string | null = null;  // IIFE bundle for type detection & MCP
           let esmCode: string | null = null;  // ESM bundle for browser UI
 
-          // First try to load ESM bundle (for browser rendering)
-          try {
-            esmCode = await r2Service.fetchTextFile(`${storageKey}index.esm.js`);
-            console.log(`App runner: loaded ESM bundle for app ${appId}`);
-          } catch {
-            // ESM bundle not available (older apps or unbundled)
+          // Check cache for IIFE code
+          code = codeCache.get(appId, storageKey);
+          if (code) {
+            console.log(`App runner: code cache HIT for app ${appId}`);
           }
 
-          // Try entry files in order of preference for IIFE/type detection
-          const entryFiles = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
-          for (const entryFile of entryFiles) {
+          // Check cache for ESM code
+          esmCode = codeCache.get(`${appId}:esm`, storageKey);
+
+          // Fetch from R2 on cache miss
+          if (!esmCode) {
             try {
-              code = await r2Service.fetchTextFile(`${storageKey}${entryFile}`);
-              console.log(`App runner: loaded ${entryFile} for app ${appId}`);
-              break;
+              esmCode = await r2Service.fetchTextFile(`${storageKey}index.esm.js`);
+              console.log(`App runner: loaded ESM bundle for app ${appId}`);
+              codeCache.set(`${appId}:esm`, storageKey, esmCode);
             } catch {
-              // Try next entry file
+              // ESM bundle not available (older apps or unbundled)
+            }
+          }
+
+          if (!code) {
+            const entryFiles = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
+            for (const entryFile of entryFiles) {
+              try {
+                code = await r2Service.fetchTextFile(`${storageKey}${entryFile}`);
+                console.log(`App runner: loaded ${entryFile} for app ${appId}`);
+                codeCache.set(appId, storageKey, code);
+                break;
+              } catch {
+                // Try next entry file
+              }
             }
           }
 
@@ -291,6 +382,9 @@ export function createApp() {
             isMcpOnlyApp = !isHttpServerApp && !isBrowserApp;
           }
 
+          // Cache headers for all app HTML responses
+          const cacheHeaders = addCacheHeaders({ 'Content-Type': 'text/html' }, etag);
+
           if (isHttpServerApp) {
             // HTTP Server app - execute handler function
             const isEmbed = url.searchParams.get('embed') === '1';
@@ -304,7 +398,7 @@ export function createApp() {
                 initialView: 'app',
                 appName: app.name || app.slug,
               }), {
-                headers: { 'Content-Type': 'text/html' },
+                headers: cacheHeaders,
               });
             }
           } else if (isMcpOnlyApp) {
@@ -314,7 +408,7 @@ export function createApp() {
             if (isEmbed) {
               // Return an info page for the iframe showing MCP tools
               return new Response(getMcpAppInfoHTML(appId, app.name || app.slug, app.skills_parsed || []), {
-                headers: { 'Content-Type': 'text/html' },
+                headers: cacheHeaders,
               });
             } else {
               // Normal view with sidebar
@@ -324,7 +418,7 @@ export function createApp() {
                 initialView: 'app',
                 appName: app.name || app.slug,
               }), {
-                headers: { 'Content-Type': 'text/html' },
+                headers: cacheHeaders,
               });
             }
           } else {
@@ -337,7 +431,7 @@ export function createApp() {
                 // Embed mode: serve app without sidebar using app-runner
                 // Use ESM bundle for browser rendering (falls back to IIFE if no ESM)
                 return new Response(getAppRunnerHTML(appId, app.slug, app.name || app.slug, browserCode), {
-                  headers: { 'Content-Type': 'text/html' },
+                  headers: cacheHeaders,
                 });
               } else {
                 // Normal mode: serve with sidebar layout
@@ -350,7 +444,7 @@ export function createApp() {
                   // Don't pass appCode - the layout will load it via iframe instead
                   appName: app.name || app.slug,
                 }), {
-                  headers: { 'Content-Type': 'text/html' },
+                  headers: cacheHeaders,
                 });
               }
             } else {

@@ -13,6 +13,7 @@ import { createR2Service } from '../services/storage.ts';
 import { createUserService } from '../services/user.ts';
 import { createAIService } from '../services/ai.ts';
 import { decryptEnvVars, decryptEnvVar } from '../services/envvars.ts';
+import { getCodeCache } from '../services/codecache.ts';
 import type {
   MCPTool,
   MCPJsonSchema,
@@ -788,16 +789,28 @@ async function executeAppFunction(
     const appDataService = createAppDataService(app.id, userId);
     const userService = createUserService();
 
-    // Fetch app code from R2
-    let code: string | null = null;
-    const entryFiles = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
+    // Fetch app code — check in-memory cache first, fall back to R2
+    const codeCache = getCodeCache();
+    let code: string | null = codeCache.get(app.id, app.storage_key);
 
-    for (const entryFile of entryFiles) {
-      try {
-        code = await r2Service.fetchTextFile(`${app.storage_key}${entryFile}`);
-        break;
-      } catch {
-        // Try next
+    if (code) {
+      console.log(`[MCP] Code cache HIT for app ${app.id} (${codeCache.stats.hitRate} hit rate)`);
+    } else {
+      console.log(`[MCP] Code cache MISS for app ${app.id}, fetching from R2...`);
+      const entryFiles = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
+
+      for (const entryFile of entryFiles) {
+        try {
+          code = await r2Service.fetchTextFile(`${app.storage_key}${entryFile}`);
+          break;
+        } catch {
+          // Try next
+        }
+      }
+
+      // Cache the code for future calls
+      if (code) {
+        codeCache.set(app.id, app.storage_key, code);
       }
     }
 
