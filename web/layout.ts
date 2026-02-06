@@ -470,14 +470,15 @@ export function getLayoutHTML(options: {
       font-size: 0.875rem;
     }
 
-    /* User Section — height matches .site-footer */
+    /* User Section — exact height matches .site-footer */
     .sidebar-footer {
-      padding: 0.75rem;
+      padding: 0 0.75rem;
       border-top: 1px solid var(--border-color);
       display: flex;
       flex-direction: column;
       justify-content: center;
-      min-height: 56px;
+      height: 52px;
+      flex-shrink: 0;
     }
 
     .sidebar.collapsed .sidebar-footer {
@@ -487,18 +488,19 @@ export function getLayoutHTML(options: {
     .user-section {
       display: flex;
       align-items: center;
-      gap: 0.75rem;
+      gap: 0.5rem;
     }
 
     .user-avatar {
-      width: 32px;
-      height: 32px;
+      width: 28px;
+      height: 28px;
       border-radius: 50%;
       background: var(--bg-tertiary);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 0.875rem;
+      font-size: 0.8rem;
+      flex-shrink: 0;
     }
 
     .user-info {
@@ -507,10 +509,11 @@ export function getLayoutHTML(options: {
     }
 
     .user-email {
-      font-size: 0.875rem;
+      font-size: 0.8125rem;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      line-height: 1.2;
     }
 
     .user-tier {
@@ -519,6 +522,7 @@ export function getLayoutHTML(options: {
       display: flex;
       align-items: center;
       gap: 0.375rem;
+      line-height: 1.2;
     }
 
     .tier-badge {
@@ -698,7 +702,7 @@ export function getLayoutHTML(options: {
     }
 
     .auth-btn {
-      padding: 0.5rem 0.75rem;
+      padding: 0.375rem 0.75rem;
       background: var(--bg-tertiary);
       color: var(--text-primary);
       border: 1px solid var(--border-color);
@@ -2307,7 +2311,7 @@ export function getLayoutHTML(options: {
       line-height: 1.6;
     }
 
-    /* ===== Footer — min-height matches .sidebar-footer ===== */
+    /* ===== Footer — exact height matches .sidebar-footer ===== */
     .site-footer {
       width: 100%;
       border-top: 1px solid var(--border-color);
@@ -2320,7 +2324,8 @@ export function getLayoutHTML(options: {
       font-size: 0.8125rem;
       color: var(--text-muted);
       margin-top: auto;
-      min-height: 56px;
+      height: 52px;
+      flex-shrink: 0;
     }
     .site-footer a {
       color: var(--text-secondary);
@@ -3206,24 +3211,12 @@ await hash.sha256('data')</div>
           const tier = userProfile?.tier || 'free';
           const tierLabel = tier === 'pro' ? '<span class="tier-badge pro">Pro ✦</span>' : '<span class="tier-badge free">Free</span>';
 
-          // Storage mini-bar for sidebar
-          const storageUsed = userProfile?.storage_used_bytes || 0;
-          const storageLimit = userProfile?.storage_limit_bytes || (100 * 1024 * 1024);
-          const storagePct = storageLimit > 0 ? Math.min(100, (storageUsed / storageLimit) * 100) : 0;
-          const storageBarClass = storagePct > 95 ? 'critical' : storagePct > 80 ? 'warning' : '';
-
           authSection.innerHTML = \`
             <div class="user-section">
               <div class="user-avatar">\${initial}</div>
               <div class="user-info">
                 <div class="user-email">\${email}</div>
                 <div class="user-tier">\${tierLabel}</div>
-                <div class="sidebar-storage">
-                  <div class="sidebar-storage-bar">
-                    <div class="sidebar-storage-fill \${storageBarClass}" style="width: \${storagePct.toFixed(1)}%"></div>
-                  </div>
-                  <span class="sidebar-storage-text">\${formatBytesUI(storageUsed)} / \${formatBytesUI(storageLimit)}</span>
-                </div>
               </div>
               <button class="settings-btn" onclick="openUserSettings()" title="Settings">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
