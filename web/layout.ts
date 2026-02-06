@@ -148,89 +148,76 @@ export function getLayoutHTML(options: {
       width: 56px;
     }
 
-    /* Sidebar top toolbar: holds toggle + theme on the right */
+    /* Sidebar header: logo on left, toolbar buttons on right */
+    .sidebar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.875rem 0.625rem 0.875rem 1rem;
+      flex-shrink: 0;
+    }
+
+    /* Hide expanded header when collapsed */
+    .sidebar.collapsed .sidebar-header {
+      display: none;
+    }
+
     .sidebar-toolbar {
       display: flex;
       align-items: center;
-      justify-content: flex-end;
-      gap: 4px;
-      padding: 10px 10px 6px;
+      gap: 2px;
       flex-shrink: 0;
     }
 
     .sidebar-toolbar-btn {
-      width: 32px;
-      height: 32px;
+      width: 30px;
+      height: 30px;
       background: transparent;
-      border: 1px solid transparent;
+      border: none;
       border-radius: 6px;
-      color: var(--text-secondary);
+      color: var(--text-muted);
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: background 0.2s, color 0.2s, border-color 0.2s;
+      transition: background 0.2s, color 0.2s;
       flex-shrink: 0;
     }
 
     .sidebar-toolbar-btn:hover {
       background: var(--bg-hover);
       color: var(--text-primary);
-      border-color: var(--border-color);
     }
 
     .sidebar-toolbar-btn svg {
-      width: 18px;
-      height: 18px;
-    }
-
-    /* Rotate chevron when collapsed */
-    .sidebar.collapsed #sidebarToggle svg {
-      transform: rotate(180deg);
-    }
-    #sidebarToggle svg {
-      transition: transform 0.3s ease;
-    }
-
-    /* Collapsed toolbar: stack vertically & center */
-    .sidebar.collapsed .sidebar-toolbar {
-      flex-direction: column;
-      align-items: center;
-      padding: 8px 0 4px;
-      gap: 2px;
+      width: 16px;
+      height: 16px;
     }
 
     .main-content.sidebar-collapsed {
       margin-left: 56px;
     }
 
-    .sidebar-header {
-      padding: 0.75rem 0.75rem 0.75rem 1rem;
-      border-bottom: 1px solid var(--border-color);
-    }
-
-    /* Hide header content when collapsed */
-    .sidebar.collapsed .sidebar-header {
-      display: none;
-    }
-
     .logo {
-      font-size: 1.25rem;
+      font-size: 1.2rem;
       font-weight: 700;
       background: var(--accent-gradient);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
       white-space: nowrap;
+      letter-spacing: -0.01em;
+    }
+
+    /* New App button (expanded) */
+    .new-app-section {
+      padding: 0 0.75rem 0.75rem;
+      flex-shrink: 0;
     }
 
     .upload-btn {
       width: 100%;
-      margin-top: 0.75rem;
-      padding: 0.625rem 0.75rem;
+      padding: 0.5rem 0.75rem;
       background: var(--bg-tertiary);
       color: var(--text-primary);
       border: 1px solid var(--border-color);
@@ -251,19 +238,22 @@ export function getLayoutHTML(options: {
     }
 
     .upload-btn svg {
-      width: 18px;
-      height: 18px;
+      width: 16px;
+      height: 16px;
     }
 
-    /* Collapsed rail: icon-only buttons */
+    .sidebar.collapsed .new-app-section {
+      display: none;
+    }
+
+    /* Collapsed rail: action icons */
     .sidebar-rail {
       display: none;
       flex-direction: column;
       align-items: center;
-      padding: 6px 0;
-      gap: 2px;
+      padding: 8px 0;
+      gap: 6px;
       flex-shrink: 0;
-      border-bottom: 1px solid var(--border-color);
     }
 
     .sidebar.collapsed .sidebar-rail {
@@ -271,29 +261,37 @@ export function getLayoutHTML(options: {
     }
 
     .sidebar-rail-btn {
-      width: 38px;
-      height: 38px;
-      background: transparent;
-      border: none;
-      border-radius: 8px;
+      width: 36px;
+      height: 36px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
       color: var(--text-secondary);
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: background 0.15s, color 0.15s;
-      font-size: 1rem;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
       flex-shrink: 0;
     }
 
     .sidebar-rail-btn:hover {
       background: var(--bg-hover);
       color: var(--text-primary);
+      border-color: var(--accent-color);
     }
 
     .sidebar-rail-btn svg {
-      width: 18px;
-      height: 18px;
+      width: 16px;
+      height: 16px;
+    }
+
+    /* Collapsed rail: divider */
+    .sidebar-rail-divider {
+      width: 24px;
+      height: 1px;
+      background: var(--border-color);
+      margin: 2px 0;
     }
 
     /* Collapsed rail apps list */
@@ -301,8 +299,8 @@ export function getLayoutHTML(options: {
       display: none;
       flex-direction: column;
       align-items: center;
-      padding: 6px 0;
-      gap: 2px;
+      padding: 4px 0;
+      gap: 6px;
       flex: 1;
       overflow-y: auto;
     }
@@ -312,34 +310,36 @@ export function getLayoutHTML(options: {
     }
 
     .sidebar-rail-app {
-      width: 38px;
-      height: 38px;
-      border-radius: 8px;
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
       background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 0.95rem;
+      font-size: 0.9rem;
       cursor: pointer;
-      transition: background 0.15s;
+      transition: background 0.15s, border-color 0.15s;
       flex-shrink: 0;
-      border: none;
       color: var(--text-primary);
     }
 
     .sidebar-rail-app:hover {
       background: var(--bg-hover);
+      border-color: var(--accent-color);
     }
 
     .sidebar-rail-app.active {
       background: var(--accent-color);
+      border-color: var(--accent-color);
       color: #fff;
     }
 
     .sidebar-rail-app img {
       width: 100%;
       height: 100%;
-      border-radius: 8px;
+      border-radius: 10px;
       object-fit: cover;
     }
 
@@ -470,13 +470,14 @@ export function getLayoutHTML(options: {
       font-size: 0.875rem;
     }
 
-    /* User Section */
+    /* User Section — height matches .site-footer */
     .sidebar-footer {
       padding: 0.75rem;
       border-top: 1px solid var(--border-color);
       display: flex;
       flex-direction: column;
-      gap: 0.75rem;
+      justify-content: center;
+      min-height: 56px;
     }
 
     .sidebar.collapsed .sidebar-footer {
@@ -515,6 +516,185 @@ export function getLayoutHTML(options: {
     .user-tier {
       font-size: 0.75rem;
       color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 0.375rem;
+    }
+
+    .tier-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      padding: 0.125rem 0.375rem;
+      border-radius: 4px;
+    }
+    .tier-badge.free {
+      background: var(--bg-tertiary);
+      color: var(--text-muted);
+    }
+    .tier-badge.pro {
+      background: rgba(139, 92, 246, 0.15);
+      color: var(--accent-color);
+    }
+
+    /* Sidebar compact storage bar */
+    .sidebar-storage {
+      display: flex;
+      align-items: center;
+      gap: 0.375rem;
+      margin-top: 0.25rem;
+    }
+    .sidebar-storage-bar {
+      flex: 1;
+      height: 4px;
+      background: var(--bg-tertiary);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .sidebar-storage-fill {
+      height: 100%;
+      border-radius: 2px;
+      background: var(--accent-color);
+      transition: width 0.3s ease;
+    }
+    .sidebar-storage-fill.warning { background: var(--warning-color); }
+    .sidebar-storage-fill.critical { background: var(--error-color); }
+    .sidebar-storage-text {
+      font-size: 0.625rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    /* Storage dashboard (user settings) */
+    .storage-overview {
+      margin-bottom: 1.25rem;
+    }
+    .storage-bar {
+      width: 100%;
+      height: 10px;
+      background: var(--bg-tertiary);
+      border-radius: 5px;
+      overflow: hidden;
+      margin: 0.5rem 0;
+    }
+    .storage-bar-fill {
+      height: 100%;
+      border-radius: 5px;
+      background: var(--accent-color);
+      transition: width 0.3s ease;
+    }
+    .storage-bar-fill.warning { background: var(--warning-color); }
+    .storage-bar-fill.critical { background: var(--error-color); }
+    .storage-text {
+      font-size: 0.8125rem;
+      color: var(--text-secondary);
+      display: flex;
+      justify-content: space-between;
+    }
+    .storage-app-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.625rem 0;
+      border-bottom: 1px solid var(--border-color);
+      font-size: 0.8125rem;
+    }
+    .storage-app-item:last-child { border-bottom: none; }
+    .storage-app-name {
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+    .storage-app-meta {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+    }
+    .storage-app-size {
+      color: var(--text-secondary);
+      font-weight: 500;
+      text-align: right;
+    }
+
+    /* Version history (app settings) */
+    .version-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.5rem 0.75rem;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      margin-bottom: 0.375rem;
+      font-size: 0.8125rem;
+    }
+    .version-item:hover { background: var(--bg-tertiary); }
+    .version-info {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .version-label {
+      font-weight: 600;
+      font-family: monospace;
+      color: var(--text-primary);
+    }
+    .version-meta {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+    }
+    .version-current-badge {
+      font-size: 0.6875rem;
+      color: var(--success-color);
+      font-weight: 600;
+    }
+    .version-delete-btn {
+      background: none;
+      border: 1px solid transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      transition: all 0.15s;
+    }
+    .version-delete-btn:hover {
+      color: var(--error-color);
+      border-color: var(--error-color);
+      background: rgba(239, 68, 68, 0.08);
+    }
+
+    /* Upgrade CTA */
+    .upgrade-cta {
+      padding: 0.75rem 1rem;
+      background: rgba(139, 92, 246, 0.08);
+      border: 1px solid rgba(139, 92, 246, 0.25);
+      border-radius: 6px;
+      font-size: 0.8125rem;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+    .upgrade-cta a {
+      color: var(--accent-color);
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .upgrade-cta a:hover { text-decoration: underline; }
+
+    /* Token limit info */
+    .token-limit-info {
+      font-size: 0.8125rem;
+      color: var(--text-secondary);
+      padding: 0.5rem 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .token-limit-count {
+      font-weight: 600;
+      font-family: monospace;
     }
 
     .auth-btn {
@@ -1511,6 +1691,10 @@ export function getLayoutHTML(options: {
       border-color: var(--error-color);
     }
 
+    .toast.warning {
+      border-color: var(--warning-color);
+    }
+
     /* Error display */
     .ultralight-error {
       position: fixed;
@@ -2123,11 +2307,11 @@ export function getLayoutHTML(options: {
       line-height: 1.6;
     }
 
-    /* ===== Footer ===== */
+    /* ===== Footer — min-height matches .sidebar-footer ===== */
     .site-footer {
       width: 100%;
       border-top: 1px solid var(--border-color);
-      padding: 1.25rem 2rem;
+      padding: 0 2rem;
       display: flex;
       flex-wrap: wrap;
       align-items: center;
@@ -2136,6 +2320,7 @@ export function getLayoutHTML(options: {
       font-size: 0.8125rem;
       color: var(--text-muted);
       margin-top: auto;
+      min-height: 56px;
     }
     .site-footer a {
       color: var(--text-secondary);
@@ -2164,46 +2349,63 @@ export function getLayoutHTML(options: {
 <body>
   <!-- Sidebar -->
   <aside class="sidebar" id="sidebar">
-    <!-- Toolbar: theme toggle + collapse toggle (top right) -->
-    <div class="sidebar-toolbar">
-      <button class="sidebar-toolbar-btn theme-toggle" id="themeToggle" title="Toggle light/dark mode">
-        <svg class="sun-icon" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-        </svg>
-        <svg class="moon-icon" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-        </svg>
-      </button>
-      <button class="sidebar-toolbar-btn" id="sidebarToggle" title="Toggle sidebar">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="15 18 9 12 15 6"></polyline>
-        </svg>
-      </button>
+    <!-- Expanded: header with logo + toolbar buttons -->
+    <div class="sidebar-header">
+      <div class="logo">Ultralight</div>
+      <div class="sidebar-toolbar">
+        <button class="sidebar-toolbar-btn theme-toggle" id="themeToggle" title="Toggle light/dark mode">
+          <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+          </svg>
+          <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <button class="sidebar-toolbar-btn" id="sidebarToggle" title="Collapse sidebar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+            <rect x="3" y="3" width="18" height="18" rx="3"></rect>
+            <line x1="9" y1="3" x2="9" y2="21"></line>
+          </svg>
+        </button>
+      </div>
     </div>
 
-    <!-- Expanded: header with logo + new app -->
-    <div class="sidebar-header">
-      <div class="logo">
-        <span>⚡</span>
-        <span>Ultralight</span>
-      </div>
+    <!-- Expanded: new app button -->
+    <div class="new-app-section">
       <button class="upload-btn" id="newAppBtn">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="12" y1="5" x2="12" y2="19"></line>
-          <line x1="5" y1="12" x2="19" y2="12"></line>
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="17 8 12 3 7 8"></polyline>
+          <line x1="12" y1="3" x2="12" y2="15"></line>
         </svg>
         New App
       </button>
     </div>
 
-    <!-- Collapsed rail: icon buttons -->
+    <!-- Collapsed rail: action icons -->
     <div class="sidebar-rail">
-      <button class="sidebar-rail-btn" id="railNewApp" title="Upload new app">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="12" y1="5" x2="12" y2="19"></line>
-          <line x1="5" y1="12" x2="19" y2="12"></line>
+      <button class="sidebar-rail-btn" id="railSidebarToggle" title="Expand sidebar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+          <rect x="3" y="3" width="18" height="18" rx="3"></rect>
+          <line x1="9" y1="3" x2="9" y2="21"></line>
         </svg>
       </button>
+      <button class="sidebar-rail-btn theme-toggle" id="railThemeToggle" title="Toggle light/dark mode">
+        <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+        </svg>
+        <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+      </button>
+      <button class="sidebar-rail-btn" id="railNewApp" title="Upload new app">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="17 8 12 3 7 8"></polyline>
+          <line x1="12" y1="3" x2="12" y2="15"></line>
+        </svg>
+      </button>
+      <div class="sidebar-rail-divider"></div>
     </div>
 
     <!-- Collapsed rail: app icons -->
@@ -2352,6 +2554,9 @@ export function getLayoutHTML(options: {
                 <option value="unlisted">Unlisted - Anyone with link can access</option>
                 <option value="public">Public - Listed in app directory</option>
               </select>
+              <div id="visibilityUpgradeHint" class="upgrade-cta" style="display: none;">
+                🔒 Unlock unlisted &amp; public visibility — <a href="/pricing">Upgrade to Pro</a>
+              </div>
             </div>
             <div class="settings-field">
               <label for="settingsDownloadAccess">Code Download Access</label>
@@ -2563,6 +2768,17 @@ const client = createClient(
               </div>
             </div>
 
+            <!-- Version History -->
+            <div class="settings-field">
+              <label>Version History</label>
+              <div id="versionHistoryList" style="margin-top: 0.25rem;">
+                <div style="color: var(--text-muted); font-size: 0.8125rem;">Loading...</div>
+              </div>
+            </div>
+
+            <!-- App Storage Usage -->
+            <div id="appStorageInfo" class="info-box" style="display: none; margin-bottom: 0.75rem;"></div>
+
             <!-- Draft Section -->
             <div id="draftSection">
               <div class="draft-banner" id="draftBanner" style="display: none;">
@@ -2635,6 +2851,9 @@ const client = createClient(
         <button class="settings-tab" data-tab="tokens" onclick="switchSettingsTab('tokens')">
           🎫 API Tokens
         </button>
+        <button class="settings-tab" data-tab="storage" onclick="switchSettingsTab('storage')">
+          📦 Storage
+        </button>
       </div>
 
       <div class="modal-body">
@@ -2686,9 +2905,29 @@ const client = createClient(
               </div>
             </div>
 
+            <!-- Token Limit Info -->
+            <div id="tokenLimitInfo" class="token-limit-info" style="display: none;"></div>
+
             <!-- Tokens List -->
             <div id="tokensList" class="tokens-list">
               <div class="byok-loading">Loading tokens...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Storage Tab -->
+        <div id="storageTab" class="settings-tab-content">
+          <div class="settings-section">
+            <div class="settings-section-title">📦 Storage Usage</div>
+            <div id="storageOverview" class="storage-overview">
+              <div class="byok-loading">Loading storage info...</div>
+            </div>
+            <div id="storageUpgradeCta" style="display: none;"></div>
+          </div>
+          <div class="settings-section">
+            <div class="settings-section-title">Per-App Breakdown</div>
+            <div id="storageBreakdown">
+              <div class="byok-loading">Loading...</div>
             </div>
           </div>
         </div>
@@ -2817,6 +3056,7 @@ await hash.sha256('data')</div>
     // ============================================
     let authToken = localStorage.getItem('ultralight_token');
     let currentUser = null;
+    let userProfile = null; // Full profile from GET /api/user (tier, storage, etc.)
     let apps = [];
     let files = [];
     let currentAppId = ${activeAppId ? `'${activeAppId}'` : 'null'};
@@ -2870,6 +3110,13 @@ await hash.sha256('data')</div>
       updateSidebarState();
     });
 
+    // Rail "Expand sidebar" button
+    document.getElementById('railSidebarToggle')?.addEventListener('click', () => {
+      sidebarCollapsed = !sidebarCollapsed;
+      localStorage.setItem('sidebar_collapsed', sidebarCollapsed);
+      updateSidebarState();
+    });
+
     // Rail "New App" button
     document.getElementById('railNewApp')?.addEventListener('click', () => {
       navigateToUpload();
@@ -2896,13 +3143,14 @@ await hash.sha256('data')</div>
     updateSidebarState();
 
     // ============================================
-    // Theme Toggle
+    // Theme Toggle (both expanded + rail buttons)
     // ============================================
-    const themeToggle = document.getElementById('themeToggle');
-    themeToggle?.addEventListener('click', () => {
+    function toggleTheme() {
       const isDark = document.documentElement.classList.toggle('dark');
       localStorage.setItem('ultralight_theme', isDark ? 'dark' : 'light');
-    });
+    }
+    document.getElementById('themeToggle')?.addEventListener('click', toggleTheme);
+    document.getElementById('railThemeToggle')?.addEventListener('click', toggleTheme);
 
     // ============================================
     // Footer visibility (hide when viewing app)
@@ -2942,12 +3190,40 @@ await hash.sha256('data')</div>
           currentUser = payload;
           const email = payload.email || 'User';
           const initial = email.charAt(0).toUpperCase();
+
+          // Fetch full user profile (tier, storage) from DB
+          try {
+            const profileRes = await fetch('/api/user', {
+              headers: { 'Authorization': \`Bearer \${authToken}\` }
+            });
+            if (profileRes.ok) {
+              userProfile = await profileRes.json();
+            }
+          } catch (e) {
+            console.warn('Failed to fetch user profile:', e);
+          }
+
+          const tier = userProfile?.tier || 'free';
+          const tierLabel = tier === 'pro' ? '<span class="tier-badge pro">Pro ✦</span>' : '<span class="tier-badge free">Free</span>';
+
+          // Storage mini-bar for sidebar
+          const storageUsed = userProfile?.storage_used_bytes || 0;
+          const storageLimit = userProfile?.storage_limit_bytes || (100 * 1024 * 1024);
+          const storagePct = storageLimit > 0 ? Math.min(100, (storageUsed / storageLimit) * 100) : 0;
+          const storageBarClass = storagePct > 95 ? 'critical' : storagePct > 80 ? 'warning' : '';
+
           authSection.innerHTML = \`
             <div class="user-section">
               <div class="user-avatar">\${initial}</div>
               <div class="user-info">
                 <div class="user-email">\${email}</div>
-                <div class="user-tier">Free tier</div>
+                <div class="user-tier">\${tierLabel}</div>
+                <div class="sidebar-storage">
+                  <div class="sidebar-storage-bar">
+                    <div class="sidebar-storage-fill \${storageBarClass}" style="width: \${storagePct.toFixed(1)}%"></div>
+                  </div>
+                  <span class="sidebar-storage-text">\${formatBytesUI(storageUsed)} / \${formatBytesUI(storageLimit)}</span>
+                </div>
               </div>
               <button class="settings-btn" onclick="openUserSettings()" title="Settings">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -3046,10 +3322,183 @@ await hash.sha256('data')</div>
       moonshot: '🌙'
     };
 
+    // ============================================
+    // UTILITY: Format bytes for display
+    // ============================================
+    function formatBytesUI(bytes) {
+      if (bytes === 0) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(1024));
+      const val = bytes / Math.pow(1024, i);
+      return val.toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+    }
+
+    // ============================================
+    // STORAGE TAB
+    // ============================================
+    async function loadStorageInfo() {
+      const overview = document.getElementById('storageOverview');
+      const breakdown = document.getElementById('storageBreakdown');
+      const upgradeCta = document.getElementById('storageUpgradeCta');
+
+      try {
+        const res = await fetch('/api/user/storage', {
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+        if (!res.ok) throw new Error('Failed to load storage');
+        const data = await res.json();
+
+        const pct = data.used_percent || 0;
+        const barClass = pct > 95 ? 'critical' : pct > 80 ? 'warning' : '';
+
+        overview.innerHTML = \`
+          <div class="storage-text">
+            <span>\${formatBytesUI(data.used_bytes)} of \${formatBytesUI(data.limit_bytes)} used</span>
+            <span>\${pct.toFixed(1)}%</span>
+          </div>
+          <div class="storage-bar">
+            <div class="storage-bar-fill \${barClass}" style="width: \${pct}%"></div>
+          </div>
+        \`;
+
+        // Upgrade CTA for free tier
+        if (data.tier === 'free') {
+          upgradeCta.style.display = 'block';
+          upgradeCta.innerHTML = \`
+            <div class="upgrade-cta">
+              📦 Free tier: \${formatBytesUI(data.limit_bytes)} limit —
+              <a href="/pricing">Upgrade to Pro</a> for 10 GB storage
+            </div>
+          \`;
+        } else {
+          upgradeCta.style.display = 'none';
+        }
+
+        // Per-app breakdown
+        if (data.breakdown && data.breakdown.length > 0) {
+          breakdown.innerHTML = data.breakdown.map(app => \`
+            <div class="storage-app-item">
+              <div>
+                <div class="storage-app-name">\${escapeHtml(app.name || app.app_id)}</div>
+                <div class="storage-app-meta">\${app.versions ? app.versions.length + ' version(s)' : ''}</div>
+              </div>
+              <div class="storage-app-size">\${formatBytesUI(app.total_bytes || 0)}</div>
+            </div>
+          \`).join('');
+        } else {
+          breakdown.innerHTML = '<div style="color: var(--text-muted); font-size: 0.8125rem;">No apps yet.</div>';
+        }
+      } catch (err) {
+        console.error('Failed to load storage info:', err);
+        overview.innerHTML = '<div style="color: var(--error-color); font-size: 0.8125rem;">Failed to load storage info.</div>';
+      }
+    }
+
+    // ============================================
+    // VERSION HISTORY
+    // ============================================
+    function loadVersionHistory(appId) {
+      const list = document.getElementById('versionHistoryList');
+      const storageInfo = document.getElementById('appStorageInfo');
+
+      if (!settingsApp) {
+        list.innerHTML = '';
+        return;
+      }
+
+      const versions = settingsApp.versions || [];
+      const metadata = settingsApp.version_metadata || [];
+      const currentVersion = settingsApp.current_version;
+
+      if (versions.length === 0) {
+        list.innerHTML = '<div style="color: var(--text-muted); font-size: 0.8125rem;">No versions yet.</div>';
+        return;
+      }
+
+      // Build lookup from version_metadata
+      const metaMap = {};
+      metadata.forEach(m => { metaMap[m.version] = m; });
+
+      // Sort versions descending (newest first)
+      const sorted = [...versions].sort((a, b) => {
+        const dateA = metaMap[a]?.created_at || '';
+        const dateB = metaMap[b]?.created_at || '';
+        return dateB.localeCompare(dateA);
+      });
+
+      list.innerHTML = sorted.map(v => {
+        const meta = metaMap[v];
+        const isCurrent = v === currentVersion;
+        const size = meta?.size_bytes ? formatBytesUI(meta.size_bytes) : '—';
+        const date = meta?.created_at ? new Date(meta.created_at).toLocaleDateString() : '—';
+
+        return \`
+          <div class="version-item">
+            <div class="version-info">
+              <span class="version-label">\${v}</span>
+              <span class="version-meta">\${size} · \${date}</span>
+              \${isCurrent ? '<span class="version-current-badge">● Current</span>' : ''}
+            </div>
+            \${!isCurrent ? \`<button class="version-delete-btn" onclick="deleteVersion('\${appId}', '\${v}')">Delete</button>\` : ''}
+          </div>
+        \`;
+      }).join('');
+
+      // Show app storage context
+      const appStorage = settingsApp.storage_bytes || 0;
+      if (appStorage > 0 && userProfile) {
+        storageInfo.style.display = 'block';
+        storageInfo.textContent = \`This app uses \${formatBytesUI(appStorage)} of your \${formatBytesUI(userProfile.storage_limit_bytes || 0)} total storage.\`;
+      } else {
+        storageInfo.style.display = 'none';
+      }
+    }
+
+    window.deleteVersion = async function(appId, version) {
+      if (!confirm(\`Delete version \${version}? This will free up storage space.\`)) return;
+
+      try {
+        const res = await fetch(\`/api/apps/\${appId}/versions/\${version}\`, {
+          method: 'DELETE',
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to delete version');
+
+        const reclaimed = data.bytes_reclaimed || 0;
+        showToast(\`Version \${version} deleted. Reclaimed \${formatBytesUI(reclaimed)}.\`);
+
+        // Refresh version list from server
+        const appRes = await fetch(\`/api/apps/\${appId}\`, {
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+        if (appRes.ok) {
+          const appData = await appRes.json();
+          settingsApp = appData;
+          // Update in apps list too
+          const idx = apps.findIndex(a => a.id === appId);
+          if (idx !== -1) apps[idx] = appData;
+        }
+        loadVersionHistory(appId);
+
+        // Refresh user profile storage
+        try {
+          const profileRes = await fetch('/api/user', {
+            headers: { 'Authorization': \`Bearer \${authToken}\` }
+          });
+          if (profileRes.ok) userProfile = await profileRes.json();
+        } catch (e) { /* ignore */ }
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    };
+
     window.openUserSettings = async function() {
       userSettingsModal.classList.add('open');
       await loadBYOKConfig();
       await loadTokens();
+      loadStorageInfo();
     };
 
     window.closeUserSettings = function() {
@@ -3278,6 +3727,27 @@ await hash.sha256('data')</div>
 
     function renderTokensList() {
       const tokensList = document.getElementById('tokensList');
+      const limitInfo = document.getElementById('tokenLimitInfo');
+      const createBtn = document.querySelector('.token-create-form .byok-btn-primary');
+
+      // Show token limit indicator
+      if (limitInfo && userProfile) {
+        limitInfo.style.display = 'flex';
+        const tier = userProfile.tier || 'free';
+        const count = currentTokens.length;
+        if (tier === 'free') {
+          const maxTokens = 1;
+          const atLimit = count >= maxTokens;
+          limitInfo.innerHTML = \`
+            <span>API Tokens: <span class="token-limit-count">\${count}/\${maxTokens}</span></span>
+            \${atLimit ? '<span style="color: var(--warning-color); font-size: 0.75rem;">Limit reached — <a href="/pricing" style="color: var(--accent-color);">Upgrade to Pro</a></span>' : ''}
+          \`;
+          if (createBtn) createBtn.disabled = atLimit;
+        } else {
+          limitInfo.innerHTML = \`<span>API Tokens: <span class="token-limit-count">\${count}</span> (unlimited)</span>\`;
+          if (createBtn) createBtn.disabled = false;
+        }
+      }
 
       if (currentTokens.length === 0) {
         tokensList.innerHTML = '<div class="tokens-empty">No API tokens yet. Create one to get started.</div>';
@@ -3536,8 +4006,28 @@ await hash.sha256('data')</div>
       // Load skills.md
       loadSkillsMd(appId);
 
-      // Load draft info
+      // Load draft info & version history
       loadDraftInfo(appId);
+      loadVersionHistory(appId);
+
+      // Gate visibility options for free tier
+      const visSelect = document.getElementById('settingsVisibility');
+      const visHint = document.getElementById('visibilityUpgradeHint');
+      if (visSelect) {
+        Array.from(visSelect.options).forEach(opt => {
+          if (opt.value === 'unlisted' || opt.value === 'public') {
+            opt.disabled = userProfile?.tier === 'free';
+          }
+        });
+      }
+      if (visHint) {
+        if (userProfile?.tier === 'free') {
+          visHint.style.display = 'block';
+          visHint.innerHTML = '🔒 <strong>Unlock unlisted & public visibility</strong> — <a href="/pricing" target="_blank">Upgrade to Pro</a> to share your apps publicly.';
+        } else {
+          visHint.style.display = 'none';
+        }
+      }
 
       // Load environment variables
       loadEnvVars(appId);
@@ -4141,9 +4631,23 @@ await hash.sha256('data')</div>
         // Update version display
         document.getElementById('publishedVersion').textContent = data.new_version;
 
-        // Refresh draft info
+        // Refresh draft info, version history, and app list
         await loadDraftInfo(settingsAppId);
+        loadVersionHistory(settingsAppId);
         await loadApps();
+
+        // Refresh user profile to update storage info
+        if (authToken) {
+          try {
+            const profileRes = await fetch('/api/user', {
+              headers: { 'Authorization': \`Bearer \${authToken}\` }
+            });
+            if (profileRes.ok) {
+              userProfile = await profileRes.json();
+              updateAuthUI();
+            }
+          } catch (e) { /* ignore */ }
+        }
       } catch (err) {
         showToast('Failed to publish draft', 'error');
       } finally {
@@ -4237,6 +4741,21 @@ await hash.sha256('data')</div>
     document.getElementById('uploadDraftBtn')?.addEventListener('click', async () => {
       if (!settingsAppId || !authToken || draftFiles.length === 0) return;
 
+      // Storage quota pre-check
+      if (userProfile) {
+        const used = userProfile.storage_used_bytes || 0;
+        const limit = userProfile.storage_limit_bytes || 0;
+        if (limit > 0 && used >= limit) {
+          showToast('Storage full. Delete old versions or upgrade to Pro.', 'error');
+          return;
+        }
+        const pct = limit > 0 ? (used / limit) * 100 : 0;
+        if (pct > 95) {
+          const remaining = formatBytesUI(limit - used);
+          showToast(\`Storage almost full — \${remaining} remaining. Consider upgrading to Pro.\`, 'warning');
+        }
+      }
+
       const btn = document.getElementById('uploadDraftBtn');
       btn.disabled = true;
       btn.textContent = 'Uploading...';
@@ -4262,6 +4781,20 @@ await hash.sha256('data')</div>
         draftFiles = [];
         document.getElementById('draftFileList').innerHTML = '';
         await loadDraftInfo(settingsAppId);
+        loadVersionHistory(settingsAppId);
+
+        // Refresh user profile to update storage info
+        if (authToken) {
+          try {
+            const profileRes = await fetch('/api/user', {
+              headers: { 'Authorization': \`Bearer \${authToken}\` }
+            });
+            if (profileRes.ok) {
+              userProfile = await profileRes.json();
+              updateAuthUI();
+            }
+          } catch (e) { /* ignore */ }
+        }
       } catch (err) {
         showToast(err.message || 'Failed to upload draft', 'error');
       } finally {
