@@ -229,14 +229,14 @@ export function getLayoutHTML(options: {
     .upload-btn {
       width: 100%;
       padding: 0.5rem 0.75rem;
-      background: var(--bg-tertiary);
+      background: transparent;
       color: var(--text-primary);
       border: 1px solid var(--border-color);
       border-radius: 8px;
       font-size: 0.875rem;
       font-weight: 500;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: color 0.2s, border-color 0.2s;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -244,8 +244,9 @@ export function getLayoutHTML(options: {
     }
 
     .upload-btn:hover {
-      background: var(--bg-hover);
-      border-color: var(--accent-color);
+      background: transparent;
+      border-color: var(--text-muted);
+      color: var(--text-primary);
     }
 
     .upload-btn svg {
@@ -275,21 +276,20 @@ export function getLayoutHTML(options: {
       width: 36px;
       height: 36px;
       background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
+      border: none;
       border-radius: 10px;
       color: var(--text-secondary);
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: background 0.15s, color 0.15s, border-color 0.15s;
+      transition: background 0.15s, color 0.15s;
       flex-shrink: 0;
     }
 
     .sidebar-rail-btn:hover {
       background: var(--bg-hover);
       color: var(--text-primary);
-      border-color: var(--accent-color);
     }
 
     .sidebar-rail-btn svg {
@@ -325,25 +325,23 @@ export function getLayoutHTML(options: {
       height: 36px;
       border-radius: 10px;
       background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
+      border: none;
       display: flex;
       align-items: center;
       justify-content: center;
       font-size: 0.9rem;
       cursor: pointer;
-      transition: background 0.15s, border-color 0.15s;
+      transition: background 0.15s;
       flex-shrink: 0;
       color: var(--text-primary);
     }
 
     .sidebar-rail-app:hover {
       background: var(--bg-hover);
-      border-color: var(--accent-color);
     }
 
     .sidebar-rail-app.active {
       background: var(--accent-color);
-      border-color: var(--accent-color);
       color: #fff;
     }
 
@@ -488,7 +486,7 @@ export function getLayoutHTML(options: {
       display: flex;
       flex-direction: column;
       justify-content: center;
-      height: 52px;
+      height: 64px;
       flex-shrink: 0;
     }
 
@@ -824,8 +822,8 @@ export function getLayoutHTML(options: {
 
     .drop-zone {
       width: 100%;
-      min-height: 260px;
-      border: 2px solid transparent;
+      min-height: 240px;
+      border: 2px dashed var(--border-color);
       border-radius: 16px;
       display: flex;
       flex-direction: column;
@@ -833,48 +831,16 @@ export function getLayoutHTML(options: {
       justify-content: center;
       padding: 2rem;
       cursor: pointer;
-      position: relative;
-      background:
-        linear-gradient(var(--bg-primary), var(--bg-primary)) padding-box,
-        conic-gradient(
-          from var(--border-angle),
-          transparent 0%,
-          transparent 25%,
-          #94a3b8 35%,
-          #e2e8f0 42%,
-          #fff 50%,
-          #e2e8f0 58%,
-          #94a3b8 65%,
-          transparent 75%,
-          transparent 100%
-        ) border-box;
-      animation: spin-border 4s linear infinite;
-      transition: box-shadow 0.3s ease;
-    }
-
-    html.dark .drop-zone {
-      background:
-        linear-gradient(var(--bg-primary), var(--bg-primary)) padding-box,
-        conic-gradient(
-          from var(--border-angle),
-          transparent 0%,
-          transparent 25%,
-          #374151 35%,
-          #9ca3af 42%,
-          #e5e7eb 50%,
-          #9ca3af 58%,
-          #374151 65%,
-          transparent 75%,
-          transparent 100%
-        ) border-box;
+      transition: border-color 0.2s, background 0.2s;
     }
 
     .drop-zone:hover, .drop-zone.dragover {
-      box-shadow: 0 0 24px rgba(148, 163, 184, 0.15);
+      border-color: var(--accent-color);
+      background: rgba(59, 130, 246, 0.03);
     }
 
     html.dark .drop-zone:hover, html.dark .drop-zone.dragover {
-      box-shadow: 0 0 24px rgba(229, 231, 235, 0.08);
+      background: rgba(96, 165, 250, 0.04);
     }
 
     .drop-zone-icon {
@@ -920,35 +886,37 @@ export function getLayoutHTML(options: {
     .deploy-btn {
       margin-top: 1.5rem;
       width: 100%;
-      padding: 0.875rem 2.5rem;
+      padding: 1rem 2.5rem;
       background:
         linear-gradient(var(--accent-gradient), var(--accent-gradient)) padding-box,
         conic-gradient(
           from var(--border-angle),
           transparent 0%,
-          transparent 30%,
-          rgba(255,255,255,0.5) 45%,
-          rgba(255,255,255,0.8) 50%,
-          rgba(255,255,255,0.5) 55%,
-          transparent 70%,
+          transparent 25%,
+          #94a3b8 35%,
+          #e2e8f0 42%,
+          #fff 50%,
+          #e2e8f0 58%,
+          #94a3b8 65%,
+          transparent 75%,
           transparent 100%
         ) border-box;
       color: white;
-      border: 1.5px solid transparent;
-      border-radius: 10px;
-      font-size: 1rem;
+      border: 2px solid transparent;
+      border-radius: 12px;
+      font-size: 1.05rem;
       font-weight: 600;
       cursor: pointer;
-      animation: spin-border 6s linear infinite;
+      animation: spin-border 4s linear infinite;
       transition: transform 0.1s, box-shadow 0.3s;
     }
 
     .deploy-btn:hover {
-      box-shadow: 0 0 20px rgba(59, 130, 246, 0.25);
+      box-shadow: 0 0 28px rgba(59, 130, 246, 0.3);
     }
 
     html.dark .deploy-btn:hover {
-      box-shadow: 0 0 20px rgba(96, 165, 250, 0.2);
+      box-shadow: 0 0 28px rgba(96, 165, 250, 0.2);
     }
 
     .deploy-btn:active {
@@ -956,13 +924,14 @@ export function getLayoutHTML(options: {
     }
 
     .deploy-btn:disabled {
-      opacity: 0.4;
+      opacity: 0.35;
       cursor: not-allowed;
       transform: none;
       animation: none;
       background: var(--bg-tertiary);
       color: var(--text-muted);
       border: 1.5px solid var(--border-color);
+      box-shadow: none;
     }
 
     .build-logs {
@@ -2356,10 +2325,10 @@ export function getLayoutHTML(options: {
     }
 
     .hero-title {
-      font-size: clamp(2.5rem, 6vw, 3.75rem);
+      font-size: clamp(3rem, 7vw, 4.5rem);
       font-weight: 800;
-      letter-spacing: -0.025em;
-      line-height: 1.08;
+      letter-spacing: -0.03em;
+      line-height: 1.05;
       text-align: center;
       color: var(--text-primary);
     }
@@ -2372,9 +2341,9 @@ export function getLayoutHTML(options: {
     .hero-subtitle {
       text-align: center;
       color: var(--text-secondary);
-      font-size: 1.1rem;
+      font-size: 1.15rem;
       max-width: 520px;
-      margin: 0.75rem auto 0;
+      margin: 0.75rem auto 2.5rem;
       line-height: 1.6;
     }
 
@@ -2391,7 +2360,7 @@ export function getLayoutHTML(options: {
       font-size: 0.8125rem;
       color: var(--text-muted);
       margin-top: auto;
-      height: 52px;
+      height: 64px;
       flex-shrink: 0;
     }
     .site-footer a {
@@ -5228,8 +5197,10 @@ await hash.sha256('data')</div>
       if (files.length === 0) {
         fileList.innerHTML = '';
         deployBtn.disabled = true;
+        dropZone.style.display = 'flex';
         return;
       }
+      dropZone.style.display = 'none';
       fileList.innerHTML = files.map(f => \`
         <div class="file-item">
           <span>\${f.name}</span>
@@ -5246,6 +5217,7 @@ await hash.sha256('data')</div>
       buildLogs.innerHTML = '';
       result.style.display = 'none';
       deployBtn.disabled = true;
+      dropZone.style.display = 'flex';
       appNameInput.value = '';
     }
 
