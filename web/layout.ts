@@ -924,13 +924,13 @@ export function getLayoutHTML(options: {
     }
 
     .deploy-btn:disabled {
-      opacity: 0.35;
+      opacity: 1;
       cursor: not-allowed;
       transform: none;
       animation: none;
-      background: var(--bg-tertiary);
+      background: var(--bg-secondary);
       color: var(--text-muted);
-      border: 1.5px solid var(--border-color);
+      border: 2px solid var(--border-color);
       box-shadow: none;
     }
 
