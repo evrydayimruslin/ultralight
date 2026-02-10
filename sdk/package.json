@@ -1,0 +1,38 @@
+{
+  "name": "ultralightpro-sdk",
+  "version": "0.2.1",
+  "description": "TypeScript SDK for Ultralight - Serverless app platform with AI integration",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "ultralight",
+    "ultralightpro",
+    "serverless",
+    "sdk",
+    "mcp",
+    "ai",
+    "typescript"
+  ],
+  "author": "Ultralight",
+  "license": "MIT",
+  "homepage": "https://ultralight.dev",
+  "devDependencies": {
+    "typescript": "^5.3.0"
+  },
+  "files": [
+    "dist/",
+    "README.md"
+  ]
+}

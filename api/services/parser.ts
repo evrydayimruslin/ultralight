@@ -1,0 +1,845 @@
+// TypeScript Parser Service
+// Parses TypeScript/JavaScript code to extract exported functions with full type information
+// Uses the TypeScript compiler API for accurate AST parsing
+
+// Note: TypeScript compiler is loaded via npm: specifier (Deno 2.x native support)
+// This adds ~2MB to the bundle but provides accurate type extraction
+import ts from 'npm:typescript@5.3.3';
+
+import type { ParsedSkills, SkillFunction, PermissionDeclaration } from '../../shared/types/index.ts';
+
+// ============================================
+// TYPES
+// ============================================
+
+export interface ParsedParameter {
+  name: string;
+  type: string;
+  description: string;
+  required: boolean;
+  default?: unknown;
+  schema: JsonSchema;
+}
+
+export interface ParsedReturn {
+  type: string;
+  description: string;
+  schema: JsonSchema;
+}
+
+export interface ParsedFunction {
+  name: string;
+  description: string;
+  parameters: ParsedParameter[];
+  returns: ParsedReturn;
+  isAsync: boolean;
+  examples: string[];
+  permissions: string[];
+}
+
+export interface JsonSchema {
+  type?: string;
+  properties?: Record<string, JsonSchema>;
+  items?: JsonSchema;
+  required?: string[];
+  description?: string;
+  enum?: unknown[];
+  default?: unknown;
+  $ref?: string;
+  additionalProperties?: boolean | JsonSchema;
+  [key: string]: unknown;
+}
+
+export interface ParseResult {
+  functions: ParsedFunction[];
+  types: Record<string, JsonSchema>; // Exported type definitions for $ref resolution
+  permissions: string[];
+  description?: string; // File-level JSDoc description
+  parseErrors: string[];
+  parseWarnings: string[];
+}
+
+export interface JSDocInfo {
+  description: string;
+  params: Map<string, string>;
+  returns: string;
+  examples: string[];
+  permissions: string[];
+}
+
+// ============================================
+// MAIN PARSER
+// ============================================
+
+/**
+ * Parse TypeScript/JavaScript code and extract exported functions
+ */
+export function parseTypeScript(code: string, filename = 'index.ts'): ParseResult {
+  const functions: ParsedFunction[] = [];
+  const types: Record<string, JsonSchema> = {};
+  const parseErrors: string[] = [];
+  const parseWarnings: string[] = [];
+  let fileDescription: string | undefined;
+
+  try {
+    // Create source file from code
+    const sourceFile = ts.createSourceFile(
+      filename,
+      code,
+      ts.ScriptTarget.Latest,
+      true, // setParentNodes - needed for JSDoc extraction
+      filename.endsWith('.tsx') || filename.endsWith('.jsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+    );
+
+    // Extract file-level JSDoc (first comment block)
+    const firstStatement = sourceFile.statements[0];
+    if (firstStatement) {
+      const fileJsDoc = getJSDocComment(firstStatement, sourceFile);
+      if (fileJsDoc && !fileJsDoc.description.includes('@')) {
+        fileDescription = fileJsDoc.description;
+      }
+    }
+
+    // Walk the AST to find exports
+    ts.forEachChild(sourceFile, node => {
+      try {
+        // Export function declarations: export function foo() {}
+        if (ts.isFunctionDeclaration(node) && isExported(node) && node.name) {
+          const parsed = parseFunctionDeclaration(node, sourceFile);
+          if (parsed) functions.push(parsed);
+        }
+
+        // Export variable statements: export const foo = () => {}
+        if (ts.isVariableStatement(node) && isExported(node)) {
+          for (const decl of node.declarationList.declarations) {
+            if (ts.isIdentifier(decl.name) && decl.initializer) {
+              // Arrow function or function expression
+              if (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer)) {
+                const parsed = parseVariableFunction(decl, node, sourceFile);
+                if (parsed) functions.push(parsed);
+              }
+            }
+          }
+        }
+
+        // Export type/interface declarations for schema resolution
+        if (ts.isInterfaceDeclaration(node) && isExported(node)) {
+          const schema = parseInterfaceDeclaration(node, sourceFile);
+          if (schema && node.name) {
+            types[node.name.text] = schema;
+          }
+        }
+
+        if (ts.isTypeAliasDeclaration(node) && isExported(node)) {
+          const schema = parseTypeAlias(node, sourceFile);
+          if (schema && node.name) {
+            types[node.name.text] = schema;
+          }
+        }
+      } catch (nodeErr) {
+        parseWarnings.push(`Failed to parse node: ${nodeErr instanceof Error ? nodeErr.message : String(nodeErr)}`);
+      }
+    });
+
+    // Also check for named exports: export { foo, bar }
+    ts.forEachChild(sourceFile, node => {
+      if (ts.isExportDeclaration(node) && node.exportClause && ts.isNamedExports(node.exportClause)) {
+        for (const element of node.exportClause.elements) {
+          const localName = element.propertyName?.text || element.name.text;
+          // Find the original declaration
+          const originalDecl = findDeclaration(sourceFile, localName);
+          if (originalDecl && !functions.some(f => f.name === element.name.text)) {
+            if (ts.isFunctionDeclaration(originalDecl) && originalDecl.name) {
+              const parsed = parseFunctionDeclaration(originalDecl, sourceFile);
+              if (parsed) {
+                parsed.name = element.name.text; // Use exported name
+                functions.push(parsed);
+              }
+            }
+          }
+        }
+      }
+    });
+
+  } catch (err) {
+    parseErrors.push(`Parse error: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // Infer permissions from code patterns
+  const permissions = inferPermissions(code);
+
+  return {
+    functions,
+    types,
+    permissions,
+    description: fileDescription,
+    parseErrors,
+    parseWarnings,
+  };
+}
+
+// ============================================
+// AST HELPERS
+// ============================================
+
+/**
+ * Check if a node has export modifier
+ */
+function isExported(node: ts.Node): boolean {
+  if (!ts.canHaveModifiers(node)) return false;
+  const modifiers = ts.getModifiers(node);
+  return modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+}
+
+/**
+ * Find a declaration by name in the source file
+ */
+function findDeclaration(sourceFile: ts.SourceFile, name: string): ts.Declaration | undefined {
+  let found: ts.Declaration | undefined;
+
+  ts.forEachChild(sourceFile, node => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === name) {
+      found = node;
+    }
+    if (ts.isVariableStatement(node)) {
+      for (const decl of node.declarationList.declarations) {
+        if (ts.isIdentifier(decl.name) && decl.name.text === name) {
+          found = decl;
+        }
+      }
+    }
+  });
+
+  return found;
+}
+
+/**
+ * Parse a function declaration into ParsedFunction
+ */
+function parseFunctionDeclaration(node: ts.FunctionDeclaration, sourceFile: ts.SourceFile): ParsedFunction | null {
+  if (!node.name) return null;
+
+  const name = node.name.text;
+  const jsDoc = getJSDocComment(node, sourceFile);
+  const isAsync = node.modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+
+  // Parse parameters
+  const parameters = node.parameters.map(param => parseParameter(param, jsDoc, sourceFile));
+
+  // Parse return type
+  const returnType = node.type ? node.type.getText(sourceFile) : (isAsync ? 'Promise<void>' : 'void');
+  const returnSchema = typeNodeToJsonSchema(node.type, sourceFile);
+
+  return {
+    name,
+    description: jsDoc?.description || '',
+    parameters,
+    returns: {
+      type: returnType,
+      description: jsDoc?.returns || '',
+      schema: returnSchema,
+    },
+    isAsync,
+    examples: jsDoc?.examples || [],
+    permissions: jsDoc?.permissions || [],
+  };
+}
+
+/**
+ * Parse a variable declaration with function initializer
+ */
+function parseVariableFunction(
+  decl: ts.VariableDeclaration,
+  statement: ts.VariableStatement,
+  sourceFile: ts.SourceFile
+): ParsedFunction | null {
+  if (!ts.isIdentifier(decl.name)) return null;
+  if (!decl.initializer) return null;
+  if (!ts.isArrowFunction(decl.initializer) && !ts.isFunctionExpression(decl.initializer)) return null;
+
+  const fn = decl.initializer;
+  const name = decl.name.text;
+  const jsDoc = getJSDocComment(statement, sourceFile);
+  const isAsync = fn.modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+
+  // Parse parameters
+  const parameters = fn.parameters.map(param => parseParameter(param, jsDoc, sourceFile));
+
+  // Parse return type - check variable type annotation first, then function return type
+  let returnType = 'void';
+  let returnTypeNode: ts.TypeNode | undefined;
+
+  if (decl.type && ts.isFunctionTypeNode(decl.type)) {
+    returnTypeNode = decl.type.type;
+    returnType = returnTypeNode?.getText(sourceFile) || 'void';
+  } else if (fn.type) {
+    returnTypeNode = fn.type;
+    returnType = fn.type.getText(sourceFile);
+  } else if (isAsync) {
+    returnType = 'Promise<void>';
+  }
+
+  const returnSchema = typeNodeToJsonSchema(returnTypeNode, sourceFile);
+
+  return {
+    name,
+    description: jsDoc?.description || '',
+    parameters,
+    returns: {
+      type: returnType,
+      description: jsDoc?.returns || '',
+      schema: returnSchema,
+    },
+    isAsync,
+    examples: jsDoc?.examples || [],
+    permissions: jsDoc?.permissions || [],
+  };
+}
+
+/**
+ * Parse a parameter node
+ */
+function parseParameter(param: ts.ParameterDeclaration, jsDoc: JSDocInfo | null, sourceFile: ts.SourceFile): ParsedParameter {
+  const name = param.name.getText(sourceFile);
+  const type = param.type ? param.type.getText(sourceFile) : 'unknown';
+  const required = !param.questionToken && !param.initializer;
+  const schema = typeNodeToJsonSchema(param.type, sourceFile);
+
+  // Get default value if present
+  let defaultValue: unknown;
+  if (param.initializer) {
+    try {
+      const initText = param.initializer.getText(sourceFile);
+      // Try to parse as JSON for simple values
+      if (initText === 'true') defaultValue = true;
+      else if (initText === 'false') defaultValue = false;
+      else if (initText === 'null') defaultValue = null;
+      else if (/^-?\d+$/.test(initText)) defaultValue = parseInt(initText, 10);
+      else if (/^-?\d+\.\d+$/.test(initText)) defaultValue = parseFloat(initText);
+      else if (initText.startsWith("'") || initText.startsWith('"')) {
+        defaultValue = initText.slice(1, -1);
+      }
+    } catch {
+      // Ignore complex defaults
+    }
+  }
+
+  return {
+    name,
+    type,
+    description: jsDoc?.params.get(name) || '',
+    required,
+    default: defaultValue,
+    schema,
+  };
+}
+
+/**
+ * Parse an interface declaration to JSON Schema
+ */
+function parseInterfaceDeclaration(node: ts.InterfaceDeclaration, sourceFile: ts.SourceFile): JsonSchema {
+  const properties: Record<string, JsonSchema> = {};
+  const required: string[] = [];
+
+  for (const member of node.members) {
+    if (ts.isPropertySignature(member) && member.name) {
+      const propName = member.name.getText(sourceFile);
+      properties[propName] = typeNodeToJsonSchema(member.type, sourceFile);
+
+      // Get JSDoc for property
+      const jsDoc = getJSDocComment(member, sourceFile);
+      if (jsDoc?.description) {
+        properties[propName].description = jsDoc.description;
+      }
+
+      if (!member.questionToken) {
+        required.push(propName);
+      }
+    }
+  }
+
+  return {
+    type: 'object',
+    properties,
+    required: required.length > 0 ? required : undefined,
+  };
+}
+
+/**
+ * Parse a type alias to JSON Schema
+ */
+function parseTypeAlias(node: ts.TypeAliasDeclaration, sourceFile: ts.SourceFile): JsonSchema {
+  return typeNodeToJsonSchema(node.type, sourceFile);
+}
+
+// ============================================
+// TYPE TO JSON SCHEMA CONVERSION
+// ============================================
+
+/**
+ * Convert a TypeScript type node to JSON Schema
+ */
+function typeNodeToJsonSchema(typeNode: ts.TypeNode | undefined, sourceFile: ts.SourceFile): JsonSchema {
+  if (!typeNode) {
+    return { type: 'any' };
+  }
+
+  // Keyword types: string, number, boolean, etc.
+  if (ts.isTypeReferenceNode(typeNode)) {
+    const typeName = typeNode.typeName.getText(sourceFile);
+
+    // Built-in types
+    if (typeName === 'string') return { type: 'string' };
+    if (typeName === 'number') return { type: 'number' };
+    if (typeName === 'boolean') return { type: 'boolean' };
+    if (typeName === 'null') return { type: 'null' };
+    if (typeName === 'undefined') return { type: 'null' };
+    if (typeName === 'void') return { type: 'null' };
+    if (typeName === 'any' || typeName === 'unknown') return {};
+
+    // Promise<T> - unwrap
+    if (typeName === 'Promise' && typeNode.typeArguments?.[0]) {
+      return typeNodeToJsonSchema(typeNode.typeArguments[0], sourceFile);
+    }
+
+    // Array<T>
+    if (typeName === 'Array' && typeNode.typeArguments?.[0]) {
+      return {
+        type: 'array',
+        items: typeNodeToJsonSchema(typeNode.typeArguments[0], sourceFile),
+      };
+    }
+
+    // Record<K, V>
+    if (typeName === 'Record' && typeNode.typeArguments?.length === 2) {
+      return {
+        type: 'object',
+        additionalProperties: typeNodeToJsonSchema(typeNode.typeArguments[1], sourceFile),
+      };
+    }
+
+    // Date
+    if (typeName === 'Date') {
+      return { type: 'string', format: 'date-time' };
+    }
+
+    // Custom type reference
+    return { $ref: `#/definitions/${typeName}` };
+  }
+
+  // Literal types: 'foo', 123, true
+  if (ts.isLiteralTypeNode(typeNode)) {
+    const literal = typeNode.literal;
+    if (ts.isStringLiteral(literal)) {
+      return { type: 'string', enum: [literal.text] };
+    }
+    if (ts.isNumericLiteral(literal)) {
+      return { type: 'number', enum: [parseFloat(literal.text)] };
+    }
+    if (literal.kind === ts.SyntaxKind.TrueKeyword) {
+      return { type: 'boolean', enum: [true] };
+    }
+    if (literal.kind === ts.SyntaxKind.FalseKeyword) {
+      return { type: 'boolean', enum: [false] };
+    }
+    if (literal.kind === ts.SyntaxKind.NullKeyword) {
+      return { type: 'null' };
+    }
+  }
+
+  // String keyword
+  if (typeNode.kind === ts.SyntaxKind.StringKeyword) {
+    return { type: 'string' };
+  }
+
+  // Number keyword
+  if (typeNode.kind === ts.SyntaxKind.NumberKeyword) {
+    return { type: 'number' };
+  }
+
+  // Boolean keyword
+  if (typeNode.kind === ts.SyntaxKind.BooleanKeyword) {
+    return { type: 'boolean' };
+  }
+
+  // Null keyword
+  if (typeNode.kind === ts.SyntaxKind.NullKeyword) {
+    return { type: 'null' };
+  }
+
+  // Undefined keyword
+  if (typeNode.kind === ts.SyntaxKind.UndefinedKeyword) {
+    return { type: 'null' };
+  }
+
+  // Void keyword
+  if (typeNode.kind === ts.SyntaxKind.VoidKeyword) {
+    return { type: 'null' };
+  }
+
+  // Any/unknown keyword
+  if (typeNode.kind === ts.SyntaxKind.AnyKeyword || typeNode.kind === ts.SyntaxKind.UnknownKeyword) {
+    return {};
+  }
+
+  // Array type: T[]
+  if (ts.isArrayTypeNode(typeNode)) {
+    return {
+      type: 'array',
+      items: typeNodeToJsonSchema(typeNode.elementType, sourceFile),
+    };
+  }
+
+  // Tuple type: [string, number]
+  if (ts.isTupleTypeNode(typeNode)) {
+    return {
+      type: 'array',
+      items: typeNode.elements.map(el => typeNodeToJsonSchema(el, sourceFile)),
+    };
+  }
+
+  // Object literal type: { foo: string, bar: number }
+  if (ts.isTypeLiteralNode(typeNode)) {
+    const properties: Record<string, JsonSchema> = {};
+    const required: string[] = [];
+
+    for (const member of typeNode.members) {
+      if (ts.isPropertySignature(member) && member.name) {
+        const propName = member.name.getText(sourceFile);
+        properties[propName] = typeNodeToJsonSchema(member.type, sourceFile);
+        if (!member.questionToken) {
+          required.push(propName);
+        }
+      }
+    }
+
+    return {
+      type: 'object',
+      properties,
+      required: required.length > 0 ? required : undefined,
+    };
+  }
+
+  // Union type: string | number
+  if (ts.isUnionTypeNode(typeNode)) {
+    const types = typeNode.types.map(t => typeNodeToJsonSchema(t, sourceFile));
+
+    // Check if it's a simple enum union: 'a' | 'b' | 'c'
+    const allLiterals = types.every(t => t.enum && t.enum.length === 1);
+    if (allLiterals) {
+      const enumValues = types.flatMap(t => t.enum || []);
+      const firstType = types[0]?.type;
+      if (types.every(t => t.type === firstType)) {
+        return { type: firstType, enum: enumValues };
+      }
+    }
+
+    // Check for nullable: string | null
+    const nonNullTypes = types.filter(t => t.type !== 'null');
+    const hasNull = types.some(t => t.type === 'null');
+    if (hasNull && nonNullTypes.length === 1) {
+      return { ...nonNullTypes[0], nullable: true };
+    }
+
+    return { oneOf: types };
+  }
+
+  // Intersection type: A & B
+  if (ts.isIntersectionTypeNode(typeNode)) {
+    const types = typeNode.types.map(t => typeNodeToJsonSchema(t, sourceFile));
+    return { allOf: types };
+  }
+
+  // Fallback
+  return { type: 'any' };
+}
+
+// ============================================
+// JSDOC EXTRACTION
+// ============================================
+
+/**
+ * Extract JSDoc comment from a node
+ */
+function getJSDocComment(node: ts.Node, sourceFile: ts.SourceFile): JSDocInfo | null {
+  // Get leading comment ranges
+  const text = sourceFile.getFullText();
+  const commentRanges = ts.getLeadingCommentRanges(text, node.getFullStart());
+
+  if (!commentRanges || commentRanges.length === 0) {
+    return null;
+  }
+
+  // Find JSDoc comment (starts with /**)
+  for (const range of commentRanges) {
+    const comment = text.slice(range.pos, range.end);
+    if (comment.startsWith('/**')) {
+      return parseJSDocComment(comment);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Parse a JSDoc comment string into structured info
+ */
+function parseJSDocComment(comment: string): JSDocInfo {
+  // Remove comment markers and normalize
+  const lines = comment
+    .replace(/^\/\*\*\s*/, '')
+    .replace(/\s*\*\/$/, '')
+    .split('\n')
+    .map(line => line.replace(/^\s*\*\s?/, '').trim());
+
+  const result: JSDocInfo = {
+    description: '',
+    params: new Map(),
+    returns: '',
+    examples: [],
+    permissions: [],
+  };
+
+  let currentSection: 'description' | 'param' | 'returns' | 'example' | 'permission' = 'description';
+  let currentParamName = '';
+  let currentExample = '';
+
+  for (const line of lines) {
+    // @param tag
+    const paramMatch = line.match(/^@param\s+(?:\{[^}]+\}\s+)?(\w+)\s*(.*)/);
+    if (paramMatch) {
+      currentSection = 'param';
+      currentParamName = paramMatch[1];
+      result.params.set(currentParamName, paramMatch[2] || '');
+      continue;
+    }
+
+    // @returns or @return tag
+    const returnsMatch = line.match(/^@returns?\s+(.*)/);
+    if (returnsMatch) {
+      currentSection = 'returns';
+      result.returns = returnsMatch[1] || '';
+      continue;
+    }
+
+    // @example tag
+    if (line.startsWith('@example')) {
+      if (currentExample) {
+        result.examples.push(currentExample.trim());
+      }
+      currentSection = 'example';
+      currentExample = line.replace('@example', '').trim();
+      continue;
+    }
+
+    // @permission tag (custom)
+    const permMatch = line.match(/^@permission\s+(.*)/);
+    if (permMatch) {
+      result.permissions.push(permMatch[1]);
+      continue;
+    }
+
+    // Skip other tags
+    if (line.startsWith('@')) {
+      currentSection = 'description';
+      continue;
+    }
+
+    // Append to current section
+    switch (currentSection) {
+      case 'description':
+        result.description += (result.description ? ' ' : '') + line;
+        break;
+      case 'param':
+        if (currentParamName) {
+          const existing = result.params.get(currentParamName) || '';
+          result.params.set(currentParamName, existing + ' ' + line);
+        }
+        break;
+      case 'returns':
+        result.returns += ' ' + line;
+        break;
+      case 'example':
+        currentExample += '\n' + line;
+        break;
+    }
+  }
+
+  // Save last example
+  if (currentExample) {
+    result.examples.push(currentExample.trim());
+  }
+
+  // Trim all values
+  result.description = result.description.trim();
+  result.returns = result.returns.trim();
+  for (const [key, value] of result.params) {
+    result.params.set(key, value.trim());
+  }
+
+  return result;
+}
+
+// ============================================
+// PERMISSION INFERENCE
+// ============================================
+
+/**
+ * Infer permissions from code patterns
+ */
+function inferPermissions(code: string): string[] {
+  const permissions: string[] = [];
+
+  // Storage operations
+  if (/ultralight\.(store|batchStore)/.test(code)) {
+    permissions.push('storage:write');
+  }
+  if (/ultralight\.(load|list|query|batchLoad)/.test(code)) {
+    permissions.push('storage:read');
+  }
+  if (/ultralight\.(remove|batchRemove)/.test(code)) {
+    permissions.push('storage:delete');
+  }
+
+  // Memory operations
+  if (/ultralight\.remember/.test(code)) {
+    permissions.push('memory:write');
+  }
+  if (/ultralight\.recall/.test(code)) {
+    permissions.push('memory:read');
+  }
+
+  // AI operations
+  if (/ultralight\.ai/.test(code)) {
+    permissions.push('ai:call');
+  }
+
+  // Cron operations
+  if (/ultralight\.cron\.(register|update|delete)/.test(code)) {
+    permissions.push('cron:write');
+  }
+  if (/ultralight\.cron\.list/.test(code)) {
+    permissions.push('cron:read');
+  }
+
+  // Network operations
+  if (/\bfetch\s*\(/.test(code)) {
+    permissions.push('net:fetch');
+  }
+
+  return [...new Set(permissions)];
+}
+
+// ============================================
+// UTILITY FUNCTIONS
+// ============================================
+
+/**
+ * Convert ParseResult to ParsedSkills format (for database storage)
+ */
+export function toSkillsParsed(result: ParseResult): ParsedSkills {
+  return {
+    functions: result.functions.map(fn => ({
+      name: fn.name,
+      description: fn.description,
+      parameters: fn.parameters.reduce((acc, p) => {
+        acc[p.name] = p.schema;
+        if (p.description) {
+          (acc[p.name] as JsonSchema).description = p.description;
+        }
+        return acc;
+      }, {} as Record<string, unknown>),
+      returns: fn.returns.schema,
+      examples: fn.examples,
+    })),
+    permissions: result.permissions.map(p => ({
+      permission: p,
+      required: true,
+    })),
+    description: result.description,
+  };
+}
+
+/**
+ * Convert ParsedSkills back to ParseResult (for round-trip from markdown)
+ */
+export function fromSkillsParsed(skills: ParsedSkills): ParseResult {
+  return {
+    functions: skills.functions.map(fn => ({
+      name: fn.name,
+      description: fn.description,
+      parameters: Object.entries(fn.parameters as Record<string, JsonSchema>).map(([name, schema]) => ({
+        name,
+        type: schemaToTypeString(schema),
+        description: schema.description || '',
+        required: true, // Assume required when parsing from skills
+        schema,
+      })),
+      returns: {
+        type: schemaToTypeString(fn.returns as JsonSchema),
+        description: '',
+        schema: fn.returns as JsonSchema,
+      },
+      isAsync: false, // Can't determine from skills
+      examples: fn.examples || [],
+      permissions: [],
+    })),
+    types: {},
+    permissions: skills.permissions.map(p => p.permission),
+    description: skills.description,
+    parseErrors: [],
+    parseWarnings: [],
+  };
+}
+
+/**
+ * Convert JSON Schema to TypeScript type string (for display)
+ */
+function schemaToTypeString(schema: JsonSchema): string {
+  if (!schema) return 'unknown';
+
+  if (schema.$ref) {
+    return schema.$ref.replace('#/definitions/', '');
+  }
+
+  if (schema.oneOf) {
+    return (schema.oneOf as JsonSchema[]).map(s => schemaToTypeString(s)).join(' | ');
+  }
+
+  if (schema.allOf) {
+    return (schema.allOf as JsonSchema[]).map(s => schemaToTypeString(s)).join(' & ');
+  }
+
+  if (schema.enum && schema.enum.length === 1) {
+    return JSON.stringify(schema.enum[0]);
+  }
+
+  if (schema.type === 'array') {
+    if (schema.items) {
+      if (Array.isArray(schema.items)) {
+        return `[${schema.items.map(i => schemaToTypeString(i)).join(', ')}]`;
+      }
+      return `${schemaToTypeString(schema.items)}[]`;
+    }
+    return 'unknown[]';
+  }
+
+  if (schema.type === 'object') {
+    if (schema.properties) {
+      const props = Object.entries(schema.properties)
+        .map(([k, v]) => `${k}: ${schemaToTypeString(v as JsonSchema)}`)
+        .join('; ');
+      return `{ ${props} }`;
+    }
+    if (schema.additionalProperties) {
+      return `Record<string, ${schemaToTypeString(schema.additionalProperties as JsonSchema)}>`;
+    }
+    return 'object';
+  }
+
+  if (schema.type) {
+    return schema.type as string;
+  }
+
+  return 'unknown';
+}

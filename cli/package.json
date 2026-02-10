@@ -1,0 +1,31 @@
+{
+  "name": "ultralightpro",
+  "version": "0.3.0",
+  "description": "CLI for Ultralight - Serverless app platform with AI integration",
+  "type": "module",
+  "bin": {
+    "ultralight": "./bin/ultralight.js"
+  },
+  "scripts": {
+    "build": "echo 'CLI is Deno-native. Use: deno task cli:install'",
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "keywords": [
+    "ultralight",
+    "ultralightpro",
+    "serverless",
+    "cli",
+    "mcp",
+    "ai"
+  ],
+  "author": "Ultralight",
+  "license": "MIT",
+  "homepage": "https://ultralight.dev",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "bin/",
+    "scripts/"
+  ]
+}
