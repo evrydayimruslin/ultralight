@@ -106,7 +106,9 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- ============================================
 -- 5. SEARCH_APPS — Updated for slug return
 -- ============================================
--- Overwrites existing search_apps to also return slug field.
+-- Must DROP first because return type is changing (adding slug column).
+
+DROP FUNCTION IF EXISTS search_apps(vector, uuid, integer, integer);
 
 CREATE OR REPLACE FUNCTION search_apps(
   p_query_embedding vector(1536),
