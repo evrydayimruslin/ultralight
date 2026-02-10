@@ -18,6 +18,10 @@ import {
   checkVisibilityAllowed,
   getUserTier,
 } from '../services/tier-enforcement.ts';
+import {
+  generateSkillsForVersion,
+  rebuildUserLibrary,
+} from '../services/library.ts';
 
 // Export file type for programmatic uploads
 export interface UploadFile {
@@ -354,6 +358,21 @@ export async function handleUpload(request: Request): Promise<Response> {
       app_type: appType,
     });
     log('success', 'App record created');
+
+    // Auto-generate Skills.md + library entry + embedding (fire-and-forget for speed)
+    log('info', 'Generating Skills.md...');
+    const appsForSkills = await appsService.findById(appId);
+    if (appsForSkills) {
+      generateSkillsForVersion(appsForSkills, storageKey, version)
+        .then(skills => {
+          if (skills.skillsMd) {
+            console.log(`Skills.md generated for ${appId}`);
+          }
+          // Rebuild user library with the new app
+          rebuildUserLibrary(userId).catch(err => console.error('Library rebuild failed:', err));
+        })
+        .catch(err => console.error('Skills generation failed:', err));
+    }
 
     log('success', 'Build complete!');
 
@@ -932,6 +951,20 @@ export async function handleUploadFiles(
     app_type: appType,
   });
   log('success', 'App record created');
+
+  // Auto-generate Skills.md + library entry + embedding (fire-and-forget)
+  log('info', 'Generating Skills.md...');
+  const appsForSkills = await appsService.findById(appId);
+  if (appsForSkills) {
+    generateSkillsForVersion(appsForSkills, storageKey, version)
+      .then(skills => {
+        if (skills.skillsMd) {
+          console.log(`Skills.md generated for ${appId}`);
+        }
+        rebuildUserLibrary(userId).catch(err => console.error('Library rebuild failed:', err));
+      })
+      .catch(err => console.error('Skills generation failed:', err));
+  }
 
   log('success', 'Build complete!');
 
