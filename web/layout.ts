@@ -682,19 +682,7 @@ export function getLayoutHTML(options: {
     }
     .upgrade-cta a:hover { text-decoration: underline; }
 
-    /* Token limit info */
-    .token-limit-info {
-      font-size: 0.8125rem;
-      color: var(--text-secondary);
-      padding: 0.5rem 0;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-    .token-limit-count {
-      font-weight: 600;
-      font-family: monospace;
-    }
+    /* Token count (in dashboard card header) — no limits, all tiers unlimited */
 
     .auth-btn {
       padding: 0.375rem 0.75rem;
@@ -2205,19 +2193,87 @@ export function getLayoutHTML(options: {
         <div class="dashboard-card" style="margin-bottom: 1rem;">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
             <h3 style="font-size: 0.9375rem; font-weight: 600;">API Tokens</h3>
-            <button onclick="openApiKeysModal()" style="font-size: 0.8125rem; padding: 4px 12px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer; color: var(--text-secondary); transition: color 0.2s, border-color 0.2s;">Manage</button>
+            <span id="tokenCount" style="font-size: 0.75rem; color: var(--text-muted);"></span>
           </div>
-          <div id="dashboardTokenList" style="font-size: 0.8125rem; color: var(--text-secondary);">Loading tokens...</div>
+          <p style="font-size: 0.8125rem; color: var(--text-muted); margin-bottom: 0.75rem;">Personal access tokens for CLI and API access. Tokens are shown only once when created.</p>
+
+          <div id="tokensMessage" class="byok-message" style="display: none;"></div>
+
+          <!-- Create Token Form -->
+          <div class="token-create-form">
+            <input type="text" id="newTokenName" placeholder="Token name (e.g., CLI, Corin Bot)" maxlength="50" />
+            <select id="newTokenExpiry">
+              <option value="">Never expires</option>
+              <option value="7">7 days</option>
+              <option value="30">30 days</option>
+              <option value="90">90 days</option>
+              <option value="365">1 year</option>
+            </select>
+            <button class="byok-btn byok-btn-primary" onclick="createToken()">Create Token</button>
+          </div>
+
+          <!-- New Token Display (shown after creation) -->
+          <div id="newTokenDisplay" class="new-token-display" style="display: none;">
+            <div class="new-token-warning">⚠️ Copy this token now! You won't be able to see it again.</div>
+            <div class="new-token-value">
+              <code id="newTokenValue"></code>
+              <button class="byok-btn byok-btn-secondary" onclick="copyToken()">Copy</button>
+            </div>
+          </div>
+
+          <!-- Tokens List -->
+          <div id="tokensList" class="tokens-list">
+            <div class="byok-loading">Loading tokens...</div>
+          </div>
         </div>
 
-        <!-- Supabase Config -->
+        <!-- Supabase Servers -->
         <div class="dashboard-card" style="margin-bottom: 1rem;">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem;">
-            <h3 style="font-size: 0.9375rem; font-weight: 600;">Supabase Config</h3>
-            <span id="supabaseStatus" style="font-size: 0.75rem; padding: 2px 8px; border-radius: 9999px; background: var(--bg-tertiary); color: var(--text-muted);">Not configured</span>
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+            <h3 style="font-size: 0.9375rem; font-weight: 600;">Supabase Servers</h3>
+            <span id="supabaseServerCount" style="font-size: 0.75rem; color: var(--text-muted);"></span>
           </div>
-          <p style="font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 0.75rem;">Set your Supabase credentials once — all your apps can use them.</p>
-          <button id="configureSupabaseBtn" onclick="openSupabaseConfig()" style="font-size: 0.8125rem; padding: 6px 14px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer; color: var(--text-secondary); transition: color 0.2s, border-color 0.2s;">Configure</button>
+          <p style="font-size: 0.8125rem; color: var(--text-muted); margin-bottom: 0.75rem;">Save your Supabase projects here, then assign them to apps from app settings.</p>
+
+          <div id="supabaseMessage" class="byok-message" style="display: none;"></div>
+
+          <!-- Add Server Form -->
+          <div class="supabase-add-form" id="supabaseAddForm" style="display: none;">
+            <div class="settings-field" style="margin-bottom: 0.5rem;">
+              <input type="text" id="sbNewName" class="settings-input" placeholder="Server name (e.g., Production, Staging)" maxlength="100" style="font-size: 0.8125rem;" />
+            </div>
+            <div class="settings-field" style="margin-bottom: 0.5rem;">
+              <input type="text" id="sbNewUrl" class="settings-input" placeholder="https://xxxxx.supabase.co" style="font-size: 0.8125rem;" />
+            </div>
+            <div class="settings-field" style="margin-bottom: 0.5rem;">
+              <div style="display: flex; gap: 0.5rem;">
+                <input type="password" id="sbNewAnonKey" class="settings-input" placeholder="Anon key (required)" style="flex: 1; font-size: 0.8125rem;" />
+                <button class="env-var-toggle-visibility" onclick="toggleSupabaseKeyVisibility('sbNewAnonKey')" title="Toggle visibility">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                </button>
+              </div>
+            </div>
+            <div class="settings-field" style="margin-bottom: 0.75rem;">
+              <div style="display: flex; gap: 0.5rem;">
+                <input type="password" id="sbNewServiceKey" class="settings-input" placeholder="Service role key (optional)" style="flex: 1; font-size: 0.8125rem;" />
+                <button class="env-var-toggle-visibility" onclick="toggleSupabaseKeyVisibility('sbNewServiceKey')" title="Toggle visibility">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                </button>
+              </div>
+            </div>
+            <div style="display: flex; gap: 0.5rem;">
+              <button class="byok-btn byok-btn-primary" onclick="saveNewSupabaseServer()">Save Server</button>
+              <button class="byok-btn byok-btn-secondary" onclick="cancelAddSupabaseServer()">Cancel</button>
+            </div>
+          </div>
+
+          <!-- Add Server Button (shown when form is hidden) -->
+          <button id="supabaseAddBtn" class="byok-btn byok-btn-secondary" onclick="showAddSupabaseForm()" style="margin-bottom: 0.75rem;">+ Add Server</button>
+
+          <!-- Servers List -->
+          <div id="supabaseServersList" class="tokens-list">
+            <div class="byok-loading">Loading servers...</div>
+          </div>
         </div>
 
         <!-- MCP Call Log -->
@@ -2387,80 +2443,34 @@ if (ultralight.env.FEATURE_FLAG) {
         <!-- Database Tab (Supabase) -->
         <div class="settings-tab-content" id="tab-database">
           <div class="settings-section">
-            <div class="settings-section-title">Supabase Integration</div>
+            <div class="settings-section-title">Supabase Server</div>
             <div class="info-box">
-              Connect your own Supabase project to enable real database access with SQL, auth, and real-time features.
-              Your credentials are encrypted and only accessible at runtime.
+              Select a saved Supabase server for this app. Manage your servers from the <a href="#" onclick="event.preventDefault(); closeSettingsModal(); showView('dashboard');" style="color: var(--accent-color);">Dashboard</a>.
             </div>
 
             <div class="settings-field">
-              <label for="supabaseUrl">Supabase URL</label>
-              <input type="text" id="supabaseUrl" class="settings-input" placeholder="https://xxxxx.supabase.co" />
+              <label for="appSupabaseSelect">Supabase Server</label>
+              <select id="appSupabaseSelect" class="settings-input" style="cursor: pointer;">
+                <option value="">None — Supabase disabled</option>
+              </select>
+              <span class="env-vars-limits">When a server is selected, a pre-configured Supabase client is available as <code>supabase</code> in your code.</span>
             </div>
 
-            <div class="settings-field">
-              <label for="supabaseAnonKey">Anon Key (public)</label>
-              <div style="display: flex; gap: 0.5rem;">
-                <input type="password" id="supabaseAnonKey" class="settings-input" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." style="flex: 1;" />
-                <button class="env-var-toggle-visibility" onclick="toggleSupabaseKeyVisibility('supabaseAnonKey')" title="Toggle visibility">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                    <circle cx="12" cy="12" r="3"></circle>
-                  </svg>
-                </button>
-              </div>
-              <span class="env-vars-limits">Required for client-side operations. Safe to expose.</span>
+            <div id="appSupabaseInfo" style="display: none; font-size: 0.8125rem; color: var(--text-muted); margin-top: 0.5rem; padding: 0.75rem; background: var(--bg-tertiary); border-radius: 6px;">
             </div>
-
-            <div class="settings-field">
-              <label for="supabaseServiceKey">Service Role Key (optional)</label>
-              <div style="display: flex; gap: 0.5rem;">
-                <input type="password" id="supabaseServiceKey" class="settings-input" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." style="flex: 1;" />
-                <button class="env-var-toggle-visibility" onclick="toggleSupabaseKeyVisibility('supabaseServiceKey')" title="Toggle visibility">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                    <circle cx="12" cy="12" r="3"></circle>
-                  </svg>
-                </button>
-              </div>
-              <span class="env-vars-limits" style="color: var(--warning-color);">⚠️ Grants full database access. Only use for admin operations.</span>
-            </div>
-
-            <div class="settings-field">
-              <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                <input type="checkbox" id="supabaseEnabled" style="width: 16px; height: 16px;" />
-                <span>Enable Supabase</span>
-              </label>
-              <span class="env-vars-limits">When enabled, a pre-configured Supabase client is available as <code>supabase</code> in your code.</span>
-            </div>
-
-            <div id="supabaseStatus" class="skills-status" style="display: none;"></div>
           </div>
 
           <div class="settings-section">
             <div class="settings-section-title">Usage in Code</div>
-            <div class="quick-ref-code" style="font-size: 0.8125rem; padding: 1rem;">// Option 1: Use the pre-configured client (recommended)
+            <div class="quick-ref-code" style="font-size: 0.8125rem; padding: 1rem;">// Use the pre-configured client (recommended)
 const { data, error } = await supabase
   .from('posts')
   .select('*')
   .eq('user_id', ultralight.user.id);
 
-// Option 2: Import and configure manually
-import { createClient } from '@supabase/supabase-js';
-const client = createClient(
-  ultralight.env.SUPABASE_URL,
-  ultralight.env.SUPABASE_ANON_KEY
-);</div>
-          </div>
-
-          <div class="settings-section">
-            <div class="settings-action-btn danger" id="removeSupabaseBtn" style="width: fit-content;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="3 6 5 6 21 6"></polyline>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-              </svg>
-              Remove Supabase Configuration
-            </div>
+// Environment variables are also available:
+// ultralight.env.SUPABASE_URL
+// ultralight.env.SUPABASE_ANON_KEY</div>
           </div>
         </div>
 
@@ -2585,63 +2595,7 @@ const client = createClient(
     </div>
   </div>
 
-  <!-- User Settings Modal (BYOK + API Tokens) -->
-  <!-- API Keys Modal -->
-  <div class="modal-overlay" id="apiKeysModal">
-    <div class="modal" style="max-width: 650px;">
-      <div class="modal-header">
-        <h2 class="modal-title">API Keys</h2>
-        <button class="modal-close" onclick="closeApiKeysModal()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </button>
-      </div>
-      <div class="modal-body">
-        <div class="settings-section">
-          <div class="info-box">
-            Create personal access tokens for CLI and API access. Tokens are shown only once when created.
-          </div>
-
-          <div id="tokensMessage" class="byok-message" style="display: none;"></div>
-
-          <!-- Create Token Form -->
-          <div class="token-create-form">
-            <input type="text" id="newTokenName" placeholder="Token name (e.g., CLI, Corin Bot)" maxlength="50" />
-            <select id="newTokenExpiry">
-              <option value="">Never expires</option>
-              <option value="7">7 days</option>
-              <option value="30">30 days</option>
-              <option value="90">90 days</option>
-              <option value="365">1 year</option>
-            </select>
-            <button class="byok-btn byok-btn-primary" onclick="createToken()">Create Token</button>
-          </div>
-
-          <!-- New Token Display (shown after creation) -->
-          <div id="newTokenDisplay" class="new-token-display" style="display: none;">
-            <div class="new-token-warning">⚠️ Copy this token now! You won't be able to see it again.</div>
-            <div class="new-token-value">
-              <code id="newTokenValue"></code>
-              <button class="byok-btn byok-btn-secondary" onclick="copyToken()">Copy</button>
-            </div>
-          </div>
-
-          <!-- Token Limit Info -->
-          <div id="tokenLimitInfo" class="token-limit-info" style="display: none;"></div>
-
-          <!-- Tokens List -->
-          <div id="tokensList" class="tokens-list">
-            <div class="byok-loading">Loading tokens...</div>
-          </div>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="modal-btn secondary" onclick="closeApiKeysModal()">Close</button>
-      </div>
-    </div>
-  </div>
+  <!-- API Keys Modal removed — token management is now inline on the dashboard -->
 
 
   <!-- Hidden BYOK container (deprecated from UI but keeping data layer) -->
@@ -3050,7 +3004,6 @@ await hash.sha256('data')</div>
     // ============================================
     // User Settings (Individual Modals)
     // ============================================
-    const apiKeysModal = document.getElementById('apiKeysModal');
     const byokProviders = document.getElementById('byokProviders');
     const byokMessage = document.getElementById('byokMessage');
     let byokData = null;
@@ -3175,21 +3128,16 @@ await hash.sha256('data')</div>
       }
     };
 
+    // Tokens are now managed inline on the dashboard — no modal needed.
+    // Legacy aliases in case profile dropdown or other code references these:
     window.openApiKeysModal = async function() {
       closeProfileDropdown();
-      apiKeysModal.classList.add('open');
+      showView('dashboard');
       await loadTokens();
     };
-
-    window.closeApiKeysModal = function() {
-      apiKeysModal.classList.remove('open');
-      document.getElementById('tokensMessage').style.display = 'none';
-      document.getElementById('newTokenDisplay').style.display = 'none';
-    };
-
-    // Legacy alias (in case anything still references it)
+    window.closeApiKeysModal = function() {};
     window.openUserSettings = function() { openApiKeysModal(); };
-    window.closeUserSettings = function() { closeApiKeysModal(); };
+    window.closeUserSettings = function() {};
 
     async function loadBYOKConfig() {
       if (!authToken) return;
@@ -3358,11 +3306,6 @@ await hash.sha256('data')</div>
       setTimeout(() => { byokMessage.style.display = 'none'; }, 5000);
     }
 
-    // Close modals on overlay click
-    apiKeysModal.addEventListener('click', (e) => {
-      if (e.target === apiKeysModal) closeApiKeysModal();
-    });
-
     // ============================================
     // API Tokens
     // ============================================
@@ -3393,26 +3336,11 @@ await hash.sha256('data')</div>
 
     function renderTokensList() {
       const tokensList = document.getElementById('tokensList');
-      const limitInfo = document.getElementById('tokenLimitInfo');
-      const createBtn = document.querySelector('.token-create-form .byok-btn-primary');
+      const countEl = document.getElementById('tokenCount');
 
-      // Show token limit indicator
-      if (limitInfo && userProfile) {
-        limitInfo.style.display = 'flex';
-        const tier = userProfile.tier || 'free';
-        const count = currentTokens.length;
-        if (tier === 'free') {
-          const maxTokens = 1;
-          const atLimit = count >= maxTokens;
-          limitInfo.innerHTML = \`
-            <span>API Tokens: <span class="token-limit-count">\${count}/\${maxTokens}</span></span>
-            \${atLimit ? '<span style="color: var(--warning-color); font-size: 0.75rem;">Limit reached — <a href="/pricing" style="color: var(--accent-color);">Upgrade to Pro</a></span>' : ''}
-          \`;
-          if (createBtn) createBtn.disabled = atLimit;
-        } else {
-          limitInfo.innerHTML = \`<span>API Tokens: <span class="token-limit-count">\${count}</span> (unlimited)</span>\`;
-          if (createBtn) createBtn.disabled = false;
-        }
+      // Update token count header — all tiers have unlimited tokens
+      if (countEl) {
+        countEl.textContent = currentTokens.length + ' token' + (currentTokens.length !== 1 ? 's' : '');
       }
 
       if (currentTokens.length === 0) {
@@ -3698,8 +3626,8 @@ await hash.sha256('data')</div>
       // Load environment variables
       loadEnvVars(appId);
 
-      // Load Supabase configuration
-      loadSupabaseConfig(appId);
+      // Load Supabase server dropdown
+      loadAppSupabaseDropdown(appId);
 
       // Published version
       document.getElementById('publishedVersion').textContent = settingsApp.current_version || '1.0.0';
@@ -4035,121 +3963,137 @@ await hash.sha256('data')</div>
     }
 
     // ============================================
-    // Supabase Configuration
+    // Supabase Servers (Dashboard CRUD)
     // ============================================
-    let supabaseConfigLoaded = false;
-    let supabaseConfigChanged = false;
+    let savedSupabaseServers = [];
 
-    async function loadSupabaseConfig(appId) {
-      const urlInput = document.getElementById('supabaseUrl');
-      const anonKeyInput = document.getElementById('supabaseAnonKey');
-      const serviceKeyInput = document.getElementById('supabaseServiceKey');
-      const enabledCheckbox = document.getElementById('supabaseEnabled');
-      const status = document.getElementById('supabaseStatus');
+    async function loadSupabaseServers() {
+      if (!authToken) return;
+
+      const listEl = document.getElementById('supabaseServersList');
+      if (listEl) listEl.innerHTML = '<div class="byok-loading">Loading servers...</div>';
 
       try {
-        const res = await fetch(\`/api/apps/\${appId}/supabase\`, {
+        const res = await fetch('/api/user/supabase', {
           headers: { 'Authorization': \`Bearer \${authToken}\` }
         });
-
-        if (!res.ok) {
-          if (res.status === 403) {
-            status.textContent = 'You don\\'t have permission to manage Supabase for this app.';
-            status.className = 'skills-status error';
-            status.style.display = 'block';
-            return;
-          }
-          throw new Error('Failed to load Supabase config');
-        }
-
+        if (!res.ok) throw new Error('Failed to load servers');
         const data = await res.json();
-
-        urlInput.value = data.url || '';
-        anonKeyInput.value = ''; // Don't show actual key
-        anonKeyInput.placeholder = data.has_anon_key ? '••••••••••••••••' : 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...';
-        serviceKeyInput.value = '';
-        serviceKeyInput.placeholder = data.has_service_key ? '••••••••••••••••' : 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...';
-        enabledCheckbox.checked = data.enabled || false;
-
-        supabaseConfigLoaded = true;
-        supabaseConfigChanged = false;
-
-        // Show status if configured
-        if (data.url && data.has_anon_key) {
-          status.textContent = '✓ Supabase configured' + (data.enabled ? ' and enabled' : ' (disabled)');
-          status.className = 'skills-status ' + (data.enabled ? 'success' : 'info');
-          status.style.display = 'block';
-        } else {
-          status.style.display = 'none';
-        }
-
+        savedSupabaseServers = data.configs || [];
+        renderSupabaseServers();
       } catch (err) {
-        console.error('Failed to load Supabase config:', err);
-        status.textContent = 'Failed to load Supabase configuration';
-        status.className = 'skills-status error';
-        status.style.display = 'block';
+        console.error('Failed to load Supabase servers:', err);
+        if (listEl) listEl.innerHTML = '<div class="byok-loading" style="color: var(--error-color);">Failed to load servers</div>';
       }
     }
 
-    // Track changes to Supabase config
-    ['supabaseUrl', 'supabaseAnonKey', 'supabaseServiceKey', 'supabaseEnabled'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) {
-        el.addEventListener('change', () => { supabaseConfigChanged = true; });
-        el.addEventListener('input', () => { supabaseConfigChanged = true; });
-      }
-    });
+    function renderSupabaseServers() {
+      const listEl = document.getElementById('supabaseServersList');
+      const countEl = document.getElementById('supabaseServerCount');
 
-    async function saveSupabaseConfig() {
-      if (!settingsAppId || !supabaseConfigChanged) {
-        return true; // Nothing to save
+      if (countEl) {
+        countEl.textContent = savedSupabaseServers.length + ' server' + (savedSupabaseServers.length !== 1 ? 's' : '');
       }
 
-      const urlInput = document.getElementById('supabaseUrl');
-      const anonKeyInput = document.getElementById('supabaseAnonKey');
-      const serviceKeyInput = document.getElementById('supabaseServiceKey');
-      const enabledCheckbox = document.getElementById('supabaseEnabled');
+      if (!listEl) return;
 
-      const payload = {
-        enabled: enabledCheckbox.checked,
-      };
-
-      // Only include URL if it changed
-      const url = urlInput.value.trim();
-      if (url) {
-        payload.url = url;
+      if (savedSupabaseServers.length === 0) {
+        listEl.innerHTML = '<div class="tokens-empty">No Supabase servers saved yet. Add one to get started.</div>';
+        return;
       }
 
-      // Only include keys if they were entered (not placeholder)
-      if (anonKeyInput.value && anonKeyInput.value !== '') {
-        payload.anon_key = anonKeyInput.value;
-      }
-      if (serviceKeyInput.value && serviceKeyInput.value !== '') {
-        payload.service_key = serviceKeyInput.value;
-      }
+      const html = savedSupabaseServers.map(server => {
+        const createdAt = new Date(server.created_at).toLocaleDateString();
+        // Extract project ref from URL for display
+        const urlShort = server.supabase_url.replace('https://', '').replace('.supabase.co', '');
+        return \`
+          <div class="token-item">
+            <div class="token-info">
+              <div class="token-name">\${escapeHtml(server.name)}</div>
+              <div class="token-meta">
+                <span class="token-prefix">\${urlShort}</span>
+                <span>Added: \${createdAt}</span>
+                \${server.has_service_key ? '<span style="color: var(--accent-color);">+ service key</span>' : ''}
+              </div>
+            </div>
+            <button class="byok-btn byok-btn-danger" onclick="deleteSupabaseServer('\${server.id}')">Remove</button>
+          </div>
+        \`;
+      }).join('');
+
+      listEl.innerHTML = html;
+    }
+
+    window.showAddSupabaseForm = function() {
+      document.getElementById('supabaseAddForm').style.display = 'block';
+      document.getElementById('supabaseAddBtn').style.display = 'none';
+      document.getElementById('sbNewName').focus();
+    };
+
+    window.cancelAddSupabaseServer = function() {
+      document.getElementById('supabaseAddForm').style.display = 'none';
+      document.getElementById('supabaseAddBtn').style.display = '';
+      // Clear form
+      ['sbNewName', 'sbNewUrl', 'sbNewAnonKey', 'sbNewServiceKey'].forEach(id => {
+        document.getElementById(id).value = '';
+      });
+    };
+
+    window.saveNewSupabaseServer = async function() {
+      const name = document.getElementById('sbNewName').value.trim();
+      const url = document.getElementById('sbNewUrl').value.trim();
+      const anonKey = document.getElementById('sbNewAnonKey').value.trim();
+      const serviceKey = document.getElementById('sbNewServiceKey').value.trim();
+
+      if (!name) { showSupabaseMessage('Server name is required', 'error'); return; }
+      if (!url) { showSupabaseMessage('Supabase URL is required', 'error'); return; }
+      if (!anonKey) { showSupabaseMessage('Anon key is required', 'error'); return; }
 
       try {
-        const res = await fetch(\`/api/apps/\${settingsAppId}/supabase\`, {
-          method: 'PUT',
+        const res = await fetch('/api/user/supabase', {
+          method: 'POST',
           headers: {
             'Authorization': \`Bearer \${authToken}\`,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify(payload)
+          body: JSON.stringify({ name, url, anon_key: anonKey, service_key: serviceKey || undefined })
         });
 
-        if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.error || 'Failed to save Supabase config');
-        }
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to save server');
 
-        supabaseConfigChanged = false;
-        return true;
+        showSupabaseMessage('Server saved!', 'success');
+        cancelAddSupabaseServer();
+        await loadSupabaseServers();
       } catch (err) {
-        console.error('Failed to save Supabase config:', err);
-        showToast(err.message || 'Failed to save Supabase configuration', 'error');
-        return false;
+        showSupabaseMessage(err.message, 'error');
       }
+    };
+
+    window.deleteSupabaseServer = async function(configId) {
+      if (!confirm('Remove this Supabase server? Apps using it will lose their database connection.')) return;
+
+      try {
+        const res = await fetch(\`/api/user/supabase/\${configId}\`, {
+          method: 'DELETE',
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+        if (!res.ok) throw new Error('Failed to remove server');
+
+        showSupabaseMessage('Server removed', 'success');
+        await loadSupabaseServers();
+      } catch (err) {
+        showSupabaseMessage(err.message, 'error');
+      }
+    };
+
+    function showSupabaseMessage(message, type) {
+      const el = document.getElementById('supabaseMessage');
+      if (!el) return;
+      el.textContent = message;
+      el.className = \`byok-message \${type}\`;
+      el.style.display = 'block';
+      setTimeout(() => { el.style.display = 'none'; }, 5000);
     }
 
     window.toggleSupabaseKeyVisibility = function(inputId) {
@@ -4161,38 +4105,111 @@ await hash.sha256('data')</div>
       }
     };
 
-    // Remove Supabase configuration
-    document.getElementById('removeSupabaseBtn')?.addEventListener('click', async () => {
-      if (!settingsAppId || !authToken) return;
+    // ============================================
+    // App Settings: Supabase Server Dropdown
+    // ============================================
+    let appSupabaseChanged = false;
 
-      if (!confirm('Are you sure you want to remove Supabase configuration? This cannot be undone.')) {
+    async function loadAppSupabaseDropdown(appId) {
+      const select = document.getElementById('appSupabaseSelect');
+      if (!select) return;
+
+      // Reset
+      select.innerHTML = '<option value="">None — Supabase disabled</option>';
+      appSupabaseChanged = false;
+
+      // Populate saved servers
+      if (savedSupabaseServers.length === 0) {
+        // Try loading if not yet fetched
+        try {
+          const res = await fetch('/api/user/supabase', {
+            headers: { 'Authorization': \`Bearer \${authToken}\` }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            savedSupabaseServers = data.configs || [];
+          }
+        } catch (e) { /* ignore */ }
+      }
+
+      savedSupabaseServers.forEach(server => {
+        const opt = document.createElement('option');
+        opt.value = server.id;
+        const urlShort = server.supabase_url.replace('https://', '').replace('.supabase.co', '');
+        opt.textContent = server.name + ' (' + urlShort + ')';
+        select.appendChild(opt);
+      });
+
+      // Get current app's supabase_config_id
+      try {
+        const res = await fetch(\`/api/apps/\${appId}/supabase\`, {
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.config_id) {
+            select.value = data.config_id;
+          }
+          updateAppSupabaseInfo();
+        }
+      } catch (e) { /* ignore */ }
+
+      // Listen for changes
+      select.onchange = function() {
+        appSupabaseChanged = true;
+        updateAppSupabaseInfo();
+      };
+    }
+
+    function updateAppSupabaseInfo() {
+      const select = document.getElementById('appSupabaseSelect');
+      const infoEl = document.getElementById('appSupabaseInfo');
+      if (!select || !infoEl) return;
+
+      const selectedId = select.value;
+      if (!selectedId) {
+        infoEl.style.display = 'none';
         return;
       }
 
+      const server = savedSupabaseServers.find(s => s.id === selectedId);
+      if (server) {
+        infoEl.style.display = 'block';
+        infoEl.innerHTML = \`<strong>\${escapeHtml(server.name)}</strong> — \${escapeHtml(server.supabase_url)}\${server.has_service_key ? ' (+ service key)' : ''}\`;
+      } else {
+        infoEl.style.display = 'none';
+      }
+    }
+
+    async function saveAppSupabaseConfig() {
+      if (!settingsAppId || !appSupabaseChanged) return true;
+
+      const select = document.getElementById('appSupabaseSelect');
+      const configId = select ? select.value : '';
+
       try {
         const res = await fetch(\`/api/apps/\${settingsAppId}/supabase\`, {
-          method: 'DELETE',
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
+          method: 'PUT',
+          headers: {
+            'Authorization': \`Bearer \${authToken}\`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ config_id: configId || null })
         });
 
-        if (!res.ok) throw new Error('Failed to remove Supabase config');
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || 'Failed to save Supabase config');
+        }
 
-        // Clear form
-        document.getElementById('supabaseUrl').value = '';
-        document.getElementById('supabaseAnonKey').value = '';
-        document.getElementById('supabaseServiceKey').value = '';
-        document.getElementById('supabaseEnabled').checked = false;
-
-        const status = document.getElementById('supabaseStatus');
-        status.textContent = 'Supabase configuration removed';
-        status.className = 'skills-status info';
-        status.style.display = 'block';
-
-        showToast('Supabase configuration removed');
+        appSupabaseChanged = false;
+        return true;
       } catch (err) {
-        showToast('Failed to remove Supabase configuration', 'error');
+        console.error('Failed to save app Supabase config:', err);
+        showToast(err.message || 'Failed to save Supabase configuration', 'error');
+        return false;
       }
-    });
+    }
 
     // Copy MCP Endpoint
     document.getElementById('copyMcpBtn')?.addEventListener('click', async () => {
@@ -4530,8 +4547,8 @@ await hash.sha256('data')</div>
           throw new Error('Failed to save environment variables');
         }
 
-        // Save Supabase configuration
-        const supabaseSaved = await saveSupabaseConfig();
+        // Save Supabase server assignment
+        const supabaseSaved = await saveAppSupabaseConfig();
         if (!supabaseSaved) {
           throw new Error('Failed to save Supabase configuration');
         }
@@ -4727,25 +4744,12 @@ await hash.sha256('data')</div>
         console.error('Failed to load usage:', e);
       }
 
-      try {
-        // Load token count for dashboard card
-        const tokensRes = await fetch('/api/tokens', { headers: { 'Authorization': \`Bearer \${authToken}\` } });
-        if (tokensRes.ok) {
-          const tokens = await tokensRes.json();
-          const listEl = document.getElementById('dashboardTokenList');
-          if (listEl) {
-            const count = Array.isArray(tokens) ? tokens.length : (tokens.tokens ? tokens.tokens.length : 0);
-            listEl.textContent = count + ' active token' + (count !== 1 ? 's' : '');
-          }
-        }
-      } catch (e) {
-        console.error('Failed to load tokens:', e);
-      }
-    }
+      // Load tokens inline on dashboard
+      await loadTokens();
 
-    window.openSupabaseConfig = function() {
-      showToast('Supabase configuration coming soon.');
-    };
+      // Load Supabase servers inline on dashboard
+      await loadSupabaseServers();
+    }
 
     window.refreshCallLog = function() {
       showToast('Call log refresh coming soon.');

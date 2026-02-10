@@ -1869,7 +1869,6 @@ async function handleGetSupabaseConfig(request: Request, appId: string): Promise
       return error('App not found', 404);
     }
 
-    // Only owner can view Supabase config
     if (app.owner_id !== user.id) {
       return error('Unauthorized', 403);
     }
@@ -1877,7 +1876,9 @@ async function handleGetSupabaseConfig(request: Request, appId: string): Promise
     const appRecord = app as Record<string, unknown>;
 
     return json({
-      enabled: appRecord.supabase_enabled || false,
+      config_id: appRecord.supabase_config_id || null,
+      // Legacy fields for backward compatibility
+      enabled: !!(appRecord.supabase_config_id || appRecord.supabase_enabled),
       url: appRecord.supabase_url || null,
       has_anon_key: !!appRecord.supabase_anon_key_encrypted,
       has_service_key: !!appRecord.supabase_service_key_encrypted,
@@ -1893,7 +1894,7 @@ async function handleGetSupabaseConfig(request: Request, appId: string): Promise
 }
 
 /**
- * Set Supabase configuration
+ * Set Supabase configuration — now accepts config_id to link a saved server
  * PUT /api/apps/:appId/supabase
  */
 async function handleSetSupabaseConfig(request: Request, appId: string): Promise<Response> {
@@ -1906,65 +1907,22 @@ async function handleSetSupabaseConfig(request: Request, appId: string): Promise
       return error('App not found', 404);
     }
 
-    // Only owner can set Supabase config
     if (app.owner_id !== user.id) {
       return error('Unauthorized', 403);
     }
 
     const body = await request.json();
-    const { url, anon_key, service_key, enabled } = body;
+    const { config_id } = body;
 
-    // Validate URL if provided
-    if (url !== undefined) {
-      if (url && typeof url !== 'string') {
-        return error('Invalid URL format', 400);
-      }
-      if (url && !url.match(/^https:\/\/[a-z0-9-]+\.supabase\.co$/)) {
-        return error('Invalid Supabase URL format. Expected: https://xxxxx.supabase.co', 400);
-      }
-    }
-
-    // Build update object
-    const updates: Record<string, unknown> = {};
-
-    if (url !== undefined) {
-      updates.supabase_url = url || null;
-    }
-
-    if (anon_key !== undefined) {
-      if (anon_key) {
-        // Validate anon key format (should be a JWT)
-        if (typeof anon_key !== 'string' || !anon_key.includes('.')) {
-          return error('Invalid anon key format', 400);
-        }
-        updates.supabase_anon_key_encrypted = await encryptEnvVar(anon_key);
-      } else {
-        updates.supabase_anon_key_encrypted = null;
-      }
-    }
-
-    if (service_key !== undefined) {
-      if (service_key) {
-        // Validate service key format (should be a JWT)
-        if (typeof service_key !== 'string' || !service_key.includes('.')) {
-          return error('Invalid service key format', 400);
-        }
-        updates.supabase_service_key_encrypted = await encryptEnvVar(service_key);
-      } else {
-        updates.supabase_service_key_encrypted = null;
-      }
-    }
-
-    if (enabled !== undefined) {
-      updates.supabase_enabled = !!enabled;
-    }
-
-    // Update app
-    await appsService.update(appId, updates);
+    // Update app to reference the saved server (or null to disable)
+    await appsService.update(appId, {
+      supabase_config_id: config_id || null,
+      supabase_enabled: !!config_id,
+    });
 
     return json({
       success: true,
-      message: 'Supabase configuration updated',
+      message: config_id ? 'Supabase server assigned' : 'Supabase disabled',
     });
 
   } catch (err) {
@@ -1990,16 +1948,12 @@ async function handleDeleteSupabaseConfig(request: Request, appId: string): Prom
       return error('App not found', 404);
     }
 
-    // Only owner can delete Supabase config
     if (app.owner_id !== user.id) {
       return error('Unauthorized', 403);
     }
 
-    // Clear all Supabase config
     await appsService.update(appId, {
-      supabase_url: null,
-      supabase_anon_key_encrypted: null,
-      supabase_service_key_encrypted: null,
+      supabase_config_id: null,
       supabase_enabled: false,
     });
 

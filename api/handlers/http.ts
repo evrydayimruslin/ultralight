@@ -103,32 +103,37 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
       console.error('Failed to decrypt env vars:', err);
     }
 
-    // Decrypt Supabase config if enabled (app-level first, then user platform-level fallback)
+    // Resolve Supabase config: prefer config_id, fall back to legacy app-level, then platform-level
     const appRecord = app as Record<string, unknown>;
     let supabaseConfig: { url: string; anonKey: string; serviceKey?: string } | undefined;
-    if (appRecord.supabase_enabled && appRecord.supabase_url && appRecord.supabase_anon_key_encrypted) {
+
+    if (appRecord.supabase_config_id) {
+      try {
+        const { getDecryptedSupabaseConfig } = await import('./user.ts');
+        const config = await getDecryptedSupabaseConfig(appRecord.supabase_config_id as string);
+        if (config) supabaseConfig = config;
+      } catch (err) {
+        console.error('Failed to get Supabase config by ID:', err);
+      }
+    }
+
+    if (!supabaseConfig && appRecord.supabase_enabled && appRecord.supabase_url && appRecord.supabase_anon_key_encrypted) {
       try {
         const anonKey = await decryptEnvVar(appRecord.supabase_anon_key_encrypted as string);
-        supabaseConfig = {
-          url: appRecord.supabase_url as string,
-          anonKey,
-        };
+        supabaseConfig = { url: appRecord.supabase_url as string, anonKey };
         if (appRecord.supabase_service_key_encrypted) {
           supabaseConfig.serviceKey = await decryptEnvVar(appRecord.supabase_service_key_encrypted as string);
         }
       } catch (err) {
-        console.error('Failed to decrypt Supabase config:', err);
+        console.error('Failed to decrypt legacy Supabase config:', err);
       }
     }
 
-    // Fallback to user's platform-level Supabase config
     if (!supabaseConfig && appRecord.supabase_enabled) {
       try {
         const { getDecryptedPlatformSupabase } = await import('./user.ts');
         const platformConfig = await getDecryptedPlatformSupabase(app.owner_id);
-        if (platformConfig) {
-          supabaseConfig = platformConfig;
-        }
+        if (platformConfig) supabaseConfig = platformConfig;
       } catch (err) {
         console.error('Failed to get platform Supabase config:', err);
       }

@@ -337,126 +337,126 @@ export async function handleUser(request: Request): Promise<Response> {
   // PLATFORM SUPABASE CONFIG
   // ============================================
 
-  // GET /api/user/supabase - Get platform Supabase config status
+  // GET /api/user/supabase - List all saved Supabase servers
   if (path === '/api/user/supabase' && method === 'GET') {
     try {
-      const config = await getUserPlatformSupabase(userId);
-      return json({
-        configured: config.configured,
-        url: config.url,
-        has_anon_key: config.has_anon_key,
-        has_service_key: config.has_service_key,
-      });
+      const configs = await listSupabaseConfigs(userId);
+      return json({ configs });
     } catch (err) {
-      console.error('Get Supabase config error:', err);
-      return error('Failed to get Supabase configuration', 500);
+      console.error('List Supabase configs error:', err);
+      return error('Failed to list Supabase configurations', 500);
     }
   }
 
-  // POST /api/user/supabase - Set platform Supabase config
+  // POST /api/user/supabase - Create a new saved Supabase server
   if (path === '/api/user/supabase' && method === 'POST') {
     try {
       const body = await request.json();
-      const { url: supabaseUrl, anon_key, service_key } = body;
+      const { name, url: supabaseUrl, anon_key, service_key } = body;
 
+      if (!name || typeof name !== 'string' || name.trim().length === 0) {
+        return error('Server name is required', 400);
+      }
+      if (name.length > 100) {
+        return error('Server name must be 100 characters or less', 400);
+      }
       if (!supabaseUrl || typeof supabaseUrl !== 'string') {
         return error('Supabase URL is required', 400);
       }
-
-      // Basic URL validation
-      try {
-        new URL(supabaseUrl);
-      } catch {
-        return error('Invalid Supabase URL', 400);
-      }
-
+      try { new URL(supabaseUrl); } catch { return error('Invalid Supabase URL', 400); }
       if (!anon_key || typeof anon_key !== 'string') {
         return error('Anon key is required', 400);
       }
 
-      // Encrypt keys
       const encryptedAnonKey = await encryptEnvVar(anon_key.trim());
       const encryptedServiceKey = service_key ? await encryptEnvVar(service_key.trim()) : null;
 
-      // Update user record
-      const SUPABASE_URL = (globalThis as Record<string, unknown>).Deno
-        ? (globalThis as Record<string, unknown> & { Deno: { env: { get: (k: string) => string } } }).Deno.env.get('SUPABASE_URL') || ''
-        : '';
-      const SUPABASE_SERVICE_ROLE_KEY = (globalThis as Record<string, unknown>).Deno
-        ? (globalThis as Record<string, unknown> & { Deno: { env: { get: (k: string) => string } } }).Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
-        : '';
+      const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } = getSupabaseEnv();
 
       const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`,
+        `${SB_URL}/rest/v1/user_supabase_configs`,
         {
-          method: 'PATCH',
+          method: 'POST',
           headers: {
-            'apikey': SUPABASE_SERVICE_ROLE_KEY,
-            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            'apikey': SB_KEY,
+            'Authorization': `Bearer ${SB_KEY}`,
             'Content-Type': 'application/json',
+            'Prefer': 'return=representation',
           },
           body: JSON.stringify({
+            user_id: userId,
+            name: name.trim(),
             supabase_url: supabaseUrl.trim(),
-            supabase_anon_key_encrypted: encryptedAnonKey,
-            supabase_service_key_encrypted: encryptedServiceKey,
-            updated_at: new Date().toISOString(),
+            anon_key_encrypted: encryptedAnonKey,
+            service_key_encrypted: encryptedServiceKey,
           }),
         }
       );
 
       if (!response.ok) {
-        throw new Error(`Failed to update: ${await response.text()}`);
+        const text = await response.text();
+        if (text.includes('unique') || text.includes('duplicate')) {
+          return error(`A server named "${name.trim()}" already exists`, 409);
+        }
+        throw new Error(`Failed to create: ${text}`);
       }
+
+      const created = await response.json();
+      const config = Array.isArray(created) ? created[0] : created;
 
       return json({
         success: true,
-        message: 'Supabase configuration saved',
+        config: {
+          id: config.id,
+          name: config.name,
+          supabase_url: config.supabase_url,
+          has_service_key: !!config.service_key_encrypted,
+          created_at: config.created_at,
+        },
       });
     } catch (err) {
-      console.error('Set Supabase config error:', err);
+      console.error('Create Supabase config error:', err);
+      if (err instanceof Error && err.message.includes('already exists')) {
+        return error(err.message, 409);
+      }
       return error('Failed to save Supabase configuration', 500);
     }
   }
 
-  // DELETE /api/user/supabase - Clear platform Supabase config
-  if (path === '/api/user/supabase' && method === 'DELETE') {
+  // DELETE /api/user/supabase/:id - Delete a saved Supabase server
+  const supabaseDeleteMatch = path.match(/^\/api\/user\/supabase\/([a-f0-9-]+)$/);
+  if (supabaseDeleteMatch && method === 'DELETE') {
     try {
-      const SUPABASE_URL = (globalThis as Record<string, unknown>).Deno
-        ? (globalThis as Record<string, unknown> & { Deno: { env: { get: (k: string) => string } } }).Deno.env.get('SUPABASE_URL') || ''
-        : '';
-      const SUPABASE_SERVICE_ROLE_KEY = (globalThis as Record<string, unknown>).Deno
-        ? (globalThis as Record<string, unknown> & { Deno: { env: { get: (k: string) => string } } }).Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
-        : '';
+      const configId = supabaseDeleteMatch[1];
+      const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } = getSupabaseEnv();
 
+      // Verify ownership
+      const checkRes = await fetch(
+        `${SB_URL}/rest/v1/user_supabase_configs?id=eq.${configId}&user_id=eq.${userId}&select=id`,
+        { headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` } }
+      );
+      const checkData = await checkRes.json();
+      if (!Array.isArray(checkData) || checkData.length === 0) {
+        return error('Configuration not found', 404);
+      }
+
+      // Delete (cascade will SET NULL on apps.supabase_config_id)
       const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`,
+        `${SB_URL}/rest/v1/user_supabase_configs?id=eq.${configId}&user_id=eq.${userId}`,
         {
-          method: 'PATCH',
-          headers: {
-            'apikey': SUPABASE_SERVICE_ROLE_KEY,
-            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            supabase_url: null,
-            supabase_anon_key_encrypted: null,
-            supabase_service_key_encrypted: null,
-            updated_at: new Date().toISOString(),
-          }),
+          method: 'DELETE',
+          headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` },
         }
       );
 
       if (!response.ok) {
-        throw new Error(`Failed to update: ${await response.text()}`);
+        throw new Error(`Failed to delete: ${await response.text()}`);
       }
 
-      return json({
-        success: true,
-        message: 'Supabase configuration cleared',
-      });
+      return json({ success: true, message: 'Supabase server removed' });
     } catch (err) {
-      console.error('Clear Supabase config error:', err);
-      return error('Failed to clear Supabase configuration', 500);
+      console.error('Delete Supabase config error:', err);
+      return error('Failed to delete Supabase configuration', 500);
     }
   }
 
@@ -500,22 +500,31 @@ export async function handleUser(request: Request): Promise<Response> {
 }
 
 // ============================================
-// Helper: Get user's platform-level Supabase config
-// Exported for use by MCP/HTTP handlers as fallback
+// Supabase env helper
 // ============================================
-export async function getUserPlatformSupabase(userId: string): Promise<{
-  configured: boolean;
-  url: string | null;
-  has_anon_key: boolean;
-  has_service_key: boolean;
-}> {
+function getSupabaseEnv(): { SUPABASE_URL: string; SUPABASE_SERVICE_ROLE_KEY: string } {
   // @ts-ignore - Deno is available
   const Deno = globalThis.Deno;
-  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  return {
+    SUPABASE_URL: Deno.env.get('SUPABASE_URL') || '',
+    SUPABASE_SERVICE_ROLE_KEY: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '',
+  };
+}
+
+// ============================================
+// Helper: List user's saved Supabase servers
+// ============================================
+export async function listSupabaseConfigs(userId: string): Promise<Array<{
+  id: string;
+  name: string;
+  supabase_url: string;
+  has_service_key: boolean;
+  created_at: string;
+}>> {
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
   const response = await fetch(
-    `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=supabase_url,supabase_anon_key_encrypted,supabase_service_key_encrypted`,
+    `${SUPABASE_URL}/rest/v1/user_supabase_configs?user_id=eq.${userId}&select=id,name,supabase_url,service_key_encrypted,created_at&order=created_at.asc`,
     {
       headers: {
         'apikey': SUPABASE_SERVICE_ROLE_KEY,
@@ -525,44 +534,39 @@ export async function getUserPlatformSupabase(userId: string): Promise<{
   );
 
   if (!response.ok) {
-    throw new Error(`Failed to get user: ${await response.text()}`);
+    throw new Error(`Failed to list configs: ${await response.text()}`);
   }
 
-  const users = await response.json() as Array<{
-    supabase_url: string | null;
-    supabase_anon_key_encrypted: string | null;
-    supabase_service_key_encrypted: string | null;
+  const rows = await response.json() as Array<{
+    id: string;
+    name: string;
+    supabase_url: string;
+    service_key_encrypted: string | null;
+    created_at: string;
   }>;
 
-  const user = users[0];
-  if (!user) {
-    return { configured: false, url: null, has_anon_key: false, has_service_key: false };
-  }
-
-  return {
-    configured: !!(user.supabase_url && user.supabase_anon_key_encrypted),
-    url: user.supabase_url,
-    has_anon_key: !!user.supabase_anon_key_encrypted,
-    has_service_key: !!user.supabase_service_key_encrypted,
-  };
+  return rows.map(r => ({
+    id: r.id,
+    name: r.name,
+    supabase_url: r.supabase_url,
+    has_service_key: !!r.service_key_encrypted,
+    created_at: r.created_at,
+  }));
 }
 
-/**
- * Get decrypted platform-level Supabase config for a user.
- * Used by MCP/HTTP handlers as fallback when app doesn't have per-app config.
- */
-export async function getDecryptedPlatformSupabase(userId: string): Promise<{
+// ============================================
+// Helper: Get decrypted Supabase config by config ID
+// Used by MCP/HTTP handlers at runtime
+// ============================================
+export async function getDecryptedSupabaseConfig(configId: string): Promise<{
   url: string;
   anonKey: string;
   serviceKey?: string;
 } | null> {
-  // @ts-ignore - Deno is available
-  const Deno = globalThis.Deno;
-  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
   const response = await fetch(
-    `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=supabase_url,supabase_anon_key_encrypted,supabase_service_key_encrypted`,
+    `${SUPABASE_URL}/rest/v1/user_supabase_configs?id=eq.${configId}&select=supabase_url,anon_key_encrypted,service_key_encrypted`,
     {
       headers: {
         'apikey': SUPABASE_SERVICE_ROLE_KEY,
@@ -573,29 +577,45 @@ export async function getDecryptedPlatformSupabase(userId: string): Promise<{
 
   if (!response.ok) return null;
 
-  const users = await response.json() as Array<{
-    supabase_url: string | null;
-    supabase_anon_key_encrypted: string | null;
-    supabase_service_key_encrypted: string | null;
+  const rows = await response.json() as Array<{
+    supabase_url: string;
+    anon_key_encrypted: string;
+    service_key_encrypted: string | null;
   }>;
 
-  const user = users[0];
-  if (!user?.supabase_url || !user?.supabase_anon_key_encrypted) {
-    return null;
-  }
+  const config = rows[0];
+  if (!config) return null;
 
   try {
-    const anonKey = await decryptEnvVar(user.supabase_anon_key_encrypted);
+    const anonKey = await decryptEnvVar(config.anon_key_encrypted);
     const result: { url: string; anonKey: string; serviceKey?: string } = {
-      url: user.supabase_url,
+      url: config.supabase_url,
       anonKey,
     };
-    if (user.supabase_service_key_encrypted) {
-      result.serviceKey = await decryptEnvVar(user.supabase_service_key_encrypted);
+    if (config.service_key_encrypted) {
+      result.serviceKey = await decryptEnvVar(config.service_key_encrypted);
     }
     return result;
   } catch (err) {
-    console.error('Failed to decrypt platform Supabase config:', err);
+    console.error('Failed to decrypt Supabase config:', err);
     return null;
   }
+}
+
+// Legacy aliases for backward compatibility during migration
+export async function getUserPlatformSupabase(userId: string) {
+  const configs = await listSupabaseConfigs(userId);
+  const first = configs[0];
+  return {
+    configured: !!first,
+    url: first?.supabase_url || null,
+    has_anon_key: !!first,
+    has_service_key: first?.has_service_key || false,
+  };
+}
+
+export async function getDecryptedPlatformSupabase(userId: string) {
+  const configs = await listSupabaseConfigs(userId);
+  if (configs.length === 0) return null;
+  return getDecryptedSupabaseConfig(configs[0].id);
 }

@@ -15,19 +15,18 @@ export interface WeeklyCallResult {
 }
 
 /**
- * Get the start of the current ISO week (Monday 00:00 UTC).
+ * Get the start of the current week (Sunday 00:00 UTC).
  */
 export function getWeekStart(): Date {
   const now = new Date();
   const day = now.getUTCDay(); // 0=Sun, 1=Mon, ...
-  const diff = day === 0 ? 6 : day - 1; // Days since Monday
-  const monday = new Date(Date.UTC(
+  const sunday = new Date(Date.UTC(
     now.getUTCFullYear(),
     now.getUTCMonth(),
-    now.getUTCDate() - diff,
+    now.getUTCDate() - day,
     0, 0, 0, 0
   ));
-  return monday;
+  return sunday;
 }
 
 /**

@@ -18,7 +18,7 @@ ALTER TABLE users ADD CONSTRAINT users_tier_check
 CREATE TABLE IF NOT EXISTS weekly_call_usage (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  week_start TIMESTAMPTZ NOT NULL,  -- Monday 00:00 UTC
+  week_start TIMESTAMPTZ NOT NULL,  -- Sunday 00:00 UTC
   call_count BIGINT DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
