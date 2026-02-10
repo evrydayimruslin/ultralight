@@ -10,6 +10,7 @@ import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
 import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
+import { getPermissionsForUser } from './user.ts';
 import { type Tier } from '../../shared/types/index.ts';
 import { handleUploadFiles, type UploadFile } from './upload.ts';
 import { handleDraftUploadFiles } from './upload.ts';
@@ -1644,6 +1645,17 @@ async function executeRun(
   }
 
   const app = await resolveAppId(userId, appId) as AppWithDraft;
+
+  // Permission check: for private apps, verify non-owner has function access
+  if (app.visibility === 'private') {
+    const allowedFunctions = await getPermissionsForUser(userId, app.id, app.owner_id, app.visibility);
+    if (allowedFunctions !== null && !allowedFunctions.has(functionName)) {
+      throw new ToolError(
+        -32003,
+        `Permission denied: you do not have access to function '${functionName}'. Ask the app owner to grant you access.`
+      );
+    }
+  }
   const r2Service = createR2Service();
 
   // Get storage key (draft or production)

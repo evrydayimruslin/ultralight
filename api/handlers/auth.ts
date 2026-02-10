@@ -146,7 +146,7 @@ export async function handleAuth(request: Request): Promise<Response> {
  * Extract and verify JWT or API token from request
  * Also ensures user exists in public.users table
  */
-export async function authenticate(request: Request): Promise<{ id: string; email: string; tier: string }> {
+export async function authenticate(request: Request): Promise<{ id: string; email: string; tier: string; tokenId?: string }> {
   const authHeader = request.headers.get('Authorization');
   console.log('Auth header present:', !!authHeader);
 

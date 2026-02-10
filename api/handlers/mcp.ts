@@ -9,6 +9,7 @@ import { createAppsService } from '../services/apps.ts';
 import { createAppDataService } from '../services/appdata.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
 import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
+import { getPermissionsForUser } from './user.ts';
 import { type Tier } from '../../shared/types/index.ts';
 import { executeInSandbox, type UserContext } from '../runtime/sandbox.ts';
 import { createR2Service } from '../services/storage.ts';
@@ -488,9 +489,14 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
     return jsonRpcErrorResponse(rpcRequest.id, -32002, 'App not found');
   }
 
-  // Check visibility - private apps only accessible by owner
+  // Check visibility — private apps: accessible by owner or users with granted permissions
+  // (Actual function-level permission check happens in handleToolsList/handleToolsCall)
   if (app.visibility === 'private' && app.owner_id !== userId) {
-    return jsonRpcErrorResponse(rpcRequest.id, -32002, 'App not found');
+    // Check if user has ANY permissions on this private app
+    const perms = await getPermissionsForUser(userId, app.id, app.owner_id, app.visibility);
+    if (perms !== null && perms.size === 0) {
+      return jsonRpcErrorResponse(rpcRequest.id, -32002, 'App not found');
+    }
   }
 
   // Route to method handler
@@ -502,7 +508,7 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
         return handleInitialize(id, appId, app);
 
       case 'tools/list':
-        return handleToolsList(id, app, params);
+        return await handleToolsList(id, app, params, userId);
 
       case 'tools/call':
         return await handleToolsCall(id, app, params, userId, user, request);
@@ -550,11 +556,12 @@ function handleInitialize(
 /**
  * Handle tools/list request - return available tools
  */
-function handleToolsList(
+async function handleToolsList(
   id: string | number,
-  app: { id: string; slug: string; skills_parsed: ParsedSkills | null; manifest?: string | null },
-  params?: { cursor?: string }
-): Response {
+  app: { id: string; slug: string; owner_id: string; visibility: string; skills_parsed: ParsedSkills | null; manifest?: string | null },
+  params?: { cursor?: string },
+  callerUserId?: string
+): Promise<Response> {
   const tools: MCPTool[] = [];
 
   // First, try to get tools from manifest (v2 architecture)
@@ -577,6 +584,20 @@ function handleToolsList(
     }
   }
 
+  // Permission filtering for private apps: only show allowed functions to non-owners
+  if (callerUserId && app.visibility === 'private') {
+    const allowedFunctions = await getPermissionsForUser(callerUserId, app.id, app.owner_id, app.visibility);
+    if (allowedFunctions !== null) {
+      // Filter tools to only include allowed functions
+      // SDK tools (ultralight.*) are always shown
+      const filteredTools = tools.filter(tool =>
+        tool.name.startsWith('ultralight.') || allowedFunctions.has(tool.name)
+      );
+      tools.length = 0;
+      tools.push(...filteredTools);
+    }
+  }
+
   // Add SDK tools (always included)
   tools.push(...SDK_TOOLS);
 
@@ -593,7 +614,7 @@ function handleToolsList(
  */
 async function handleToolsCall(
   id: string | number,
-  app: { id: string; slug: string; storage_key: string; skills_parsed: ParsedSkills | null; manifest?: string | null },
+  app: { id: string; slug: string; owner_id: string; visibility: string; storage_key: string; skills_parsed: ParsedSkills | null; manifest?: string | null },
   params: unknown,
   userId: string,
   user: UserContext | null,
@@ -607,9 +628,21 @@ async function handleToolsCall(
 
   const { name, arguments: args } = callParams;
 
-  // Check if it's an SDK tool
+  // Check if it's an SDK tool (always allowed)
   if (name.startsWith('ultralight.')) {
     return await executeSDKTool(id, name, args || {}, app.id, userId, user);
+  }
+
+  // Permission check: for private apps, verify non-owner has access to this function
+  if (app.visibility === 'private') {
+    const allowedFunctions = await getPermissionsForUser(userId, app.id, app.owner_id, app.visibility);
+    if (allowedFunctions !== null && !allowedFunctions.has(name)) {
+      return jsonRpcErrorResponse(
+        id,
+        -32003,
+        `Permission denied: you do not have access to '${name}'. Ask the app owner to grant you access.`
+      );
+    }
   }
 
   // Determine the actual function name to execute

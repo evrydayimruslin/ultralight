@@ -61,9 +61,10 @@ async function _insertLog(entry: McpCallLogEntry): Promise<void> {
  */
 export async function getRecentCalls(
   userId: string,
-  options: { limit?: number; since?: string } = {}
+  options: { limit?: number; since?: string; appId?: string } = {}
 ): Promise<Array<{
   id: string;
+  app_id: string | null;
   app_name: string | null;
   function_name: string;
   method: string;
@@ -73,10 +74,14 @@ export async function getRecentCalls(
   created_at: string;
 }>> {
   const limit = options.limit || 50;
-  let url = `${SUPABASE_URL}/rest/v1/mcp_call_logs?user_id=eq.${userId}&order=created_at.desc&limit=${limit}&select=id,app_name,function_name,method,success,duration_ms,error_message,created_at`;
+  let url = `${SUPABASE_URL}/rest/v1/mcp_call_logs?user_id=eq.${userId}&order=created_at.desc&limit=${limit}&select=id,app_id,app_name,function_name,method,success,duration_ms,error_message,created_at`;
 
   if (options.since) {
     url += `&created_at=gt.${options.since}`;
+  }
+
+  if (options.appId) {
+    url += `&app_id=eq.${options.appId}`;
   }
 
   const response = await fetch(url, {

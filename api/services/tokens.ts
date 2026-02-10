@@ -287,6 +287,7 @@ export async function getUserFromToken(token: string, clientIp?: string): Promis
   id: string;
   email: string;
   tier: string;
+  tokenId: string;
 } | null> {
   const validated = await validateToken(token, clientIp);
   if (!validated) {
@@ -308,6 +309,7 @@ export async function getUserFromToken(token: string, clientIp?: string): Promis
     id: user.id,
     email: user.email,
     tier: user.tier || 'free',
+    tokenId: validated.token_id,
   };
 }
 

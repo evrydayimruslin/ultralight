@@ -4,7 +4,7 @@
 export function getLayoutHTML(options: {
   title?: string;
   activeAppId?: string;
-  initialView: 'dashboard' | 'app' | 'settings';
+  initialView: 'dashboard' | 'app';
   appCode?: string;
   appName?: string;
 }): string {
@@ -731,6 +731,7 @@ export function getLayoutHTML(options: {
       flex-direction: column;
       align-items: center;
       padding: 2rem 1.5rem;
+      padding-top: 52px;
       min-height: 100vh;
       width: 100%;
     }
@@ -2060,6 +2061,250 @@ export function getLayoutHTML(options: {
     .main-content {
       transition: margin-left 0.3s ease, background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
     }
+
+    /* ===== Top Bar ===== */
+    .top-bar {
+      position: fixed;
+      top: 0;
+      right: 0;
+      left: var(--sidebar-width, 260px);
+      height: 52px;
+      background: var(--bg-primary);
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      padding: 0 1.25rem;
+      gap: 0.75rem;
+      z-index: 90;
+      transition: left 0.2s ease;
+    }
+    .sidebar-collapsed .top-bar { left: 52px; }
+    .top-bar-search {
+      flex: 1;
+      max-width: 400px;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 0.375rem 0.75rem;
+    }
+    .top-bar-search input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text-primary);
+      font-size: 0.8125rem;
+      outline: none;
+    }
+    .top-bar-search svg { width: 16px; height: 16px; color: var(--text-muted); flex-shrink: 0; }
+    .top-bar-actions { display: flex; align-items: center; gap: 0.5rem; margin-left: auto; }
+    .top-bar-btn {
+      display: flex;
+      align-items: center;
+      gap: 0.375rem;
+      padding: 0.375rem 0.75rem;
+      background: transparent;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      font-size: 0.8125rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .top-bar-btn:hover { background: var(--bg-secondary); color: var(--text-primary); }
+    .top-bar-btn svg { width: 16px; height: 16px; }
+    .top-bar-profile {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.25rem 0.5rem;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .top-bar-profile:hover { background: var(--bg-secondary); }
+    .top-bar-profile-dropdown {
+      display: none;
+      position: absolute;
+      top: 100%;
+      right: 0;
+      margin-top: 4px;
+      min-width: 220px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      z-index: 100;
+      padding: 0.5rem;
+    }
+    .top-bar-profile-dropdown.open { display: block; }
+    .top-bar-profile-dropdown-email {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border-color);
+      margin-bottom: 0.25rem;
+    }
+    .top-bar-profile-dropdown-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      width: 100%;
+      padding: 0.5rem 0.75rem;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      color: var(--text-secondary);
+      font-size: 0.8125rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .top-bar-profile-dropdown-item:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+    .top-bar-profile-dropdown-item svg { width: 16px; height: 16px; }
+
+    /* ===== App Page ===== */
+    .app-page {
+      flex-direction: column;
+      padding-top: 52px;
+      min-height: 100vh;
+      overflow-y: auto;
+    }
+    .app-page-inner {
+      width: 100%;
+      max-width: 700px;
+      margin: 0 auto;
+      padding: 1.5rem 1rem 4rem;
+    }
+    .app-endpoint-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.875rem 1rem;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      margin-bottom: 1.5rem;
+    }
+    .app-endpoint-url {
+      flex: 1;
+      overflow: hidden;
+    }
+    .app-endpoint-url code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8125rem;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: block;
+    }
+    .app-endpoint-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-shrink: 0;
+    }
+    .app-version-select {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 0.375rem 0.5rem;
+      color: var(--text-primary);
+      font-size: 0.75rem;
+      cursor: pointer;
+    }
+    .app-endpoint-copy {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      cursor: pointer;
+      color: var(--text-secondary);
+      transition: all 0.15s;
+    }
+    .app-endpoint-copy:hover { background: var(--accent-color); color: #fff; border-color: var(--accent-color); }
+    .app-endpoint-copy svg { width: 16px; height: 16px; }
+
+    /* Collapsible sections */
+    .app-section {
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      margin-bottom: 0.75rem;
+      overflow: hidden;
+      background: var(--bg-primary);
+    }
+    .app-section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      padding: 0.875rem 1rem;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      color: var(--text-primary);
+      transition: background 0.15s;
+    }
+    .app-section-header:hover { background: var(--bg-secondary); }
+    .app-section-title { font-size: 0.9375rem; font-weight: 600; }
+    .app-section-chevron {
+      width: 18px;
+      height: 18px;
+      color: var(--text-muted);
+      transition: transform 0.2s;
+    }
+    .app-section.collapsed .app-section-chevron { transform: rotate(-90deg); }
+    .app-section-body {
+      padding: 0 1rem 1rem;
+    }
+    .app-section.collapsed .app-section-body { display: none; }
+    .app-field { margin-bottom: 0.75rem; }
+    .app-field label {
+      display: block;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 0.375rem;
+    }
+    .app-section-actions {
+      display: flex;
+      gap: 0.75rem;
+      margin-top: 0.5rem;
+    }
+
+    /* Floating save */
+    .floating-save {
+      position: fixed;
+      bottom: 1.5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 80;
+      animation: floatIn 0.2s ease;
+    }
+    @keyframes floatIn {
+      from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+      to { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+    .floating-save-btn {
+      padding: 0.625rem 1.5rem;
+      background: var(--accent-color);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      transition: all 0.15s;
+    }
+    .floating-save-btn:hover { filter: brightness(1.1); }
   </style>
 </head>
 <body>
@@ -2150,6 +2395,31 @@ export function getLayoutHTML(options: {
       </div>
     </div>
   </aside>
+
+  <!-- Top Bar -->
+  <div class="top-bar" id="topBar">
+    <div class="top-bar-search" style="position: relative;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+      <input type="text" id="searchInput" placeholder="Search apps..." oninput="handleSearch(this.value)" autocomplete="off" />
+      <div id="searchDropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; margin-top: 4px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 100; max-height: 300px; overflow-y: auto;"></div>
+    </div>
+    <div class="top-bar-actions">
+      <button class="top-bar-btn" onclick="openLogsModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+        Logs
+      </button>
+      <div class="top-bar-profile" id="topBarProfile" onclick="toggleTopBarDropdown(event)">
+        <!-- Populated by updateAuthUI -->
+      </div>
+      <div class="top-bar-profile-dropdown" id="topBarDropdown">
+        <div class="top-bar-profile-dropdown-email">Not signed in</div>
+        <button class="top-bar-profile-dropdown-item" onclick="event.stopPropagation(); signOut();">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+          Sign Out
+        </button>
+      </div>
+    </div>
+  </div>
 
   <!-- Main Content -->
   <main class="main-content">
@@ -2289,9 +2559,128 @@ export function getLayoutHTML(options: {
       </div>
     </div>
 
-    <!-- App View -->
-    <div class="app-view" id="appView" style="display: ${initialView === 'app' ? 'flex' : 'none'};">
-      <div id="app"></div>
+    <!-- App View / App Page -->
+    <div class="app-page" id="appView" style="display: ${initialView === 'app' ? 'flex' : 'none'};">
+      <div class="app-page-inner">
+        <!-- MCP Endpoint + Version -->
+        <div class="app-endpoint-bar">
+          <div class="app-endpoint-url">
+            <code id="appMcpUrl">Loading...</code>
+          </div>
+          <div class="app-endpoint-actions">
+            <select id="appVersionSelect" class="app-version-select">
+              <option>Loading...</option>
+            </select>
+            <button class="app-endpoint-copy" id="copyAppMcpBtn" title="Copy MCP URL" onclick="copyAppMcpUrl()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Collapsible: General -->
+        <div class="app-section" id="sectionGeneral">
+          <button class="app-section-header" onclick="toggleAppSection('General')">
+            <span class="app-section-title">General</span>
+            <svg class="app-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+          <div class="app-section-body">
+            <div class="app-field">
+              <label>App Name</label>
+              <input type="text" id="appPageName" class="settings-input" placeholder="My App" />
+            </div>
+            <div class="app-field">
+              <label>Visibility</label>
+              <select id="appPageVisibility" class="settings-select">
+                <option value="private">Private — Only you can access</option>
+                <option value="unlisted">Unlisted — Anyone with link</option>
+                <option value="published">Published — Listed publicly</option>
+              </select>
+              <div id="appVisibilityHint" class="upgrade-cta" style="display: none;"></div>
+            </div>
+            <div class="app-field">
+              <label>Code Download Access</label>
+              <select id="appPageDownload" class="settings-select">
+                <option value="owner">Owner Only</option>
+                <option value="public">Public — Anyone can download</option>
+              </select>
+            </div>
+            <div class="app-section-actions">
+              <button class="settings-action-btn" onclick="downloadAppCode()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                Download Code
+              </button>
+              <button class="settings-action-btn danger" onclick="deleteApp()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                Delete App
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Collapsible: Database -->
+        <div class="app-section" id="sectionDatabase">
+          <button class="app-section-header" onclick="toggleAppSection('Database')">
+            <span class="app-section-title">Database</span>
+            <svg class="app-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+          <div class="app-section-body">
+            <div class="app-field">
+              <label>Supabase Server</label>
+              <select id="appPageSupabase" class="settings-select">
+                <option value="">None — Supabase disabled</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Collapsible: Skills -->
+        <div class="app-section" id="sectionSkills">
+          <button class="app-section-header" onclick="toggleAppSection('Skills')">
+            <span class="app-section-title">Skills</span>
+            <svg class="app-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+          <div class="app-section-body">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span id="appSkillsSummary" style="font-size: 0.8125rem; color: var(--text-secondary);">No skills documented</span>
+              <button class="byok-btn byok-btn-secondary" onclick="openSkillsModal()">Edit Skills</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Collapsible: Permissions -->
+        <div class="app-section" id="sectionPermissions">
+          <button class="app-section-header" onclick="toggleAppSection('Permissions')">
+            <span class="app-section-title">Permissions</span>
+            <svg class="app-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+          <div class="app-section-body">
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.5rem;">Control who can access this private app. Published and unlisted apps are open to all users.</div>
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span id="appPermsSummary" style="font-size: 0.8125rem; color: var(--text-secondary);">No users granted access</span>
+              <button class="byok-btn byok-btn-secondary" onclick="openPermissionsModal()">Manage</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Collapsible: Environment -->
+        <div class="app-section" id="sectionEnvironment">
+          <button class="app-section-header" onclick="toggleAppSection('Environment')">
+            <span class="app-section-title">Environment</span>
+            <svg class="app-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+          <div class="app-section-body">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span id="appEnvSummary" style="font-size: 0.8125rem; color: var(--text-secondary);">No variables configured</span>
+              <button class="byok-btn byok-btn-secondary" onclick="openEnvModal()">Edit</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Floating Save Button -->
+        <div class="floating-save" id="floatingSave" style="display: none;">
+          <button class="floating-save-btn" onclick="saveAppPageChanges()">Save Changes</button>
+        </div>
+      </div>
     </div>
 
     <!-- Footer -->
@@ -2306,302 +2695,133 @@ export function getLayoutHTML(options: {
     </div>
   </main>
 
-  <!-- Settings Modal -->
-  <div class="modal-overlay" id="settingsModal">
-    <div class="modal wide">
-      <div class="modal-header">
-        <h2 class="modal-title">App Settings</h2>
-        <button class="modal-close" onclick="closeSettingsModal()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </button>
-      </div>
-
-      <!-- Tabs -->
-      <div class="settings-tabs">
-        <button class="settings-tab active" data-tab="general">General</button>
-        <button class="settings-tab" data-tab="env">Environment</button>
-        <button class="settings-tab" data-tab="database">Database</button>
-        <button class="settings-tab" data-tab="mcp">MCP & Skills</button>
-        <button class="settings-tab" data-tab="draft">Draft & Publish</button>
-      </div>
-
-      <div class="modal-body">
-        <!-- General Tab -->
-        <div class="settings-tab-content active" id="tab-general">
-          <!-- Draft Banner (shown when draft exists) -->
-          <div class="draft-banner" id="draftBannerGeneral" style="display: none;">
-            <div class="draft-banner-title">📝 Draft Available</div>
-            <div class="draft-banner-info">You have unpublished changes. Go to "Draft & Publish" tab to manage.</div>
-          </div>
-
-          <div class="settings-section">
-            <div class="settings-section-title">General</div>
-            <div class="settings-field">
-              <label for="settingsAppName">App Name</label>
-              <input type="text" id="settingsAppName" class="settings-input" placeholder="My App" />
-            </div>
-            <div class="settings-field">
-              <label>App Icon</label>
-              <div class="icon-upload-container">
-                <div class="icon-preview" id="iconPreview">🚀</div>
-                <div class="icon-upload-actions">
-                  <button class="icon-upload-btn" id="iconUploadBtn">Upload Icon</button>
-                  <input type="file" id="iconFileInput" accept="image/png,image/jpeg,image/webp" style="display:none">
-                  <div class="icon-upload-hint">PNG, JPG or WebP. Max 1MB.</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="settings-section">
-            <div class="settings-section-title">Visibility</div>
-            <div class="settings-field">
-              <label for="settingsVisibility">App Visibility</label>
-              <select id="settingsVisibility" class="settings-select">
-                <option value="private">Private - Only you can access</option>
-                <option value="unlisted">Unlisted - Anyone with link can access</option>
-                <option value="public">Public - Listed in app directory</option>
-              </select>
-              <div id="visibilityUpgradeHint" class="upgrade-cta" style="display: none;">
-                🔒 Unlock unlisted &amp; public visibility — <a href="/pricing">Upgrade to Pro</a>
-              </div>
-            </div>
-            <div class="settings-field">
-              <label for="settingsDownloadAccess">Code Download Access</label>
-              <select id="settingsDownloadAccess" class="settings-select">
-                <option value="owner">Owner Only - Only you can download</option>
-                <option value="public">Public - Anyone can download code</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="settings-section">
-            <div class="settings-section-title">Actions</div>
-            <div class="settings-actions">
-              <button class="settings-action-btn" id="downloadCodeBtn">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                  <polyline points="7 10 12 15 17 10"></polyline>
-                  <line x1="12" y1="15" x2="12" y2="3"></line>
-                </svg>
-                Download Code
-              </button>
-              <button class="settings-action-btn danger" id="deleteAppBtn">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="3 6 5 6 21 6"></polyline>
-                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                </svg>
-                Delete App
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Environment Variables Tab -->
-        <div class="settings-tab-content" id="tab-env">
-          <div class="settings-section">
-            <div class="settings-section-title">Environment Variables</div>
-            <div class="info-box">
-              Store secrets and configuration for your app. These are encrypted and only accessible by your app at runtime via <code>ultralight.env</code>.
-            </div>
-
-            <div id="envVarsContainer" class="env-vars-container">
-              <div class="env-vars-empty" id="envVarsEmpty">
-                No environment variables configured. Add one to get started.
-              </div>
-            </div>
-
-            <button class="env-var-add-btn" id="addEnvVarBtn" style="margin-top: 0.75rem;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="12" y1="5" x2="12" y2="19"></line>
-                <line x1="5" y1="12" x2="19" y2="12"></line>
-              </svg>
-              Add Variable
-            </button>
-
-            <div class="env-vars-limits">
-              Max 50 variables • Keys: uppercase, underscores (max 64 chars) • Values: max 4KB
-            </div>
-          </div>
-
-          <div class="settings-section">
-            <div class="settings-section-title">Usage in Code</div>
-            <div class="quick-ref-code" style="font-size: 0.8125rem; padding: 1rem;">// Access environment variables
-const apiKey = ultralight.env.MY_API_KEY;
-const dbUrl = ultralight.env.DATABASE_URL;
-
-// Check if variable exists
-if (ultralight.env.FEATURE_FLAG) {
-  // Feature enabled
-}</div>
-          </div>
-        </div>
-
-        <!-- Database Tab (Supabase) -->
-        <div class="settings-tab-content" id="tab-database">
-          <div class="settings-section">
-            <div class="settings-section-title">Supabase Server</div>
-            <div class="info-box">
-              Select a saved Supabase server for this app. Manage your servers from the <a href="#" onclick="event.preventDefault(); closeSettingsModal(); showView('dashboard');" style="color: var(--accent-color);">Dashboard</a>.
-            </div>
-
-            <div class="settings-field">
-              <label for="appSupabaseSelect">Supabase Server</label>
-              <select id="appSupabaseSelect" class="settings-input" style="cursor: pointer;">
-                <option value="">None — Supabase disabled</option>
-              </select>
-              <span class="env-vars-limits">When a server is selected, a pre-configured Supabase client is available as <code>supabase</code> in your code.</span>
-            </div>
-
-            <div id="appSupabaseInfo" style="display: none; font-size: 0.8125rem; color: var(--text-muted); margin-top: 0.5rem; padding: 0.75rem; background: var(--bg-tertiary); border-radius: 6px;">
-            </div>
-          </div>
-
-          <div class="settings-section">
-            <div class="settings-section-title">Usage in Code</div>
-            <div class="quick-ref-code" style="font-size: 0.8125rem; padding: 1rem;">// Use the pre-configured client (recommended)
-const { data, error } = await supabase
-  .from('posts')
-  .select('*')
-  .eq('user_id', ultralight.user.id);
-
-// Environment variables are also available:
-// ultralight.env.SUPABASE_URL
-// ultralight.env.SUPABASE_ANON_KEY</div>
-          </div>
-        </div>
-
-        <!-- MCP & Skills Tab -->
-        <div class="settings-tab-content" id="tab-mcp">
-          <div class="settings-section">
-            <div class="settings-section-title">MCP Endpoint</div>
-            <div class="info-box">
-              Connect this app to AI agents via the Model Context Protocol (MCP).
-              Use the endpoint below in Claude Desktop, Cursor, or other MCP clients.
-            </div>
-            <div class="mcp-endpoint">
-              <span class="mcp-endpoint-url" id="mcpEndpointUrl">Loading...</span>
-              <button class="mcp-endpoint-copy" id="copyMcpBtn" title="Copy endpoint">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          <div class="settings-section">
-            <div class="settings-section-title">Skills Documentation</div>
-            <div class="info-box" id="skillsInfoBox">
-              Skills.md describes what your app can do. Generate from code or edit manually.
-            </div>
-
-            <div class="skills-status info" id="skillsStatus">
-              <span>No documentation generated yet</span>
-            </div>
-
-            <button class="generate-docs-btn" id="generateDocsBtn">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
-              </svg>
-              Generate Documentation
-            </button>
-
-            <div class="settings-field" style="margin-top: 1rem;">
-              <label for="skillsEditor">Skills.md Editor</label>
-              <textarea class="skills-editor" id="skillsEditor" placeholder="# App Name\n\n## Functions\n\n### functionName\nDescription of the function..."></textarea>
-            </div>
-
-            <div class="skills-status" id="skillsValidation" style="display: none;"></div>
-          </div>
-        </div>
-
-        <!-- Draft & Publish Tab -->
-        <div class="settings-tab-content" id="tab-draft">
-          <div class="settings-section">
-            <div class="settings-section-title">Version Management</div>
-
-            <!-- Published Version Info -->
-            <div class="settings-field">
-              <label>Published Version</label>
-              <div style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-secondary); font-size: 0.875rem;">
-                <span id="publishedVersion">1.0.0</span>
-                <span style="color: var(--success-color);">● Live</span>
-              </div>
-            </div>
-
-            <!-- Version History -->
-            <div class="settings-field">
-              <label>Version History</label>
-              <div id="versionHistoryList" style="margin-top: 0.25rem;">
-                <div style="color: var(--text-muted); font-size: 0.8125rem;">Loading...</div>
-              </div>
-            </div>
-
-            <!-- App Storage Usage -->
-            <div id="appStorageInfo" class="info-box" style="display: none; margin-bottom: 0.75rem;"></div>
-
-            <!-- Draft Section -->
-            <div id="draftSection">
-              <div class="draft-banner" id="draftBanner" style="display: none;">
-                <div class="draft-banner-title">📝 Draft Ready</div>
-                <div class="draft-banner-info">
-                  Version: <strong id="draftVersion">-</strong><br>
-                  Uploaded: <span id="draftUploadedAt">-</span>
-                </div>
-                <div class="draft-actions">
-                  <button class="btn-publish" id="publishDraftBtn">
-                    Publish Draft
-                  </button>
-                  <button class="btn-discard" id="discardDraftBtn">
-                    Discard
-                  </button>
-                </div>
-              </div>
-
-              <div id="noDraftMessage" class="info-box">
-                No draft available. Upload new code to create a draft.
-              </div>
-            </div>
-          </div>
-
-          <div class="settings-section">
-            <div class="settings-section-title">Upload New Version</div>
-            <div class="info-box">
-              Upload new code as a draft. Review and test before publishing to replace the live version.
-            </div>
-
-            <div class="drop-zone" id="draftDropZone" style="min-height: 120px; margin-bottom: 0.75rem;">
-              <div class="drop-zone-icon" style="font-size: 2rem;">📁</div>
-              <div class="drop-zone-text" style="font-size: 0.875rem;">Drop files or click to upload draft</div>
-              <input type="file" id="draftFileInput" webkitdirectory directory multiple style="display: none;">
-            </div>
-
-            <div id="draftFileList" class="file-list"></div>
-            <button class="settings-action-btn" id="uploadDraftBtn" style="width: 100%; margin-top: 0.5rem;" disabled>
-              Upload as Draft
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div class="modal-footer">
-        <button class="modal-btn secondary" onclick="closeSettingsModal()">Cancel</button>
-        <button class="modal-btn primary" id="saveSettingsBtn">Save Changes</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- API Keys Modal removed — token management is now inline on the dashboard -->
-
-
   <!-- Hidden BYOK container (deprecated from UI but keeping data layer) -->
   <div style="display: none;">
     <div id="byokMessage" class="byok-message"></div>
     <div id="byokProviders" class="byok-providers"></div>
+  </div>
+
+  <!-- Skills Modal -->
+  <div class="modal-overlay" id="skillsModal">
+    <div class="modal wide">
+      <div class="modal-header">
+        <h2 class="modal-title">Edit Skills</h2>
+        <button class="modal-close" onclick="closeSkillsModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="settings-section">
+          <div class="info-box">Skills.md describes what your app can do. Generate from code or edit manually.</div>
+          <div id="skillsModalStatus" class="skills-status info" style="margin-bottom: 0.75rem;">No documentation generated yet</div>
+          <button id="generateDocsBtn" class="generate-docs-btn" style="margin-bottom: 0.75rem;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
+            Generate Documentation
+          </button>
+          <textarea id="skillsEditor" class="skills-editor" placeholder="# App Name\n\n## Functions\n\n### functionName\nDescription of the function..."></textarea>
+          <div id="skillsValidation" class="skills-status" style="display: none;"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn secondary" onclick="closeSkillsModal()">Cancel</button>
+        <button class="modal-btn primary" id="saveSkillsBtn" onclick="saveSkillsFromModal()">Save Skills</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Environment Modal -->
+  <div class="modal-overlay" id="envModal">
+    <div class="modal wide">
+      <div class="modal-header">
+        <h2 class="modal-title">Environment Variables</h2>
+        <button class="modal-close" onclick="closeEnvModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="settings-section">
+          <div class="info-box">Store secrets and configuration. Encrypted and only accessible at runtime via <code>ultralight.env</code>.</div>
+          <div id="envModalVarsContainer" class="env-vars-container">
+            <div id="envModalVarsEmpty" class="env-vars-empty">No environment variables set.</div>
+          </div>
+          <button id="envModalAddBtn" class="env-var-add-btn" style="margin-top: 0.75rem;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            Add Variable
+          </button>
+          <div class="env-vars-limits" style="margin-top: 0.5rem;">Max 50 variables · Keys: uppercase, underscores (max 64 chars) · Values: max 4KB</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn secondary" onclick="closeEnvModal()">Cancel</button>
+        <button class="modal-btn primary" id="saveEnvBtn" onclick="saveEnvFromModal()">Save Variables</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Permissions Modal -->
+  <div class="modal-overlay" id="permissionsModal">
+    <div class="modal wide">
+      <div class="modal-header">
+        <h2 class="modal-title">App Permissions</h2>
+        <button class="modal-close" onclick="closePermissionsModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="settings-section">
+          <div class="info-box">Grant access to specific users for this private app. Only users you add here can access its functions. The app owner always has full access.</div>
+
+          <!-- Add user by email -->
+          <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+            <input type="email" id="permsEmailInput" class="settings-input" placeholder="Enter email address..." style="flex: 1;" />
+            <button class="byok-btn byok-btn-primary" onclick="addPermissionUser()" style="white-space: nowrap; padding: 0.5rem 1rem;">Add User</button>
+          </div>
+          <div id="permsAddError" style="color: var(--error-color); font-size: 0.75rem; margin-top: -0.5rem; margin-bottom: 0.75rem; display: none;"></div>
+
+          <!-- Granted users list -->
+          <div id="permsUsersList" class="tokens-list" style="margin-bottom: 0.75rem;"></div>
+          <div id="permsEmpty" style="text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.8125rem;">No users have been granted access yet.</div>
+
+          <!-- Per-user function permissions (shown when a user is selected) -->
+          <div id="permsUserDetail" style="display: none; border-top: 1px solid var(--border-color); padding-top: 1rem; margin-top: 0.75rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+              <span id="permsDetailTitle" style="font-size: 0.875rem; font-weight: 500; color: var(--text-primary);">User Functions</span>
+              <div style="display: flex; gap: 0.5rem;">
+                <button class="byok-btn byok-btn-secondary" onclick="allowAllPermissions()" style="font-size: 0.75rem; padding: 2px 10px;">Allow All</button>
+                <button class="byok-btn byok-btn-secondary" onclick="denyAllPermissions()" style="font-size: 0.75rem; padding: 2px 10px;">Deny All</button>
+              </div>
+            </div>
+            <div id="permsMatrix" class="tokens-list"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn secondary" onclick="closePermissionsModal()">Close</button>
+        <button class="modal-btn primary" id="savePermsBtn" onclick="savePermissions()">Save Permissions</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Logs Modal -->
+  <div class="modal-overlay" id="logsModal">
+    <div class="modal wide">
+      <div class="modal-header">
+        <h2 class="modal-title" id="logsModalTitle">MCP Call Logs</h2>
+        <button class="modal-close" onclick="closeLogsModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div id="logsContent" style="max-height: 60vh; overflow-y: auto;">
+          <div id="logsEmpty" style="text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.8125rem;">Loading logs...</div>
+          <div id="logsList" class="tokens-list" style="display: none;"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn secondary" onclick="closeLogsModal()">Close</button>
+        <button class="modal-btn secondary" onclick="refreshLogs()">Refresh</button>
+      </div>
+    </div>
   </div>
 
   <!-- Quick Reference Modal -->
@@ -2725,8 +2945,6 @@ await hash.sha256('data')</div>
     let apps = [];
     let currentAppId = ${activeAppId ? `'${activeAppId}'` : 'null'};
     let currentView = '${initialView}';
-    let settingsAppId = null;
-    let settingsApp = null;
 
     // ============================================
     // DOM Elements
@@ -2736,7 +2954,6 @@ await hash.sha256('data')</div>
     const newAppBtn = document.getElementById('newAppBtn');
     const dashboardView = document.getElementById('dashboardView');
     const appView = document.getElementById('appView');
-    const settingsModal = document.getElementById('settingsModal');
     const deleteConfirmModal = document.getElementById('deleteConfirmModal');
     const toast = document.getElementById('toast');
     const sidebar = document.getElementById('sidebar');
@@ -2866,38 +3083,21 @@ await hash.sha256('data')</div>
           const firstName = fullName.split(' ')[0] || email.split('@')[0];
           const initial = (firstName || email).charAt(0).toUpperCase();
 
-          authSection.innerHTML = \`
-            <div class="user-section" onclick="toggleProfileDropdown(event)">
-              <div class="user-avatar">\${initial}</div>
-              <div class="user-info">
-                <div class="user-name">\${firstName}</div>
-                <div class="user-tier-text">\${tierText}</div>
-              </div>
-              <svg class="user-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="6 15 12 9 18 15"></polyline>
-              </svg>
-              <div class="profile-dropdown" id="profileDropdown">
-                <div class="profile-dropdown-email">\${email}</div>
-                <div class="profile-dropdown-items">
-                  <button class="profile-dropdown-item" onclick="event.stopPropagation(); openApiKeysModal();">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path>
-                    </svg>
-                    API Keys
-                  </button>
-                  <div class="profile-dropdown-divider"></div>
-                  <button class="profile-dropdown-item logout" onclick="event.stopPropagation(); signOut();">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-                      <polyline points="16 17 21 12 16 7"></polyline>
-                      <line x1="21" y1="12" x2="9" y2="12"></line>
-                    </svg>
-                    Log out
-                  </button>
-                </div>
-              </div>
-            </div>
-          \`;
+          // Sidebar: hide auth when logged in (profile moves to top bar)
+          authSection.innerHTML = '';
+
+          // Top bar profile
+          const topBarProfile = document.getElementById('topBarProfile');
+          if (topBarProfile) {
+            topBarProfile.innerHTML = \`
+              <div class="user-avatar" style="width: 28px; height: 28px; font-size: 0.75rem;">\${initial}</div>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            \`;
+            const topBarDropdown = document.getElementById('topBarDropdown');
+            if (topBarDropdown) {
+              topBarDropdown.querySelector('.top-bar-profile-dropdown-email').textContent = email;
+            }
+          }
           loadApps();
           loadDashboardData();
           return;
@@ -2946,38 +3146,31 @@ await hash.sha256('data')</div>
     };
 
     // ============================================
-    // Profile Dropdown
+    // Top Bar Profile Dropdown
     // ============================================
-    window.toggleProfileDropdown = function(e) {
+    window.toggleTopBarDropdown = function(e) {
       e.stopPropagation();
-      const dropdown = document.getElementById('profileDropdown');
-      const userSection = dropdown?.closest('.user-section');
+      const dropdown = document.getElementById('topBarDropdown');
       if (!dropdown) return;
-
       const isOpen = dropdown.classList.contains('open');
       if (isOpen) {
-        closeProfileDropdown();
+        closeTopBarDropdown();
       } else {
         dropdown.classList.add('open');
-        userSection?.classList.add('menu-open');
       }
     };
 
-    function closeProfileDropdown() {
-      const dropdown = document.getElementById('profileDropdown');
-      const userSection = dropdown?.closest('.user-section');
-      if (dropdown) {
-        dropdown.classList.remove('open');
-        userSection?.classList.remove('menu-open');
-      }
+    function closeTopBarDropdown() {
+      const dropdown = document.getElementById('topBarDropdown');
+      if (dropdown) dropdown.classList.remove('open');
     }
 
     // Close dropdown when clicking outside
     document.addEventListener('click', (e) => {
-      const dropdown = document.getElementById('profileDropdown');
+      const dropdown = document.getElementById('topBarDropdown');
       if (dropdown && dropdown.classList.contains('open')) {
-        if (!e.target.closest('.user-section')) {
-          closeProfileDropdown();
+        if (!e.target.closest('.top-bar-profile') && !e.target.closest('.top-bar-profile-dropdown')) {
+          closeTopBarDropdown();
         }
       }
     });
@@ -3035,14 +3228,15 @@ await hash.sha256('data')</div>
       const list = document.getElementById('versionHistoryList');
       const storageInfo = document.getElementById('appStorageInfo');
 
-      if (!settingsApp) {
-        list.innerHTML = '';
+      const appData = apps.find(a => a.id === appId);
+      if (!appData) {
+        if (list) list.innerHTML = '';
         return;
       }
 
-      const versions = settingsApp.versions || [];
-      const metadata = settingsApp.version_metadata || [];
-      const currentVersion = settingsApp.current_version;
+      const versions = appData.versions || [];
+      const metadata = appData.version_metadata || [];
+      const currentVersion = appData.current_version;
 
       if (versions.length === 0) {
         list.innerHTML = '<div style="color: var(--text-muted); font-size: 0.8125rem;">No versions yet.</div>';
@@ -3079,7 +3273,7 @@ await hash.sha256('data')</div>
       }).join('');
 
       // Show app storage context
-      const appStorage = settingsApp.storage_bytes || 0;
+      const appStorage = appData.storage_bytes || 0;
       if (appStorage > 0) {
         storageInfo.style.display = 'block';
         storageInfo.textContent = \`This app uses \${formatBytesUI(appStorage)}.\`;
@@ -3109,8 +3303,7 @@ await hash.sha256('data')</div>
         });
         if (appRes.ok) {
           const appData = await appRes.json();
-          settingsApp = appData;
-          // Update in apps list too
+          // Update in apps list
           const idx = apps.findIndex(a => a.id === appId);
           if (idx !== -1) apps[idx] = appData;
         }
@@ -3131,7 +3324,7 @@ await hash.sha256('data')</div>
     // Tokens are now managed inline on the dashboard — no modal needed.
     // Legacy aliases in case profile dropdown or other code references these:
     window.openApiKeysModal = async function() {
-      closeProfileDropdown();
+      closeTopBarDropdown();
       showView('dashboard');
       await loadTokens();
     };
@@ -3533,18 +3726,12 @@ await hash.sha256('data')</div>
         const date = new Date(app.created_at).toLocaleDateString();
 
         return \`
-          <div class="app-item \${isActive ? 'active' : ''}" data-app-id="\${app.id}">
-            <div class="app-icon" onclick="navigateToApp(event, '\${app.id}')">\${icon}</div>
-            <div class="app-info" onclick="navigateToApp(event, '\${app.id}')">
+          <div class="app-item \${isActive ? 'active' : ''}" data-app-id="\${app.id}" onclick="navigateToApp(event, '\${app.id}')">
+            <div class="app-icon">\${icon}</div>
+            <div class="app-info">
               <div class="app-name">\${escapeHtml(app.name)}</div>
               <div class="app-meta">\${date}</div>
             </div>
-            <button class="app-settings-btn" onclick="openSettings(event, '\${app.id}')" title="Settings">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="3"></circle>
-                <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"></path>
-              </svg>
-            </button>
           </div>
         \`;
       }).join('');
@@ -3566,103 +3753,14 @@ await hash.sha256('data')</div>
     }
 
     // ============================================
-    // Settings Modal
+    // App Page
     // ============================================
     let draftFiles = [];
-
-    window.openSettings = async function(event, appId) {
-      event.stopPropagation();
-      settingsAppId = appId;
-      settingsApp = apps.find(a => a.id === appId);
-
-      if (!settingsApp) return;
-
-      // Reset to first tab
-      switchAppSettingsTab('general');
-
-      // Populate form
-      document.getElementById('settingsAppName').value = settingsApp.name || '';
-      document.getElementById('settingsVisibility').value = settingsApp.visibility || 'private';
-      document.getElementById('settingsDownloadAccess').value = settingsApp.download_access || 'owner';
-
-      // Update icon preview
-      const iconPreview = document.getElementById('iconPreview');
-      if (settingsApp.icon_url) {
-        iconPreview.innerHTML = \`<img src="\${settingsApp.icon_url}" alt="">\`;
-      } else {
-        iconPreview.innerHTML = getAppEmoji(settingsApp.name);
-      }
-
-      // Set MCP endpoint URL
-      const mcpUrl = \`\${window.location.origin}/mcp/\${appId}\`;
-      document.getElementById('mcpEndpointUrl').textContent = mcpUrl;
-
-      // Load skills.md
-      loadSkillsMd(appId);
-
-      // Load draft info & version history
-      loadDraftInfo(appId);
-      loadVersionHistory(appId);
-
-      // Gate visibility options for free tier
-      const visSelect = document.getElementById('settingsVisibility');
-      const visHint = document.getElementById('visibilityUpgradeHint');
-      if (visSelect) {
-        Array.from(visSelect.options).forEach(opt => {
-          if (opt.value === 'unlisted' || opt.value === 'public') {
-            opt.disabled = userProfile?.tier === 'free';
-          }
-        });
-      }
-      if (visHint) {
-        if (userProfile?.tier === 'free') {
-          visHint.style.display = 'block';
-          visHint.innerHTML = '🔒 <strong>Unlock unlisted & public visibility</strong> — <a href="/pricing" target="_blank">Upgrade to Pro</a> to share your apps publicly.';
-        } else {
-          visHint.style.display = 'none';
-        }
-      }
-
-      // Load environment variables
-      loadEnvVars(appId);
-
-      // Load Supabase server dropdown
-      loadAppSupabaseDropdown(appId);
-
-      // Published version
-      document.getElementById('publishedVersion').textContent = settingsApp.current_version || '1.0.0';
-
-      // Reset draft upload
-      draftFiles = [];
-      document.getElementById('draftFileList').innerHTML = '';
-      document.getElementById('uploadDraftBtn').disabled = true;
-
-      settingsModal.classList.add('open');
-    };
-
-    // Tab switching for app settings modal
-    function switchAppSettingsTab(tabName) {
-      // Update tab buttons within app settings modal only
-      settingsModal.querySelectorAll('.settings-tab').forEach(tab => {
-        tab.classList.toggle('active', tab.dataset.tab === tabName);
-      });
-
-      // Update tab content
-      settingsModal.querySelectorAll('.settings-tab-content').forEach(content => {
-        content.classList.toggle('active', content.id === \`tab-\${tabName}\`);
-      });
-    }
-
-    settingsModal.querySelectorAll('.settings-tab').forEach(tab => {
-      tab.addEventListener('click', () => {
-        switchAppSettingsTab(tab.dataset.tab);
-      });
-    });
 
     // Load Skills.md
     async function loadSkillsMd(appId) {
       const editor = document.getElementById('skillsEditor');
-      const status = document.getElementById('skillsStatus');
+      const status = document.getElementById('skillsModalStatus');
 
       try {
         const res = await fetch(\`/api/apps/\${appId}/skills.md\`, {
@@ -3672,18 +3770,24 @@ await hash.sha256('data')</div>
         if (res.ok) {
           const text = await res.text();
           editor.value = text;
-          status.className = 'skills-status success';
-          status.innerHTML = '✓ Documentation loaded';
+          if (status) {
+            status.className = 'skills-status success';
+            status.innerHTML = '✓ Documentation loaded';
+          }
         } else if (res.status === 404) {
           editor.value = '';
-          status.className = 'skills-status info';
-          status.innerHTML = 'No documentation generated yet. Click "Generate Documentation" to create.';
+          if (status) {
+            status.className = 'skills-status info';
+            status.innerHTML = 'No documentation generated yet. Click "Generate Documentation" to create.';
+          }
         } else {
           throw new Error('Failed to load');
         }
       } catch (err) {
-        status.className = 'skills-status error';
-        status.innerHTML = '✗ Failed to load documentation';
+        if (status) {
+          status.className = 'skills-status error';
+          status.innerHTML = '✗ Failed to load documentation';
+        }
       }
     }
 
@@ -3728,8 +3832,8 @@ await hash.sha256('data')</div>
     let pendingEnvVarChanges = {}; // Track changes to be saved
 
     async function loadEnvVars(appId) {
-      const container = document.getElementById('envVarsContainer');
-      const emptyState = document.getElementById('envVarsEmpty');
+      const container = document.getElementById('envModalVarsContainer');
+      const emptyState = document.getElementById('envModalVarsEmpty');
 
       try {
         const res = await fetch(\`/api/apps/\${appId}/env\`, {
@@ -3763,12 +3867,12 @@ await hash.sha256('data')</div>
     }
 
     function renderEnvVars() {
-      const container = document.getElementById('envVarsContainer');
-      const emptyState = document.getElementById('envVarsEmpty');
+      const container = document.getElementById('envModalVarsContainer');
+      const emptyState = document.getElementById('envModalVarsEmpty');
       const keys = Object.keys(currentEnvVars);
 
       if (keys.length === 0 && Object.keys(pendingEnvVarChanges).length === 0) {
-        container.innerHTML = '<div class="env-vars-empty" id="envVarsEmpty">No environment variables configured. Add one to get started.</div>';
+        container.innerHTML = '<div class="env-vars-empty" id="envModalVarsEmpty">No environment variables set.</div>';
         return;
       }
 
@@ -3874,7 +3978,7 @@ await hash.sha256('data')</div>
     };
 
     // Add new env var
-    document.getElementById('addEnvVarBtn')?.addEventListener('click', () => {
+    document.getElementById('envModalAddBtn')?.addEventListener('click', () => {
       // Generate a unique placeholder key
       let counter = 1;
       let newKey = 'NEW_VAR';
@@ -3898,9 +4002,9 @@ await hash.sha256('data')</div>
       }, 50);
     });
 
-    // Save env vars (called from save settings)
+    // Save env vars (called from env modal)
     async function saveEnvVars() {
-      if (!settingsAppId || Object.keys(pendingEnvVarChanges).length === 0) {
+      if (!currentAppId || Object.keys(pendingEnvVarChanges).length === 0) {
         return true; // Nothing to save
       }
 
@@ -3928,7 +4032,7 @@ await hash.sha256('data')</div>
       try {
         // Handle deletions first
         for (const key of deletions) {
-          const res = await fetch(\`/api/apps/\${settingsAppId}/env/\${key}\`, {
+          const res = await fetch(\`/api/apps/\${currentAppId}/env/\${key}\`, {
             method: 'DELETE',
             headers: { 'Authorization': \`Bearer \${authToken}\` }
           });
@@ -3937,7 +4041,7 @@ await hash.sha256('data')</div>
 
         // Update/add vars if there are any
         if (Object.keys(updates).length > 0) {
-          const res = await fetch(\`/api/apps/\${settingsAppId}/env\`, {
+          const res = await fetch(\`/api/apps/\${currentAppId}/env\`, {
             method: 'PATCH',
             headers: {
               'Authorization': \`Bearer \${authToken}\`,
@@ -4182,13 +4286,13 @@ await hash.sha256('data')</div>
     }
 
     async function saveAppSupabaseConfig() {
-      if (!settingsAppId || !appSupabaseChanged) return true;
+      if (!currentAppId || !appSupabaseChanged) return true;
 
       const select = document.getElementById('appSupabaseSelect');
       const configId = select ? select.value : '';
 
       try {
-        const res = await fetch(\`/api/apps/\${settingsAppId}/supabase\`, {
+        const res = await fetch(\`/api/apps/\${currentAppId}/supabase\`, {
           method: 'PUT',
           headers: {
             'Authorization': \`Bearer \${authToken}\`,
@@ -4211,23 +4315,12 @@ await hash.sha256('data')</div>
       }
     }
 
-    // Copy MCP Endpoint
-    document.getElementById('copyMcpBtn')?.addEventListener('click', async () => {
-      const url = document.getElementById('mcpEndpointUrl').textContent;
-      try {
-        await navigator.clipboard.writeText(url);
-        showToast('MCP endpoint copied');
-      } catch (err) {
-        showToast('Failed to copy', 'error');
-      }
-    });
-
     // Generate Documentation
     document.getElementById('generateDocsBtn')?.addEventListener('click', async () => {
-      if (!settingsAppId || !authToken) return;
+      if (!currentAppId || !authToken) return;
 
       const btn = document.getElementById('generateDocsBtn');
-      const status = document.getElementById('skillsStatus');
+      const status = document.getElementById('skillsModalStatus');
 
       btn.disabled = true;
       btn.innerHTML = '<span>Generating...</span>';
@@ -4235,7 +4328,7 @@ await hash.sha256('data')</div>
       status.innerHTML = 'Generating documentation from code...';
 
       try {
-        const res = await fetch(\`/api/apps/\${settingsAppId}/generate-docs\`, {
+        const res = await fetch(\`/api/apps/\${currentAppId}/generate-docs\`, {
           method: 'POST',
           headers: {
             'Authorization': \`Bearer \${authToken}\`,
@@ -4267,9 +4360,7 @@ await hash.sha256('data')</div>
       } finally {
         btn.disabled = false;
         btn.innerHTML = \`
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
-          </svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
           Generate Documentation
         \`;
       }
@@ -4290,14 +4381,14 @@ await hash.sha256('data')</div>
 
     // Publish Draft
     document.getElementById('publishDraftBtn')?.addEventListener('click', async () => {
-      if (!settingsAppId || !authToken) return;
+      if (!currentAppId || !authToken) return;
 
       const btn = document.getElementById('publishDraftBtn');
       btn.disabled = true;
       btn.textContent = 'Publishing...';
 
       try {
-        const res = await fetch(\`/api/apps/\${settingsAppId}/publish\`, {
+        const res = await fetch(\`/api/apps/\${currentAppId}/publish\`, {
           method: 'POST',
           headers: {
             'Authorization': \`Bearer \${authToken}\`,
@@ -4315,8 +4406,8 @@ await hash.sha256('data')</div>
         document.getElementById('publishedVersion').textContent = data.new_version;
 
         // Refresh draft info, version history, and app list
-        await loadDraftInfo(settingsAppId);
-        loadVersionHistory(settingsAppId);
+        await loadDraftInfo(currentAppId);
+        loadVersionHistory(currentAppId);
         await loadApps();
 
         // Refresh user profile to update storage info
@@ -4341,7 +4432,7 @@ await hash.sha256('data')</div>
 
     // Discard Draft
     document.getElementById('discardDraftBtn')?.addEventListener('click', async () => {
-      if (!settingsAppId || !authToken) return;
+      if (!currentAppId || !authToken) return;
 
       if (!confirm('Are you sure you want to discard this draft? This cannot be undone.')) {
         return;
@@ -4352,7 +4443,7 @@ await hash.sha256('data')</div>
       btn.textContent = 'Discarding...';
 
       try {
-        const res = await fetch(\`/api/apps/\${settingsAppId}/draft\`, {
+        const res = await fetch(\`/api/apps/\${currentAppId}/draft\`, {
           method: 'DELETE',
           headers: { 'Authorization': \`Bearer \${authToken}\` }
         });
@@ -4360,7 +4451,7 @@ await hash.sha256('data')</div>
         if (!res.ok) throw new Error('Failed to discard');
 
         showToast('Draft discarded');
-        await loadDraftInfo(settingsAppId);
+        await loadDraftInfo(currentAppId);
       } catch (err) {
         showToast('Failed to discard draft', 'error');
       } finally {
@@ -4422,7 +4513,7 @@ await hash.sha256('data')</div>
 
     // Upload Draft
     document.getElementById('uploadDraftBtn')?.addEventListener('click', async () => {
-      if (!settingsAppId || !authToken || draftFiles.length === 0) return;
+      if (!currentAppId || !authToken || draftFiles.length === 0) return;
 
 
 
@@ -4434,7 +4525,7 @@ await hash.sha256('data')</div>
       draftFiles.forEach(f => formData.append('files', f));
 
       try {
-        const res = await fetch(\`/api/apps/\${settingsAppId}/draft\`, {
+        const res = await fetch(\`/api/apps/\${currentAppId}/draft\`, {
           method: 'POST',
           headers: { 'Authorization': \`Bearer \${authToken}\` },
           body: formData
@@ -4450,8 +4541,8 @@ await hash.sha256('data')</div>
         // Reset and refresh
         draftFiles = [];
         document.getElementById('draftFileList').innerHTML = '';
-        await loadDraftInfo(settingsAppId);
-        loadVersionHistory(settingsAppId);
+        await loadDraftInfo(currentAppId);
+        loadVersionHistory(currentAppId);
 
         // Refresh user profile to update storage info
         if (authToken) {
@@ -4473,166 +4564,685 @@ await hash.sha256('data')</div>
       }
     });
 
-    window.closeSettingsModal = function() {
-      settingsModal.classList.remove('open');
-      settingsAppId = null;
-      settingsApp = null;
-    };
+    // ============================================
+    // App Page Functions
+    // ============================================
 
-    // Close modal on overlay click
-    settingsModal.addEventListener('click', (e) => {
-      if (e.target === settingsModal) closeSettingsModal();
-    });
+    // Load App Page data
+    async function loadAppPage(appId) {
+      const app = apps.find(a => a.id === appId);
+      if (!app) return;
 
-    // Save settings
-    document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
-      if (!settingsAppId || !authToken) return;
+      document.title = \`\${app.name || app.slug} - Ultralight\`;
 
-      const btn = document.getElementById('saveSettingsBtn');
-      btn.disabled = true;
-      btn.textContent = 'Saving...';
+      // MCP Endpoint URL
+      const mcpUrl = \`\${window.location.origin}/mcp/\${appId}\`;
+      document.getElementById('appMcpUrl').textContent = mcpUrl;
 
+      // Version dropdown
+      const versionSelect = document.getElementById('appVersionSelect');
+      versionSelect.innerHTML = '<option>Loading...</option>';
       try {
-        // Save general settings
-        const updates = {
-          name: document.getElementById('settingsAppName').value.trim(),
-          visibility: document.getElementById('settingsVisibility').value,
-          download_access: document.getElementById('settingsDownloadAccess').value,
-        };
-
-        const res = await fetch(\`/api/apps/\${settingsAppId}\`, {
-          method: 'PATCH',
-          headers: {
-            'Authorization': \`Bearer \${authToken}\`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(updates)
+        const res = await fetch(\`/api/apps/\${appId}\`, {
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
         });
-
-        if (!res.ok) throw new Error('Failed to save settings');
-
-        // Also save Skills.md if it has content
-        const skillsEditor = document.getElementById('skillsEditor');
-        const skillsMd = skillsEditor.value.trim();
-
-        if (skillsMd) {
-          try {
-            const skillsRes = await fetch(\`/api/apps/\${settingsAppId}/skills\`, {
-              method: 'PATCH',
-              headers: {
-                'Authorization': \`Bearer \${authToken}\`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({ skills_md: skillsMd })
-            });
-
-            if (!skillsRes.ok) {
-              const skillsData = await skillsRes.json();
-              if (skillsData.errors) {
-                const validation = document.getElementById('skillsValidation');
-                validation.style.display = 'block';
-                validation.className = 'skills-status error';
-                validation.innerHTML = '✗ Validation errors: ' + skillsData.errors.map(e => e.message).join(', ');
-                throw new Error('Skills.md validation failed');
-              }
-            }
-          } catch (skillsErr) {
-            showToast('Skills.md has errors - check the editor', 'warning');
+        if (res.ok) {
+          const appData = await res.json();
+          const versions = appData.versions || [];
+          const activeVersion = appData.current_version || '1.0.0';
+          if (versions.length > 0) {
+            versionSelect.innerHTML = versions.map(v =>
+              \`<option value="\${v}" \${v === activeVersion ? 'selected' : ''}>\${v}\${v === activeVersion ? ' ● live' : ''}</option>\`
+            ).join('');
+          } else {
+            versionSelect.innerHTML = \`<option value="\${activeVersion}" selected>\${activeVersion} ● live</option>\`;
           }
         }
+      } catch (e) { console.error('Failed to load versions:', e); }
 
-        // Save environment variables
-        const envSaved = await saveEnvVars();
-        if (!envSaved) {
-          throw new Error('Failed to save environment variables');
+      // General fields
+      document.getElementById('appPageName').value = app.name || '';
+      const visSelect = document.getElementById('appPageVisibility');
+      visSelect.value = app.visibility || 'private';
+      // Gate visibility for free tier
+      const visHint = document.getElementById('appVisibilityHint');
+      if (userProfile?.tier === 'free') {
+        Array.from(visSelect.options).forEach(opt => {
+          if (opt.value === 'unlisted' || opt.value === 'published') opt.disabled = true;
+        });
+        if (visHint) {
+          visHint.style.display = 'block';
+          visHint.innerHTML = '🔒 <a href="/pricing" target="_blank" style="color: var(--accent-color);">Upgrade</a> to unlock unlisted & published visibility.';
+        }
+      } else if (visHint) {
+        visHint.style.display = 'none';
+      }
+      document.getElementById('appPageDownload').value = app.download_access || 'owner';
+
+      // Supabase dropdown
+      const sbSelect = document.getElementById('appPageSupabase');
+      sbSelect.innerHTML = '<option value="">None — Supabase disabled</option>';
+      savedSupabaseServers.forEach(server => {
+        const opt = document.createElement('option');
+        opt.value = server.id;
+        const urlShort = server.supabase_url.replace('https://', '').replace('.supabase.co', '');
+        opt.textContent = server.name + ' (' + urlShort + ')';
+        sbSelect.appendChild(opt);
+      });
+      // Load current app Supabase config
+      try {
+        const sbRes = await fetch(\`/api/apps/\${appId}/supabase\`, {
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+        if (sbRes.ok) {
+          const sbData = await sbRes.json();
+          if (sbData.config_id) sbSelect.value = sbData.config_id;
+        }
+      } catch (e) { /* ignore */ }
+
+      // Skills summary
+      try {
+        const skillsRes = await fetch(\`/api/apps/\${appId}/skills.md\`, {
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+        if (skillsRes.ok) {
+          const skillsData = await skillsRes.json();
+          const parsed = skillsData.skills_parsed || [];
+          const summaryEl = document.getElementById('appSkillsSummary');
+          if (summaryEl) {
+            summaryEl.textContent = parsed.length > 0
+              ? parsed.length + ' function' + (parsed.length !== 1 ? 's' : '') + ' documented'
+              : 'No skills documented';
+          }
+        }
+      } catch (e) { /* ignore */ }
+
+      // Env summary
+      try {
+        const envRes = await fetch(\`/api/apps/\${appId}/env\`, {
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+        if (envRes.ok) {
+          const envData = await envRes.json();
+          const envArr = envData.env_vars || [];
+          const keyCount = Array.isArray(envArr) ? envArr.length : Object.keys(envArr).length;
+          const envSummaryEl = document.getElementById('appEnvSummary');
+          if (envSummaryEl) {
+            envSummaryEl.textContent = keyCount > 0
+              ? keyCount + ' variable' + (keyCount !== 1 ? 's' : '') + ' configured'
+              : 'No variables configured';
+          }
+        }
+      } catch (e) { /* ignore */ }
+
+      // Permissions summary: load granted user count
+      const permsSummaryEl = document.getElementById('appPermsSummary');
+      if (permsSummaryEl) {
+        try {
+          const permsRes = await fetch(\`/api/user/permissions/\${appId}\`, {
+            headers: { 'Authorization': \`Bearer \${authToken}\` }
+          });
+          const permsData = permsRes.ok ? await permsRes.json() : { users: [] };
+          const userCount = (permsData.users || []).length;
+          permsSummaryEl.textContent = userCount > 0
+            ? userCount + ' user' + (userCount !== 1 ? 's' : '') + ' granted access'
+            : 'No users granted access';
+        } catch (e) {
+          permsSummaryEl.textContent = 'Not configured';
+        }
+      }
+
+      // Hide floating save
+      document.getElementById('floatingSave').style.display = 'none';
+
+      // Track changes for floating save
+      ['appPageName', 'appPageVisibility', 'appPageDownload', 'appPageSupabase', 'appVersionSelect'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.onchange = () => { document.getElementById('floatingSave').style.display = 'block'; };
+          el.oninput = () => { document.getElementById('floatingSave').style.display = 'block'; };
+        }
+      });
+    }
+
+    // Save App Page Changes
+    window.saveAppPageChanges = async function() {
+      if (!currentAppId || !authToken) return;
+      const btn = document.querySelector('.floating-save-btn');
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
+      try {
+        // Save general settings
+        const res = await fetch(\`/api/apps/\${currentAppId}\`, {
+          method: 'PATCH',
+          headers: { 'Authorization': \`Bearer \${authToken}\`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: document.getElementById('appPageName').value.trim(),
+            visibility: document.getElementById('appPageVisibility').value,
+            download_access: document.getElementById('appPageDownload').value,
+          })
+        });
+        if (!res.ok) throw new Error('Failed to save');
+
+        // Save Supabase config
+        const sbSelect = document.getElementById('appPageSupabase');
+        await fetch(\`/api/apps/\${currentAppId}/supabase\`, {
+          method: 'PUT',
+          headers: { 'Authorization': \`Bearer \${authToken}\`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ config_id: sbSelect.value || null })
+        });
+
+        // Save active version
+        const versionSelect = document.getElementById('appVersionSelect');
+        if (versionSelect.value) {
+          await fetch(\`/api/apps/\${currentAppId}\`, {
+            method: 'PATCH',
+            headers: { 'Authorization': \`Bearer \${authToken}\`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ current_version: versionSelect.value })
+          });
         }
 
-        // Save Supabase server assignment
-        const supabaseSaved = await saveAppSupabaseConfig();
-        if (!supabaseSaved) {
-          throw new Error('Failed to save Supabase configuration');
-        }
-
-        showToast('Settings saved successfully');
-        closeSettingsModal();
+        showToast('Changes saved');
+        document.getElementById('floatingSave').style.display = 'none';
         await loadApps();
       } catch (err) {
-        showToast('Failed to save settings', 'error');
+        showToast('Failed to save changes', 'error');
       } finally {
         btn.disabled = false;
         btn.textContent = 'Save Changes';
       }
-    });
+    };
 
-    // Icon upload
-    document.getElementById('iconUploadBtn').addEventListener('click', () => {
-      document.getElementById('iconFileInput').click();
-    });
+    // Toggle collapsible app section
+    window.toggleAppSection = function(name) {
+      const section = document.getElementById('section' + name);
+      if (section) section.classList.toggle('collapsed');
+    };
 
-    document.getElementById('iconFileInput').addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file || !settingsAppId) return;
+    // Skills Modal
+    window.openSkillsModal = async function() {
+      document.getElementById('skillsModal').classList.add('open');
+      if (!currentAppId) return;
+      try {
+        const res = await fetch(\`/api/apps/\${currentAppId}/skills.md\`, {
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          document.getElementById('skillsEditor').value = data.skills_md || '';
+          const parsed = data.skills_parsed || [];
+          const statusEl = document.getElementById('skillsModalStatus');
+          statusEl.textContent = parsed.length > 0
+            ? \`✓ \${parsed.length} function\${parsed.length !== 1 ? 's' : ''} documented\`
+            : 'No documentation generated yet';
+          statusEl.className = parsed.length > 0 ? 'skills-status success' : 'skills-status info';
+        }
+      } catch (e) { console.error('Failed to load skills:', e); }
+    };
+    window.closeSkillsModal = function() {
+      document.getElementById('skillsModal').classList.remove('open');
+    };
+    window.saveSkillsFromModal = async function() {
+      if (!currentAppId) return;
+      const btn = document.getElementById('saveSkillsBtn');
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
+      try {
+        const skillsMd = document.getElementById('skillsEditor').value;
+        const res = await fetch(\`/api/apps/\${currentAppId}/skills\`, {
+          method: 'PATCH',
+          headers: { 'Authorization': \`Bearer \${authToken}\`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ skills_md: skillsMd })
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          if (data.errors) {
+            const validation = document.getElementById('skillsValidation');
+            validation.style.display = 'block';
+            validation.className = 'skills-status error';
+            validation.innerHTML = '✗ ' + data.errors.map(e => e.message).join(', ');
+            throw new Error('Validation failed');
+          }
+          throw new Error('Failed to save');
+        }
+        showToast('Skills saved');
+        closeSkillsModal();
+        await loadAppPage(currentAppId);
+      } catch (err) {
+        if (!err.message.includes('Validation')) showToast(err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Save Skills';
+      }
+    };
 
-      if (file.size > 1024 * 1024) {
-        showToast('Icon must be less than 1MB', 'error');
+    // Environment Modal
+    window.openEnvModal = async function() {
+      document.getElementById('envModal').classList.add('open');
+      if (!currentAppId) return;
+      await loadEnvVars(currentAppId);
+    };
+    window.closeEnvModal = function() {
+      document.getElementById('envModal').classList.remove('open');
+    };
+    window.saveEnvFromModal = async function() {
+      const btn = document.getElementById('saveEnvBtn');
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
+      try {
+        const saved = await saveEnvVars();
+        if (saved) {
+          showToast('Environment variables saved');
+          closeEnvModal();
+          await loadAppPage(currentAppId);
+        }
+      } catch (err) {
+        showToast('Failed to save', 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Save Variables';
+      }
+    };
+
+    // ============================================
+    // Permissions Modal (Per-User Model B)
+    // ============================================
+    let permsGrantedUsers = [];
+    let permsSelectedUserId = null;
+
+    window.openPermissionsModal = async function() {
+      document.getElementById('permissionsModal').classList.add('open');
+      document.getElementById('permsEmailInput').value = '';
+      document.getElementById('permsAddError').style.display = 'none';
+      document.getElementById('permsUserDetail').style.display = 'none';
+      permsSelectedUserId = null;
+      await loadPermissionsUsers();
+    };
+
+    window.closePermissionsModal = function() {
+      document.getElementById('permissionsModal').classList.remove('open');
+    };
+
+    async function loadPermissionsUsers() {
+      if (!currentAppId) return;
+      const usersList = document.getElementById('permsUsersList');
+      const emptyEl = document.getElementById('permsEmpty');
+
+      try {
+        const res = await fetch(\`/api/user/permissions/\${currentAppId}\`, {
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+        const data = res.ok ? await res.json() : { users: [] };
+        permsGrantedUsers = data.users || [];
+
+        if (permsGrantedUsers.length === 0) {
+          usersList.style.display = 'none';
+          emptyEl.style.display = 'block';
+          // Update summary on app page
+          const summaryEl = document.getElementById('appPermsSummary');
+          if (summaryEl) summaryEl.textContent = 'No users granted access';
+          return;
+        }
+
+        emptyEl.style.display = 'none';
+        usersList.style.display = 'block';
+        usersList.innerHTML = permsGrantedUsers.map(u => \`
+          <div class="token-item" style="display: flex; align-items: center; justify-content: space-between; padding: 0.625rem 0.875rem; cursor: pointer; \${permsSelectedUserId === u.user_id ? 'background: var(--bg-tertiary);' : ''}"
+               onclick="selectPermissionUser('\${u.user_id}')">
+            <div>
+              <div style="font-size: 0.8125rem; color: var(--text-primary);">\${escapeHtml(u.display_name || u.email)}</div>
+              <div style="font-size: 0.75rem; color: var(--text-muted);">\${escapeHtml(u.email)} · \${u.function_count} function\${u.function_count !== 1 ? 's' : ''} allowed</div>
+            </div>
+            <button class="byok-btn byok-btn-secondary" onclick="event.stopPropagation(); revokePermissionUser('\${u.user_id}', '\${escapeHtml(u.email)}')" style="font-size: 0.75rem; padding: 2px 10px; color: var(--error-color);">Revoke</button>
+          </div>
+        \`).join('');
+
+        // Update summary on app page
+        const summaryEl = document.getElementById('appPermsSummary');
+        if (summaryEl) summaryEl.textContent = permsGrantedUsers.length + ' user' + (permsGrantedUsers.length !== 1 ? 's' : '') + ' granted access';
+      } catch (err) {
+        usersList.innerHTML = '<div style="text-align: center; padding: 1rem; color: var(--error-color);">Failed to load users</div>';
+        usersList.style.display = 'block';
+        emptyEl.style.display = 'none';
+      }
+    }
+
+    window.addPermissionUser = async function() {
+      const input = document.getElementById('permsEmailInput');
+      const errorEl = document.getElementById('permsAddError');
+      const email = input.value.trim();
+
+      if (!email || !email.includes('@')) {
+        errorEl.textContent = 'Please enter a valid email address';
+        errorEl.style.display = 'block';
         return;
       }
 
-      const formData = new FormData();
-      formData.append('icon', file);
+      errorEl.style.display = 'none';
+
+      // Get app functions to grant all by default
+      const app = apps.find(a => a.id === currentAppId);
+      const fns = app?.skills_parsed?.functions || [];
+
+      if (fns.length === 0) {
+        errorEl.textContent = 'No functions documented. Add Skills.md first to configure permissions.';
+        errorEl.style.display = 'block';
+        return;
+      }
+
+      // Grant all functions by default when adding a new user
+      const perms = fns.map(fn => ({ function_name: fn.name, allowed: true }));
 
       try {
-        const res = await fetch(\`/api/apps/\${settingsAppId}/icon\`, {
-          method: 'POST',
-          headers: { 'Authorization': \`Bearer \${authToken}\` },
-          body: formData
+        const res = await fetch(\`/api/user/permissions/\${currentAppId}\`, {
+          method: 'PUT',
+          headers: { 'Authorization': \`Bearer \${authToken}\`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, permissions: perms })
         });
 
-        if (!res.ok) throw new Error('Failed to upload icon');
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || 'Failed to add user');
+        }
 
-        const data = await res.json();
-        const iconPreview = document.getElementById('iconPreview');
-        iconPreview.innerHTML = \`<img src="\${data.icon_url}" alt="">\`;
-        settingsApp.icon_url = data.icon_url;
-        showToast('Icon uploaded successfully');
-        await loadApps();
+        input.value = '';
+        showToast('User added with full access');
+        await loadPermissionsUsers();
       } catch (err) {
-        showToast('Failed to upload icon', 'error');
+        errorEl.textContent = err.message || 'Failed to add user';
+        errorEl.style.display = 'block';
+      }
+    };
+
+    window.selectPermissionUser = async function(targetUserId) {
+      permsSelectedUserId = targetUserId;
+
+      // Highlight selected user in list
+      document.querySelectorAll('#permsUsersList .token-item').forEach(el => {
+        el.style.background = '';
+      });
+      event?.target?.closest?.('.token-item')?.style && (event.target.closest('.token-item').style.background = 'var(--bg-tertiary)');
+
+      // Show detail panel
+      const detailEl = document.getElementById('permsUserDetail');
+      detailEl.style.display = 'block';
+
+      const matrix = document.getElementById('permsMatrix');
+      matrix.innerHTML = '<div style="text-align: center; padding: 1rem; color: var(--text-muted);">Loading...</div>';
+
+      const user = permsGrantedUsers.find(u => u.user_id === targetUserId);
+      document.getElementById('permsDetailTitle').textContent = \`Functions for \${user?.display_name || user?.email || 'user'}\`;
+
+      try {
+        // Load permissions for this user+app
+        const permsRes = await fetch(\`/api/user/permissions/\${currentAppId}?user_id=\${targetUserId}\`, {
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+        const permsData = permsRes.ok ? await permsRes.json() : { permissions: [] };
+        const permsMap = {};
+        (permsData.permissions || []).forEach(p => { permsMap[p.function_name] = p.allowed; });
+
+        // Get app functions
+        const app = apps.find(a => a.id === currentAppId);
+        const fns = app?.skills_parsed?.functions || [];
+
+        if (fns.length === 0) {
+          matrix.innerHTML = '<div style="text-align: center; padding: 1.5rem; color: var(--text-muted); font-size: 0.8125rem;">No functions documented.</div>';
+          return;
+        }
+
+        matrix.innerHTML = fns.map(fn => {
+          const allowed = permsMap[fn.name] === true;
+          return \`<div class="token-item" style="display: flex; align-items: center; justify-content: space-between; padding: 0.625rem 0.875rem;">
+            <div>
+              <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.8125rem; color: var(--text-primary);">\${fn.name}</div>
+              <div style="font-size: 0.75rem; color: var(--text-muted);">\${fn.description || 'No description'}</div>
+            </div>
+            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+              <input type="checkbox" data-fn="\${fn.name}" \${allowed ? 'checked' : ''} style="width: 16px; height: 16px; accent-color: var(--accent-color);" />
+              <span style="font-size: 0.75rem; color: var(--text-secondary);">\${allowed ? 'Allowed' : 'Denied'}</span>
+            </label>
+          </div>\`;
+        }).join('');
+
+        matrix.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+          cb.addEventListener('change', () => {
+            cb.nextElementSibling.textContent = cb.checked ? 'Allowed' : 'Denied';
+          });
+        });
+      } catch (err) {
+        matrix.innerHTML = '<div style="text-align: center; padding: 1rem; color: var(--error-color);">Failed to load permissions</div>';
+      }
+    };
+
+    window.revokePermissionUser = async function(targetUserId, email) {
+      if (!confirm(\`Revoke all access for \${email}?\`)) return;
+
+      try {
+        const res = await fetch(\`/api/user/permissions/\${currentAppId}?user_id=\${targetUserId}\`, {
+          method: 'DELETE',
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+        if (!res.ok) throw new Error('Failed');
+        showToast('User access revoked');
+
+        if (permsSelectedUserId === targetUserId) {
+          permsSelectedUserId = null;
+          document.getElementById('permsUserDetail').style.display = 'none';
+        }
+        await loadPermissionsUsers();
+      } catch (err) {
+        showToast('Failed to revoke access', 'error');
+      }
+    };
+
+    window.allowAllPermissions = function() {
+      document.querySelectorAll('#permsMatrix input[type="checkbox"]').forEach(cb => {
+        cb.checked = true;
+        if (cb.nextElementSibling) cb.nextElementSibling.textContent = 'Allowed';
+      });
+    };
+
+    window.denyAllPermissions = function() {
+      document.querySelectorAll('#permsMatrix input[type="checkbox"]').forEach(cb => {
+        cb.checked = false;
+        if (cb.nextElementSibling) cb.nextElementSibling.textContent = 'Denied';
+      });
+    };
+
+    window.savePermissions = async function() {
+      if (!permsSelectedUserId || !currentAppId) {
+        showToast('Select a user first', 'error');
+        return;
+      }
+
+      const perms = [];
+      document.querySelectorAll('#permsMatrix input[type="checkbox"]').forEach(cb => {
+        perms.push({ function_name: cb.dataset.fn, allowed: cb.checked });
+      });
+
+      try {
+        const res = await fetch(\`/api/user/permissions/\${currentAppId}\`, {
+          method: 'PUT',
+          headers: { 'Authorization': \`Bearer \${authToken}\`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: permsSelectedUserId, permissions: perms })
+        });
+        if (!res.ok) throw new Error('Failed to save');
+        showToast('Permissions saved');
+        await loadPermissionsUsers();
+      } catch (err) {
+        showToast('Failed to save permissions', 'error');
+      }
+    };
+
+    // ============================================
+    // Logs Modal
+    // ============================================
+    window.openLogsModal = async function() {
+      document.getElementById('logsModal').classList.add('open');
+      const titleEl = document.getElementById('logsModalTitle');
+      if (currentView === 'app' && currentAppId) {
+        const app = apps.find(a => a.id === currentAppId);
+        titleEl.textContent = \`Logs: \${app?.name || 'App'}\`;
+      } else {
+        titleEl.textContent = 'MCP Call Logs';
+      }
+      await refreshLogs();
+    };
+    window.closeLogsModal = function() {
+      document.getElementById('logsModal').classList.remove('open');
+    };
+    window.refreshLogs = async function() {
+      const listEl = document.getElementById('logsList');
+      const emptyEl = document.getElementById('logsEmpty');
+      listEl.style.display = 'none';
+      emptyEl.style.display = 'block';
+      emptyEl.textContent = 'Loading logs...';
+
+      try {
+        let url = '/api/user/call-log?limit=100';
+        if (currentView === 'app' && currentAppId) {
+          url += \`&app_id=\${currentAppId}\`;
+        }
+        const res = await fetch(url, {
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+        if (!res.ok) throw new Error('Failed');
+        const { logs } = await res.json();
+
+        if (!logs || logs.length === 0) {
+          emptyEl.textContent = 'No call logs yet. Make some MCP tool calls to see them here.';
+          return;
+        }
+
+        listEl.style.display = 'block';
+        emptyEl.style.display = 'none';
+        listEl.innerHTML = logs.map(log => {
+          const time = new Date(log.created_at).toLocaleString();
+          const statusDot = log.success ? '🟢' : '🔴';
+          const duration = log.duration_ms ? \`\${log.duration_ms}ms\` : '';
+          const appLabel = log.app_name ? \`<span style="color: var(--accent-color);">\${log.app_name}</span> · \` : '';
+          return \`<div class="token-item" style="padding: 0.5rem 0.875rem;">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <div>
+                <span style="font-size: 0.75rem;">\${statusDot}</span>
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 0.8125rem; color: var(--text-primary);">\${log.function_name}</span>
+                <span style="font-size: 0.75rem; color: var(--text-muted);"> \${log.method}</span>
+              </div>
+              <span style="font-size: 0.75rem; color: var(--text-muted);">\${duration}</span>
+            </div>
+            <div style="font-size: 0.6875rem; color: var(--text-muted); margin-top: 2px;">\${appLabel}\${time}\${log.error_message ? ' · <span style="color: var(--error-color);">' + log.error_message + '</span>' : ''}</div>
+          </div>\`;
+        }).join('');
+      } catch (err) {
+        emptyEl.textContent = 'Failed to load logs.';
+      }
+    };
+
+    // ============================================
+    // Search
+    // ============================================
+    let searchTimeout = null;
+    window.handleSearch = function(query) {
+      clearTimeout(searchTimeout);
+      const dropdown = document.getElementById('searchDropdown');
+
+      if (!query || query.trim().length < 2) {
+        dropdown.style.display = 'none';
+        return;
+      }
+
+      searchTimeout = setTimeout(async () => {
+        const q = query.trim().toLowerCase();
+        let html = '';
+
+        // Your Apps - local filter
+        const myApps = apps.filter(a =>
+          a.name?.toLowerCase().includes(q) || a.slug?.toLowerCase().includes(q)
+        ).slice(0, 5);
+
+        if (myApps.length > 0) {
+          html += '<div style="padding: 0.5rem 0.75rem; font-size: 0.6875rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Your Apps</div>';
+          html += myApps.map(a =>
+            \`<div class="top-bar-profile-dropdown-item" onclick="document.getElementById('searchInput').value=''; document.getElementById('searchDropdown').style.display='none'; navigateToApp(event, '\${a.id}')" style="padding: 0.5rem 0.75rem; cursor: pointer;">
+              <span style="font-size: 0.8125rem;">\${a.name || a.slug}</span>
+              <span style="font-size: 0.6875rem; color: var(--text-muted); margin-left: 0.5rem;">\${a.visibility || 'private'}</span>
+            </div>\`
+          ).join('');
+        }
+
+        // App Store - discover API
+        try {
+          const discoverRes = await fetch('/api/discover', {
+            method: 'POST',
+            headers: { 'Authorization': \`Bearer \${authToken}\`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: q, limit: 5 })
+          });
+          if (discoverRes.ok) {
+            const { results } = await discoverRes.json();
+            if (results && results.length > 0) {
+              html += '<div style="padding: 0.5rem 0.75rem; font-size: 0.6875rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; border-top: 1px solid var(--border-color); margin-top: 0.25rem;">App Store</div>';
+              html += results.map(r =>
+                \`<div class="top-bar-profile-dropdown-item" onclick="window.location.href='/a/\${r.id}'" style="padding: 0.5rem 0.75rem; cursor: pointer;">
+                  <span style="font-size: 0.8125rem;">\${r.name || r.slug}</span>
+                  <span style="font-size: 0.6875rem; color: var(--text-muted); margin-left: 0.5rem;">by \${r.owner_name || 'unknown'}</span>
+                </div>\`
+              ).join('');
+            }
+          }
+        } catch (e) { /* App store search failed silently */ }
+
+        if (!html) {
+          html = '<div style="padding: 1rem; text-align: center; color: var(--text-muted); font-size: 0.8125rem;">No results found</div>';
+        }
+
+        dropdown.innerHTML = html;
+        dropdown.style.display = 'block';
+      }, 300);
+    };
+
+    // Close search on click outside
+    document.addEventListener('click', (e) => {
+      const search = document.querySelector('.top-bar-search');
+      if (search && !search.contains(e.target)) {
+        document.getElementById('searchDropdown').style.display = 'none';
       }
     });
 
-    // Download code
-    document.getElementById('downloadCodeBtn').addEventListener('click', async () => {
-      if (!settingsAppId) return;
+    // Copy App MCP URL
+    window.copyAppMcpUrl = function() {
+      const url = document.getElementById('appMcpUrl').textContent;
+      navigator.clipboard.writeText(url).then(() => showToast('MCP URL copied!'));
+    };
 
+    // Download app code
+    window.downloadAppCode = async function() {
+      if (!currentAppId || !authToken) return;
       try {
-        const res = await fetch(\`/api/apps/\${settingsAppId}/download\`, {
+        const res = await fetch(\`/api/apps/\${currentAppId}/download\`, {
           headers: { 'Authorization': \`Bearer \${authToken}\` }
         });
-
         if (!res.ok) throw new Error('Failed to download');
-
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = \`\${settingsApp?.name || 'app'}.zip\`;
-        document.body.appendChild(a);
+        const appRef = apps.find(x => x.id === currentAppId);
+        a.download = (appRef?.slug || 'app') + '.zip';
         a.click();
-        document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        showToast('Download started');
       } catch (err) {
         showToast('Failed to download code', 'error');
       }
-    });
+    };
 
     // Delete app
-    document.getElementById('deleteAppBtn').addEventListener('click', () => {
-      if (!settingsApp) return;
-      document.getElementById('deleteAppName').textContent = settingsApp.name;
+    window.deleteApp = function() {
+      if (!currentAppId) return;
+      const app = apps.find(a => a.id === currentAppId);
+      document.getElementById('deleteAppName').textContent = app?.name || 'this app';
       deleteConfirmModal.classList.add('open');
-    });
+    };
 
     window.closeDeleteConfirm = function() {
       deleteConfirmModal.classList.remove('open');
@@ -4642,15 +5252,29 @@ await hash.sha256('data')</div>
       if (e.target === deleteConfirmModal) closeDeleteConfirm();
     });
 
+    // Close modals on overlay click
+    document.getElementById('skillsModal')?.addEventListener('click', (e) => {
+      if (e.target.id === 'skillsModal') closeSkillsModal();
+    });
+    document.getElementById('envModal')?.addEventListener('click', (e) => {
+      if (e.target.id === 'envModal') closeEnvModal();
+    });
+    document.getElementById('permissionsModal')?.addEventListener('click', (e) => {
+      if (e.target.id === 'permissionsModal') closePermissionsModal();
+    });
+    document.getElementById('permsEmailInput')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); addPermissionUser(); }
+    });
+
     document.getElementById('confirmDeleteBtn').addEventListener('click', async () => {
-      if (!settingsAppId || !authToken) return;
+      if (!currentAppId || !authToken) return;
 
       const btn = document.getElementById('confirmDeleteBtn');
       btn.disabled = true;
       btn.textContent = 'Deleting...';
 
       try {
-        const res = await fetch(\`/api/apps/\${settingsAppId}\`, {
+        const res = await fetch(\`/api/apps/\${currentAppId}\`, {
           method: 'DELETE',
           headers: { 'Authorization': \`Bearer \${authToken}\` }
         });
@@ -4659,12 +5283,9 @@ await hash.sha256('data')</div>
 
         showToast('App deleted successfully');
         closeDeleteConfirm();
-        closeSettingsModal();
 
-        // If viewing the deleted app, go to dashboard
-        if (currentAppId === settingsAppId) {
-          navigateToDashboard();
-        }
+        // Go to dashboard after deleting
+        navigateToDashboard();
 
         await loadApps();
       } catch (err) {
@@ -4687,7 +5308,7 @@ await hash.sha256('data')</div>
       currentView = 'app';
       renderAppsList();
       showView('app');
-      await loadAndRunApp(appId);
+      await loadAppPage(appId);
     };
 
     function showView(view) {
@@ -4767,97 +5388,11 @@ await hash.sha256('data')</div>
         currentAppId = appId;
         showView('app');
         renderAppsList();
-        await loadAndRunApp(appId);
+        await loadAppPage(appId);
       }
     });
 
-    // ============================================
-    // App Runner - Uses iframe to ensure identical rendering
-    // ============================================
-    function loadAndRunApp(appId) {
-      const appElement = document.getElementById('app');
-
-      // Use iframe to load the app at its dedicated URL
-      // This ensures the app runs exactly the same way as when accessed directly
-      appElement.innerHTML = \`
-        <iframe
-          src="/a/\${appId}?embed=1"
-          style="width:100%;height:100%;border:none;background:var(--bg-primary);"
-          allow="clipboard-read; clipboard-write; camera; microphone; geolocation"
-        ></iframe>
-      \`;
-
-      // Update page title based on the app
-      const app = apps.find(a => a.id === appId);
-      if (app) {
-        document.title = \`\${app.name || app.slug} - Ultralight\`;
-      }
-
-      console.log('✨ App loaded in iframe');
-    }
-
-    function createRuntime(appId) {
-      return {
-        appId,
-        memory: {
-          async get(key) {
-            try {
-              const res = await fetch(\`/api/memory/\${appId}/\` + encodeURIComponent(key));
-              if (!res.ok) return null;
-              const data = await res.json();
-              return data.value;
-            } catch { return null; }
-          },
-          async set(key, value) {
-            try {
-              await fetch(\`/api/memory/\${appId}/\` + encodeURIComponent(key), {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ value })
-              });
-            } catch (e) { console.error('Memory set failed:', e); }
-          },
-          async delete(key) {
-            try {
-              await fetch(\`/api/memory/\${appId}/\` + encodeURIComponent(key), { method: 'DELETE' });
-            } catch (e) { console.error('Memory delete failed:', e); }
-          }
-        },
-        ai: {
-          async chat(messages, options = {}) {
-            const res = await fetch(\`/api/ai/\${appId}/chat\`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ messages, ...options })
-            });
-            if (!res.ok) throw new Error('AI call failed');
-            return res.json();
-          }
-        },
-        data: {
-          async get(key) {
-            try {
-              const res = await fetch(\`/api/data/\${appId}/\` + encodeURIComponent(key));
-              if (!res.ok) return null;
-              const data = await res.json();
-              return data.value;
-            } catch { return null; }
-          },
-          async set(key, value) {
-            await fetch(\`/api/data/\${appId}/\` + encodeURIComponent(key), {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ value })
-            });
-          },
-          async list(prefix = '') {
-            const res = await fetch(\`/api/data/\${appId}?prefix=\` + encodeURIComponent(prefix));
-            if (!res.ok) return [];
-            return res.json();
-          }
-        }
-      };
-    }
+    // (loadAndRunApp and createRuntime removed — replaced by loadAppPage)
 
     // ============================================
     // Dashboard
@@ -4890,12 +5425,11 @@ await hash.sha256('data')</div>
     // ============================================
     await updateAuthUI();
 
-    // If we're in app view and have an appId, load the app via iframe
-    // This ensures consistent rendering whether accessed directly via URL or via sidebar navigation
+    // If we're in app view and have an appId, load the app page
     ${initialView === 'app' && activeAppId ? `
     (async () => {
-      console.log('📱 Initial app load via iframe for appId: ${activeAppId}');
-      loadAndRunApp('${activeAppId}');
+      console.log('📱 Initial app page load for appId: ${activeAppId}');
+      await loadAppPage('${activeAppId}');
     })();
     ` : ''}
   </script>

@@ -488,11 +488,205 @@ export async function handleUser(request: Request): Promise<Response> {
       const { getRecentCalls } = await import('../services/call-logger.ts');
       const limit = parseInt(url.searchParams.get('limit') || '50', 10);
       const since = url.searchParams.get('since') || undefined;
-      const logs = await getRecentCalls(userId, { limit: Math.min(limit, 200), since });
+      const appId = url.searchParams.get('app_id') || undefined;
+      const logs = await getRecentCalls(userId, { limit: Math.min(limit, 200), since, appId });
       return json({ logs });
     } catch (err) {
       console.error('Get call log error:', err);
       return error('Failed to get call logs', 500);
+    }
+  }
+
+  // ============================================
+  // PERMISSIONS: Per-User App Permissions (Model B)
+  // ============================================
+
+  const permsMatch = path.match(/^\/api\/user\/permissions\/([a-f0-9-]+)$/);
+
+  // GET /api/user/permissions/:appId - Get granted users + their permissions for an app
+  if (permsMatch && method === 'GET') {
+    try {
+      const appId = permsMatch[1];
+      const targetUserId = url.searchParams.get('user_id');
+      const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+
+      // Verify caller owns this app
+      const appsService = createAppsService();
+      const app = await appsService.findById(appId);
+      if (!app || app.owner_id !== userId) {
+        return error('App not found', 404);
+      }
+
+      if (targetUserId) {
+        // Get permissions for a specific user on this app
+        const response = await fetch(
+          `${SUPABASE_URL}/rest/v1/user_app_permissions?app_id=eq.${appId}&granted_to_user_id=eq.${targetUserId}&select=id,function_name,allowed`,
+          {
+            headers: {
+              'apikey': SUPABASE_SERVICE_ROLE_KEY,
+              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            },
+          }
+        );
+        if (!response.ok) throw new Error(await response.text());
+        const permissions = await response.json();
+        return json({ permissions });
+      } else {
+        // Get all granted users for this app using the RPC
+        const rpcRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/rpc/get_app_granted_users`,
+          {
+            method: 'POST',
+            headers: {
+              'apikey': SUPABASE_SERVICE_ROLE_KEY,
+              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ p_app_id: appId }),
+          }
+        );
+        if (!rpcRes.ok) throw new Error(await rpcRes.text());
+        const users = await rpcRes.json();
+        return json({ users });
+      }
+    } catch (err) {
+      console.error('Get permissions error:', err);
+      return error('Failed to get permissions', 500);
+    }
+  }
+
+  // PUT /api/user/permissions/:appId - Set permissions for a user on an app
+  if (permsMatch && method === 'PUT') {
+    try {
+      const appId = permsMatch[1];
+      const body = await request.json();
+      const { email, user_id: targetUserId, permissions: permsList } = body;
+
+      if (!Array.isArray(permsList)) {
+        return error('permissions array required', 400);
+      }
+
+      const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+
+      // Verify caller owns this app
+      const appsService = createAppsService();
+      const app = await appsService.findById(appId);
+      if (!app || app.owner_id !== userId) {
+        return error('App not found', 404);
+      }
+
+      // Resolve target user: either by user_id or email
+      let resolvedUserId = targetUserId;
+      if (!resolvedUserId && email) {
+        const userRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/users?email=eq.${encodeURIComponent(email)}&select=id`,
+          {
+            headers: {
+              'apikey': SUPABASE_SERVICE_ROLE_KEY,
+              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            },
+          }
+        );
+        if (!userRes.ok) throw new Error(await userRes.text());
+        const userRows = await userRes.json();
+        if (userRows.length === 0) {
+          return error(`No user found with email "${email}"`, 404);
+        }
+        resolvedUserId = userRows[0].id;
+      }
+
+      if (!resolvedUserId) {
+        return error('email or user_id is required', 400);
+      }
+
+      // Can't grant permissions to yourself (owner already has full access)
+      if (resolvedUserId === userId) {
+        return error('Cannot set permissions for the app owner', 400);
+      }
+
+      // Delete existing permissions for this user+app
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/user_app_permissions?granted_to_user_id=eq.${resolvedUserId}&app_id=eq.${appId}`,
+        {
+          method: 'DELETE',
+          headers: {
+            'apikey': SUPABASE_SERVICE_ROLE_KEY,
+            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          },
+        }
+      );
+
+      // Insert new permissions
+      if (permsList.length > 0) {
+        const rows = permsList.map((p: { function_name: string; allowed: boolean }) => ({
+          app_id: appId,
+          granted_to_user_id: resolvedUserId,
+          granted_by_user_id: userId,
+          function_name: p.function_name,
+          allowed: !!p.allowed,
+        }));
+
+        const insertRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/user_app_permissions`,
+          {
+            method: 'POST',
+            headers: {
+              'apikey': SUPABASE_SERVICE_ROLE_KEY,
+              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(rows),
+          }
+        );
+
+        if (!insertRes.ok) throw new Error(await insertRes.text());
+      }
+
+      return json({ success: true, message: 'Permissions saved', user_id: resolvedUserId });
+    } catch (err) {
+      console.error('Set permissions error:', err);
+      if (err instanceof Error && err.message.includes('No user found')) {
+        return error(err.message, 404);
+      }
+      return error('Failed to save permissions', 500);
+    }
+  }
+
+  // DELETE /api/user/permissions/:appId - Revoke all permissions for a user on an app
+  if (permsMatch && method === 'DELETE') {
+    try {
+      const appId = permsMatch[1];
+      const targetUserId = url.searchParams.get('user_id');
+
+      if (!targetUserId) {
+        return error('user_id query parameter required', 400);
+      }
+
+      const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+
+      // Verify caller owns this app
+      const appsService = createAppsService();
+      const app = await appsService.findById(appId);
+      if (!app || app.owner_id !== userId) {
+        return error('App not found', 404);
+      }
+
+      // Delete all permissions for this user+app
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/user_app_permissions?granted_to_user_id=eq.${targetUserId}&app_id=eq.${appId}`,
+        {
+          method: 'DELETE',
+          headers: {
+            'apikey': SUPABASE_SERVICE_ROLE_KEY,
+            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          },
+        }
+      );
+
+      return json({ success: true, message: 'User access revoked' });
+    } catch (err) {
+      console.error('Revoke permissions error:', err);
+      return error('Failed to revoke permissions', 500);
     }
   }
 
@@ -618,4 +812,66 @@ export async function getDecryptedPlatformSupabase(userId: string) {
   const configs = await listSupabaseConfigs(userId);
   if (configs.length === 0) return null;
   return getDecryptedSupabaseConfig(configs[0].id);
+}
+
+// ============================================
+// Helper: Check if user has access to a private app
+// Used by MCP handlers for runtime permission enforcement
+//
+// Logic:
+// - Owner always has full access (returns null = no restrictions)
+// - For non-owners on private apps: returns Set of allowed function names
+// - Empty set means user has no granted permissions (denied by default)
+// - null means no restrictions (owner, or non-private app)
+// ============================================
+export async function getPermissionsForUser(
+  callerUserId: string,
+  appId: string,
+  appOwnerId: string,
+  appVisibility: string
+): Promise<Set<string> | null> {
+  // Owner always has full access
+  if (callerUserId === appOwnerId) {
+    return null; // No restrictions
+  }
+
+  // Published and unlisted apps: open to all authenticated users
+  if (appVisibility === 'public' || appVisibility === 'unlisted') {
+    return null; // No restrictions
+  }
+
+  // Private app, non-owner: check user_app_permissions
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/user_app_permissions?granted_to_user_id=eq.${callerUserId}&app_id=eq.${appId}&select=function_name,allowed`,
+    {
+      headers: {
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+    }
+  );
+
+  if (!response.ok) {
+    console.error('Failed to fetch user permissions:', await response.text());
+    return new Set<string>(); // On error, deny access for safety
+  }
+
+  const rows = await response.json() as Array<{ function_name: string; allowed: boolean }>;
+
+  // If no permission rows exist, this user has no access to this private app
+  if (rows.length === 0) {
+    return new Set<string>();
+  }
+
+  // Build set of allowed function names
+  const allowed = new Set<string>();
+  for (const row of rows) {
+    if (row.allowed) {
+      allowed.add(row.function_name);
+    }
+  }
+
+  return allowed;
 }
