@@ -4,7 +4,19 @@ Endpoint: `POST /mcp/platform`
 Protocol: JSON-RPC 2.0
 Namespace: `ul.*`
 
-15 tools for managing MCP apps: upload code, configure settings, control permissions, discover apps, review apps, view logs, and manage per-user secrets.
+17 tools for managing MCP apps: upload code, configure settings, control permissions, discover apps, like/dislike apps, view logs, and manage per-user secrets.
+
+---
+
+## Discovery Strategy
+
+When the user needs a capability, search in this order:
+
+1. **Desk** — `ul.discover.desk` — The last 3 apps the user called. Check here first.
+2. **Library** — `ul.discover.library` — Apps the user owns or has liked. Check here if the desk didn't match.
+3. **App Store** — `ul.discover.appstore` — All published apps. Only search here if nothing in the desk or library fits.
+
+`ul.like` saves an app to the user's library. `ul.dislike` removes it from library and future app store results. Both toggle — calling again removes the action.
 
 ---
 
@@ -114,9 +126,17 @@ ul.permissions.list(
 )
 ```
 
+## ul.discover.desk
+
+Returns the last 3 distinct apps the user has called. Check here first before searching library or app store.
+
+```
+ul.discover.desk()
+```
+
 ## ul.discover.library
 
-Search your own apps. No `query` returns full Library.md (all apps with capabilities). With `query`: semantic search against your app embeddings.
+Search your apps — both owned and liked. No `query` returns full Library.md (all apps with capabilities). With `query`: semantic search. Includes apps saved via like.
 
 ```
 ul.discover.library(
@@ -126,7 +146,7 @@ ul.discover.library(
 
 ## ul.discover.appstore
 
-Semantic search across all published apps in the global app store.
+Semantic search across all published apps in the global app store. Excludes apps the user has disliked.
 
 ```
 ul.discover.appstore(
@@ -135,14 +155,23 @@ ul.discover.appstore(
 )
 ```
 
-## ul.review
+## ul.like
 
-Submit a binary review (thumbs up/down) for a published app. Paid users only (Fun tier and above). One review per user per app — calling again changes your review. Cannot review your own apps. Returns updated review counters.
+Like an app to save it to your library. Works on public, unlisted, and private apps. Paid users only (Fun tier and above). Cannot like your own apps. Calling again on an already-liked app removes the like (toggle). Liking a previously disliked app removes the dislike.
 
 ```
-ul.review(
-  app_id: string,         // required — app ID or slug
-  positive: boolean       // required — true = thumbs up, false = thumbs down
+ul.like(
+  app_id: string          // required — app ID or slug
+)
+```
+
+## ul.dislike
+
+Dislike an app to remove it from your library and hide it from future app store results. Works on public, unlisted, and private apps. Paid users only. Cannot dislike your own apps. Calling again on an already-disliked app removes the dislike (toggle). Disliking a previously liked app removes the like.
+
+```
+ul.dislike(
+  app_id: string          // required — app ID or slug
 )
 ```
 

@@ -3,7 +3,7 @@
 // Endpoint: POST /mcp/platform
 // Tools: upload, download, set.version, set.visibility, set.download, set.supabase,
 //        permissions.grant, permissions.revoke, permissions.list,
-//        discover.library, discover.appstore, review, logs,
+//        discover.desk, discover.library, discover.appstore, like, dislike, logs,
 //        connect, connections
 
 import { json, error } from './app.ts';
@@ -272,11 +272,22 @@ const PLATFORM_TOOLS: MCPTool[] = [
 
   // ── Discovery ──────────────────────────────────
   {
+    name: 'ul.discover.desk',
+    title: 'Check Desk',
+    description:
+      'Returns the last 3 distinct apps the user has called. ' +
+      'This is the fastest lookup — check here first before searching library or app store.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
     name: 'ul.discover.library',
     title: 'Search Your Apps',
     description:
-      'Search your own apps. No query returns full Library.md (all apps). ' +
-      'With query: semantic search against your app embeddings.',
+      'Search your apps (owned + liked). No query returns full Library.md. ' +
+      'With query: semantic search. Includes apps saved via like.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -290,7 +301,9 @@ const PLATFORM_TOOLS: MCPTool[] = [
   {
     name: 'ul.discover.appstore',
     title: 'Search App Store',
-    description: 'Semantic search across all published apps in the global app store. Results include review scores.',
+    description:
+      'Semantic search across all published apps in the global app store. ' +
+      'Results exclude apps you have disliked. Includes like scores.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -304,21 +317,37 @@ const PLATFORM_TOOLS: MCPTool[] = [
     },
   },
 
-  // ── Reviews ──────────────────────────────────────
+  // ── Like/Dislike ─────────────────────────────────
   {
-    name: 'ul.review',
-    title: 'Review an App',
+    name: 'ul.like',
+    title: 'Like an App',
     description:
-      'Submit a binary review (thumbs up/down) for a published app. ' +
-      'Paid users only. One review per user per app — calling again changes your review. ' +
-      'Cannot review your own apps.',
+      'Like an app to save it to your library. Works on public, unlisted, and private apps. ' +
+      'Paid users only. Cannot like your own apps. ' +
+      'Calling again on an already-liked app removes the like (toggle). ' +
+      'Liking a previously disliked app removes the dislike.',
     inputSchema: {
       type: 'object',
       properties: {
-        app_id: { type: 'string', description: 'App ID or slug to review' },
-        positive: { type: 'boolean', description: 'true = thumbs up, false = thumbs down' },
+        app_id: { type: 'string', description: 'App ID or slug' },
       },
-      required: ['app_id', 'positive'],
+      required: ['app_id'],
+    },
+  },
+  {
+    name: 'ul.dislike',
+    title: 'Dislike an App',
+    description:
+      'Dislike an app to remove it from your library and hide it from future app store results. ' +
+      'Works on public, unlisted, and private apps. Paid users only. Cannot dislike your own apps. ' +
+      'Calling again on an already-disliked app removes the dislike (toggle). ' +
+      'Disliking a previously liked app removes the like.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        app_id: { type: 'string', description: 'App ID or slug' },
+      },
+      required: ['app_id'],
     },
   },
 
@@ -374,6 +403,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
       required: ['app_id', 'secrets'],
     },
   },
+  // ── Connections ────────────────────────────────
   {
     name: 'ul.connections',
     title: 'View Connections',
@@ -575,6 +605,9 @@ async function handleToolsCall(
         break;
 
       // Discovery
+      case 'ul.discover.desk':
+        result = await executeDiscoverDesk(userId);
+        break;
       case 'ul.discover.library':
         result = await executeDiscoverLibrary(userId, toolArgs);
         break;
@@ -582,9 +615,12 @@ async function handleToolsCall(
         result = await executeDiscoverAppstore(userId, toolArgs);
         break;
 
-      // Reviews
-      case 'ul.review':
-        result = await executeReview(userId, toolArgs, user.tier);
+      // Like/Dislike
+      case 'ul.like':
+        result = await executeLikeDislike(userId, toolArgs, user.tier, true);
+        break;
+      case 'ul.dislike':
+        result = await executeLikeDislike(userId, toolArgs, user.tier, false);
         break;
 
       // Logs
@@ -1341,22 +1377,20 @@ async function executePermissionsList(
   };
 }
 
-// ── ul.review ────────────────────────────────────
+// ── ul.like / ul.dislike ──────────────────────────────────────
 
-async function executeReview(
+async function executeLikeDislike(
   userId: string,
   args: Record<string, unknown>,
-  userTier: Tier
+  userTier: Tier,
+  positive: boolean
 ): Promise<unknown> {
   const appIdOrSlug = args.app_id as string;
-  const positive = args.positive as boolean;
-
   if (!appIdOrSlug) throw new ToolError(INVALID_PARAMS, 'app_id is required');
-  if (typeof positive !== 'boolean') throw new ToolError(INVALID_PARAMS, 'positive must be a boolean');
 
   // Paid users only
   if (userTier === 'free') {
-    throw new ToolError(FORBIDDEN, 'Reviews are available to paid users only. Upgrade to Fun or higher.');
+    throw new ToolError(FORBIDDEN, 'Like/dislike is available to paid users only. Upgrade to Fun or higher.');
   }
 
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
@@ -1365,13 +1399,12 @@ async function executeReview(
     'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
   };
 
-  // Look up the app (anyone can review a public app — don't use resolveApp which checks ownership)
+  // Look up the app (don't use resolveApp which checks ownership)
   const appsService = createAppsService();
   let app = await appsService.findById(appIdOrSlug);
   if (!app) {
-    // Try slug lookup — search across all apps (not owner-scoped)
     const slugRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/apps?slug=eq.${encodeURIComponent(appIdOrSlug)}&deleted_at=is.null&select=id,owner_id,name,slug,visibility,review_positive,review_total,review_score&limit=1`,
+      `${SUPABASE_URL}/rest/v1/apps?slug=eq.${encodeURIComponent(appIdOrSlug)}&deleted_at=is.null&select=id,owner_id,name,slug,visibility,likes,dislikes&limit=1`,
       { headers }
     );
     if (slugRes.ok) {
@@ -1381,24 +1414,51 @@ async function executeReview(
   }
   if (!app) throw new ToolError(NOT_FOUND, `App not found: ${appIdOrSlug}`);
 
-  // Can't review your own app
   if (app.owner_id === userId) {
-    throw new ToolError(FORBIDDEN, 'You cannot review your own app');
+    throw new ToolError(FORBIDDEN, `You cannot ${positive ? 'like' : 'dislike'} your own app`);
   }
 
-  // App must be public (published) to be reviewed
-  if (app.visibility !== 'public') {
-    throw new ToolError(FORBIDDEN, 'Only published apps can be reviewed');
+  // Check if user already has a like/dislike for this app
+  const existingRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/app_likes?user_id=eq.${userId}&app_id=eq.${app.id}&select=positive&limit=1`,
+    { headers }
+  );
+  const existingRows = existingRes.ok ? await existingRes.json() : [];
+  const existing = existingRows.length > 0 ? existingRows[0] : null;
+
+  // Toggle: if already set to the same value, remove it
+  if (existing && existing.positive === positive) {
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/app_likes?user_id=eq.${userId}&app_id=eq.${app.id}`,
+      { method: 'DELETE', headers }
+    );
+    // Clean up side-effect tables
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/user_app_library?user_id=eq.${userId}&app_id=eq.${app.id}`,
+      { method: 'DELETE', headers }
+    );
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/user_app_blocks?user_id=eq.${userId}&app_id=eq.${app.id}`,
+      { method: 'DELETE', headers }
+    );
+
+    const updatedApp = await appsService.findById(app.id);
+    return {
+      app_id: app.id,
+      app_name: app.name,
+      action: positive ? 'unliked' : 'undisliked',
+      likes: updatedApp?.likes ?? 0,
+      dislikes: updatedApp?.dislikes ?? 0,
+    };
   }
 
-  // Upsert the review — ON CONFLICT updates the positive value
+  // Upsert the like/dislike
   const upsertRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/app_reviews`,
+    `${SUPABASE_URL}/rest/v1/app_likes`,
     {
       method: 'POST',
       headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        ...headers,
         'Content-Type': 'application/json',
         'Prefer': 'resolution=merge-duplicates,return=representation',
       },
@@ -1412,23 +1472,47 @@ async function executeReview(
   );
 
   if (!upsertRes.ok) {
-    throw new ToolError(INTERNAL_ERROR, `Failed to submit review: ${await upsertRes.text()}`);
+    throw new ToolError(INTERNAL_ERROR, `Failed to ${positive ? 'like' : 'dislike'}: ${await upsertRes.text()}`);
   }
 
   // Read back the updated app counters (trigger has already fired)
   const updatedApp = await appsService.findById(app.id);
-  const reviewPositive = updatedApp?.review_positive ?? 0;
-  const reviewTotal = updatedApp?.review_total ?? 0;
-  const reviewScore = updatedApp?.review_score ?? 0;
+
+  // Side-effects: library save / block
+  try {
+    if (positive) {
+      await fetch(`${SUPABASE_URL}/rest/v1/user_app_library`, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+        body: JSON.stringify({ user_id: userId, app_id: app.id, source: 'like' }),
+      });
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/user_app_blocks?user_id=eq.${userId}&app_id=eq.${app.id}`,
+        { method: 'DELETE', headers }
+      );
+    } else {
+      await fetch(`${SUPABASE_URL}/rest/v1/user_app_blocks`, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+        body: JSON.stringify({ user_id: userId, app_id: app.id, reason: 'dislike' }),
+      });
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/user_app_library?user_id=eq.${userId}&app_id=eq.${app.id}`,
+        { method: 'DELETE', headers }
+      );
+    }
+  } catch (err) {
+    console.error('Like/dislike side-effect error:', err);
+  }
 
   return {
     app_id: app.id,
     app_name: app.name,
-    positive,
-    review_score: reviewScore,
-    review_positive: reviewPositive,
-    review_total: reviewTotal,
-    review_pct: reviewTotal > 0 ? Math.round((reviewPositive / reviewTotal) * 100) : 0,
+    action: positive ? 'liked' : 'disliked',
+    saved_to_library: positive,
+    blocked_from_appstore: !positive,
+    likes: updatedApp?.likes ?? 0,
+    dislikes: updatedApp?.dislikes ?? 0,
   };
 }
 
@@ -1800,6 +1884,75 @@ async function executeConnections(
   };
 }
 
+// ── ul.discover.desk ─────────────────────────────
+
+async function executeDiscoverDesk(userId: string): Promise<unknown> {
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+  const headers = {
+    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+  };
+
+  // Get the last 3 distinct apps the user has called, ordered by most recent
+  // Uses mcp_call_logs which already has idx_mcp_logs_user_time index
+  const logsRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/mcp_call_logs?user_id=eq.${userId}&select=app_id,app_name,created_at&order=created_at.desc&limit=50`,
+    { headers }
+  );
+
+  if (!logsRes.ok) {
+    return { desk: [], total: 0 };
+  }
+
+  const logs = await logsRes.json() as Array<{ app_id: string | null; app_name: string | null; created_at: string }>;
+
+  // Deduplicate by app_id, keep first (most recent) occurrence, limit to 3
+  const seen = new Set<string>();
+  const recentAppIds: Array<{ app_id: string; last_used: string }> = [];
+  for (const log of logs) {
+    if (!log.app_id || seen.has(log.app_id)) continue;
+    seen.add(log.app_id);
+    recentAppIds.push({ app_id: log.app_id, last_used: log.created_at });
+    if (recentAppIds.length >= 3) break;
+  }
+
+  if (recentAppIds.length === 0) {
+    return { desk: [], total: 0 };
+  }
+
+  // Fetch app details for the recent apps
+  const appIds = recentAppIds.map(r => r.app_id);
+  const appsRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/apps?id=in.(${appIds.join(',')})&deleted_at=is.null&select=id,name,slug,description,owner_id,visibility`,
+    { headers }
+  );
+
+  if (!appsRes.ok) {
+    return { desk: [], total: 0 };
+  }
+
+  const apps = await appsRes.json() as Array<{ id: string; name: string; slug: string; description: string | null; owner_id: string; visibility: string }>;
+  const appMap = new Map(apps.map(a => [a.id, a]));
+
+  const desk = recentAppIds
+    .map(r => {
+      const app = appMap.get(r.app_id);
+      if (!app) return null;
+      return {
+        id: app.id,
+        name: app.name,
+        slug: app.slug,
+        description: app.description,
+        is_owner: app.owner_id === userId,
+        mcp_endpoint: `/mcp/${app.id}`,
+        last_used: r.last_used,
+      };
+    })
+    .filter(Boolean);
+
+  return { desk, total: desk.length };
+}
+
 // ── ul.discover.library ──────────────────────────
 
 async function executeDiscoverLibrary(
@@ -1807,46 +1960,90 @@ async function executeDiscoverLibrary(
   args: Record<string, unknown>
 ): Promise<unknown> {
   const query = args.query as string | undefined;
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+  const headers = {
+    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+  };
+
+  // Fetch saved app IDs from user_app_library (liked apps)
+  let savedAppIds: string[] = [];
+  try {
+    const savedRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/user_app_library?user_id=eq.${userId}&select=app_id`,
+      { headers }
+    );
+    if (savedRes.ok) {
+      const rows = await savedRes.json() as Array<{ app_id: string }>;
+      savedAppIds = rows.map(r => r.app_id);
+    }
+  } catch { /* best effort */ }
+
+  // Fetch saved app details if any exist
+  let savedApps: App[] = [];
+  if (savedAppIds.length > 0) {
+    try {
+      const appsRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/apps?id=in.(${savedAppIds.join(',')})&deleted_at=is.null&select=*`,
+        { headers }
+      );
+      if (appsRes.ok) {
+        savedApps = await appsRes.json() as App[];
+      }
+    } catch { /* best effort */ }
+  }
 
   if (!query) {
-    // Return full Library.md
+    // Return full Library.md + saved apps list
     const r2Service = createR2Service();
+    let libraryMd: string | null = null;
     try {
-      const libraryMd = await r2Service.fetchTextFile(`users/${userId}/library.md`);
-      return { library: libraryMd };
+      libraryMd = await r2Service.fetchTextFile(`users/${userId}/library.md`);
     } catch {
-      // Library doesn't exist yet — build it
       await rebuildUserLibrary(userId);
       try {
-        const libraryMd = await r2Service.fetchTextFile(`users/${userId}/library.md`);
-        return { library: libraryMd };
-      } catch {
-        // Still nothing — return inline list
-        const appsService = createAppsService();
-        const apps = await appsService.listByOwner(userId);
-        return {
-          library: apps.map(a => ({
-            id: a.id,
-            name: a.name,
-            slug: a.slug,
-            description: a.description,
-            visibility: a.visibility,
-            version: a.current_version,
-            mcp_endpoint: `/mcp/${a.id}`,
-          })),
-        };
-      }
+        libraryMd = await r2Service.fetchTextFile(`users/${userId}/library.md`);
+      } catch { /* no library yet */ }
     }
+
+    if (!libraryMd) {
+      // Inline list as fallback
+      const appsService = createAppsService();
+      const apps = await appsService.listByOwner(userId);
+      const ownedList = apps.map(a => ({
+        id: a.id, name: a.name, slug: a.slug, description: a.description,
+        visibility: a.visibility, version: a.current_version,
+        source: 'owned' as const, mcp_endpoint: `/mcp/${a.id}`,
+      }));
+      const savedList = savedApps.map(a => ({
+        id: a.id, name: a.name, slug: a.slug, description: a.description,
+        visibility: a.visibility, version: a.current_version,
+        source: 'saved' as const, mcp_endpoint: `/mcp/${a.id}`,
+      }));
+      return { library: [...ownedList, ...savedList] };
+    }
+
+    // Append saved apps section to Library.md
+    if (savedApps.length > 0) {
+      const savedSection = '\n\n## Saved Apps\n\nApps you\'ve liked.\n\n' +
+        savedApps.map(a =>
+          `## ${a.name || a.slug}\n${a.description || 'No description'}\nMCP: /mcp/${a.id}`
+        ).join('\n\n');
+      libraryMd += savedSection;
+    }
+
+    return { library: libraryMd };
   }
 
   // Semantic search against user's app embeddings
   const embeddingService = createEmbeddingService();
   if (!embeddingService) {
-    // Fall back to text search
+    // Fall back to text search across owned + saved
     const appsService = createAppsService();
-    const apps = await appsService.listByOwner(userId);
+    const ownedApps = await appsService.listByOwner(userId);
+    const allApps = [...ownedApps, ...savedApps.filter(sa => sa.owner_id !== userId)];
     const queryLower = query.toLowerCase();
-    const matches = apps.filter(a =>
+    const matches = allApps.filter(a =>
       a.name.toLowerCase().includes(queryLower) ||
       (a.description || '').toLowerCase().includes(queryLower) ||
       (a.tags || []).some(t => t.toLowerCase().includes(queryLower))
@@ -1854,16 +2051,14 @@ async function executeDiscoverLibrary(
     return {
       query,
       results: matches.map(a => ({
-        id: a.id,
-        name: a.name,
-        slug: a.slug,
-        description: a.description,
+        id: a.id, name: a.name, slug: a.slug, description: a.description,
+        source: a.owner_id === userId ? 'owned' : 'saved',
         mcp_endpoint: `/mcp/${a.id}`,
       })),
     };
   }
 
-  // Generate query embedding and search
+  // Generate query embedding and search (includes own private apps)
   const queryResult = await embeddingService.embed(query);
   const appsService = createAppsService();
   const results = await appsService.searchByEmbedding(
@@ -1874,17 +2069,18 @@ async function executeDiscoverLibrary(
     0.3
   );
 
-  // Filter to only user's own apps
-  const ownResults = results.filter(r => r.owner_id === userId);
+  // Filter to own apps + saved apps
+  const savedAppIdSet = new Set(savedAppIds);
+  const libraryResults = results.filter(r =>
+    r.owner_id === userId || savedAppIdSet.has(r.id)
+  );
 
   return {
     query,
-    results: ownResults.map(r => ({
-      id: r.id,
-      name: r.name,
-      slug: r.slug,
-      description: r.description,
+    results: libraryResults.map(r => ({
+      id: r.id, name: r.name, slug: r.slug, description: r.description,
       similarity: r.similarity,
+      source: r.owner_id === userId ? 'owned' : 'saved',
       mcp_endpoint: `/mcp/${r.id}`,
     })),
   };
@@ -1916,13 +2112,29 @@ async function executeDiscoverAppstore(
     0.4
   );
 
-  // Fetch env_schema and user connection status for discovered apps
-  const appIds = results.map(r => r.id);
+  // Filter out blocked apps (disliked)
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   const headers = {
     'apikey': SUPABASE_SERVICE_ROLE_KEY,
     'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
   };
+
+  let blockedAppIds = new Set<string>();
+  try {
+    const blocksRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/user_app_blocks?user_id=eq.${userId}&select=app_id`,
+      { headers }
+    );
+    if (blocksRes.ok) {
+      const rows = await blocksRes.json() as Array<{ app_id: string }>;
+      blockedAppIds = new Set(rows.map(r => r.app_id));
+    }
+  } catch { /* best effort — don't block search on filter failure */ }
+
+  const filteredResults = results.filter(r => !blockedAppIds.has(r.id));
+
+  // Fetch env_schema and user connection status for discovered apps
+  const appIds = filteredResults.map(r => r.id);
 
   // Batch fetch env_schema for all discovered apps
   let envSchemas = new Map<string, Record<string, EnvSchemaEntry>>();
@@ -1961,10 +2173,8 @@ async function executeDiscoverAppstore(
 
   return {
     query,
-    results: results.map(r => {
-      const rr = r as App & { similarity: number; review_positive?: number; review_total?: number; review_score?: number };
-      const pos = rr.review_positive ?? 0;
-      const tot = rr.review_total ?? 0;
+    results: filteredResults.map(r => {
+      const rr = r as App & { similarity: number; likes?: number; dislikes?: number };
 
       // Per-user secret info
       const schema = envSchemas.get(rr.id) || {};
@@ -1983,17 +2193,15 @@ async function executeDiscoverAppstore(
         similarity: rr.similarity,
         is_owner: rr.owner_id === userId,
         mcp_endpoint: `/mcp/${rr.id}`,
-        review_score: rr.review_score ?? 0,
-        review_positive: pos,
-        review_total: tot,
-        review_pct: tot > 0 ? Math.round((pos / tot) * 100) : null,
+        likes: rr.likes ?? 0,
+        dislikes: rr.dislikes ?? 0,
         // Connection info
         required_secrets: requiredSecrets.length > 0 ? requiredSecrets : undefined,
         connected: connectedKeys.length > 0,
         fully_connected: requiredSecrets.length === 0 || missingRequired.length === 0,
       };
     }),
-    total: results.length,
+    total: filteredResults.length,
   };
 }
 

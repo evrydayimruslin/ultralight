@@ -93,10 +93,9 @@ export interface App {
   total_unique_users: number;
   runs_7d: number;
   runs_30d: number;
-  // Review counters (denormalized, kept in sync by DB trigger)
-  review_positive: number;
-  review_total: number;
-  review_score: number; // positive - negative
+  // Like counters (denormalized, kept in sync by DB trigger)
+  likes: number;
+  dislikes: number;
   category: string | null;
   tags: string[];
   // Environment variables (encrypted, keys only exposed to owner)
