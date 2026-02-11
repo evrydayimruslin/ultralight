@@ -5,6 +5,7 @@ const Deno = globalThis.Deno;
 
 import { createApp } from './handlers/app.ts';
 import { startCronScheduler } from './services/cron.ts';
+import { startSubscriptionExpiryChecker } from './services/subscription-expiry.ts';
 
 // Get port from environment or default to 8000
 // @ts-ignore
@@ -19,6 +20,9 @@ console.log(`Starting Ultralight API on port ${port}...`);
 // Start the cron scheduler for background jobs
 console.log(`[CRON] Initializing scheduler with base URL: ${baseUrl}`);
 startCronScheduler(baseUrl);
+
+// Start subscription expiry checker (hourly)
+startSubscriptionExpiryChecker();
 
 // Serve the API
 Deno.serve({ port, hostname: '0.0.0.0' }, async (request: Request) => {
