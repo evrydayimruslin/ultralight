@@ -1060,7 +1060,6 @@ async function executeAppFunction(
 
     // Log the call (fire-and-forget)
     const { logMcpCall } = await import('../services/call-logger.ts');
-    const appRecord = app as Record<string, unknown>;
     logMcpCall({
       userId,
       appId: app.id,
