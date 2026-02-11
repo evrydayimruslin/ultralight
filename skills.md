@@ -4,7 +4,7 @@ Endpoint: `POST /mcp/platform`
 Protocol: JSON-RPC 2.0
 Namespace: `ul.*`
 
-12 tools for managing MCP apps: upload code, configure settings, control permissions, discover apps, and view logs.
+13 tools for managing MCP apps: upload code, configure settings, control permissions, discover apps, review apps, and view logs.
 
 ---
 
@@ -132,6 +132,17 @@ Semantic search across all published apps in the global app store.
 ul.discover.appstore(
   query: string,          // required — natural language search query
   limit?: number          // max results (default: 10)
+)
+```
+
+## ul.review
+
+Submit a binary review (thumbs up/down) for a published app. Paid users only (Fun tier and above). One review per user per app — calling again changes your review. Cannot review your own apps. Returns updated review counters.
+
+```
+ul.review(
+  app_id: string,         // required — app ID or slug
+  positive: boolean       // required — true = thumbs up, false = thumbs down
 )
 ```
 

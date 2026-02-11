@@ -3,7 +3,7 @@
 // Endpoint: POST /mcp/platform
 // Tools: upload, download, set.version, set.visibility, set.download, set.supabase,
 //        permissions.grant, permissions.revoke, permissions.list,
-//        discover.library, discover.appstore, logs
+//        discover.library, discover.appstore, review, logs
 
 import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
@@ -287,7 +287,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
   {
     name: 'ul.discover.appstore',
     title: 'Search App Store',
-    description: 'Semantic search across all published apps in the global app store.',
+    description: 'Semantic search across all published apps in the global app store. Results include review scores.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -298,6 +298,24 @@ const PLATFORM_TOOLS: MCPTool[] = [
         limit: { type: 'number', description: 'Max results (default: 10)' },
       },
       required: ['query'],
+    },
+  },
+
+  // ── Reviews ──────────────────────────────────────
+  {
+    name: 'ul.review',
+    title: 'Review an App',
+    description:
+      'Submit a binary review (thumbs up/down) for a published app. ' +
+      'Paid users only. One review per user per app — calling again changes your review. ' +
+      'Cannot review your own apps.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        app_id: { type: 'string', description: 'App ID or slug to review' },
+        positive: { type: 'boolean', description: 'true = thumbs up, false = thumbs down' },
+      },
+      required: ['app_id', 'positive'],
     },
   },
 
@@ -517,6 +535,11 @@ async function handleToolsCall(
         break;
       case 'ul.discover.appstore':
         result = await executeDiscoverAppstore(userId, toolArgs);
+        break;
+
+      // Reviews
+      case 'ul.review':
+        result = await executeReview(userId, toolArgs, user.tier);
         break;
 
       // Logs
@@ -1265,6 +1288,97 @@ async function executePermissionsList(
   };
 }
 
+// ── ul.review ────────────────────────────────────
+
+async function executeReview(
+  userId: string,
+  args: Record<string, unknown>,
+  userTier: Tier
+): Promise<unknown> {
+  const appIdOrSlug = args.app_id as string;
+  const positive = args.positive as boolean;
+
+  if (!appIdOrSlug) throw new ToolError(INVALID_PARAMS, 'app_id is required');
+  if (typeof positive !== 'boolean') throw new ToolError(INVALID_PARAMS, 'positive must be a boolean');
+
+  // Paid users only
+  if (userTier === 'free') {
+    throw new ToolError(FORBIDDEN, 'Reviews are available to paid users only. Upgrade to Fun or higher.');
+  }
+
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+  const headers = {
+    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+  };
+
+  // Look up the app (anyone can review a public app — don't use resolveApp which checks ownership)
+  const appsService = createAppsService();
+  let app = await appsService.findById(appIdOrSlug);
+  if (!app) {
+    // Try slug lookup — search across all apps (not owner-scoped)
+    const slugRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/apps?slug=eq.${encodeURIComponent(appIdOrSlug)}&deleted_at=is.null&select=id,owner_id,name,slug,visibility,review_positive,review_total,review_score&limit=1`,
+      { headers }
+    );
+    if (slugRes.ok) {
+      const rows = await slugRes.json();
+      if (rows.length > 0) app = rows[0] as App;
+    }
+  }
+  if (!app) throw new ToolError(NOT_FOUND, `App not found: ${appIdOrSlug}`);
+
+  // Can't review your own app
+  if (app.owner_id === userId) {
+    throw new ToolError(FORBIDDEN, 'You cannot review your own app');
+  }
+
+  // App must be public (published) to be reviewed
+  if (app.visibility !== 'public') {
+    throw new ToolError(FORBIDDEN, 'Only published apps can be reviewed');
+  }
+
+  // Upsert the review — ON CONFLICT updates the positive value
+  const upsertRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/app_reviews`,
+    {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates,return=representation',
+      },
+      body: JSON.stringify({
+        app_id: app.id,
+        user_id: userId,
+        positive,
+        updated_at: new Date().toISOString(),
+      }),
+    }
+  );
+
+  if (!upsertRes.ok) {
+    throw new ToolError(INTERNAL_ERROR, `Failed to submit review: ${await upsertRes.text()}`);
+  }
+
+  // Read back the updated app counters (trigger has already fired)
+  const updatedApp = await appsService.findById(app.id);
+  const reviewPositive = updatedApp?.review_positive ?? 0;
+  const reviewTotal = updatedApp?.review_total ?? 0;
+  const reviewScore = updatedApp?.review_score ?? 0;
+
+  return {
+    app_id: app.id,
+    app_name: app.name,
+    positive,
+    review_score: reviewScore,
+    review_positive: reviewPositive,
+    review_total: reviewTotal,
+    review_pct: reviewTotal > 0 ? Math.round((reviewPositive / reviewTotal) * 100) : 0,
+  };
+}
+
 // ── ul.logs ──────────────────────────────────────
 
 async function executeLogs(
@@ -1496,15 +1610,24 @@ async function executeDiscoverAppstore(
 
   return {
     query,
-    results: results.map(r => ({
-      id: r.id,
-      name: r.name,
-      slug: r.slug,
-      description: r.description,
-      similarity: r.similarity,
-      is_owner: r.owner_id === userId,
-      mcp_endpoint: `/mcp/${r.id}`,
-    })),
+    results: results.map(r => {
+      const rr = r as App & { similarity: number; review_positive?: number; review_total?: number; review_score?: number };
+      const pos = rr.review_positive ?? 0;
+      const tot = rr.review_total ?? 0;
+      return {
+        id: rr.id,
+        name: rr.name,
+        slug: rr.slug,
+        description: rr.description,
+        similarity: rr.similarity,
+        is_owner: rr.owner_id === userId,
+        mcp_endpoint: `/mcp/${rr.id}`,
+        review_score: rr.review_score ?? 0,
+        review_positive: pos,
+        review_total: tot,
+        review_pct: tot > 0 ? Math.round((pos / tot) * 100) : null,
+      };
+    }),
     total: results.length,
   };
 }
