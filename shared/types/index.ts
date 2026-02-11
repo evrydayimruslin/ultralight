@@ -96,6 +96,9 @@ export interface App {
   // Like counters (denormalized, kept in sync by DB trigger)
   likes: number;
   dislikes: number;
+  // Weighted counters (paid-tier likes only, used for search ranking)
+  weighted_likes: number;
+  weighted_dislikes: number;
   category: string | null;
   tags: string[];
   // Environment variables (encrypted, keys only exposed to owner)

@@ -303,7 +303,8 @@ const PLATFORM_TOOLS: MCPTool[] = [
     title: 'Search App Store',
     description:
       'Semantic search across all published apps in the global app store. ' +
-      'Results exclude apps you have disliked. Includes like scores.',
+      'Results ranked by relevancy, community signal, and native capability. ' +
+      'Excludes apps you have disliked.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -323,7 +324,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     title: 'Like an App',
     description:
       'Like an app to save it to your library. Works on public, unlisted, and private apps. ' +
-      'Paid users only. Cannot like your own apps. ' +
+      'Cannot like your own apps. ' +
       'Calling again on an already-liked app removes the like (toggle). ' +
       'Liking a previously disliked app removes the dislike.',
     inputSchema: {
@@ -339,7 +340,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     title: 'Dislike an App',
     description:
       'Dislike an app to remove it from your library and hide it from future app store results. ' +
-      'Works on public, unlisted, and private apps. Paid users only. Cannot dislike your own apps. ' +
+      'Works on public, unlisted, and private apps. Cannot dislike your own apps. ' +
       'Calling again on an already-disliked app removes the dislike (toggle). ' +
       'Disliking a previously liked app removes the like.',
     inputSchema: {
@@ -617,10 +618,10 @@ async function handleToolsCall(
 
       // Like/Dislike
       case 'ul.like':
-        result = await executeLikeDislike(userId, toolArgs, user.tier, true);
+        result = await executeLikeDislike(userId, toolArgs, true);
         break;
       case 'ul.dislike':
-        result = await executeLikeDislike(userId, toolArgs, user.tier, false);
+        result = await executeLikeDislike(userId, toolArgs, false);
         break;
 
       // Logs
@@ -1382,16 +1383,10 @@ async function executePermissionsList(
 async function executeLikeDislike(
   userId: string,
   args: Record<string, unknown>,
-  userTier: Tier,
   positive: boolean
 ): Promise<unknown> {
   const appIdOrSlug = args.app_id as string;
   if (!appIdOrSlug) throw new ToolError(INVALID_PARAMS, 'app_id is required');
-
-  // Paid users only
-  if (userTier === 'free') {
-    throw new ToolError(FORBIDDEN, 'Like/dislike is available to paid users only. Upgrade to Fun or higher.');
-  }
 
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   const headers = {
@@ -2096,6 +2091,7 @@ async function executeDiscoverAppstore(
   if (!query) throw new ToolError(INVALID_PARAMS, 'query is required');
 
   const limit = (args.limit as number) || 10;
+  const overFetchLimit = limit * 3; // Over-fetch 3x for re-ranking pool
 
   const embeddingService = createEmbeddingService();
   if (!embeddingService) {
@@ -2108,7 +2104,7 @@ async function executeDiscoverAppstore(
     queryResult.embedding,
     userId,
     false, // public only
-    limit,
+    overFetchLimit,
     0.4
   );
 
@@ -2129,14 +2125,13 @@ async function executeDiscoverAppstore(
       const rows = await blocksRes.json() as Array<{ app_id: string }>;
       blockedAppIds = new Set(rows.map(r => r.app_id));
     }
-  } catch { /* best effort — don't block search on filter failure */ }
+  } catch { /* best effort */ }
 
   const filteredResults = results.filter(r => !blockedAppIds.has(r.id));
 
-  // Fetch env_schema and user connection status for discovered apps
+  // Fetch env_schema and user connection status for re-ranking
   const appIds = filteredResults.map(r => r.id);
 
-  // Batch fetch env_schema for all discovered apps
   let envSchemas = new Map<string, Record<string, EnvSchemaEntry>>();
   if (appIds.length > 0) {
     try {
@@ -2153,7 +2148,6 @@ async function executeDiscoverAppstore(
     } catch { /* best effort */ }
   }
 
-  // Batch fetch user's connected keys for all discovered apps
   let userConnections = new Map<string, string[]>();
   if (appIds.length > 0) {
     try {
@@ -2171,37 +2165,129 @@ async function executeDiscoverAppstore(
     } catch { /* best effort */ }
   }
 
+  // ── COMPOSITE RE-RANKING ──
+  // final_score = (similarity * 0.7) + (native_boost * 0.15) + (like_signal * 0.15)
+
+  const scored = filteredResults.map(r => {
+    const rr = r as App & { similarity: number; weighted_likes?: number; weighted_dislikes?: number };
+
+    // native_boost: reward apps that need no user configuration
+    const schema = envSchemas.get(rr.id) || {};
+    const perUserEntries = Object.entries(schema).filter(([, v]) => v.scope === 'per_user');
+    const requiredPerUser = perUserEntries.filter(([, v]) => v.required);
+    const connectedKeys = userConnections.get(rr.id) || [];
+
+    let nativeBoost: number;
+    if (perUserEntries.length === 0) {
+      nativeBoost = 1.0; // fully native — no per-user env vars
+    } else if (requiredPerUser.length === 0) {
+      nativeBoost = 0.3; // optional per-user keys only
+    } else {
+      const requiredKeys = requiredPerUser.map(([key]) => key);
+      const missingRequired = requiredKeys.filter(k => !connectedKeys.includes(k));
+      nativeBoost = missingRequired.length === 0 ? 0.8 : 0.0;
+    }
+
+    // like_signal: paid-tier likes only (free likes have zero weight)
+    const wLikes = rr.weighted_likes ?? 0;
+    const wDislikes = rr.weighted_dislikes ?? 0;
+    const likeSignal = wLikes / (wLikes + wDislikes + 1);
+
+    // composite score
+    const finalScore = (rr.similarity * 0.7) + (nativeBoost * 0.15) + (likeSignal * 0.15);
+
+    // connection info (computed here so we don't recompute in formatting)
+    const requiredSecrets = Object.entries(schema)
+      .filter(([, v]) => v.scope === 'per_user')
+      .map(([key, v]) => ({ key, description: v.description || null, required: v.required ?? false }));
+    const requiredKeys = requiredSecrets.filter(s => s.required).map(s => s.key);
+    const missingRequired = requiredKeys.filter(k => !connectedKeys.includes(k));
+
+    return {
+      id: rr.id,
+      name: rr.name,
+      slug: rr.slug,
+      description: rr.description,
+      owner_id: rr.owner_id,
+      similarity: rr.similarity,
+      likes: rr.likes ?? 0,
+      dislikes: rr.dislikes ?? 0,
+      finalScore,
+      requiredSecrets,
+      connected: connectedKeys.length > 0,
+      fullyConnected: requiredSecrets.length === 0 || missingRequired.length === 0,
+    };
+  });
+
+  // Sort by final_score DESC
+  scored.sort((a, b) => b.finalScore - a.finalScore);
+
+  // ── LUCK SHUFFLE (top 5) ──
+  // Among the top 5 results, add a random bonus proportional to the gap from #1.
+  // Close competitors swap frequently; distant results rarely overtake.
+  if (scored.length >= 2) {
+    const shuffleCount = Math.min(5, scored.length);
+    const topSlice = scored.slice(0, shuffleCount);
+    const topScore = topSlice[0].finalScore;
+
+    const shuffled = topSlice.map(app => {
+      const gap = topScore - app.finalScore;
+      const luckBonus = Math.random() * gap * 0.5;
+      return { app, shuffledScore: app.finalScore + luckBonus };
+    });
+    shuffled.sort((a, b) => b.shuffledScore - a.shuffledScore);
+
+    for (let i = 0; i < shuffleCount; i++) {
+      scored[i] = shuffled[i].app;
+    }
+  }
+
+  // Truncate to requested limit
+  const finalResults = scored.slice(0, limit);
+
+  // ── LOG QUERY (fire-and-forget) ──
+  const queryId = crypto.randomUUID();
+  try {
+    const resultsForLog = finalResults.map((r, i) => ({
+      app_id: r.id,
+      position: i + 1,
+      final_score: Math.round(r.finalScore * 10000) / 10000,
+      similarity: Math.round(r.similarity * 10000) / 10000,
+    }));
+    fetch(`${SUPABASE_URL}/rest/v1/appstore_queries`, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: queryId,
+        query,
+        top_similarity: finalResults.length > 0 ? Math.round(finalResults[0].similarity * 10000) / 10000 : null,
+        top_final_score: finalResults.length > 0 ? Math.round(finalResults[0].finalScore * 10000) / 10000 : null,
+        result_count: finalResults.length,
+        results: resultsForLog,
+      }),
+    }).catch(err => console.error('Failed to log appstore query:', err));
+  } catch { /* best effort */ }
+
+  // ── FORMAT RESPONSE ──
   return {
     query,
-    results: filteredResults.map(r => {
-      const rr = r as App & { similarity: number; likes?: number; dislikes?: number };
-
-      // Per-user secret info
-      const schema = envSchemas.get(rr.id) || {};
-      const requiredSecrets = Object.entries(schema)
-        .filter(([, v]) => v.scope === 'per_user')
-        .map(([key, v]) => ({ key, description: v.description || null, required: v.required ?? false }));
-      const connectedKeys = userConnections.get(rr.id) || [];
-      const requiredKeys = requiredSecrets.filter(s => s.required).map(s => s.key);
-      const missingRequired = requiredKeys.filter(k => !connectedKeys.includes(k));
-
-      return {
-        id: rr.id,
-        name: rr.name,
-        slug: rr.slug,
-        description: rr.description,
-        similarity: rr.similarity,
-        is_owner: rr.owner_id === userId,
-        mcp_endpoint: `/mcp/${rr.id}`,
-        likes: rr.likes ?? 0,
-        dislikes: rr.dislikes ?? 0,
-        // Connection info
-        required_secrets: requiredSecrets.length > 0 ? requiredSecrets : undefined,
-        connected: connectedKeys.length > 0,
-        fully_connected: requiredSecrets.length === 0 || missingRequired.length === 0,
-      };
-    }),
-    total: filteredResults.length,
+    query_id: queryId,
+    results: finalResults.map(r => ({
+      id: r.id,
+      name: r.name,
+      slug: r.slug,
+      description: r.description,
+      similarity: r.similarity,
+      final_score: Math.round(r.finalScore * 10000) / 10000,
+      is_owner: r.owner_id === userId,
+      mcp_endpoint: `/mcp/${r.id}`,
+      likes: r.likes,
+      dislikes: r.dislikes,
+      required_secrets: r.requiredSecrets.length > 0 ? r.requiredSecrets : undefined,
+      connected: r.connected,
+      fully_connected: r.fullyConnected,
+    })),
+    total: finalResults.length,
   };
 }
 

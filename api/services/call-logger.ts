@@ -16,6 +16,7 @@ export interface McpCallLogEntry {
   success: boolean;
   durationMs?: number;
   errorMessage?: string;
+  source?: 'direct' | 'appstore' | 'library' | 'desk';
 }
 
 /**
@@ -47,6 +48,7 @@ async function _insertLog(entry: McpCallLogEntry): Promise<void> {
         success: entry.success,
         duration_ms: entry.durationMs || null,
         error_message: entry.errorMessage || null,
+        source: entry.source || 'direct',
       }),
     }
   );

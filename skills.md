@@ -146,7 +146,7 @@ ul.discover.library(
 
 ## ul.discover.appstore
 
-Semantic search across all published apps in the global app store. Excludes apps the user has disliked.
+Semantic search across all published apps in the global app store. Results ranked by relevancy, community signal, and native capability. Excludes apps the user has disliked.
 
 ```
 ul.discover.appstore(
@@ -157,7 +157,7 @@ ul.discover.appstore(
 
 ## ul.like
 
-Like an app to save it to your library. Works on public, unlisted, and private apps. Paid users only (Fun tier and above). Cannot like your own apps. Calling again on an already-liked app removes the like (toggle). Liking a previously disliked app removes the dislike.
+Like an app to save it to your library. Works on public, unlisted, and private apps. Cannot like your own apps. Calling again on an already-liked app removes the like (toggle). Liking a previously disliked app removes the dislike.
 
 ```
 ul.like(
@@ -167,7 +167,7 @@ ul.like(
 
 ## ul.dislike
 
-Dislike an app to remove it from your library and hide it from future app store results. Works on public, unlisted, and private apps. Paid users only. Cannot dislike your own apps. Calling again on an already-disliked app removes the dislike (toggle). Disliking a previously liked app removes the like.
+Dislike an app to remove it from your library and hide it from future app store results. Works on public, unlisted, and private apps. Cannot dislike your own apps. Calling again on an already-disliked app removes the dislike (toggle). Disliking a previously liked app removes the like.
 
 ```
 ul.dislike(

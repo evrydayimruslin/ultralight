@@ -151,14 +151,19 @@ CREATE INDEX IF NOT EXISTS idx_app_likes_user ON app_likes(user_id);
 -- Denormalized like/dislike counters on apps
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS likes INTEGER DEFAULT 0;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS dislikes INTEGER DEFAULT 0;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS weighted_likes INTEGER DEFAULT 0;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS weighted_dislikes INTEGER DEFAULT 0;
 
--- Trigger function: recompute likes and dislikes
+-- Trigger function: recompute likes, dislikes, weighted_likes, weighted_dislikes
 -- on every INSERT/UPDATE/DELETE in app_likes.
+-- JOINs users to compute weighted counts (paid tiers only).
 CREATE OR REPLACE FUNCTION update_app_like_counts() RETURNS trigger AS $$
 DECLARE
   target_app_id UUID;
   like_count INTEGER;
   dislike_count INTEGER;
+  w_like_count INTEGER;
+  w_dislike_count INTEGER;
 BEGIN
   IF TG_OP = 'DELETE' THEN
     target_app_id := OLD.app_id;
@@ -168,24 +173,41 @@ BEGIN
 
   -- If UPDATE changed app_id, also recompute old app
   IF TG_OP = 'UPDATE' AND OLD.app_id IS DISTINCT FROM NEW.app_id THEN
-    SELECT COUNT(*) FILTER (WHERE positive), COUNT(*) FILTER (WHERE NOT positive)
-      INTO like_count, dislike_count
-      FROM app_likes WHERE app_id = OLD.app_id;
+    SELECT
+      COUNT(*) FILTER (WHERE al.positive),
+      COUNT(*) FILTER (WHERE NOT al.positive),
+      COUNT(*) FILTER (WHERE al.positive AND u.tier != 'free'),
+      COUNT(*) FILTER (WHERE NOT al.positive AND u.tier != 'free')
+    INTO like_count, dislike_count, w_like_count, w_dislike_count
+    FROM app_likes al
+    JOIN users u ON u.id = al.user_id
+    WHERE al.app_id = OLD.app_id;
+
     UPDATE apps SET
       likes = like_count,
       dislikes = dislike_count,
+      weighted_likes = w_like_count,
+      weighted_dislikes = w_dislike_count,
       updated_at = NOW()
     WHERE id = OLD.app_id;
   END IF;
 
   -- Recompute for the target app
-  SELECT COUNT(*) FILTER (WHERE positive), COUNT(*) FILTER (WHERE NOT positive)
-    INTO like_count, dislike_count
-    FROM app_likes WHERE app_id = target_app_id;
+  SELECT
+    COUNT(*) FILTER (WHERE al.positive),
+    COUNT(*) FILTER (WHERE NOT al.positive),
+    COUNT(*) FILTER (WHERE al.positive AND u.tier != 'free'),
+    COUNT(*) FILTER (WHERE NOT al.positive AND u.tier != 'free')
+  INTO like_count, dislike_count, w_like_count, w_dislike_count
+  FROM app_likes al
+  JOIN users u ON u.id = al.user_id
+  WHERE al.app_id = target_app_id;
 
   UPDATE apps SET
     likes = like_count,
     dislikes = dislike_count,
+    weighted_likes = w_like_count,
+    weighted_dislikes = w_dislike_count,
     updated_at = NOW()
   WHERE id = target_app_id;
 
@@ -205,7 +227,7 @@ CREATE TRIGGER trg_app_likes
 -- ============================================
 -- 9. SEARCH_APPS — Add like fields to return type
 -- ============================================
--- Must DROP again because return type is changing (adding likes/dislikes).
+-- Must DROP again because return type is changing.
 
 DROP FUNCTION IF EXISTS search_apps(vector, uuid, integer, integer);
 
@@ -224,7 +246,9 @@ CREATE OR REPLACE FUNCTION search_apps(
   similarity FLOAT,
   skills_parsed JSONB,
   likes INTEGER,
-  dislikes INTEGER
+  dislikes INTEGER,
+  weighted_likes INTEGER,
+  weighted_dislikes INTEGER
 ) AS $$
 BEGIN
   RETURN QUERY
@@ -238,7 +262,9 @@ BEGIN
     1 - (a.skills_embedding <=> p_query_embedding) as similarity,
     a.skills_parsed,
     COALESCE(a.likes, 0),
-    COALESCE(a.dislikes, 0)
+    COALESCE(a.dislikes, 0),
+    COALESCE(a.weighted_likes, 0),
+    COALESCE(a.weighted_dislikes, 0)
   FROM apps a
   WHERE
     a.deleted_at IS NULL
@@ -311,6 +337,6 @@ CREATE POLICY user_app_secrets_own ON user_app_secrets
 -- - search_apps() now returns slug + like data for discovery results
 -- - update_app_embedding() provides atomic embedding updates
 -- - mcp_call_logs has app_id index for ul.logs owner queries
--- - app_likes table + trigger keeps likes/dislikes on apps in sync
+-- - app_likes table + trigger keeps likes/dislikes/weighted_likes/weighted_dislikes on apps in sync
 -- - apps.env_schema declares per-user secret requirements
 -- - user_app_secrets stores encrypted per-user secrets (ul.connect/ul.connections)
