@@ -270,6 +270,43 @@ CREATE POLICY app_reviews_own ON app_reviews
   FOR ALL USING (user_id = auth.uid());
 
 -- ============================================
+-- 10. PER-USER SECRETS — ul.connect / ul.connections
+-- ============================================
+-- App owners declare per-user env var schema via apps.env_schema.
+-- End users store their encrypted secrets in user_app_secrets.
+
+-- env_schema: declares which env vars are per-user (with description, required flag)
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS env_schema JSONB DEFAULT '{}';
+
+-- user_app_secrets: encrypted per-user secrets for apps
+CREATE TABLE IF NOT EXISTS user_app_secrets (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id UUID NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  key TEXT NOT NULL,
+  value_encrypted TEXT NOT NULL,  -- AES-256-GCM encrypted value
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_id, app_id, key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_app_secrets_user_app
+  ON user_app_secrets(user_id, app_id);
+
+CREATE INDEX IF NOT EXISTS idx_user_app_secrets_app
+  ON user_app_secrets(app_id);
+
+-- RLS for user_app_secrets
+ALTER TABLE user_app_secrets ENABLE ROW LEVEL SECURITY;
+
+-- Users can only see/manage their own secrets
+CREATE POLICY user_app_secrets_own ON user_app_secrets
+  FOR ALL USING (user_id = auth.uid());
+
+-- App owners can see which users have connected (but NOT the secret values)
+-- This is handled at the application level via service role key
+
+-- ============================================
 -- NOTES
 -- ============================================
 -- After running this migration, the new ul.* Platform MCP tools
@@ -283,3 +320,5 @@ CREATE POLICY app_reviews_own ON app_reviews
 -- - mcp_call_logs has app_id index for ul.logs owner queries
 -- - app_reviews table + trigger keeps review_positive/total/score on apps in sync
 -- - review_score = positive_count - negative_count (Rotten Tomatoes style)
+-- - apps.env_schema declares per-user secret requirements
+-- - user_app_secrets stores encrypted per-user secrets (ul.connect/ul.connections)

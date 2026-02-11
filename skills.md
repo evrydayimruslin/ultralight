@@ -4,7 +4,7 @@ Endpoint: `POST /mcp/platform`
 Protocol: JSON-RPC 2.0
 Namespace: `ul.*`
 
-13 tools for managing MCP apps: upload code, configure settings, control permissions, discover apps, review apps, and view logs.
+15 tools for managing MCP apps: upload code, configure settings, control permissions, discover apps, review apps, view logs, and manage per-user secrets.
 
 ---
 
@@ -157,5 +157,28 @@ ul.logs(
   functions?: string[],   // filter to these function names; omit = all
   limit?: number,         // max entries (default: 50, max: 200)
   since?: string          // ISO timestamp — only logs after this time
+)
+```
+
+## ul.connect
+
+Set, update, or remove your per-user secrets for an app. Apps declare required secrets (e.g. API keys) via `env_schema`. Pass a secret value as `null` to remove that key. Pass all values as `null` to fully disconnect.
+
+```
+ul.connect(
+  app_id: string,         // required — app ID or slug to connect to
+  secrets: {              // required — key-value pairs of secrets to set
+    [key: string]: string | null  // string to set, null to remove
+  }
+)
+```
+
+## ul.connections
+
+View your connections to apps. No `app_id` returns all apps you have connected to. With `app_id` shows required secrets, which you've provided, and connection status.
+
+```
+ul.connections(
+  app_id?: string         // app ID or slug; omit = list all your connections
 )
 ```

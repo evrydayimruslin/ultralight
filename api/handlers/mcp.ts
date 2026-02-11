@@ -903,7 +903,7 @@ async function executeAppFunction(
     // For now, pass as single object argument
     const argsArray = Object.keys(args).length > 0 ? [args] : [];
 
-    // Decrypt environment variables for the app
+    // Decrypt environment variables for the app (universal env vars set by owner)
     const encryptedEnvVars = (app as Record<string, unknown>).env_vars as Record<string, string> || {};
     let envVars: Record<string, string> = {};
     try {
@@ -913,8 +913,68 @@ async function executeAppFunction(
       // Continue with empty env vars
     }
 
-    // Resolve Supabase config: prefer config_id (new model), fall back to legacy app-level, then platform-level
+    // Merge per-user secrets (from ul.connect) into envVars
+    // Per-user secrets override universal env vars for the same key
     const appRecord = app as Record<string, unknown>;
+    const envSchema = (appRecord.env_schema || {}) as Record<string, { scope: string; required?: boolean; description?: string }>;
+    const perUserKeys = Object.entries(envSchema)
+      .filter(([, v]) => v.scope === 'per_user')
+      .map(([k]) => k);
+
+    if (perUserKeys.length > 0) {
+      try {
+        // @ts-ignore
+        const Deno = globalThis.Deno;
+        const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+        const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+
+        const secretsRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/user_app_secrets?user_id=eq.${userId}&app_id=eq.${app.id}&select=key,value_encrypted`,
+          {
+            headers: {
+              'apikey': SUPABASE_SERVICE_ROLE_KEY,
+              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            },
+          }
+        );
+
+        if (secretsRes.ok) {
+          const userSecrets = await secretsRes.json() as Array<{ key: string; value_encrypted: string }>;
+          for (const secret of userSecrets) {
+            try {
+              envVars[secret.key] = await decryptEnvVar(secret.value_encrypted);
+            } catch (err) {
+              console.error(`Failed to decrypt per-user secret ${secret.key}:`, err);
+            }
+          }
+        }
+
+        // Check for missing required per-user secrets
+        const requiredPerUser = Object.entries(envSchema)
+          .filter(([, v]) => v.scope === 'per_user' && v.required)
+          .map(([k]) => k);
+        const missingSecrets = requiredPerUser.filter(k => !envVars[k]);
+
+        if (missingSecrets.length > 0) {
+          return jsonRpcErrorResponse(
+            id,
+            -32006,
+            `Missing required secrets: ${missingSecrets.join(', ')}. Use ul.connect to provide them.`,
+            {
+              type: 'MISSING_SECRETS',
+              missing_secrets: missingSecrets,
+              app_id: app.id,
+              hint: `Call ul.connect with app_id="${app.id}" and provide: ${missingSecrets.join(', ')}`,
+            }
+          );
+        }
+      } catch (err) {
+        console.error('Failed to fetch per-user secrets:', err);
+        // Continue without per-user secrets — app may still work if keys are optional
+      }
+    }
+
+    // Resolve Supabase config: prefer config_id (new model), fall back to legacy app-level, then platform-level
     let supabaseConfig: { url: string; anonKey: string; serviceKey?: string } | undefined;
 
     if (appRecord.supabase_config_id) {

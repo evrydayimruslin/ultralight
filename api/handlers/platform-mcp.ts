@@ -3,7 +3,8 @@
 // Endpoint: POST /mcp/platform
 // Tools: upload, download, set.version, set.visibility, set.download, set.supabase,
 //        permissions.grant, permissions.revoke, permissions.list,
-//        discover.library, discover.appstore, review, logs
+//        discover.library, discover.appstore, review, logs,
+//        connect, connections
 
 import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
@@ -22,8 +23,10 @@ import {
   generateSkillsForVersion,
   rebuildUserLibrary,
 } from '../services/library.ts';
+import { encryptEnvVar, decryptEnvVar } from '../services/envvars.ts';
 import { type UserContext } from '../runtime/sandbox.ts';
 import type {
+  EnvSchemaEntry,
   MCPTool,
   MCPToolsListResponse,
   MCPToolCallRequest,
@@ -346,6 +349,48 @@ const PLATFORM_TOOLS: MCPTool[] = [
       required: ['app_id'],
     },
   },
+
+  // ── Connections (per-user secrets) ─────────────
+  {
+    name: 'ul.connect',
+    title: 'Connect to App',
+    description:
+      'Set, update, or remove your per-user secrets for an app. ' +
+      'Apps declare required secrets (e.g. API keys) via env_schema. ' +
+      'Pass a secret value as null to remove that key. ' +
+      'Pass all values as null to fully disconnect.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        app_id: { type: 'string', description: 'App ID or slug to connect to' },
+        secrets: {
+          type: 'object',
+          description: 'Key-value pairs of secrets to set. Use null value to remove a key.',
+          additionalProperties: {
+            type: ['string', 'null'],
+          },
+        },
+      },
+      required: ['app_id', 'secrets'],
+    },
+  },
+  {
+    name: 'ul.connections',
+    title: 'View Connections',
+    description:
+      'View your connections to apps. ' +
+      'No app_id → list all apps you have connected to. ' +
+      'With app_id → show required secrets, which you\'ve provided, and connection status.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        app_id: {
+          type: 'string',
+          description: 'App ID or slug. Omit to list all your connections.',
+        },
+      },
+    },
+  },
 ];
 
 // ============================================
@@ -545,6 +590,14 @@ async function handleToolsCall(
       // Logs
       case 'ul.logs':
         result = await executeLogs(userId, toolArgs);
+        break;
+
+      // Connections (per-user secrets)
+      case 'ul.connect':
+        result = await executeConnect(userId, toolArgs);
+        break;
+      case 'ul.connections':
+        result = await executeConnections(userId, toolArgs);
         break;
 
       default:
@@ -1492,6 +1545,261 @@ async function executeLogs(
   };
 }
 
+// ── ul.connect ───────────────────────────────────
+
+async function executeConnect(
+  userId: string,
+  args: Record<string, unknown>
+): Promise<unknown> {
+  const appIdOrSlug = args.app_id as string;
+  const secrets = args.secrets as Record<string, string | null>;
+
+  if (!appIdOrSlug) throw new ToolError(INVALID_PARAMS, 'app_id is required');
+  if (!secrets || typeof secrets !== 'object') throw new ToolError(INVALID_PARAMS, 'secrets must be an object');
+
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+  const headers = {
+    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    'Content-Type': 'application/json',
+  };
+
+  // Look up the app (anyone can connect to a public/unlisted app, or a private app they have permissions on)
+  const appsService = createAppsService();
+  let app = await appsService.findById(appIdOrSlug);
+  if (!app) {
+    // Try slug lookup across all apps
+    const slugRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/apps?slug=eq.${encodeURIComponent(appIdOrSlug)}&deleted_at=is.null&select=id,owner_id,name,slug,visibility,env_schema&limit=1`,
+      { headers }
+    );
+    if (slugRes.ok) {
+      const rows = await slugRes.json();
+      if (rows.length > 0) app = rows[0] as App;
+    }
+  }
+  if (!app) throw new ToolError(NOT_FOUND, `App not found: ${appIdOrSlug}`);
+
+  // Get env_schema to validate keys
+  const envSchema = ((app as Record<string, unknown>).env_schema || {}) as Record<string, EnvSchemaEntry>;
+  const perUserKeys = Object.entries(envSchema)
+    .filter(([, v]) => v.scope === 'per_user')
+    .map(([k]) => k);
+
+  // Validate that submitted keys are declared per_user keys (if schema exists and has per_user keys)
+  if (perUserKeys.length > 0) {
+    for (const key of Object.keys(secrets)) {
+      if (!perUserKeys.includes(key)) {
+        throw new ToolError(INVALID_PARAMS, `Key "${key}" is not a declared per-user secret. Available: ${perUserKeys.join(', ')}`);
+      }
+    }
+  }
+
+  const setKeys: string[] = [];
+  const removedKeys: string[] = [];
+
+  for (const [key, value] of Object.entries(secrets)) {
+    if (value === null) {
+      // Remove this key
+      const deleteRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/user_app_secrets?user_id=eq.${userId}&app_id=eq.${app.id}&key=eq.${encodeURIComponent(key)}`,
+        { method: 'DELETE', headers }
+      );
+      if (!deleteRes.ok) {
+        throw new ToolError(INTERNAL_ERROR, `Failed to remove secret "${key}": ${await deleteRes.text()}`);
+      }
+      removedKeys.push(key);
+    } else {
+      // Encrypt and upsert the value
+      const encrypted = await encryptEnvVar(value);
+
+      const upsertRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/user_app_secrets`,
+        {
+          method: 'POST',
+          headers: {
+            ...headers,
+            'Prefer': 'resolution=merge-duplicates',
+          },
+          body: JSON.stringify({
+            user_id: userId,
+            app_id: app.id,
+            key,
+            value_encrypted: encrypted,
+            updated_at: new Date().toISOString(),
+          }),
+        }
+      );
+      if (!upsertRes.ok) {
+        throw new ToolError(INTERNAL_ERROR, `Failed to set secret "${key}": ${await upsertRes.text()}`);
+      }
+      setKeys.push(key);
+    }
+  }
+
+  // Check connection status after changes
+  const remainingRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/user_app_secrets?user_id=eq.${userId}&app_id=eq.${app.id}&select=key`,
+    { headers }
+  );
+  const remainingRows = remainingRes.ok ? await remainingRes.json() as Array<{ key: string }> : [];
+  const connectedKeys = remainingRows.map(r => r.key);
+
+  // Determine if all required per_user keys are provided
+  const requiredKeys = Object.entries(envSchema)
+    .filter(([, v]) => v.scope === 'per_user' && v.required)
+    .map(([k]) => k);
+  const missingRequired = requiredKeys.filter(k => !connectedKeys.includes(k));
+
+  return {
+    app_id: app.id,
+    app_name: app.name,
+    keys_set: setKeys,
+    keys_removed: removedKeys,
+    connected_keys: connectedKeys,
+    missing_required: missingRequired,
+    fully_connected: missingRequired.length === 0 && connectedKeys.length > 0,
+  };
+}
+
+// ── ul.connections ───────────────────────────────
+
+async function executeConnections(
+  userId: string,
+  args: Record<string, unknown>
+): Promise<unknown> {
+  const appIdOrSlug = args.app_id as string | undefined;
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+  const headers = {
+    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+  };
+
+  if (!appIdOrSlug) {
+    // ── No app_id: list all apps the user has secrets for ──
+    const secretsRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/user_app_secrets?user_id=eq.${userId}&select=app_id,key`,
+      { headers }
+    );
+    if (!secretsRes.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to fetch connections');
+    const secretRows = await secretsRes.json() as Array<{ app_id: string; key: string }>;
+
+    if (secretRows.length === 0) {
+      return { connections: [], total: 0 };
+    }
+
+    // Group by app_id
+    const appSecrets = new Map<string, string[]>();
+    for (const row of secretRows) {
+      if (!appSecrets.has(row.app_id)) appSecrets.set(row.app_id, []);
+      appSecrets.get(row.app_id)!.push(row.key);
+    }
+
+    // Fetch app details
+    const appIds = [...appSecrets.keys()];
+    const appsRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/apps?id=in.(${appIds.join(',')})&deleted_at=is.null&select=id,name,slug,env_schema`,
+      { headers }
+    );
+    const apps = appsRes.ok ? await appsRes.json() as Array<{ id: string; name: string; slug: string; env_schema: Record<string, EnvSchemaEntry> | null }> : [];
+
+    const connections = apps.map(a => {
+      const connectedKeys = appSecrets.get(a.id) || [];
+      const schema = a.env_schema || {};
+      const requiredKeys = Object.entries(schema)
+        .filter(([, v]) => v.scope === 'per_user' && v.required)
+        .map(([k]) => k);
+      const missingRequired = requiredKeys.filter(k => !connectedKeys.includes(k));
+
+      return {
+        app_id: a.id,
+        app_name: a.name,
+        app_slug: a.slug,
+        connected_keys: connectedKeys,
+        missing_required: missingRequired,
+        fully_connected: missingRequired.length === 0,
+        mcp_endpoint: `/mcp/${a.id}`,
+      };
+    });
+
+    return { connections, total: connections.length };
+  }
+
+  // ── With app_id: show detail for one app ──
+  const appsService = createAppsService();
+  let app = await appsService.findById(appIdOrSlug);
+  if (!app) {
+    const slugRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/apps?slug=eq.${encodeURIComponent(appIdOrSlug)}&deleted_at=is.null&select=id,owner_id,name,slug,visibility,env_schema&limit=1`,
+      { headers }
+    );
+    if (slugRes.ok) {
+      const rows = await slugRes.json();
+      if (rows.length > 0) app = rows[0] as App;
+    }
+  }
+  if (!app) throw new ToolError(NOT_FOUND, `App not found: ${appIdOrSlug}`);
+
+  const envSchema = ((app as Record<string, unknown>).env_schema || {}) as Record<string, EnvSchemaEntry>;
+
+  // Get per_user schema entries
+  const perUserSchema = Object.entries(envSchema)
+    .filter(([, v]) => v.scope === 'per_user')
+    .map(([key, v]) => ({
+      key,
+      description: v.description || null,
+      required: v.required ?? false,
+    }));
+
+  // Get user's connected keys for this app
+  const secretsRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/user_app_secrets?user_id=eq.${userId}&app_id=eq.${app.id}&select=key,updated_at`,
+    { headers }
+  );
+  const secretRows = secretsRes.ok
+    ? await secretsRes.json() as Array<{ key: string; updated_at: string }>
+    : [];
+  const connectedKeys = secretRows.map(r => r.key);
+  const keyDates = new Map(secretRows.map(r => [r.key, r.updated_at]));
+
+  // Build status per key
+  const requiredPerUser = perUserSchema.filter(s => s.required).map(s => s.key);
+  const missingRequired = requiredPerUser.filter(k => !connectedKeys.includes(k));
+
+  const secretStatus = perUserSchema.map(s => ({
+    key: s.key,
+    description: s.description,
+    required: s.required,
+    connected: connectedKeys.includes(s.key),
+    updated_at: keyDates.get(s.key) || null,
+  }));
+
+  // Also show any user-provided keys not in schema (legacy or manual)
+  const schemaKeys = perUserSchema.map(s => s.key);
+  const extraKeys = connectedKeys.filter(k => !schemaKeys.includes(k));
+  for (const key of extraKeys) {
+    secretStatus.push({
+      key,
+      description: null,
+      required: false,
+      connected: true,
+      updated_at: keyDates.get(key) || null,
+    });
+  }
+
+  return {
+    app_id: app.id,
+    app_name: app.name,
+    app_slug: app.slug,
+    mcp_endpoint: `/mcp/${app.id}`,
+    required_secrets: perUserSchema,
+    secret_status: secretStatus,
+    connected_keys: connectedKeys,
+    missing_required: missingRequired,
+    fully_connected: missingRequired.length === 0 && (connectedKeys.length > 0 || perUserSchema.length === 0),
+  };
+}
+
 // ── ul.discover.library ──────────────────────────
 
 async function executeDiscoverLibrary(
@@ -1608,12 +1916,65 @@ async function executeDiscoverAppstore(
     0.4
   );
 
+  // Fetch env_schema and user connection status for discovered apps
+  const appIds = results.map(r => r.id);
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+  const headers = {
+    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+  };
+
+  // Batch fetch env_schema for all discovered apps
+  let envSchemas = new Map<string, Record<string, EnvSchemaEntry>>();
+  if (appIds.length > 0) {
+    try {
+      const schemaRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,env_schema`,
+        { headers }
+      );
+      if (schemaRes.ok) {
+        const rows = await schemaRes.json() as Array<{ id: string; env_schema: Record<string, EnvSchemaEntry> | null }>;
+        for (const row of rows) {
+          if (row.env_schema) envSchemas.set(row.id, row.env_schema);
+        }
+      }
+    } catch { /* best effort */ }
+  }
+
+  // Batch fetch user's connected keys for all discovered apps
+  let userConnections = new Map<string, string[]>();
+  if (appIds.length > 0) {
+    try {
+      const secretsRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/user_app_secrets?user_id=eq.${userId}&app_id=in.(${appIds.join(',')})&select=app_id,key`,
+        { headers }
+      );
+      if (secretsRes.ok) {
+        const rows = await secretsRes.json() as Array<{ app_id: string; key: string }>;
+        for (const row of rows) {
+          if (!userConnections.has(row.app_id)) userConnections.set(row.app_id, []);
+          userConnections.get(row.app_id)!.push(row.key);
+        }
+      }
+    } catch { /* best effort */ }
+  }
+
   return {
     query,
     results: results.map(r => {
       const rr = r as App & { similarity: number; review_positive?: number; review_total?: number; review_score?: number };
       const pos = rr.review_positive ?? 0;
       const tot = rr.review_total ?? 0;
+
+      // Per-user secret info
+      const schema = envSchemas.get(rr.id) || {};
+      const requiredSecrets = Object.entries(schema)
+        .filter(([, v]) => v.scope === 'per_user')
+        .map(([key, v]) => ({ key, description: v.description || null, required: v.required ?? false }));
+      const connectedKeys = userConnections.get(rr.id) || [];
+      const requiredKeys = requiredSecrets.filter(s => s.required).map(s => s.key);
+      const missingRequired = requiredKeys.filter(k => !connectedKeys.includes(k));
+
       return {
         id: rr.id,
         name: rr.name,
@@ -1626,6 +1987,10 @@ async function executeDiscoverAppstore(
         review_positive: pos,
         review_total: tot,
         review_pct: tot > 0 ? Math.round((pos / tot) * 100) : null,
+        // Connection info
+        required_secrets: requiredSecrets.length > 0 ? requiredSecrets : undefined,
+        connected: connectedKeys.length > 0,
+        fully_connected: requiredSecrets.length === 0 || missingRequired.length === 0,
       };
     }),
     total: results.length,

@@ -101,6 +101,9 @@ export interface App {
   tags: string[];
   // Environment variables (encrypted, keys only exposed to owner)
   env_vars: Record<string, string>;
+  // Per-user env var schema: declares which keys are per_user with descriptions
+  // Format: { "KEY_NAME": { scope: "per_user", description: "...", required: true } }
+  env_schema: Record<string, EnvSchemaEntry>;
   // HTTP endpoint settings
   http_rate_limit: number;
   http_enabled: boolean;
@@ -152,6 +155,13 @@ export interface EnvVarLimits {
   max_key_length: number;
   max_value_length: number;
   reserved_prefixes: string[];
+}
+
+// Per-user env var schema entry (declared by app owner)
+export interface EnvSchemaEntry {
+  scope: 'universal' | 'per_user';
+  description?: string;
+  required?: boolean;
 }
 
 export const ENV_VAR_LIMITS: EnvVarLimits = {
