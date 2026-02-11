@@ -566,7 +566,13 @@ async function handleToolsCall(
   }
 
   const { name, arguments: args } = callParams;
-  const toolArgs = args || {};
+
+  // Extract agent meta (_user_query, _session_id) before passing to tool handlers
+  const { extractCallMeta } = await import('../services/call-logger.ts');
+  const { cleanArgs, userQuery, sessionId } = extractCallMeta(args || {});
+  const toolArgs = cleanArgs;
+
+  const execStart = Date.now();
 
   try {
     let result: unknown;
@@ -641,6 +647,8 @@ async function handleToolsCall(
         return jsonRpcErrorResponse(id, INVALID_PARAMS, `Unknown tool: ${name}`);
     }
 
+    const durationMs = Date.now() - execStart;
+
     // Log the call
     const { logMcpCall } = await import('../services/call-logger.ts');
     logMcpCall({
@@ -648,12 +656,19 @@ async function handleToolsCall(
       functionName: name,
       method: 'tools/call',
       success: true,
-      durationMs: 0,
+      durationMs,
+      inputArgs: toolArgs,
+      outputResult: result,
+      userTier: user.tier,
+      sessionId,
+      userQuery,
     });
 
     return jsonRpcResponse(id, formatToolResult(result));
   } catch (err) {
     console.error(`Platform tool ${name} error:`, err);
+
+    const durationMs = Date.now() - execStart;
 
     const { logMcpCall } = await import('../services/call-logger.ts');
     logMcpCall({
@@ -661,7 +676,13 @@ async function handleToolsCall(
       functionName: name,
       method: 'tools/call',
       success: false,
+      durationMs,
       errorMessage: err instanceof Error ? err.message : String(err),
+      inputArgs: toolArgs,
+      outputResult: { error: err instanceof Error ? err.message : String(err) },
+      userTier: user.tier,
+      sessionId,
+      userQuery,
     });
 
     if (err instanceof ToolError) {

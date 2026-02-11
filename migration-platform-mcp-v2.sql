@@ -130,6 +130,26 @@ CREATE INDEX IF NOT EXISTS idx_mcp_logs_app_time
 CREATE INDEX IF NOT EXISTS idx_mcp_logs_app_function
   ON mcp_call_logs(app_id, function_name);
 
+-- Rich telemetry columns for tool-use training data
+ALTER TABLE mcp_call_logs ADD COLUMN IF NOT EXISTS input_args JSONB;
+ALTER TABLE mcp_call_logs ADD COLUMN IF NOT EXISTS output_result JSONB;
+ALTER TABLE mcp_call_logs ADD COLUMN IF NOT EXISTS user_tier TEXT;
+ALTER TABLE mcp_call_logs ADD COLUMN IF NOT EXISTS app_version TEXT;
+ALTER TABLE mcp_call_logs ADD COLUMN IF NOT EXISTS ai_cost_cents FLOAT DEFAULT 0;
+ALTER TABLE mcp_call_logs ADD COLUMN IF NOT EXISTS session_id TEXT;
+ALTER TABLE mcp_call_logs ADD COLUMN IF NOT EXISTS sequence_number INTEGER;
+ALTER TABLE mcp_call_logs ADD COLUMN IF NOT EXISTS user_query TEXT;
+
+-- Session replay index
+CREATE INDEX IF NOT EXISTS idx_mcp_logs_session
+  ON mcp_call_logs(session_id, sequence_number)
+  WHERE session_id IS NOT NULL;
+
+-- Training data export index
+CREATE INDEX IF NOT EXISTS idx_mcp_logs_rich
+  ON mcp_call_logs(created_at DESC)
+  WHERE input_args IS NOT NULL AND output_result IS NOT NULL;
+
 -- ============================================
 -- 8. APP LIKES — Binary like/dislike system (ul.like)
 -- ============================================
@@ -337,6 +357,7 @@ CREATE POLICY user_app_secrets_own ON user_app_secrets
 -- - search_apps() now returns slug + like data for discovery results
 -- - update_app_embedding() provides atomic embedding updates
 -- - mcp_call_logs has app_id index for ul.logs owner queries
+-- - mcp_call_logs has rich telemetry: input_args, output_result, session_id, user_query
 -- - app_likes table + trigger keeps likes/dislikes/weighted_likes/weighted_dislikes on apps in sync
 -- - apps.env_schema declares per-user secret requirements
 -- - user_app_secrets stores encrypted per-user secrets (ul.connect/ul.connections)

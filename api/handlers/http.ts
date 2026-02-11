@@ -259,6 +259,10 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
       success: result.success,
       durationMs,
       errorMessage: result.success ? undefined : (result.error?.message || 'Execution failed'),
+      outputResult: result.success ? result.result : result.error,
+      userTier: user?.tier,
+      appVersion: app.current_version || undefined,
+      aiCostCents: result.aiCostCents || 0,
     });
 
     console.log(`[HTTP] ${request.method} /http/${appId}/${functionName} - ${result.success ? 'OK' : 'ERROR'} - ${durationMs}ms`);

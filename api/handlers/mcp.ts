@@ -69,6 +69,26 @@ const INVALID_PARAMS = -32602;
 const INTERNAL_ERROR = -32603;
 const RATE_LIMITED = -32000;
 
+// Session sequence counters — tracks call order within a session.
+// Key: sessionId → next sequence number. Auto-expires after 1 hour.
+const sessionSequences = new Map<string, { seq: number; lastUsed: number }>();
+
+function nextSequenceNumber(sessionId: string | undefined): number | undefined {
+  if (!sessionId) return undefined;
+  const now = Date.now();
+  const entry = sessionSequences.get(sessionId);
+  const seq = entry ? entry.seq + 1 : 1;
+  sessionSequences.set(sessionId, { seq, lastUsed: now });
+  // Lazy cleanup: purge stale sessions every 100 calls
+  if (sessionSequences.size > 100 && Math.random() < 0.1) {
+    const cutoff = now - 3_600_000; // 1 hour
+    for (const [k, v] of sessionSequences) {
+      if (v.lastUsed < cutoff) sessionSequences.delete(k);
+    }
+  }
+  return seq;
+}
+
 // ============================================
 // SDK TOOLS DEFINITIONS
 // Always included in every app's tool list
@@ -674,8 +694,12 @@ async function handleToolsCall(
     }
   }
 
+  // Extract agent meta (e.g. _user_query, _session_id) before passing to sandbox
+  const { extractCallMeta } = await import('../services/call-logger.ts');
+  const { cleanArgs, userQuery, sessionId } = extractCallMeta(args || {});
+
   // Execute app function via sandbox
-  return await executeAppFunction(id, functionName, args || {}, app, userId, user);
+  return await executeAppFunction(id, functionName, cleanArgs, app, userId, user, { userQuery, sessionId });
 }
 
 // ============================================
@@ -830,7 +854,8 @@ async function executeAppFunction(
   args: Record<string, unknown>,
   app: { id: string; storage_key: string },
   userId: string,
-  user: UserContext | null
+  user: UserContext | null,
+  meta?: { userQuery?: string; sessionId?: string }
 ): Promise<Response> {
   try {
     const r2Service = createR2Service();
@@ -1035,15 +1060,24 @@ async function executeAppFunction(
 
     // Log the call (fire-and-forget)
     const { logMcpCall } = await import('../services/call-logger.ts');
+    const appRecord = app as Record<string, unknown>;
     logMcpCall({
       userId,
       appId: app.id,
-      appName: app.name || app.slug,
+      appName: (appRecord.name as string) || (appRecord.slug as string),
       functionName,
       method: 'tools/call',
       success: result.success,
       durationMs: execDuration,
       errorMessage: result.success ? undefined : String(result.error),
+      inputArgs: args,
+      outputResult: result.success ? result.result : result.error,
+      userTier: user?.tier,
+      appVersion: (appRecord.current_version as string) || undefined,
+      aiCostCents: result.aiCostCents || 0,
+      sessionId: meta?.sessionId,
+      sequenceNumber: nextSequenceNumber(meta?.sessionId),
+      userQuery: meta?.userQuery,
     });
 
     if (result.success) {
