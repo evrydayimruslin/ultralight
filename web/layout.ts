@@ -2574,6 +2574,9 @@ export function getLayoutHTML(options: {
             <button class="app-endpoint-copy" id="copyAppMcpBtn" title="Copy MCP URL" onclick="copyAppMcpUrl()">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
             </button>
+            <button class="app-endpoint-copy" id="openDashboardBtn" title="Open Dashboard" onclick="openAppDashboard()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>
+            </button>
           </div>
         </div>
 
@@ -5213,6 +5216,11 @@ await hash.sha256('data')</div>
     window.copyAppMcpUrl = function() {
       const url = document.getElementById('appMcpUrl').textContent;
       navigator.clipboard.writeText(url).then(() => showToast('MCP URL copied!'));
+    };
+
+    window.openAppDashboard = function() {
+      if (!currentAppId) return;
+      window.open(\`/http/\${currentAppId}/_ui\`, '_blank');
     };
 
     // Download app code

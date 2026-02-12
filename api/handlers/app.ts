@@ -550,22 +550,15 @@ function getMcpAppInfoHTML(appId: string, appName: string, skills: Array<{ name:
     <div class="section">
       <div class="section-title">MCP Endpoint</div>
       <div class="mcp-url">${typeof location !== 'undefined' ? location.origin : ''}/mcp/${appId}</div>
-      <p class="info-text" style="margin-top: 1rem;">
-        Connect to this app using any MCP-compatible client (Claude Desktop, Cursor, etc.)
+      <a href="/http/${appId}/_ui" style="display:inline-flex;align-items:center;gap:0.5rem;margin-top:0.75rem;background:rgba(99,102,241,.15);color:#a78bfa;padding:0.5rem 1rem;border-radius:8px;text-decoration:none;font-weight:500;font-size:0.8125rem;transition:background 0.15s;">&#9881; Open Dashboard</a>
+      <p class="info-text" style="margin-top: 0.75rem;">
+        Connect via MCP client, or open the dashboard to view and manage data from your browser.
       </p>
     </div>
 
     <div class="section">
       <div class="section-title">Available Tools (${skills.length})</div>
       ${toolsList}
-    </div>
-
-    <div class="section">
-      <div class="section-title">Dashboard</div>
-      <a href="/http/${appId}/_ui" style="display:inline-block;background:rgba(99,102,241,.15);color:#a78bfa;padding:0.6rem 1.2rem;border-radius:8px;text-decoration:none;font-weight:500;font-size:0.875rem;transition:background 0.15s;">Open Dashboard &rarr;</a>
-      <p class="info-text" style="margin-top:0.75rem;">
-        View and manage this app's data from your browser. Authenticate with your API token.
-      </p>
     </div>
 
     <div class="section">
