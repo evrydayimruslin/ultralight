@@ -145,6 +145,8 @@ export function generateLibraryEntry(
     const params = fn.parameters.map(p => p.name).join(', ');
     lines.push(`- ${fn.name}(${params}): ${fn.description || 'No description'}`);
   }
+  lines.push('');
+  lines.push(`Dashboard: /http/${app.id}/ui`);
   return lines.join('\n');
 }
 

@@ -108,6 +108,18 @@ export function generateSkillsMd(
     }
   }
 
+  // Web Dashboard section — always present so agents know about the UI endpoint
+  lines.push('## Web Dashboard');
+  lines.push('');
+  lines.push('This app has a browser-accessible dashboard at:');
+  lines.push('');
+  lines.push('```');
+  lines.push('GET /http/{appId}/ui');
+  lines.push('```');
+  lines.push('');
+  lines.push('Direct users to this URL when they want to view or manage their data visually. Supports `?token=ul_...` for authentication.');
+  lines.push('');
+
   return lines.join('\n');
 }
 

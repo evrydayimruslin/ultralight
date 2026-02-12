@@ -238,3 +238,85 @@ ul.connections(
   app_id?: string         // app ID or slug; omit = list all your connections
 )
 ```
+
+---
+
+## Self-Hosted UI Pattern
+
+Every Ultralight MCP server can serve its own web UI via the HTTP endpoint system. This is the **recommended pattern** for giving users a browser-based dashboard to view and manage their data — no separate hosting, no CORS issues, no orphaned infrastructure.
+
+### How It Works
+
+Export a function named `ui` that returns `http.html(htmlString)`:
+
+```typescript
+export async function ui(request: {
+  method: string;
+  url: string;
+  path: string;
+  query: Record<string, string>;
+  headers: Record<string, string>;
+}) {
+  // Extract app ID from URL for MCP calls
+  const urlParts = request.url.split("/");
+  const httpIdx = urlParts.indexOf("http");
+  const appId = httpIdx >= 0 ? urlParts[httpIdx + 1] : "";
+
+  // Accept auth token via query param
+  const token = request.query.token || "";
+
+  const html = `<!DOCTYPE html>
+<html><head><title>My App</title></head>
+<body>
+  <div id="app"></div>
+  <script>
+    const APP_ID = "${appId}";
+    let TOKEN = sessionStorage.getItem("ul_token") || "${token}";
+    if ("${token}") sessionStorage.setItem("ul_token", TOKEN);
+
+    // Call your own MCP tools (same origin = no CORS)
+    async function mcp(tool, args) {
+      const res = await fetch("/mcp/" + APP_ID, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + TOKEN },
+        body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: "tools/call",
+          params: { name: PREFIX + tool, arguments: args || {} } })
+      });
+      return (await res.json()).result?.structuredContent;
+    }
+  </script>
+</body></html>`;
+
+  return http.html(html);
+}
+```
+
+The UI is then accessible at: `GET /http/{appId}/ui`
+
+### Why This Pattern
+
+| Property | Benefit |
+|----------|---------|
+| **Same origin** | UI calls MCP at `/mcp/{appId}` — no CORS, no proxy needed |
+| **Zero infra** | No separate hosting, no static site deployment, no CDN |
+| **Lifecycle coupling** | UI lives and dies with the MCP — no orphaned frontends |
+| **Auth unified** | Same token works for MCP and UI — one auth model |
+| **Portable** | Access from any device with a browser |
+
+### Best Practices
+
+- Accept `?token=ul_...` query param → store in `sessionStorage` → show auth screen if missing
+- Call `tools/list` on init to discover the tool name prefix (slug changes per deploy)
+- Keep it self-contained: inline CSS, zero external dependencies
+- Add the `ui` function to your `manifest.json`:
+  ```json
+  "ui": {
+    "description": "Serves the web UI. Access via GET /http/{appId}/ui",
+    "parameters": {},
+    "returns": { "type": "string" }
+  }
+  ```
+
+### When Building Ultralight Apps
+
+**Always include a `ui` function** as standard practice. Even simple data-storage MCP servers benefit from a browser dashboard where users can peek at their data and make manual edits. The pattern adds minimal code overhead and dramatically improves the user experience.

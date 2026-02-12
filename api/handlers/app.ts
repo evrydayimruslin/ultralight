@@ -234,6 +234,11 @@ export function createApp() {
           return handleHttpOptions(appId);
         }
 
+        // Platform-level generic dashboard at /_ui
+        if (subPath === '_ui' && method === 'GET') {
+          return handleGenericDashboard(request, appId);
+        }
+
         return handleHttpEndpoint(request, appId, subPath);
       }
 
@@ -556,6 +561,14 @@ function getMcpAppInfoHTML(appId: string, appName: string, skills: Array<{ name:
     </div>
 
     <div class="section">
+      <div class="section-title">Dashboard</div>
+      <a href="/http/${appId}/_ui" style="display:inline-block;background:rgba(99,102,241,.15);color:#a78bfa;padding:0.6rem 1.2rem;border-radius:8px;text-decoration:none;font-weight:500;font-size:0.875rem;transition:background 0.15s;">Open Dashboard &rarr;</a>
+      <p class="info-text" style="margin-top:0.75rem;">
+        View and manage this app's data from your browser. Authenticate with your API token.
+      </p>
+    </div>
+
+    <div class="section">
       <p class="info-text">
         This is an MCP (Model Context Protocol) app. It provides tools that AI assistants
         can use to perform actions. Add the MCP endpoint URL to your client's configuration
@@ -563,6 +576,353 @@ function getMcpAppInfoHTML(appId: string, appName: string, skills: Array<{ name:
       </p>
     </div>
   </div>
+</body>
+</html>`;
+}
+
+/**
+ * Serve a generic auto-generated dashboard for any MCP app.
+ * Reads skills_parsed/manifest to discover tools and renders an interactive UI.
+ * Accessible at: GET /http/{appId}/_ui
+ */
+async function handleGenericDashboard(request: Request, appId: string): Promise<Response> {
+  try {
+    const appsService = createAppsService();
+    const app = await appsService.findById(appId);
+
+    if (!app) {
+      return json({ error: 'App not found' }, 404);
+    }
+
+    const appName = app.name || app.slug;
+    const skills = app.skills_parsed || [];
+    const functions = Array.isArray(skills)
+      ? skills as Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>
+      : (skills as { functions?: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }> }).functions || [];
+
+    // Extract token from query param if provided
+    const url = new URL(request.url);
+    const tokenFromQuery = url.searchParams.get('token') || '';
+
+    const html = generateGenericDashboardHTML(appId, appName, functions, tokenFromQuery);
+    return new Response(html, {
+      headers: { 'Content-Type': 'text/html' },
+    });
+  } catch (err) {
+    console.error('[Dashboard] Error:', err);
+    return json({ error: 'Failed to load dashboard' }, 500);
+  }
+}
+
+/**
+ * Generate a fully self-contained generic dashboard HTML for any MCP app.
+ * Auto-discovers tools from skills_parsed and renders forms for each.
+ */
+function generateGenericDashboardHTML(
+  appId: string,
+  appName: string,
+  functions: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>,
+  tokenFromQuery: string
+): string {
+  // Build tool definitions as JSON for the client-side JS
+  const toolDefs = JSON.stringify(functions.map(fn => ({
+    name: fn.name,
+    description: fn.description || '',
+    parameters: fn.parameters || {},
+  })));
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${appName} — Dashboard</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0a0a0a;--surface:#141414;--surface2:#1e1e1e;--border:#2a2a2a;--text:#e5e5e5;--text2:#888;--accent:#6366f1;--accent-hover:#4f46e5;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.container{max-width:800px;margin:0 auto;padding:24px 16px}
+/* Auth */
+.auth-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;gap:16px}
+.auth-screen h2{font-size:22px;font-weight:700}
+.auth-screen p{color:var(--text2);font-size:14px;text-align:center;max-width:400px}
+.token-input{width:100%;max-width:420px;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;font-family:var(--mono);outline:none}
+.token-input:focus{border-color:var(--accent)}
+/* Header */
+.header{display:flex;align-items:center;gap:12px;margin-bottom:24px}
+.header-icon{width:44px;height:44px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.3rem}
+.header h1{font-size:22px;font-weight:700}
+.header .badge{display:inline-block;background:rgba(99,102,241,.15);color:#a5b4fc;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:600;margin-left:8px}
+/* Tool cards */
+.tool-grid{display:flex;flex-direction:column;gap:16px}
+.tool-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;transition:border-color .15s}
+.tool-card:hover{border-color:#333}
+.tool-header{padding:16px;cursor:pointer;display:flex;align-items:center;gap:12px;user-select:none}
+.tool-header:hover{background:var(--surface2)}
+.tool-name{font-family:var(--mono);font-size:14px;font-weight:600;color:var(--green)}
+.tool-desc{font-size:13px;color:var(--text2);flex:1}
+.tool-toggle{color:var(--text2);font-size:18px;transition:transform .2s}
+.tool-toggle.open{transform:rotate(90deg)}
+.tool-body{display:none;padding:0 16px 16px;border-top:1px solid var(--border)}
+.tool-body.open{display:block}
+/* Form */
+.param-group{margin-top:12px}
+.param-label{display:block;font-size:12px;color:var(--text2);margin-bottom:4px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+.param-label .req{color:var(--red);margin-left:2px}
+.param-desc{font-size:11px;color:var(--text2);margin-bottom:6px;font-style:italic}
+.param-input{width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:inherit;outline:none}
+.param-input:focus{border-color:var(--accent)}
+textarea.param-input{min-height:60px;resize:vertical;font-family:inherit}
+/* Buttons */
+button{cursor:pointer;border:none;border-radius:8px;font-size:13px;font-weight:600;padding:10px 20px;transition:all .15s}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:var(--accent-hover)}
+.btn-primary:disabled{opacity:.4;cursor:not-allowed}
+.btn-secondary{background:var(--surface2);color:var(--text2);padding:8px 14px}
+.btn-secondary:hover{color:var(--text)}
+/* Result */
+.result-area{margin-top:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;overflow:hidden;display:none}
+.result-header{padding:8px 12px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;justify-content:space-between}
+.result-header.success{color:var(--green);background:rgba(34,197,94,.05)}
+.result-header.error{color:var(--red);background:rgba(239,68,68,.05)}
+.result-body{padding:12px;font-family:var(--mono);font-size:12px;line-height:1.6;overflow-x:auto;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto}
+/* Toast */
+.toast{position:fixed;bottom:24px;right:24px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:12px 20px;border-radius:10px;font-size:13px;opacity:0;transform:translateY(10px);transition:all .3s;pointer-events:none;z-index:99}
+.toast.show{opacity:1;transform:translateY(0)}
+.toast.error{border-color:var(--red);color:var(--red)}
+/* Scrollbar */
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+/* Custom UI link */
+.custom-ui-link{display:inline-block;margin-top:8px;padding:8px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--accent);font-size:13px;font-weight:600;text-decoration:none;transition:all .15s}
+.custom-ui-link:hover{background:var(--surface);border-color:var(--accent)}
+/* Empty */
+.empty{text-align:center;padding:48px 16px;color:var(--text2)}
+.empty-icon{font-size:48px;margin-bottom:12px}
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- Auth screen -->
+<div id="auth-screen" class="auth-screen">
+<div style="font-size:48px">&#9881;</div>
+<h2>${appName}</h2>
+<p>Enter your Ultralight API token to access this app's dashboard. Your token stays in the browser only.</p>
+<input type="password" id="token-input" class="token-input" placeholder="ul_..." />
+<button class="btn-primary" onclick="submitToken()">Connect</button>
+<p style="font-size:11px;color:var(--text2)">Tip: add ?token=ul_... to the URL to skip this step</p>
+</div>
+
+<!-- Main app -->
+<div id="app" style="display:none">
+<div class="header">
+<div class="header-icon">&#9881;</div>
+<div>
+<h1>${appName}<span class="badge">MCP Dashboard</span></h1>
+</div>
+</div>
+
+<div id="custom-ui-banner"></div>
+
+<div id="tool-grid" class="tool-grid">
+<div class="empty"><div class="empty-icon">&#9881;</div>Loading tools...</div>
+</div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+</div>
+
+<script>
+var APP_ID = ${JSON.stringify(appId)};
+var TOKEN = sessionStorage.getItem("ul_token") || "";
+var PARAM_TOKEN = ${JSON.stringify(tokenFromQuery)};
+var TOOL_PREFIX = "";
+var TOOLS = ${toolDefs};
+
+if (PARAM_TOKEN) { TOKEN = PARAM_TOKEN; sessionStorage.setItem("ul_token", TOKEN); }
+if (TOKEN) { showApp(); }
+
+function submitToken() {
+  var t = document.getElementById("token-input").value.trim();
+  if (!t) return;
+  TOKEN = t; sessionStorage.setItem("ul_token", TOKEN);
+  showApp();
+}
+
+document.getElementById("token-input").addEventListener("keydown", function(e) {
+  if (e.key === "Enter") submitToken();
+});
+
+function showApp() {
+  document.getElementById("auth-screen").style.display = "none";
+  document.getElementById("app").style.display = "block";
+  init();
+}
+
+async function discoverPrefix() {
+  try {
+    var res = await fetch("/mcp/" + APP_ID, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + TOKEN },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 0, method: "tools/list" })
+    });
+    var data = await res.json();
+    if (data.result && data.result.tools && data.result.tools.length > 0) {
+      var first = data.result.tools[0];
+      if (first.name && first.name.indexOf("_") > -1) {
+        TOOL_PREFIX = first.name.substring(0, first.name.lastIndexOf("_") + 1);
+      }
+      // Check if app has a custom "ui" function
+      var hasCustomUI = data.result.tools.some(function(t) {
+        return t.title === "ui" || t.name.endsWith("_ui");
+      });
+      if (hasCustomUI) {
+        document.getElementById("custom-ui-banner").innerHTML =
+          '<a class="custom-ui-link" href="/http/' + APP_ID + '/ui' + (TOKEN ? '?token=' + encodeURIComponent(TOKEN) : '') + '">&#10024; This app has a custom UI &rarr; Open it</a>';
+      }
+    }
+  } catch(e) { console.warn("Could not discover prefix:", e); }
+}
+
+async function mcp(tool, args) {
+  var res = await fetch("/mcp/" + APP_ID, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + TOKEN },
+    body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: "tools/call", params: { name: TOOL_PREFIX + tool, arguments: args || {} } })
+  });
+  var data = await res.json();
+  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+  if (data.result && data.result.isError) throw new Error(data.result.content[0].text);
+  return data.result ? (data.result.structuredContent || data.result) : null;
+}
+
+var toastTimer;
+function toast(msg, isError) {
+  var el = document.getElementById("toast");
+  el.textContent = msg;
+  el.className = "toast show" + (isError ? " error" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function() { el.className = "toast"; }, 2500);
+}
+
+async function init() {
+  await discoverPrefix();
+  renderTools();
+}
+
+function renderTools() {
+  var container = document.getElementById("tool-grid");
+  if (!TOOLS || TOOLS.length === 0) {
+    container.innerHTML = '<div class="empty"><div class="empty-icon">&#128268;</div>No tools found for this app.</div>';
+    return;
+  }
+
+  // Filter out the "ui" function from the tool list (it's a UI endpoint, not a data tool)
+  var visibleTools = TOOLS.filter(function(t) { return t.name !== "ui"; });
+
+  container.innerHTML = visibleTools.map(function(tool, idx) {
+    var params = tool.parameters || {};
+    var paramKeys = Object.keys(params);
+
+    var formHTML = paramKeys.map(function(key) {
+      var p = params[key];
+      var pType = (p && p.type) || "string";
+      var pDesc = (p && p.description) || "";
+      var isRequired = p && p.required;
+      var inputType = pType === "number" ? "number" : "text";
+      var isLongText = pDesc.toLowerCase().indexOf("text") > -1 || pDesc.toLowerCase().indexOf("content") > -1 || key === "text";
+
+      return '<div class="param-group">' +
+        '<label class="param-label">' + escHtml(key) + (isRequired ? '<span class="req">*</span>' : '') + '</label>' +
+        (pDesc ? '<div class="param-desc">' + escHtml(pDesc) + '</div>' : '') +
+        (isLongText
+          ? '<textarea class="param-input" data-tool="' + idx + '" data-param="' + escAttr(key) + '" placeholder="' + escAttr(pType) + '"></textarea>'
+          : '<input type="' + inputType + '" class="param-input" data-tool="' + idx + '" data-param="' + escAttr(key) + '" placeholder="' + escAttr(pType) + '" />') +
+        '</div>';
+    }).join("");
+
+    var noParams = paramKeys.length === 0;
+
+    return '<div class="tool-card" id="tool-card-' + idx + '">' +
+      '<div class="tool-header" onclick="toggleTool(' + idx + ')">' +
+        '<span class="tool-name">' + escHtml(tool.name) + '</span>' +
+        '<span class="tool-desc">' + escHtml(tool.description) + '</span>' +
+        '<span class="tool-toggle" id="tool-toggle-' + idx + '">&#9654;</span>' +
+      '</div>' +
+      '<div class="tool-body" id="tool-body-' + idx + '">' +
+        formHTML +
+        '<div style="margin-top:16px;display:flex;gap:8px;align-items:center">' +
+          '<button class="btn-primary" onclick="callTool(' + idx + ')">' + (noParams ? 'Run' : 'Call') + '</button>' +
+          '<button class="btn-secondary" onclick="clearResult(' + idx + ')">Clear</button>' +
+        '</div>' +
+        '<div class="result-area" id="result-' + idx + '">' +
+          '<div class="result-header" id="result-header-' + idx + '"></div>' +
+          '<div class="result-body" id="result-body-' + idx + '"></div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }).join("");
+}
+
+function toggleTool(idx) {
+  var body = document.getElementById("tool-body-" + idx);
+  var toggle = document.getElementById("tool-toggle-" + idx);
+  var isOpen = body.classList.contains("open");
+  body.classList.toggle("open");
+  toggle.classList.toggle("open");
+}
+
+async function callTool(idx) {
+  var visibleTools = TOOLS.filter(function(t) { return t.name !== "ui"; });
+  var tool = visibleTools[idx];
+  var params = tool.parameters || {};
+  var args = {};
+  var inputs = document.querySelectorAll('[data-tool="' + idx + '"]');
+
+  inputs.forEach(function(input) {
+    var key = input.getAttribute("data-param");
+    var val = input.value.trim();
+    if (val) {
+      var pType = params[key] && params[key].type;
+      if (pType === "number") {
+        args[key] = parseFloat(val);
+      } else {
+        args[key] = val;
+      }
+    }
+  });
+
+  var resultArea = document.getElementById("result-" + idx);
+  var resultHeader = document.getElementById("result-header-" + idx);
+  var resultBody = document.getElementById("result-body-" + idx);
+
+  resultArea.style.display = "block";
+  resultHeader.className = "result-header";
+  resultHeader.textContent = "Running...";
+  resultBody.textContent = "";
+
+  try {
+    var result = await mcp(tool.name, args);
+    resultHeader.className = "result-header success";
+    resultHeader.innerHTML = "&#10003; Success";
+    resultBody.textContent = JSON.stringify(result, null, 2);
+    toast("Called " + tool.name);
+  } catch(e) {
+    resultHeader.className = "result-header error";
+    resultHeader.innerHTML = "&#10007; Error";
+    resultBody.textContent = e.message;
+    toast("Failed: " + e.message, true);
+  }
+}
+
+function clearResult(idx) {
+  document.getElementById("result-" + idx).style.display = "none";
+}
+
+function escHtml(s) { if (!s) return ""; var d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+function escAttr(s) { return String(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
+</script>
 </body>
 </html>`;
 }
