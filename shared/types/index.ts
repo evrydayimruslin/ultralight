@@ -688,10 +688,25 @@ export interface MCPServerInfo {
   description?: string;
   capabilities: {
     tools?: { listChanged?: boolean };
+    resources?: { subscribe?: boolean; listChanged?: boolean };
   };
   endpoints?: {
     mcp: string;
   };
+}
+
+export interface MCPResourceDescriptor {
+  uri: string;
+  name: string;
+  description?: string;
+  mimeType?: string;
+}
+
+export interface MCPResourceContent {
+  uri: string;
+  mimeType?: string;
+  text?: string;
+  blob?: string;
 }
 
 // ============================================

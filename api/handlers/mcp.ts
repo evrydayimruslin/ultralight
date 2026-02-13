@@ -25,6 +25,8 @@ import type {
   MCPToolCallResponse,
   MCPContent,
   MCPServerInfo,
+  MCPResourceDescriptor,
+  MCPResourceContent,
   ParsedSkills,
   SkillFunction,
   BYOKProvider,
@@ -95,6 +97,27 @@ function nextSequenceNumber(sessionId: string | undefined): number | undefined {
 // ============================================
 
 const SDK_TOOLS: MCPTool[] = [
+  // ---- Skills (Documentation) ----
+  {
+    name: 'ultralight.getSkills',
+    title: 'Get Skills',
+    description:
+      'Get the Skills.md documentation for this app. Call this FIRST before using other tools — ' +
+      'it explains every function, its parameters, return types, and usage patterns.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        skills_md: { type: 'string', description: 'The full Skills.md markdown content.' },
+        app_name: { type: 'string' },
+        app_id: { type: 'string' },
+      },
+    },
+  },
+
   // ---- Data Storage ----
   {
     name: 'ultralight.store',
@@ -532,6 +555,12 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
       case 'tools/call':
         return await handleToolsCall(id, app, params, userId, user, request);
 
+      case 'resources/list':
+        return handleResourcesList(id, appId, app);
+
+      case 'resources/read':
+        return handleResourcesRead(id, appId, app, params);
+
       default:
         return jsonRpcErrorResponse(id, METHOD_NOT_FOUND, `Method not found: ${method}`);
     }
@@ -563,6 +592,7 @@ function handleInitialize(
     description: app.description || undefined,
     capabilities: {
       tools: { listChanged: false },
+      resources: { subscribe: false, listChanged: false },
     },
     endpoints: {
       mcp: `/mcp/${appId}`,
@@ -570,6 +600,64 @@ function handleInitialize(
   };
 
   return jsonRpcResponse(id, result);
+}
+
+/**
+ * Handle resources/list request - return available resources for this app
+ */
+function handleResourcesList(
+  id: string | number,
+  appId: string,
+  app: { name: string; slug: string; skills_md?: string | null }
+): Response {
+  const resources: MCPResourceDescriptor[] = [];
+
+  // Always advertise skills.md — even if not yet generated, so clients know it exists
+  if (app.skills_md) {
+    resources.push({
+      uri: `ultralight://app/${appId}/skills.md`,
+      name: `${app.name || app.slug} — Skills & Usage Guide`,
+      description: 'Auto-generated documentation: function signatures, parameters, return types, and usage examples. Read this before calling tools.',
+      mimeType: 'text/markdown',
+    });
+  }
+
+  return jsonRpcResponse(id, { resources });
+}
+
+/**
+ * Handle resources/read request - return resource content
+ */
+function handleResourcesRead(
+  id: string | number,
+  appId: string,
+  app: { name: string; slug: string; skills_md?: string | null },
+  params: unknown
+): Response {
+  const readParams = params as { uri?: string } | undefined;
+  const uri = readParams?.uri;
+
+  if (!uri) {
+    return jsonRpcErrorResponse(id, INVALID_PARAMS, 'Missing required parameter: uri');
+  }
+
+  const expectedSkillsUri = `ultralight://app/${appId}/skills.md`;
+
+  if (uri === expectedSkillsUri) {
+    if (!app.skills_md) {
+      return jsonRpcErrorResponse(id, -32002, 'Skills.md not yet generated for this app');
+    }
+
+    const contents: MCPResourceContent[] = [{
+      uri: uri,
+      mimeType: 'text/markdown',
+      text: app.skills_md,
+    }];
+
+    return jsonRpcResponse(id, { contents });
+  }
+
+  return jsonRpcErrorResponse(id, -32002, `Resource not found: ${uri}`);
 }
 
 /**
@@ -723,6 +811,18 @@ async function executeSDKTool(
     let result: unknown;
 
     switch (toolName) {
+      // Skills (documentation)
+      case 'ultralight.getSkills': {
+        const appsService = createAppsService();
+        const app = await appsService.findById(appId);
+        result = {
+          skills_md: app?.skills_md || 'Skills.md not yet generated for this app.',
+          app_name: app?.name || app?.slug || appId,
+          app_id: appId,
+        };
+        break;
+      }
+
       // Storage
       case 'ultralight.store':
         await appDataService.store(args.key as string, args.value);
@@ -1244,6 +1344,7 @@ export async function handleMcpDiscovery(request: Request, appId: string): Promi
       description: app.description || undefined,
       capabilities: {
         tools: { listChanged: false },
+        resources: { subscribe: false, listChanged: false },
       },
       endpoints: {
         mcp: `/mcp/${appId}`,
@@ -1256,6 +1357,7 @@ export async function handleMcpDiscovery(request: Request, appId: string): Promi
       tools_count: totalTools,
       app_tools: appToolsCount,
       sdk_tools: SDK_TOOLS.length,
+      resources_count: app.skills_md ? 1 : 0,
     };
 
     return json(response);

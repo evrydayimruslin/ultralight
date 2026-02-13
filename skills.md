@@ -8,6 +8,29 @@ Namespace: `ul.*`
 
 ---
 
+## MCP Resources
+
+This server and every Ultralight per-app MCP server support **MCP Resources** — structured context that your client can load automatically on connection.
+
+### Platform Resources (this server)
+
+| Resource | URI | Description |
+|----------|-----|-------------|
+| Skills.md | `ultralight://platform/skills.md` | This document — full platform tool reference |
+| Library.md | `ultralight://platform/library.md` | Your compiled app library (owned + saved apps with capabilities) |
+
+### Per-App Resources
+
+Every Ultralight app MCP at `/mcp/{appId}` also supports `resources/list` and `resources/read`. Each app exposes:
+
+| Resource | URI | Description |
+|----------|-----|-------------|
+| Skills.md | `ultralight://app/{appId}/skills.md` | Auto-generated documentation: function signatures, parameters, return types, examples |
+
+**When connecting to any Ultralight MCP endpoint**, call `resources/list` first to load the app's Skills.md into your context before calling tools. This gives you complete understanding of the app's capabilities, parameter types, and usage patterns.
+
+---
+
 ## Call Context
 
 Every tool call accepts two optional context fields that help the platform improve results. Include these on **all calls** when available:
@@ -18,20 +41,6 @@ Every tool call accepts two optional context fields that help the platform impro
 | `_session_id` | string | A stable identifier for the current conversation session. Use the same value across all calls within one conversation. |
 
 **These fields are stripped before execution** — they never reach the tool handler. They exist purely for analytics and improving search relevance.
-
-**Example:** If a user says "find me a tool that can summarize PDFs", and you call `ul.discover.appstore`, include:
-```json
-{
-  "name": "ul.discover.appstore",
-  "arguments": {
-    "query": "PDF summarizer",
-    "_user_query": "find me a tool that can summarize PDFs",
-    "_session_id": "conv_abc123"
-  }
-}
-```
-
-Always include `_user_query` when you have access to the user's message. It captures intent that may differ from the derived tool arguments — "find me something to help with my taxes" tells us more than the tool arg `query: "tax calculator"`.
 
 ---
 
@@ -53,12 +62,12 @@ Upload source code to create a new app or add a new version to an existing app. 
 
 ```
 ul.upload(
-  files: [{ path: string, content: string, encoding?: "text" | "base64" }],  // required
-  app_id?: string,        // existing app ID or slug; omit to create new
-  name?: string,          // app name (new apps only)
-  description?: string,   // app description
-  visibility?: "private" | "unlisted" | "published",  // default: private
-  version?: string        // explicit version e.g. "2.0.0"; default: patch bump
+  files: [{ path: string, content: string, encoding?: "text" | "base64" }],
+  app_id?: string,
+  name?: string,
+  description?: string,
+  visibility?: "private" | "unlisted" | "published",
+  version?: string
 )
 ```
 
@@ -68,8 +77,8 @@ Download the source code for an app version as a list of files. Respects `downlo
 
 ```
 ul.download(
-  app_id: string,         // required — app ID or slug
-  version?: string        // version to download; default: live version
+  app_id: string,
+  version?: string
 )
 ```
 
@@ -79,8 +88,8 @@ Set the live version for an app. Triggers Library.md rebuild for the user.
 
 ```
 ul.set.version(
-  app_id: string,         // required — app ID or slug
-  version: string         // required — version string to set as live
+  app_id: string,
+  version: string
 )
 ```
 
@@ -90,8 +99,8 @@ Change app visibility. Setting to `"published"` adds the app to the global app s
 
 ```
 ul.set.visibility(
-  app_id: string,         // required — app ID or slug
-  visibility: "private" | "unlisted" | "published"  // required
+  app_id: string,
+  visibility: "private" | "unlisted" | "published"
 )
 ```
 
@@ -101,8 +110,8 @@ Control who can download the source code.
 
 ```
 ul.set.download(
-  app_id: string,         // required — app ID or slug
-  access: "owner" | "public"  // required
+  app_id: string,
+  access: "owner" | "public"
 )
 ```
 
@@ -112,8 +121,8 @@ Assign or unassign a saved Supabase server to an app. Pass `server_name: null` t
 
 ```
 ul.set.supabase(
-  app_id: string,         // required — app ID or slug
-  server_name: string | null  // required — name of saved config, or null to unassign
+  app_id: string,
+  server_name: string | null
 )
 ```
 
@@ -123,9 +132,9 @@ Grant a user access to specific functions on a private app. Additive — does no
 
 ```
 ul.permissions.grant(
-  app_id: string,         // required — app ID or slug
-  email: string,          // required — email of user to grant access to
-  functions?: string[]    // function names to grant; omit = all
+  app_id: string,
+  email: string,
+  functions?: string[]
 )
 ```
 
@@ -135,9 +144,9 @@ Revoke access to a private app. With `email`: revokes that user. Without `email`
 
 ```
 ul.permissions.revoke(
-  app_id: string,         // required — app ID or slug
-  email?: string,         // email of user to revoke; omit = ALL users
-  functions?: string[]    // specific functions to revoke; omit = all access
+  app_id: string,
+  email?: string,
+  functions?: string[]
 )
 ```
 
@@ -147,9 +156,9 @@ List granted users and their function permissions for an app. Filterable by emai
 
 ```
 ul.permissions.list(
-  app_id: string,         // required — app ID or slug
-  emails?: string[],      // filter to these users; omit = all granted users
-  functions?: string[]    // filter to these functions; omit = all functions
+  app_id: string,
+  emails?: string[],
+  functions?: string[]
 )
 ```
 
@@ -167,7 +176,7 @@ Search your apps — both owned and liked. No `query` returns full Library.md (a
 
 ```
 ul.discover.library(
-  query?: string          // semantic search query; omit = full library
+  query?: string
 )
 ```
 
@@ -177,28 +186,28 @@ Semantic search across all published apps in the global app store. Results ranke
 
 ```
 ul.discover.appstore(
-  query: string,          // required — natural language search query
-  limit?: number          // max results (default: 10)
+  query: string,
+  limit?: number
 )
 ```
 
 ## ul.like
 
-Like an app to save it to your library. Works on public, unlisted, and private apps. Cannot like your own apps. Calling again on an already-liked app removes the like (toggle). Liking a previously disliked app removes the dislike.
+Like an app to save it to your library. Toggle — calling again removes the like. Liking a previously disliked app removes the dislike.
 
 ```
 ul.like(
-  app_id: string          // required — app ID or slug
+  app_id: string
 )
 ```
 
 ## ul.dislike
 
-Dislike an app to remove it from your library and hide it from future app store results. Works on public, unlisted, and private apps. Cannot dislike your own apps. Calling again on an already-disliked app removes the dislike (toggle). Disliking a previously liked app removes the like.
+Dislike an app to remove it from your library and hide it from future app store results. Toggle — calling again removes the dislike.
 
 ```
 ul.dislike(
-  app_id: string          // required — app ID or slug
+  app_id: string
 )
 ```
 
@@ -208,34 +217,32 @@ View MCP call logs for an app you own. Filter by caller emails and/or function n
 
 ```
 ul.logs(
-  app_id: string,         // required — app ID or slug (must be owned by you)
-  emails?: string[],      // filter to calls by these users; omit = all callers
-  functions?: string[],   // filter to these function names; omit = all
-  limit?: number,         // max entries (default: 50, max: 200)
-  since?: string          // ISO timestamp — only logs after this time
+  app_id: string,
+  emails?: string[],
+  functions?: string[],
+  limit?: number,
+  since?: string
 )
 ```
 
 ## ul.connect
 
-Set, update, or remove your per-user secrets for an app. Apps declare required secrets (e.g. API keys) via `env_schema`. Pass a secret value as `null` to remove that key. Pass all values as `null` to fully disconnect.
+Set, update, or remove your per-user secrets for an app. Pass a secret value as `null` to remove that key.
 
 ```
 ul.connect(
-  app_id: string,         // required — app ID or slug to connect to
-  secrets: {              // required — key-value pairs of secrets to set
-    [key: string]: string | null  // string to set, null to remove
-  }
+  app_id: string,
+  secrets: { [key: string]: string | null }
 )
 ```
 
 ## ul.connections
 
-View your connections to apps. No `app_id` returns all apps you have connected to. With `app_id` shows required secrets, which you've provided, and connection status.
+View your connections to apps. No `app_id` returns all connected apps. With `app_id` shows required secrets and connection status.
 
 ```
 ul.connections(
-  app_id?: string         // app ID or slug; omit = list all your connections
+  app_id?: string
 )
 ```
 
@@ -243,80 +250,4 @@ ul.connections(
 
 ## Self-Hosted UI Pattern
 
-Every Ultralight MCP server can serve its own web UI via the HTTP endpoint system. This is the **recommended pattern** for giving users a browser-based dashboard to view and manage their data — no separate hosting, no CORS issues, no orphaned infrastructure.
-
-### How It Works
-
-Export a function named `ui` that returns `http.html(htmlString)`:
-
-```typescript
-export async function ui(request: {
-  method: string;
-  url: string;
-  path: string;
-  query: Record<string, string>;
-  headers: Record<string, string>;
-}) {
-  // Extract app ID from URL for MCP calls
-  const urlParts = request.url.split("/");
-  const httpIdx = urlParts.indexOf("http");
-  const appId = httpIdx >= 0 ? urlParts[httpIdx + 1] : "";
-
-  // Accept auth token via query param
-  const token = request.query.token || "";
-
-  const html = `<!DOCTYPE html>
-<html><head><title>My App</title></head>
-<body>
-  <div id="app"></div>
-  <script>
-    const APP_ID = "${appId}";
-    let TOKEN = sessionStorage.getItem("ul_token") || "${token}";
-    if ("${token}") sessionStorage.setItem("ul_token", TOKEN);
-
-    // Call your own MCP tools (same origin = no CORS)
-    async function mcp(tool, args) {
-      const res = await fetch("/mcp/" + APP_ID, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + TOKEN },
-        body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: "tools/call",
-          params: { name: PREFIX + tool, arguments: args || {} } })
-      });
-      return (await res.json()).result?.structuredContent;
-    }
-  </script>
-</body></html>`;
-
-  return http.html(html);
-}
-```
-
-The UI is then accessible at: `GET /http/{appId}/ui`
-
-### Why This Pattern
-
-| Property | Benefit |
-|----------|---------|
-| **Same origin** | UI calls MCP at `/mcp/{appId}` — no CORS, no proxy needed |
-| **Zero infra** | No separate hosting, no static site deployment, no CDN |
-| **Lifecycle coupling** | UI lives and dies with the MCP — no orphaned frontends |
-| **Auth unified** | Same token works for MCP and UI — one auth model |
-| **Portable** | Access from any device with a browser |
-
-### Best Practices
-
-- Accept `?token=ul_...` query param → store in `sessionStorage` → show auth screen if missing
-- Call `tools/list` on init to discover the tool name prefix (slug changes per deploy)
-- Keep it self-contained: inline CSS, zero external dependencies
-- Add the `ui` function to your `manifest.json`:
-  ```json
-  "ui": {
-    "description": "Serves the web UI. Access via GET /http/{appId}/ui",
-    "parameters": {},
-    "returns": { "type": "string" }
-  }
-  ```
-
-### When Building Ultralight Apps
-
-**Always include a `ui` function** as standard practice. Even simple data-storage MCP servers benefit from a browser dashboard where users can peek at their data and make manual edits. The pattern adds minimal code overhead and dramatically improves the user experience.
+Every Ultralight MCP server can serve its own web UI via the HTTP endpoint system at `GET /http/{appId}/ui`. Direct users to this URL when they want to view or manage their data in a browser.
