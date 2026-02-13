@@ -2429,6 +2429,17 @@ export function getLayoutHTML(options: {
         <h1 style="font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem;">Developer Dashboard</h1>
         <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">Your MCP hosting control center</p>
 
+        <!-- Pro paused banner (shown for free users who have granted users on their apps) -->
+        <div id="proPausedBanner" style="display: none; padding: 0.875rem 1rem; background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 8px; margin-bottom: 1rem;">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <div style="font-size: 0.8125rem; color: var(--text-primary);">
+              <strong>Your Pro features are paused.</strong>
+              <span style="color: var(--text-secondary);"> Granular permissions and log oversight require Pro.</span>
+            </div>
+            <a href="#" onclick="event.preventDefault(); showToast('Stripe integration coming soon');" style="font-size: 0.8125rem; font-weight: 600; color: var(--accent-color); text-decoration: none; white-space: nowrap; margin-left: 1rem;">Reactivate →</a>
+          </div>
+        </div>
+
         <!-- Platform MCP URL -->
         <div class="dashboard-card" style="margin-bottom: 1rem;">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem;">
@@ -5441,6 +5452,32 @@ await hash.sha256('data')</div>
 
       // Load Supabase servers inline on dashboard
       await loadSupabaseServers();
+
+      // Show "Pro paused" banner for free users who have granted users on any app
+      const banner = document.getElementById('proPausedBanner');
+      if (banner) {
+        const tier = userProfile?.tier || 'free';
+        const isPro = tier === 'pro' || tier === 'scale' || tier === 'enterprise';
+        if (isPro) {
+          banner.style.display = 'none';
+        } else if (apps.length > 0) {
+          // Check first few apps in parallel — short-circuit on first match
+          try {
+            const checks = apps.slice(0, 5).map(app =>
+              fetch(\`/api/user/permissions/\${app.id}\`, {
+                headers: { 'Authorization': \`Bearer \${authToken}\` }
+              }).then(r => r.ok ? r.json() : { users: [] })
+            );
+            const results = await Promise.all(checks);
+            const hasGrantedUsers = results.some(d => d.users && d.users.length > 0);
+            banner.style.display = hasGrantedUsers ? 'block' : 'none';
+          } catch (e) {
+            banner.style.display = 'none';
+          }
+        } else {
+          banner.style.display = 'none';
+        }
+      }
     }
 
     window.refreshCallLog = function() {

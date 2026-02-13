@@ -100,12 +100,14 @@ export async function handleTierChange(request: Request): Promise<Response> {
   const newTierLimits = TIER_LIMITS[new_tier as Tier];
 
   // ============================================
-  // DOWNGRADE ENFORCEMENT
-  // If new tier cannot publish, force all non-private apps to private
+  // DOWNGRADE ENFORCEMENT — Graceful freeze
+  // Public apps → unlisted (shared links survive, directory listing gone)
+  // Unlisted apps → unchanged (team keeps working)
+  // Permissions/logs degrade automatically via isProTier() runtime checks
   // ============================================
   if (!newTierLimits.can_publish) {
     const appsResponse = await fetch(
-      `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${user_id}&deleted_at=is.null&visibility=neq.private&select=id,name,visibility`,
+      `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${user_id}&deleted_at=is.null&visibility=eq.public&select=id,name,visibility`,
       {
         headers: {
           'apikey': SUPABASE_SERVICE_ROLE_KEY,
@@ -118,8 +120,9 @@ export async function handleTierChange(request: Request): Promise<Response> {
       const publicApps = await appsResponse.json();
 
       if (publicApps.length > 0) {
+        // Soft degradation: public → unlisted (NOT private)
         const updateResponse = await fetch(
-          `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${user_id}&deleted_at=is.null&visibility=neq.private`,
+          `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${user_id}&deleted_at=is.null&visibility=eq.public`,
           {
             method: 'PATCH',
             headers: {
@@ -128,22 +131,21 @@ export async function handleTierChange(request: Request): Promise<Response> {
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              visibility: 'private',
+              visibility: 'unlisted',
               updated_at: new Date().toISOString(),
             }),
           }
         );
 
         if (updateResponse.ok) {
-          const appNames = publicApps.map((a: { name: string; visibility: string }) =>
-            `${a.name} (was ${a.visibility})`
-          );
+          const appNames = publicApps.map((a: { name: string }) => a.name);
           changes.push(
-            `Set ${publicApps.length} app(s) to private: ${appNames.join(', ')}`
+            `Unlisted ${publicApps.length} public app(s): ${appNames.join(', ')}`
           );
           enforcementResults.visibility = {
             apps_changed: publicApps.length,
             app_names: appNames,
+            action: 'public_to_unlisted',
           };
         }
       }
