@@ -471,8 +471,6 @@ export async function handleUser(request: Request): Promise<Response> {
       const usage = await getWeeklyUsage(userId, tier);
       return json({
         count: usage.count,
-        limit: usage.limit,
-        tier,
       });
     } catch (err) {
       console.error('Get usage error:', err);

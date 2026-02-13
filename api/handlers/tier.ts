@@ -16,7 +16,14 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const TIER_CHANGE_SECRET = Deno.env.get('TIER_CHANGE_SECRET') || SUPABASE_SERVICE_ROLE_KEY;
 
-const VALID_TIERS: Tier[] = ['free', 'fun', 'pro', 'scale', 'enterprise'];
+const VALID_TIERS: Tier[] = ['free', 'pro'];
+
+// Map legacy tier names to the simplified two-tier system
+const TIER_ALIASES: Record<string, Tier> = {
+  fun: 'free',
+  scale: 'pro',
+  enterprise: 'pro',
+};
 
 /**
  * Handle tier change requests.
@@ -45,7 +52,9 @@ export async function handleTierChange(request: Request): Promise<Response> {
     return error('Invalid JSON body', 400);
   }
 
-  const { user_id, new_tier, reason } = body;
+  const { user_id, reason } = body;
+  // Resolve legacy tier names to the simplified two-tier system
+  const new_tier = TIER_ALIASES[body.new_tier] || body.new_tier;
 
   if (!user_id || typeof user_id !== 'string') {
     return error('user_id is required', 400);

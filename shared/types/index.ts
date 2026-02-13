@@ -364,80 +364,49 @@ export interface AppPermission {
 // ============================================
 // TIER LIMITS
 // ============================================
+// Two tiers: Free (generous silent limits) and Pro ($25/mo, unlimited publishing).
+// Legacy tiers (fun/scale/enterprise) alias to free/pro for backward compatibility.
 
 export type Tier = 'free' | 'fun' | 'pro' | 'scale' | 'enterprise';
 
+const FREE_LIMITS = {
+  max_apps: 50,
+  weekly_call_limit: 500_000,
+  overage_cost_per_100k_cents: 0,       // Hard cap — silent
+  can_publish: false,
+  price_cents_monthly: 0,
+  daily_ai_credit_cents: 20,
+  monthly_ai_credit_cents: 600,
+  max_file_size_mb: 10,
+  max_files_per_app: 50,
+  max_storage_bytes: 1_073_741_824,     // 1 GB
+  execution_timeout_ms: 30_000,         // 30s
+  log_retention_days: 30,
+  allowed_visibility: ['private', 'unlisted'] as const,
+} as const;
+
+const PRO_LIMITS = {
+  max_apps: Infinity,
+  weekly_call_limit: 10_000_000,
+  overage_cost_per_100k_cents: 150,     // $1.50/100k
+  can_publish: true,
+  price_cents_monthly: 2_500,           // $25/mo
+  daily_ai_credit_cents: 200,
+  monthly_ai_credit_cents: 6_000,
+  max_file_size_mb: 10,
+  max_files_per_app: 50,
+  max_storage_bytes: 107_374_182_400,   // 100 GB
+  execution_timeout_ms: 120_000,        // 2min
+  log_retention_days: 90,
+  allowed_visibility: ['private', 'unlisted', 'public'] as const,
+} as const;
+
 export const TIER_LIMITS = {
-  free: {
-    max_apps: 5,
-    weekly_call_limit: 1_000,
-    overage_cost_per_100k_cents: 0,     // No overage — hard cap
-    can_publish: false,
-    price_cents_monthly: 0,
-    daily_ai_credit_cents: 5,           // $0.05
-    monthly_ai_credit_cents: 150,       // ~$1.50
-    max_file_size_mb: 10,
-    max_files_per_app: 50,
-    execution_timeout_ms: 30_000,       // 30s
-    log_retention_days: 7,
-    allowed_visibility: ['private'] as const,
-  },
-  fun: {
-    max_apps: 25,
-    weekly_call_limit: 100_000,
-    overage_cost_per_100k_cents: 0,     // No overage — hard cap
-    can_publish: false,
-    price_cents_monthly: 800,           // $8/mo
-    daily_ai_credit_cents: 20,
-    monthly_ai_credit_cents: 600,
-    max_file_size_mb: 10,
-    max_files_per_app: 50,
-    execution_timeout_ms: 30_000,
-    log_retention_days: 14,
-    allowed_visibility: ['private'] as const,
-  },
-  pro: {
-    max_apps: Infinity,
-    weekly_call_limit: 1_000_000,
-    overage_cost_per_100k_cents: 150,   // $1.50/100k
-    can_publish: true,
-    price_cents_monthly: 2_500,         // $25/mo
-    daily_ai_credit_cents: 50,
-    monthly_ai_credit_cents: 1_500,
-    max_file_size_mb: 10,
-    max_files_per_app: 50,
-    execution_timeout_ms: 60_000,       // 60s
-    log_retention_days: 30,
-    allowed_visibility: ['private', 'unlisted', 'public'] as const,
-  },
-  scale: {
-    max_apps: Infinity,
-    weekly_call_limit: 10_000_000,
-    overage_cost_per_100k_cents: 105,   // $1.05/100k
-    can_publish: true,
-    price_cents_monthly: 9_900,         // $99/mo
-    daily_ai_credit_cents: 200,
-    monthly_ai_credit_cents: 6_000,
-    max_file_size_mb: 10,
-    max_files_per_app: 50,
-    execution_timeout_ms: 120_000,      // 2min
-    log_retention_days: 90,
-    allowed_visibility: ['private', 'unlisted', 'public'] as const,
-  },
-  enterprise: {
-    max_apps: Infinity,
-    weekly_call_limit: 100_000_000,
-    overage_cost_per_100k_cents: 50,    // $0.50/100k
-    can_publish: true,
-    price_cents_monthly: 59_900,        // $599/mo
-    daily_ai_credit_cents: 1_000,
-    monthly_ai_credit_cents: 30_000,
-    max_file_size_mb: 10,
-    max_files_per_app: 50,
-    execution_timeout_ms: 300_000,      // 5min
-    log_retention_days: 365,
-    allowed_visibility: ['private', 'unlisted', 'public'] as const,
-  },
+  free: FREE_LIMITS,
+  fun: FREE_LIMITS,                     // Legacy alias → free
+  pro: PRO_LIMITS,
+  scale: PRO_LIMITS,                    // Legacy alias → pro
+  enterprise: PRO_LIMITS,              // Legacy alias → pro
 } as const;
 
 // ============================================

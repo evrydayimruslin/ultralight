@@ -2444,20 +2444,6 @@ export function getLayoutHTML(options: {
           <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem;">Connect this URL to Claude Desktop, Cursor, or any MCP-compatible client.</p>
         </div>
 
-        <!-- Weekly Usage -->
-        <div class="dashboard-card" style="margin-bottom: 1rem;">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
-            <h3 style="font-size: 0.9375rem; font-weight: 600;">Weekly Usage</h3>
-            <span id="weeklyUsageText" style="font-size: 0.8125rem; color: var(--text-secondary);">Loading...</span>
-          </div>
-          <div style="width: 100%; height: 8px; background: var(--bg-tertiary); border-radius: 4px; overflow: hidden;">
-            <div id="weeklyUsageBar" style="height: 100%; width: 0%; background: var(--accent-color); border-radius: 4px; transition: width 0.5s ease;"></div>
-          </div>
-          <div style="display: flex; justify-content: space-between; margin-top: 0.375rem;">
-            <span id="weeklyUsageCount" style="font-size: 0.75rem; color: var(--text-muted);">0 calls</span>
-            <span id="weeklyUsageLimit" style="font-size: 0.75rem; color: var(--text-muted);">— / week</span>
-          </div>
-        </div>
 
         <!-- API Tokens -->
         <div class="dashboard-card" style="margin-bottom: 1rem;">
@@ -3078,7 +3064,7 @@ await hash.sha256('data')</div>
           }
 
           const tier = userProfile?.tier || 'free';
-          const tierText = tier === 'pro' ? 'Pro plan' : 'Free plan';
+          const tierText = tier === 'pro' ? 'Pro' : '';
 
           // Extract first name from Supabase Google Auth user_metadata
           const userMeta = payload.user_metadata || {};
@@ -4607,15 +4593,17 @@ await hash.sha256('data')</div>
       document.getElementById('appPageName').value = app.name || '';
       const visSelect = document.getElementById('appPageVisibility');
       visSelect.value = app.visibility || 'private';
-      // Gate visibility for free tier
+      // Gate public visibility — only Pro can publish publicly
       const visHint = document.getElementById('appVisibilityHint');
-      if (userProfile?.tier === 'free') {
+      const tier = userProfile?.tier || 'free';
+      const isPro = tier === 'pro' || tier === 'scale' || tier === 'enterprise';
+      if (!isPro) {
         Array.from(visSelect.options).forEach(opt => {
-          if (opt.value === 'unlisted' || opt.value === 'published') opt.disabled = true;
+          if (opt.value === 'public') opt.disabled = true;
         });
         if (visHint) {
           visHint.style.display = 'block';
-          visHint.innerHTML = '🔒 <a href="/pricing" target="_blank" style="color: var(--accent-color);">Upgrade</a> to unlock unlisted & published visibility.';
+          visHint.innerHTML = 'Upgrade to Pro to publish.';
         }
       } else if (visHint) {
         visHint.style.display = 'none';
@@ -5350,29 +5338,6 @@ await hash.sha256('data')</div>
     };
 
     async function loadDashboardData() {
-      try {
-        // Load weekly usage
-        const usageRes = await fetch('/api/user/usage', { headers: { 'Authorization': \`Bearer \${authToken}\` } });
-        if (usageRes.ok) {
-          const usage = await usageRes.json();
-          const countEl = document.getElementById('weeklyUsageCount');
-          const limitEl = document.getElementById('weeklyUsageLimit');
-          const barEl = document.getElementById('weeklyUsageBar');
-          const textEl = document.getElementById('weeklyUsageText');
-          if (countEl) countEl.textContent = (usage.count || 0).toLocaleString() + ' calls';
-          if (limitEl) limitEl.textContent = (usage.limit || 0).toLocaleString() + ' / week';
-          if (barEl) {
-            const pct = usage.limit > 0 ? Math.min(100, (usage.count / usage.limit) * 100) : 0;
-            barEl.style.width = pct + '%';
-            if (pct > 90) barEl.style.background = 'var(--error-color)';
-            else if (pct > 70) barEl.style.background = 'var(--warning-color)';
-          }
-          if (textEl) textEl.textContent = usage.tier ? usage.tier.charAt(0).toUpperCase() + usage.tier.slice(1) + ' tier' : '';
-        }
-      } catch (e) {
-        console.error('Failed to load usage:', e);
-      }
-
       // Load tokens inline on dashboard
       await loadTokens();
 

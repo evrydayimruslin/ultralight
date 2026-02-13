@@ -1258,7 +1258,7 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
       const visibilityErr = checkVisibilityAllowed(userTier, app.visibility as 'private' | 'unlisted' | 'public');
       if (visibilityErr) {
         return error(
-          `Cannot publish: ${visibilityErr} Change the app to private first, or upgrade to Pro.`,
+          `Cannot publish: ${visibilityErr}`,
           403
         );
       }

@@ -495,8 +495,7 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
       return jsonRpcErrorResponse(
         rpcRequest.id,
         RATE_LIMITED,
-        `Weekly call limit reached (${weeklyResult.limit.toLocaleString()} calls/week). ` +
-        `Upgrade your plan for more calls.`
+        `Too many requests. Please try again later or upgrade to Pro.`
       );
     }
   }

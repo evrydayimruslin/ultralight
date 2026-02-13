@@ -17,14 +17,10 @@ export function checkVisibilityAllowed(
   const allowedVisibility = TIER_LIMITS[tier].allowed_visibility as readonly string[];
 
   if (!allowedVisibility.includes(visibility)) {
-    const allowed = allowedVisibility.join(', ');
     if (!TIER_LIMITS[tier].can_publish) {
-      return (
-        `${tier} tier apps are restricted to private visibility. ` +
-        `You requested "${visibility}". Upgrade to Pro or higher to unlock unlisted and public visibility.`
-      );
+      return 'Upgrade to Pro to publish.';
     }
-    return `Visibility "${visibility}" is not allowed for your ${tier} tier. Allowed: ${allowed}`;
+    return 'Upgrade to Pro to publish.';
   }
 
   return null;
