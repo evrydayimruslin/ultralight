@@ -24,50 +24,70 @@ startCronScheduler(baseUrl);
 // Start subscription expiry checker (hourly)
 startSubscriptionExpiryChecker();
 
+// Security headers applied to every response
+const securityHeaders: Record<string, string> = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+  'X-XSS-Protection': '1; mode=block',
+  // HSTS — tells browsers to always use HTTPS (1 year, include subdomains)
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+};
+
+// CORS headers
+const corsHeaders: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
+// Merge security + CORS for convenience
+const standardHeaders = { ...securityHeaders, ...corsHeaders };
+
 // Serve the API
 Deno.serve({ port, hostname: '0.0.0.0' }, async (request: Request) => {
   const url = new URL(request.url);
   console.log(`[REQ] ${request.method} ${url.pathname}`);
 
-  // CORS headers
-  const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  };
+  // Reject oversized request bodies early (50 MB limit)
+  const contentLength = request.headers.get('content-length');
+  if (contentLength && parseInt(contentLength, 10) > 50 * 1024 * 1024) {
+    return new Response(
+      JSON.stringify({ error: 'Request body too large' }),
+      {
+        status: 413,
+        headers: { 'Content-Type': 'application/json', ...standardHeaders },
+      },
+    );
+  }
 
   // Handle preflight
   if (request.method === 'OPTIONS') {
-    console.log('[REQ] Preflight request');
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { headers: standardHeaders });
   }
 
   try {
-    console.log('[MAIN] Handling request:', request.method, request.url);
     const app = createApp();
-    console.log('[MAIN] App created, handling...');
     const response = await app.handle(request);
-    console.log('[MAIN] Response received:', response.status);
 
-    // Add CORS to all responses
-    Object.entries(corsHeaders).forEach(([key, value]) => {
+    // Apply standard headers to all responses
+    for (const [key, value] of Object.entries(standardHeaders)) {
       response.headers.set(key, value);
-    });
+    }
 
     return response;
-  } catch (error) {
-    console.error('Unhandled error:', error);
+  } catch (err) {
+    console.error('Unhandled error:', err);
 
+    // Never leak internal error messages to clients
     return new Response(
-      JSON.stringify({
-        error: 'Internal server error',
-        message: error instanceof Error ? error.message : 'Unknown error',
-      }),
+      JSON.stringify({ error: 'Internal server error' }),
       {
         status: 500,
         headers: {
           'Content-Type': 'application/json',
-          ...corsHeaders,
+          ...standardHeaders,
         },
       },
     );

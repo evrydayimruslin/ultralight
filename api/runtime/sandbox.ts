@@ -1489,7 +1489,16 @@ export async function executeInSandbox(
       },
     };
 
-    // Open fetch - allow all HTTPS
+    // Track timers created by user code so we can clean them up
+    const activeTimers = new Set<number>();
+    const activeIntervals = new Set<number>();
+
+    // Fetch guards
+    const MAX_CONCURRENT_FETCHES = 20;
+    const MAX_FETCH_RESPONSE_BYTES = 10 * 1024 * 1024; // 10 MB
+    const FETCH_TIMEOUT_MS = 15_000; // 15 seconds per request
+    let activeFetchCount = 0;
+
     const openFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const parsedUrl = new URL(url);
@@ -1499,7 +1508,32 @@ export async function executeInSandbox(
         throw new Error(`Only HTTPS URLs are allowed. Got: ${parsedUrl.protocol}`);
       }
 
-      return await fetch(input, init);
+      if (activeFetchCount >= MAX_CONCURRENT_FETCHES) {
+        throw new Error(`Concurrent fetch limit exceeded (max ${MAX_CONCURRENT_FETCHES})`);
+      }
+
+      activeFetchCount++;
+      try {
+        const controller = new AbortController();
+        const fetchTimeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+        const response = await fetch(input, {
+          ...init,
+          signal: init?.signal || controller.signal,
+        });
+
+        clearTimeout(fetchTimeout);
+
+        // Wrap response to enforce size limit on body reads
+        const contentLength = response.headers.get('content-length');
+        if (contentLength && parseInt(contentLength, 10) > MAX_FETCH_RESPONSE_BYTES) {
+          throw new Error(`Response too large (${contentLength} bytes, max ${MAX_FETCH_RESPONSE_BYTES})`);
+        }
+
+        return response;
+      } finally {
+        activeFetchCount--;
+      }
     };
 
     // Create Supabase client if configured
@@ -1574,11 +1608,25 @@ export async function executeInSandbox(
       // Network (all HTTPS allowed)
       fetch: openFetch,
 
-      // Timers
-      setTimeout: (fn: () => void, ms: number) => setTimeout(fn, Math.min(ms, 30000)),
-      clearTimeout,
-      setInterval: (fn: () => void, ms: number) => setInterval(fn, Math.max(ms, 100)), // Min 100ms
-      clearInterval,
+      // Timers — tracked for cleanup after execution
+      setTimeout: (fn: () => void, ms: number) => {
+        const id = setTimeout(fn, Math.min(ms, 30000));
+        activeTimers.add(id as unknown as number);
+        return id;
+      },
+      clearTimeout: (id: number) => {
+        activeTimers.delete(id);
+        clearTimeout(id);
+      },
+      setInterval: (fn: () => void, ms: number) => {
+        const id = setInterval(fn, Math.max(ms, 100)); // Min 100ms
+        activeIntervals.add(id as unknown as number);
+        return id;
+      },
+      clearInterval: (id: number) => {
+        activeIntervals.delete(id);
+        clearInterval(id);
+      },
 
       // Built-in globals
       URL,
@@ -1641,10 +1689,10 @@ export async function executeInSandbox(
       _,
       console: capturedConsole,
       fetch: openFetch,
-      setTimeout: context.setTimeout,
-      clearTimeout: context.clearTimeout,
-      setInterval: context.setInterval,
-      clearInterval: context.clearInterval,
+      setTimeout: context.setTimeout as typeof globalThis.setTimeout,
+      clearTimeout: context.clearTimeout as typeof globalThis.clearTimeout,
+      setInterval: context.setInterval as typeof globalThis.setInterval,
+      clearInterval: context.clearInterval as typeof globalThis.clearInterval,
       URL,
       URLSearchParams,
       JSON,
@@ -1745,8 +1793,46 @@ export async function executeInSandbox(
       throw new Error(`Code compilation failed: ${compileErr instanceof Error ? compileErr.message : String(compileErr)}`);
     }
 
-    const result = await userFunc(args);
+    // Execute with timeout — prevent user code from hanging the server
+    const EXECUTION_TIMEOUT_MS = 30_000; // 30 seconds
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(`Execution timed out after ${EXECUTION_TIMEOUT_MS / 1000}s`));
+      }, EXECUTION_TIMEOUT_MS);
+    });
+
+    let result: unknown;
+    try {
+      result = await Promise.race([userFunc(args), timeoutPromise]);
+    } finally {
+      // Always clean up: cancel timeout and all user-created timers/intervals
+      if (timeoutId) clearTimeout(timeoutId);
+      for (const id of activeTimers) clearTimeout(id);
+      for (const id of activeIntervals) clearInterval(id);
+      activeTimers.clear();
+      activeIntervals.clear();
+    }
+
     const durationMs = Date.now() - startTime;
+
+    // Guard against oversized results
+    const MAX_RESULT_BYTES = 5 * 1024 * 1024; // 5 MB
+    const serialized = JSON.stringify(result);
+    if (serialized && serialized.length > MAX_RESULT_BYTES) {
+      return {
+        success: false,
+        result: null,
+        logs,
+        durationMs,
+        aiCostCents,
+        error: {
+          type: 'ResultTooLarge',
+          message: `Result size (${(serialized.length / 1024 / 1024).toFixed(1)} MB) exceeds limit (${MAX_RESULT_BYTES / 1024 / 1024} MB)`,
+        },
+      };
+    }
 
     return {
       success: true,
@@ -1757,6 +1843,7 @@ export async function executeInSandbox(
     };
 
   } catch (error) {
+    // Clean up any lingering timers on error path too
     const durationMs = Date.now() - startTime;
 
     return {
@@ -1768,7 +1855,7 @@ export async function executeInSandbox(
       error: {
         type: error instanceof Error ? error.constructor.name : 'UnknownError',
         message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        // Stack traces intentionally omitted — never expose internal paths to callers
       },
     };
   }

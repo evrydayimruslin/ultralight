@@ -28,27 +28,11 @@ export interface User {
   byok_enabled: boolean;
   byok_provider: BYOKProvider | null; // Primary provider
   byok_configs: BYOKConfig[]; // All configured providers (keys stored encrypted separately)
-  root_memory: RootMemory;
+  /** @deprecated DB column exists but unused. User memory now lives in memory.md (R2) and the memory table (Supabase KV). */
+  root_memory: Record<string, unknown>;
   preferences: UserPreferences;
   created_at: string;
   updated_at: string;
-}
-
-export interface RootMemory {
-  profile: {
-    name?: string;
-    email?: string;
-    timezone?: string;
-    [key: string]: unknown;
-  };
-  preferences: {
-    ai_model: string;
-    memory_mode: 'unified' | 'siloed';
-    timezone: string;
-    [key: string]: unknown;
-  };
-  auth: Record<string, { access_token: string; expires: number }>;
-  contacts: Array<{ name: string; email?: string; phone?: string }>;
 }
 
 export interface UserPreferences {
@@ -117,6 +101,8 @@ export interface App {
   // Manifest-based configuration (v2 architecture)
   manifest: string | null;  // JSON stringified AppManifest
   app_type: 'mcp' | null;  // null means legacy auto-detect; ui/hybrid removed
+  // Per-app rate limit config (Pro, owner-configurable)
+  rate_limit_config: AppRateLimitConfig | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -359,6 +345,68 @@ export interface AppPermission {
   budget_limit: number | null;
   budget_used: number;
   last_used_at: string | null;
+}
+
+// ── Granular Permission Constraints (Pro feature) ──
+
+/** Constraints applied to a permission grant — checked at MCP call time */
+export interface GrantConstraints {
+  /** CIDR ranges or exact IPs that may call this app (e.g. ["10.0.0.0/8", "203.0.113.5"]) */
+  allowed_ips?: string[] | null;
+  /** Time window during which calls are allowed */
+  time_window?: TimeWindow | null;
+  /** Max calls allowed before access is suspended. Resets according to budget_period. */
+  budget_limit?: number | null;
+  /** Rolling period for budget reset. null = lifetime budget (never resets). */
+  budget_period?: 'hour' | 'day' | 'week' | 'month' | null;
+  /** ISO timestamp — permission auto-expires after this date */
+  expires_at?: string | null;
+}
+
+/** Allowed time window for calls */
+export interface TimeWindow {
+  /** Start hour in 24h format (0-23) */
+  start_hour: number;
+  /** End hour in 24h format (0-23). If end < start, wraps past midnight. */
+  end_hour: number;
+  /** IANA timezone (e.g. "America/New_York"). Defaults to UTC. */
+  timezone?: string;
+  /** Days of week allowed (0=Sunday, 6=Saturday). Omit for all days. */
+  days?: number[];
+}
+
+/** A row from the user_app_permissions table — extended with granular constraints */
+export interface PermissionRow {
+  app_id: string;
+  granted_to_user_id: string;
+  granted_by_user_id: string;
+  function_name: string;
+  allowed: boolean;
+  // Granular constraints (stored as JSONB columns)
+  allowed_ips: string[] | null;
+  time_window: TimeWindow | null;
+  budget_limit: number | null;
+  budget_used: number;
+  budget_period: string | null;
+  expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Token scoping — restrict which apps/functions a token can access */
+export interface TokenScope {
+  /** App IDs this token can access. null = all apps (wildcard). */
+  app_ids?: string[] | null;
+  /** Function names this token can call. null = all functions. */
+  function_names?: string[] | null;
+}
+
+/** Per-app rate limit override — set by app owner (Pro) */
+export interface AppRateLimitConfig {
+  /** Max calls per consumer per minute. null = use platform default. */
+  calls_per_minute?: number | null;
+  /** Max calls per consumer per day. null = unlimited. */
+  calls_per_day?: number | null;
 }
 
 // ============================================

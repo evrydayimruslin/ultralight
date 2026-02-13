@@ -3,6 +3,7 @@
 
 import { error, json } from './app.ts';
 import { isApiToken, getUserFromToken } from '../services/tokens.ts';
+import { getUserTier } from '../services/tier-enforcement.ts';
 
 // @ts-ignore - Deno is available
 const Deno = globalThis.Deno;
@@ -101,11 +102,8 @@ export async function handleAuth(request: Request): Promise<Response> {
       const refreshToken = body.refresh_token;
 
       if (!refreshToken) {
-        console.error('[auth/refresh] Missing refresh_token in request body');
         return error('Missing refresh_token', 400);
       }
-
-      console.log('[auth/refresh] Attempting token refresh...');
 
       const tokenResponse = await fetch(
         `${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`,
@@ -120,21 +118,17 @@ export async function handleAuth(request: Request): Promise<Response> {
       );
 
       if (!tokenResponse.ok) {
-        const errText = await tokenResponse.text();
-        console.error('[auth/refresh] Supabase refresh failed:', tokenResponse.status, errText);
         return error('Token refresh failed', 401);
       }
 
       const tokens = await tokenResponse.json();
-      console.log('[auth/refresh] Token refreshed successfully');
 
       return json({
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
         expires_in: tokens.expires_in,
       });
-    } catch (err) {
-      console.error('[auth/refresh] Error:', err);
+    } catch {
       return error('Token refresh failed', 500);
     }
   }
@@ -146,82 +140,54 @@ export async function handleAuth(request: Request): Promise<Response> {
  * Extract and verify JWT or API token from request
  * Also ensures user exists in public.users table
  */
-export async function authenticate(request: Request): Promise<{ id: string; email: string; tier: string; tokenId?: string }> {
+export async function authenticate(request: Request): Promise<{ id: string; email: string; tier: string; tokenId?: string; tokenAppIds?: string[] | null; tokenFunctionNames?: string[] | null }> {
   const authHeader = request.headers.get('Authorization');
-  console.log('Auth header present:', !!authHeader);
 
   if (!authHeader?.startsWith('Bearer ')) {
-    console.error('Missing or invalid auth header format');
     throw new Error('Missing or invalid authorization header');
   }
 
   const token = authHeader.slice(7);
-  console.log('Token length:', token.length, 'Token preview:', token.substring(0, 20) + '...');
 
   // Check if this is an API token (starts with "ul_")
   if (isApiToken(token)) {
-    console.log('Detected API token, validating...');
     const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
                      request.headers.get('x-real-ip') ||
                      undefined;
 
     const user = await getUserFromToken(token, clientIp);
     if (!user) {
-      console.error('Invalid or expired API token');
       throw new Error('Invalid or expired API token');
     }
 
-    console.log('API token validated for user:', user.id, user.email);
     return user;
   }
 
-  // Otherwise, treat as JWT
-  console.log('Treating as JWT...');
+  // Otherwise, treat as JWT — verify via Supabase Auth API
+  const verifyResponse = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'apikey': SUPABASE_ANON_KEY,
+    },
+  });
 
-  // Decode and verify JWT locally
-  const parts = token.split('.');
-  console.log('JWT parts count:', parts.length);
-
-  if (parts.length !== 3) {
-    console.error('Invalid JWT format - expected 3 parts, got', parts.length);
-    throw new Error('Invalid JWT format');
+  if (!verifyResponse.ok) {
+    const status = verifyResponse.status;
+    if (status === 401) {
+      throw new Error('Invalid or expired token');
+    }
+    throw new Error('Token verification failed');
   }
 
-  // JWT uses base64url encoding - need to convert to standard base64
-  let payload: Record<string, unknown>;
-  try {
-    const base64Payload = parts[1]
-      .replace(/-/g, '+')
-      .replace(/_/g, '/');
-    // Add padding if needed
-    const padded = base64Payload + '='.repeat((4 - base64Payload.length % 4) % 4);
-    console.log('Base64 payload length:', padded.length);
-    const decoded = atob(padded);
-    console.log('Decoded payload:', decoded.substring(0, 100) + '...');
-    payload = JSON.parse(decoded);
-    console.log('Parsed payload keys:', Object.keys(payload));
-  } catch (decodeErr) {
-    console.error('Failed to decode JWT payload:', decodeErr);
-    throw new Error('Failed to decode token');
-  }
+  const verifiedUser = await verifyResponse.json();
 
-  // Check if token is expired
-  if (payload.exp && (payload.exp as number) * 1000 < Date.now()) {
-    console.error('Token expired at:', new Date((payload.exp as number) * 1000));
-    throw new Error('Token expired');
-  }
-
-  // Extract user info directly from JWT - Supabase JWTs contain user data
   const user = {
-    id: payload.sub as string,
-    email: payload.email as string,
-    user_metadata: (payload.user_metadata || {}) as Record<string, string>,
+    id: verifiedUser.id as string,
+    email: verifiedUser.email as string,
+    user_metadata: (verifiedUser.user_metadata || {}) as Record<string, string>,
   };
 
-  console.log('User from JWT:', user.id, user.email);
-
   if (!user.id || !user.email) {
-    console.error('Missing user id or email in token. Payload:', JSON.stringify(payload));
     throw new Error('Invalid token payload');
   }
 
@@ -229,16 +195,22 @@ export async function authenticate(request: Request): Promise<{ id: string; emai
   // Don't block auth - user creation will be retried during upload
   try {
     await ensureUserExists(user);
-    console.log('User record ensured successfully');
-  } catch (userErr) {
-    console.error('Failed to ensure user exists (will retry on upload):', userErr);
+  } catch {
     // Don't throw - let auth succeed, user creation will be retried
+  }
+
+  // Look up the actual tier from the database (don't hardcode 'free')
+  let tier = 'free';
+  try {
+    tier = await getUserTier(user.id);
+  } catch {
+    // Default to free on error — conservative
   }
 
   return {
     id: user.id,
     email: user.email,
-    tier: 'free',
+    tier,
   };
 }
 
@@ -255,24 +227,13 @@ export async function getUserId(request: Request): Promise<string> {
  * Uses direct REST API to bypass any client library issues
  */
 export async function ensureUserExists(authUser: { id: string; email: string; user_metadata?: { name?: string; avatar_url?: string; full_name?: string } }): Promise<void> {
-  console.log('ensureUserExists called for:', authUser.id, authUser.email);
-
   const displayName = authUser.user_metadata?.full_name || authUser.user_metadata?.name || authUser.email.split('@')[0];
-  // Note: avatar_url column doesn't exist in DB yet, so we don't include it
-  // const avatarUrl = authUser.user_metadata?.avatar_url || null;
 
   // Use direct REST API with service role key (bypasses RLS)
-  // Only include columns that exist in the users table
   const payload: Record<string, unknown> = {
     id: authUser.id,
     email: authUser.email,
   };
-
-  // Only add display_name if the column exists (it might not)
-  // For now, let's try with minimal fields
-  // payload.display_name = displayName;
-
-  console.log('Inserting user via REST API:', JSON.stringify(payload));
 
   // First try to select to see if user exists
   const checkResponse = await fetch(
@@ -286,10 +247,8 @@ export async function ensureUserExists(authUser: { id: string; email: string; us
   );
 
   const existingUsers = await checkResponse.json();
-  console.log('Existing users check:', JSON.stringify(existingUsers));
 
   if (Array.isArray(existingUsers) && existingUsers.length > 0) {
-    console.log('User already exists, skipping insert');
     await resolvePendingPermissions(authUser.id, authUser.email);
     return;
   }
@@ -309,22 +268,17 @@ export async function ensureUserExists(authUser: { id: string; email: string; us
     }
   );
 
-  console.log('Insert response status:', insertResponse.status);
-
   if (!insertResponse.ok) {
     const errorText = await insertResponse.text();
-    console.error('Insert failed:', insertResponse.status, errorText);
 
     // If it's a duplicate key error, that's fine
     if (errorText.includes('duplicate') || errorText.includes('23505')) {
-      console.log('User already exists (duplicate key), continuing');
       return;
     }
 
-    throw new Error(`Failed to create user: ${errorText}`);
+    throw new Error('Failed to create user record');
   }
 
-  console.log('User created successfully');
   await resolvePendingPermissions(authUser.id, authUser.email);
 }
 
@@ -383,9 +337,9 @@ async function resolvePendingPermissions(userId: string, email: string): Promise
       }
     );
 
-    console.log(`[AUTH] Resolved ${pendingRows.length} pending permissions for ${email}`);
-  } catch (err) {
-    console.error('[AUTH] Failed to resolve pending permissions:', err);
+    console.log(`[AUTH] Resolved ${pendingRows.length} pending permissions`);
+  } catch {
+    // Non-fatal: don't block auth
     // Non-fatal: don't block auth
   }
 }

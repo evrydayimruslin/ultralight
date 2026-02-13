@@ -104,58 +104,6 @@ export function createApp() {
         });
       }
 
-      // Debug endpoint - test auth and database connection
-      if (path === '/api/debug/auth' && method === 'GET') {
-        const authHeader = request.headers.get('Authorization');
-        const result: Record<string, unknown> = {
-          hasAuthHeader: !!authHeader,
-          authHeaderPreview: authHeader ? authHeader.substring(0, 30) + '...' : null,
-        };
-
-        // Test auth
-        if (authHeader) {
-          try {
-            const { authenticate } = await import('./auth.ts');
-            const user = await authenticate(request);
-            result.authSuccess = true;
-            result.user = user;
-          } catch (err: unknown) {
-            result.authSuccess = false;
-            result.authError = err instanceof Error ? err.message : String(err);
-          }
-        }
-
-        // Test Supabase connection
-        try {
-          const appsService = createAppsService();
-          result.supabaseConfigured = true;
-
-          // Try a simple query
-          if (result.user && typeof result.user === 'object' && 'id' in result.user) {
-            const apps = await appsService.listByOwner((result.user as { id: string }).id);
-            result.appsCount = apps.length;
-            result.dbQuerySuccess = true;
-          }
-        } catch (err: unknown) {
-          result.supabaseConfigured = false;
-          result.supabaseError = err instanceof Error ? err.message : String(err);
-        }
-
-        // Check env vars (without exposing values)
-        // @ts-ignore
-        const Deno = globalThis.Deno;
-        result.envVars = {
-          SUPABASE_URL: !!Deno?.env?.get('SUPABASE_URL'),
-          SUPABASE_SERVICE_ROLE_KEY: !!Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY'),
-          R2_ACCOUNT_ID: !!Deno?.env?.get('R2_ACCOUNT_ID'),
-          R2_ACCESS_KEY_ID: !!Deno?.env?.get('R2_ACCESS_KEY_ID'),
-          R2_SECRET_ACCESS_KEY: !!Deno?.env?.get('R2_SECRET_ACCESS_KEY'),
-          R2_BUCKET_NAME: !!Deno?.env?.get('R2_BUCKET_NAME'),
-        };
-
-        return json(result);
-      }
-
       // Upload page (HTML UI with sidebar)
       // Legacy /upload redirects to home
       if (path === '/upload' && method === 'GET') {
@@ -240,6 +188,12 @@ export function createApp() {
         }
 
         return handleHttpEndpoint(request, appId, subPath);
+      }
+
+      // Published markdown pages - GET /p/:userId/:slug
+      // Public, no auth required. Renders user-published markdown as styled HTML.
+      if (path.startsWith('/p/') && method === 'GET') {
+        return handlePublishedPage(request, path);
       }
 
       // App runner - /a/:appId/* - serves deployed apps
@@ -918,6 +872,173 @@ function escAttr(s) { return String(s).replace(/"/g, "&quot;").replace(/'/g, "&#
 </script>
 </body>
 </html>`;
+}
+
+// ============================================
+// PUBLISHED MARKDOWN PAGES
+// ============================================
+
+async function handlePublishedPage(_request: Request, path: string): Promise<Response> {
+  // Parse /p/{userId}/{slug} or /p/{userId}/{slug}.md
+  const parts = path.slice(3).split('/'); // Remove '/p/'
+  if (parts.length < 2) {
+    return new Response('Not found', { status: 404 });
+  }
+  const userId = parts[0];
+  let slug = parts.slice(1).join('/');
+  // Strip .md extension if present in URL
+  if (slug.endsWith('.md')) slug = slug.slice(0, -3);
+
+  const r2Service = createR2Service();
+  let content: string;
+  try {
+    content = await r2Service.fetchTextFile(`users/${userId}/pages/${slug}.md`);
+  } catch {
+    return new Response('Page not found', { status: 404 });
+  }
+
+  // Parse front-matter style title from first H1, or use slug
+  let title = slug;
+  const h1Match = content.match(/^#\s+(.+)$/m);
+  if (h1Match) title = h1Match[1];
+
+  const html = renderMarkdownPage(title, content);
+  return new Response(html, {
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'public, max-age=60',
+    },
+  });
+}
+
+/**
+ * Render markdown content as a clean, readable HTML page.
+ * Uses simple regex-based markdown→HTML (no external deps).
+ */
+function renderMarkdownPage(title: string, markdown: string): string {
+  // Basic markdown → HTML conversion
+  let html = escapeHtml(markdown);
+
+  // Code blocks (``` ... ```) — must be before inline code
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, lang, code) =>
+    `<pre><code class="language-${lang}">${code.trim()}</code></pre>`
+  );
+  // Inline code
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Headers
+  html = html.replace(/^######\s+(.+)$/gm, '<h6>$1</h6>');
+  html = html.replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>');
+  html = html.replace(/^####\s+(.+)$/gm, '<h4>$1</h4>');
+  html = html.replace(/^###\s+(.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^##\s+(.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
+  // Bold + italic
+  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  // Links
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  // Horizontal rules
+  html = html.replace(/^---+$/gm, '<hr>');
+  // Unordered lists
+  html = html.replace(/^[-*]\s+(.+)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>.*<\/li>\n?)+/g, (m) => `<ul>${m}</ul>`);
+  // Ordered lists
+  html = html.replace(/^\d+\.\s+(.+)$/gm, '<li>$1</li>');
+  // Blockquotes
+  html = html.replace(/^>\s+(.+)$/gm, '<blockquote>$1</blockquote>');
+  // Paragraphs (double newlines)
+  html = html.replace(/\n\n+/g, '</p><p>');
+  html = `<p>${html}</p>`;
+  // Clean up empty paragraphs around block elements
+  html = html.replace(/<p>\s*(<h[1-6]|<pre|<ul|<ol|<hr|<blockquote)/g, '$1');
+  html = html.replace(/(<\/h[1-6]>|<\/pre>|<\/ul>|<\/ol>|<hr>|<\/blockquote>)\s*<\/p>/g, '$1');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${escapeHtml(title)} — Ultralight</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.7;
+    color: #1a1a2e;
+    background: #fafafa;
+    padding: 2rem 1rem;
+  }
+  article {
+    max-width: 720px;
+    margin: 0 auto;
+    background: #fff;
+    padding: 3rem;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  h1 { font-size: 2rem; margin-bottom: 1rem; color: #0f0f23; }
+  h2 { font-size: 1.5rem; margin: 2rem 0 0.75rem; color: #16213e; border-bottom: 1px solid #eee; padding-bottom: 0.3rem; }
+  h3 { font-size: 1.25rem; margin: 1.5rem 0 0.5rem; color: #1a1a2e; }
+  h4, h5, h6 { margin: 1.25rem 0 0.5rem; }
+  p { margin: 0.75rem 0; }
+  a { color: #4361ee; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.9em;
+    background: #f0f0f5;
+    padding: 0.15em 0.4em;
+    border-radius: 4px;
+  }
+  pre {
+    margin: 1rem 0;
+    padding: 1rem;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    border-radius: 8px;
+    overflow-x: auto;
+  }
+  pre code { background: none; padding: 0; color: inherit; font-size: 0.85em; }
+  ul, ol { margin: 0.75rem 0; padding-left: 1.5rem; }
+  li { margin: 0.25rem 0; }
+  blockquote {
+    margin: 1rem 0;
+    padding: 0.75rem 1rem;
+    border-left: 3px solid #4361ee;
+    background: #f8f9ff;
+    color: #444;
+  }
+  hr { margin: 2rem 0; border: none; border-top: 1px solid #eee; }
+  .footer {
+    text-align: center;
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid #eee;
+    font-size: 0.8rem;
+    color: #999;
+  }
+  .footer a { color: #999; }
+  @media (max-width: 600px) {
+    body { padding: 1rem 0.5rem; }
+    article { padding: 1.5rem; }
+  }
+</style>
+</head>
+<body>
+<article>
+${html}
+<div class="footer">Published with <a href="https://ultralight.dev">Ultralight</a></div>
+</article>
+</body>
+</html>`;
+}
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 export function json(data: unknown, status = 200): Response {

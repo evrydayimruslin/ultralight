@@ -59,7 +59,12 @@ export async function handleCron(request: Request): Promise<Response> {
 
     // POST /api/cron/validate - Validate a cron expression
     if (path === '/api/cron/validate' && method === 'POST') {
-      const body = await request.json();
+      let body;
+      try {
+        body = await request.json();
+      } catch {
+        return error('Invalid JSON body', 400);
+      }
       const { expression } = body;
 
       if (!expression) {
@@ -125,7 +130,12 @@ export async function handleCron(request: Request): Promise<Response> {
 
       // POST - Create job for app
       if (method === 'POST') {
-        const body = await request.json();
+        let body;
+        try {
+          body = await request.json();
+        } catch {
+          return error('Invalid JSON body', 400);
+        }
         const { name, schedule, handler } = body;
 
         if (!name || !schedule || !handler) {
@@ -185,7 +195,12 @@ export async function handleCron(request: Request): Promise<Response> {
 
       // PATCH - Update job
       if (method === 'PATCH') {
-        const body = await request.json();
+        let body;
+        try {
+          body = await request.json();
+        } catch {
+          return error('Invalid JSON body', 400);
+        }
         const { schedule, handler, enabled } = body;
 
         const updates: Partial<{ schedule: string; handler: string; enabled: boolean }> = {};

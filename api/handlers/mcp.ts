@@ -17,6 +17,7 @@ import { createUserService } from '../services/user.ts';
 import { createAIService } from '../services/ai.ts';
 import { decryptEnvVars, decryptEnvVar } from '../services/envvars.ts';
 import { getCodeCache } from '../services/codecache.ts';
+import { createMemoryService, type MemoryService as MemoryServiceImpl } from '../services/memory.ts';
 import type {
   MCPTool,
   MCPJsonSchema,
@@ -34,6 +35,22 @@ import type {
   App,
 } from '../../shared/types/index.ts';
 import { manifestToMCPTools } from '../../shared/types/index.ts';
+
+// ============================================
+// MEMORY SERVICE (lazy singleton)
+// ============================================
+
+let _memoryService: MemoryServiceImpl | null = null;
+function getMemoryService(): MemoryServiceImpl | null {
+  if (!_memoryService) {
+    try {
+      _memoryService = createMemoryService();
+    } catch (err) {
+      console.error('Failed to create MemoryService:', err);
+    }
+  }
+  return _memoryService;
+}
 
 // ============================================
 // TYPES
@@ -228,7 +245,7 @@ const SDK_TOOLS: MCPTool[] = [
   {
     name: 'ultralight.remember',
     title: 'Remember (Cross-App)',
-    description: "Store a value in user's cross-app memory. Accessible by all apps the user uses.",
+    description: "Store a value in user's cross-app memory. Defaults to app-scoped (app:{appId}). Use scope='user' for memory shared across all apps.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -239,6 +256,10 @@ const SDK_TOOLS: MCPTool[] = [
         value: {
           description: 'JSON-serializable value to remember.',
         },
+        scope: {
+          type: 'string',
+          description: "Memory scope. Defaults to 'app:{appId}'. Use 'user' for cross-app memory.",
+        },
       },
       required: ['key', 'value'],
     },
@@ -246,13 +267,17 @@ const SDK_TOOLS: MCPTool[] = [
   {
     name: 'ultralight.recall',
     title: 'Recall (Cross-App)',
-    description: "Retrieve a value from user's cross-app memory.",
+    description: "Retrieve a value from user's cross-app memory. Defaults to app-scoped. Use scope='user' for cross-app memory.",
     inputSchema: {
       type: 'object',
       properties: {
         key: {
           type: 'string',
           description: 'Memory key to recall.',
+        },
+        scope: {
+          type: 'string',
+          description: "Memory scope. Defaults to 'app:{appId}'. Use 'user' for cross-app memory.",
         },
       },
       required: ['key'],
@@ -442,9 +467,13 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
   // Authenticate user
   let userId: string;
   let user: UserContext | null = null;
+  let tokenAppIds: string[] | null = null;
+  let tokenFunctionNames: string[] | null = null;
   try {
     const authUser = await authenticate(request);
     userId = authUser.id;
+    tokenAppIds = authUser.tokenAppIds || null;
+    tokenFunctionNames = authUser.tokenFunctionNames || null;
 
     // Extract display name and avatar from JWT user_metadata (not available on authenticate() return type)
     let displayName: string | null = authUser.email.split('@')[0];
@@ -531,12 +560,49 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
     return jsonRpcErrorResponse(rpcRequest.id, -32002, 'App not found');
   }
 
+  // Token scoping: if the API token is scoped to specific apps, enforce it
+  if (tokenAppIds && tokenAppIds.length > 0 && !tokenAppIds.includes('*')) {
+    if (!tokenAppIds.includes(appId) && !tokenAppIds.includes(app.slug)) {
+      return jsonRpcErrorResponse(
+        rpcRequest.id,
+        -32003,
+        `Token not authorized for this app. Scoped to: ${tokenAppIds.join(', ')}`
+      );
+    }
+  }
+
+  // Per-app rate limit (owner-configurable, Pro feature)
+  // Stored as app.rate_limit_config JSONB: { calls_per_minute, calls_per_day }
+  if (rpcRequest.method === 'tools/call' && app.owner_id !== userId) {
+    const rlConfig = app.rate_limit_config as { calls_per_minute?: number; calls_per_day?: number } | null;
+    if (rlConfig?.calls_per_minute) {
+      const appRateResult = await checkRateLimit(userId, `app:${appId}:minute`, rlConfig.calls_per_minute, 1);
+      if (!appRateResult.allowed) {
+        return jsonRpcErrorResponse(
+          rpcRequest.id,
+          RATE_LIMITED,
+          `App rate limit exceeded (${rlConfig.calls_per_minute}/min). Try again after ${appRateResult.resetAt.toISOString()}`
+        );
+      }
+    }
+    if (rlConfig?.calls_per_day) {
+      const appDayResult = await checkRateLimit(userId, `app:${appId}:day`, rlConfig.calls_per_day, 1440);
+      if (!appDayResult.allowed) {
+        return jsonRpcErrorResponse(
+          rpcRequest.id,
+          RATE_LIMITED,
+          `App daily limit exceeded (${rlConfig.calls_per_day}/day). Try again tomorrow.`
+        );
+      }
+    }
+  }
+
   // Check visibility — private apps: accessible by owner or users with granted permissions
   // (Actual function-level permission check happens in handleToolsList/handleToolsCall)
   if (app.visibility === 'private' && app.owner_id !== userId) {
     // Check if user has ANY permissions on this private app
     const perms = await getPermissionsForUser(userId, app.id, app.owner_id, app.visibility);
-    if (perms !== null && perms.size === 0) {
+    if (perms !== null && perms.allowed.size === 0) {
       return jsonRpcErrorResponse(rpcRequest.id, -32002, 'App not found');
     }
   }
@@ -553,7 +619,7 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
         return await handleToolsList(id, app, params, userId);
 
       case 'tools/call':
-        return await handleToolsCall(id, app, params, userId, user, request);
+        return await handleToolsCall(id, app, params, userId, user, request, tokenFunctionNames);
 
       case 'resources/list':
         return handleResourcesList(id, appId, app);
@@ -693,12 +759,12 @@ async function handleToolsList(
 
   // Permission filtering for private apps: only show allowed functions to non-owners
   if (callerUserId && app.visibility === 'private') {
-    const allowedFunctions = await getPermissionsForUser(callerUserId, app.id, app.owner_id, app.visibility);
-    if (allowedFunctions !== null) {
+    const permsResult = await getPermissionsForUser(callerUserId, app.id, app.owner_id, app.visibility);
+    if (permsResult !== null) {
       // Filter tools to only include allowed functions
       // SDK tools (ultralight.*) are always shown
       const filteredTools = tools.filter(tool =>
-        tool.name.startsWith('ultralight.') || allowedFunctions.has(tool.name)
+        tool.name.startsWith('ultralight.') || permsResult.allowed.has(tool.name)
       );
       tools.length = 0;
       tools.push(...filteredTools);
@@ -725,7 +791,8 @@ async function handleToolsCall(
   params: unknown,
   userId: string,
   user: UserContext | null,
-  request: Request
+  request: Request,
+  tokenFunctionNames?: string[] | null
 ): Promise<Response> {
   // Validate params
   const callParams = params as MCPToolCallRequest | undefined;
@@ -740,15 +807,69 @@ async function handleToolsCall(
     return await executeSDKTool(id, name, args || {}, app.id, userId, user);
   }
 
-  // Permission check: for private apps, verify non-owner has access to this function
-  if (app.visibility === 'private') {
-    const allowedFunctions = await getPermissionsForUser(userId, app.id, app.owner_id, app.visibility);
-    if (allowedFunctions !== null && !allowedFunctions.has(name)) {
+  // Token function scoping: if the API token restricts callable functions, enforce it
+  if (tokenFunctionNames && tokenFunctionNames.length > 0 && !tokenFunctionNames.includes('*')) {
+    // Extract the raw function name from prefixed tool name (slug_functionName)
+    const prefix = `${app.slug}_`;
+    const rawName = name.startsWith(prefix) ? name.slice(prefix.length) : name;
+    if (!tokenFunctionNames.includes(name) && !tokenFunctionNames.includes(rawName)) {
       return jsonRpcErrorResponse(
         id,
         -32003,
-        `Permission denied: you do not have access to '${name}'. Ask the app owner to grant you access.`
+        `Token not authorized for function '${rawName}'. Scoped to: ${tokenFunctionNames.join(', ')}`
       );
+    }
+  }
+
+  // Permission check: for private apps, verify non-owner has access to this function
+  // Also enforce granular constraints (IP, time window, budget, expiry) — Pro feature
+  if (app.visibility === 'private') {
+    const permsResult = await getPermissionsForUser(userId, app.id, app.owner_id, app.visibility);
+    if (permsResult !== null) {
+      if (!permsResult.allowed.has(name)) {
+        return jsonRpcErrorResponse(
+          id,
+          -32003,
+          `Permission denied: you do not have access to '${name}'. Ask the app owner to grant you access.`
+        );
+      }
+
+      // Enforce granular constraints on the matching permission row
+      const { checkConstraints } = await import('../services/constraints.ts');
+      const matchingRow = permsResult.rows.find(r => r.function_name === name && r.allowed);
+      if (matchingRow) {
+        const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+          || request.headers.get('x-real-ip')
+          || null;
+        const constraintResult = checkConstraints(matchingRow, clientIp);
+        if (!constraintResult.allowed) {
+          return jsonRpcErrorResponse(
+            id,
+            -32003,
+            `Permission denied: ${constraintResult.reason}`
+          );
+        }
+
+        // Increment budget_used if budget_limit is set (fire and forget)
+        if (matchingRow.budget_limit !== null && matchingRow.budget_limit > 0) {
+          // @ts-ignore
+          const _Deno = globalThis.Deno;
+          const sbUrl = _Deno.env.get('SUPABASE_URL') || '';
+          const sbKey = _Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+          fetch(`${sbUrl}/rest/v1/user_app_permissions?granted_to_user_id=eq.${userId}&app_id=eq.${app.id}&function_name=eq.${encodeURIComponent(name)}`, {
+            method: 'PATCH',
+            headers: {
+              'apikey': sbKey,
+              'Authorization': `Bearer ${sbKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              budget_used: (matchingRow.budget_used || 0) + 1,
+              updated_at: new Date().toISOString(),
+            }),
+          }).catch(err => console.error('Budget increment failed:', err));
+        }
+      }
     }
   }
 
@@ -850,15 +971,28 @@ async function executeSDKTool(
         break;
 
       // Memory (cross-app)
-      case 'ultralight.remember':
-        // TODO: Implement cross-app memory via memory service
-        result = { success: true, message: 'Cross-app memory not yet implemented' };
+      case 'ultralight.remember': {
+        const memService = getMemoryService();
+        if (!memService) {
+          result = { success: false, error: 'Memory service not available' };
+          break;
+        }
+        const scope = args.scope as string || `app:${appId}`;
+        await memService.remember(userId, scope, args.key as string, args.value);
+        result = { success: true, key: args.key, scope };
         break;
+      }
 
-      case 'ultralight.recall':
-        // TODO: Implement cross-app memory via memory service
-        result = null;
+      case 'ultralight.recall': {
+        const memService = getMemoryService();
+        if (!memService) {
+          result = null;
+          break;
+        }
+        const scope = args.scope as string || `app:${appId}`;
+        result = await memService.recall(userId, scope, args.key as string);
         break;
+      }
 
       // AI
       case 'ultralight.ai': {
@@ -1136,6 +1270,17 @@ async function executeAppFunction(
     }
 
     // Execute in sandbox
+    // Create memory adapter: binds userId + app scope to the sandbox's simple interface
+    const memService = getMemoryService();
+    const memoryAdapter = memService ? {
+      remember: async (key: string, value: unknown) => {
+        await memService.remember(userId, `app:${app.id}`, key, value);
+      },
+      recall: async (key: string) => {
+        return await memService.recall(userId, `app:${app.id}`, key);
+      },
+    } : null;
+
     const execStart = Date.now();
     const result = await executeInSandbox(
       {
@@ -1147,7 +1292,7 @@ async function executeAppFunction(
         userApiKey,
         user,
         appDataService,
-        memoryService: null,
+        memoryService: memoryAdapter,
         aiService: aiServiceInstance as { call: (request: import('../../shared/types/index.ts').AIRequest, apiKey: string) => Promise<import('../../shared/types/index.ts').AIResponse> },
         envVars,
         supabase: supabaseConfig,

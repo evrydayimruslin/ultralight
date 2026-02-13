@@ -1,9 +1,10 @@
 // Library Service
 // Generates Skills.md, library.txt, embedding.json per version,
-// and rebuilds the user-level Library.md from all live app versions.
+// rebuilds the user-level Library.md from all live app versions,
+// and manages the user's memory.md (free-form context).
 //
 // R2 layout per version:  apps/{appId}/{version}/skills.md, library.txt, embedding.json
-// R2 layout per user:     users/{userId}/library.md, library.json
+// R2 layout per user:     users/{userId}/library.md, users/{userId}/memory.md
 
 import { createR2Service } from './storage.ts';
 import { createAppsService } from './apps.ts';
@@ -16,6 +17,84 @@ import {
 import { createEmbeddingService } from './embedding.ts';
 import type { App, AppWithDraft, ParsedSkills } from '../../shared/types/index.ts';
 import type { ParseResult } from './parser.ts';
+
+// ============================================
+// USER MEMORY.MD: Read / Write / Append
+// ============================================
+
+/** Max memory.md size: 50KB. Prevents runaway writes from blowing out context windows or R2 costs. */
+const MEMORY_MAX_BYTES = 50 * 1024;
+
+/**
+ * Read a user's memory.md from R2.
+ * Returns the full markdown content, or null if none exists.
+ */
+export async function readUserMemory(userId: string): Promise<string | null> {
+  const r2Service = createR2Service();
+  try {
+    return await r2Service.fetchTextFile(`users/${userId}/memory.md`);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write (overwrite) a user's memory.md in R2.
+ * Saves a timestamped snapshot of the previous version before overwriting.
+ * Throws if content exceeds 50KB.
+ */
+export async function writeUserMemory(userId: string, content: string): Promise<void> {
+  const bytes = new TextEncoder().encode(content);
+  if (bytes.length > MEMORY_MAX_BYTES) {
+    throw new Error(`memory.md exceeds ${MEMORY_MAX_BYTES / 1024}KB limit (${(bytes.length / 1024).toFixed(1)}KB). Trim content or use ul.memory.remember for structured data.`);
+  }
+
+  const r2Service = createR2Service();
+
+  // Snapshot previous version (fire-and-forget)
+  snapshotMemory(r2Service, userId).catch(err =>
+    console.error('Memory snapshot failed:', err)
+  );
+
+  await r2Service.uploadFile(`users/${userId}/memory.md`, {
+    name: 'memory.md',
+    content: bytes,
+    contentType: 'text/markdown',
+  });
+}
+
+/**
+ * Append a section to a user's memory.md.
+ * Creates the file if it doesn't exist.
+ * Throws if result would exceed 50KB.
+ */
+export async function appendUserMemory(userId: string, section: string): Promise<string> {
+  const existing = await readUserMemory(userId);
+  const separator = existing ? '\n\n' : '';
+  const updated = (existing || '# Memory\n\nPersonal context and preferences.') + separator + section;
+  await writeUserMemory(userId, updated);
+  return updated;
+}
+
+/**
+ * Save a timestamped snapshot of the current memory.md before overwriting.
+ * Stored at users/{userId}/memory_snapshots/{timestamp}.md
+ * Only snapshots if current memory.md exists.
+ */
+async function snapshotMemory(r2Service: ReturnType<typeof createR2Service>, userId: string): Promise<void> {
+  let existing: string;
+  try {
+    existing = await r2Service.fetchTextFile(`users/${userId}/memory.md`);
+  } catch {
+    return; // nothing to snapshot
+  }
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  await r2Service.uploadFile(`users/${userId}/memory_snapshots/${ts}.md`, {
+    name: `${ts}.md`,
+    content: new TextEncoder().encode(existing),
+    contentType: 'text/markdown',
+  });
+}
 
 // ============================================
 // PER-VERSION: Skills + Library Entry + Embedding
@@ -167,7 +246,6 @@ export async function rebuildUserLibrary(userId: string): Promise<void> {
   const apps = await appsService.listByOwner(userId);
 
   const libraryParts: string[] = [];
-  const embeddings: Array<{ appId: string; embedding: number[] }> = [];
 
   for (const app of apps) {
     if (!app.current_version || !app.storage_key) continue;
@@ -181,15 +259,6 @@ export async function rebuildUserLibrary(userId: string): Promise<void> {
       libraryParts.push(`## ${app.name || app.slug}\n${app.description || 'No description'}\nMCP: /mcp/${app.id}`);
     }
 
-    // Try to read embedding
-    try {
-      const embeddingStr = await r2Service.fetchTextFile(`${app.storage_key}embedding.json`);
-      const embedding = JSON.parse(embeddingStr);
-      if (Array.isArray(embedding)) {
-        embeddings.push({ appId: app.id, embedding });
-      }
-    } catch { /* no embedding for this app */ }
-
     libraryParts.push(''); // separator
   }
 
@@ -201,11 +270,6 @@ export async function rebuildUserLibrary(userId: string): Promise<void> {
       name: 'library.md',
       content: new TextEncoder().encode(libraryMd),
       contentType: 'text/markdown',
-    });
-    await r2Service.uploadFile(`users/${userId}/library.json`, {
-      name: 'library.json',
-      content: new TextEncoder().encode(JSON.stringify(embeddings)),
-      contentType: 'application/json',
     });
   } catch (err) {
     console.error('Failed to store user library:', err);

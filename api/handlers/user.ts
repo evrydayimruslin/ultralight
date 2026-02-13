@@ -240,6 +240,8 @@ export async function handleUser(request: Request): Promise<Response> {
           name: t.name,
           token_prefix: t.token_prefix,
           scopes: t.scopes,
+          app_ids: t.app_ids,
+          function_names: t.function_names,
           last_used_at: t.last_used_at,
           expires_at: t.expires_at,
           created_at: t.created_at,
@@ -255,7 +257,7 @@ export async function handleUser(request: Request): Promise<Response> {
   if (path === '/api/user/tokens' && method === 'POST') {
     try {
       const body = await request.json();
-      const { name, expires_in_days } = body;
+      const { name, expires_in_days, app_ids, function_names } = body;
 
       if (!name || typeof name !== 'string' || name.trim().length === 0) {
         return error('Token name is required', 400);
@@ -272,8 +274,18 @@ export async function handleUser(request: Request): Promise<Response> {
         }
       }
 
+      // Validate token scoping (Pro feature — accepts but stores for all tiers)
+      if (app_ids !== undefined && (!Array.isArray(app_ids) || app_ids.some((id: unknown) => typeof id !== 'string'))) {
+        return error('app_ids must be an array of strings', 400);
+      }
+      if (function_names !== undefined && (!Array.isArray(function_names) || function_names.some((n: unknown) => typeof n !== 'string'))) {
+        return error('function_names must be an array of strings', 400);
+      }
+
       const result = await createToken(userId, name.trim(), {
         expiresInDays: expires_in_days,
+        app_ids: app_ids || undefined,
+        function_names: function_names || undefined,
       });
 
       return json({
@@ -282,6 +294,8 @@ export async function handleUser(request: Request): Promise<Response> {
           id: result.token.id,
           name: result.token.name,
           token_prefix: result.token.token_prefix,
+          app_ids: result.token.app_ids,
+          function_names: result.token.function_names,
           expires_at: result.token.expires_at,
           created_at: result.token.created_at,
         },
@@ -938,12 +952,22 @@ export async function getDecryptedPlatformSupabase(userId: string) {
 // - Empty set means user has no granted permissions (denied by default)
 // - null means no restrictions (owner, or non-private app)
 // ============================================
+
+import type { PermissionRow } from '../../shared/types/index.ts';
+
+/** Result of getPermissionsForUser — includes constraint rows for runtime enforcement */
+export interface PermissionsResult {
+  allowed: Set<string>;
+  /** Raw permission rows with constraint data (for IP/time/budget/expiry checks) */
+  rows: PermissionRow[];
+}
+
 export async function getPermissionsForUser(
   callerUserId: string,
   appId: string,
   appOwnerId: string,
   appVisibility: string
-): Promise<Set<string> | null> {
+): Promise<PermissionsResult | null> {
   // Owner always has full access
   if (callerUserId === appOwnerId) {
     return null; // No restrictions
@@ -958,7 +982,7 @@ export async function getPermissionsForUser(
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
   const response = await fetch(
-    `${SUPABASE_URL}/rest/v1/user_app_permissions?granted_to_user_id=eq.${callerUserId}&app_id=eq.${appId}&select=function_name,allowed`,
+    `${SUPABASE_URL}/rest/v1/user_app_permissions?granted_to_user_id=eq.${callerUserId}&app_id=eq.${appId}&select=function_name,allowed,allowed_ips,time_window,budget_limit,budget_used,budget_period,expires_at,created_at,updated_at,granted_by_user_id,app_id,granted_to_user_id`,
     {
       headers: {
         'apikey': SUPABASE_SERVICE_ROLE_KEY,
@@ -969,14 +993,14 @@ export async function getPermissionsForUser(
 
   if (!response.ok) {
     console.error('Failed to fetch user permissions:', await response.text());
-    return new Set<string>(); // On error, deny access for safety
+    return { allowed: new Set<string>(), rows: [] }; // On error, deny access for safety
   }
 
-  const rows = await response.json() as Array<{ function_name: string; allowed: boolean }>;
+  const rows = await response.json() as PermissionRow[];
 
   // If no permission rows exist, this user has no access to this private app
   if (rows.length === 0) {
-    return new Set<string>();
+    return { allowed: new Set<string>(), rows: [] };
   }
 
   // Build set of allowed function names
@@ -987,5 +1011,5 @@ export async function getPermissionsForUser(
     }
   }
 
-  return allowed;
+  return { allowed, rows };
 }

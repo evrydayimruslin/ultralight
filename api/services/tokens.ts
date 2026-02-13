@@ -25,6 +25,10 @@ export interface ApiToken {
   name: string;
   token_prefix: string;
   scopes: string[];
+  /** App IDs this token is scoped to. null or ['*'] = all apps. */
+  app_ids: string[] | null;
+  /** Function names this token can call. null or ['*'] = all functions. */
+  function_names: string[] | null;
   last_used_at: string | null;
   last_used_ip: string | null;
   expires_at: string | null;
@@ -40,6 +44,10 @@ export interface ValidatedToken {
   user_id: string;
   token_id: string;
   scopes: string[];
+  /** App IDs this token is restricted to. null = unrestricted. */
+  app_ids: string[] | null;
+  /** Function names this token can call. null = unrestricted. */
+  function_names: string[] | null;
 }
 
 /**
@@ -75,6 +83,8 @@ export async function createToken(
   options?: {
     expiresInDays?: number;
     scopes?: string[];
+    app_ids?: string[];
+    function_names?: string[];
   }
 ): Promise<CreateTokenResult> {
   // Check if token with this name already exists
@@ -111,6 +121,8 @@ export async function createToken(
       token_prefix: tokenPrefix,
       token_hash: tokenHash,
       scopes: options?.scopes || ['*'],
+      app_ids: options?.app_ids || null,
+      function_names: options?.function_names || null,
       expires_at: expiresAt,
     })
     .select()
@@ -132,7 +144,7 @@ export async function createToken(
 export async function listTokens(userId: string): Promise<ApiToken[]> {
   const { data, error } = await supabase
     .from('user_api_tokens')
-    .select('id, user_id, name, token_prefix, scopes, last_used_at, last_used_ip, expires_at, created_at')
+    .select('id, user_id, name, token_prefix, scopes, app_ids, function_names, last_used_at, last_used_ip, expires_at, created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
 
@@ -244,7 +256,7 @@ export async function validateToken(
   // Look up token by prefix first (indexed), then verify hash
   const { data, error } = await supabase
     .from('user_api_tokens')
-    .select('id, user_id, token_hash, scopes, expires_at')
+    .select('id, user_id, token_hash, scopes, app_ids, function_names, expires_at')
     .eq('token_prefix', tokenPrefix)
     .single();
 
@@ -276,6 +288,8 @@ export async function validateToken(
     user_id: data.user_id,
     token_id: data.id,
     scopes: data.scopes || ['*'],
+    app_ids: data.app_ids || null,
+    function_names: data.function_names || null,
   };
 }
 
@@ -288,6 +302,8 @@ export async function getUserFromToken(token: string, clientIp?: string): Promis
   email: string;
   tier: string;
   tokenId: string;
+  tokenAppIds?: string[] | null;
+  tokenFunctionNames?: string[] | null;
 } | null> {
   const validated = await validateToken(token, clientIp);
   if (!validated) {
@@ -310,6 +326,8 @@ export async function getUserFromToken(token: string, clientIp?: string): Promis
     email: user.email,
     tier: user.tier || 'free',
     tokenId: validated.token_id,
+    tokenAppIds: validated.app_ids,
+    tokenFunctionNames: validated.function_names,
   };
 }
 

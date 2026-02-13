@@ -4,7 +4,9 @@
 // Tools: upload, download, set.version, set.visibility, set.download, set.supabase,
 //        permissions.grant, permissions.revoke, permissions.list,
 //        discover.desk, discover.library, discover.appstore, like, dislike, logs,
-//        connect, connections
+//        connect, connections,
+//        memory.read, memory.write, memory.append, memory.remember, memory.recall, memory.query, memory.forget,
+//        markdown, pages
 
 import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
@@ -22,7 +24,11 @@ import { checkVisibilityAllowed } from '../services/tier-enforcement.ts';
 import {
   generateSkillsForVersion,
   rebuildUserLibrary,
+  readUserMemory,
+  writeUserMemory,
+  appendUserMemory,
 } from '../services/library.ts';
+import { createMemoryService } from '../services/memory.ts';
 import { encryptEnvVar, decryptEnvVar } from '../services/envvars.ts';
 import { type UserContext } from '../runtime/sandbox.ts';
 import type {
@@ -87,7 +93,7 @@ Endpoint: \`POST /mcp/platform\`
 Protocol: JSON-RPC 2.0
 Namespace: \`ul.*\`
 
-17 tools for managing MCP apps: upload code, configure settings, control permissions, discover apps, like/dislike apps, view logs, and manage per-user secrets.
+29 tools for managing MCP apps, user memory, discovery, permissions, connections, rate limits, and audit logs.
 
 ---
 
@@ -132,10 +138,21 @@ Every tool call accepts two optional context fields that help the platform impro
 When the user needs a capability, search in this order:
 
 1. **Desk** — \`ul.discover.desk\` — The last 3 apps the user called. Check here first.
-2. **Library** — \`ul.discover.library\` — Apps the user owns or has liked. Check here if the desk didn't match.
-3. **App Store** — \`ul.discover.appstore\` — All published apps. Only search here if nothing in the desk or library fits.
+2. **Library** — \`ul.discover.library\` — Apps the user owns or has liked. Also returns the user's memory.md context. Check here if the desk didn't match.
+3. **App Store** — \`ul.discover.appstore\` — All published apps. Call without a query to browse featured/top apps, or with a query to search. Only search here if nothing in the desk or library fits.
 
 \`ul.like\` saves an app to the user's library. \`ul.dislike\` removes it from library and future app store results. Both toggle — calling again removes the action.
+
+---
+
+## Memory
+
+Ultralight provides two complementary memory layers:
+
+- **memory.md** — Free-form markdown the user (or agents) read/write. Preferences, project context, notes. Returned automatically by \`ul.discover.library\`. Use \`ul.memory.read\` / \`ul.memory.write\` / \`ul.memory.append\`.
+- **KV store** — Structured key-value pairs for programmatic storage. Cross-app by default. Use \`ul.memory.remember\` / \`ul.memory.recall\` / \`ul.memory.query\` / \`ul.memory.forget\`.
+
+Per-app MCP servers also expose \`ultralight.remember()\` / \`ultralight.recall()\` in the sandbox for app code to use programmatically.
 
 ---
 
@@ -211,13 +228,25 @@ ul.set.supabase(
 
 ## ul.permissions.grant
 
-Grant a user access to specific functions on a private app. Additive — does not remove existing grants. Omit \`functions\` to grant ALL current exported functions.
+Grant a user access to specific functions on a private app. Additive — does not remove existing grants. Omit \`functions\` to grant ALL current exported functions. Pro: pass \`constraints\` to set IP allowlists, time windows, usage budgets, and expiry dates.
 
 \`\`\`
 ul.permissions.grant(
   app_id: string,
   email: string,
-  functions?: string[]
+  functions?: string[],
+  constraints?: {
+    allowed_ips?: string[],       // CIDR or exact IPs (e.g. ["10.0.0.0/8"])
+    time_window?: {
+      start_hour: number,         // 0-23
+      end_hour: number,           // 0-23 (wraps if end < start)
+      timezone?: string,          // IANA (e.g. "America/New_York")
+      days?: number[]             // 0=Sun, 6=Sat
+    },
+    budget_limit?: number,        // max calls before access suspends
+    budget_period?: "hour" | "day" | "week" | "month",
+    expires_at?: string           // ISO timestamp
+  }
 )
 \`\`\`
 
@@ -235,13 +264,39 @@ ul.permissions.revoke(
 
 ## ul.permissions.list
 
-List granted users and their function permissions for an app. Filterable by emails and/or functions.
+List granted users, their function permissions, and active constraints. Shows IP allowlists, time windows, budgets, and expiry. Filterable by emails and/or functions.
 
 \`\`\`
 ul.permissions.list(
   app_id: string,
   emails?: string[],
   functions?: string[]
+)
+\`\`\`
+
+## ul.permissions.export
+
+Pro: Export MCP call logs and permission audit data. Useful for compliance and security review.
+
+\`\`\`
+ul.permissions.export(
+  app_id: string,
+  format?: "json" | "csv",
+  since?: string,
+  until?: string,
+  limit?: number
+)
+\`\`\`
+
+## ul.set.ratelimit
+
+Pro: Set per-consumer rate limits for your app. Pass null values to remove limits and use platform defaults.
+
+\`\`\`
+ul.set.ratelimit(
+  app_id: string,
+  calls_per_minute?: number | null,
+  calls_per_day?: number | null
 )
 \`\`\`
 
@@ -255,23 +310,27 @@ ul.discover.desk()
 
 ## ul.discover.library
 
-Search your apps — both owned and liked. No \`query\` returns full Library.md (all apps with capabilities). With \`query\`: semantic search. Includes apps saved via like.
+Search your apps — both owned and liked. No \`query\` returns full Library.md + memory.md (all apps with capabilities, plus user context). With \`query\`: semantic search. Includes apps saved via like.
 
 \`\`\`
 ul.discover.library(
   query?: string
 )
+→ { library: string, memory: string | null }  // no query
+→ { query: string, results: [...] }           // with query
 \`\`\`
 
 ## ul.discover.appstore
 
-Semantic search across all published apps in the global app store. Results ranked by relevancy, community signal, and native capability. Excludes apps the user has disliked.
+Browse or search all published apps in the global app store. Without a query, returns featured/top apps ranked by community likes. With a query, returns semantic search results ranked by relevancy, community signal, and native capability. Excludes apps the user has disliked.
 
 \`\`\`
 ul.discover.appstore(
-  query: string,
+  query?: string,  // omit to browse featured/top apps
   limit?: number
 )
+→ { mode: 'featured', results: [...] }  // no query
+→ { mode: 'search', query, results: [...] }  // with query
 \`\`\`
 
 ## ul.like
@@ -328,6 +387,124 @@ ul.connections(
   app_id?: string
 )
 \`\`\`
+
+## ul.memory.read
+
+Read the user's memory.md — free-form markdown context that persists across sessions and agents.
+
+\`\`\`
+ul.memory.read()
+→ { memory: string | null, exists: boolean }
+\`\`\`
+
+## ul.memory.write
+
+Overwrite the user's memory.md. Auto-embeds for semantic search. Use \`ul.memory.append\` to add without losing existing content.
+
+\`\`\`
+ul.memory.write(
+  content: string
+)
+\`\`\`
+
+## ul.memory.append
+
+Append a section to the user's memory.md. Creates the file if it doesn't exist. Auto-embeds on update.
+
+\`\`\`
+ul.memory.append(
+  content: string
+)
+\`\`\`
+
+## ul.memory.remember
+
+Store a key-value pair in the user's cross-app memory (KV store). Scope defaults to \`"user"\` (shared across all apps).
+
+\`\`\`
+ul.memory.remember(
+  key: string,
+  value: any,
+  scope?: string
+)
+\`\`\`
+
+## ul.memory.recall
+
+Retrieve a value from the user's cross-app memory by key. Returns the value or null.
+
+\`\`\`
+ul.memory.recall(
+  key: string,
+  scope?: string
+)
+\`\`\`
+
+## ul.memory.query
+
+Query the user's KV memory. Filter by scope and/or key prefix. Returns \`{ key, value }\` pairs ordered by most recently updated.
+
+\`\`\`
+ul.memory.query(
+  scope?: string,
+  prefix?: string,
+  limit?: number
+)
+→ { entries: [{ key, value }], total: number, scope: string }
+\`\`\`
+
+## ul.memory.forget
+
+Delete a key from the user's cross-app memory.
+
+\`\`\`
+ul.memory.forget(
+  key: string,
+  scope?: string
+)
+\`\`\`
+
+---
+
+## Pages (Markdown Publishing)
+
+Agents can publish markdown as live, public web pages. Useful for reports, summaries, documentation, or any content the user should be able to view in a browser or share via link.
+
+## ul.markdown
+
+Publish markdown content as a live web page. Returns a shareable URL. Same slug overwrites the previous version. Pages are public — no auth required to view.
+
+\`\`\`
+ul.markdown(
+  content: string,
+  slug: string,
+  title?: string
+)
+→ { success, slug, title, url, size, updated_at }
+\`\`\`
+
+The page is served at \`GET /p/{userId}/{slug}\` as styled HTML.
+
+## ul.pages
+
+List all your published markdown pages with URLs, titles, sizes, and timestamps.
+
+\`\`\`
+ul.pages()
+→ { pages: [{ slug, title, size, created_at, updated_at, url }], total }
+\`\`\`
+
+---
+
+## Per-App SDK Memory
+
+Every per-app MCP server at \`/mcp/{appId}\` also exposes memory tools in the SDK:
+
+- \`ultralight.remember(key, value, scope?)\` — Store in KV (defaults to \`app:{appId}\` scope)
+- \`ultralight.recall(key, scope?)\` — Retrieve from KV
+- \`ultralight.store(key, value)\` / \`ultralight.load(key)\` — Per-app data storage (R2-backed, separate from KV memory)
+
+App code running in the sandbox can also call \`ultralight.remember()\` / \`ultralight.recall()\` programmatically.
 
 ---
 
@@ -472,7 +649,8 @@ const PLATFORM_TOOLS: MCPTool[] = [
     title: 'Grant Permissions',
     description:
       'Grant a user access to specific functions on a private app. ' +
-      'Additive — does not remove existing grants. Omit functions to grant ALL.',
+      'Additive — does not remove existing grants. Omit functions to grant ALL. ' +
+      'Pro: pass constraints to set IP allowlists, time windows, usage budgets, and expiry.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -482,6 +660,29 @@ const PLATFORM_TOOLS: MCPTool[] = [
           type: 'array',
           items: { type: 'string' },
           description: 'Function names to grant. Omit to grant all current functions.',
+        },
+        constraints: {
+          type: 'object',
+          description: 'Pro: Granular constraints applied to this grant.',
+          properties: {
+            allowed_ips: {
+              type: 'array', items: { type: 'string' },
+              description: 'IP addresses or CIDR ranges allowed (e.g. ["10.0.0.0/8", "203.0.113.5"]).',
+            },
+            time_window: {
+              type: 'object', description: 'Restrict to specific hours/days.',
+              properties: {
+                start_hour: { type: 'number', description: 'Start hour 0-23' },
+                end_hour: { type: 'number', description: 'End hour 0-23' },
+                timezone: { type: 'string', description: 'IANA timezone. Default: UTC.' },
+                days: { type: 'array', items: { type: 'number' }, description: 'Days of week (0=Sun, 6=Sat).' },
+              },
+              required: ['start_hour', 'end_hour'],
+            },
+            budget_limit: { type: 'number', description: 'Max calls before access suspends.' },
+            budget_period: { type: 'string', enum: ['hour', 'day', 'week', 'month'], description: 'Budget reset period.' },
+            expires_at: { type: 'string', description: 'ISO timestamp — auto-expire date.' },
+          },
         },
       },
       required: ['app_id', 'email'],
@@ -500,8 +701,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
         app_id: { type: 'string', description: 'App ID or slug' },
         email: { type: 'string', description: 'Email of user to revoke. Omit to revoke ALL users.' },
         functions: {
-          type: 'array',
-          items: { type: 'string' },
+          type: 'array', items: { type: 'string' },
           description: 'Specific functions to revoke. Omit to revoke all access.',
         },
       },
@@ -511,21 +711,55 @@ const PLATFORM_TOOLS: MCPTool[] = [
   {
     name: 'ul.permissions.list',
     title: 'List Permissions',
-    description: 'List granted users and their function permissions for an app. Filterable by emails and/or functions.',
+    description:
+      'List granted users, their function permissions, and active constraints. ' +
+      'Shows IP allowlists, time windows, budgets, and expiry. Filterable by emails and/or functions.',
     inputSchema: {
       type: 'object',
       properties: {
         app_id: { type: 'string', description: 'App ID or slug' },
         emails: {
-          type: 'array',
-          items: { type: 'string' },
+          type: 'array', items: { type: 'string' },
           description: 'Filter to these users. Omit for all granted users.',
         },
         functions: {
-          type: 'array',
-          items: { type: 'string' },
+          type: 'array', items: { type: 'string' },
           description: 'Filter to these functions. Omit for all functions.',
         },
+      },
+      required: ['app_id'],
+    },
+  },
+  {
+    name: 'ul.permissions.export',
+    title: 'Export Audit Log',
+    description:
+      'Pro: Export MCP call logs and permission audit data as structured JSON or CSV. ' +
+      'Includes caller info, IPs, timestamps, functions, and success/failure.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        app_id: { type: 'string', description: 'App ID or slug' },
+        format: { type: 'string', enum: ['json', 'csv'], description: 'Export format. Default: json.' },
+        since: { type: 'string', description: 'ISO timestamp — logs after this time.' },
+        until: { type: 'string', description: 'ISO timestamp — logs before this time.' },
+        limit: { type: 'number', description: 'Max entries. Default 500, max 5000.' },
+      },
+      required: ['app_id'],
+    },
+  },
+  {
+    name: 'ul.set.ratelimit',
+    title: 'Set App Rate Limit',
+    description:
+      'Pro: Set per-consumer rate limits for your app. ' +
+      'Pass null values to remove and use platform defaults.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        app_id: { type: 'string', description: 'App ID or slug' },
+        calls_per_minute: { type: ['number', 'null'], description: 'Max calls per consumer per minute. null = platform default.' },
+        calls_per_day: { type: ['number', 'null'], description: 'Max calls per consumer per day. null = unlimited.' },
       },
       required: ['app_id'],
     },
@@ -561,21 +795,21 @@ const PLATFORM_TOOLS: MCPTool[] = [
   },
   {
     name: 'ul.discover.appstore',
-    title: 'Search App Store',
+    title: 'Browse & Search App Store',
     description:
-      'Semantic search across all published apps in the global app store. ' +
-      'Results ranked by relevancy, community signal, and native capability. ' +
+      'Browse or search all published apps in the global app store. ' +
+      'With a query: semantic search ranked by relevancy, community signal, and native capability. ' +
+      'Without a query: returns featured/top apps ranked by community likes. ' +
       'Excludes apps you have disliked.',
     inputSchema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'Natural language search query (e.g. "weather API", "send emails")',
+          description: 'Natural language search query (e.g. "weather API", "send emails"). Omit to browse featured/top apps.',
         },
         limit: { type: 'number', description: 'Max results (default: 10)' },
       },
-      required: ['query'],
     },
   },
 
@@ -681,6 +915,181 @@ const PLATFORM_TOOLS: MCPTool[] = [
           description: 'App ID or slug. Omit to list all your connections.',
         },
       },
+    },
+  },
+
+  // ── Memory ─────────────────────────────────────
+  {
+    name: 'ul.memory.read',
+    title: 'Read Memory',
+    description:
+      'Read the user\'s memory.md — free-form markdown context that persists across sessions and agents. ' +
+      'Contains preferences, project context, notes, and anything the user wants agents to know.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'ul.memory.write',
+    title: 'Write Memory',
+    description:
+      'Overwrite the user\'s memory.md with new content. Use this for full rewrites. ' +
+      'For adding a section without losing existing content, use ul.memory.append instead. ' +
+      'Auto-embeds the content for semantic search.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        content: {
+          type: 'string',
+          description: 'Full markdown content to write.',
+        },
+      },
+      required: ['content'],
+    },
+  },
+  {
+    name: 'ul.memory.append',
+    title: 'Append to Memory',
+    description:
+      'Append a section to the user\'s memory.md. Preserves existing content. ' +
+      'Creates the file if it doesn\'t exist. Auto-embeds on update.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        content: {
+          type: 'string',
+          description: 'Markdown section to append.',
+        },
+      },
+      required: ['content'],
+    },
+  },
+  {
+    name: 'ul.memory.remember',
+    title: 'Remember (KV)',
+    description:
+      'Store a key-value pair in the user\'s cross-app memory. ' +
+      'For structured data that apps read/write programmatically. ' +
+      'Scope defaults to \'user\' (cross-app). Use scope \'app:{appId}\' for app-specific memory.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: {
+          type: 'string',
+          description: 'Memory key.',
+        },
+        value: {
+          description: 'JSON-serializable value to store.',
+        },
+        scope: {
+          type: 'string',
+          description: 'Memory scope. Defaults to \'user\'. Use \'app:{appId}\' for app-scoped.',
+        },
+      },
+      required: ['key', 'value'],
+    },
+  },
+  {
+    name: 'ul.memory.recall',
+    title: 'Recall (KV)',
+    description:
+      'Retrieve a value from the user\'s cross-app memory by key. ' +
+      'Returns null if the key does not exist.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: {
+          type: 'string',
+          description: 'Memory key to recall.',
+        },
+        scope: {
+          type: 'string',
+          description: 'Memory scope. Defaults to \'user\'.',
+        },
+      },
+      required: ['key'],
+    },
+  },
+  {
+    name: 'ul.memory.query',
+    title: 'Query Memory (KV)',
+    description:
+      'Query the user\'s memory key-value store. Filter by scope and/or key prefix. ' +
+      'Returns an array of { key, value } pairs ordered by most recently updated.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scope: {
+          type: 'string',
+          description: 'Filter by scope. Defaults to \'user\'.',
+        },
+        prefix: {
+          type: 'string',
+          description: 'Filter keys by prefix.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max results. Default 100.',
+        },
+      },
+    },
+  },
+  {
+    name: 'ul.memory.forget',
+    title: 'Forget (KV)',
+    description:
+      'Delete a key from the user\'s cross-app memory.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: {
+          type: 'string',
+          description: 'Memory key to delete.',
+        },
+        scope: {
+          type: 'string',
+          description: 'Memory scope. Defaults to \'user\'.',
+        },
+      },
+      required: ['key'],
+    },
+  },
+
+  // ── Pages (Markdown Publishing) ────────────────
+  {
+    name: 'ul.markdown',
+    title: 'Publish Markdown',
+    description:
+      'Publish markdown content as a live, public web page. Returns a shareable URL. ' +
+      'Same slug overwrites the previous version. No auth required to view the page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        content: {
+          type: 'string',
+          description: 'Markdown content to publish.',
+        },
+        slug: {
+          type: 'string',
+          description: 'URL slug for the page (e.g. "weekly-report"). Lowercase, hyphens allowed. Same slug overwrites.',
+        },
+        title: {
+          type: 'string',
+          description: 'Optional page title. If omitted, extracted from the first H1 in content.',
+        },
+      },
+      required: ['content', 'slug'],
+    },
+  },
+  {
+    name: 'ul.pages',
+    title: 'List Pages',
+    description:
+      'List all your published markdown pages with their URLs, titles, sizes, and last updated timestamps.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
     },
   },
 ];
@@ -942,6 +1351,9 @@ async function handleToolsCall(
       case 'ul.set.supabase':
         result = await executeSetSupabase(userId, toolArgs);
         break;
+      case 'ul.set.ratelimit':
+        result = await executeSetRateLimit(userId, toolArgs, user.tier);
+        break;
 
       // Permissions
       case 'ul.permissions.grant':
@@ -952,6 +1364,9 @@ async function handleToolsCall(
         break;
       case 'ul.permissions.list':
         result = await executePermissionsList(userId, toolArgs);
+        break;
+      case 'ul.permissions.export':
+        result = await executePermissionsExport(userId, toolArgs, user.tier);
         break;
 
       // Discovery
@@ -984,6 +1399,37 @@ async function handleToolsCall(
         break;
       case 'ul.connections':
         result = await executeConnections(userId, toolArgs);
+        break;
+
+      // Memory
+      case 'ul.memory.read':
+        result = await executeMemoryRead(userId);
+        break;
+      case 'ul.memory.write':
+        result = await executeMemoryWrite(userId, toolArgs);
+        break;
+      case 'ul.memory.append':
+        result = await executeMemoryAppend(userId, toolArgs);
+        break;
+      case 'ul.memory.remember':
+        result = await executeMemoryRemember(userId, toolArgs);
+        break;
+      case 'ul.memory.recall':
+        result = await executeMemoryRecall(userId, toolArgs);
+        break;
+      case 'ul.memory.query':
+        result = await executeMemoryQuery(userId, toolArgs);
+        break;
+      case 'ul.memory.forget':
+        result = await executeMemoryForget(userId, toolArgs);
+        break;
+
+      // Pages (Markdown Publishing)
+      case 'ul.markdown':
+        result = await executeMarkdown(userId, toolArgs);
+        break;
+      case 'ul.pages':
+        result = await executePages(userId);
         break;
 
       default:
@@ -1585,6 +2031,32 @@ async function executePermissionsGrant(
     throw new ToolError(VALIDATION_ERROR, 'App has no exported functions to grant');
   }
 
+  // Parse constraints (Pro-only)
+  const constraints = args.constraints as Record<string, unknown> | undefined;
+  const constraintFields: Record<string, unknown> = {};
+  let appliedConstraints: string[] = [];
+
+  if (constraints && isProTier(callerTier)) {
+    if (constraints.allowed_ips) {
+      constraintFields.allowed_ips = constraints.allowed_ips;
+      appliedConstraints.push('ip_allowlist');
+    }
+    if (constraints.time_window) {
+      constraintFields.time_window = constraints.time_window;
+      appliedConstraints.push('time_window');
+    }
+    if (constraints.budget_limit !== undefined) {
+      constraintFields.budget_limit = constraints.budget_limit;
+      constraintFields.budget_used = 0; // Reset on new grant
+      constraintFields.budget_period = constraints.budget_period || null;
+      appliedConstraints.push('usage_budget');
+    }
+    if (constraints.expires_at) {
+      constraintFields.expires_at = constraints.expires_at;
+      appliedConstraints.push('expiry');
+    }
+  }
+
   // Upsert permissions (additive — use ON CONFLICT)
   const rows = functionsToGrant.map(fn => ({
     app_id: app.id,
@@ -1592,6 +2064,8 @@ async function executePermissionsGrant(
     granted_by_user_id: userId,
     function_name: fn,
     allowed: true,
+    ...constraintFields,
+    updated_at: new Date().toISOString(),
   }));
 
   const insertRes = await fetch(
@@ -1617,6 +2091,10 @@ async function executePermissionsGrant(
     email,
     user_id: targetUserId,
     functions_granted: functionsToGrant,
+    ...(appliedConstraints.length > 0 ? { constraints_applied: appliedConstraints } : {}),
+    ...(constraints && !isProTier(callerTier)
+      ? { note: 'Constraints require Pro tier. Grant applied without constraints.' }
+      : {}),
     ...(!bothPro && functions && functions.length > 0
       ? { note: 'Per-function permissions require both users to be on Pro. Granted all-or-nothing access.' }
       : {}),
@@ -1714,6 +2192,23 @@ async function executePermissionsRevoke(
 
 // ── ul.permissions.list ──────────────────────────
 
+interface PermListEntry {
+  email: string;
+  display_name: string | null;
+  functions: Array<{
+    name: string;
+    constraints?: {
+      allowed_ips?: string[] | null;
+      time_window?: unknown | null;
+      budget_limit?: number | null;
+      budget_used?: number;
+      budget_period?: string | null;
+      expires_at?: string | null;
+    };
+  }>;
+  status?: 'pending';
+}
+
 async function executePermissionsList(
   userId: string,
   args: Record<string, unknown>
@@ -1727,10 +2222,9 @@ async function executePermissionsList(
   const app = await resolveApp(userId, appIdOrSlug);
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
-  // Build query with optional filters
-  let url = `${SUPABASE_URL}/rest/v1/user_app_permissions?app_id=eq.${app.id}&allowed=eq.true&select=granted_to_user_id,function_name,users!user_app_permissions_granted_to_user_id_fkey(email,display_name)`;
+  // Fetch permissions with constraint columns
+  let url = `${SUPABASE_URL}/rest/v1/user_app_permissions?app_id=eq.${app.id}&allowed=eq.true&select=granted_to_user_id,function_name,allowed_ips,time_window,budget_limit,budget_used,budget_period,expires_at`;
 
-  // Filter by functions if provided
   if (functions && functions.length > 0) {
     url += `&function_name=in.(${functions.map(f => encodeURIComponent(f)).join(',')})`;
   }
@@ -1742,85 +2236,206 @@ async function executePermissionsList(
     },
   });
 
-  if (!response.ok) {
-    // Fall back to simpler query without join
-    const fallbackUrl = `${SUPABASE_URL}/rest/v1/user_app_permissions?app_id=eq.${app.id}&allowed=eq.true&select=granted_to_user_id,function_name`;
-    const fallbackRes = await fetch(fallbackUrl, {
-      headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      },
-    });
+  if (!response.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to fetch permissions');
 
-    if (!fallbackRes.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to fetch permissions');
+  const rows = await response.json() as Array<{
+    granted_to_user_id: string;
+    function_name: string;
+    allowed_ips: string[] | null;
+    time_window: unknown | null;
+    budget_limit: number | null;
+    budget_used: number;
+    budget_period: string | null;
+    expires_at: string | null;
+  }>;
 
-    const rows = await fallbackRes.json();
-
-    // Resolve user IDs to emails manually
-    const userIds = [...new Set(rows.map((r: { granted_to_user_id: string }) => r.granted_to_user_id))] as string[];
-
-    // Fetch user details
-    const usersMap = new Map<string, { email: string; display_name: string | null }>();
-    if (userIds.length > 0) {
-      const usersRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/users?id=in.(${userIds.join(',')})&select=id,email,display_name`,
-        {
-          headers: {
-            'apikey': SUPABASE_SERVICE_ROLE_KEY,
-            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          },
-        }
-      );
-      if (usersRes.ok) {
-        const users = await usersRes.json();
-        for (const u of users) {
-          usersMap.set(u.id, { email: u.email, display_name: u.display_name });
-        }
+  // Resolve user IDs to emails
+  const userIds = [...new Set(rows.map(r => r.granted_to_user_id))] as string[];
+  const usersMap = new Map<string, { email: string; display_name: string | null }>();
+  if (userIds.length > 0) {
+    const usersRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/users?id=in.(${userIds.join(',')})&select=id,email,display_name`,
+      { headers: { 'apikey': SUPABASE_SERVICE_ROLE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` } }
+    );
+    if (usersRes.ok) {
+      for (const u of await usersRes.json()) {
+        usersMap.set(u.id, { email: u.email, display_name: u.display_name });
       }
     }
-
-    // Group by user
-    const userPerms = new Map<string, { email: string; display_name: string | null; functions: string[] }>();
-    for (const row of rows) {
-      const userInfo = usersMap.get(row.granted_to_user_id);
-      if (!userInfo) continue;
-
-      // Filter by emails if provided
-      if (emails && emails.length > 0 && !emails.includes(userInfo.email)) continue;
-
-      if (!userPerms.has(row.granted_to_user_id)) {
-        userPerms.set(row.granted_to_user_id, { email: userInfo.email, display_name: userInfo.display_name, functions: [] });
-      }
-      userPerms.get(row.granted_to_user_id)!.functions.push(row.function_name);
-    }
-
-    return {
-      app_id: app.id,
-      users: [...Array.from(userPerms.values()), ...await getPendingUsers(app.id, emails, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)],
-    };
   }
 
-  let rows = await response.json();
-
-  // Group by user
-  const userPerms = new Map<string, { email: string; display_name: string | null; functions: string[] }>();
+  // Group by user, include constraint data per function
+  const userPerms = new Map<string, PermListEntry>();
   for (const row of rows) {
-    const userInfo = row.users;
+    const userInfo = usersMap.get(row.granted_to_user_id);
     if (!userInfo) continue;
-    const userEmail = userInfo.email;
-
-    // Filter by emails if provided
-    if (emails && emails.length > 0 && !emails.includes(userEmail)) continue;
+    if (emails && emails.length > 0 && !emails.includes(userInfo.email)) continue;
 
     if (!userPerms.has(row.granted_to_user_id)) {
-      userPerms.set(row.granted_to_user_id, { email: userEmail, display_name: userInfo.display_name, functions: [] });
+      userPerms.set(row.granted_to_user_id, {
+        email: userInfo.email,
+        display_name: userInfo.display_name,
+        functions: [],
+      });
     }
-    userPerms.get(row.granted_to_user_id)!.functions.push(row.function_name);
+
+    // Build function entry with constraints (only include non-null constraints)
+    const fnEntry: PermListEntry['functions'][0] = { name: row.function_name };
+    const hasConstraints = row.allowed_ips || row.time_window || row.budget_limit !== null || row.expires_at;
+    if (hasConstraints) {
+      fnEntry.constraints = {};
+      if (row.allowed_ips) fnEntry.constraints.allowed_ips = row.allowed_ips;
+      if (row.time_window) fnEntry.constraints.time_window = row.time_window;
+      if (row.budget_limit !== null) {
+        fnEntry.constraints.budget_limit = row.budget_limit;
+        fnEntry.constraints.budget_used = row.budget_used || 0;
+        if (row.budget_period) fnEntry.constraints.budget_period = row.budget_period;
+      }
+      if (row.expires_at) fnEntry.constraints.expires_at = row.expires_at;
+    }
+
+    userPerms.get(row.granted_to_user_id)!.functions.push(fnEntry);
   }
 
   return {
     app_id: app.id,
     users: [...Array.from(userPerms.values()), ...await getPendingUsers(app.id, emails, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)],
+  };
+}
+
+// ── ul.permissions.export ────────────────────────
+
+async function executePermissionsExport(
+  userId: string,
+  args: Record<string, unknown>,
+  callerTier: Tier
+): Promise<unknown> {
+  if (!isProTier(callerTier)) {
+    throw new ToolError(FORBIDDEN, 'Audit log export requires Pro tier.');
+  }
+
+  const appIdOrSlug = args.app_id as string;
+  if (!appIdOrSlug) throw new ToolError(INVALID_PARAMS, 'app_id is required');
+
+  const app = await resolveApp(userId, appIdOrSlug);
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+  const format = (args.format as string) || 'json';
+  const limit = Math.min((args.limit as number) || 500, 5000);
+  const since = args.since as string | undefined;
+  const until = args.until as string | undefined;
+
+  // Query mcp_call_logs for this app
+  let url = `${SUPABASE_URL}/rest/v1/mcp_call_logs?app_id=eq.${app.id}&select=caller_user_id,caller_email,function_name,success,duration_ms,caller_ip,created_at,error_message&order=created_at.desc&limit=${limit}`;
+
+  if (since) url += `&created_at=gte.${encodeURIComponent(since)}`;
+  if (until) url += `&created_at=lte.${encodeURIComponent(until)}`;
+
+  const response = await fetch(url, {
+    headers: {
+      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    },
+  });
+
+  if (!response.ok) {
+    // Fallback: try the call_logs table name variant
+    const altUrl = url.replace('mcp_call_logs', 'call_logs');
+    const altRes = await fetch(altUrl, {
+      headers: {
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+    });
+    if (!altRes.ok) {
+      throw new ToolError(INTERNAL_ERROR, 'Failed to fetch audit logs. Ensure call logging is enabled.');
+    }
+    const entries = await altRes.json();
+    return formatExport(app.id, entries, format);
+  }
+
+  const entries = await response.json();
+  return formatExport(app.id, entries, format);
+}
+
+function formatExport(appId: string, entries: unknown[], format: string): unknown {
+  if (format === 'csv') {
+    if (entries.length === 0) return { app_id: appId, format: 'csv', data: '', total: 0 };
+    const headers = Object.keys(entries[0] as Record<string, unknown>);
+    const csvRows = [
+      headers.join(','),
+      ...entries.map(e => headers.map(h => {
+        const val = (e as Record<string, unknown>)[h];
+        const str = val === null || val === undefined ? '' : String(val);
+        return str.includes(',') || str.includes('"') ? `"${str.replace(/"/g, '""')}"` : str;
+      }).join(',')),
+    ];
+    return { app_id: appId, format: 'csv', data: csvRows.join('\n'), total: entries.length };
+  }
+
+  return { app_id: appId, format: 'json', entries, total: entries.length };
+}
+
+// ── ul.set.ratelimit ─────────────────────────────
+
+async function executeSetRateLimit(
+  userId: string,
+  args: Record<string, unknown>,
+  callerTier: Tier
+): Promise<unknown> {
+  if (!isProTier(callerTier)) {
+    throw new ToolError(FORBIDDEN, 'Custom rate limits require Pro tier.');
+  }
+
+  const appIdOrSlug = args.app_id as string;
+  if (!appIdOrSlug) throw new ToolError(INVALID_PARAMS, 'app_id is required');
+
+  const app = await resolveApp(userId, appIdOrSlug);
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+
+  const callsPerMinute = args.calls_per_minute as number | null | undefined;
+  const callsPerDay = args.calls_per_day as number | null | undefined;
+
+  // Build the rate_limit_config JSONB
+  const config: Record<string, unknown> = {};
+  if (callsPerMinute !== undefined && callsPerMinute !== null) {
+    if (callsPerMinute < 1 || callsPerMinute > 10000) {
+      throw new ToolError(VALIDATION_ERROR, 'calls_per_minute must be between 1 and 10000');
+    }
+    config.calls_per_minute = callsPerMinute;
+  }
+  if (callsPerDay !== undefined && callsPerDay !== null) {
+    if (callsPerDay < 1 || callsPerDay > 1000000) {
+      throw new ToolError(VALIDATION_ERROR, 'calls_per_day must be between 1 and 1000000');
+    }
+    config.calls_per_day = callsPerDay;
+  }
+
+  const rateLimitConfig = Object.keys(config).length > 0 ? config : null;
+
+  // Update app with rate_limit_config
+  const patchRes = await fetch(`${SUPABASE_URL}/rest/v1/apps?id=eq.${app.id}`, {
+    method: 'PATCH',
+    headers: {
+      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      rate_limit_config: rateLimitConfig,
+      updated_at: new Date().toISOString(),
+    }),
+  });
+
+  if (!patchRes.ok) {
+    throw new ToolError(INTERNAL_ERROR, `Failed to update rate limit: ${await patchRes.text()}`);
+  }
+
+  return {
+    app_id: app.id,
+    rate_limit_config: rateLimitConfig,
+    message: rateLimitConfig
+      ? `Rate limit set: ${rateLimitConfig.calls_per_minute ? rateLimitConfig.calls_per_minute + '/min' : 'default'}, ${rateLimitConfig.calls_per_day ? rateLimitConfig.calls_per_day + '/day' : 'unlimited/day'}`
+      : 'Rate limits removed. Using platform defaults.',
   };
 }
 
@@ -2484,7 +3099,7 @@ async function executeDiscoverLibrary(
   }
 
   if (!query) {
-    // Return full Library.md + saved apps list
+    // Return full Library.md + memory.md + saved apps list
     const r2Service = createR2Service();
     let libraryMd: string | null = null;
     try {
@@ -2495,6 +3110,9 @@ async function executeDiscoverLibrary(
         libraryMd = await r2Service.fetchTextFile(`users/${userId}/library.md`);
       } catch { /* no library yet */ }
     }
+
+    // Fetch user memory (best-effort, never blocks library response)
+    const memoryMd = await readUserMemory(userId);
 
     if (!libraryMd) {
       // Inline list as fallback
@@ -2510,7 +3128,7 @@ async function executeDiscoverLibrary(
         visibility: a.visibility, version: a.current_version,
         source: 'saved' as const, mcp_endpoint: `/mcp/${a.id}`,
       }));
-      return { library: [...ownedList, ...savedList] };
+      return { library: [...ownedList, ...savedList], memory: memoryMd };
     }
 
     // Append saved apps section to Library.md
@@ -2522,7 +3140,7 @@ async function executeDiscoverLibrary(
       libraryMd += savedSection;
     }
 
-    return { library: libraryMd };
+    return { library: libraryMd, memory: memoryMd };
   }
 
   // Semantic search against user's app embeddings
@@ -2582,10 +3200,98 @@ async function executeDiscoverAppstore(
   userId: string,
   args: Record<string, unknown>
 ): Promise<unknown> {
-  const query = args.query as string;
-  if (!query) throw new ToolError(INVALID_PARAMS, 'query is required');
-
+  const query = (args.query as string) || '';
   const limit = (args.limit as number) || 10;
+
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+  const headers = {
+    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+  };
+
+  // Fetch blocked apps (shared by both modes)
+  let blockedAppIds = new Set<string>();
+  try {
+    const blocksRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/user_app_blocks?user_id=eq.${userId}&select=app_id`,
+      { headers }
+    );
+    if (blocksRes.ok) {
+      const rows = await blocksRes.json() as Array<{ app_id: string }>;
+      blockedAppIds = new Set(rows.map(r => r.app_id));
+    }
+  } catch { /* best effort */ }
+
+  // ── HOMEPAGE MODE (no query) ──
+  // Return featured/top apps ranked by weighted likes
+  if (!query) {
+    const overFetchLimit = limit + blockedAppIds.size + 5; // over-fetch to cover filtered-out blocks
+    const topRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/apps?visibility=eq.public&deleted_at=is.null` +
+      `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,runs_30d` +
+      `&order=weighted_likes.desc,likes.desc,runs_30d.desc` +
+      `&limit=${overFetchLimit}`,
+      { headers }
+    );
+    if (!topRes.ok) {
+      throw new ToolError(INTERNAL_ERROR, 'Failed to fetch featured apps');
+    }
+    const topApps = await topRes.json() as Array<App & { weighted_likes: number; weighted_dislikes: number; env_schema: Record<string, EnvSchemaEntry> | null }>;
+
+    // Filter blocked, truncate to limit
+    const filtered = topApps.filter(a => !blockedAppIds.has(a.id)).slice(0, limit);
+
+    // Fetch user connections for these apps
+    const appIds = filtered.map(a => a.id);
+    let userConnections = new Map<string, string[]>();
+    if (appIds.length > 0) {
+      try {
+        const secretsRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/user_app_secrets?user_id=eq.${userId}&app_id=in.(${appIds.join(',')})&select=app_id,key`,
+          { headers }
+        );
+        if (secretsRes.ok) {
+          const rows = await secretsRes.json() as Array<{ app_id: string; key: string }>;
+          for (const row of rows) {
+            if (!userConnections.has(row.app_id)) userConnections.set(row.app_id, []);
+            userConnections.get(row.app_id)!.push(row.key);
+          }
+        }
+      } catch { /* best effort */ }
+    }
+
+    const featuredResults = filtered.map(a => {
+      const schema = a.env_schema || {};
+      const requiredSecrets = Object.entries(schema)
+        .filter(([, v]) => v.scope === 'per_user')
+        .map(([key, v]) => ({ key, description: v.description || null, required: v.required ?? false }));
+      const requiredKeys = requiredSecrets.filter(s => s.required).map(s => s.key);
+      const connectedKeys = userConnections.get(a.id) || [];
+      const missingRequired = requiredKeys.filter(k => !connectedKeys.includes(k));
+
+      return {
+        id: a.id,
+        name: a.name,
+        slug: a.slug,
+        description: a.description,
+        is_owner: a.owner_id === userId,
+        mcp_endpoint: `/mcp/${a.id}`,
+        likes: a.likes ?? 0,
+        dislikes: a.dislikes ?? 0,
+        required_secrets: requiredSecrets.length > 0 ? requiredSecrets : undefined,
+        connected: connectedKeys.length > 0,
+        fully_connected: requiredSecrets.length === 0 || missingRequired.length === 0,
+      };
+    });
+
+    return {
+      mode: 'featured',
+      results: featuredResults,
+      total: featuredResults.length,
+    };
+  }
+
+  // ── SEARCH MODE (with query) ──
   const overFetchLimit = limit * 3; // Over-fetch 3x for re-ranking pool
 
   const embeddingService = createEmbeddingService();
@@ -2602,25 +3308,6 @@ async function executeDiscoverAppstore(
     overFetchLimit,
     0.4
   );
-
-  // Filter out blocked apps (disliked)
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
-  const headers = {
-    'apikey': SUPABASE_SERVICE_ROLE_KEY,
-    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-  };
-
-  let blockedAppIds = new Set<string>();
-  try {
-    const blocksRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/user_app_blocks?user_id=eq.${userId}&select=app_id`,
-      { headers }
-    );
-    if (blocksRes.ok) {
-      const rows = await blocksRes.json() as Array<{ app_id: string }>;
-      blockedAppIds = new Set(rows.map(r => r.app_id));
-    }
-  } catch { /* best effort */ }
 
   const filteredResults = results.filter(r => !blockedAppIds.has(r.id));
 
@@ -2765,6 +3452,7 @@ async function executeDiscoverAppstore(
 
   // ── FORMAT RESPONSE ──
   return {
+    mode: 'search',
     query,
     query_id: queryId,
     results: finalResults.map(r => ({
@@ -2851,4 +3539,216 @@ export function handlePlatformMcpDiscovery(): Response {
     documentation: 'https://ultralight.dev/docs/mcp',
   };
   return json(discovery);
+}
+
+// ============================================
+// MEMORY HANDLERS
+// ============================================
+
+async function executeMemoryRead(userId: string): Promise<unknown> {
+  const content = await readUserMemory(userId);
+  return {
+    memory: content || null,
+    exists: content !== null,
+  };
+}
+
+async function executeMemoryWrite(
+  userId: string,
+  args: Record<string, unknown>
+): Promise<unknown> {
+  const content = args.content as string;
+  if (!content) throw new ToolError(INVALID_PARAMS, 'content is required');
+
+  await writeUserMemory(userId, content);
+  return {
+    success: true,
+    length: content.length,
+  };
+}
+
+async function executeMemoryAppend(
+  userId: string,
+  args: Record<string, unknown>
+): Promise<unknown> {
+  const content = args.content as string;
+  if (!content) throw new ToolError(INVALID_PARAMS, 'content is required');
+
+  const updated = await appendUserMemory(userId, content);
+  return {
+    success: true,
+    length: updated.length,
+  };
+}
+
+async function executeMemoryRemember(
+  userId: string,
+  args: Record<string, unknown>
+): Promise<unknown> {
+  const key = args.key as string;
+  const value = args.value;
+  const scope = (args.scope as string) || 'user';
+
+  if (!key) throw new ToolError(INVALID_PARAMS, 'key is required');
+  if (value === undefined) throw new ToolError(INVALID_PARAMS, 'value is required');
+
+  const memoryService = createMemoryService();
+  await memoryService.remember(userId, scope, key, value);
+  return { success: true, key: key, scope: scope };
+}
+
+async function executeMemoryRecall(
+  userId: string,
+  args: Record<string, unknown>
+): Promise<unknown> {
+  const key = args.key as string;
+  const scope = (args.scope as string) || 'user';
+
+  if (!key) throw new ToolError(INVALID_PARAMS, 'key is required');
+
+  const memoryService = createMemoryService();
+  const value = await memoryService.recall(userId, scope, key);
+  return value;
+}
+
+async function executeMemoryQuery(
+  userId: string,
+  args: Record<string, unknown>
+): Promise<unknown> {
+  const scope = (args.scope as string) || 'user';
+  const prefix = args.prefix as string | undefined;
+  const limit = args.limit as number | undefined;
+
+  const memoryService = createMemoryService();
+  const results = await memoryService.query(userId, {
+    scope: scope,
+    keyPrefix: prefix,
+    limit: limit,
+  });
+  return { entries: results, total: results.length, scope: scope };
+}
+
+async function executeMemoryForget(
+  userId: string,
+  args: Record<string, unknown>
+): Promise<unknown> {
+  const key = args.key as string;
+  const scope = (args.scope as string) || 'user';
+
+  if (!key) throw new ToolError(INVALID_PARAMS, 'key is required');
+
+  const memoryService = createMemoryService();
+  await memoryService.forget(userId, scope, key);
+  return { success: true, key: key, scope: scope };
+}
+
+// ============================================
+// PAGES (MARKDOWN PUBLISHING) HANDLERS
+// ============================================
+
+/** Max page size: 100KB */
+const PAGE_MAX_BYTES = 100 * 1024;
+
+interface PageMeta {
+  slug: string;
+  title: string;
+  size: number;
+  created_at: string;
+  updated_at: string;
+  url: string;
+}
+
+async function executeMarkdown(
+  userId: string,
+  args: Record<string, unknown>
+): Promise<unknown> {
+  const content = args.content as string;
+  const slug = args.slug as string;
+  const titleArg = args.title as string | undefined;
+
+  if (!content) throw new ToolError(INVALID_PARAMS, 'content is required');
+  if (!slug) throw new ToolError(INVALID_PARAMS, 'slug is required');
+
+  // Validate slug: lowercase, alphanumeric, hyphens, slashes for nesting
+  if (!/^[a-z0-9][a-z0-9\-\/]*[a-z0-9]$/.test(slug) && !/^[a-z0-9]$/.test(slug)) {
+    throw new ToolError(INVALID_PARAMS, 'slug must be lowercase alphanumeric with hyphens (e.g. "weekly-report")');
+  }
+
+  const bytes = new TextEncoder().encode(content);
+  if (bytes.length > PAGE_MAX_BYTES) {
+    throw new ToolError(INVALID_PARAMS, `Page exceeds ${PAGE_MAX_BYTES / 1024}KB limit (${(bytes.length / 1024).toFixed(1)}KB)`);
+  }
+
+  // Extract title from first H1 if not provided
+  const title = titleArg || content.match(/^#\s+(.+)$/m)?.[1] || slug;
+
+  const r2Service = createR2Service();
+
+  // Write the page
+  await r2Service.uploadFile(`users/${userId}/pages/${slug}.md`, {
+    name: `${slug}.md`,
+    content: bytes,
+    contentType: 'text/markdown',
+  });
+
+  // Update page index
+  const now = new Date().toISOString();
+  const pageMeta: PageMeta = {
+    slug: slug,
+    title: title,
+    size: bytes.length,
+    created_at: now,
+    updated_at: now,
+    url: `/p/${userId}/${slug}`,
+  };
+
+  // Read existing index, update or append
+  let index: PageMeta[] = [];
+  try {
+    const indexStr = await r2Service.fetchTextFile(`users/${userId}/pages/_index.json`);
+    index = JSON.parse(indexStr);
+  } catch { /* no index yet */ }
+
+  const existingIdx = index.findIndex(p => p.slug === slug);
+  if (existingIdx >= 0) {
+    pageMeta.created_at = index[existingIdx].created_at; // preserve original creation time
+    index[existingIdx] = pageMeta;
+  } else {
+    index.push(pageMeta);
+  }
+
+  await r2Service.uploadFile(`users/${userId}/pages/_index.json`, {
+    name: '_index.json',
+    content: new TextEncoder().encode(JSON.stringify(index)),
+    contentType: 'application/json',
+  });
+
+  return {
+    success: true,
+    slug: slug,
+    title: title,
+    url: `/p/${userId}/${slug}`,
+    size: bytes.length,
+    updated_at: pageMeta.updated_at,
+  };
+}
+
+async function executePages(userId: string): Promise<unknown> {
+  const r2Service = createR2Service();
+
+  let index: PageMeta[] = [];
+  try {
+    const indexStr = await r2Service.fetchTextFile(`users/${userId}/pages/_index.json`);
+    index = JSON.parse(indexStr);
+  } catch {
+    return { pages: [], total: 0 };
+  }
+
+  // Sort by most recently updated
+  index.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+
+  return {
+    pages: index,
+    total: index.length,
+  };
 }

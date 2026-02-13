@@ -15,6 +15,55 @@ import { getUserTier } from '../services/tier-enforcement.ts';
 // @ts-ignore - Deno is available in Deno Deploy
 const Deno = globalThis.Deno;
 
+// ============================================
+// PER-APP IP-BASED HTTP RATE LIMITING
+// ============================================
+// In-memory sliding window keyed by ip:appId.
+// Protects against unauthenticated floods and webhook quota exhaustion.
+
+const httpRateBuckets = new Map<string, { count: number; resetAt: number }>();
+
+// Cleanup expired buckets every 60 seconds
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of httpRateBuckets) {
+    if (bucket.resetAt < now) {
+      httpRateBuckets.delete(key);
+    }
+  }
+}, 60_000);
+
+/**
+ * Check per-app HTTP rate limit (IP-scoped).
+ * Uses the app's http_rate_limit column (default 1000 req/min).
+ */
+function checkHttpRateLimit(
+  ip: string,
+  appId: string,
+  limitPerMinute: number
+): { allowed: boolean; remaining: number; resetAt: Date } {
+  const key = `${ip}:${appId}`;
+  const now = Date.now();
+  const windowMs = 60_000; // 1-minute window
+
+  let bucket = httpRateBuckets.get(key);
+
+  // Reset if window expired
+  if (!bucket || bucket.resetAt < now) {
+    bucket = { count: 0, resetAt: now + windowMs };
+    httpRateBuckets.set(key, bucket);
+  }
+
+  bucket.count++;
+  const allowed = bucket.count <= limitPerMinute;
+
+  return {
+    allowed,
+    remaining: Math.max(0, limitPerMinute - bucket.count),
+    resetAt: new Date(bucket.resetAt),
+  };
+}
+
 /**
  * Handle HTTP endpoint requests to apps
  * Route: /http/:appId/:functionName
@@ -51,6 +100,29 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
     const httpEnabled = (app as Record<string, unknown>).http_enabled !== false;
     if (!httpEnabled) {
       return json({ error: 'HTTP endpoints are disabled for this app' }, 403);
+    }
+
+    // Per-app IP-based rate limit (prevents unauthenticated flood / quota exhaustion)
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+      || request.headers.get('x-real-ip')
+      || 'unknown';
+    const appRateLimit = (app as Record<string, unknown>).http_rate_limit as number || 1000;
+    const httpRateResult = checkHttpRateLimit(clientIp, appId, appRateLimit);
+
+    if (!httpRateResult.allowed) {
+      return new Response(
+        JSON.stringify({ error: 'Rate limit exceeded for this app' }),
+        {
+          status: 429,
+          headers: {
+            'Content-Type': 'application/json',
+            'Retry-After': String(Math.ceil((httpRateResult.resetAt.getTime() - Date.now()) / 1000)),
+            'X-RateLimit-Limit': String(appRateLimit),
+            'X-RateLimit-Remaining': '0',
+            'X-RateLimit-Reset': String(Math.floor(httpRateResult.resetAt.getTime() / 1000)),
+          },
+        }
+      );
     }
 
     // Weekly call limit check (counts against app owner)

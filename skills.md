@@ -4,7 +4,7 @@ Endpoint: `POST /mcp/platform`
 Protocol: JSON-RPC 2.0
 Namespace: `ul.*`
 
-17 tools for managing MCP apps: upload code, configure settings, control permissions, discover apps, like/dislike apps, view logs, and manage per-user secrets.
+29 tools for managing MCP apps, user memory, discovery, permissions, connections, rate limits, and audit logs.
 
 ---
 
@@ -49,10 +49,21 @@ Every tool call accepts two optional context fields that help the platform impro
 When the user needs a capability, search in this order:
 
 1. **Desk** — `ul.discover.desk` — The last 3 apps the user called. Check here first.
-2. **Library** — `ul.discover.library` — Apps the user owns or has liked. Check here if the desk didn't match.
-3. **App Store** — `ul.discover.appstore` — All published apps. Only search here if nothing in the desk or library fits.
+2. **Library** — `ul.discover.library` — Apps the user owns or has liked. Also returns the user's memory.md context. Check here if the desk didn't match.
+3. **App Store** — `ul.discover.appstore` — All published apps. Call without a query to browse featured/top apps, or with a query to search. Only search here if nothing in the desk or library fits.
 
 `ul.like` saves an app to the user's library. `ul.dislike` removes it from library and future app store results. Both toggle — calling again removes the action.
+
+---
+
+## Memory
+
+Ultralight provides two complementary memory layers:
+
+- **memory.md** — Free-form markdown the user (or agents) read/write. Preferences, project context, notes. Returned automatically by `ul.discover.library`. Use `ul.memory.read` / `ul.memory.write` / `ul.memory.append`.
+- **KV store** — Structured key-value pairs for programmatic storage. Cross-app by default. Use `ul.memory.remember` / `ul.memory.recall` / `ul.memory.query` / `ul.memory.forget`.
+
+Per-app MCP servers also expose `ultralight.remember()` / `ultralight.recall()` in the sandbox for app code to use programmatically.
 
 ---
 
@@ -128,13 +139,25 @@ ul.set.supabase(
 
 ## ul.permissions.grant
 
-Grant a user access to specific functions on a private app. Additive — does not remove existing grants. Omit `functions` to grant ALL current exported functions.
+Grant a user access to specific functions on a private app. Additive — does not remove existing grants. Omit `functions` to grant ALL current exported functions. Pro: pass `constraints` to set IP allowlists, time windows, usage budgets, and expiry dates.
 
 ```
 ul.permissions.grant(
   app_id: string,
   email: string,
-  functions?: string[]
+  functions?: string[],
+  constraints?: {
+    allowed_ips?: string[],       // CIDR or exact IPs (e.g. ["10.0.0.0/8"])
+    time_window?: {
+      start_hour: number,         // 0-23
+      end_hour: number,           // 0-23 (wraps if end < start)
+      timezone?: string,          // IANA (e.g. "America/New_York")
+      days?: number[]             // 0=Sun, 6=Sat
+    },
+    budget_limit?: number,        // max calls before access suspends
+    budget_period?: "hour" | "day" | "week" | "month",
+    expires_at?: string           // ISO timestamp
+  }
 )
 ```
 
@@ -152,13 +175,39 @@ ul.permissions.revoke(
 
 ## ul.permissions.list
 
-List granted users and their function permissions for an app. Filterable by emails and/or functions.
+List granted users, their function permissions, and active constraints. Shows IP allowlists, time windows, budgets, and expiry. Filterable by emails and/or functions.
 
 ```
 ul.permissions.list(
   app_id: string,
   emails?: string[],
   functions?: string[]
+)
+```
+
+## ul.permissions.export
+
+Pro: Export MCP call logs and permission audit data. Useful for compliance and security review.
+
+```
+ul.permissions.export(
+  app_id: string,
+  format?: "json" | "csv",
+  since?: string,
+  until?: string,
+  limit?: number
+)
+```
+
+## ul.set.ratelimit
+
+Pro: Set per-consumer rate limits for your app. Pass null values to remove limits and use platform defaults.
+
+```
+ul.set.ratelimit(
+  app_id: string,
+  calls_per_minute?: number | null,
+  calls_per_day?: number | null
 )
 ```
 
@@ -172,23 +221,27 @@ ul.discover.desk()
 
 ## ul.discover.library
 
-Search your apps — both owned and liked. No `query` returns full Library.md (all apps with capabilities). With `query`: semantic search. Includes apps saved via like.
+Search your apps — both owned and liked. No `query` returns full Library.md + memory.md (all apps with capabilities, plus user context). With `query`: semantic search. Includes apps saved via like.
 
 ```
 ul.discover.library(
   query?: string
 )
+→ { library: string, memory: string | null }  // no query
+→ { query: string, results: [...] }           // with query
 ```
 
 ## ul.discover.appstore
 
-Semantic search across all published apps in the global app store. Results ranked by relevancy, community signal, and native capability. Excludes apps the user has disliked.
+Browse or search all published apps in the global app store. Without a query, returns featured/top apps ranked by community likes. With a query, returns semantic search results ranked by relevancy, community signal, and native capability. Excludes apps the user has disliked.
 
 ```
 ul.discover.appstore(
-  query: string,
+  query?: string,  // omit to browse featured/top apps
   limit?: number
 )
+→ { mode: 'featured', results: [...] }  // no query
+→ { mode: 'search', query, results: [...] }  // with query
 ```
 
 ## ul.like
@@ -245,6 +298,124 @@ ul.connections(
   app_id?: string
 )
 ```
+
+## ul.memory.read
+
+Read the user's memory.md — free-form markdown context that persists across sessions and agents.
+
+```
+ul.memory.read()
+→ { memory: string | null, exists: boolean }
+```
+
+## ul.memory.write
+
+Overwrite the user's memory.md. Auto-embeds for semantic search. Use `ul.memory.append` to add without losing existing content.
+
+```
+ul.memory.write(
+  content: string
+)
+```
+
+## ul.memory.append
+
+Append a section to the user's memory.md. Creates the file if it doesn't exist. Auto-embeds on update.
+
+```
+ul.memory.append(
+  content: string
+)
+```
+
+## ul.memory.remember
+
+Store a key-value pair in the user's cross-app memory (KV store). Scope defaults to `"user"` (shared across all apps).
+
+```
+ul.memory.remember(
+  key: string,
+  value: any,
+  scope?: string
+)
+```
+
+## ul.memory.recall
+
+Retrieve a value from the user's cross-app memory by key. Returns the value or null.
+
+```
+ul.memory.recall(
+  key: string,
+  scope?: string
+)
+```
+
+## ul.memory.query
+
+Query the user's KV memory. Filter by scope and/or key prefix. Returns `{ key, value }` pairs ordered by most recently updated.
+
+```
+ul.memory.query(
+  scope?: string,
+  prefix?: string,
+  limit?: number
+)
+→ { entries: [{ key, value }], total: number, scope: string }
+```
+
+## ul.memory.forget
+
+Delete a key from the user's cross-app memory.
+
+```
+ul.memory.forget(
+  key: string,
+  scope?: string
+)
+```
+
+---
+
+## Pages (Markdown Publishing)
+
+Agents can publish markdown as live, public web pages. Useful for reports, summaries, documentation, or any content the user should be able to view in a browser or share via link.
+
+## ul.markdown
+
+Publish markdown content as a live web page. Returns a shareable URL. Same slug overwrites the previous version. Pages are public — no auth required to view.
+
+```
+ul.markdown(
+  content: string,
+  slug: string,
+  title?: string
+)
+→ { success, slug, title, url, size, updated_at }
+```
+
+The page is served at `GET /p/{userId}/{slug}` as styled HTML.
+
+## ul.pages
+
+List all your published markdown pages with URLs, titles, sizes, and timestamps.
+
+```
+ul.pages()
+→ { pages: [{ slug, title, size, created_at, updated_at, url }], total }
+```
+
+---
+
+## Per-App SDK Memory
+
+Every per-app MCP server at `/mcp/{appId}` also exposes memory tools in the SDK:
+
+- `ultralight.remember(key, value, scope?)` — Store in KV (defaults to `app:{appId}` scope)
+- `ultralight.recall(key, scope?)` — Retrieve from KV
+- `ultralight.store(key, value)` / `ultralight.load(key)` — Per-app data storage (R2-backed, separate from KV memory)
+
+App code running in the sandbox can also call `ultralight.remember()` / `ultralight.recall()` programmatically.
 
 ---
 

@@ -9,15 +9,20 @@ const Deno = globalThis.Deno;
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
-// Simple encryption for API keys using Web Crypto API
-// In production, consider using a dedicated secrets manager
-const ENCRYPTION_KEY = Deno.env.get('BYOK_ENCRYPTION_KEY') || 'ultralight-default-key-change-in-production';
+// Encryption key for BYOK API keys — must be set in environment
+const ENCRYPTION_KEY = Deno.env.get('BYOK_ENCRYPTION_KEY');
+if (!ENCRYPTION_KEY) {
+  console.error('FATAL: BYOK_ENCRYPTION_KEY environment variable is not set. BYOK encryption will fail.');
+}
 
 // ============================================
 // ENCRYPTION HELPERS
 // ============================================
 
 async function getEncryptionKey(): Promise<CryptoKey> {
+  if (!ENCRYPTION_KEY) {
+    throw new Error('BYOK_ENCRYPTION_KEY is not configured');
+  }
   const encoder = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey(
     'raw',
