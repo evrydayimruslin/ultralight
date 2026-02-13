@@ -2580,7 +2580,7 @@ export function getLayoutHTML(options: {
             <div class="app-field">
               <label>Visibility</label>
               <select id="appPageVisibility" class="settings-select">
-                <option value="private">Private — Only you can access</option>
+                <option value="private">Private — Only you and granted users</option>
                 <option value="unlisted">Unlisted — Anyone with link</option>
                 <option value="published">Published — Listed publicly</option>
               </select>
@@ -2602,6 +2602,21 @@ export function getLayoutHTML(options: {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                 Delete App
               </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Collapsible: Permissions -->
+        <div class="app-section" id="sectionPermissions">
+          <button class="app-section-header" onclick="toggleAppSection('Permissions')">
+            <span class="app-section-title">Permissions</span>
+            <svg class="app-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+          <div class="app-section-body">
+            <div id="permsProContext" style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.5rem;">Control who can access this app.</div>
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span id="appPermsSummary" style="font-size: 0.8125rem; color: var(--text-secondary);">No users granted access</span>
+              <button class="byok-btn byok-btn-secondary" onclick="openPermissionsModal()">Manage</button>
             </div>
           </div>
         </div>
@@ -2632,21 +2647,6 @@ export function getLayoutHTML(options: {
             <div style="display: flex; align-items: center; justify-content: space-between;">
               <span id="appSkillsSummary" style="font-size: 0.8125rem; color: var(--text-secondary);">No skills documented</span>
               <button class="byok-btn byok-btn-secondary" onclick="openSkillsModal()">Edit Skills</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Collapsible: Permissions -->
-        <div class="app-section" id="sectionPermissions">
-          <button class="app-section-header" onclick="toggleAppSection('Permissions')">
-            <span class="app-section-title">Permissions</span>
-            <svg class="app-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-          </button>
-          <div class="app-section-body">
-            <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.5rem;">Control who can access this private app. Published and unlisted apps are open to all users.</div>
-            <div style="display: flex; align-items: center; justify-content: space-between;">
-              <span id="appPermsSummary" style="font-size: 0.8125rem; color: var(--text-secondary);">No users granted access</span>
-              <button class="byok-btn byok-btn-secondary" onclick="openPermissionsModal()">Manage</button>
             </div>
           </div>
         </div>
@@ -2758,7 +2758,7 @@ export function getLayoutHTML(options: {
       </div>
       <div class="modal-body">
         <div class="settings-section">
-          <div class="info-box">Grant access to specific users for this private app. Only users you add here can access its functions. The app owner always has full access.</div>
+          <div class="info-box" id="permsInfoBox">Grant access to specific users for this app. The app owner always has full access.</div>
 
           <!-- Add user by email -->
           <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
@@ -4683,6 +4683,16 @@ await hash.sha256('data')</div>
         }
       }
 
+      // Permissions Pro context
+      const proCtx = document.getElementById('permsProContext');
+      if (proCtx) {
+        const ownerTier = userProfile?.tier || 'free';
+        const ownerIsPro = ownerTier === 'pro' || ownerTier === 'scale' || ownerTier === 'enterprise';
+        proCtx.textContent = ownerIsPro
+          ? 'Granular per-function control for each user.'
+          : 'All-or-nothing access. Upgrade to Pro for per-function control.';
+      }
+
       // Hide floating save
       document.getElementById('floatingSave').style.display = 'none';
 
@@ -4847,6 +4857,17 @@ await hash.sha256('data')</div>
       document.getElementById('permsAddError').style.display = 'none';
       document.getElementById('permsUserDetail').style.display = 'none';
       permsSelectedUserId = null;
+
+      // Update modal info box based on tier
+      const infoBox = document.getElementById('permsInfoBox');
+      if (infoBox) {
+        const ownerTier = userProfile?.tier || 'free';
+        const ownerIsPro = ownerTier === 'pro' || ownerTier === 'scale' || ownerTier === 'enterprise';
+        infoBox.textContent = ownerIsPro
+          ? 'Grant access to specific users. Pro plan: per-function control for each user.'
+          : 'Grant access to specific users. Free plan: all-or-nothing access. Upgrade to Pro for per-function control.';
+      }
+
       await loadPermissionsUsers();
     };
 
@@ -4877,20 +4898,32 @@ await hash.sha256('data')</div>
 
         emptyEl.style.display = 'none';
         usersList.style.display = 'block';
-        usersList.innerHTML = permsGrantedUsers.map(u => \`
-          <div class="token-item" style="display: flex; align-items: center; justify-content: space-between; padding: 0.625rem 0.875rem; cursor: pointer; \${permsSelectedUserId === u.user_id ? 'background: var(--bg-tertiary);' : ''}"
-               onclick="selectPermissionUser('\${u.user_id}')">
+        usersList.innerHTML = permsGrantedUsers.map(u => {
+          const isPending = u.status === 'pending';
+          return \`
+          <div class="token-item" style="display: flex; align-items: center; justify-content: space-between; padding: 0.625rem 0.875rem; cursor: \${isPending ? 'default' : 'pointer'}; \${isPending ? 'opacity: 0.7;' : ''} \${permsSelectedUserId === u.user_id ? 'background: var(--bg-tertiary);' : ''}"
+               \${isPending ? '' : \`onclick="selectPermissionUser('\${u.user_id}')"\`}>
             <div>
-              <div style="font-size: 0.8125rem; color: var(--text-primary);">\${escapeHtml(u.display_name || u.email)}</div>
-              <div style="font-size: 0.75rem; color: var(--text-muted);">\${escapeHtml(u.email)} · \${u.function_count} function\${u.function_count !== 1 ? 's' : ''} allowed</div>
+              <div style="font-size: 0.8125rem; color: var(--text-primary);">
+                \${escapeHtml(u.display_name || u.email)}
+                \${isPending ? '<span style="font-size: 0.6875rem; color: var(--warning-color, #f59e0b); margin-left: 0.5rem; font-weight: 500;">Pending invite</span>' : ''}
+              </div>
+              <div style="font-size: 0.75rem; color: var(--text-muted);">\${escapeHtml(u.email)} · \${u.function_count} function\${u.function_count !== 1 ? 's' : ''} \${isPending ? 'invited' : 'allowed'}</div>
             </div>
-            <button class="byok-btn byok-btn-secondary" onclick="event.stopPropagation(); revokePermissionUser('\${u.user_id}', '\${escapeHtml(u.email)}')" style="font-size: 0.75rem; padding: 2px 10px; color: var(--error-color);">Revoke</button>
-          </div>
-        \`).join('');
+            <button class="byok-btn byok-btn-secondary" onclick="event.stopPropagation(); \${isPending ? \`revokePendingUser('\${escapeHtml(u.email)}')\` : \`revokePermissionUser('\${u.user_id}', '\${escapeHtml(u.email)}')\`}" style="font-size: 0.75rem; padding: 2px 10px; color: var(--error-color);">Revoke</button>
+          </div>\`;
+        }).join('');
 
         // Update summary on app page
         const summaryEl = document.getElementById('appPermsSummary');
-        if (summaryEl) summaryEl.textContent = permsGrantedUsers.length + ' user' + (permsGrantedUsers.length !== 1 ? 's' : '') + ' granted access';
+        if (summaryEl) {
+          const activeCount = permsGrantedUsers.filter(u => u.status !== 'pending').length;
+          const pendingCount = permsGrantedUsers.filter(u => u.status === 'pending').length;
+          const parts = [];
+          if (activeCount > 0) parts.push(activeCount + ' user' + (activeCount !== 1 ? 's' : '') + ' granted');
+          if (pendingCount > 0) parts.push(pendingCount + ' pending');
+          summaryEl.textContent = parts.length > 0 ? parts.join(', ') : 'No users granted access';
+        }
       } catch (err) {
         usersList.innerHTML = '<div style="text-align: center; padding: 1rem; color: var(--error-color);">Failed to load users</div>';
         usersList.style.display = 'block';
@@ -4936,8 +4969,13 @@ await hash.sha256('data')</div>
           throw new Error(data.error || 'Failed to add user');
         }
 
+        const data = await res.json().catch(() => ({}));
         input.value = '';
-        showToast('User added with full access');
+        if (data.status === 'pending') {
+          showToast('Invite created — access will activate when user signs up');
+        } else {
+          showToast('User added with full access');
+        }
         await loadPermissionsUsers();
       } catch (err) {
         errorEl.textContent = err.message || 'Failed to add user';
@@ -5068,6 +5106,22 @@ await hash.sha256('data')</div>
         await loadPermissionsUsers();
       } catch (err) {
         showToast('Failed to revoke access', 'error');
+      }
+    };
+
+    window.revokePendingUser = async function(email) {
+      if (!confirm(\`Revoke pending invite for \${email}?\`)) return;
+
+      try {
+        const res = await fetch(\`/api/user/permissions/\${currentAppId}?email=\${encodeURIComponent(email)}&pending=true\`, {
+          method: 'DELETE',
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+        if (!res.ok) throw new Error('Failed');
+        showToast('Pending invite revoked');
+        await loadPermissionsUsers();
+      } catch (err) {
+        showToast('Failed to revoke invite', 'error');
       }
     };
 

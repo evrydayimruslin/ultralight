@@ -1179,7 +1179,47 @@ async function executePermissionsGrant(
   );
   if (!userRes.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to look up user');
   const userRows = await userRes.json();
-  if (userRows.length === 0) throw new ToolError(NOT_FOUND, `No user found with email "${email}"`);
+
+  // If user doesn't exist yet, create a pending invite
+  if (userRows.length === 0) {
+    const functionsToGrant = (isProTier(callerTier) && functions && functions.length > 0)
+      ? functions
+      : (app.exports || []);
+    if (functionsToGrant.length === 0) {
+      throw new ToolError(VALIDATION_ERROR, 'App has no exported functions to grant');
+    }
+    const pendingRows = functionsToGrant.map(fn => ({
+      app_id: app.id,
+      invited_email: email.toLowerCase(),
+      granted_by_user_id: userId,
+      function_name: fn,
+      allowed: true,
+    }));
+    const pendingRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/pending_permissions`,
+      {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_SERVICE_ROLE_KEY,
+          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates',
+        },
+        body: JSON.stringify(pendingRows),
+      }
+    );
+    if (!pendingRes.ok) {
+      throw new ToolError(INTERNAL_ERROR, `Failed to create pending invite: ${await pendingRes.text()}`);
+    }
+    return {
+      app_id: app.id,
+      email,
+      status: 'pending',
+      functions_granted: functionsToGrant,
+      note: `User "${email}" has not signed up yet. Permissions will activate when they create an account.`,
+    };
+  }
+
   const targetUserId = userRows[0].id;
   const targetTier = (userRows[0].tier || 'free') as Tier;
 
@@ -1268,6 +1308,7 @@ async function executePermissionsRevoke(
       const deleteUrl = `${SUPABASE_URL}/rest/v1/user_app_permissions?app_id=eq.${app.id}`;
       const res = await fetch(deleteUrl, { method: 'DELETE', headers });
       if (!res.ok) throw new ToolError(INTERNAL_ERROR, `Revoke failed: ${await res.text()}`);
+      await fetch(`${SUPABASE_URL}/rest/v1/pending_permissions?app_id=eq.${app.id}`, { method: 'DELETE', headers });
       return { app_id: app.id, all_users: true, all_access_revoked: true, note: 'Per-function revoke requires Pro. Revoked all access instead.' };
     }
 
@@ -1277,6 +1318,9 @@ async function executePermissionsRevoke(
     }
     const res = await fetch(deleteUrl, { method: 'DELETE', headers });
     if (!res.ok) throw new ToolError(INTERNAL_ERROR, `Revoke failed: ${await res.text()}`);
+
+    // Also revoke all pending invites for this app
+    await fetch(`${SUPABASE_URL}/rest/v1/pending_permissions?app_id=eq.${app.id}`, { method: 'DELETE', headers });
 
     return functions && functions.length > 0
       ? { app_id: app.id, all_users: true, functions_revoked: functions }
@@ -1290,7 +1334,14 @@ async function executePermissionsRevoke(
   );
   if (!userRes.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to look up user');
   const userRows = await userRes.json();
-  if (userRows.length === 0) throw new ToolError(NOT_FOUND, `No user found with email "${email}"`);
+
+  // User doesn't exist — try revoking pending invite
+  if (userRows.length === 0) {
+    const pendingDeleteUrl = `${SUPABASE_URL}/rest/v1/pending_permissions?app_id=eq.${app.id}&invited_email=eq.${encodeURIComponent(email.toLowerCase())}`;
+    const res = await fetch(pendingDeleteUrl, { method: 'DELETE', headers });
+    if (!res.ok) throw new ToolError(INTERNAL_ERROR, `Revoke failed: ${await res.text()}`);
+    return { app_id: app.id, email, pending_invite_revoked: true };
+  }
   const targetUserId = userRows[0].id;
   const targetTier = (userRows[0].tier || 'free') as Tier;
 
@@ -1402,7 +1453,7 @@ async function executePermissionsList(
 
     return {
       app_id: app.id,
-      users: Array.from(userPerms.values()),
+      users: [...Array.from(userPerms.values()), ...await getPendingUsers(app.id, emails, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)],
     };
   }
 
@@ -1426,8 +1477,36 @@ async function executePermissionsList(
 
   return {
     app_id: app.id,
-    users: Array.from(userPerms.values()),
+    users: [...Array.from(userPerms.values()), ...await getPendingUsers(app.id, emails, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)],
   };
+}
+
+/** Fetch pending invites for an app and return as user-like objects */
+async function getPendingUsers(
+  appId: string,
+  emailFilter: string[] | undefined,
+  supabaseUrl: string,
+  serviceKey: string
+): Promise<Array<{ email: string; display_name: null; functions: string[]; status: 'pending' }>> {
+  try {
+    const res = await fetch(
+      `${supabaseUrl}/rest/v1/pending_permissions?app_id=eq.${appId}&allowed=eq.true&select=invited_email,function_name`,
+      { headers: { 'apikey': serviceKey, 'Authorization': `Bearer ${serviceKey}` } }
+    );
+    if (!res.ok) return [];
+    const rows = await res.json() as Array<{ invited_email: string; function_name: string }>;
+    const pendingMap = new Map<string, { email: string; display_name: null; functions: string[]; status: 'pending' }>();
+    for (const row of rows) {
+      if (emailFilter && emailFilter.length > 0 && !emailFilter.includes(row.invited_email)) continue;
+      if (!pendingMap.has(row.invited_email)) {
+        pendingMap.set(row.invited_email, { email: row.invited_email, display_name: null, functions: [], status: 'pending' as const });
+      }
+      pendingMap.get(row.invited_email)!.functions.push(row.function_name);
+    }
+    return Array.from(pendingMap.values());
+  } catch {
+    return [];
+  }
 }
 
 // ── ul.like / ul.dislike ──────────────────────────────────────

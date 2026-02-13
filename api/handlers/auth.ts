@@ -290,6 +290,7 @@ export async function ensureUserExists(authUser: { id: string; email: string; us
 
   if (Array.isArray(existingUsers) && existingUsers.length > 0) {
     console.log('User already exists, skipping insert');
+    await resolvePendingPermissions(authUser.id, authUser.email);
     return;
   }
 
@@ -324,6 +325,69 @@ export async function ensureUserExists(authUser: { id: string; email: string; us
   }
 
   console.log('User created successfully');
+  await resolvePendingPermissions(authUser.id, authUser.email);
+}
+
+/**
+ * Resolve pending permission invites for a user.
+ * Called on every auth — converts pending_permissions rows into real user_app_permissions.
+ * Non-fatal: if this fails, auth still succeeds.
+ */
+async function resolvePendingPermissions(userId: string, email: string): Promise<void> {
+  try {
+    const pendingRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/pending_permissions?invited_email=eq.${encodeURIComponent(email.toLowerCase())}&select=*`,
+      {
+        headers: {
+          'apikey': SUPABASE_SERVICE_ROLE_KEY,
+          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        },
+      }
+    );
+    if (!pendingRes.ok) return;
+    const pendingRows = await pendingRes.json();
+    if (!Array.isArray(pendingRows) || pendingRows.length === 0) return;
+
+    // Convert to real permission rows
+    const realRows = pendingRows.map((p: { app_id: string; granted_by_user_id: string; function_name: string; allowed: boolean }) => ({
+      app_id: p.app_id,
+      granted_to_user_id: userId,
+      granted_by_user_id: p.granted_by_user_id,
+      function_name: p.function_name,
+      allowed: p.allowed,
+    }));
+
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/user_app_permissions`,
+      {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_SERVICE_ROLE_KEY,
+          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates',
+        },
+        body: JSON.stringify(realRows),
+      }
+    );
+
+    // Delete resolved pending rows
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/pending_permissions?invited_email=eq.${encodeURIComponent(email.toLowerCase())}`,
+      {
+        method: 'DELETE',
+        headers: {
+          'apikey': SUPABASE_SERVICE_ROLE_KEY,
+          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        },
+      }
+    );
+
+    console.log(`[AUTH] Resolved ${pendingRows.length} pending permissions for ${email}`);
+  } catch (err) {
+    console.error('[AUTH] Failed to resolve pending permissions:', err);
+    // Non-fatal: don't block auth
+  }
 }
 
 // Callback page HTML - handles Supabase's hash-based token return

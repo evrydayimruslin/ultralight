@@ -545,7 +545,31 @@ export async function handleUser(request: Request): Promise<Response> {
         );
         if (!rpcRes.ok) throw new Error(await rpcRes.text());
         const users = await rpcRes.json();
-        return json({ users });
+
+        // Also fetch pending invites
+        const pendingRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/pending_permissions?app_id=eq.${appId}&allowed=eq.true&select=invited_email,function_name`,
+          {
+            headers: {
+              'apikey': SUPABASE_SERVICE_ROLE_KEY,
+              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            },
+          }
+        );
+        let pendingUsers: Array<{ email: string; display_name: null; function_count: number; status: string }> = [];
+        if (pendingRes.ok) {
+          const pendingRows = await pendingRes.json() as Array<{ invited_email: string; function_name: string }>;
+          const pendingMap = new Map<string, { email: string; display_name: null; function_count: number; status: string }>();
+          for (const row of pendingRows) {
+            if (!pendingMap.has(row.invited_email)) {
+              pendingMap.set(row.invited_email, { email: row.invited_email, display_name: null, function_count: 0, status: 'pending' });
+            }
+            pendingMap.get(row.invited_email)!.function_count++;
+          }
+          pendingUsers = Array.from(pendingMap.values());
+        }
+
+        return json({ users: [...users, ...pendingUsers] });
       }
     } catch (err) {
       console.error('Get permissions error:', err);
@@ -589,7 +613,45 @@ export async function handleUser(request: Request): Promise<Response> {
         if (!userRes.ok) throw new Error(await userRes.text());
         const userRows = await userRes.json();
         if (userRows.length === 0) {
-          return error(`No user found with email "${email}"`, 404);
+          // User doesn't exist — create pending invite
+          const pendingRows = permsList.map((p: { function_name: string; allowed: boolean }) => ({
+            app_id: appId,
+            invited_email: email.toLowerCase(),
+            granted_by_user_id: userId,
+            function_name: p.function_name,
+            allowed: !!p.allowed,
+          }));
+          // Delete existing pending for this email+app
+          await fetch(
+            `${SUPABASE_URL}/rest/v1/pending_permissions?invited_email=eq.${encodeURIComponent(email.toLowerCase())}&app_id=eq.${appId}`,
+            {
+              method: 'DELETE',
+              headers: { 'apikey': SUPABASE_SERVICE_ROLE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+            }
+          );
+          // Insert pending rows
+          const hasAnyAllowed = pendingRows.some((p: { allowed: boolean }) => p.allowed);
+          if (hasAnyAllowed) {
+            await fetch(
+              `${SUPABASE_URL}/rest/v1/pending_permissions`,
+              {
+                method: 'POST',
+                headers: {
+                  'apikey': SUPABASE_SERVICE_ROLE_KEY,
+                  'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                  'Content-Type': 'application/json',
+                  'Prefer': 'resolution=merge-duplicates',
+                },
+                body: JSON.stringify(pendingRows.filter((p: { allowed: boolean }) => p.allowed)),
+              }
+            );
+          }
+          return json({
+            success: true,
+            message: 'Invite created (user has not signed up yet)',
+            status: 'pending',
+            email,
+          });
         }
         resolvedUserId = userRows[0].id;
         targetTier = (userRows[0].tier || 'free') as Tier;
@@ -692,10 +754,8 @@ export async function handleUser(request: Request): Promise<Response> {
     try {
       const appId = permsMatch[1];
       const targetUserId = url.searchParams.get('user_id');
-
-      if (!targetUserId) {
-        return error('user_id query parameter required', 400);
-      }
+      const pendingEmail = url.searchParams.get('email');
+      const isPending = url.searchParams.get('pending') === 'true';
 
       const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
@@ -704,6 +764,25 @@ export async function handleUser(request: Request): Promise<Response> {
       const app = await appsService.findById(appId);
       if (!app || app.owner_id !== userId) {
         return error('App not found', 404);
+      }
+
+      // Revoke pending invite by email
+      if (isPending && pendingEmail) {
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/pending_permissions?invited_email=eq.${encodeURIComponent(pendingEmail.toLowerCase())}&app_id=eq.${appId}`,
+          {
+            method: 'DELETE',
+            headers: {
+              'apikey': SUPABASE_SERVICE_ROLE_KEY,
+              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            },
+          }
+        );
+        return json({ success: true, message: 'Pending invite revoked' });
+      }
+
+      if (!targetUserId) {
+        return error('user_id query parameter required', 400);
       }
 
       // Delete all permissions for this user+app
