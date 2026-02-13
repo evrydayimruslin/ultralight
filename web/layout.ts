@@ -2775,7 +2775,7 @@ export function getLayoutHTML(options: {
           <div id="permsUserDetail" style="display: none; border-top: 1px solid var(--border-color); padding-top: 1rem; margin-top: 0.75rem;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
               <span id="permsDetailTitle" style="font-size: 0.875rem; font-weight: 500; color: var(--text-primary);">User Functions</span>
-              <div style="display: flex; gap: 0.5rem;">
+              <div id="permsGranularBtns" style="display: flex; gap: 0.5rem;">
                 <button class="byok-btn byok-btn-secondary" onclick="allowAllPermissions()" style="font-size: 0.75rem; padding: 2px 10px;">Allow All</button>
                 <button class="byok-btn byok-btn-secondary" onclick="denyAllPermissions()" style="font-size: 0.75rem; padding: 2px 10px;">Deny All</button>
               </div>
@@ -4982,25 +4982,69 @@ await hash.sha256('data')</div>
           return;
         }
 
-        matrix.innerHTML = fns.map(fn => {
-          const allowed = permsMap[fn.name] === true;
-          return \`<div class="token-item" style="display: flex; align-items: center; justify-content: space-between; padding: 0.625rem 0.875rem;">
-            <div>
-              <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.8125rem; color: var(--text-primary);">\${fn.name}</div>
-              <div style="font-size: 0.75rem; color: var(--text-muted);">\${fn.description || 'No description'}</div>
-            </div>
-            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-              <input type="checkbox" data-fn="\${fn.name}" \${allowed ? 'checked' : ''} style="width: 16px; height: 16px; accent-color: var(--accent-color);" />
-              <span style="font-size: 0.75rem; color: var(--text-secondary);">\${allowed ? 'Allowed' : 'Denied'}</span>
-            </label>
-          </div>\`;
-        }).join('');
+        // Check if owner is Pro — only Pro owners get per-function controls
+        const ownerTier = userProfile?.tier || 'free';
+        const ownerIsPro = ownerTier === 'pro' || ownerTier === 'scale' || ownerTier === 'enterprise';
 
-        matrix.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-          cb.addEventListener('change', () => {
-            cb.nextElementSibling.textContent = cb.checked ? 'Allowed' : 'Denied';
+        // Show/hide granular buttons based on tier
+        const granularBtns = document.getElementById('permsGranularBtns');
+        if (granularBtns) granularBtns.style.display = ownerIsPro ? 'flex' : 'none';
+
+        if (ownerIsPro) {
+          // Pro: show per-function checkboxes
+          matrix.innerHTML = fns.map(fn => {
+            const allowed = permsMap[fn.name] === true;
+            return \`<div class="token-item" style="display: flex; align-items: center; justify-content: space-between; padding: 0.625rem 0.875rem;">
+              <div>
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.8125rem; color: var(--text-primary);">\${fn.name}</div>
+                <div style="font-size: 0.75rem; color: var(--text-muted);">\${fn.description || 'No description'}</div>
+              </div>
+              <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                <input type="checkbox" data-fn="\${fn.name}" \${allowed ? 'checked' : ''} style="width: 16px; height: 16px; accent-color: var(--accent-color);" />
+                <span style="font-size: 0.75rem; color: var(--text-secondary);">\${allowed ? 'Allowed' : 'Denied'}</span>
+              </label>
+            </div>\`;
+          }).join('');
+
+          matrix.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+            cb.addEventListener('change', () => {
+              cb.nextElementSibling.textContent = cb.checked ? 'Allowed' : 'Denied';
+            });
           });
-        });
+        } else {
+          // Free: binary toggle (all or nothing) + upgrade hint
+          const anyAllowed = fns.some(fn => permsMap[fn.name] === true);
+          matrix.innerHTML = \`
+            <div style="padding: 1rem;">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+                <span style="font-size: 0.8125rem; color: var(--text-primary);">Full access to all \${fns.length} functions</span>
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                  <input type="checkbox" id="permsBinaryToggle" \${anyAllowed ? 'checked' : ''} style="width: 16px; height: 16px; accent-color: var(--accent-color);" />
+                  <span id="permsBinaryLabel" style="font-size: 0.75rem; color: var(--text-secondary);">\${anyAllowed ? 'Allowed' : 'Denied'}</span>
+                </label>
+              </div>
+              <div class="upgrade-cta" style="margin-top: 0.5rem;">Upgrade to Pro for per-function permission control.</div>
+            </div>
+          \`;
+          // Hidden checkboxes for all functions so savePermissions() works
+          fns.forEach(fn => {
+            const hidden = document.createElement('input');
+            hidden.type = 'checkbox';
+            hidden.dataset.fn = fn.name;
+            hidden.checked = anyAllowed;
+            hidden.style.display = 'none';
+            matrix.appendChild(hidden);
+          });
+          const binaryToggle = document.getElementById('permsBinaryToggle');
+          if (binaryToggle) {
+            binaryToggle.addEventListener('change', () => {
+              const checked = binaryToggle.checked;
+              document.getElementById('permsBinaryLabel').textContent = checked ? 'Allowed' : 'Denied';
+              // Sync all hidden checkboxes
+              matrix.querySelectorAll('input[type="checkbox"][data-fn]').forEach(cb => { cb.checked = checked; });
+            });
+          }
+        }
       } catch (err) {
         matrix.innerHTML = '<div style="text-align: center; padding: 1rem; color: var(--error-color);">Failed to load permissions</div>';
       }
@@ -5028,14 +5072,14 @@ await hash.sha256('data')</div>
     };
 
     window.allowAllPermissions = function() {
-      document.querySelectorAll('#permsMatrix input[type="checkbox"]').forEach(cb => {
+      document.querySelectorAll('#permsMatrix input[type="checkbox"][data-fn]').forEach(cb => {
         cb.checked = true;
         if (cb.nextElementSibling) cb.nextElementSibling.textContent = 'Allowed';
       });
     };
 
     window.denyAllPermissions = function() {
-      document.querySelectorAll('#permsMatrix input[type="checkbox"]').forEach(cb => {
+      document.querySelectorAll('#permsMatrix input[type="checkbox"][data-fn]').forEach(cb => {
         cb.checked = false;
         if (cb.nextElementSibling) cb.nextElementSibling.textContent = 'Denied';
       });
@@ -5048,7 +5092,7 @@ await hash.sha256('data')</div>
       }
 
       const perms = [];
-      document.querySelectorAll('#permsMatrix input[type="checkbox"]').forEach(cb => {
+      document.querySelectorAll('#permsMatrix input[type="checkbox"][data-fn]').forEach(cb => {
         perms.push({ function_name: cb.dataset.fn, allowed: cb.checked });
       });
 

@@ -364,7 +364,7 @@ export interface AppPermission {
 // ============================================
 // TIER LIMITS
 // ============================================
-// Two tiers: Free (generous silent limits) and Pro ($25/mo, unlimited publishing).
+// Two tiers: Free (generous silent limits) and Pro ($48/mo, unlimited publishing).
 // Legacy tiers (fun/scale/enterprise) alias to free/pro for backward compatibility.
 
 export type Tier = 'free' | 'fun' | 'pro' | 'scale' | 'enterprise';
@@ -390,7 +390,7 @@ const PRO_LIMITS = {
   weekly_call_limit: 10_000_000,
   overage_cost_per_100k_cents: 150,     // $1.50/100k
   can_publish: true,
-  price_cents_monthly: 2_500,           // $25/mo
+  price_cents_monthly: 4_800,           // $48/mo
   daily_ai_credit_cents: 200,
   monthly_ai_credit_cents: 6_000,
   max_file_size_mb: 10,
@@ -408,6 +408,11 @@ export const TIER_LIMITS = {
   scale: PRO_LIMITS,                    // Legacy alias → pro
   enterprise: PRO_LIMITS,              // Legacy alias → pro
 } as const;
+
+/** Returns true if the tier has Pro-level access (pro, scale, enterprise). */
+export function isProTier(tier: Tier | string): boolean {
+  return tier === 'pro' || tier === 'scale' || tier === 'enterprise';
+}
 
 // ============================================
 // ALLOWED FILE TYPES

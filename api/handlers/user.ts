@@ -5,7 +5,7 @@ import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
 import { createUserService } from '../services/user.ts';
 import { validateAPIKey } from '../services/ai.ts';
-import { BYOK_PROVIDERS, type BYOKProvider } from '../../shared/types/index.ts';
+import { BYOK_PROVIDERS, type BYOKProvider, isProTier, type Tier } from '../../shared/types/index.ts';
 import {
   createToken,
   listTokens,
@@ -573,11 +573,12 @@ export async function handleUser(request: Request): Promise<Response> {
         return error('App not found', 404);
       }
 
-      // Resolve target user: either by user_id or email
+      // Resolve target user: either by user_id or email (also fetch tier)
       let resolvedUserId = targetUserId;
+      let targetTier: Tier = 'free';
       if (!resolvedUserId && email) {
         const userRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/users?email=eq.${encodeURIComponent(email)}&select=id`,
+          `${SUPABASE_URL}/rest/v1/users?email=eq.${encodeURIComponent(email)}&select=id,tier`,
           {
             headers: {
               'apikey': SUPABASE_SERVICE_ROLE_KEY,
@@ -591,6 +592,22 @@ export async function handleUser(request: Request): Promise<Response> {
           return error(`No user found with email "${email}"`, 404);
         }
         resolvedUserId = userRows[0].id;
+        targetTier = (userRows[0].tier || 'free') as Tier;
+      } else if (resolvedUserId) {
+        // Look up tier for user_id
+        const userRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/users?id=eq.${resolvedUserId}&select=tier`,
+          {
+            headers: {
+              'apikey': SUPABASE_SERVICE_ROLE_KEY,
+              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            },
+          }
+        );
+        if (userRes.ok) {
+          const rows = await userRes.json();
+          targetTier = (rows[0]?.tier || 'free') as Tier;
+        }
       }
 
       if (!resolvedUserId) {
@@ -600,6 +617,21 @@ export async function handleUser(request: Request): Promise<Response> {
       // Can't grant permissions to yourself (owner already has full access)
       if (resolvedUserId === userId) {
         return error('Cannot set permissions for the app owner', 400);
+      }
+
+      // Check if granular per-function permissions are allowed
+      const owner = await userService.getUser(userId);
+      const ownerTier = (owner?.tier || 'free') as Tier;
+      const bothPro = isProTier(ownerTier) && isProTier(targetTier);
+
+      // If not both Pro, force binary: all functions get the same value
+      let effectivePermsList = permsList;
+      if (!bothPro) {
+        const hasAnyAllowed = permsList.some((p: { allowed: boolean }) => p.allowed);
+        effectivePermsList = permsList.map((p: { function_name: string; allowed: boolean }) => ({
+          function_name: p.function_name,
+          allowed: hasAnyAllowed,
+        }));
       }
 
       // Delete existing permissions for this user+app
@@ -615,8 +647,8 @@ export async function handleUser(request: Request): Promise<Response> {
       );
 
       // Insert new permissions
-      if (permsList.length > 0) {
-        const rows = permsList.map((p: { function_name: string; allowed: boolean }) => ({
+      if (effectivePermsList.length > 0) {
+        const rows = effectivePermsList.map((p: { function_name: string; allowed: boolean }) => ({
           app_id: appId,
           granted_to_user_id: resolvedUserId,
           granted_by_user_id: userId,
@@ -640,7 +672,12 @@ export async function handleUser(request: Request): Promise<Response> {
         if (!insertRes.ok) throw new Error(await insertRes.text());
       }
 
-      return json({ success: true, message: 'Permissions saved', user_id: resolvedUserId });
+      return json({
+        success: true,
+        message: 'Permissions saved',
+        user_id: resolvedUserId,
+        ...(!bothPro ? { granular: false, note: 'Per-function permissions require both users to be on Pro.' } : { granular: true }),
+      });
     } catch (err) {
       console.error('Set permissions error:', err);
       if (err instanceof Error && err.message.includes('No user found')) {

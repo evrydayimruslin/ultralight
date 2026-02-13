@@ -14,7 +14,7 @@ import { createR2Service } from '../services/storage.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
 import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
 import { getPermissionsForUser } from './user.ts';
-import { type Tier } from '../../shared/types/index.ts';
+import { type Tier, isProTier } from '../../shared/types/index.ts';
 import { handleUploadFiles, type UploadFile } from './upload.ts';
 import { validateAndParseSkillsMd } from '../services/docgen.ts';
 import { createEmbeddingService } from '../services/embedding.ts';
@@ -602,10 +602,10 @@ async function handleToolsCall(
 
       // Permissions
       case 'ul.permissions.grant':
-        result = await executePermissionsGrant(userId, toolArgs);
+        result = await executePermissionsGrant(userId, toolArgs, user.tier);
         break;
       case 'ul.permissions.revoke':
-        result = await executePermissionsRevoke(userId, toolArgs);
+        result = await executePermissionsRevoke(userId, toolArgs, user.tier);
         break;
       case 'ul.permissions.list':
         result = await executePermissionsList(userId, toolArgs);
@@ -632,7 +632,7 @@ async function handleToolsCall(
 
       // Logs
       case 'ul.logs':
-        result = await executeLogs(userId, toolArgs);
+        result = await executeLogs(userId, toolArgs, user.tier);
         break;
 
       // Connections (per-user secrets)
@@ -1159,7 +1159,8 @@ async function executeSetSupabase(
 
 async function executePermissionsGrant(
   userId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  callerTier: Tier
 ): Promise<unknown> {
   const appIdOrSlug = args.app_id as string;
   const email = args.email as string;
@@ -1171,22 +1172,29 @@ async function executePermissionsGrant(
   const app = await resolveApp(userId, appIdOrSlug);
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
-  // Resolve email → user_id
+  // Resolve email → user_id + tier
   const userRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/users?email=eq.${encodeURIComponent(email)}&select=id`,
+    `${SUPABASE_URL}/rest/v1/users?email=eq.${encodeURIComponent(email)}&select=id,tier`,
     { headers: { 'apikey': SUPABASE_SERVICE_ROLE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` } }
   );
   if (!userRes.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to look up user');
   const userRows = await userRes.json();
   if (userRows.length === 0) throw new ToolError(NOT_FOUND, `No user found with email "${email}"`);
   const targetUserId = userRows[0].id;
+  const targetTier = (userRows[0].tier || 'free') as Tier;
 
   if (targetUserId === userId) throw new ToolError(INVALID_PARAMS, 'Cannot grant permissions to yourself (owner has full access)');
 
+  // Granular per-function permissions require both parties to be Pro
+  const bothPro = isProTier(callerTier) && isProTier(targetTier);
+
   // Determine which functions to grant
-  let functionsToGrant = functions;
-  if (!functionsToGrant || functionsToGrant.length === 0) {
-    // Grant all current exports
+  let functionsToGrant: string[];
+  if (bothPro && functions && functions.length > 0) {
+    // Pro→Pro: honour the granular functions list
+    functionsToGrant = functions;
+  } else {
+    // Binary access: always grant ALL functions
     functionsToGrant = app.exports || [];
   }
 
@@ -1226,6 +1234,9 @@ async function executePermissionsGrant(
     email,
     user_id: targetUserId,
     functions_granted: functionsToGrant,
+    ...(!bothPro && functions && functions.length > 0
+      ? { note: 'Per-function permissions require both users to be on Pro. Granted all-or-nothing access.' }
+      : {}),
   };
 }
 
@@ -1233,7 +1244,8 @@ async function executePermissionsGrant(
 
 async function executePermissionsRevoke(
   userId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  callerTier: Tier
 ): Promise<unknown> {
   const appIdOrSlug = args.app_id as string;
   const email = args.email as string | undefined;
@@ -1250,6 +1262,15 @@ async function executePermissionsRevoke(
 
   // ── No email: revoke ALL users ──
   if (!email) {
+    // Per-function revoke across all users requires Pro caller
+    if (functions && functions.length > 0 && !isProTier(callerTier)) {
+      // Free: ignore functions filter, revoke all access for all users
+      const deleteUrl = `${SUPABASE_URL}/rest/v1/user_app_permissions?app_id=eq.${app.id}`;
+      const res = await fetch(deleteUrl, { method: 'DELETE', headers });
+      if (!res.ok) throw new ToolError(INTERNAL_ERROR, `Revoke failed: ${await res.text()}`);
+      return { app_id: app.id, all_users: true, all_access_revoked: true, note: 'Per-function revoke requires Pro. Revoked all access instead.' };
+    }
+
     let deleteUrl = `${SUPABASE_URL}/rest/v1/user_app_permissions?app_id=eq.${app.id}`;
     if (functions && functions.length > 0) {
       deleteUrl += `&function_name=in.(${functions.map(f => encodeURIComponent(f)).join(',')})`;
@@ -1264,26 +1285,36 @@ async function executePermissionsRevoke(
 
   // ── With email: revoke specific user ──
   const userRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/users?email=eq.${encodeURIComponent(email)}&select=id`,
+    `${SUPABASE_URL}/rest/v1/users?email=eq.${encodeURIComponent(email)}&select=id,tier`,
     { headers }
   );
   if (!userRes.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to look up user');
   const userRows = await userRes.json();
   if (userRows.length === 0) throw new ToolError(NOT_FOUND, `No user found with email "${email}"`);
   const targetUserId = userRows[0].id;
+  const targetTier = (userRows[0].tier || 'free') as Tier;
 
-  if (functions && functions.length > 0) {
-    // Revoke specific functions for specific user
+  const bothPro = isProTier(callerTier) && isProTier(targetTier);
+
+  if (functions && functions.length > 0 && bothPro) {
+    // Pro→Pro: revoke specific functions for specific user
     const deleteUrl = `${SUPABASE_URL}/rest/v1/user_app_permissions?granted_to_user_id=eq.${targetUserId}&app_id=eq.${app.id}&function_name=in.(${functions.map(f => encodeURIComponent(f)).join(',')})`;
     const res = await fetch(deleteUrl, { method: 'DELETE', headers });
     if (!res.ok) throw new ToolError(INTERNAL_ERROR, `Revoke failed: ${await res.text()}`);
     return { app_id: app.id, email, functions_revoked: functions };
   } else {
-    // Revoke all functions for specific user
+    // Binary: revoke all functions for specific user
     const deleteUrl = `${SUPABASE_URL}/rest/v1/user_app_permissions?granted_to_user_id=eq.${targetUserId}&app_id=eq.${app.id}`;
     const res = await fetch(deleteUrl, { method: 'DELETE', headers });
     if (!res.ok) throw new ToolError(INTERNAL_ERROR, `Revoke failed: ${await res.text()}`);
-    return { app_id: app.id, email, all_access_revoked: true };
+    return {
+      app_id: app.id,
+      email,
+      all_access_revoked: true,
+      ...(functions && functions.length > 0 && !bothPro
+        ? { note: 'Per-function revoke requires both users to be on Pro. Revoked all access instead.' }
+        : {}),
+    };
   }
 }
 
@@ -1536,7 +1567,8 @@ async function executeLikeDislike(
 
 async function executeLogs(
   userId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  callerTier: Tier
 ): Promise<unknown> {
   const appIdOrSlug = args.app_id as string;
   const emails = args.emails as string[] | undefined;
@@ -1553,9 +1585,37 @@ async function executeLogs(
     'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
   };
 
+  // ── Determine allowed user scope based on tier ──
+  // Free: can only see own calls
+  // Pro: can see own calls + calls from explicitly granted users (any visibility)
+  //   Visibility doesn't gate historical log access — if you granted someone
+  //   access while the app was private and later made it unlisted, you should
+  //   still be able to see their historical logs. The permission rows are the
+  //   source of truth for the trust relationship, not current visibility.
+  let allowedUserIds: string[];
+
+  if (!isProTier(callerTier)) {
+    // Free tier: only own calls
+    allowedUserIds = [userId];
+  } else {
+    // Pro: own calls + any explicitly granted users
+    const permsRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/user_app_permissions?app_id=eq.${app.id}&select=granted_to_user_id`,
+      { headers }
+    );
+    const grantedRows = permsRes.ok
+      ? await permsRes.json() as Array<{ granted_to_user_id: string }>
+      : [];
+    const grantedIds = [...new Set(grantedRows.map(r => r.granted_to_user_id))];
+    allowedUserIds = [userId, ...grantedIds];
+  }
+
   // Build PostgREST query against mcp_call_logs
   let url = `${SUPABASE_URL}/rest/v1/mcp_call_logs?app_id=eq.${app.id}&order=created_at.desc&limit=${limit}`;
   url += '&select=id,user_id,function_name,method,success,duration_ms,error_message,created_at';
+
+  // Always scope to allowed users
+  url += `&user_id=in.(${allowedUserIds.join(',')})`;
 
   if (since) {
     url += `&created_at=gt.${encodeURIComponent(since)}`;
@@ -1565,8 +1625,7 @@ async function executeLogs(
     url += `&function_name=in.(${functions.map(f => encodeURIComponent(f)).join(',')})`;
   }
 
-  // If filtering by emails, resolve emails → user_ids first
-  let emailFilterUserIds: string[] | null = null;
+  // If filtering by emails, resolve and intersect with allowed users
   if (emails && emails.length > 0) {
     const usersRes = await fetch(
       `${SUPABASE_URL}/rest/v1/users?email=in.(${emails.map(e => encodeURIComponent(e)).join(',')})&select=id,email`,
@@ -1574,13 +1633,18 @@ async function executeLogs(
     );
     if (!usersRes.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to resolve emails');
     const users = await usersRes.json() as Array<{ id: string; email: string }>;
-    emailFilterUserIds = users.map(u => u.id);
+    // Intersect with allowed users
+    const filteredIds = users.map(u => u.id).filter(id => allowedUserIds.includes(id));
 
-    if (emailFilterUserIds.length === 0) {
-      return { app_id: app.id, logs: [], total: 0, message: 'No matching users found for given emails' };
+    if (filteredIds.length === 0) {
+      return { app_id: app.id, logs: [], total: 0, message: 'No matching users found (or not in your permissions scope)' };
     }
 
-    url += `&user_id=in.(${emailFilterUserIds.join(',')})`;
+    // Override the user_id filter with the intersected set
+    url = url.replace(
+      `&user_id=in.(${allowedUserIds.join(',')})`,
+      `&user_id=in.(${filteredIds.join(',')})`
+    );
   }
 
   const response = await fetch(url, { headers });
@@ -1597,30 +1661,17 @@ async function executeLogs(
     created_at: string;
   }>;
 
-  // Resolve user_ids → emails for display (batch, reuse email filter resolution)
+  // Resolve user_ids → emails for display
   const userMap = new Map<string, string>();
-  if (emails && emailFilterUserIds) {
-    // Already resolved — build map from emails filter query
+  const userIdsInResults = [...new Set(rows.map(r => r.user_id))];
+  if (userIdsInResults.length > 0) {
     const usersRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?id=in.(${emailFilterUserIds.join(',')})&select=id,email`,
+      `${SUPABASE_URL}/rest/v1/users?id=in.(${userIdsInResults.join(',')})&select=id,email`,
       { headers }
     );
     if (usersRes.ok) {
       for (const u of await usersRes.json() as Array<{ id: string; email: string }>) {
         userMap.set(u.id, u.email);
-      }
-    }
-  } else {
-    const userIdsInResults = [...new Set(rows.map(r => r.user_id))];
-    if (userIdsInResults.length > 0) {
-      const usersRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/users?id=in.(${userIdsInResults.join(',')})&select=id,email`,
-        { headers }
-      );
-      if (usersRes.ok) {
-        for (const u of await usersRes.json() as Array<{ id: string; email: string }>) {
-          userMap.set(u.id, u.email);
-        }
       }
     }
   }
@@ -1642,6 +1693,7 @@ async function executeLogs(
     logs,
     total: logs.length,
     ...(since ? { since } : {}),
+    ...(!isProTier(callerTier) ? { scope: 'own_calls_only' } : { scope: 'granted_users' }),
   };
 }
 
