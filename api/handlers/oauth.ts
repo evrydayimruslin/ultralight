@@ -67,13 +67,11 @@ function cleanupExpired() {
 // ============================================
 
 function getBaseUrl(request: Request): string {
-  // Use X-Forwarded-Host or request URL origin
-  const forwardedHost = request.headers.get('x-forwarded-host');
-  const forwardedProto = request.headers.get('x-forwarded-proto') || 'https';
-  if (forwardedHost) {
-    return `${forwardedProto}://${forwardedHost}`;
-  }
-  return new URL(request.url).origin;
+  const url = new URL(request.url);
+  // Behind a reverse proxy (DigitalOcean, Cloudflare), use forwarded headers
+  const proto = request.headers.get('x-forwarded-proto') || url.protocol.replace(':', '');
+  const host = request.headers.get('x-forwarded-host') || request.headers.get('host') || url.host;
+  return `${proto}://${host}`;
 }
 
 async function sha256(plain: string): Promise<ArrayBuffer> {
