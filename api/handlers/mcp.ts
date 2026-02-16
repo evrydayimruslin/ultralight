@@ -542,12 +542,20 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
       hasAuthHeader: !!request.headers.get('Authorization'),
     });
 
-    return jsonRpcErrorResponse(
+    const baseUrl = new URL(request.url).origin;
+    const authErrorResponse = jsonRpcErrorResponse(
       rpcRequest.id,
       -32001,
       message,
       { type: errorType }
     );
+    // MCP spec: 401 must include WWW-Authenticate pointing to resource metadata
+    const authHeaders = new Headers(authErrorResponse.headers);
+    authHeaders.set('WWW-Authenticate', `Bearer resource_metadata="${baseUrl}/.well-known/oauth-protected-resource"`);
+    return new Response(authErrorResponse.body, {
+      status: 401,
+      headers: authHeaders,
+    });
   }
 
   // Check per-minute rate limit

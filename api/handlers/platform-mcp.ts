@@ -1177,7 +1177,15 @@ export async function handlePlatformMcp(request: Request): Promise<Response> {
     else if (message.includes('Missing')) errorType = 'AUTH_MISSING_TOKEN';
     else if (message.includes('Invalid JWT') || message.includes('decode')) errorType = 'AUTH_INVALID_TOKEN';
 
-    return jsonRpcErrorResponse(rpcRequest.id, AUTH_REQUIRED, message, { type: errorType });
+    const baseUrl = new URL(request.url).origin;
+    const authErrorResponse = jsonRpcErrorResponse(rpcRequest.id, AUTH_REQUIRED, message, { type: errorType });
+    // MCP spec: 401 must include WWW-Authenticate pointing to resource metadata
+    const authHeaders = new Headers(authErrorResponse.headers);
+    authHeaders.set('WWW-Authenticate', `Bearer resource_metadata="${baseUrl}/.well-known/oauth-protected-resource"`);
+    return new Response(authErrorResponse.body, {
+      status: 401,
+      headers: authHeaders,
+    });
   }
 
   // Rate limit

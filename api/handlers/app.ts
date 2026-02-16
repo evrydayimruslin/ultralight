@@ -9,6 +9,7 @@ import { handleUser } from './user.ts';
 import { handleCron } from './cron.ts';
 import { handleMcp, handleMcpDiscovery } from './mcp.ts';
 import { handlePlatformMcp, handlePlatformMcpDiscovery } from './platform-mcp.ts';
+import { handleOAuth } from './oauth.ts';
 import { handleDiscover } from './discover.ts';
 import { handleHttpEndpoint, handleHttpOptions } from './http.ts';
 import { handleTierChange } from './tier.ts';
@@ -111,6 +112,14 @@ export function createApp() {
           status: 302,
           headers: { 'Location': '/' },
         });
+      }
+
+      // OAuth 2.1 routes for MCP spec compliance
+      // Protected Resource Metadata + Authorization Server Metadata + OAuth endpoints
+      if (path === '/.well-known/oauth-protected-resource' ||
+          path === '/.well-known/oauth-authorization-server' ||
+          path.startsWith('/oauth/')) {
+        return handleOAuth(request);
       }
 
       // Auth routes
