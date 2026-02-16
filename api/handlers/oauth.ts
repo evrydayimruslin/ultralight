@@ -68,9 +68,12 @@ function cleanupExpired() {
 
 function getBaseUrl(request: Request): string {
   const url = new URL(request.url);
-  // Behind a reverse proxy (DigitalOcean, Cloudflare), use forwarded headers
-  const proto = request.headers.get('x-forwarded-proto') || url.protocol.replace(':', '');
   const host = request.headers.get('x-forwarded-host') || request.headers.get('host') || url.host;
+  // Behind DigitalOcean + Cloudflare, internal requests arrive as http://
+  // but the service is always accessed via https:// externally.
+  // Use x-forwarded-proto if available, otherwise default to https for non-localhost.
+  const proto = request.headers.get('x-forwarded-proto')
+    || (host.includes('localhost') ? 'http' : 'https');
   return `${proto}://${host}`;
 }
 

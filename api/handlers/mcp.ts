@@ -542,9 +542,9 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
       hasAuthHeader: !!request.headers.get('Authorization'),
     });
 
-    const url = new URL(request.url);
-    const proto = request.headers.get('x-forwarded-proto') || url.protocol.replace(':', '');
-    const host = request.headers.get('host') || url.host;
+    const reqUrl = new URL(request.url);
+    const host = request.headers.get('host') || reqUrl.host;
+    const proto = request.headers.get('x-forwarded-proto') || (host.includes('localhost') ? 'http' : 'https');
     const baseUrl = `${proto}://${host}`;
     const authErrorResponse = jsonRpcErrorResponse(
       rpcRequest.id,

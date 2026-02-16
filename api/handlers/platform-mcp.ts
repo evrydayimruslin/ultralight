@@ -1177,9 +1177,9 @@ export async function handlePlatformMcp(request: Request): Promise<Response> {
     else if (message.includes('Missing')) errorType = 'AUTH_MISSING_TOKEN';
     else if (message.includes('Invalid JWT') || message.includes('decode')) errorType = 'AUTH_INVALID_TOKEN';
 
-    const url = new URL(request.url);
-    const proto = request.headers.get('x-forwarded-proto') || url.protocol.replace(':', '');
-    const host = request.headers.get('host') || url.host;
+    const reqUrl = new URL(request.url);
+    const host = request.headers.get('host') || reqUrl.host;
+    const proto = request.headers.get('x-forwarded-proto') || (host.includes('localhost') ? 'http' : 'https');
     const baseUrl = `${proto}://${host}`;
     const authErrorResponse = jsonRpcErrorResponse(rpcRequest.id, AUTH_REQUIRED, message, { type: errorType });
     // MCP spec: 401 must include WWW-Authenticate pointing to resource metadata
