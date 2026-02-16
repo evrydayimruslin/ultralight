@@ -2453,6 +2453,19 @@ export function getLayoutHTML(options: {
             </button>
           </div>
           <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem;">Connect this URL to Claude Desktop, Cursor, or any MCP-compatible client.</p>
+          <details style="margin-top: 0.75rem;">
+            <summary style="font-size: 0.75rem; color: var(--text-secondary); cursor: pointer; user-select: none;">Setup instructions for Claude Desktop &amp; Cursor</summary>
+            <div style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--text-muted); line-height: 1.6;">
+              <p style="margin-bottom: 0.5rem;">Add this to your MCP client config (<code style="font-size: 0.6875rem; padding: 1px 4px; background: var(--bg-tertiary); border-radius: 4px;">claude_desktop_config.json</code> or <code style="font-size: 0.6875rem; padding: 1px 4px; background: var(--bg-tertiary); border-radius: 4px;">.cursor/mcp.json</code>):</p>
+              <div style="position: relative;">
+                <pre id="platformBridgeConfig" style="background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; padding: 0.75rem; font-family: 'JetBrains Mono', monospace; font-size: 0.6875rem; overflow-x: auto; white-space: pre; margin: 0;"></pre>
+                <button onclick="copyPlatformBridgeConfig()" style="position: absolute; top: 6px; right: 6px; padding: 4px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 4px; cursor: pointer; color: var(--text-secondary);" title="Copy config">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
+              </div>
+              <p style="margin-top: 0.5rem;">Replace <code style="font-size: 0.6875rem; padding: 1px 4px; background: var(--bg-tertiary); border-radius: 4px;">YOUR_TOKEN</code> with an API token from below. Requires <code style="font-size: 0.6875rem; padding: 1px 4px; background: var(--bg-tertiary); border-radius: 4px;">npx</code> (Node.js 18+).</p>
+            </div>
+          </details>
         </div>
 
 
@@ -2576,6 +2589,21 @@ export function getLayoutHTML(options: {
             </button>
           </div>
         </div>
+
+        <!-- Client Setup Instructions -->
+        <details style="margin: 0.5rem 0 0.75rem 0;">
+          <summary style="font-size: 0.75rem; color: var(--text-secondary); cursor: pointer; user-select: none; padding: 0.25rem 0;">Setup for Claude Desktop &amp; Cursor</summary>
+          <div style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--text-muted); line-height: 1.6;">
+            <p style="margin-bottom: 0.5rem;">Add to your MCP client config:</p>
+            <div style="position: relative;">
+              <pre id="appBridgeConfig" style="background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; padding: 0.75rem; font-family: 'JetBrains Mono', monospace; font-size: 0.6875rem; overflow-x: auto; white-space: pre; margin: 0;"></pre>
+              <button onclick="copyAppBridgeConfig()" style="position: absolute; top: 6px; right: 6px; padding: 4px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 4px; cursor: pointer; color: var(--text-secondary);" title="Copy config">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+            </div>
+            <p style="margin-top: 0.5rem;">Replace <code style="font-size: 0.6875rem; padding: 1px 4px; background: var(--bg-tertiary); border-radius: 4px;">YOUR_TOKEN</code> with your API token. Requires <code style="font-size: 0.6875rem; padding: 1px 4px; background: var(--bg-tertiary); border-radius: 4px;">npx</code> (Node.js 18+).</p>
+          </div>
+        </details>
 
         <!-- Collapsible: General -->
         <div class="app-section" id="sectionGeneral">
@@ -4579,6 +4607,26 @@ await hash.sha256('data')</div>
       const mcpUrl = \`\${window.location.origin}/mcp/\${appId}\`;
       document.getElementById('appMcpUrl').textContent = mcpUrl;
 
+      // Populate bridge config for Claude Desktop / Cursor
+      const bridgeEl = document.getElementById('appBridgeConfig');
+      if (bridgeEl) {
+        const slug = app.slug || 'my-app';
+        const bridgeConfig = JSON.stringify({
+          mcpServers: {
+            [slug]: {
+              command: "npx",
+              args: [
+                "mcp-remote",
+                mcpUrl,
+                "--header",
+                "Authorization: Bearer YOUR_TOKEN"
+              ]
+            }
+          }
+        }, null, 2);
+        bridgeEl.textContent = bridgeConfig;
+      }
+
       // Version dropdown
       const versionSelect = document.getElementById('appVersionSelect');
       versionSelect.innerHTML = '<option>Loading...</option>';
@@ -5315,6 +5363,15 @@ await hash.sha256('data')</div>
       navigator.clipboard.writeText(url).then(() => showToast('MCP URL copied!'));
     };
 
+    window.copyAppBridgeConfig = function() {
+      const el = document.getElementById('appBridgeConfig');
+      if (el) {
+        navigator.clipboard.writeText(el.textContent).then(() => {
+          showToast('Bridge config copied!');
+        });
+      }
+    };
+
     window.openAppDashboard = function() {
       if (!currentAppId) return;
       window.open(\`/http/\${currentAppId}/_ui\`, '_blank');
@@ -5445,6 +5502,48 @@ await hash.sha256('data')</div>
         showToast('Platform MCP URL copied!');
       });
     };
+
+    window.copyPlatformBridgeConfig = function() {
+      const url = window.location.origin + '/mcp/platform';
+      const config = JSON.stringify({
+        mcpServers: {
+          "ultralight-platform": {
+            command: "npx",
+            args: [
+              "mcp-remote",
+              url,
+              "--header",
+              "Authorization: Bearer YOUR_TOKEN"
+            ]
+          }
+        }
+      }, null, 2);
+      navigator.clipboard.writeText(config).then(() => {
+        showToast('Bridge config copied!');
+      });
+    };
+
+    // Populate the platform bridge config snippet
+    (function() {
+      const el = document.getElementById('platformBridgeConfig');
+      if (el) {
+        const url = window.location.origin + '/mcp/platform';
+        const config = JSON.stringify({
+          mcpServers: {
+            "ultralight-platform": {
+              command: "npx",
+              args: [
+                "mcp-remote",
+                url,
+                "--header",
+                "Authorization: Bearer YOUR_TOKEN"
+              ]
+            }
+          }
+        }, null, 2);
+        el.textContent = config;
+      }
+    })();
 
     async function loadDashboardData() {
       // Load tokens inline on dashboard

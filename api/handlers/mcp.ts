@@ -58,7 +58,7 @@ function getMemoryService(): MemoryServiceImpl | null {
 
 interface JsonRpcRequest {
   jsonrpc: '2.0';
-  id: string | number;
+  id?: string | number;  // Optional for JSON-RPC notifications (e.g. notifications/initialized)
   method: string;
   params?: Record<string, unknown>;
 }
@@ -442,10 +442,31 @@ const SDK_TOOLS: MCPTool[] = [
  * POST /mcp/:appId
  */
 export async function handleMcp(request: Request, appId: string): Promise<Response> {
-  // Only accept POST
-  if (request.method !== 'POST') {
-    return error('Method not allowed. Use POST for MCP requests.', 405);
+  const method = request.method;
+
+  // Streamable HTTP transport: GET opens SSE stream (not supported yet), DELETE terminates session
+  if (method === 'DELETE') {
+    // Session termination — we're stateless, so just acknowledge
+    return new Response(null, { status: 200 });
   }
+
+  if (method === 'GET') {
+    // SSE stream for server-initiated notifications — not supported yet
+    return new Response(JSON.stringify({ error: 'SSE stream not supported. Use POST for MCP requests.' }), {
+      status: 405,
+      headers: { 'Allow': 'POST, DELETE', 'Content-Type': 'application/json' },
+    });
+  }
+
+  if (method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed.' }), {
+      status: 405,
+      headers: { 'Allow': 'POST, GET, DELETE', 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Streamable HTTP: read client protocol version (don't enforce — backward compatible)
+  const _clientProtocolVersion = request.headers.get('MCP-Protocol-Version');
 
   // Parse JSON-RPC request
   let rpcRequest: JsonRpcRequest;
@@ -608,12 +629,22 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
   }
 
   // Route to method handler
-  const { method, params, id } = rpcRequest;
+  const { method: rpcMethod, params, id } = rpcRequest;
 
   try {
-    switch (method) {
-      case 'initialize':
-        return handleInitialize(id, appId, app);
+    switch (rpcMethod) {
+      case 'initialize': {
+        const response = handleInitialize(id, appId, app);
+        // Streamable HTTP: assign a session ID on initialize
+        const sessionId = crypto.randomUUID();
+        const headers = new Headers(response.headers);
+        headers.set('Mcp-Session-Id', sessionId);
+        return new Response(response.body, { status: response.status, headers });
+      }
+
+      case 'notifications/initialized':
+        // Client acknowledgment after initialize — no response body needed
+        return new Response(null, { status: 202 });
 
       case 'tools/list':
         return await handleToolsList(id, app, params, userId);
@@ -628,10 +659,10 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
         return handleResourcesRead(id, appId, app, params);
 
       default:
-        return jsonRpcErrorResponse(id, METHOD_NOT_FOUND, `Method not found: ${method}`);
+        return jsonRpcErrorResponse(id, METHOD_NOT_FOUND, `Method not found: ${rpcMethod}`);
     }
   } catch (err) {
-    console.error(`MCP ${method} error:`, err);
+    console.error(`MCP ${rpcMethod} error:`, err);
     return jsonRpcErrorResponse(
       id,
       INTERNAL_ERROR,
@@ -649,20 +680,20 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
  */
 function handleInitialize(
   id: string | number,
-  appId: string,
+  _appId: string,
   app: { name: string; slug: string; description: string | null }
 ): Response {
   const result: MCPServerInfo = {
-    name: app.name || app.slug,
-    version: '1.0.0',
-    description: app.description || undefined,
+    protocolVersion: '2025-03-26',
     capabilities: {
       tools: { listChanged: false },
       resources: { subscribe: false, listChanged: false },
     },
-    endpoints: {
-      mcp: `/mcp/${appId}`,
+    serverInfo: {
+      name: app.name || app.slug,
+      version: '1.0.0',
     },
+    instructions: app.description || undefined,
   };
 
   return jsonRpcResponse(id, result);
@@ -1483,22 +1514,17 @@ export async function handleMcpDiscovery(request: Request, appId: string): Promi
     const appToolsCount = app.skills_parsed?.functions?.length || 0;
     const totalTools = appToolsCount + SDK_TOOLS.length;
 
-    const discovery: MCPServerInfo = {
+    const response = {
       name: app.name || app.slug,
-      version: '1.0.0',
       description: app.description || undefined,
+      transport: {
+        type: 'http-post',
+        url: `/mcp/${appId}`,
+      },
       capabilities: {
         tools: { listChanged: false },
         resources: { subscribe: false, listChanged: false },
       },
-      endpoints: {
-        mcp: `/mcp/${appId}`,
-      },
-    };
-
-    // Add extra metadata
-    const response = {
-      ...discovery,
       tools_count: totalTools,
       app_tools: appToolsCount,
       sdk_tools: SDK_TOOLS.length,

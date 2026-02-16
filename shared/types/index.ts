@@ -731,16 +731,16 @@ export interface MCPResource {
 }
 
 export interface MCPServerInfo {
-  name: string;
-  version: string;
-  description?: string;
+  protocolVersion: string;
   capabilities: {
     tools?: { listChanged?: boolean };
     resources?: { subscribe?: boolean; listChanged?: boolean };
   };
-  endpoints?: {
-    mcp: string;
+  serverInfo: {
+    name: string;
+    version: string;
   };
+  instructions?: string;
 }
 
 export interface MCPResourceDescriptor {

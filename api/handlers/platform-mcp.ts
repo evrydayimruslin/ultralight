@@ -51,7 +51,7 @@ import type {
 
 interface JsonRpcRequest {
   jsonrpc: '2.0';
-  id: string | number;
+  id?: string | number;  // Optional for JSON-RPC notifications (e.g. notifications/initialized)
   method: string;
   params?: Record<string, unknown>;
 }
@@ -1099,9 +1099,30 @@ const PLATFORM_TOOLS: MCPTool[] = [
 // ============================================
 
 export async function handlePlatformMcp(request: Request): Promise<Response> {
-  if (request.method !== 'POST') {
-    return error('Method not allowed. Use POST for MCP requests.', 405);
+  const httpMethod = request.method;
+
+  // Streamable HTTP transport: DELETE terminates session
+  if (httpMethod === 'DELETE') {
+    return new Response(null, { status: 200 });
   }
+
+  // Streamable HTTP transport: GET opens SSE stream (not supported yet)
+  if (httpMethod === 'GET') {
+    return new Response(JSON.stringify({ error: 'SSE stream not supported. Use POST for MCP requests.' }), {
+      status: 405,
+      headers: { 'Allow': 'POST, DELETE', 'Content-Type': 'application/json' },
+    });
+  }
+
+  if (httpMethod !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed.' }), {
+      status: 405,
+      headers: { 'Allow': 'POST, GET, DELETE', 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Streamable HTTP: read client protocol version (don't enforce — backward compatible)
+  const _clientProtocolVersion = request.headers.get('MCP-Protocol-Version');
 
   let rpcRequest: JsonRpcRequest;
   try {
@@ -1182,12 +1203,19 @@ export async function handlePlatformMcp(request: Request): Promise<Response> {
     }
   }
 
-  const { method, params, id } = rpcRequest;
+  const { method: rpcMethod, params, id } = rpcRequest;
 
   try {
-    switch (method) {
-      case 'initialize':
-        return handleInitialize(id);
+    switch (rpcMethod) {
+      case 'initialize': {
+        const response = handleInitialize(id);
+        const sessionId = crypto.randomUUID();
+        const headers = new Headers(response.headers);
+        headers.set('Mcp-Session-Id', sessionId);
+        return new Response(response.body, { status: response.status, headers });
+      }
+      case 'notifications/initialized':
+        return new Response(null, { status: 202 });
       case 'tools/list':
         return handleToolsList(id);
       case 'tools/call':
@@ -1197,10 +1225,10 @@ export async function handlePlatformMcp(request: Request): Promise<Response> {
       case 'resources/read':
         return await handleResourcesRead(id, userId, params);
       default:
-        return jsonRpcErrorResponse(id, METHOD_NOT_FOUND, `Method not found: ${method}`);
+        return jsonRpcErrorResponse(id, METHOD_NOT_FOUND, `Method not found: ${rpcMethod}`);
     }
   } catch (err) {
-    console.error(`Platform MCP ${method} error:`, err);
+    console.error(`Platform MCP ${rpcMethod} error:`, err);
     return jsonRpcErrorResponse(
       id,
       INTERNAL_ERROR,
@@ -1215,14 +1243,16 @@ export async function handlePlatformMcp(request: Request): Promise<Response> {
 
 function handleInitialize(id: string | number): Response {
   const result: MCPServerInfo = {
-    name: 'Ultralight Platform',
-    version: '2.0.0',
-    description: 'MCP-first app hosting platform. Upload, configure, and discover apps.',
+    protocolVersion: '2025-03-26',
     capabilities: {
       tools: { listChanged: false },
       resources: { subscribe: false, listChanged: false },
     },
-    endpoints: { mcp: '/mcp/platform' },
+    serverInfo: {
+      name: 'Ultralight Platform',
+      version: '2.0.0',
+    },
+    instructions: 'MCP-first app hosting platform. Upload, configure, and discover apps.',
   };
   return jsonRpcResponse(id, result);
 }
@@ -3524,15 +3554,15 @@ function jsonRpcErrorResponse(
 export function handlePlatformMcpDiscovery(): Response {
   const discovery = {
     name: 'Ultralight Platform',
-    version: '2.0.0',
     description: 'MCP-first app hosting. Upload, configure, discover, manage permissions, and view logs.',
+    transport: {
+      type: 'http-post',
+      url: '/mcp/platform',
+      app_endpoint_pattern: '/mcp/{appId}',
+    },
     capabilities: {
       tools: { listChanged: false },
       resources: { subscribe: false, listChanged: false },
-    },
-    endpoints: {
-      platform: '/mcp/platform',
-      apps: '/mcp/{appId}',
     },
     tools_count: PLATFORM_TOOLS.length,
     resources_count: 2,
