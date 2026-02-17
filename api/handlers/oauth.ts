@@ -7,6 +7,7 @@
 
 import { json, error } from './app.ts';
 import { createToken } from '../services/tokens.ts';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 
 // @ts-ignore - Deno is available
 const Deno = globalThis.Deno;
@@ -15,8 +16,10 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || SUPABASE_SERVICE_ROLE_KEY;
 
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
 // ============================================
-// IN-MEMORY STORES (short TTL, no DB needed)
+// OAUTH CLIENT PERSISTENCE (Supabase)
 // ============================================
 
 interface OAuthClient {
@@ -26,8 +29,54 @@ interface OAuthClient {
   grant_types: string[];
   response_types: string[];
   token_endpoint_auth_method: string;
-  created_at: number;
 }
+
+/**
+ * Save an OAuth client to the database.
+ */
+async function saveOAuthClient(client: OAuthClient): Promise<void> {
+  const { error: err } = await supabase
+    .from('oauth_clients')
+    .insert({
+      client_id: client.client_id,
+      client_name: client.client_name || null,
+      redirect_uris: client.redirect_uris,
+      grant_types: client.grant_types,
+      response_types: client.response_types,
+      token_endpoint_auth_method: client.token_endpoint_auth_method,
+    });
+
+  if (err) {
+    console.error('Failed to save OAuth client:', err);
+    throw new Error(`Failed to save OAuth client: ${err.message}`);
+  }
+}
+
+/**
+ * Look up an OAuth client by client_id from the database.
+ */
+async function getOAuthClient(clientId: string): Promise<OAuthClient | null> {
+  const { data, error: err } = await supabase
+    .from('oauth_clients')
+    .select('client_id, client_name, redirect_uris, grant_types, response_types, token_endpoint_auth_method')
+    .eq('client_id', clientId)
+    .single();
+
+  if (err || !data) return null;
+
+  return {
+    client_id: data.client_id,
+    client_name: data.client_name || undefined,
+    redirect_uris: data.redirect_uris,
+    grant_types: data.grant_types,
+    response_types: data.response_types,
+    token_endpoint_auth_method: data.token_endpoint_auth_method,
+  };
+}
+
+// ============================================
+// AUTHORIZATION CODES (in-memory, short-lived)
+// ============================================
 
 interface AuthorizationCode {
   code: string;
@@ -43,22 +92,15 @@ interface AuthorizationCode {
   created_at: number;
 }
 
-// In-memory stores with TTL cleanup
-const oauthClients = new Map<string, OAuthClient>();
+// Auth codes are short-lived (5 min) and one-time use — in-memory is fine.
 const authorizationCodes = new Map<string, AuthorizationCode>();
-
-// TTLs
-const CLIENT_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const CODE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-// Lazy cleanup
-function cleanupExpired() {
+// Lazy cleanup of expired authorization codes
+function cleanupExpiredCodes() {
   const now = Date.now();
   for (const [k, v] of authorizationCodes) {
     if (now - v.created_at > CODE_TTL_MS) authorizationCodes.delete(k);
-  }
-  for (const [k, v] of oauthClients) {
-    if (now - v.created_at > CLIENT_TTL_MS) oauthClients.delete(k);
   }
 }
 
@@ -231,13 +273,15 @@ async function handleClientRegistration(request: Request): Promise<Response> {
     grant_types: (body.grant_types as string[]) || ['authorization_code'],
     response_types: (body.response_types as string[]) || ['code'],
     token_endpoint_auth_method: (body.token_endpoint_auth_method as string) || 'none',
-    created_at: Date.now(),
   };
 
-  oauthClients.set(clientId, client);
-
-  // Lazy cleanup
-  if (oauthClients.size > 100) cleanupExpired();
+  // Persist to Supabase so clients survive restarts and work across instances
+  try {
+    await saveOAuthClient(client);
+  } catch (err) {
+    console.error('OAuth client registration failed:', err);
+    return error('Failed to register client', 500);
+  }
 
   return json({
     client_id: clientId,
@@ -253,7 +297,7 @@ async function handleClientRegistration(request: Request): Promise<Response> {
 // P2D: AUTHORIZATION ENDPOINT
 // ============================================
 
-function handleAuthorize(request: Request): Response {
+async function handleAuthorize(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const baseUrl = getBaseUrl(request);
 
@@ -276,7 +320,7 @@ function handleAuthorize(request: Request): Response {
   }
 
   // Validate client exists and redirect_uri is registered
-  const client = oauthClients.get(clientId);
+  const client = await getOAuthClient(clientId);
   if (client && !client.redirect_uris.includes(redirectUri)) {
     return error('redirect_uri not registered for this client', 400);
   }
@@ -398,7 +442,7 @@ async function generateAuthCodeAndRedirect(
   authorizationCodes.set(authCode, codeEntry);
 
   // Lazy cleanup
-  if (authorizationCodes.size > 50) cleanupExpired();
+  if (authorizationCodes.size > 50) cleanupExpiredCodes();
 
   // Redirect back to the MCP client with the authorization code
   const redirectUrl = new URL(oauthState.redirect_uri);
@@ -556,7 +600,7 @@ async function handleOAuthCallbackComplete(request: Request): Promise<Response> 
   };
 
   authorizationCodes.set(authCode, codeEntry);
-  if (authorizationCodes.size > 50) cleanupExpired();
+  if (authorizationCodes.size > 50) cleanupExpiredCodes();
 
   // Build redirect URL back to the MCP client
   const redirectUrl = new URL(oauthState.redirect_uri);
