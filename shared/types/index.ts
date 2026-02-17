@@ -673,12 +673,24 @@ export interface AppWithDraft extends App {
 // MCP (Model Context Protocol)
 // ============================================
 
+export interface MCPToolAnnotations {
+  /** Tool does not modify its environment (default: false) */
+  readOnlyHint?: boolean;
+  /** Tool may perform destructive updates (default: true). Only meaningful when readOnlyHint is false. */
+  destructiveHint?: boolean;
+  /** Calling repeatedly with same args has no additional effect (default: false) */
+  idempotentHint?: boolean;
+  /** Tool interacts with external entities (default: true) */
+  openWorldHint?: boolean;
+}
+
 export interface MCPTool {
   name: string;
   title?: string;
   description: string;
   inputSchema: MCPJsonSchema;
   outputSchema?: MCPJsonSchema;
+  annotations?: MCPToolAnnotations;
 }
 
 export interface MCPJsonSchema {
@@ -1072,6 +1084,7 @@ export function manifestToMCPTools(manifest: AppManifest, appId: string, appSlug
       name: `${appSlug}_${fnName}`,
       title: fnName,
       description: fnDef.description,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       inputSchema: {
         type: 'object',
         properties: {},

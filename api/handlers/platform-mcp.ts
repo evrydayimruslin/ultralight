@@ -527,6 +527,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
       'No app_id → new app (v1.0.0, set live automatically). ' +
       'With app_id → new version (NOT set live — use ul.set.version). ' +
       'Auto-generates Skills.md, library entry, and embedding per version.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -566,6 +567,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     name: 'ul.download',
     title: 'Download Source Code',
     description: 'Download the source code for an app version as a list of files. Respects download_access settings.',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -581,6 +583,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     name: 'ul.set.version',
     title: 'Set Live Version',
     description: 'Set the live version for an app. Triggers Library.md rebuild for the user.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -596,6 +599,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     description:
       'Change app visibility. Setting to "published" adds the app to the global app store index. ' +
       'Removing from "published" removes it.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -613,6 +617,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     name: 'ul.set.download',
     title: 'Set Download Access',
     description: 'Control who can download the source code.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -630,6 +635,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     name: 'ul.set.supabase',
     title: 'Assign Supabase Server',
     description: 'Assign or unassign a Supabase server to an app. Pass server_name: null to unassign.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -651,6 +657,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
       'Grant a user access to specific functions on a private app. ' +
       'Additive — does not remove existing grants. Omit functions to grant ALL. ' +
       'Pro: pass constraints to set IP allowlists, time windows, usage budgets, and expiry.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -695,6 +702,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
       'Revoke access to a private app. ' +
       'With email: revokes that user. Without email: revokes ALL users. ' +
       'With functions: revokes only those functions. Without functions: revokes all access.',
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -714,6 +722,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     description:
       'List granted users, their function permissions, and active constraints. ' +
       'Shows IP allowlists, time windows, budgets, and expiry. Filterable by emails and/or functions.',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -736,6 +745,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     description:
       'Pro: Export MCP call logs and permission audit data as structured JSON or CSV. ' +
       'Includes caller info, IPs, timestamps, functions, and success/failure.',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -754,6 +764,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     description:
       'Pro: Set per-consumer rate limits for your app. ' +
       'Pass null values to remove and use platform defaults.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -772,6 +783,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     description:
       'Returns the last 3 distinct apps the user has called. ' +
       'This is the fastest lookup — check here first before searching library or app store.',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {},
@@ -783,6 +795,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     description:
       'Search your apps (owned + liked). No query returns full Library.md. ' +
       'With query: semantic search. Includes apps saved via like.',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -801,6 +814,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
       'With a query: semantic search ranked by relevancy, community signal, and native capability. ' +
       'Without a query: returns featured/top apps ranked by community likes. ' +
       'Excludes apps you have disliked.',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
@@ -822,6 +836,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
       'Cannot like your own apps. ' +
       'Calling again on an already-liked app removes the like (toggle). ' +
       'Liking a previously disliked app removes the dislike.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -838,6 +853,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
       'Works on public, unlisted, and private apps. Cannot dislike your own apps. ' +
       'Calling again on an already-disliked app removes the dislike (toggle). ' +
       'Disliking a previously liked app removes the like.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -854,6 +870,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     description:
       'View MCP call logs for an app you own. ' +
       'Filter by caller emails and/or function names.',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -884,6 +901,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
       'Apps declare required secrets (e.g. API keys) via env_schema. ' +
       'Pass a secret value as null to remove that key. ' +
       'Pass all values as null to fully disconnect.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -907,6 +925,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
       'View your connections to apps. ' +
       'No app_id → list all apps you have connected to. ' +
       'With app_id → show required secrets, which you\'ve provided, and connection status.',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -925,6 +944,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     description:
       'Read the user\'s memory.md — free-form markdown context that persists across sessions and agents. ' +
       'Contains preferences, project context, notes, and anything the user wants agents to know.',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {},
@@ -937,6 +957,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
       'Overwrite the user\'s memory.md with new content. Use this for full rewrites. ' +
       'For adding a section without losing existing content, use ul.memory.append instead. ' +
       'Auto-embeds the content for semantic search.',
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -954,6 +975,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     description:
       'Append a section to the user\'s memory.md. Preserves existing content. ' +
       'Creates the file if it doesn\'t exist. Auto-embeds on update.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -972,6 +994,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
       'Store a key-value pair in the user\'s cross-app memory. ' +
       'For structured data that apps read/write programmatically. ' +
       'Scope defaults to \'user\' (cross-app). Use scope \'app:{appId}\' for app-specific memory.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -996,6 +1019,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     description:
       'Retrieve a value from the user\'s cross-app memory by key. ' +
       'Returns null if the key does not exist.',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -1017,6 +1041,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     description:
       'Query the user\'s memory key-value store. Filter by scope and/or key prefix. ' +
       'Returns an array of { key, value } pairs ordered by most recently updated.',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -1040,6 +1065,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     title: 'Forget (KV)',
     description:
       'Delete a key from the user\'s cross-app memory.',
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -1063,6 +1089,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     description:
       'Publish markdown content as a live, public web page. Returns a shareable URL. ' +
       'Same slug overwrites the previous version. No auth required to view the page.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
@@ -1087,6 +1114,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     title: 'List Pages',
     description:
       'List all your published markdown pages with their URLs, titles, sizes, and last updated timestamps.',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {},
