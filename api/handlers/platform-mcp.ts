@@ -245,7 +245,10 @@ ul.permissions.grant(
     },
     budget_limit?: number,        // max calls before access suspends
     budget_period?: "hour" | "day" | "week" | "month",
-    expires_at?: string           // ISO timestamp
+    expires_at?: string,          // ISO timestamp
+    allowed_args?: {              // per-parameter value whitelists
+      [param: string]: (string | number | boolean)[]
+    }                             // e.g. { "region": ["us-east", "eu-west"] }
   }
 )
 \`\`\`
@@ -689,6 +692,17 @@ const PLATFORM_TOOLS: MCPTool[] = [
             budget_limit: { type: 'number', description: 'Max calls before access suspends.' },
             budget_period: { type: 'string', enum: ['hour', 'day', 'week', 'month'], description: 'Budget reset period.' },
             expires_at: { type: 'string', description: 'ISO timestamp — auto-expire date.' },
+            allowed_args: {
+              type: 'object',
+              description:
+                'Per-parameter value whitelists. Keys are parameter names, values are arrays of allowed values. ' +
+                'Example: { "region": ["us-east", "eu-west"], "format": ["json"] }. ' +
+                'Parameters not listed are unrestricted. Only listed parameters are checked at call time.',
+              additionalProperties: {
+                type: 'array',
+                items: { type: ['string', 'number', 'boolean'] },
+              },
+            },
           },
         },
       },
@@ -2124,6 +2138,10 @@ async function executePermissionsGrant(
       constraintFields.expires_at = constraints.expires_at;
       appliedConstraints.push('expiry');
     }
+    if (constraints.allowed_args) {
+      constraintFields.allowed_args = constraints.allowed_args;
+      appliedConstraints.push('arg_whitelist');
+    }
   }
 
   // Upsert permissions (additive — use ON CONFLICT)
@@ -2273,6 +2291,7 @@ interface PermListEntry {
       budget_used?: number;
       budget_period?: string | null;
       expires_at?: string | null;
+      allowed_args?: Record<string, (string | number | boolean)[]> | null;
     };
   }>;
   status?: 'pending';
@@ -2292,7 +2311,7 @@ async function executePermissionsList(
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
   // Fetch permissions with constraint columns
-  let url = `${SUPABASE_URL}/rest/v1/user_app_permissions?app_id=eq.${app.id}&allowed=eq.true&select=granted_to_user_id,function_name,allowed_ips,time_window,budget_limit,budget_used,budget_period,expires_at`;
+  let url = `${SUPABASE_URL}/rest/v1/user_app_permissions?app_id=eq.${app.id}&allowed=eq.true&select=granted_to_user_id,function_name,allowed_ips,time_window,budget_limit,budget_used,budget_period,expires_at,allowed_args`;
 
   if (functions && functions.length > 0) {
     url += `&function_name=in.(${functions.map(f => encodeURIComponent(f)).join(',')})`;
@@ -2316,6 +2335,7 @@ async function executePermissionsList(
     budget_used: number;
     budget_period: string | null;
     expires_at: string | null;
+    allowed_args: Record<string, (string | number | boolean)[]> | null;
   }>;
 
   // Resolve user IDs to emails
@@ -2350,7 +2370,7 @@ async function executePermissionsList(
 
     // Build function entry with constraints (only include non-null constraints)
     const fnEntry: PermListEntry['functions'][0] = { name: row.function_name };
-    const hasConstraints = row.allowed_ips || row.time_window || row.budget_limit !== null || row.expires_at;
+    const hasConstraints = row.allowed_ips || row.time_window || row.budget_limit !== null || row.expires_at || row.allowed_args;
     if (hasConstraints) {
       fnEntry.constraints = {};
       if (row.allowed_ips) fnEntry.constraints.allowed_ips = row.allowed_ips;
@@ -2361,6 +2381,7 @@ async function executePermissionsList(
         if (row.budget_period) fnEntry.constraints.budget_period = row.budget_period;
       }
       if (row.expires_at) fnEntry.constraints.expires_at = row.expires_at;
+      if (row.allowed_args) fnEntry.constraints.allowed_args = row.allowed_args;
     }
 
     userPerms.get(row.granted_to_user_id)!.functions.push(fnEntry);

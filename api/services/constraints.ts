@@ -1,8 +1,9 @@
 /**
  * Granular Permission Constraint Enforcement
  *
- * Checks IP allowlists, time windows, usage budgets, and expiry dates
- * against permission rows at MCP call time. Pro-only feature.
+ * Checks IP allowlists, time windows, usage budgets, expiry dates,
+ * and argument-value whitelists against permission rows at MCP call time.
+ * Pro-only feature.
  */
 
 import type { PermissionRow, TimeWindow } from '../../shared/types/index.ts';
@@ -15,11 +16,17 @@ export interface ConstraintCheckResult {
 /**
  * Check all constraints on a permission row.
  * Returns { allowed: true } if all pass, or { allowed: false, reason } on first failure.
+ *
+ * @param row       The permission row with constraint columns
+ * @param clientIp  Caller's IP address (for IP allowlist check)
+ * @param now       Current time override (for testing)
+ * @param callArgs  The actual arguments passed to the MCP function call (for arg whitelist check)
  */
 export function checkConstraints(
   row: PermissionRow,
   clientIp: string | null,
-  now?: Date
+  now?: Date,
+  callArgs?: Record<string, unknown>
 ): ConstraintCheckResult {
   const currentTime = now || new Date();
 
@@ -53,6 +60,50 @@ export function checkConstraints(
     }
   }
 
+  // 5. Argument-value whitelist check
+  if (row.allowed_args && callArgs) {
+    const result = checkAllowedArgs(row.allowed_args, callArgs);
+    if (!result.allowed) return result;
+  }
+
+  return { allowed: true };
+}
+
+/**
+ * Check if the call arguments comply with the allowed_args whitelist.
+ * Each key in allowedArgs maps to an array of permitted values for that parameter.
+ * If a parameter is present in callArgs and has a whitelist, its value must be in the list.
+ * Parameters not in the whitelist are unrestricted.
+ */
+export function checkAllowedArgs(
+  allowedArgs: Record<string, (string | number | boolean)[]>,
+  callArgs: Record<string, unknown>
+): ConstraintCheckResult {
+  for (const [param, allowedValues] of Object.entries(allowedArgs)) {
+    if (!(param in callArgs)) continue; // Parameter not provided — skip (not denied)
+
+    const actual = callArgs[param];
+
+    // For primitive values, check directly
+    if (typeof actual === 'string' || typeof actual === 'number' || typeof actual === 'boolean') {
+      if (!allowedValues.includes(actual as string | number | boolean)) {
+        return {
+          allowed: false,
+          reason: `Argument '${param}' value ${JSON.stringify(actual)} not in allowed values: [${allowedValues.map(v => JSON.stringify(v)).join(', ')}]`,
+        };
+      }
+    } else {
+      // Non-primitive values (objects, arrays) — stringify and compare
+      const actualStr = JSON.stringify(actual);
+      const match = allowedValues.some(v => JSON.stringify(v) === actualStr);
+      if (!match) {
+        return {
+          allowed: false,
+          reason: `Argument '${param}' value not in allowed values`,
+        };
+      }
+    }
+  }
   return { allowed: true };
 }
 

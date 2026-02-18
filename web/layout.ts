@@ -5068,7 +5068,11 @@ await hash.sha256('data')</div>
         });
         const permsData = permsRes.ok ? await permsRes.json() : { permissions: [] };
         const permsMap = {};
-        (permsData.permissions || []).forEach(p => { permsMap[p.function_name] = p.allowed; });
+        const permsArgsMap = {};
+        (permsData.permissions || []).forEach(p => {
+          permsMap[p.function_name] = p.allowed;
+          if (p.allowed_args) permsArgsMap[p.function_name] = p.allowed_args;
+        });
 
         // Get app functions
         const app = apps.find(a => a.id === currentAppId);
@@ -5088,22 +5092,36 @@ await hash.sha256('data')</div>
         if (granularBtns) granularBtns.style.display = ownerIsPro ? 'flex' : 'none';
 
         if (ownerIsPro) {
-          // Pro: show per-function checkboxes
-          matrix.innerHTML = fns.map(fn => {
+          // Pro: show per-function checkboxes with optional arg constraints
+          matrix.innerHTML = fns.map((fn, fnIdx) => {
             const allowed = permsMap[fn.name] === true;
-            return \`<div class="token-item" style="display: flex; align-items: center; justify-content: space-between; padding: 0.625rem 0.875rem;">
-              <div>
-                <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.8125rem; color: var(--text-primary);">\${fn.name}</div>
-                <div style="font-size: 0.75rem; color: var(--text-muted);">\${fn.description || 'No description'}</div>
+            const argConstraints = permsArgsMap[fn.name] || null;
+            const argJson = argConstraints ? JSON.stringify(argConstraints, null, 2) : '';
+            const hasArgs = argConstraints && Object.keys(argConstraints).length > 0;
+            return \`<div class="token-item" style="padding: 0.625rem 0.875rem;">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.8125rem; color: var(--text-primary);">\${fn.name}</div>
+                  <div style="font-size: 0.75rem; color: var(--text-muted);">\${fn.description || 'No description'}</div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 0.75rem;">
+                  <button class="byok-btn byok-btn-secondary" onclick="toggleArgConstraints(\${fnIdx})" style="font-size: 0.6875rem; padding: 2px 8px; \${hasArgs ? 'color: var(--accent-color); border-color: var(--accent-color);' : ''}">\${hasArgs ? 'Args \u2713' : 'Args'}</button>
+                  <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                    <input type="checkbox" data-fn="\${fn.name}" \${allowed ? 'checked' : ''} style="width: 16px; height: 16px; accent-color: var(--accent-color);" />
+                    <span style="font-size: 0.75rem; color: var(--text-secondary);">\${allowed ? 'Allowed' : 'Denied'}</span>
+                  </label>
+                </div>
               </div>
-              <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                <input type="checkbox" data-fn="\${fn.name}" \${allowed ? 'checked' : ''} style="width: 16px; height: 16px; accent-color: var(--accent-color);" />
-                <span style="font-size: 0.75rem; color: var(--text-secondary);">\${allowed ? 'Allowed' : 'Denied'}</span>
-              </label>
+              <div id="argConstraints-\${fnIdx}" style="display: none; margin-top: 0.5rem; padding: 0.5rem; background: var(--bg-secondary, #111); border-radius: 6px;">
+                <div style="font-size: 0.6875rem; color: var(--text-muted); margin-bottom: 0.375rem;">
+                  Arg whitelist (JSON). E.g. <code style="font-size: 0.65rem;">{"region": ["us-east", "eu-west"]}</code>
+                </div>
+                <textarea data-args-fn="\${fn.name}" rows="3" style="width: 100%; padding: 0.375rem 0.5rem; background: var(--bg-primary, #0a0a0a); border: 1px solid var(--border-color, #2a2a2a); border-radius: 4px; color: var(--text-primary); font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; resize: vertical;">\${escapeHtml(argJson)}</textarea>
+              </div>
             </div>\`;
           }).join('');
 
-          matrix.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+          matrix.querySelectorAll('input[type="checkbox"][data-fn]').forEach(cb => {
             cb.addEventListener('change', () => {
               cb.nextElementSibling.textContent = cb.checked ? 'Allowed' : 'Denied';
             });
@@ -5198,6 +5216,11 @@ await hash.sha256('data')</div>
       });
     };
 
+    window.toggleArgConstraints = function(fnIdx) {
+      const el = document.getElementById('argConstraints-' + fnIdx);
+      if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    };
+
     window.savePermissions = async function() {
       if (!permsSelectedUserId || !currentAppId) {
         showToast('Select a user first', 'error');
@@ -5206,7 +5229,20 @@ await hash.sha256('data')</div>
 
       const perms = [];
       document.querySelectorAll('#permsMatrix input[type="checkbox"][data-fn]').forEach(cb => {
-        perms.push({ function_name: cb.dataset.fn, allowed: cb.checked });
+        const entry = { function_name: cb.dataset.fn, allowed: cb.checked };
+        // Check for arg constraints textarea
+        const argsTA = document.querySelector(\`textarea[data-args-fn="\${cb.dataset.fn}"]\`);
+        if (argsTA && argsTA.value.trim()) {
+          try {
+            const parsed = JSON.parse(argsTA.value.trim());
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              entry.allowed_args = parsed;
+            }
+          } catch (e) {
+            // Invalid JSON — skip silently, will be sent without allowed_args
+          }
+        }
+        perms.push(entry);
       });
 
       try {

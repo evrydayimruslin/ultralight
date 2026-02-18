@@ -156,7 +156,10 @@ ul.permissions.grant(
     },
     budget_limit?: number,        // max calls before access suspends
     budget_period?: "hour" | "day" | "week" | "month",
-    expires_at?: string           // ISO timestamp
+    expires_at?: string,          // ISO timestamp
+    allowed_args?: {              // per-parameter value whitelists
+      [param: string]: (string | number | boolean)[]
+    }                             // e.g. { "region": ["us-east", "eu-west"] }
   }
 )
 ```

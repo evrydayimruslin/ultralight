@@ -361,6 +361,8 @@ export interface GrantConstraints {
   budget_period?: 'hour' | 'day' | 'week' | 'month' | null;
   /** ISO timestamp — permission auto-expires after this date */
   expires_at?: string | null;
+  /** Per-parameter value whitelists. Keys are parameter names, values are arrays of allowed values. null = unrestricted. */
+  allowed_args?: Record<string, (string | number | boolean)[]> | null;
 }
 
 /** Allowed time window for calls */
@@ -389,6 +391,7 @@ export interface PermissionRow {
   budget_used: number;
   budget_period: string | null;
   expires_at: string | null;
+  allowed_args: Record<string, (string | number | boolean)[]> | null;
   created_at: string;
   updated_at: string;
 }

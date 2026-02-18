@@ -864,7 +864,7 @@ async function handleToolsCall(
   }
 
   // Permission check: for private apps, verify non-owner has access to this function
-  // Also enforce granular constraints (IP, time window, budget, expiry) — Pro feature
+  // Also enforce granular constraints (IP, time window, budget, expiry, arg whitelist) — Pro feature
   if (app.visibility === 'private') {
     const permsResult = await getPermissionsForUser(userId, app.id, app.owner_id, app.visibility);
     if (permsResult !== null) {
@@ -883,7 +883,9 @@ async function handleToolsCall(
         const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
           || request.headers.get('x-real-ip')
           || null;
-        const constraintResult = checkConstraints(matchingRow, clientIp);
+        // Pass call arguments for argument-value whitelist enforcement
+        const callArgs = (args && typeof args === 'object') ? args as Record<string, unknown> : undefined;
+        const constraintResult = checkConstraints(matchingRow, clientIp, undefined, callArgs);
         if (!constraintResult.allowed) {
           return jsonRpcErrorResponse(
             id,

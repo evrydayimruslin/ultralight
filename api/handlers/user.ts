@@ -532,7 +532,7 @@ export async function handleUser(request: Request): Promise<Response> {
       if (targetUserId) {
         // Get permissions for a specific user on this app
         const response = await fetch(
-          `${SUPABASE_URL}/rest/v1/user_app_permissions?app_id=eq.${appId}&granted_to_user_id=eq.${targetUserId}&select=id,function_name,allowed`,
+          `${SUPABASE_URL}/rest/v1/user_app_permissions?app_id=eq.${appId}&granted_to_user_id=eq.${targetUserId}&select=id,function_name,allowed,allowed_args`,
           {
             headers: {
               'apikey': SUPABASE_SERVICE_ROLE_KEY,
@@ -724,12 +724,13 @@ export async function handleUser(request: Request): Promise<Response> {
 
       // Insert new permissions
       if (effectivePermsList.length > 0) {
-        const rows = effectivePermsList.map((p: { function_name: string; allowed: boolean }) => ({
+        const rows = effectivePermsList.map((p: { function_name: string; allowed: boolean; allowed_args?: Record<string, unknown> | null }) => ({
           app_id: appId,
           granted_to_user_id: resolvedUserId,
           granted_by_user_id: userId,
           function_name: p.function_name,
           allowed: !!p.allowed,
+          ...(bothPro && p.allowed_args ? { allowed_args: p.allowed_args } : {}),
         }));
 
         const insertRes = await fetch(
@@ -982,7 +983,7 @@ export async function getPermissionsForUser(
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
   const response = await fetch(
-    `${SUPABASE_URL}/rest/v1/user_app_permissions?granted_to_user_id=eq.${callerUserId}&app_id=eq.${appId}&select=function_name,allowed,allowed_ips,time_window,budget_limit,budget_used,budget_period,expires_at,created_at,updated_at,granted_by_user_id,app_id,granted_to_user_id`,
+    `${SUPABASE_URL}/rest/v1/user_app_permissions?granted_to_user_id=eq.${callerUserId}&app_id=eq.${appId}&select=function_name,allowed,allowed_ips,time_window,budget_limit,budget_used,budget_period,expires_at,allowed_args,created_at,updated_at,granted_by_user_id,app_id,granted_to_user_id`,
     {
       headers: {
         'apikey': SUPABASE_SERVICE_ROLE_KEY,
