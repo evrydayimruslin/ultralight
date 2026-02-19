@@ -176,32 +176,31 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
     }
 
     // Resolve Supabase config: prefer config_id, fall back to legacy app-level, then platform-level
-    const appRecord = app as Record<string, unknown>;
     let supabaseConfig: { url: string; anonKey: string; serviceKey?: string } | undefined;
 
-    if (appRecord.supabase_config_id) {
+    if (app.supabase_config_id) {
       try {
         const { getDecryptedSupabaseConfig } = await import('./user.ts');
-        const config = await getDecryptedSupabaseConfig(appRecord.supabase_config_id as string);
+        const config = await getDecryptedSupabaseConfig(app.supabase_config_id);
         if (config) supabaseConfig = config;
       } catch (err) {
         console.error('Failed to get Supabase config by ID:', err);
       }
     }
 
-    if (!supabaseConfig && appRecord.supabase_enabled && appRecord.supabase_url && appRecord.supabase_anon_key_encrypted) {
+    if (!supabaseConfig && app.supabase_enabled && app.supabase_url && app.supabase_anon_key_encrypted) {
       try {
-        const anonKey = await decryptEnvVar(appRecord.supabase_anon_key_encrypted as string);
-        supabaseConfig = { url: appRecord.supabase_url as string, anonKey };
-        if (appRecord.supabase_service_key_encrypted) {
-          supabaseConfig.serviceKey = await decryptEnvVar(appRecord.supabase_service_key_encrypted as string);
+        const anonKey = await decryptEnvVar(app.supabase_anon_key_encrypted as string);
+        supabaseConfig = { url: app.supabase_url as string, anonKey };
+        if (app.supabase_service_key_encrypted) {
+          supabaseConfig.serviceKey = await decryptEnvVar(app.supabase_service_key_encrypted as string);
         }
       } catch (err) {
         console.error('Failed to decrypt legacy Supabase config:', err);
       }
     }
 
-    if (!supabaseConfig && appRecord.supabase_enabled) {
+    if (!supabaseConfig && app.supabase_enabled) {
       try {
         const { getDecryptedPlatformSupabase } = await import('./user.ts');
         const platformConfig = await getDecryptedPlatformSupabase(app.owner_id);

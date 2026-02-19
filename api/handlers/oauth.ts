@@ -6,7 +6,7 @@
 // into the standard OAuth 2.1 shape that MCP clients (Claude Desktop, etc.) expect.
 
 import { json, error } from './app.ts';
-import { createToken } from '../services/tokens.ts';
+import { createToken, revokeByToken } from '../services/tokens.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 // @ts-ignore - Deno is available
@@ -75,7 +75,7 @@ async function getOAuthClient(clientId: string): Promise<OAuthClient | null> {
 }
 
 // ============================================
-// AUTHORIZATION CODES (in-memory, short-lived)
+// AUTHORIZATION CODES (persisted to Supabase)
 // ============================================
 
 interface AuthorizationCode {
@@ -92,17 +92,84 @@ interface AuthorizationCode {
   created_at: number;
 }
 
-// Auth codes are short-lived (5 min) and one-time use — in-memory is fine.
-const authorizationCodes = new Map<string, AuthorizationCode>();
-const CODE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-// Lazy cleanup of expired authorization codes
-function cleanupExpiredCodes() {
-  const now = Date.now();
-  for (const [k, v] of authorizationCodes) {
-    if (now - v.created_at > CODE_TTL_MS) authorizationCodes.delete(k);
+/**
+ * Save an authorization code to the database.
+ * Codes auto-expire via the `expires_at` column (5 min from creation).
+ */
+async function saveAuthorizationCode(entry: AuthorizationCode): Promise<void> {
+  const { error: err } = await supabase
+    .from('oauth_authorization_codes')
+    .insert({
+      code: entry.code,
+      client_id: entry.client_id,
+      redirect_uri: entry.redirect_uri,
+      code_challenge: entry.code_challenge,
+      code_challenge_method: entry.code_challenge_method,
+      supabase_access_token: entry.supabase_access_token,
+      supabase_refresh_token: entry.supabase_refresh_token || null,
+      user_id: entry.user_id,
+      user_email: entry.user_email,
+      scope: entry.scope,
+    });
+  if (err) {
+    console.error('Failed to save authorization code:', err);
+    throw new Error(`Failed to save authorization code: ${err.message}`);
   }
 }
+
+/**
+ * Retrieve and atomically delete an authorization code (one-time use).
+ * Returns null if the code doesn't exist or has expired.
+ */
+async function getAndDeleteAuthorizationCode(code: string): Promise<AuthorizationCode | null> {
+  // Select the code (only if not expired)
+  const { data, error: selectErr } = await supabase
+    .from('oauth_authorization_codes')
+    .select('*')
+    .eq('code', code)
+    .gt('expires_at', new Date().toISOString())
+    .single();
+
+  if (selectErr || !data) return null;
+
+  // Delete immediately (one-time use)
+  await supabase
+    .from('oauth_authorization_codes')
+    .delete()
+    .eq('code', code);
+
+  return {
+    code: data.code,
+    client_id: data.client_id,
+    redirect_uri: data.redirect_uri,
+    code_challenge: data.code_challenge,
+    code_challenge_method: data.code_challenge_method,
+    supabase_access_token: data.supabase_access_token,
+    supabase_refresh_token: data.supabase_refresh_token || undefined,
+    user_id: data.user_id,
+    user_email: data.user_email,
+    scope: data.scope,
+    created_at: new Date(data.created_at).getTime(),
+  };
+}
+
+/**
+ * Clean up expired authorization codes from the database.
+ * Called periodically to prevent stale rows from accumulating.
+ */
+async function cleanupExpiredCodes(): Promise<void> {
+  try {
+    await supabase
+      .from('oauth_authorization_codes')
+      .delete()
+      .lt('expires_at', new Date().toISOString());
+  } catch (err) {
+    console.error('Failed to cleanup expired auth codes:', err);
+  }
+}
+
+// Periodic cleanup every 5 minutes
+setInterval(() => { cleanupExpiredCodes(); }, 5 * 60 * 1000);
 
 // ============================================
 // HELPERS
@@ -194,6 +261,11 @@ export async function handleOAuth(request: Request): Promise<Response> {
     return handleTokenExchange(request);
   }
 
+  // Token revocation (RFC 7009)
+  if (path === '/oauth/revoke' && method === 'POST') {
+    return handleTokenRevocation(request);
+  }
+
   // Implicit flow completion (called from browser JS in the callback HTML)
   if (path === '/oauth/callback/complete' && method === 'POST') {
     return handleOAuthCallbackComplete(request);
@@ -234,6 +306,8 @@ function handleAuthorizationServerMetadata(request: Request): Response {
     grant_types_supported: ['authorization_code'],
     code_challenge_methods_supported: ['S256'],
     token_endpoint_auth_methods_supported: ['none'],
+    revocation_endpoint: `${baseUrl}/oauth/revoke`,
+    revocation_endpoint_auth_methods_supported: ['none'],
     service_documentation: 'https://ultralight.dev/docs/mcp',
   });
 }
@@ -439,10 +513,7 @@ async function generateAuthCodeAndRedirect(
     created_at: Date.now(),
   };
 
-  authorizationCodes.set(authCode, codeEntry);
-
-  // Lazy cleanup
-  if (authorizationCodes.size > 50) cleanupExpiredCodes();
+  await saveAuthorizationCode(codeEntry);
 
   // Redirect back to the MCP client with the authorization code
   const redirectUrl = new URL(oauthState.redirect_uri);
@@ -494,18 +565,10 @@ async function handleTokenExchange(request: Request): Promise<Response> {
     return oauthError('invalid_request', 'Missing code_verifier (PKCE required)', 400);
   }
 
-  // Look up authorization code
-  const codeEntry = authorizationCodes.get(code);
+  // Look up and atomically delete authorization code (one-time use, checks expiry)
+  const codeEntry = await getAndDeleteAuthorizationCode(code);
   if (!codeEntry) {
     return oauthError('invalid_grant', 'Invalid or expired authorization code', 400);
-  }
-
-  // Delete the code immediately (one-time use)
-  authorizationCodes.delete(code);
-
-  // Check expiry (5 min)
-  if (Date.now() - codeEntry.created_at > CODE_TTL_MS) {
-    return oauthError('invalid_grant', 'Authorization code expired', 400);
   }
 
   // Verify redirect_uri matches
@@ -535,6 +598,41 @@ async function handleTokenExchange(request: Request): Promise<Response> {
     console.error('OAuth token creation failed:', err);
     return oauthError('server_error', 'Failed to create access token', 500);
   }
+}
+
+// ============================================
+// P2F: TOKEN REVOCATION (RFC 7009)
+// ============================================
+
+async function handleTokenRevocation(request: Request): Promise<Response> {
+  let body: Record<string, string>;
+  try {
+    const contentType = request.headers.get('content-type') || '';
+    if (contentType.includes('application/x-www-form-urlencoded')) {
+      const text = await request.text();
+      const params = new URLSearchParams(text);
+      body = Object.fromEntries(params.entries());
+    } else {
+      body = await request.json();
+    }
+  } catch {
+    return oauthError('invalid_request', 'Could not parse request body', 400);
+  }
+
+  const token = body.token;
+  if (!token) {
+    return oauthError('invalid_request', 'Missing token parameter', 400);
+  }
+
+  // Attempt to revoke — per RFC 7009, always return 200 regardless of outcome
+  try {
+    await revokeByToken(token);
+  } catch (err) {
+    console.error('Token revocation error:', err);
+    // Still return 200 per spec
+  }
+
+  return new Response(null, { status: 200 });
 }
 
 // ============================================
@@ -599,8 +697,7 @@ async function handleOAuthCallbackComplete(request: Request): Promise<Response> 
     created_at: Date.now(),
   };
 
-  authorizationCodes.set(authCode, codeEntry);
-  if (authorizationCodes.size > 50) cleanupExpiredCodes();
+  await saveAuthorizationCode(codeEntry);
 
   // Build redirect URL back to the MCP client
   const redirectUrl = new URL(oauthState.redirect_uri);

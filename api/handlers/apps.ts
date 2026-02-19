@@ -1873,15 +1873,13 @@ async function handleGetSupabaseConfig(request: Request, appId: string): Promise
       return error('Unauthorized', 403);
     }
 
-    const appRecord = app as Record<string, unknown>;
-
     return json({
-      config_id: appRecord.supabase_config_id || null,
+      config_id: app.supabase_config_id || null,
       // Legacy fields for backward compatibility
-      enabled: !!(appRecord.supabase_config_id || appRecord.supabase_enabled),
-      url: appRecord.supabase_url || null,
-      has_anon_key: !!appRecord.supabase_anon_key_encrypted,
-      has_service_key: !!appRecord.supabase_service_key_encrypted,
+      enabled: !!(app.supabase_config_id || app.supabase_enabled),
+      url: app.supabase_url || null,
+      has_anon_key: !!app.supabase_anon_key_encrypted,
+      has_service_key: !!app.supabase_service_key_encrypted,
     });
 
   } catch (err) {

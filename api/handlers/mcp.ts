@@ -1324,8 +1324,7 @@ async function executeAppFunction(
 
     // Merge per-user secrets (from ul.connect) into envVars
     // Per-user secrets override universal env vars for the same key
-    const appRecord = app as Record<string, unknown>;
-    const envSchema = (appRecord.env_schema || {}) as Record<string, { scope: string; required?: boolean; description?: string }>;
+    const envSchema = (app.env_schema || {}) as Record<string, { scope: string; required?: boolean; description?: string }>;
     const perUserKeys = Object.entries(envSchema)
       .filter(([, v]) => v.scope === 'per_user')
       .map(([k]) => k);
@@ -1386,10 +1385,10 @@ async function executeAppFunction(
     // Resolve Supabase config: prefer config_id (new model), fall back to legacy app-level, then platform-level
     let supabaseConfig: { url: string; anonKey: string; serviceKey?: string } | undefined;
 
-    if (appRecord.supabase_config_id) {
+    if (app.supabase_config_id) {
       try {
         const { getDecryptedSupabaseConfig } = await import('./user.ts');
-        const config = await getDecryptedSupabaseConfig(appRecord.supabase_config_id as string);
+        const config = await getDecryptedSupabaseConfig(app.supabase_config_id as string);
         if (config) supabaseConfig = config;
       } catch (err) {
         console.error('Failed to get Supabase config by ID:', err);
@@ -1397,12 +1396,12 @@ async function executeAppFunction(
     }
 
     // Legacy fallback: app-level creds
-    if (!supabaseConfig && appRecord.supabase_enabled && appRecord.supabase_url && appRecord.supabase_anon_key_encrypted) {
+    if (!supabaseConfig && app.supabase_enabled && app.supabase_url && app.supabase_anon_key_encrypted) {
       try {
-        const anonKey = await decryptEnvVar(appRecord.supabase_anon_key_encrypted as string);
-        supabaseConfig = { url: appRecord.supabase_url as string, anonKey };
-        if (appRecord.supabase_service_key_encrypted) {
-          supabaseConfig.serviceKey = await decryptEnvVar(appRecord.supabase_service_key_encrypted as string);
+        const anonKey = await decryptEnvVar(app.supabase_anon_key_encrypted as string);
+        supabaseConfig = { url: app.supabase_url as string, anonKey };
+        if (app.supabase_service_key_encrypted) {
+          supabaseConfig.serviceKey = await decryptEnvVar(app.supabase_service_key_encrypted as string);
         }
       } catch (err) {
         console.error('Failed to decrypt legacy Supabase config:', err);
@@ -1410,7 +1409,7 @@ async function executeAppFunction(
     }
 
     // Legacy fallback: user platform-level config
-    if (!supabaseConfig && appRecord.supabase_enabled) {
+    if (!supabaseConfig && app.supabase_enabled) {
       try {
         const { getDecryptedPlatformSupabase } = await import('./user.ts');
         const platformConfig = await getDecryptedPlatformSupabase(app.owner_id);
@@ -1465,7 +1464,7 @@ async function executeAppFunction(
     logMcpCall({
       userId,
       appId: app.id,
-      appName: (appRecord.name as string) || (appRecord.slug as string),
+      appName: app.name || app.slug,
       functionName,
       method: 'tools/call',
       success: result.success,
@@ -1474,7 +1473,7 @@ async function executeAppFunction(
       inputArgs: args,
       outputResult: result.success ? result.result : result.error,
       userTier: user?.tier,
-      appVersion: (appRecord.current_version as string) || undefined,
+      appVersion: app.current_version || undefined,
       aiCostCents: result.aiCostCents || 0,
       sessionId: meta?.sessionId,
       sequenceNumber: nextSequenceNumber(meta?.sessionId),

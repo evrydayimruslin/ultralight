@@ -188,6 +188,46 @@ export async function revokeAllTokens(userId: string): Promise<number> {
 }
 
 /**
+ * Revoke a token by its plaintext value (used by OAuth revocation endpoint).
+ * Looks up the token by prefix + hash verification, then deletes it.
+ * Returns true if the token was found and revoked, false if not found.
+ * Per RFC 7009, callers should return 200 OK regardless.
+ */
+export async function revokeByToken(token: string): Promise<boolean> {
+  // Quick format check
+  if (!token.startsWith(TOKEN_PREFIX) || token.length !== 35) {
+    return false;
+  }
+
+  const tokenPrefix = token.substring(0, 8);
+  const tokenHash = await hashToken(token);
+
+  // Look up by prefix (indexed), verify hash
+  const { data, error: lookupErr } = await supabase
+    .from('user_api_tokens')
+    .select('id, token_hash')
+    .eq('token_prefix', tokenPrefix)
+    .single();
+
+  if (lookupErr || !data || data.token_hash !== tokenHash) {
+    return false;
+  }
+
+  // Delete the token
+  const { error: deleteErr } = await supabase
+    .from('user_api_tokens')
+    .delete()
+    .eq('id', data.id);
+
+  if (deleteErr) {
+    console.error('Failed to revoke token by value:', deleteErr);
+    return false;
+  }
+
+  return true;
+}
+
+/**
  * Revoke excess tokens when a user downgrades tier.
  * Keeps the most recently created tokens up to maxTokens,
  * revokes the rest. Returns the number of tokens revoked.

@@ -98,6 +98,7 @@ export interface App {
   supabase_anon_key_encrypted: string | null;
   supabase_service_key_encrypted: string | null;
   supabase_enabled: boolean;
+  supabase_config_id: string | null;
   // Manifest-based configuration (v2 architecture)
   manifest: string | null;  // JSON stringified AppManifest
   app_type: 'mcp' | null;  // null means legacy auto-detect; ui/hybrid removed
