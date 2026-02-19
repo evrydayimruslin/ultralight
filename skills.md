@@ -4,7 +4,7 @@ Endpoint: `POST /mcp/platform`
 Protocol: JSON-RPC 2.0
 Namespace: `ul.*`
 
-29 tools for managing MCP apps, user memory, discovery, permissions, connections, rate limits, and audit logs.
+29 tools for managing MCP apps, user memory, discovery, permissions, connections, content publishing, sharing, rate limits, and audit logs.
 
 ---
 
@@ -60,8 +60,10 @@ When the user needs a capability, search in this order:
 
 Ultralight provides two complementary memory layers:
 
-- **memory.md** — Free-form markdown the user (or agents) read/write. Preferences, project context, notes. Returned automatically by `ul.discover.library`. Use `ul.memory.read` / `ul.memory.write` / `ul.memory.append`.
-- **KV store** — Structured key-value pairs for programmatic storage. Cross-app by default. Use `ul.memory.remember` / `ul.memory.recall` / `ul.memory.query` / `ul.memory.forget`.
+- **memory.md** — Free-form markdown the user (or agents) read/write. Preferences, project context, notes. Returned automatically by `ul.discover.library`. Use `ul.memory.read` / `ul.memory.write` / `ul.memory.append`. Sharable with other users via `ul.markdown.share`.
+- **KV store** — Structured key-value pairs for programmatic storage. Cross-app by default. Use `ul.memory.remember` / `ul.memory.recall` / `ul.memory.query` / `ul.memory.forget`. Share specific keys or patterns with `ul.markdown.share`.
+
+Both memory types are now indexed in the unified content table with embeddings, making them semantically searchable via `ul.discover.library` with `types: ["memory_md"]`.
 
 Per-app MCP servers also expose `ultralight.remember()` / `ultralight.recall()` in the sandbox for app code to use programmatically.
 
@@ -224,27 +226,29 @@ ul.discover.desk()
 
 ## ul.discover.library
 
-Search your apps — both owned and liked. No `query` returns full Library.md + memory.md (all apps with capabilities, plus user context). With `query`: semantic search. Includes apps saved via like.
+Search your library — apps (owned + liked), pages, memory, and library content. No `query` returns full Library.md + memory.md. With `query`: semantic search. Use `types` to include non-app content in search results.
 
 ```
 ul.discover.library(
-  query?: string
+  query?: string,
+  types?: ("app" | "page" | "memory_md" | "library_md")[]  // omit for apps only (backward compat)
 )
 → { library: string, memory: string | null }  // no query
-→ { query: string, results: [...] }           // with query
+→ { query, types, results: [{ id, name, slug, description, similarity, source, type, ... }] }
 ```
 
 ## ul.discover.appstore
 
-Browse or search all published apps in the global app store. Without a query, returns featured/top apps ranked by community likes. With a query, returns semantic search results ranked by relevancy, community signal, and native capability. Excludes apps the user has disliked.
+Browse or search all published apps and content. Without a query, returns featured/top apps. With a query, returns semantic search results. Use `types` to include published pages.
 
 ```
 ul.discover.appstore(
-  query?: string,  // omit to browse featured/top apps
-  limit?: number
+  query?: string,
+  limit?: number,
+  types?: ("app" | "page")[]  // omit for apps only (backward compat)
 )
 → { mode: 'featured', results: [...] }  // no query
-→ { mode: 'search', query, results: [...] }  // with query
+→ { mode: 'search', query, types, results: [{ ..., type: "app" | "page" }] }
 ```
 
 ## ul.like
@@ -304,10 +308,12 @@ ul.connections(
 
 ## ul.memory.read
 
-Read the user's memory.md — free-form markdown context that persists across sessions and agents.
+Read the user's memory.md — free-form markdown context that persists across sessions and agents. Use `owner_email` to read another user's shared memory.
 
 ```
-ul.memory.read()
+ul.memory.read(
+  owner_email?: string
+)
 → { memory: string | null, exists: boolean }
 ```
 
@@ -345,24 +351,26 @@ ul.memory.remember(
 
 ## ul.memory.recall
 
-Retrieve a value from the user's cross-app memory by key. Returns the value or null.
+Retrieve a value from the user's cross-app memory by key. Returns the value or null. Use `owner_email` to recall from another user's shared memory keys.
 
 ```
 ul.memory.recall(
   key: string,
-  scope?: string
+  scope?: string,
+  owner_email?: string
 )
 ```
 
 ## ul.memory.query
 
-Query the user's KV memory. Filter by scope and/or key prefix. Returns `{ key, value }` pairs ordered by most recently updated.
+Query the user's KV memory. Filter by scope and/or key prefix. Returns `{ key, value }` pairs ordered by most recently updated. Use `owner_email` to query another user's shared memory keys.
 
 ```
 ul.memory.query(
   scope?: string,
   prefix?: string,
-  limit?: number
+  limit?: number,
+  owner_email?: string
 )
 → { entries: [{ key, value }], total: number, scope: string }
 ```
@@ -380,32 +388,59 @@ ul.memory.forget(
 
 ---
 
-## Pages (Markdown Publishing)
+## Markdown — Publishing, Listing & Sharing
 
-Agents can publish markdown as live, public web pages. Useful for reports, summaries, documentation, or any content the user should be able to view in a browser or share via link.
+Agents can publish markdown as web pages, manage sharing across all content types (pages, memory.md, library.md, KV keys), and list published pages. All content operations live under the `ul.markdown.*` namespace.
 
-## ul.markdown
+## ul.markdown.publish
 
-Publish markdown content as a live web page. Returns a shareable URL. Same slug overwrites the previous version. Pages are public — no auth required to view.
+Publish markdown content as a live web page. Returns a shareable URL. Same slug overwrites the previous version. Set visibility to control access. Set `published: true` + `visibility: "public"` to make the page discoverable in appstore search.
 
 ```
-ul.markdown(
+ul.markdown.publish(
   content: string,
   slug: string,
-  title?: string
+  title?: string,
+  visibility?: "public" | "private" | "shared",  // default: "public"
+  shared_with?: string[],      // emails for "shared" visibility
+  tags?: string[],             // optional tags for filtering/discovery
+  published?: boolean          // if true + public, discoverable in appstore search
 )
-→ { success, slug, title, url, size, updated_at }
+→ { success, slug, title, url, size, visibility, published, tags, shared_with?, updated_at }
 ```
 
-The page is served at `GET /p/{userId}/{slug}` as styled HTML.
+The page is served at `GET /p/{userId}/{slug}` as styled HTML. Shared pages include `?token=...` in URL.
 
-## ul.pages
+## ul.markdown.list
 
-List all your published markdown pages with URLs, titles, sizes, and timestamps.
+List all your published markdown pages with URLs, titles, sizes, visibility, sharing info, and timestamps.
 
 ```
-ul.pages()
-→ { pages: [{ slug, title, size, created_at, updated_at, url }], total }
+ul.markdown.list()
+→ { pages: [{ slug, title, size, created_at, updated_at, url, visibility, published, tags?, shared_with? }], total }
+```
+
+## ul.markdown.share
+
+Unified sharing for all content types — pages, memory.md, library.md, and KV memory keys. Behavior depends on which arguments are present:
+
+- **No email** → list shares (use `direction` to see incoming or outgoing)
+- **email + no revoke** → grant access
+- **email + revoke: true** → revoke access
+- **regenerate_token** → regenerate the shared link token for a page
+
+```
+ul.markdown.share(
+  type: "page" | "memory_md" | "library_md" | "kv",  // what to share
+  slug?: string,           // required for type="page" — the page slug
+  key_pattern?: string,    // required for type="kv" — exact key or pattern (e.g. "project_*")
+  email?: string,          // email to share with / revoke from. Omit to list shares.
+  access?: "read" | "readwrite",  // default: "read"
+  revoke?: boolean,        // true to revoke instead of grant
+  regenerate_token?: boolean,     // regenerate shared link token (pages only)
+  direction?: "incoming" | "outgoing"  // for listing: who shared with me vs what I shared
+)
+→ (varies by operation)
 ```
 
 ---

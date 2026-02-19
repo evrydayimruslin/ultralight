@@ -49,6 +49,9 @@ export interface RuntimeConfig {
     anonKey: string;
     serviceKey?: string;
   };
+  // Inter-app calls: base URL + auth token for calling other apps via MCP
+  baseUrl?: string;
+  authToken?: string;
 }
 
 export interface AppDataService {
@@ -1301,6 +1304,53 @@ export async function executeInSandbox(
   };
 
   try {
+    // Track timers created by user code so we can clean them up
+    const activeTimers = new Set<number>();
+    const activeIntervals = new Set<number>();
+
+    // Fetch guards
+    const MAX_CONCURRENT_FETCHES = 20;
+    const MAX_FETCH_RESPONSE_BYTES = 10 * 1024 * 1024; // 10 MB
+    const FETCH_TIMEOUT_MS = 15_000; // 15 seconds per request
+    let activeFetchCount = 0;
+
+    const openFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const parsedUrl = new URL(url);
+
+      // Only allow HTTPS (and localhost for development)
+      if (parsedUrl.protocol !== 'https:' && parsedUrl.hostname !== 'localhost') {
+        throw new Error(`Only HTTPS URLs are allowed. Got: ${parsedUrl.protocol}`);
+      }
+
+      if (activeFetchCount >= MAX_CONCURRENT_FETCHES) {
+        throw new Error(`Concurrent fetch limit exceeded (max ${MAX_CONCURRENT_FETCHES})`);
+      }
+
+      activeFetchCount++;
+      try {
+        const controller = new AbortController();
+        const fetchTimeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+        const response = await fetch(input, {
+          ...init,
+          signal: init?.signal || controller.signal,
+        });
+
+        clearTimeout(fetchTimeout);
+
+        // Wrap response to enforce size limit on body reads
+        const contentLength = response.headers.get('content-length');
+        if (contentLength && parseInt(contentLength, 10) > MAX_FETCH_RESPONSE_BYTES) {
+          throw new Error(`Response too large (${contentLength} bytes, max ${MAX_FETCH_RESPONSE_BYTES})`);
+        }
+
+        return response;
+      } finally {
+        activeFetchCount--;
+      }
+    };
+
     // Create SDK with both app data (R2) and user memory (Supabase)
     const sdk = {
       // ENVIRONMENT VARIABLES - Decrypted, read-only
@@ -1423,6 +1473,65 @@ export async function executeInSandbox(
         return response;
       },
 
+      // CALL - Inter-app function calls via MCP
+      call: async (targetAppId: string, functionName: string, callArgs?: Record<string, unknown>): Promise<unknown> => {
+        if (!config.permissions.includes('app:call')) {
+          throw new Error('app:call permission required');
+        }
+        if (!config.baseUrl || !config.authToken) {
+          throw new Error('Inter-app calls not available (missing baseUrl or authToken)');
+        }
+        if (targetAppId === config.appId && !callArgs?._allowSelfCall) {
+          capturedConsole.log(`[SDK] call("${targetAppId}", "${functionName}") — self-call`);
+        } else {
+          capturedConsole.log(`[SDK] call("${targetAppId}", "${functionName}")`);
+        }
+
+        const rpcRequest = {
+          jsonrpc: '2.0',
+          id: crypto.randomUUID(),
+          method: 'tools/call',
+          params: {
+            name: functionName,
+            arguments: callArgs || {},
+          },
+        };
+
+        const response = await openFetch(`${config.baseUrl}/mcp/${targetAppId}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${config.authToken}`,
+          },
+          body: JSON.stringify(rpcRequest),
+        });
+
+        if (!response.ok) {
+          const text = await response.text().catch(() => response.statusText);
+          throw new Error(`ultralight.call failed (${response.status}): ${text}`);
+        }
+
+        const rpcResponse = await response.json();
+
+        if (rpcResponse.error) {
+          throw new Error(`ultralight.call RPC error: ${rpcResponse.error.message || JSON.stringify(rpcResponse.error)}`);
+        }
+
+        // Unwrap MCP tool result — result.content[0].text is the JSON-encoded return value
+        const result = rpcResponse.result;
+        if (result?.content && Array.isArray(result.content)) {
+          const textBlock = result.content.find((c: { type: string }) => c.type === 'text');
+          if (textBlock?.text) {
+            try {
+              return JSON.parse(textBlock.text);
+            } catch {
+              return textBlock.text;
+            }
+          }
+        }
+        return result;
+      },
+
       // CRON - Background scheduled tasks
       cron: {
         // Register a new cron job
@@ -1487,53 +1596,6 @@ export async function executeInSandbox(
         // Common cron expression presets
         presets: CRON_PRESETS,
       },
-    };
-
-    // Track timers created by user code so we can clean them up
-    const activeTimers = new Set<number>();
-    const activeIntervals = new Set<number>();
-
-    // Fetch guards
-    const MAX_CONCURRENT_FETCHES = 20;
-    const MAX_FETCH_RESPONSE_BYTES = 10 * 1024 * 1024; // 10 MB
-    const FETCH_TIMEOUT_MS = 15_000; // 15 seconds per request
-    let activeFetchCount = 0;
-
-    const openFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-      const parsedUrl = new URL(url);
-
-      // Only allow HTTPS (and localhost for development)
-      if (parsedUrl.protocol !== 'https:' && parsedUrl.hostname !== 'localhost') {
-        throw new Error(`Only HTTPS URLs are allowed. Got: ${parsedUrl.protocol}`);
-      }
-
-      if (activeFetchCount >= MAX_CONCURRENT_FETCHES) {
-        throw new Error(`Concurrent fetch limit exceeded (max ${MAX_CONCURRENT_FETCHES})`);
-      }
-
-      activeFetchCount++;
-      try {
-        const controller = new AbortController();
-        const fetchTimeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
-        const response = await fetch(input, {
-          ...init,
-          signal: init?.signal || controller.signal,
-        });
-
-        clearTimeout(fetchTimeout);
-
-        // Wrap response to enforce size limit on body reads
-        const contentLength = response.headers.get('content-length');
-        if (contentLength && parseInt(contentLength, 10) > MAX_FETCH_RESPONSE_BYTES) {
-          throw new Error(`Response too large (${contentLength} bytes, max ${MAX_FETCH_RESPONSE_BYTES})`);
-        }
-
-        return response;
-      } finally {
-        activeFetchCount--;
-      }
     };
 
     // Create Supabase client if configured

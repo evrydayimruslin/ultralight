@@ -887,7 +887,7 @@ function escAttr(s) { return String(s).replace(/"/g, "&quot;").replace(/'/g, "&#
 // PUBLISHED MARKDOWN PAGES
 // ============================================
 
-async function handlePublishedPage(_request: Request, path: string): Promise<Response> {
+async function handlePublishedPage(request: Request, path: string): Promise<Response> {
   // Parse /p/{userId}/{slug} or /p/{userId}/{slug}.md
   const parts = path.slice(3).split('/'); // Remove '/p/'
   if (parts.length < 2) {
@@ -897,6 +897,86 @@ async function handlePublishedPage(_request: Request, path: string): Promise<Res
   let slug = parts.slice(1).join('/');
   // Strip .md extension if present in URL
   if (slug.endsWith('.md')) slug = slug.slice(0, -3);
+
+  // Check content table for visibility/access control
+  // @ts-ignore
+  const Deno = globalThis.Deno;
+  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const dbHeaders = {
+    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+  };
+
+  let contentRow: { id: string; visibility: string; access_token: string | null } | null = null;
+  try {
+    const contentRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${userId}&type=eq.page&slug=eq.${encodeURIComponent(slug)}&select=id,visibility,access_token&limit=1`,
+      { headers: dbHeaders }
+    );
+    if (contentRes.ok) {
+      const rows = await contentRes.json() as Array<typeof contentRow>;
+      contentRow = rows.length > 0 ? rows[0] : null;
+    }
+  } catch { /* if DB fails, fall through to public serving */ }
+
+  // If content row exists, enforce access control
+  if (contentRow) {
+    if (contentRow.visibility === 'private') {
+      // Only the owner can view private pages
+      try {
+        const { authenticate } = await import('./auth.ts');
+        const user = await authenticate(request);
+        if (user.id !== userId) {
+          return new Response('Not found', { status: 404 });
+        }
+      } catch {
+        return new Response('Not found', { status: 404 });
+      }
+    } else if (contentRow.visibility === 'shared') {
+      // Check token param OR authenticated user in content_shares
+      const url = new URL(request.url);
+      const tokenParam = url.searchParams.get('token');
+
+      let authorized = false;
+
+      // Check access_token in URL
+      if (tokenParam && contentRow.access_token && tokenParam === contentRow.access_token) {
+        authorized = true;
+      }
+
+      // Check if authenticated user has a share
+      if (!authorized) {
+        try {
+          const { authenticate } = await import('./auth.ts');
+          const user = await authenticate(request);
+
+          // Owner always has access
+          if (user.id === userId) {
+            authorized = true;
+          } else {
+            // Check content_shares for this user
+            const sharesRes = await fetch(
+              `${SUPABASE_URL}/rest/v1/content_shares?content_id=eq.${contentRow.id}&or=(shared_with_user_id.eq.${user.id},shared_with_email.eq.${encodeURIComponent(user.email)})&select=id&limit=1`,
+              { headers: dbHeaders }
+            );
+            if (sharesRes.ok) {
+              const shares = await sharesRes.json() as Array<{ id: string }>;
+              if (shares.length > 0) authorized = true;
+            }
+          }
+        } catch {
+          // Not authenticated and no valid token
+        }
+      }
+
+      if (!authorized) {
+        return new Response('Not found', { status: 404 });
+      }
+    }
+    // visibility === 'public' falls through to serve normally
+  }
+  // No content row = backward compat, serve as public
 
   const r2Service = createR2Service();
   let content: string;
@@ -912,10 +992,13 @@ async function handlePublishedPage(_request: Request, path: string): Promise<Res
   if (h1Match) title = h1Match[1];
 
   const html = renderMarkdownPage(title, content);
+  const cacheControl = contentRow?.visibility === 'private' || contentRow?.visibility === 'shared'
+    ? 'private, no-cache'
+    : 'public, max-age=60';
   return new Response(html, {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'public, max-age=60',
+      'Cache-Control': cacheControl,
     },
   });
 }

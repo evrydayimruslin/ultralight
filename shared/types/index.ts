@@ -413,6 +413,55 @@ export interface AppRateLimitConfig {
 }
 
 // ============================================
+// CONTENT LAYER (unified content index)
+// ============================================
+
+export type ContentType = 'page' | 'memory_md' | 'library_md';
+export type ContentVisibility = 'public' | 'private' | 'shared';
+
+/** A row from the content table — indexes pages, memory.md, library.md */
+export interface ContentRow {
+  id: string;
+  owner_id: string;
+  type: ContentType;
+  slug: string;
+  title: string | null;
+  description: string | null;
+  visibility: ContentVisibility;
+  access_token: string | null;
+  embedding_text: string | null;
+  size: number | null;
+  tags: string[] | null;
+  published: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A row from content_shares — per-email sharing for content items */
+export interface ContentShare {
+  id: string;
+  content_id: string;
+  shared_with_email: string;
+  shared_with_user_id: string | null;
+  access_level: 'read' | 'readwrite';
+  created_at: string;
+  expires_at: string | null;
+}
+
+/** A row from memory_shares — pattern-based KV key sharing */
+export interface MemoryShare {
+  id: string;
+  owner_user_id: string;
+  scope: string;
+  key_pattern: string;
+  shared_with_email: string;
+  shared_with_user_id: string | null;
+  access_level: 'read' | 'write' | 'readwrite';
+  created_at: string;
+  expires_at: string | null;
+}
+
+// ============================================
 // TIER LIMITS
 // ============================================
 // Two tiers: Free (generous silent limits) and Pro ($48/mo, unlimited publishing).

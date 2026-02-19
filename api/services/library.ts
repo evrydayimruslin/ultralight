@@ -61,6 +61,11 @@ export async function writeUserMemory(userId: string, content: string): Promise<
     content: bytes,
     contentType: 'text/markdown',
   });
+
+  // Upsert content row + generate embedding (fire-and-forget)
+  upsertContentWithEmbedding(userId, 'memory_md', '_memory', content, bytes.length).catch(err =>
+    console.error('Memory content upsert failed:', err)
+  );
 }
 
 /**
@@ -94,6 +99,92 @@ async function snapshotMemory(r2Service: ReturnType<typeof createR2Service>, use
     content: new TextEncoder().encode(existing),
     contentType: 'text/markdown',
   });
+}
+
+// ============================================
+// CONTENT TABLE UPSERT + EMBEDDING
+// ============================================
+
+/**
+ * Upsert a content row in the content table and generate an embedding.
+ * Used for memory.md and library.md indexing into the unified content layer.
+ * Fire-and-forget safe — all errors logged but not thrown.
+ */
+async function upsertContentWithEmbedding(
+  userId: string,
+  type: 'memory_md' | 'library_md',
+  slug: string,
+  content: string,
+  sizeBytes: number
+): Promise<void> {
+  // @ts-ignore
+  const Deno = globalThis.Deno;
+  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
+
+  const headers = {
+    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    'Content-Type': 'application/json',
+    'Prefer': 'resolution=merge-duplicates',
+  };
+
+  // Generate embedding text: prefix + first ~500 words
+  const prefix = type === 'memory_md'
+    ? 'User memory and preferences: '
+    : 'User app library and capabilities: ';
+  const words = content.split(/\s+/).slice(0, 500);
+  const embeddingText = prefix + words.join(' ');
+
+  // Generate embedding
+  let embedding: number[] | null = null;
+  const embeddingService = createEmbeddingService();
+  if (embeddingService) {
+    try {
+      const result = await embeddingService.embed(embeddingText);
+      embedding = result.embedding;
+    } catch (err) {
+      console.error(`Failed to generate ${type} embedding:`, err);
+    }
+  }
+
+  // Upsert content row
+  const title = type === 'memory_md' ? 'Memory' : 'Library';
+  const row: Record<string, unknown> = {
+    owner_id: userId,
+    type: type,
+    slug: slug,
+    title: title,
+    description: type === 'memory_md'
+      ? 'Personal context, preferences, and notes'
+      : 'Compiled app library and capabilities',
+    visibility: 'private',
+    size: sizeBytes,
+    embedding_text: embeddingText,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (embedding) {
+    row.embedding = JSON.stringify(embedding);
+  }
+
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/content?on_conflict=owner_id,type,slug`,
+      {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify(row),
+      }
+    );
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error(`Content upsert failed for ${type}:`, errText);
+    }
+  } catch (err) {
+    console.error(`Content upsert fetch failed for ${type}:`, err);
+  }
 }
 
 // ============================================
@@ -263,15 +354,21 @@ export async function rebuildUserLibrary(userId: string): Promise<void> {
   }
 
   const libraryMd = `# Library\n\nAll your apps and their capabilities.\n\n${libraryParts.join('\n')}`;
+  const libraryBytes = new TextEncoder().encode(libraryMd);
 
   // Store per-user in R2
   try {
     await r2Service.uploadFile(`users/${userId}/library.md`, {
       name: 'library.md',
-      content: new TextEncoder().encode(libraryMd),
+      content: libraryBytes,
       contentType: 'text/markdown',
     });
   } catch (err) {
     console.error('Failed to store user library:', err);
   }
+
+  // Upsert content row + generate embedding (fire-and-forget)
+  upsertContentWithEmbedding(userId, 'library_md', '_library', libraryMd, libraryBytes.length).catch(err =>
+    console.error('Library content upsert failed:', err)
+  );
 }

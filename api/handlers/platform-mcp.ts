@@ -93,7 +93,7 @@ Endpoint: \`POST /mcp/platform\`
 Protocol: JSON-RPC 2.0
 Namespace: \`ul.*\`
 
-29 tools for managing MCP apps, user memory, discovery, permissions, connections, rate limits, and audit logs.
+29 tools for managing MCP apps, user memory, discovery, permissions, connections, content publishing, sharing, rate limits, and audit logs.
 
 ---
 
@@ -149,8 +149,10 @@ When the user needs a capability, search in this order:
 
 Ultralight provides two complementary memory layers:
 
-- **memory.md** — Free-form markdown the user (or agents) read/write. Preferences, project context, notes. Returned automatically by \`ul.discover.library\`. Use \`ul.memory.read\` / \`ul.memory.write\` / \`ul.memory.append\`.
-- **KV store** — Structured key-value pairs for programmatic storage. Cross-app by default. Use \`ul.memory.remember\` / \`ul.memory.recall\` / \`ul.memory.query\` / \`ul.memory.forget\`.
+- **memory.md** — Free-form markdown the user (or agents) read/write. Preferences, project context, notes. Returned automatically by \`ul.discover.library\`. Use \`ul.memory.read\` / \`ul.memory.write\` / \`ul.memory.append\`. Sharable with other users via \`ul.markdown.share\`.
+- **KV store** — Structured key-value pairs for programmatic storage. Cross-app by default. Use \`ul.memory.remember\` / \`ul.memory.recall\` / \`ul.memory.query\` / \`ul.memory.forget\`. Share specific keys or patterns with \`ul.markdown.share\`.
+
+Both memory types are now indexed in the unified content table with embeddings, making them semantically searchable via \`ul.discover.library\` with \`types: ["memory_md"]\`.
 
 Per-app MCP servers also expose \`ultralight.remember()\` / \`ultralight.recall()\` in the sandbox for app code to use programmatically.
 
@@ -313,27 +315,29 @@ ul.discover.desk()
 
 ## ul.discover.library
 
-Search your apps — both owned and liked. No \`query\` returns full Library.md + memory.md (all apps with capabilities, plus user context). With \`query\`: semantic search. Includes apps saved via like.
+Search your library — apps (owned + liked), pages, memory, and library content. No \`query\` returns full Library.md + memory.md. With \`query\`: semantic search. Use \`types\` to include non-app content (pages, memory_md, library_md) in search results.
 
 \`\`\`
 ul.discover.library(
-  query?: string
+  query?: string,
+  types?: ("app" | "page" | "memory_md" | "library_md")[]  // omit for apps only (backward compat)
 )
 → { library: string, memory: string | null }  // no query
-→ { query: string, results: [...] }           // with query
+→ { query, types, results: [{ id, name, slug, description, similarity, source, type, ... }] }
 \`\`\`
 
 ## ul.discover.appstore
 
-Browse or search all published apps in the global app store. Without a query, returns featured/top apps ranked by community likes. With a query, returns semantic search results ranked by relevancy, community signal, and native capability. Excludes apps the user has disliked.
+Browse or search all published apps and content. Without a query, returns featured/top apps ranked by community likes. With a query, returns semantic search results ranked by relevancy, community signal, and native capability. Use \`types\` to include published pages.
 
 \`\`\`
 ul.discover.appstore(
-  query?: string,  // omit to browse featured/top apps
-  limit?: number
+  query?: string,
+  limit?: number,
+  types?: ("app" | "page")[]  // omit for apps only (backward compat)
 )
 → { mode: 'featured', results: [...] }  // no query
-→ { mode: 'search', query, results: [...] }  // with query
+→ { mode: 'search', query, types, results: [{ ..., type: "app" | "page" }] }
 \`\`\`
 
 ## ul.like
@@ -393,10 +397,12 @@ ul.connections(
 
 ## ul.memory.read
 
-Read the user's memory.md — free-form markdown context that persists across sessions and agents.
+Read the user's memory.md — free-form markdown context that persists across sessions and agents. Use \`owner_email\` to read another user's shared memory.
 
 \`\`\`
-ul.memory.read()
+ul.memory.read(
+  owner_email?: string  // email of another user whose shared memory to read
+)
 → { memory: string | null, exists: boolean }
 \`\`\`
 
@@ -434,24 +440,26 @@ ul.memory.remember(
 
 ## ul.memory.recall
 
-Retrieve a value from the user's cross-app memory by key. Returns the value or null.
+Retrieve a value from the user's cross-app memory by key. Returns the value or null. Use \`owner_email\` to recall from another user's shared memory keys.
 
 \`\`\`
 ul.memory.recall(
   key: string,
-  scope?: string
+  scope?: string,
+  owner_email?: string  // email of another user whose shared key to recall
 )
 \`\`\`
 
 ## ul.memory.query
 
-Query the user's KV memory. Filter by scope and/or key prefix. Returns \`{ key, value }\` pairs ordered by most recently updated.
+Query the user's KV memory. Filter by scope and/or key prefix. Returns \`{ key, value }\` pairs ordered by most recently updated. Use \`owner_email\` to query another user's shared memory keys.
 
 \`\`\`
 ul.memory.query(
   scope?: string,
   prefix?: string,
-  limit?: number
+  limit?: number,
+  owner_email?: string
 )
 → { entries: [{ key, value }], total: number, scope: string }
 \`\`\`
@@ -469,32 +477,59 @@ ul.memory.forget(
 
 ---
 
-## Pages (Markdown Publishing)
+## Markdown — Publishing, Listing & Sharing
 
-Agents can publish markdown as live, public web pages. Useful for reports, summaries, documentation, or any content the user should be able to view in a browser or share via link.
+Agents can publish markdown as web pages, manage sharing across all content types (pages, memory.md, library.md, KV keys), and list published pages. All content operations live under the \`ul.markdown.*\` namespace.
 
-## ul.markdown
+## ul.markdown.publish
 
-Publish markdown content as a live web page. Returns a shareable URL. Same slug overwrites the previous version. Pages are public — no auth required to view.
+Publish markdown content as a live web page. Returns a shareable URL. Same slug overwrites the previous version. Set visibility to control access. Set \`published: true\` + \`visibility: "public"\` to make the page discoverable in appstore search.
 
 \`\`\`
-ul.markdown(
+ul.markdown.publish(
   content: string,
   slug: string,
-  title?: string
+  title?: string,
+  visibility?: "public" | "private" | "shared",  // default: "public"
+  shared_with?: string[],      // emails for "shared" visibility
+  tags?: string[],             // optional tags for filtering/discovery
+  published?: boolean          // if true + public, discoverable in appstore search
 )
-→ { success, slug, title, url, size, updated_at }
+→ { success, slug, title, url, size, visibility, published, tags, shared_with?, updated_at }
 \`\`\`
 
-The page is served at \`GET /p/{userId}/{slug}\` as styled HTML.
+The page is served at \`GET /p/{userId}/{slug}\` as styled HTML. Shared pages include \`?token=...\` in URL.
 
-## ul.pages
+## ul.markdown.list
 
-List all your published markdown pages with URLs, titles, sizes, and timestamps.
+List all your published markdown pages with URLs, titles, sizes, visibility, sharing info, and timestamps.
 
 \`\`\`
-ul.pages()
-→ { pages: [{ slug, title, size, created_at, updated_at, url }], total }
+ul.markdown.list()
+→ { pages: [{ slug, title, size, created_at, updated_at, url, visibility, published, tags?, shared_with? }], total }
+\`\`\`
+
+## ul.markdown.share
+
+Unified sharing for all content types — pages, memory.md, library.md, and KV memory keys. Behavior depends on which arguments are present:
+
+- **No email** → list shares (use \`direction\` to see incoming or outgoing)
+- **email + no revoke** → grant access
+- **email + revoke: true** → revoke access
+- **regenerate_token** → regenerate the shared link token for a page
+
+\`\`\`
+ul.markdown.share(
+  type: "page" | "memory_md" | "library_md" | "kv",  // what to share
+  slug?: string,           // required for type="page" — the page slug
+  key_pattern?: string,    // required for type="kv" — exact key or pattern (e.g. "project_*")
+  email?: string,          // email to share with / revoke from. Omit to list shares.
+  access?: "read" | "readwrite",  // default: "read"
+  revoke?: boolean,        // true to revoke instead of grant
+  regenerate_token?: boolean,     // regenerate shared link token (pages only)
+  direction?: "incoming" | "outgoing"  // for listing: who shared with me vs what I shared
+)
+→ (varies by operation)
 \`\`\`
 
 ---
@@ -805,10 +840,11 @@ const PLATFORM_TOOLS: MCPTool[] = [
   },
   {
     name: 'ul.discover.library',
-    title: 'Search Your Apps',
+    title: 'Search Your Library',
     description:
-      'Search your apps (owned + liked). No query returns full Library.md. ' +
-      'With query: semantic search. Includes apps saved via like.',
+      'Search your apps (owned + liked), pages, and memory. No query returns full Library.md. ' +
+      'With query: semantic search across all content types. ' +
+      'Use types filter to narrow results to specific content types.',
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
@@ -817,6 +853,11 @@ const PLATFORM_TOOLS: MCPTool[] = [
           type: 'string',
           description: 'Semantic search query. Omit to list all your apps.',
         },
+        types: {
+          type: 'array',
+          items: { type: 'string', enum: ['app', 'page', 'memory_md', 'library_md'] },
+          description: 'Filter results to specific content types. Omit to search apps only (backward compat). Include "page", "memory_md", "library_md" to search non-app content.',
+        },
       },
     },
   },
@@ -824,10 +865,10 @@ const PLATFORM_TOOLS: MCPTool[] = [
     name: 'ul.discover.appstore',
     title: 'Browse & Search App Store',
     description:
-      'Browse or search all published apps in the global app store. ' +
+      'Browse or search all published apps and content in the global app store. ' +
       'With a query: semantic search ranked by relevancy, community signal, and native capability. ' +
       'Without a query: returns featured/top apps ranked by community likes. ' +
-      'Excludes apps you have disliked.',
+      'Excludes apps you have disliked. Use types filter to include published pages.',
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
@@ -837,6 +878,11 @@ const PLATFORM_TOOLS: MCPTool[] = [
           description: 'Natural language search query (e.g. "weather API", "send emails"). Omit to browse featured/top apps.',
         },
         limit: { type: 'number', description: 'Max results (default: 10)' },
+        types: {
+          type: 'array',
+          items: { type: 'string', enum: ['app', 'page'] },
+          description: 'Filter results to specific content types. Omit for apps only (backward compat). Include "page" to also search published pages.',
+        },
       },
     },
   },
@@ -957,11 +1003,17 @@ const PLATFORM_TOOLS: MCPTool[] = [
     title: 'Read Memory',
     description:
       'Read the user\'s memory.md — free-form markdown context that persists across sessions and agents. ' +
-      'Contains preferences, project context, notes, and anything the user wants agents to know.',
+      'Contains preferences, project context, notes, and anything the user wants agents to know. ' +
+      'Use owner_email to read another user\'s shared memory.',
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
-      properties: {},
+      properties: {
+        owner_email: {
+          type: 'string',
+          description: 'Email of another user whose shared memory to read. Omit to read your own.',
+        },
+      },
     },
   },
   {
@@ -1032,7 +1084,8 @@ const PLATFORM_TOOLS: MCPTool[] = [
     title: 'Recall (KV)',
     description:
       'Retrieve a value from the user\'s cross-app memory by key. ' +
-      'Returns null if the key does not exist.',
+      'Returns null if the key does not exist. ' +
+      'Use owner_email to recall from another user\'s shared memory keys.',
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
@@ -1045,6 +1098,10 @@ const PLATFORM_TOOLS: MCPTool[] = [
           type: 'string',
           description: 'Memory scope. Defaults to \'user\'.',
         },
+        owner_email: {
+          type: 'string',
+          description: 'Email of another user whose shared memory key to recall. Omit to recall your own.',
+        },
       },
       required: ['key'],
     },
@@ -1054,7 +1111,8 @@ const PLATFORM_TOOLS: MCPTool[] = [
     title: 'Query Memory (KV)',
     description:
       'Query the user\'s memory key-value store. Filter by scope and/or key prefix. ' +
-      'Returns an array of { key, value } pairs ordered by most recently updated.',
+      'Returns an array of { key, value } pairs ordered by most recently updated. ' +
+      'Use owner_email to query another user\'s shared memory keys.',
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
@@ -1070,6 +1128,10 @@ const PLATFORM_TOOLS: MCPTool[] = [
         limit: {
           type: 'number',
           description: 'Max results. Default 100.',
+        },
+        owner_email: {
+          type: 'string',
+          description: 'Email of another user whose shared memory keys to query. Omit to query your own.',
         },
       },
     },
@@ -1096,13 +1158,15 @@ const PLATFORM_TOOLS: MCPTool[] = [
     },
   },
 
-  // ── Pages (Markdown Publishing) ────────────────
+  // ── Markdown (Publishing, Listing, Sharing) ────
   {
-    name: 'ul.markdown',
+    name: 'ul.markdown.publish',
     title: 'Publish Markdown',
     description:
-      'Publish markdown content as a live, public web page. Returns a shareable URL. ' +
-      'Same slug overwrites the previous version. No auth required to view the page.',
+      'Publish markdown content as a live web page. Returns a shareable URL. ' +
+      'Same slug overwrites the previous version. ' +
+      'Set visibility to control access: public (anyone), private (owner only), or shared (specific emails + token URL). ' +
+      'Set published=true on public pages to make them discoverable in the app store.',
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
@@ -1119,19 +1183,89 @@ const PLATFORM_TOOLS: MCPTool[] = [
           type: 'string',
           description: 'Optional page title. If omitted, extracted from the first H1 in content.',
         },
+        visibility: {
+          type: 'string',
+          enum: ['public', 'private', 'shared'],
+          description: 'Page visibility. Default: public. "shared" returns a token URL for link-based access.',
+        },
+        shared_with: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Emails that can access a "shared" page. Ignored for public/private.',
+        },
+        tags: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional tags for categorization and discovery.',
+        },
+        published: {
+          type: 'boolean',
+          description: 'If true and visibility is public, the page is discoverable in appstore search results via embedding.',
+        },
       },
       required: ['content', 'slug'],
     },
   },
   {
-    name: 'ul.pages',
+    name: 'ul.markdown.list',
     title: 'List Pages',
     description:
-      'List all your published markdown pages with their URLs, titles, sizes, and last updated timestamps.',
+      'List all your published markdown pages with their URLs, titles, sizes, visibility, sharing info, and timestamps.',
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {},
+    },
+  },
+  {
+    name: 'ul.markdown.share',
+    title: 'Manage Sharing',
+    description:
+      'Unified sharing tool for all content: pages, memory.md, library.md, and KV memory keys. ' +
+      'Behavior depends on arguments:\n' +
+      '• email present → grant access (or revoke if revoke=true)\n' +
+      '• no email → list shares (direction: "incoming" or "outgoing")\n' +
+      'For pages: use type="page" + slug. For memory.md: type="memory_md". For KV keys: type="kv" + key_pattern.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: {
+          type: 'string',
+          enum: ['page', 'memory_md', 'library_md', 'kv'],
+          description: 'Content type to share. Default: "page".',
+        },
+        slug: {
+          type: 'string',
+          description: 'Page slug. Required when type="page".',
+        },
+        key_pattern: {
+          type: 'string',
+          description: 'KV key or pattern (e.g. "project_*"). Required when type="kv".',
+        },
+        email: {
+          type: 'string',
+          description: 'Email to share with (or revoke from). Omit to list shares instead.',
+        },
+        access: {
+          type: 'string',
+          enum: ['read', 'readwrite'],
+          description: 'Access level when granting. Default: "read".',
+        },
+        revoke: {
+          type: 'boolean',
+          description: 'Set true to revoke access instead of granting.',
+        },
+        regenerate_token: {
+          type: 'boolean',
+          description: 'Regenerate the shared link token (invalidates old URLs). Only for pages.',
+        },
+        direction: {
+          type: 'string',
+          enum: ['incoming', 'outgoing'],
+          description: 'When listing shares (no email): "incoming" (shared with me, default) or "outgoing" (I shared with others).',
+        },
+      },
     },
   },
 ];
@@ -1486,7 +1620,7 @@ async function handleToolsCall(
 
       // Memory
       case 'ul.memory.read':
-        result = await executeMemoryRead(userId);
+        result = await executeMemoryRead(userId, toolArgs);
         break;
       case 'ul.memory.write':
         result = await executeMemoryWrite(userId, toolArgs);
@@ -1506,13 +1640,15 @@ async function handleToolsCall(
       case 'ul.memory.forget':
         result = await executeMemoryForget(userId, toolArgs);
         break;
-
-      // Pages (Markdown Publishing)
-      case 'ul.markdown':
+      // Markdown (Publishing, Listing, Sharing)
+      case 'ul.markdown.publish':
         result = await executeMarkdown(userId, toolArgs);
         break;
-      case 'ul.pages':
+      case 'ul.markdown.list':
         result = await executePages(userId);
+        break;
+      case 'ul.markdown.share':
+        result = await executeMarkdownShare(userId, toolArgs);
         break;
 
       default:
@@ -3155,11 +3291,17 @@ async function executeDiscoverLibrary(
   args: Record<string, unknown>
 ): Promise<unknown> {
   const query = args.query as string | undefined;
+  const types = args.types as string[] | undefined;
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   const headers = {
     'apikey': SUPABASE_SERVICE_ROLE_KEY,
     'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
   };
+
+  // Determine which content types to search
+  const searchApps = !types || types.includes('app');
+  const contentTypes = types?.filter(t => t !== 'app') || []; // ['page', 'memory_md', 'library_md']
+  const searchContent = contentTypes.length > 0;
 
   // Fetch saved app IDs from user_app_library (liked apps)
   let savedAppIds: string[] = [];
@@ -3251,35 +3393,108 @@ async function executeDiscoverLibrary(
       results: matches.map(a => ({
         id: a.id, name: a.name, slug: a.slug, description: a.description,
         source: a.owner_id === userId ? 'owned' : 'saved',
+        type: 'app' as const,
         mcp_endpoint: `/mcp/${a.id}`,
       })),
     };
   }
 
-  // Generate query embedding and search (includes own private apps)
+  // Generate query embedding
   const queryResult = await embeddingService.embed(query);
-  const appsService = createAppsService();
-  const results = await appsService.searchByEmbedding(
-    queryResult.embedding,
-    userId,
-    true, // include private (own apps)
-    20,
-    0.3
-  );
 
-  // Filter to own apps + saved apps
-  const savedAppIdSet = new Set(savedAppIds);
-  const libraryResults = results.filter(r =>
-    r.owner_id === userId || savedAppIdSet.has(r.id)
-  );
+  // Search apps (existing behavior)
+  let appResults: Array<{
+    id: string; name: string; slug: string; description: string | null;
+    similarity: number; source: string; type: string; mcp_endpoint: string;
+  }> = [];
+
+  if (searchApps) {
+    const appsService = createAppsService();
+    const results = await appsService.searchByEmbedding(
+      queryResult.embedding,
+      userId,
+      true, // include private (own apps)
+      20,
+      0.3
+    );
+
+    // Filter to own apps + saved apps
+    const savedAppIdSet = new Set(savedAppIds);
+    const libraryResults = results.filter(r =>
+      r.owner_id === userId || savedAppIdSet.has(r.id)
+    );
+
+    appResults = libraryResults.map(r => ({
+      id: r.id,
+      name: r.name,
+      slug: r.slug,
+      description: r.description,
+      similarity: r.similarity,
+      source: r.owner_id === userId ? 'owned' : 'saved',
+      type: 'app',
+      mcp_endpoint: `/mcp/${r.id}`,
+    }));
+  }
+
+  // Search content (pages, memory_md, library_md) via search_content RPC
+  let contentResults: Array<{
+    id: string; name: string; slug: string; description: string | null;
+    similarity: number; source: string; type: string; tags?: string[];
+  }> = [];
+
+  if (searchContent) {
+    try {
+      const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/search_content`, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          p_query_embedding: JSON.stringify(queryResult.embedding),
+          p_user_id: userId,
+          p_types: contentTypes,
+          p_visibility: null,
+          p_limit: 20,
+        }),
+      });
+
+      if (rpcRes.ok) {
+        const rows = await rpcRes.json() as Array<{
+          id: string; type: string; slug: string; title: string | null;
+          description: string | null; owner_id: string; visibility: string;
+          similarity: number; tags: string[] | null; published: boolean;
+          updated_at: string;
+        }>;
+
+        contentResults = rows.map(r => ({
+          id: r.id,
+          name: r.title || r.slug,
+          slug: r.slug,
+          description: r.description,
+          similarity: r.similarity,
+          source: r.owner_id === userId ? 'owned' : 'shared',
+          type: r.type,
+          tags: r.tags || undefined,
+        }));
+      }
+    } catch { /* best effort — content search failure shouldn't break app search */ }
+  }
+
+  // Merge and sort by similarity
+  const allResults = [...appResults, ...contentResults];
+  allResults.sort((a, b) => b.similarity - a.similarity);
 
   return {
     query,
-    results: libraryResults.map(r => ({
-      id: r.id, name: r.name, slug: r.slug, description: r.description,
+    types: types || ['app'],
+    results: allResults.slice(0, 20).map(r => ({
+      id: r.id,
+      name: r.name,
+      slug: r.slug,
+      description: r.description,
       similarity: r.similarity,
-      source: r.owner_id === userId ? 'owned' : 'saved',
-      mcp_endpoint: `/mcp/${r.id}`,
+      source: r.source,
+      type: r.type,
+      ...(r.type === 'app' ? { mcp_endpoint: (r as typeof appResults[0]).mcp_endpoint } : {}),
+      ...('tags' in r && r.tags ? { tags: r.tags } : {}),
     })),
   };
 }
@@ -3292,6 +3507,11 @@ async function executeDiscoverAppstore(
 ): Promise<unknown> {
   const query = (args.query as string) || '';
   const limit = (args.limit as number) || 10;
+  const types = args.types as string[] | undefined;
+
+  // Determine what to search
+  const searchApps = !types || types.includes('app');
+  const searchPages = types?.includes('page') || false;
 
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   const headers = {
@@ -3364,6 +3584,7 @@ async function executeDiscoverAppstore(
         name: a.name,
         slug: a.slug,
         description: a.description,
+        type: 'app' as const,
         is_owner: a.owner_id === userId,
         mcp_endpoint: `/mcp/${a.id}`,
         likes: a.likes ?? 0,
@@ -3390,127 +3611,180 @@ async function executeDiscoverAppstore(
   }
 
   const queryResult = await embeddingService.embed(query);
-  const appsService = createAppsService();
-  const results = await appsService.searchByEmbedding(
-    queryResult.embedding,
-    userId,
-    false, // public only
-    overFetchLimit,
-    0.4
-  );
 
-  const filteredResults = results.filter(r => !blockedAppIds.has(r.id));
+  // ── APP SEARCH ──
+  type ScoredResult = {
+    id: string; name: string; slug: string; description: string | null;
+    owner_id: string; similarity: number; likes: number; dislikes: number;
+    finalScore: number; type: string;
+    requiredSecrets?: Array<{ key: string; description: string | null; required: boolean }>;
+    connected?: boolean; fullyConnected?: boolean; tags?: string[];
+  };
 
-  // Fetch env_schema and user connection status for re-ranking
-  const appIds = filteredResults.map(r => r.id);
+  let scored: ScoredResult[] = [];
 
-  let envSchemas = new Map<string, Record<string, EnvSchemaEntry>>();
-  if (appIds.length > 0) {
-    try {
-      const schemaRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,env_schema`,
-        { headers }
-      );
-      if (schemaRes.ok) {
-        const rows = await schemaRes.json() as Array<{ id: string; env_schema: Record<string, EnvSchemaEntry> | null }>;
-        for (const row of rows) {
-          if (row.env_schema) envSchemas.set(row.id, row.env_schema);
+  if (searchApps) {
+    const appsService = createAppsService();
+    const results = await appsService.searchByEmbedding(
+      queryResult.embedding,
+      userId,
+      false, // public only
+      overFetchLimit,
+      0.4
+    );
+
+    const filteredResults = results.filter(r => !blockedAppIds.has(r.id));
+
+    // Fetch env_schema and user connection status for re-ranking
+    const appIds = filteredResults.map(r => r.id);
+
+    let envSchemas = new Map<string, Record<string, EnvSchemaEntry>>();
+    if (appIds.length > 0) {
+      try {
+        const schemaRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,env_schema`,
+          { headers }
+        );
+        if (schemaRes.ok) {
+          const rows = await schemaRes.json() as Array<{ id: string; env_schema: Record<string, EnvSchemaEntry> | null }>;
+          for (const row of rows) {
+            if (row.env_schema) envSchemas.set(row.id, row.env_schema);
+          }
         }
-      }
-    } catch { /* best effort */ }
-  }
-
-  let userConnections = new Map<string, string[]>();
-  if (appIds.length > 0) {
-    try {
-      const secretsRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/user_app_secrets?user_id=eq.${userId}&app_id=in.(${appIds.join(',')})&select=app_id,key`,
-        { headers }
-      );
-      if (secretsRes.ok) {
-        const rows = await secretsRes.json() as Array<{ app_id: string; key: string }>;
-        for (const row of rows) {
-          if (!userConnections.has(row.app_id)) userConnections.set(row.app_id, []);
-          userConnections.get(row.app_id)!.push(row.key);
-        }
-      }
-    } catch { /* best effort */ }
-  }
-
-  // ── COMPOSITE RE-RANKING ──
-  // final_score = (similarity * 0.7) + (native_boost * 0.15) + (like_signal * 0.15)
-
-  const scored = filteredResults.map(r => {
-    const rr = r as App & { similarity: number; weighted_likes?: number; weighted_dislikes?: number };
-
-    // native_boost: reward apps that need no user configuration
-    const schema = envSchemas.get(rr.id) || {};
-    const perUserEntries = Object.entries(schema).filter(([, v]) => v.scope === 'per_user');
-    const requiredPerUser = perUserEntries.filter(([, v]) => v.required);
-    const connectedKeys = userConnections.get(rr.id) || [];
-
-    let nativeBoost: number;
-    if (perUserEntries.length === 0) {
-      nativeBoost = 1.0; // fully native — no per-user env vars
-    } else if (requiredPerUser.length === 0) {
-      nativeBoost = 0.3; // optional per-user keys only
-    } else {
-      const requiredKeys = requiredPerUser.map(([key]) => key);
-      const missingRequired = requiredKeys.filter(k => !connectedKeys.includes(k));
-      nativeBoost = missingRequired.length === 0 ? 0.8 : 0.0;
+      } catch { /* best effort */ }
     }
 
-    // like_signal: paid-tier likes only (free likes have zero weight)
-    const wLikes = rr.weighted_likes ?? 0;
-    const wDislikes = rr.weighted_dislikes ?? 0;
-    const likeSignal = wLikes / (wLikes + wDislikes + 1);
+    let userConnections = new Map<string, string[]>();
+    if (appIds.length > 0) {
+      try {
+        const secretsRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/user_app_secrets?user_id=eq.${userId}&app_id=in.(${appIds.join(',')})&select=app_id,key`,
+          { headers }
+        );
+        if (secretsRes.ok) {
+          const rows = await secretsRes.json() as Array<{ app_id: string; key: string }>;
+          for (const row of rows) {
+            if (!userConnections.has(row.app_id)) userConnections.set(row.app_id, []);
+            userConnections.get(row.app_id)!.push(row.key);
+          }
+        }
+      } catch { /* best effort */ }
+    }
 
-    // composite score
-    const finalScore = (rr.similarity * 0.7) + (nativeBoost * 0.15) + (likeSignal * 0.15);
+    // ── COMPOSITE RE-RANKING ──
+    // final_score = (similarity * 0.7) + (native_boost * 0.15) + (like_signal * 0.15)
+    scored = filteredResults.map(r => {
+      const rr = r as App & { similarity: number; weighted_likes?: number; weighted_dislikes?: number };
 
-    // connection info (computed here so we don't recompute in formatting)
-    const requiredSecrets = Object.entries(schema)
-      .filter(([, v]) => v.scope === 'per_user')
-      .map(([key, v]) => ({ key, description: v.description || null, required: v.required ?? false }));
-    const requiredKeys = requiredSecrets.filter(s => s.required).map(s => s.key);
-    const missingRequired = requiredKeys.filter(k => !connectedKeys.includes(k));
+      const schema = envSchemas.get(rr.id) || {};
+      const perUserEntries = Object.entries(schema).filter(([, v]) => v.scope === 'per_user');
+      const requiredPerUser = perUserEntries.filter(([, v]) => v.required);
+      const connectedKeys = userConnections.get(rr.id) || [];
 
-    return {
-      id: rr.id,
-      name: rr.name,
-      slug: rr.slug,
-      description: rr.description,
-      owner_id: rr.owner_id,
-      similarity: rr.similarity,
-      likes: rr.likes ?? 0,
-      dislikes: rr.dislikes ?? 0,
-      finalScore,
-      requiredSecrets,
-      connected: connectedKeys.length > 0,
-      fullyConnected: requiredSecrets.length === 0 || missingRequired.length === 0,
-    };
-  });
+      let nativeBoost: number;
+      if (perUserEntries.length === 0) {
+        nativeBoost = 1.0;
+      } else if (requiredPerUser.length === 0) {
+        nativeBoost = 0.3;
+      } else {
+        const requiredKeys = requiredPerUser.map(([key]) => key);
+        const missingRequired = requiredKeys.filter(k => !connectedKeys.includes(k));
+        nativeBoost = missingRequired.length === 0 ? 0.8 : 0.0;
+      }
+
+      const wLikes = rr.weighted_likes ?? 0;
+      const wDislikes = rr.weighted_dislikes ?? 0;
+      const likeSignal = wLikes / (wLikes + wDislikes + 1);
+      const finalScore = (rr.similarity * 0.7) + (nativeBoost * 0.15) + (likeSignal * 0.15);
+
+      const requiredSecrets = Object.entries(schema)
+        .filter(([, v]) => v.scope === 'per_user')
+        .map(([key, v]) => ({ key, description: v.description || null, required: v.required ?? false }));
+      const requiredKeys = requiredSecrets.filter(s => s.required).map(s => s.key);
+      const missingRequired = requiredKeys.filter(k => !connectedKeys.includes(k));
+
+      return {
+        id: rr.id,
+        name: rr.name,
+        slug: rr.slug,
+        description: rr.description,
+        owner_id: rr.owner_id,
+        similarity: rr.similarity,
+        likes: rr.likes ?? 0,
+        dislikes: rr.dislikes ?? 0,
+        finalScore: finalScore,
+        type: 'app',
+        requiredSecrets: requiredSecrets,
+        connected: connectedKeys.length > 0,
+        fullyConnected: requiredSecrets.length === 0 || missingRequired.length === 0,
+      };
+    });
+  }
+
+  // ── PUBLISHED PAGE SEARCH ──
+  if (searchPages) {
+    try {
+      const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/search_content`, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          p_query_embedding: JSON.stringify(queryResult.embedding),
+          p_user_id: userId,
+          p_types: ['page'],
+          p_visibility: 'public',
+          p_limit: overFetchLimit,
+        }),
+      });
+
+      if (rpcRes.ok) {
+        const pageRows = await rpcRes.json() as Array<{
+          id: string; type: string; slug: string; title: string | null;
+          description: string | null; owner_id: string; visibility: string;
+          similarity: number; tags: string[] | null; published: boolean;
+          updated_at: string;
+        }>;
+
+        // Only include published pages
+        const publishedPages = pageRows.filter(r => r.published);
+
+        // Score pages: similarity * 0.7 + type_boost(0.5) * 0.15 + 0 (no likes yet) * 0.15
+        const pageScored: ScoredResult[] = publishedPages.map(r => ({
+          id: r.id,
+          name: r.title || r.slug,
+          slug: r.slug,
+          description: r.description,
+          owner_id: r.owner_id,
+          similarity: r.similarity,
+          likes: 0,
+          dislikes: 0,
+          finalScore: (r.similarity * 0.7) + (0.5 * 0.15) + (0 * 0.15),
+          type: 'page',
+          tags: r.tags || undefined,
+        }));
+
+        scored.push(...pageScored);
+      }
+    } catch { /* best effort — page search failure shouldn't break app search */ }
+  }
 
   // Sort by final_score DESC
   scored.sort((a, b) => b.finalScore - a.finalScore);
 
   // ── LUCK SHUFFLE (top 5) ──
-  // Among the top 5 results, add a random bonus proportional to the gap from #1.
-  // Close competitors swap frequently; distant results rarely overtake.
   if (scored.length >= 2) {
     const shuffleCount = Math.min(5, scored.length);
     const topSlice = scored.slice(0, shuffleCount);
     const topScore = topSlice[0].finalScore;
 
-    const shuffled = topSlice.map(app => {
-      const gap = topScore - app.finalScore;
+    const shuffled = topSlice.map(item => {
+      const gap = topScore - item.finalScore;
       const luckBonus = Math.random() * gap * 0.5;
-      return { app, shuffledScore: app.finalScore + luckBonus };
+      return { item: item, shuffledScore: item.finalScore + luckBonus };
     });
     shuffled.sort((a, b) => b.shuffledScore - a.shuffledScore);
 
     for (let i = 0; i < shuffleCount; i++) {
-      scored[i] = shuffled[i].app;
+      scored[i] = shuffled[i].item;
     }
   }
 
@@ -3521,17 +3795,19 @@ async function executeDiscoverAppstore(
   const queryId = crypto.randomUUID();
   try {
     const resultsForLog = finalResults.map((r, i) => ({
-      app_id: r.id,
+      app_id: r.type === 'app' ? r.id : null,
+      content_id: r.type !== 'app' ? r.id : null,
       position: i + 1,
       final_score: Math.round(r.finalScore * 10000) / 10000,
       similarity: Math.round(r.similarity * 10000) / 10000,
+      type: r.type,
     }));
     fetch(`${SUPABASE_URL}/rest/v1/appstore_queries`, {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         id: queryId,
-        query,
+        query: query,
         top_similarity: finalResults.length > 0 ? Math.round(finalResults[0].similarity * 10000) / 10000 : null,
         top_final_score: finalResults.length > 0 ? Math.round(finalResults[0].finalScore * 10000) / 10000 : null,
         result_count: finalResults.length,
@@ -3543,8 +3819,9 @@ async function executeDiscoverAppstore(
   // ── FORMAT RESPONSE ──
   return {
     mode: 'search',
-    query,
+    query: query,
     query_id: queryId,
+    types: types || ['app'],
     results: finalResults.map(r => ({
       id: r.id,
       name: r.name,
@@ -3552,13 +3829,15 @@ async function executeDiscoverAppstore(
       description: r.description,
       similarity: r.similarity,
       final_score: Math.round(r.finalScore * 10000) / 10000,
+      type: r.type,
       is_owner: r.owner_id === userId,
-      mcp_endpoint: `/mcp/${r.id}`,
+      ...(r.type === 'app' ? { mcp_endpoint: `/mcp/${r.id}` } : {}),
       likes: r.likes,
       dislikes: r.dislikes,
-      required_secrets: r.requiredSecrets.length > 0 ? r.requiredSecrets : undefined,
-      connected: r.connected,
-      fully_connected: r.fullyConnected,
+      ...(r.requiredSecrets && r.requiredSecrets.length > 0 ? { required_secrets: r.requiredSecrets } : {}),
+      ...(r.connected !== undefined ? { connected: r.connected } : {}),
+      ...(r.fullyConnected !== undefined ? { fully_connected: r.fullyConnected } : {}),
+      ...(r.tags ? { tags: r.tags } : {}),
     })),
     total: finalResults.length,
   };
@@ -3635,12 +3914,77 @@ export function handlePlatformMcpDiscovery(): Response {
 // MEMORY HANDLERS
 // ============================================
 
-async function executeMemoryRead(userId: string): Promise<unknown> {
+async function executeMemoryRead(userId: string, args: Record<string, unknown>): Promise<unknown> {
+  const ownerEmail = args.owner_email as string | undefined;
+
+  if (ownerEmail) {
+    // Cross-user access: check if owner shared their memory.md with this user
+    const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+    const headers = {
+      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    };
+
+    // Resolve owner email to user ID
+    const ownerRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/users?email=eq.${encodeURIComponent(ownerEmail)}&select=id&limit=1`,
+      { headers }
+    );
+    if (!ownerRes.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to resolve user');
+    const owners = await ownerRes.json() as Array<{ id: string }>;
+    if (owners.length === 0) throw new ToolError(INVALID_PARAMS, 'User not found');
+    const ownerId = owners[0].id;
+
+    // Check content_shares for memory_md content shared with this user
+    const callerEmail = await getUserEmail(userId);
+    const contentRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${ownerId}&type=eq.memory_md&slug=eq._memory&select=id`,
+      { headers }
+    );
+    if (!contentRes.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to check memory sharing');
+    const contentRows = await contentRes.json() as Array<{ id: string }>;
+    if (contentRows.length === 0) throw new ToolError(INVALID_PARAMS, 'Memory not shared with you');
+
+    const shareRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/content_shares?content_id=eq.${contentRows[0].id}&or=(shared_with_user_id.eq.${userId},shared_with_email.eq.${encodeURIComponent(callerEmail)})&select=id&limit=1`,
+      { headers }
+    );
+    if (!shareRes.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to check sharing permissions');
+    const shares = await shareRes.json() as Array<{ id: string }>;
+    if (shares.length === 0) throw new ToolError(INVALID_PARAMS, 'Memory not shared with you');
+
+    // Read the owner's memory
+    const content = await readUserMemory(ownerId);
+    return {
+      memory: content || null,
+      exists: content !== null,
+      owner_email: ownerEmail,
+    };
+  }
+
   const content = await readUserMemory(userId);
   return {
     memory: content || null,
     exists: content !== null,
   };
+}
+
+/** Helper to get a user's email from their ID */
+async function getUserEmail(userId: string): Promise<string> {
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=email&limit=1`,
+    {
+      headers: {
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+    }
+  );
+  if (!res.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to get user email');
+  const rows = await res.json() as Array<{ email: string }>;
+  if (rows.length === 0) throw new ToolError(INTERNAL_ERROR, 'User not found');
+  return rows[0].email;
 }
 
 async function executeMemoryWrite(
@@ -3693,12 +4037,58 @@ async function executeMemoryRecall(
 ): Promise<unknown> {
   const key = args.key as string;
   const scope = (args.scope as string) || 'user';
+  const ownerEmail = args.owner_email as string | undefined;
 
   if (!key) throw new ToolError(INVALID_PARAMS, 'key is required');
+
+  if (ownerEmail) {
+    // Cross-user KV recall: check memory_shares for matching key pattern
+    const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+    const headers = {
+      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    };
+
+    // Resolve owner email to ID
+    const ownerRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/users?email=eq.${encodeURIComponent(ownerEmail)}&select=id&limit=1`,
+      { headers }
+    );
+    if (!ownerRes.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to resolve user');
+    const owners = await ownerRes.json() as Array<{ id: string }>;
+    if (owners.length === 0) throw new ToolError(INVALID_PARAMS, 'User not found');
+    const ownerId = owners[0].id;
+
+    // Check memory_shares for a matching pattern
+    const callerEmail = await getUserEmail(userId);
+    const sharesRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/memory_shares?owner_user_id=eq.${ownerId}&scope=eq.${encodeURIComponent(scope)}&or=(shared_with_user_id.eq.${userId},shared_with_email.eq.${encodeURIComponent(callerEmail)})&select=key_pattern,access_level`,
+      { headers }
+    );
+    if (!sharesRes.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to check sharing permissions');
+    const shares = await sharesRes.json() as Array<{ key_pattern: string; access_level: string }>;
+
+    // Check if any pattern matches the requested key
+    const hasAccess = shares.some(s => matchKeyPattern(s.key_pattern, key));
+    if (!hasAccess) throw new ToolError(INVALID_PARAMS, 'Key not shared with you');
+
+    const memoryService = createMemoryService();
+    const value = await memoryService.recall(ownerId, scope, key);
+    return value;
+  }
 
   const memoryService = createMemoryService();
   const value = await memoryService.recall(userId, scope, key);
   return value;
+}
+
+/** Match a key against a pattern (exact match or prefix with wildcard *) */
+function matchKeyPattern(pattern: string, key: string): boolean {
+  if (pattern === key) return true;
+  if (pattern.endsWith('*')) {
+    return key.startsWith(pattern.slice(0, -1));
+  }
+  return false;
 }
 
 async function executeMemoryQuery(
@@ -3708,6 +4098,48 @@ async function executeMemoryQuery(
   const scope = (args.scope as string) || 'user';
   const prefix = args.prefix as string | undefined;
   const limit = args.limit as number | undefined;
+  const ownerEmail = args.owner_email as string | undefined;
+
+  if (ownerEmail) {
+    // Cross-user KV query: check memory_shares, filter results to shared patterns
+    const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+    const headers = {
+      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    };
+
+    const ownerRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/users?email=eq.${encodeURIComponent(ownerEmail)}&select=id&limit=1`,
+      { headers }
+    );
+    if (!ownerRes.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to resolve user');
+    const owners = await ownerRes.json() as Array<{ id: string }>;
+    if (owners.length === 0) throw new ToolError(INVALID_PARAMS, 'User not found');
+    const ownerId = owners[0].id;
+
+    const callerEmail = await getUserEmail(userId);
+    const sharesRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/memory_shares?owner_user_id=eq.${ownerId}&scope=eq.${encodeURIComponent(scope)}&or=(shared_with_user_id.eq.${userId},shared_with_email.eq.${encodeURIComponent(callerEmail)})&select=key_pattern,access_level`,
+      { headers }
+    );
+    if (!sharesRes.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to check sharing permissions');
+    const shares = await sharesRes.json() as Array<{ key_pattern: string; access_level: string }>;
+    if (shares.length === 0) throw new ToolError(INVALID_PARAMS, 'No memory shared with you from this user');
+
+    // Query the owner's memory, then filter to only shared keys
+    const memoryService = createMemoryService();
+    const results = await memoryService.query(ownerId, {
+      scope: scope,
+      keyPrefix: prefix,
+      limit: limit ? limit * 2 : 200, // over-fetch to filter
+    });
+
+    const filteredResults = results.filter((entry: { key: string }) =>
+      shares.some(s => matchKeyPattern(s.key_pattern, entry.key))
+    ).slice(0, limit || 100);
+
+    return { entries: filteredResults, total: filteredResults.length, scope: scope, owner_email: ownerEmail };
+  }
 
   const memoryService = createMemoryService();
   const results = await memoryService.query(userId, {
@@ -3733,6 +4165,357 @@ async function executeMemoryForget(
 }
 
 // ============================================
+// UNIFIED SHARING HANDLER — ul.markdown.share
+// ============================================
+// Handles grant, revoke, and listing for all content types:
+// pages, memory_md, library_md (via content_shares), and kv (via memory_shares).
+
+async function executeMarkdownShare(
+  userId: string,
+  args: Record<string, unknown>
+): Promise<unknown> {
+  const contentType = (args.type as string) || 'page';
+  const slug = args.slug as string | undefined;
+  const keyPattern = args.key_pattern as string | undefined;
+  const email = args.email as string | undefined;
+  const access = (args.access as string) || 'read';
+  const revoke = args.revoke as boolean | undefined;
+  const regenerateToken = args.regenerate_token as boolean | undefined;
+  const direction = (args.direction as string) || 'incoming';
+
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+  const headers = {
+    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    'Content-Type': 'application/json',
+  };
+
+  // ── LIST MODE (no email) ──
+  if (!email) {
+    return listShares(userId, direction, headers, SUPABASE_URL);
+  }
+
+  // ── GRANT / REVOKE MODE (email present) ──
+
+  if (contentType === 'kv') {
+    // KV memory key sharing via memory_shares table
+    if (!keyPattern) throw new ToolError(INVALID_PARAMS, 'key_pattern is required for type="kv"');
+
+    if (revoke) {
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/memory_shares?owner_user_id=eq.${userId}&key_pattern=eq.${encodeURIComponent(keyPattern)}&shared_with_email=eq.${encodeURIComponent(email)}`,
+        { method: 'DELETE', headers }
+      );
+      return { success: true, action: 'revoked', type: 'kv', key_pattern: keyPattern, email: email };
+    }
+
+    // Resolve target user ID
+    const targetUserId = await resolveEmailToUserId(email, headers, SUPABASE_URL);
+
+    const shareRow = {
+      owner_user_id: userId,
+      scope: 'user',
+      key_pattern: keyPattern,
+      shared_with_email: email,
+      shared_with_user_id: targetUserId,
+      access_level: access,
+    };
+    const shareRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/memory_shares?on_conflict=owner_user_id,scope,key_pattern,shared_with_email`,
+      {
+        method: 'POST',
+        headers: { ...headers, 'Prefer': 'resolution=merge-duplicates' },
+        body: JSON.stringify(shareRow),
+      }
+    );
+    if (!shareRes.ok) {
+      const errText = await shareRes.text();
+      throw new ToolError(INTERNAL_ERROR, 'Failed to create KV share: ' + errText);
+    }
+    return { success: true, action: 'granted', type: 'kv', key_pattern: keyPattern, email: email, access: access };
+  }
+
+  // Content-based sharing (page, memory_md, library_md) via content_shares table
+  // Look up the content row
+  let contentSlug: string;
+  let contentTypeDb: string;
+  if (contentType === 'page') {
+    if (!slug) throw new ToolError(INVALID_PARAMS, 'slug is required for type="page"');
+    contentSlug = slug;
+    contentTypeDb = 'page';
+  } else if (contentType === 'memory_md') {
+    contentSlug = '_memory';
+    contentTypeDb = 'memory_md';
+  } else if (contentType === 'library_md') {
+    contentSlug = '_library';
+    contentTypeDb = 'library_md';
+  } else {
+    throw new ToolError(INVALID_PARAMS, `Unknown type: ${contentType}`);
+  }
+
+  const contentRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${userId}&type=eq.${contentTypeDb}&slug=eq.${encodeURIComponent(contentSlug)}&select=id,access_token,visibility`,
+    { headers }
+  );
+  if (!contentRes.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to look up content');
+  const contentRows = await contentRes.json() as Array<{ id: string; access_token: string | null; visibility: string }>;
+  if (contentRows.length === 0) {
+    const hint = contentType === 'page' ? ' Publish it first with ul.markdown.publish.' :
+                 contentType === 'memory_md' ? ' Write to memory first.' : '';
+    throw new ToolError(INVALID_PARAMS, `Content not found (${contentType}/${contentSlug}).${hint}`);
+  }
+
+  const contentId = contentRows[0].id;
+  let accessToken = contentRows[0].access_token;
+
+  if (revoke) {
+    // Revoke share
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/content_shares?content_id=eq.${contentId}&shared_with_email=eq.${encodeURIComponent(email)}`,
+      { method: 'DELETE', headers }
+    );
+    return { success: true, action: 'revoked', type: contentType, slug: contentSlug, email: email };
+  }
+
+  // Grant share
+  const targetUserId = await resolveEmailToUserId(email, headers, SUPABASE_URL);
+
+  const shareRow = {
+    content_id: contentId,
+    shared_with_email: email,
+    shared_with_user_id: targetUserId,
+    access_level: access,
+  };
+  const shareRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/content_shares?on_conflict=content_id,shared_with_email`,
+    {
+      method: 'POST',
+      headers: { ...headers, 'Prefer': 'resolution=merge-duplicates' },
+      body: JSON.stringify(shareRow),
+    }
+  );
+  if (!shareRes.ok) {
+    const errText = await shareRes.text();
+    throw new ToolError(INTERNAL_ERROR, 'Failed to create share: ' + errText);
+  }
+
+  // Set visibility to 'shared' if not already
+  if (contentRows[0].visibility !== 'shared') {
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/content?id=eq.${contentId}`,
+      {
+        method: 'PATCH',
+        headers: headers,
+        body: JSON.stringify({ visibility: 'shared' }),
+      }
+    );
+  }
+
+  // Generate access_token if missing
+  if (!accessToken) {
+    accessToken = crypto.randomUUID();
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/content?id=eq.${contentId}`,
+      {
+        method: 'PATCH',
+        headers: headers,
+        body: JSON.stringify({ access_token: accessToken }),
+      }
+    );
+  }
+
+  // Regenerate token if requested
+  if (regenerateToken) {
+    accessToken = crypto.randomUUID();
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/content?id=eq.${contentId}`,
+      {
+        method: 'PATCH',
+        headers: headers,
+        body: JSON.stringify({ access_token: accessToken }),
+      }
+    );
+  }
+
+  // Fetch current shares
+  const allSharesRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/content_shares?content_id=eq.${contentId}&select=shared_with_email,access_level`,
+    { headers }
+  );
+  const allShares = allSharesRes.ok ? await allSharesRes.json() as Array<{ shared_with_email: string; access_level: string }> : [];
+
+  const result: Record<string, unknown> = {
+    success: true,
+    action: 'granted',
+    type: contentType,
+    email: email,
+    access: access,
+    shared_with: allShares.map(s => s.shared_with_email),
+  };
+  if (contentType === 'page' && slug) {
+    result.url = `/p/${userId}/${slug}?token=${accessToken}`;
+    result.slug = slug;
+  }
+  if (regenerateToken) {
+    result.token_regenerated = true;
+  }
+  return result;
+}
+
+/** Resolve an email to a user ID, or null if user hasn't signed up yet. */
+async function resolveEmailToUserId(
+  email: string,
+  headers: Record<string, string>,
+  supabaseUrl: string
+): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `${supabaseUrl}/rest/v1/users?email=eq.${encodeURIComponent(email)}&select=id&limit=1`,
+      { headers }
+    );
+    if (res.ok) {
+      const rows = await res.json() as Array<{ id: string }>;
+      if (rows.length > 0) return rows[0].id;
+    }
+  } catch { /* user may not exist yet */ }
+  return null;
+}
+
+/** List shares — incoming (shared with me) or outgoing (I shared with others). */
+async function listShares(
+  userId: string,
+  direction: string,
+  headers: Record<string, string>,
+  supabaseUrl: string
+): Promise<unknown> {
+  const callerEmail = await getUserEmail(userId);
+
+  if (direction === 'outgoing') {
+    // Content shares I've created (pages, memory_md, library_md)
+    const contentRes = await fetch(
+      `${supabaseUrl}/rest/v1/content?owner_id=eq.${userId}&select=id,type,slug`,
+      { headers }
+    );
+    let contentShares: Array<{ type: string; slug: string; shared_with: string; access: string }> = [];
+    if (contentRes.ok) {
+      const contentRows = await contentRes.json() as Array<{ id: string; type: string; slug: string }>;
+      if (contentRows.length > 0) {
+        const ids = contentRows.map(r => r.id);
+        const idMap = new Map(contentRows.map(r => [r.id, r]));
+        const sharesRes = await fetch(
+          `${supabaseUrl}/rest/v1/content_shares?content_id=in.(${ids.join(',')})&select=content_id,shared_with_email,access_level`,
+          { headers }
+        );
+        if (sharesRes.ok) {
+          const shares = await sharesRes.json() as Array<{ content_id: string; shared_with_email: string; access_level: string }>;
+          contentShares = shares.map(s => {
+            const c = idMap.get(s.content_id);
+            return {
+              type: c?.type || 'unknown',
+              slug: c?.slug || 'unknown',
+              shared_with: s.shared_with_email,
+              access: s.access_level,
+            };
+          });
+        }
+      }
+    }
+
+    // KV shares I've created
+    const kvRes = await fetch(
+      `${supabaseUrl}/rest/v1/memory_shares?owner_user_id=eq.${userId}&select=key_pattern,scope,shared_with_email,access_level`,
+      { headers }
+    );
+    let kvShares: Array<{ key_pattern: string; scope: string; shared_with: string; access: string }> = [];
+    if (kvRes.ok) {
+      const rows = await kvRes.json() as Array<{ key_pattern: string; scope: string; shared_with_email: string; access_level: string }>;
+      kvShares = rows.map(r => ({
+        key_pattern: r.key_pattern,
+        scope: r.scope,
+        shared_with: r.shared_with_email,
+        access: r.access_level,
+      }));
+    }
+
+    return { direction: 'outgoing', content_shares: contentShares, kv_shares: kvShares };
+  }
+
+  // Incoming — shared with me
+  const csRes = await fetch(
+    `${supabaseUrl}/rest/v1/content_shares?or=(shared_with_user_id.eq.${userId},shared_with_email.eq.${encodeURIComponent(callerEmail)})&select=content_id,access_level`,
+    { headers }
+  );
+  let incomingContent: Array<{ type: string; slug: string; owner_email: string; access: string }> = [];
+  if (csRes.ok) {
+    const shares = await csRes.json() as Array<{ content_id: string; access_level: string }>;
+    if (shares.length > 0) {
+      const contentIds = shares.map(s => s.content_id);
+      const contentRes = await fetch(
+        `${supabaseUrl}/rest/v1/content?id=in.(${contentIds.join(',')})&select=id,type,slug,owner_id`,
+        { headers }
+      );
+      if (contentRes.ok) {
+        const contentRows = await contentRes.json() as Array<{ id: string; type: string; slug: string; owner_id: string }>;
+        const ownerIds = [...new Set(contentRows.map(r => r.owner_id))];
+        let ownerMap = new Map<string, string>();
+        if (ownerIds.length > 0) {
+          const ownerRes = await fetch(
+            `${supabaseUrl}/rest/v1/users?id=in.(${ownerIds.join(',')})&select=id,email`,
+            { headers }
+          );
+          if (ownerRes.ok) {
+            const ownerRows = await ownerRes.json() as Array<{ id: string; email: string }>;
+            ownerMap = new Map(ownerRows.map(r => [r.id, r.email]));
+          }
+        }
+        const contentIdMap = new Map(contentRows.map(r => [r.id, r]));
+        incomingContent = shares
+          .filter(s => contentIdMap.has(s.content_id))
+          .map(s => {
+            const c = contentIdMap.get(s.content_id)!;
+            return {
+              type: c.type,
+              slug: c.slug,
+              owner_email: ownerMap.get(c.owner_id) || 'unknown',
+              access: s.access_level,
+            };
+          });
+      }
+    }
+  }
+
+  // KV shares incoming
+  const kvRes = await fetch(
+    `${supabaseUrl}/rest/v1/memory_shares?or=(shared_with_user_id.eq.${userId},shared_with_email.eq.${encodeURIComponent(callerEmail)})&select=owner_user_id,key_pattern,scope,access_level`,
+    { headers }
+  );
+  let incomingKv: Array<{ owner_email: string; key_pattern: string; scope: string; access: string }> = [];
+  if (kvRes.ok) {
+    const rows = await kvRes.json() as Array<{ owner_user_id: string; key_pattern: string; scope: string; access_level: string }>;
+    if (rows.length > 0) {
+      const ownerIds = [...new Set(rows.map(r => r.owner_user_id))];
+      let ownerMap = new Map<string, string>();
+      const ownerRes = await fetch(
+        `${supabaseUrl}/rest/v1/users?id=in.(${ownerIds.join(',')})&select=id,email`,
+        { headers }
+      );
+      if (ownerRes.ok) {
+        const ownerRows = await ownerRes.json() as Array<{ id: string; email: string }>;
+        ownerMap = new Map(ownerRows.map(r => [r.id, r.email]));
+      }
+      incomingKv = rows.map(r => ({
+        owner_email: ownerMap.get(r.owner_user_id) || 'unknown',
+        key_pattern: r.key_pattern,
+        scope: r.scope,
+        access: r.access_level,
+      }));
+    }
+  }
+
+  return { direction: 'incoming', content_shares: incomingContent, kv_shares: incomingKv };
+}
+
+// ============================================
 // PAGES (MARKDOWN PUBLISHING) HANDLERS
 // ============================================
 
@@ -3746,6 +4529,22 @@ interface PageMeta {
   created_at: string;
   updated_at: string;
   url: string;
+  visibility?: string;
+  published?: boolean;
+  tags?: string[];
+}
+
+/**
+ * Generate text optimized for embedding/semantic search of a page.
+ */
+function generatePageEmbeddingText(title: string, content: string, tags?: string[]): string {
+  const parts: string[] = [];
+  parts.push(title);
+  if (tags && tags.length > 0) parts.push(`Tags: ${tags.join(', ')}`);
+  // Truncate content to first ~500 words for embedding
+  const words = content.split(/\s+/).slice(0, 500);
+  parts.push(words.join(' '));
+  return parts.join('\n');
 }
 
 async function executeMarkdown(
@@ -3755,6 +4554,10 @@ async function executeMarkdown(
   const content = args.content as string;
   const slug = args.slug as string;
   const titleArg = args.title as string | undefined;
+  const visibility = (args.visibility as string) || 'public';
+  const sharedWith = args.shared_with as string[] | undefined;
+  const tags = args.tags as string[] | undefined;
+  const published = args.published as boolean | undefined;
 
   if (!content) throw new ToolError(INVALID_PARAMS, 'content is required');
   if (!slug) throw new ToolError(INVALID_PARAMS, 'slug is required');
@@ -3762,6 +4565,9 @@ async function executeMarkdown(
   // Validate slug: lowercase, alphanumeric, hyphens, slashes for nesting
   if (!/^[a-z0-9][a-z0-9\-\/]*[a-z0-9]$/.test(slug) && !/^[a-z0-9]$/.test(slug)) {
     throw new ToolError(INVALID_PARAMS, 'slug must be lowercase alphanumeric with hyphens (e.g. "weekly-report")');
+  }
+  if (!['public', 'private', 'shared'].includes(visibility)) {
+    throw new ToolError(INVALID_PARAMS, 'visibility must be "public", "private", or "shared"');
   }
 
   const bytes = new TextEncoder().encode(content);
@@ -3773,26 +4579,125 @@ async function executeMarkdown(
   const title = titleArg || content.match(/^#\s+(.+)$/m)?.[1] || slug;
 
   const r2Service = createR2Service();
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+  const sbHeaders = {
+    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    'Content-Type': 'application/json',
+  };
 
-  // Write the page
+  // Write the page to R2
   await r2Service.uploadFile(`users/${userId}/pages/${slug}.md`, {
     name: `${slug}.md`,
     content: bytes,
     contentType: 'text/markdown',
   });
 
-  // Update page index
+  // Generate access token for shared pages
+  let accessToken: string | null = null;
+  if (visibility === 'shared') {
+    accessToken = crypto.randomUUID();
+  }
+
+  // Upsert into content table
   const now = new Date().toISOString();
+  const shouldPublish = published === true && visibility === 'public';
+  const description = content.split(/\s+/).slice(0, 30).join(' ') + (content.split(/\s+/).length > 30 ? '...' : '');
+
+  // Generate embedding for published pages
+  let embeddingArr: number[] | null = null;
+  let embeddingText: string | null = null;
+  if (shouldPublish) {
+    try {
+      const embService = createEmbeddingService();
+      embeddingText = generatePageEmbeddingText(title, content, tags);
+      const embResult = await embService.embed(embeddingText);
+      embeddingArr = embResult.embedding;
+    } catch (err) {
+      console.error('Page embedding generation failed:', err);
+      // Non-fatal — page still publishes, just not discoverable via search
+    }
+  }
+
+  const contentRow = {
+    owner_id: userId,
+    type: 'page',
+    slug: slug,
+    title: title,
+    description: description,
+    visibility: visibility,
+    access_token: accessToken,
+    size: bytes.length,
+    tags: tags || null,
+    published: shouldPublish,
+    embedding_text: embeddingText,
+    ...(embeddingArr ? { embedding: JSON.stringify(embeddingArr) } : {}),
+    updated_at: now,
+  };
+
+  // Upsert content row (on conflict: owner_id, type, slug)
+  const upsertRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/content`,
+    {
+      method: 'POST',
+      headers: { ...sbHeaders, 'Prefer': 'resolution=merge-duplicates,return=representation' },
+      body: JSON.stringify(contentRow),
+    }
+  );
+  let contentId: string | null = null;
+  if (upsertRes.ok) {
+    const rows = await upsertRes.json();
+    if (rows.length > 0) contentId = rows[0].id;
+  }
+
+  // Handle content_shares for shared visibility
+  if (visibility === 'shared' && sharedWith && sharedWith.length > 0 && contentId) {
+    // Look up user IDs for emails
+    for (const email of sharedWith) {
+      const shareRow = {
+        content_id: contentId,
+        shared_with_email: email.toLowerCase(),
+        access_level: 'read',
+      };
+      // Resolve email to user_id if possible
+      try {
+        const userRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/users?email=eq.${encodeURIComponent(email.toLowerCase())}&select=id`,
+          { headers: sbHeaders }
+        );
+        if (userRes.ok) {
+          const users = await userRes.json();
+          if (users.length > 0) {
+            (shareRow as Record<string, unknown>).shared_with_user_id = users[0].id;
+          }
+        }
+      } catch { /* best effort */ }
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/content_shares`,
+        {
+          method: 'POST',
+          headers: { ...sbHeaders, 'Prefer': 'resolution=merge-duplicates' },
+          body: JSON.stringify(shareRow),
+        }
+      ).catch(() => {});
+    }
+  }
+
+  // Update R2 page index (backward compat)
   const pageMeta: PageMeta = {
     slug: slug,
     title: title,
     size: bytes.length,
     created_at: now,
     updated_at: now,
-    url: `/p/${userId}/${slug}`,
+    url: visibility === 'shared' && accessToken
+      ? `/p/${userId}/${slug}?token=${accessToken}`
+      : `/p/${userId}/${slug}`,
+    visibility: visibility,
+    published: shouldPublish,
+    tags: tags,
   };
 
-  // Read existing index, update or append
   let index: PageMeta[] = [];
   try {
     const indexStr = await r2Service.fetchTextFile(`users/${userId}/pages/_index.json`);
@@ -3817,7 +4722,11 @@ async function executeMarkdown(
     success: true,
     slug: slug,
     title: title,
-    url: `/p/${userId}/${slug}`,
+    url: pageMeta.url,
+    visibility: visibility,
+    ...(shouldPublish ? { published: true } : {}),
+    ...(tags && tags.length > 0 ? { tags: tags } : {}),
+    ...(sharedWith && visibility === 'shared' ? { shared_with: sharedWith } : {}),
     size: bytes.length,
     updated_at: pageMeta.updated_at,
   };
@@ -3834,11 +4743,84 @@ async function executePages(userId: string): Promise<unknown> {
     return { pages: [], total: 0 };
   }
 
+  // Enrich with content table metadata (visibility, sharing, published, tags)
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+  const headers = {
+    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+  };
+
+  let contentRows: Array<{
+    slug: string; visibility: string; published: boolean;
+    tags: string[] | null; access_token: string | null;
+  }> = [];
+  try {
+    const contentRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${userId}&type=eq.page&select=slug,visibility,published,tags,access_token`,
+      { headers }
+    );
+    if (contentRes.ok) {
+      contentRows = await contentRes.json() as typeof contentRows;
+    }
+  } catch { /* best effort — pages still work without content metadata */ }
+
+  // Build lookup map
+  const contentMap = new Map(contentRows.map(r => [r.slug, r]));
+
+  // Fetch sharing info for pages that have content rows
+  let sharesMap = new Map<string, string[]>();
+  if (contentRows.length > 0) {
+    try {
+      const slugsWithShares = contentRows.filter(r => r.visibility === 'shared').map(r => r.slug);
+      if (slugsWithShares.length > 0) {
+        // Get content IDs for shared pages
+        const contentIdRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${userId}&type=eq.page&visibility=eq.shared&select=id,slug`,
+          { headers }
+        );
+        if (contentIdRes.ok) {
+          const idRows = await contentIdRes.json() as Array<{ id: string; slug: string }>;
+          const idToSlug = new Map(idRows.map(r => [r.id, r.slug]));
+          const contentIds = idRows.map(r => r.id);
+          if (contentIds.length > 0) {
+            const sharesRes = await fetch(
+              `${SUPABASE_URL}/rest/v1/content_shares?content_id=in.(${contentIds.join(',')})&select=content_id,shared_with_email`,
+              { headers }
+            );
+            if (sharesRes.ok) {
+              const shareRows = await sharesRes.json() as Array<{ content_id: string; shared_with_email: string }>;
+              for (const row of shareRows) {
+                const slug = idToSlug.get(row.content_id);
+                if (slug) {
+                  if (!sharesMap.has(slug)) sharesMap.set(slug, []);
+                  sharesMap.get(slug)!.push(row.shared_with_email);
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch { /* best effort */ }
+  }
+
   // Sort by most recently updated
   index.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
 
+  // Enrich page entries
+  const enrichedPages = index.map(page => {
+    const meta = contentMap.get(page.slug);
+    const sharedWith = sharesMap.get(page.slug);
+    return {
+      ...page,
+      visibility: meta?.visibility || 'public',
+      published: meta?.published || false,
+      tags: meta?.tags || undefined,
+      shared_with: sharedWith && sharedWith.length > 0 ? sharedWith : undefined,
+    };
+  });
+
   return {
-    pages: index,
-    total: index.length,
+    pages: enrichedPages,
+    total: enrichedPages.length,
   };
 }

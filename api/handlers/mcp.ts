@@ -342,6 +342,37 @@ const SDK_TOOLS: MCPTool[] = [
     },
   },
 
+  // ---- Inter-App Calls ----
+  {
+    name: 'ultralight.call',
+    title: 'Call Another App',
+    description:
+      'Call a function on another Ultralight app. Uses the current user\'s auth context — ' +
+      'the called app sees the same user. Accepts app ID or slug as the target.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        app_id: {
+          type: 'string',
+          description: 'App ID or slug of the target app.',
+        },
+        function_name: {
+          type: 'string',
+          description: 'Function name to call on the target app (unprefixed, e.g. "doThing" not "app-slug_doThing").',
+        },
+        args: {
+          type: 'object',
+          description: 'Arguments to pass to the function.',
+          additionalProperties: true,
+        },
+      },
+      required: ['app_id', 'function_name'],
+    },
+    outputSchema: {
+      description: 'The return value from the called function.',
+    },
+  },
+
   // ---- Cron Jobs ----
   {
     name: 'ultralight.cron.list',
@@ -846,7 +877,7 @@ async function handleToolsCall(
 
   // Check if it's an SDK tool (always allowed)
   if (name.startsWith('ultralight.')) {
-    return await executeSDKTool(id, name, args || {}, app.id, userId, user);
+    return await executeSDKTool(id, name, args || {}, app.id, userId, user, request);
   }
 
   // Token function scoping: if the API token restricts callable functions, enforce it
@@ -950,8 +981,11 @@ async function handleToolsCall(
   const { extractCallMeta } = await import('../services/call-logger.ts');
   const { cleanArgs, userQuery, sessionId } = extractCallMeta(args || {});
 
+  // Extract auth token from request for inter-app calls (ultralight.call)
+  const authToken = request.headers.get('Authorization')?.slice(7) || undefined;
+
   // Execute app function via sandbox
-  return await executeAppFunction(id, functionName, cleanArgs, app, userId, user, { userQuery, sessionId });
+  return await executeAppFunction(id, functionName, cleanArgs, app, userId, user, { userQuery, sessionId, authToken });
 }
 
 // ============================================
@@ -967,7 +1001,8 @@ async function executeSDKTool(
   args: Record<string, unknown>,
   appId: string,
   userId: string,
-  user: UserContext | null
+  user: UserContext | null,
+  request?: Request
 ): Promise<Response> {
   try {
     // Create app data service for user-partitioned storage
@@ -1089,6 +1124,78 @@ async function executeSDKTool(
         break;
       }
 
+      // Inter-app calls
+      case 'ultralight.call': {
+        const targetAppId = args.app_id as string;
+        const targetFn = args.function_name as string;
+        const callArgs = (args.args as Record<string, unknown>) || {};
+
+        if (!targetAppId || !targetFn) {
+          result = { error: 'app_id and function_name are required' };
+          break;
+        }
+
+        // @ts-ignore - Deno is available
+        const __Deno = globalThis.Deno;
+        const baseUrl = __Deno?.env?.get('BASE_URL');
+        const authToken = request?.headers.get('Authorization')?.slice(7);
+
+        if (!baseUrl || !authToken) {
+          result = { error: 'Inter-app calls not available (missing baseUrl or authToken)' };
+          break;
+        }
+
+        // Make JSON-RPC call to target app's MCP endpoint
+        const rpcRequest = {
+          jsonrpc: '2.0',
+          id: crypto.randomUUID(),
+          method: 'tools/call',
+          params: {
+            name: targetFn,
+            arguments: callArgs,
+          },
+        };
+
+        const callResponse = await fetch(`${baseUrl}/mcp/${targetAppId}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authToken}`,
+          },
+          body: JSON.stringify(rpcRequest),
+        });
+
+        if (!callResponse.ok) {
+          const errText = await callResponse.text().catch(() => callResponse.statusText);
+          result = { error: `Call failed (${callResponse.status}): ${errText}` };
+          break;
+        }
+
+        const rpcResponse = await callResponse.json();
+        if (rpcResponse.error) {
+          result = { error: `RPC error: ${rpcResponse.error.message || JSON.stringify(rpcResponse.error)}` };
+          break;
+        }
+
+        // Unwrap MCP tool result
+        const callResult = rpcResponse.result;
+        if (callResult?.content && Array.isArray(callResult.content)) {
+          const textBlock = callResult.content.find((c: { type: string }) => c.type === 'text');
+          if (textBlock?.text) {
+            try {
+              result = JSON.parse(textBlock.text);
+            } catch {
+              result = textBlock.text;
+            }
+          } else {
+            result = callResult;
+          }
+        } else {
+          result = callResult;
+        }
+        break;
+      }
+
       // Cron
       case 'ultralight.cron.list':
         // TODO: Implement cron list
@@ -1132,7 +1239,7 @@ async function executeAppFunction(
   app: { id: string; storage_key: string },
   userId: string,
   user: UserContext | null,
-  meta?: { userQuery?: string; sessionId?: string }
+  meta?: { userQuery?: string; sessionId?: string; authToken?: string }
 ): Promise<Response> {
   try {
     const r2Service = createR2Service();
@@ -1325,6 +1432,11 @@ async function executeAppFunction(
       },
     } : null;
 
+    // Resolve base URL for inter-app calls
+    // @ts-ignore - Deno is available
+    const _Deno = globalThis.Deno;
+    const baseUrl = _Deno?.env?.get('BASE_URL') || undefined;
+
     const execStart = Date.now();
     const result = await executeInSandbox(
       {
@@ -1332,7 +1444,7 @@ async function executeAppFunction(
         userId,
         executionId: crypto.randomUUID(),
         code,
-        permissions: ['memory:read', 'memory:write', 'ai:call', 'net:fetch', 'cron:read', 'cron:write'],
+        permissions: ['memory:read', 'memory:write', 'ai:call', 'net:fetch', 'cron:read', 'cron:write', 'app:call'],
         userApiKey,
         user,
         appDataService,
@@ -1340,6 +1452,8 @@ async function executeAppFunction(
         aiService: aiServiceInstance as { call: (request: import('../../shared/types/index.ts').AIRequest, apiKey: string) => Promise<import('../../shared/types/index.ts').AIResponse> },
         envVars,
         supabase: supabaseConfig,
+        baseUrl,
+        authToken: meta?.authToken,
       },
       functionName,
       argsArray
