@@ -205,6 +205,24 @@ export function createApp() {
         return handlePublishedPage(request, path);
       }
 
+      // Public app page - GET /app/:appId
+      // Shareable page showing MCP endpoint, documentation, and metadata.
+      if (path.startsWith('/app/') && method === 'GET') {
+        const appId = path.slice(5); // Remove '/app/'
+        if (appId && !appId.includes('/')) {
+          return handlePublicAppPage(request, appId);
+        }
+      }
+
+      // Public user profile - GET /u/:userId
+      // Shows all public MCP apps and published pages for a user.
+      if (path.startsWith('/u/') && method === 'GET') {
+        const profileUserId = path.slice(3); // Remove '/u/'
+        if (profileUserId && !profileUserId.includes('/')) {
+          return handlePublicUserProfile(request, profileUserId);
+        }
+      }
+
       // App runner - /a/:appId/* - serves deployed apps
       // Supports two patterns:
       // 1. Browser apps: export default function(app, ultralight) - renders UI in browser
@@ -884,6 +902,607 @@ function escAttr(s) { return String(s).replace(/"/g, "&quot;").replace(/'/g, "&#
 }
 
 // ============================================
+// PUBLIC APP PAGE
+// ============================================
+
+async function handlePublicAppPage(request: Request, appId: string): Promise<Response> {
+  try {
+    const appsService = createAppsService();
+    const app = await appsService.findById(appId);
+
+    if (!app || app.deleted_at) {
+      return new Response('Not found', { status: 404 });
+    }
+
+    // Only show public or unlisted apps
+    if (app.visibility === 'private') {
+      return new Response('Not found', { status: 404 });
+    }
+
+    const baseUrl = getBaseUrl(request);
+
+    // Fetch owner display name
+    // @ts-ignore
+    const Deno = globalThis.Deno;
+    const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+    const dbHeaders = {
+      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    };
+
+    let ownerName = 'Unknown';
+    try {
+      const userRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/users?id=eq.${app.owner_id}&select=display_name,email&limit=1`,
+        { headers: dbHeaders }
+      );
+      if (userRes.ok) {
+        const users = await userRes.json() as Array<{ display_name: string | null; email: string }>;
+        if (users.length > 0) {
+          ownerName = users[0].display_name || users[0].email.split('@')[0];
+        }
+      }
+    } catch { /* best effort */ }
+
+    const html = getPublicAppPageHTML(app, ownerName, baseUrl);
+    return new Response(html, {
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'public, max-age=60',
+      },
+    });
+  } catch (err) {
+    console.error('[PublicAppPage] Error:', err);
+    return new Response('Internal server error', { status: 500 });
+  }
+}
+
+function getPublicAppPageHTML(
+  app: { id: string; name: string; slug: string; description?: string; current_version?: string; owner_id: string; skills_md?: string; skills_parsed?: unknown },
+  ownerName: string,
+  baseUrl: string
+): string {
+  const appName = escapeHtml(app.name || app.slug);
+  const description = app.description ? escapeHtml(app.description) : '';
+  const version = app.current_version ? escapeHtml(app.current_version) : '1.0';
+  const mcpEndpoint = `${baseUrl}/mcp/${app.id}`;
+  const dashboardUrl = `/http/${app.id}/_ui`;
+
+  // Render skills documentation
+  let skillsHtml = '';
+  if (app.skills_md) {
+    skillsHtml = markdownToHtml(app.skills_md);
+  } else if (app.skills_parsed) {
+    const skills = Array.isArray(app.skills_parsed)
+      ? app.skills_parsed as Array<{ name: string; description?: string }>
+      : ((app.skills_parsed as { functions?: Array<{ name: string; description?: string }> }).functions || []);
+    if (skills.length > 0) {
+      skillsHtml = skills.map(s =>
+        `<div class="fn-item"><span class="fn-name">${escapeHtml(s.name)}</span>${s.description ? `<span class="fn-desc">${escapeHtml(s.description)}</span>` : ''}</div>`
+      ).join('');
+    } else {
+      skillsHtml = '<p class="no-docs">No documentation yet.</p>';
+    }
+  } else {
+    skillsHtml = '<p class="no-docs">No documentation yet.</p>';
+  }
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${appName} — Ultralight MCP Server</title>
+<meta name="description" content="${description}">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0a0a0f;
+    color: #e4e4e7;
+    padding: 2rem 1rem;
+    min-height: 100vh;
+  }
+  .container { max-width: 760px; margin: 0 auto; }
+
+  /* Header */
+  .app-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  .app-icon {
+    width: 56px; height: 56px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.75rem;
+    flex-shrink: 0;
+  }
+  .app-info h1 { font-size: 1.75rem; font-weight: 700; color: #fafafa; }
+  .app-meta {
+    display: flex; align-items: center; gap: 0.75rem;
+    margin-top: 0.35rem; font-size: 0.875rem; color: #71717a;
+  }
+  .app-meta a { color: #a78bfa; text-decoration: none; }
+  .app-meta a:hover { text-decoration: underline; }
+  .version-badge {
+    background: rgba(139, 92, 246, 0.2);
+    color: #a78bfa;
+    padding: 0.15rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+  .app-desc {
+    color: #a1a1aa;
+    font-size: 1rem;
+    line-height: 1.6;
+    margin-bottom: 1.5rem;
+  }
+
+  /* Endpoint Box */
+  .endpoint-box {
+    background: #18181b;
+    border: 1px solid #27272a;
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+  .endpoint-label {
+    font-size: 0.75rem;
+    color: #71717a;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.5rem;
+  }
+  .endpoint-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .endpoint-url {
+    flex: 1;
+    background: #09090b;
+    border: 1px solid #27272a;
+    border-radius: 8px;
+    padding: 0.65rem 0.85rem;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.85rem;
+    color: #a78bfa;
+    word-break: break-all;
+    user-select: all;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.55rem 1rem;
+    border-radius: 8px;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    text-decoration: none;
+    border: none;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+    white-space: nowrap;
+  }
+  .btn-primary {
+    background: rgba(99, 102, 241, 0.15);
+    color: #a78bfa;
+  }
+  .btn-primary:hover { background: rgba(99, 102, 241, 0.25); }
+  .btn-copy {
+    background: #27272a;
+    color: #e4e4e7;
+  }
+  .btn-copy:hover { background: #3f3f46; }
+  .btn-copy.copied { background: rgba(34, 197, 94, 0.2); color: #4ade80; }
+  .endpoint-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+  }
+
+  /* Documentation / Skills */
+  .docs-section {
+    background: #18181b;
+    border: 1px solid #27272a;
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .docs-title {
+    font-size: 0.75rem;
+    color: #71717a;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 1rem;
+  }
+  .docs-content { color: #d4d4d8; line-height: 1.7; }
+  .docs-content h1 { font-size: 1.5rem; color: #fafafa; margin: 1.5rem 0 0.75rem; }
+  .docs-content h2 { font-size: 1.25rem; color: #fafafa; margin: 1.5rem 0 0.5rem; border-bottom: 1px solid #27272a; padding-bottom: 0.3rem; }
+  .docs-content h3 { font-size: 1.1rem; color: #e4e4e7; margin: 1.25rem 0 0.5rem; }
+  .docs-content p { margin: 0.6rem 0; }
+  .docs-content a { color: #818cf8; }
+  .docs-content code {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.875em;
+    background: #27272a;
+    padding: 0.15em 0.4em;
+    border-radius: 4px;
+    color: #e4e4e7;
+  }
+  .docs-content pre {
+    margin: 1rem 0;
+    padding: 1rem;
+    background: #09090b;
+    border: 1px solid #27272a;
+    border-radius: 8px;
+    overflow-x: auto;
+  }
+  .docs-content pre code { background: none; padding: 0; font-size: 0.85em; color: #a1a1aa; }
+  .docs-content ul, .docs-content ol { margin: 0.5rem 0; padding-left: 1.5rem; }
+  .docs-content li { margin: 0.25rem 0; }
+  .docs-content blockquote {
+    margin: 1rem 0;
+    padding: 0.75rem 1rem;
+    border-left: 3px solid #6366f1;
+    background: rgba(99, 102, 241, 0.05);
+    color: #a1a1aa;
+  }
+  .docs-content hr { margin: 1.5rem 0; border: none; border-top: 1px solid #27272a; }
+
+  .fn-item {
+    padding: 0.65rem 0;
+    border-bottom: 1px solid #27272a;
+  }
+  .fn-item:last-child { border-bottom: none; }
+  .fn-name {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: #22c55e;
+    font-weight: 500;
+    font-size: 0.9rem;
+  }
+  .fn-desc {
+    display: block;
+    font-size: 0.8125rem;
+    color: #71717a;
+    margin-top: 0.2rem;
+  }
+  .no-docs { color: #52525b; font-style: italic; }
+
+  .footer-bar {
+    text-align: center;
+    padding-top: 1.5rem;
+    font-size: 0.8rem;
+    color: #52525b;
+  }
+  .footer-bar a { color: #71717a; text-decoration: none; }
+  .footer-bar a:hover { color: #a1a1aa; }
+
+  @media (max-width: 600px) {
+    body { padding: 1rem 0.5rem; }
+    .endpoint-row { flex-direction: column; align-items: stretch; }
+    .endpoint-actions { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="app-header">
+    <div class="app-icon">&#9889;</div>
+    <div class="app-info">
+      <h1>${appName}</h1>
+      <div class="app-meta">
+        <a href="/u/${escapeHtml(app.owner_id)}">${escapeHtml(ownerName)}</a>
+        <span class="version-badge">v${version}</span>
+      </div>
+    </div>
+  </div>
+
+  ${description ? `<p class="app-desc">${description}</p>` : ''}
+
+  <div class="endpoint-box">
+    <div class="endpoint-label">MCP Endpoint</div>
+    <div class="endpoint-row">
+      <div class="endpoint-url" id="mcpUrl">${escapeHtml(mcpEndpoint)}</div>
+      <button class="btn btn-copy" onclick="copyUrl()" id="copyBtn">&#128203; Copy</button>
+    </div>
+    <div class="endpoint-actions">
+      <a href="${escapeHtml(dashboardUrl)}" class="btn btn-primary">&#9881; Open Dashboard</a>
+    </div>
+  </div>
+
+  <div class="docs-section">
+    <div class="docs-title">Documentation</div>
+    <div class="docs-content">
+      ${skillsHtml}
+    </div>
+  </div>
+
+  <div class="footer-bar">
+    Powered by <a href="https://ultralight.dev">Ultralight</a>
+  </div>
+</div>
+<script>
+function copyUrl() {
+  var url = document.getElementById('mcpUrl').textContent;
+  navigator.clipboard.writeText(url).then(function() {
+    var btn = document.getElementById('copyBtn');
+    btn.className = 'btn btn-copy copied';
+    btn.innerHTML = '&#10003; Copied';
+    setTimeout(function() {
+      btn.className = 'btn btn-copy';
+      btn.innerHTML = '&#128203; Copy';
+    }, 2000);
+  });
+}
+</script>
+</body>
+</html>`;
+}
+
+// ============================================
+// PUBLIC USER PROFILE
+// ============================================
+
+async function handlePublicUserProfile(request: Request, profileUserId: string): Promise<Response> {
+  try {
+    // @ts-ignore
+    const Deno = globalThis.Deno;
+    const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+    const dbHeaders = {
+      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    };
+    const baseUrl = getBaseUrl(request);
+
+    // Fetch user info
+    let user: { id: string; display_name: string | null; email: string; created_at: string } | null = null;
+    try {
+      const userRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/users?id=eq.${profileUserId}&select=id,display_name,email,created_at&limit=1`,
+        { headers: dbHeaders }
+      );
+      if (userRes.ok) {
+        const users = await userRes.json() as Array<typeof user>;
+        user = users.length > 0 ? users[0] : null;
+      }
+    } catch { /* */ }
+
+    if (!user) {
+      return new Response('Not found', { status: 404 });
+    }
+
+    // Fetch public apps
+    let apps: Array<{ id: string; name: string; slug: string; description: string | null; current_version: string | null; updated_at: string }> = [];
+    try {
+      const appsRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${profileUserId}&visibility=in.(public,unlisted)&deleted_at=is.null&order=updated_at.desc&select=id,name,slug,description,current_version,updated_at&limit=50`,
+        { headers: dbHeaders }
+      );
+      if (appsRes.ok) {
+        apps = await appsRes.json();
+      }
+    } catch { /* */ }
+
+    // Fetch published pages
+    let pages: Array<{ slug: string; title: string | null; updated_at: string; tags: string[] | null }> = [];
+    try {
+      const pagesRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${profileUserId}&type=eq.page&visibility=eq.public&order=updated_at.desc&select=slug,title,updated_at,tags&limit=50`,
+        { headers: dbHeaders }
+      );
+      if (pagesRes.ok) {
+        pages = await pagesRes.json();
+      }
+    } catch { /* */ }
+
+    const html = getPublicUserProfileHTML(user, apps, pages, baseUrl, profileUserId);
+    return new Response(html, {
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'public, max-age=60',
+      },
+    });
+  } catch (err) {
+    console.error('[PublicUserProfile] Error:', err);
+    return new Response('Internal server error', { status: 500 });
+  }
+}
+
+function getPublicUserProfileHTML(
+  user: { display_name: string | null; email: string; created_at: string },
+  apps: Array<{ id: string; name: string; slug: string; description: string | null; current_version: string | null; updated_at: string }>,
+  pages: Array<{ slug: string; title: string | null; updated_at: string; tags: string[] | null }>,
+  baseUrl: string,
+  userId: string
+): string {
+  const displayName = escapeHtml(user.display_name || user.email.split('@')[0]);
+  const memberSince = new Date(user.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
+
+  const appCards = apps.length > 0
+    ? apps.map(a => `
+      <a href="/app/${escapeHtml(a.id)}" class="card">
+        <div class="card-icon">&#9889;</div>
+        <div class="card-body">
+          <div class="card-title">${escapeHtml(a.name || a.slug)}</div>
+          ${a.description ? `<div class="card-desc">${escapeHtml(a.description)}</div>` : ''}
+          <div class="card-meta">
+            ${a.current_version ? `<span class="version-badge">v${escapeHtml(a.current_version)}</span>` : ''}
+            <span class="card-date">${new Date(a.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+          </div>
+        </div>
+      </a>
+    `).join('')
+    : '<p class="empty-text">No public MCP servers yet.</p>';
+
+  const pageCards = pages.length > 0
+    ? pages.map(p => `
+      <a href="/p/${escapeHtml(userId)}/${escapeHtml(p.slug)}" class="card">
+        <div class="card-icon">&#128196;</div>
+        <div class="card-body">
+          <div class="card-title">${escapeHtml(p.title || p.slug)}</div>
+          ${p.tags && p.tags.length > 0 ? `<div class="card-tags">${p.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
+          <div class="card-meta">
+            <span class="card-date">${new Date(p.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+          </div>
+        </div>
+      </a>
+    `).join('')
+    : '<p class="empty-text">No published pages yet.</p>';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${displayName} — Ultralight</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0a0a0f;
+    color: #e4e4e7;
+    padding: 2rem 1rem;
+    min-height: 100vh;
+  }
+  .container { max-width: 760px; margin: 0 auto; }
+
+  .profile-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 2rem;
+  }
+  .avatar {
+    width: 64px; height: 64px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.75rem; font-weight: 700;
+    color: #fff;
+    flex-shrink: 0;
+  }
+  .profile-info h1 { font-size: 1.5rem; font-weight: 700; color: #fafafa; }
+  .profile-info .profile-meta {
+    color: #71717a;
+    font-size: 0.875rem;
+    margin-top: 0.25rem;
+  }
+
+  .section { margin-bottom: 2rem; }
+  .section-title {
+    font-size: 0.75rem;
+    color: #71717a;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.75rem;
+  }
+
+  .card {
+    display: flex;
+    gap: 0.875rem;
+    padding: 1rem;
+    background: #18181b;
+    border: 1px solid #27272a;
+    border-radius: 10px;
+    margin-bottom: 0.625rem;
+    text-decoration: none;
+    color: inherit;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .card:hover { border-color: #3f3f46; background: #1c1c21; }
+  .card-icon {
+    font-size: 1.25rem;
+    flex-shrink: 0;
+    margin-top: 0.1rem;
+  }
+  .card-body { flex: 1; min-width: 0; }
+  .card-title { font-weight: 600; color: #fafafa; font-size: 0.95rem; }
+  .card-desc {
+    color: #a1a1aa;
+    font-size: 0.8125rem;
+    margin-top: 0.25rem;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .card-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.4rem;
+    font-size: 0.75rem;
+    color: #52525b;
+  }
+  .card-tags { margin-top: 0.3rem; }
+  .tag {
+    display: inline-block;
+    background: rgba(139, 92, 246, 0.15);
+    color: #a78bfa;
+    padding: 0.1rem 0.45rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    margin-right: 0.25rem;
+  }
+  .version-badge {
+    background: rgba(139, 92, 246, 0.2);
+    color: #a78bfa;
+    padding: 0.1rem 0.4rem;
+    border-radius: 9999px;
+    font-size: 0.7rem;
+    font-weight: 500;
+  }
+  .empty-text { color: #52525b; font-style: italic; font-size: 0.875rem; }
+  .footer-bar {
+    text-align: center;
+    padding-top: 1.5rem;
+    font-size: 0.8rem;
+    color: #52525b;
+  }
+  .footer-bar a { color: #71717a; text-decoration: none; }
+  .footer-bar a:hover { color: #a1a1aa; }
+
+  @media (max-width: 600px) {
+    body { padding: 1rem 0.5rem; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="profile-header">
+    <div class="avatar">${displayName.charAt(0).toUpperCase()}</div>
+    <div class="profile-info">
+      <h1>${displayName}</h1>
+      <div class="profile-meta">Member since ${escapeHtml(memberSince)}</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">MCP Servers (${apps.length})</div>
+    ${appCards}
+  </div>
+
+  <div class="section">
+    <div class="section-title">Published Pages (${pages.length})</div>
+    ${pageCards}
+  </div>
+
+  <div class="footer-bar">
+    Powered by <a href="https://ultralight.dev">Ultralight</a>
+  </div>
+</div>
+</body>
+</html>`;
+}
+
+// ============================================
 // PUBLISHED MARKDOWN PAGES
 // ============================================
 
@@ -908,10 +1527,10 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
     'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
   };
 
-  let contentRow: { id: string; visibility: string; access_token: string | null } | null = null;
+  let contentRow: { id: string; visibility: string; access_token: string | null; title: string | null; tags: string[] | null; updated_at: string | null } | null = null;
   try {
     const contentRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${userId}&type=eq.page&slug=eq.${encodeURIComponent(slug)}&select=id,visibility,access_token&limit=1`,
+      `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${userId}&type=eq.page&slug=eq.${encodeURIComponent(slug)}&select=id,visibility,access_token,title,tags,updated_at&limit=1`,
       { headers: dbHeaders }
     );
     if (contentRes.ok) {
@@ -986,15 +1605,49 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
     return new Response('Page not found', { status: 404 });
   }
 
-  // Parse front-matter style title from first H1, or use slug
-  let title = slug;
-  const h1Match = content.match(/^#\s+(.+)$/m);
-  if (h1Match) title = h1Match[1];
-
-  const html = renderMarkdownPage(title, content);
+  const pageUrl = new URL(request.url);
   const cacheControl = contentRow?.visibility === 'private' || contentRow?.visibility === 'shared'
     ? 'private, no-cache'
     : 'public, max-age=60';
+
+  // Raw markdown API — agents can fetch ?format=raw for programmatic access
+  if (pageUrl.searchParams.get('format') === 'raw') {
+    return new Response(content, {
+      headers: {
+        'Content-Type': 'text/markdown; charset=utf-8',
+        'Cache-Control': cacheControl,
+      },
+    });
+  }
+
+  // Parse front-matter style title from first H1, or use slug
+  let title = contentRow?.title || slug;
+  const h1Match = content.match(/^#\s+(.+)$/m);
+  if (h1Match && !contentRow?.title) title = h1Match[1];
+
+  // Fetch owner display name for the header
+  let authorName: string | undefined;
+  try {
+    const userRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=display_name,email&limit=1`,
+      { headers: dbHeaders }
+    );
+    if (userRes.ok) {
+      const users = await userRes.json() as Array<{ display_name: string | null; email: string }>;
+      if (users.length > 0) {
+        authorName = users[0].display_name || users[0].email.split('@')[0];
+      }
+    }
+  } catch { /* best effort */ }
+
+  const rawUrl = `${pageUrl.pathname}?format=raw`;
+  const html = renderMarkdownPage(title, content, {
+    authorName,
+    authorId: userId,
+    updatedAt: contentRow?.updated_at || undefined,
+    tags: contentRow?.tags || undefined,
+    rawUrl,
+  });
   return new Response(html, {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
@@ -1004,11 +1657,21 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
 }
 
 /**
- * Render markdown content as a clean, readable HTML page.
- * Uses simple regex-based markdown→HTML (no external deps).
+ * Get the public base URL of the server, respecting reverse proxy headers.
  */
-function renderMarkdownPage(title: string, markdown: string): string {
-  // Basic markdown → HTML conversion
+function getBaseUrl(request: Request): string {
+  const url = new URL(request.url);
+  const host = request.headers.get('x-forwarded-host') || request.headers.get('host') || url.host;
+  const proto = request.headers.get('x-forwarded-proto')
+    || (host.includes('localhost') ? 'http' : 'https');
+  return `${proto}://${host}`;
+}
+
+/**
+ * Convert markdown text to HTML using simple regex-based conversion (no external deps).
+ * Extracted for reuse across published pages, app pages, etc.
+ */
+function markdownToHtml(markdown: string): string {
   let html = escapeHtml(markdown);
 
   // Code blocks (``` ... ```) — must be before inline code
@@ -1045,6 +1708,24 @@ function renderMarkdownPage(title: string, markdown: string): string {
   // Clean up empty paragraphs around block elements
   html = html.replace(/<p>\s*(<h[1-6]|<pre|<ul|<ol|<hr|<blockquote)/g, '$1');
   html = html.replace(/(<\/h[1-6]>|<\/pre>|<\/ul>|<\/ol>|<hr>|<\/blockquote>)\s*<\/p>/g, '$1');
+
+  return html;
+}
+
+/**
+ * Render markdown content as a clean, readable HTML page.
+ * Uses simple regex-based markdown→HTML (no external deps).
+ */
+function renderMarkdownPage(title: string, markdown: string, meta?: { authorName?: string; authorId?: string; updatedAt?: string; tags?: string[]; rawUrl?: string }): string {
+  const html = markdownToHtml(markdown);
+
+  const metaHeader = meta ? `
+    <div class="page-meta">
+      ${meta.authorName ? `<span class="meta-author">by <a href="/u/${escapeHtml(meta.authorId || '')}">${escapeHtml(meta.authorName)}</a></span>` : ''}
+      ${meta.updatedAt ? `<span class="meta-date">${new Date(meta.updatedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</span>` : ''}
+      ${meta.tags && meta.tags.length > 0 ? `<span class="meta-tags">${meta.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</span>` : ''}
+      ${meta.rawUrl ? `<a href="${escapeHtml(meta.rawUrl)}" class="meta-raw">View Raw</a>` : ''}
+    </div>` : '';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1102,6 +1783,38 @@ function renderMarkdownPage(title: string, markdown: string): string {
     color: #444;
   }
   hr { margin: 2rem 0; border: none; border-top: 1px solid #eee; }
+  .page-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #eee;
+    font-size: 0.875rem;
+    color: #666;
+  }
+  .page-meta a { color: #4361ee; }
+  .meta-date::before { content: "\\00b7"; margin-right: 0; }
+  .tag {
+    display: inline-block;
+    background: #f0f0f5;
+    padding: 0.15em 0.5em;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    color: #555;
+    margin-right: 0.25rem;
+  }
+  .meta-raw {
+    margin-left: auto;
+    font-size: 0.8rem;
+    color: #999 !important;
+    text-decoration: none;
+    border: 1px solid #ddd;
+    padding: 0.2em 0.6em;
+    border-radius: 4px;
+  }
+  .meta-raw:hover { background: #f0f0f5; text-decoration: none; }
   .footer {
     text-align: center;
     margin-top: 2rem;
@@ -1119,6 +1832,7 @@ function renderMarkdownPage(title: string, markdown: string): string {
 </head>
 <body>
 <article>
+${metaHeader}
 ${html}
 <div class="footer">Published with <a href="https://ultralight.dev">Ultralight</a></div>
 </article>

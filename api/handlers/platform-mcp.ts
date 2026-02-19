@@ -3440,6 +3440,7 @@ async function executeDiscoverLibrary(
   let contentResults: Array<{
     id: string; name: string; slug: string; description: string | null;
     similarity: number; source: string; type: string; tags?: string[];
+    owner_id?: string;
   }> = [];
 
   if (searchContent) {
@@ -3473,6 +3474,7 @@ async function executeDiscoverLibrary(
           source: r.owner_id === userId ? 'owned' : 'shared',
           type: r.type,
           tags: r.tags || undefined,
+          owner_id: r.owner_id,
         }));
       }
     } catch { /* best effort — content search failure shouldn't break app search */ }
@@ -3494,6 +3496,7 @@ async function executeDiscoverLibrary(
       source: r.source,
       type: r.type,
       ...(r.type === 'app' ? { mcp_endpoint: (r as typeof appResults[0]).mcp_endpoint } : {}),
+      ...(r.type === 'page' && 'owner_id' in r && r.owner_id ? { url: `/p/${r.owner_id}/${r.slug}` } : {}),
       ...('tags' in r && r.tags ? { tags: r.tags } : {}),
     })),
   };
@@ -3832,6 +3835,7 @@ async function executeDiscoverAppstore(
       type: r.type,
       is_owner: r.owner_id === userId,
       ...(r.type === 'app' ? { mcp_endpoint: `/mcp/${r.id}` } : {}),
+      ...(r.type === 'page' ? { url: `/p/${r.owner_id}/${r.slug}` } : {}),
       likes: r.likes,
       dislikes: r.dislikes,
       ...(r.requiredSecrets && r.requiredSecrets.length > 0 ? { required_secrets: r.requiredSecrets } : {}),
