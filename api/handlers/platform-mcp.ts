@@ -1,12 +1,13 @@
-// Platform MCP Handler — v2
+// Platform MCP Handler — v3
 // Implements JSON-RPC 2.0 for the ul.* tool namespace
 // Endpoint: POST /mcp/platform
-// Tools: upload, download, set.version, set.visibility, set.download, set.supabase,
-//        permissions.grant, permissions.revoke, permissions.list,
-//        discover.desk, discover.library, discover.appstore, like, dislike, logs,
-//        connect, connections,
-//        memory.read, memory.write, memory.append, memory.remember, memory.recall, memory.query, memory.forget,
-//        markdown, pages
+// 25 tools:
+//   upload, download, set.version, set.visibility, set.download, set.supabase, set.ratelimit,
+//   permissions.grant, permissions.revoke, permissions.list, permissions.export,
+//   discover.desk, discover.library, discover.appstore, rate, logs,
+//   connect, connections,
+//   memory.read, memory.write, memory.recall, memory.query,
+//   markdown.publish, markdown.list, markdown.share
 
 import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
@@ -16,11 +17,10 @@ import { createR2Service } from '../services/storage.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
 import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
 import { getPermissionsForUser } from './user.ts';
-import { type Tier, isProTier } from '../../shared/types/index.ts';
+import { type Tier } from '../../shared/types/index.ts';
 import { handleUploadFiles, type UploadFile } from './upload.ts';
 import { validateAndParseSkillsMd } from '../services/docgen.ts';
 import { createEmbeddingService } from '../services/embedding.ts';
-import { checkVisibilityAllowed } from '../services/tier-enforcement.ts';
 import {
   generateSkillsForVersion,
   rebuildUserLibrary,
@@ -93,7 +93,7 @@ Endpoint: \`POST /mcp/platform\`
 Protocol: JSON-RPC 2.0
 Namespace: \`ul.*\`
 
-29 tools for managing MCP apps, user memory, discovery, permissions, connections, content publishing, sharing, rate limits, and audit logs.
+25 tools for managing MCP apps, user memory, discovery, permissions, connections, content publishing, sharing, rate limits, and audit logs.
 
 ---
 
@@ -141,7 +141,7 @@ When the user needs a capability, search in this order:
 2. **Library** — \`ul.discover.library\` — Apps the user owns or has liked. Also returns the user's memory.md context. Check here if the desk didn't match.
 3. **App Store** — \`ul.discover.appstore\` — All published apps. Call without a query to browse featured/top apps, or with a query to search. Only search here if nothing in the desk or library fits.
 
-\`ul.like\` saves an app to the user's library. \`ul.dislike\` removes it from library and future app store results. Both toggle — calling again removes the action.
+\`ul.rate\` manages app ratings: \`rating: "like"\` saves to library, \`"dislike"\` hides from app store, \`"none"\` removes any rating.
 
 ---
 
@@ -149,8 +149,8 @@ When the user needs a capability, search in this order:
 
 Ultralight provides two complementary memory layers:
 
-- **memory.md** — Free-form markdown the user (or agents) read/write. Preferences, project context, notes. Returned automatically by \`ul.discover.library\`. Use \`ul.memory.read\` / \`ul.memory.write\` / \`ul.memory.append\`. Sharable with other users via \`ul.markdown.share\`.
-- **KV store** — Structured key-value pairs for programmatic storage. Cross-app by default. Use \`ul.memory.remember\` / \`ul.memory.recall\` / \`ul.memory.query\` / \`ul.memory.forget\`. Share specific keys or patterns with \`ul.markdown.share\`.
+- **memory.md** — Free-form markdown the user (or agents) read/write. Preferences, project context, notes. Returned automatically by \`ul.discover.library\`. Use \`ul.memory.read\` / \`ul.memory.write\` (set \`append: true\` to add without overwriting). Sharable with other users via \`ul.markdown.share\`.
+- **KV store** — Structured key-value pairs for programmatic storage. Cross-app by default. Use \`ul.memory.recall\` (with \`value\` to store, without to retrieve) / \`ul.memory.query\` (with \`delete_key\` to remove a key). Share specific keys or patterns with \`ul.markdown.share\`.
 
 Both memory types are now indexed in the unified content table with embeddings, making them semantically searchable via \`ul.discover.library\` with \`types: ["memory_md"]\`.
 
@@ -230,7 +230,7 @@ ul.set.supabase(
 
 ## ul.permissions.grant
 
-Grant a user access to specific functions on a private app. Additive — does not remove existing grants. Omit \`functions\` to grant ALL current exported functions. Pro: pass \`constraints\` to set IP allowlists, time windows, usage budgets, and expiry dates.
+Grant a user access to specific functions on a private app. Additive — does not remove existing grants. Omit \`functions\` to grant ALL current exported functions. Pass \`constraints\` to set IP allowlists, time windows, usage budgets, and expiry dates.
 
 \`\`\`
 ul.permissions.grant(
@@ -281,7 +281,7 @@ ul.permissions.list(
 
 ## ul.permissions.export
 
-Pro: Export MCP call logs and permission audit data. Useful for compliance and security review.
+Export MCP call logs and permission audit data. Useful for compliance and security review.
 
 \`\`\`
 ul.permissions.export(
@@ -295,7 +295,7 @@ ul.permissions.export(
 
 ## ul.set.ratelimit
 
-Pro: Set per-consumer rate limits for your app. Pass null values to remove limits and use platform defaults.
+Set per-consumer rate limits for your app. Pass null values to remove limits and use platform defaults.
 
 \`\`\`
 ul.set.ratelimit(
@@ -340,23 +340,14 @@ ul.discover.appstore(
 → { mode: 'search', query, types, results: [{ ..., type: "app" | "page" }] }
 \`\`\`
 
-## ul.like
+## ul.rate
 
-Like an app to save it to your library. Toggle — calling again removes the like. Liking a previously disliked app removes the dislike.
-
-\`\`\`
-ul.like(
-  app_id: string
-)
-\`\`\`
-
-## ul.dislike
-
-Dislike an app to remove it from your library and hide it from future app store results. Toggle — calling again removes the dislike.
+Rate an app. \`"like"\` saves it to your library. \`"dislike"\` hides it from future app store results. \`"none"\` removes any existing rating. Cannot rate your own apps.
 
 \`\`\`
-ul.dislike(
-  app_id: string
+ul.rate(
+  app_id: string,
+  rating: "like" | "dislike" | "none"
 )
 \`\`\`
 
@@ -408,71 +399,41 @@ ul.memory.read(
 
 ## ul.memory.write
 
-Overwrite the user's memory.md. Auto-embeds for semantic search. Use \`ul.memory.append\` to add without losing existing content.
+Write to the user's memory.md. By default overwrites; set \`append: true\` to add without losing existing content. Creates the file if it doesn't exist. Auto-embeds for semantic search.
 
 \`\`\`
 ul.memory.write(
-  content: string
-)
-\`\`\`
-
-## ul.memory.append
-
-Append a section to the user's memory.md. Creates the file if it doesn't exist. Auto-embeds on update.
-
-\`\`\`
-ul.memory.append(
-  content: string
-)
-\`\`\`
-
-## ul.memory.remember
-
-Store a key-value pair in the user's cross-app memory (KV store). Scope defaults to \`"user"\` (shared across all apps).
-
-\`\`\`
-ul.memory.remember(
-  key: string,
-  value: any,
-  scope?: string
+  content: string,
+  append?: boolean          // true to append instead of overwrite
 )
 \`\`\`
 
 ## ul.memory.recall
 
-Retrieve a value from the user's cross-app memory by key. Returns the value or null. Use \`owner_email\` to recall from another user's shared memory keys.
+Get or set a value in the user's cross-app memory (KV store). With \`value\`: stores the key-value pair. Without \`value\`: retrieves (returns null if not found). Scope defaults to \`"user"\` (cross-app). Use \`owner_email\` to recall from another user's shared keys.
 
 \`\`\`
 ul.memory.recall(
   key: string,
+  value?: any,            // provide to store, omit to retrieve
   scope?: string,
-  owner_email?: string  // email of another user whose shared key to recall
+  owner_email?: string    // email of another user whose shared key to recall
 )
 \`\`\`
 
 ## ul.memory.query
 
-Query the user's KV memory. Filter by scope and/or key prefix. Returns \`{ key, value }\` pairs ordered by most recently updated. Use \`owner_email\` to query another user's shared memory keys.
+Query the user's KV memory. Filter by scope and/or key prefix. Returns \`{ key, value }\` pairs ordered by most recently updated. Use \`owner_email\` to query another user's shared memory keys. Use \`delete_key\` to remove a specific key.
 
 \`\`\`
 ul.memory.query(
   scope?: string,
   prefix?: string,
   limit?: number,
-  owner_email?: string
+  owner_email?: string,
+  delete_key?: string     // provide to delete this key instead of querying
 )
 → { entries: [{ key, value }], total: number, scope: string }
-\`\`\`
-
-## ul.memory.forget
-
-Delete a key from the user's cross-app memory.
-
-\`\`\`
-ul.memory.forget(
-  key: string,
-  scope?: string
-)
 \`\`\`
 
 ---
@@ -694,7 +655,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     description:
       'Grant a user access to specific functions on a private app. ' +
       'Additive — does not remove existing grants. Omit functions to grant ALL. ' +
-      'Pro: pass constraints to set IP allowlists, time windows, usage budgets, and expiry.',
+      'Pass constraints to set IP allowlists, time windows, usage budgets, and expiry.',
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
@@ -708,7 +669,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
         },
         constraints: {
           type: 'object',
-          description: 'Pro: Granular constraints applied to this grant.',
+          description: 'Granular constraints applied to this grant.',
           properties: {
             allowed_ips: {
               type: 'array', items: { type: 'string' },
@@ -792,7 +753,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     name: 'ul.permissions.export',
     title: 'Export Audit Log',
     description:
-      'Pro: Export MCP call logs and permission audit data as structured JSON or CSV. ' +
+      'Export MCP call logs and permission audit data as structured JSON or CSV. ' +
       'Includes caller info, IPs, timestamps, functions, and success/failure.',
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
@@ -811,7 +772,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     name: 'ul.set.ratelimit',
     title: 'Set App Rate Limit',
     description:
-      'Pro: Set per-consumer rate limits for your app. ' +
+      'Set per-consumer rate limits for your app. ' +
       'Pass null values to remove and use platform defaults.',
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
@@ -887,39 +848,26 @@ const PLATFORM_TOOLS: MCPTool[] = [
     },
   },
 
-  // ── Like/Dislike ─────────────────────────────────
+  // ── Rate ─────────────────────────────────
   {
-    name: 'ul.like',
-    title: 'Like an App',
+    name: 'ul.rate',
+    title: 'Rate an App',
     description:
-      'Like an app to save it to your library. Works on public, unlisted, and private apps. ' +
-      'Cannot like your own apps. ' +
-      'Calling again on an already-liked app removes the like (toggle). ' +
-      'Liking a previously disliked app removes the dislike.',
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      'Like or dislike an app. "like" saves it to your library. "dislike" hides it from future app store results. ' +
+      '"none" removes any existing like/dislike. ' +
+      'Cannot rate your own apps. Liking a disliked app (or vice versa) replaces the previous rating.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
         app_id: { type: 'string', description: 'App ID or slug' },
+        rating: {
+          type: 'string',
+          enum: ['like', 'dislike', 'none'],
+          description: 'Rating to apply. "none" removes any existing rating.',
+        },
       },
-      required: ['app_id'],
-    },
-  },
-  {
-    name: 'ul.dislike',
-    title: 'Dislike an App',
-    description:
-      'Dislike an app to remove it from your library and hide it from future app store results. ' +
-      'Works on public, unlisted, and private apps. Cannot dislike your own apps. ' +
-      'Calling again on an already-disliked app removes the dislike (toggle). ' +
-      'Disliking a previously liked app removes the like.',
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    inputSchema: {
-      type: 'object',
-      properties: {
-        app_id: { type: 'string', description: 'App ID or slug' },
-      },
-      required: ['app_id'],
+      required: ['app_id', 'rating'],
     },
   },
 
@@ -1021,45 +969,32 @@ const PLATFORM_TOOLS: MCPTool[] = [
     title: 'Write Memory',
     description:
       'Overwrite the user\'s memory.md with new content. Use this for full rewrites. ' +
-      'For adding a section without losing existing content, use ul.memory.append instead. ' +
-      'Auto-embeds the content for semantic search.',
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-    inputSchema: {
-      type: 'object',
-      properties: {
-        content: {
-          type: 'string',
-          description: 'Full markdown content to write.',
-        },
-      },
-      required: ['content'],
-    },
-  },
-  {
-    name: 'ul.memory.append',
-    title: 'Append to Memory',
-    description:
-      'Append a section to the user\'s memory.md. Preserves existing content. ' +
-      'Creates the file if it doesn\'t exist. Auto-embeds on update.',
+      'For adding a section without losing existing content, set append=true. ' +
+      'Creates the file if it doesn\'t exist. Auto-embeds the content for semantic search.',
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
         content: {
           type: 'string',
-          description: 'Markdown section to append.',
+          description: 'Markdown content to write (or append).',
+        },
+        append: {
+          type: 'boolean',
+          description: 'If true, appends content to existing memory.md instead of overwriting. Default: false.',
         },
       },
       required: ['content'],
     },
   },
   {
-    name: 'ul.memory.remember',
-    title: 'Remember (KV)',
+    name: 'ul.memory.recall',
+    title: 'Recall (KV)',
     description:
-      'Store a key-value pair in the user\'s cross-app memory. ' +
-      'For structured data that apps read/write programmatically. ' +
-      'Scope defaults to \'user\' (cross-app). Use scope \'app:{appId}\' for app-specific memory.',
+      'Get or set a value in the user\'s cross-app memory (KV store). ' +
+      'With value: stores the key-value pair. Without value: retrieves the value (null if not found). ' +
+      'Scope defaults to \'user\' (cross-app). Use scope \'app:{appId}\' for app-specific memory. ' +
+      'Use owner_email to recall from another user\'s shared memory keys.',
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
@@ -1069,38 +1004,15 @@ const PLATFORM_TOOLS: MCPTool[] = [
           description: 'Memory key.',
         },
         value: {
-          description: 'JSON-serializable value to store.',
+          description: 'JSON-serializable value to store. Omit to retrieve instead of store.',
         },
         scope: {
           type: 'string',
           description: 'Memory scope. Defaults to \'user\'. Use \'app:{appId}\' for app-scoped.',
         },
-      },
-      required: ['key', 'value'],
-    },
-  },
-  {
-    name: 'ul.memory.recall',
-    title: 'Recall (KV)',
-    description:
-      'Retrieve a value from the user\'s cross-app memory by key. ' +
-      'Returns null if the key does not exist. ' +
-      'Use owner_email to recall from another user\'s shared memory keys.',
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    inputSchema: {
-      type: 'object',
-      properties: {
-        key: {
-          type: 'string',
-          description: 'Memory key to recall.',
-        },
-        scope: {
-          type: 'string',
-          description: 'Memory scope. Defaults to \'user\'.',
-        },
         owner_email: {
           type: 'string',
-          description: 'Email of another user whose shared memory key to recall. Omit to recall your own.',
+          description: 'Email of another user whose shared memory key to recall. Omit to use your own.',
         },
       },
       required: ['key'],
@@ -1112,8 +1024,9 @@ const PLATFORM_TOOLS: MCPTool[] = [
     description:
       'Query the user\'s memory key-value store. Filter by scope and/or key prefix. ' +
       'Returns an array of { key, value } pairs ordered by most recently updated. ' +
-      'Use owner_email to query another user\'s shared memory keys.',
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      'Use owner_email to query another user\'s shared memory keys. ' +
+      'Use delete_key to remove a specific key from memory.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: 'object',
       properties: {
@@ -1133,28 +1046,11 @@ const PLATFORM_TOOLS: MCPTool[] = [
           type: 'string',
           description: 'Email of another user whose shared memory keys to query. Omit to query your own.',
         },
-      },
-    },
-  },
-  {
-    name: 'ul.memory.forget',
-    title: 'Forget (KV)',
-    description:
-      'Delete a key from the user\'s cross-app memory.',
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-    inputSchema: {
-      type: 'object',
-      properties: {
-        key: {
+        delete_key: {
           type: 'string',
-          description: 'Memory key to delete.',
-        },
-        scope: {
-          type: 'string',
-          description: 'Memory scope. Defaults to \'user\'.',
+          description: 'Delete this key from memory instead of querying. Returns confirmation.',
         },
       },
-      required: ['key'],
     },
   },
 
@@ -1549,7 +1445,7 @@ async function handleToolsCall(
     switch (name) {
       // Upload & Download
       case 'ul.upload':
-        result = await executeUpload(userId, toolArgs, user.tier);
+        result = await executeUpload(userId, toolArgs);
         break;
       case 'ul.download':
         result = await executeDownload(userId, toolArgs);
@@ -1560,7 +1456,7 @@ async function handleToolsCall(
         result = await executeSetVersion(userId, toolArgs);
         break;
       case 'ul.set.visibility':
-        result = await executeSetVisibility(userId, toolArgs, user.tier);
+        result = await executeSetVisibility(userId, toolArgs);
         break;
       case 'ul.set.download':
         result = await executeSetDownload(userId, toolArgs);
@@ -1569,21 +1465,21 @@ async function handleToolsCall(
         result = await executeSetSupabase(userId, toolArgs);
         break;
       case 'ul.set.ratelimit':
-        result = await executeSetRateLimit(userId, toolArgs, user.tier);
+        result = await executeSetRateLimit(userId, toolArgs);
         break;
 
       // Permissions
       case 'ul.permissions.grant':
-        result = await executePermissionsGrant(userId, toolArgs, user.tier);
+        result = await executePermissionsGrant(userId, toolArgs);
         break;
       case 'ul.permissions.revoke':
-        result = await executePermissionsRevoke(userId, toolArgs, user.tier);
+        result = await executePermissionsRevoke(userId, toolArgs);
         break;
       case 'ul.permissions.list':
         result = await executePermissionsList(userId, toolArgs);
         break;
       case 'ul.permissions.export':
-        result = await executePermissionsExport(userId, toolArgs, user.tier);
+        result = await executePermissionsExport(userId, toolArgs);
         break;
 
       // Discovery
@@ -1597,17 +1493,21 @@ async function handleToolsCall(
         result = await executeDiscoverAppstore(userId, toolArgs);
         break;
 
-      // Like/Dislike
+      // Rate
+      case 'ul.rate':
+        result = await executeRate(userId, toolArgs);
+        break;
+      // Legacy aliases
       case 'ul.like':
-        result = await executeLikeDislike(userId, toolArgs, true);
+        result = await executeRate(userId, { ...toolArgs, rating: 'like' });
         break;
       case 'ul.dislike':
-        result = await executeLikeDislike(userId, toolArgs, false);
+        result = await executeRate(userId, { ...toolArgs, rating: 'dislike' });
         break;
 
       // Logs
       case 'ul.logs':
-        result = await executeLogs(userId, toolArgs, user.tier);
+        result = await executeLogs(userId, toolArgs);
         break;
 
       // Connections (per-user secrets)
@@ -1625,20 +1525,23 @@ async function handleToolsCall(
       case 'ul.memory.write':
         result = await executeMemoryWrite(userId, toolArgs);
         break;
+      // Legacy alias: ul.memory.append → ul.memory.write with append=true
       case 'ul.memory.append':
-        result = await executeMemoryAppend(userId, toolArgs);
-        break;
-      case 'ul.memory.remember':
-        result = await executeMemoryRemember(userId, toolArgs);
+        result = await executeMemoryWrite(userId, { ...toolArgs, append: true });
         break;
       case 'ul.memory.recall':
+        result = await executeMemoryRecall(userId, toolArgs);
+        break;
+      // Legacy alias: ul.memory.remember → ul.memory.recall with value
+      case 'ul.memory.remember':
         result = await executeMemoryRecall(userId, toolArgs);
         break;
       case 'ul.memory.query':
         result = await executeMemoryQuery(userId, toolArgs);
         break;
+      // Legacy alias: ul.memory.forget → ul.memory.query with delete_key
       case 'ul.memory.forget':
-        result = await executeMemoryForget(userId, toolArgs);
+        result = await executeMemoryQuery(userId, { ...toolArgs, delete_key: toolArgs.key });
         break;
       // Markdown (Publishing, Listing, Sharing)
       case 'ul.markdown.publish':
@@ -1756,8 +1659,7 @@ function bumpVersion(current: string | null, explicit?: string): string {
 
 async function executeUpload(
   userId: string,
-  args: Record<string, unknown>,
-  userTier: Tier
+  args: Record<string, unknown>
 ): Promise<unknown> {
   const files = args.files as Array<{ path: string; content: string; encoding?: string }>;
   if (!files || !Array.isArray(files) || files.length === 0) {
@@ -1767,10 +1669,9 @@ async function executeUpload(
   const appIdOrSlug = args.app_id as string | undefined;
   const requestedVisibility = (args.visibility as string) || 'private';
 
-  // Gate visibility by tier
-  if (requestedVisibility !== 'private') {
-    const visibilityErr = checkVisibilityAllowed(userTier, requestedVisibility as 'private' | 'unlisted' | 'public');
-    if (visibilityErr) throw new ToolError(FORBIDDEN, visibilityErr);
+  // Visibility validation
+  if (!['private', 'unlisted', 'public', 'published'].includes(requestedVisibility)) {
+    throw new ToolError(INVALID_PARAMS, `Invalid visibility: ${requestedVisibility}`);
   }
 
   // Convert files to UploadFile format
@@ -2026,8 +1927,7 @@ async function executeSetVersion(
 
 async function executeSetVisibility(
   userId: string,
-  args: Record<string, unknown>,
-  userTier: Tier
+  args: Record<string, unknown>
 ): Promise<unknown> {
   const appIdOrSlug = args.app_id as string;
   const visibility = args.visibility as string;
@@ -2036,9 +1936,6 @@ async function executeSetVisibility(
 
   // Map 'published' → 'public' for DB storage (DB uses 'public')
   const dbVisibility = visibility === 'published' ? 'public' : visibility;
-
-  const visibilityErr = checkVisibilityAllowed(userTier, dbVisibility as 'private' | 'unlisted' | 'public');
-  if (visibilityErr) throw new ToolError(FORBIDDEN, visibilityErr);
 
   const app = await resolveApp(userId, appIdOrSlug);
   const previousVisibility = app.visibility;
@@ -2167,8 +2064,7 @@ async function executeSetSupabase(
 
 async function executePermissionsGrant(
   userId: string,
-  args: Record<string, unknown>,
-  callerTier: Tier
+  args: Record<string, unknown>
 ): Promise<unknown> {
   const appIdOrSlug = args.app_id as string;
   const email = args.email as string;
@@ -2190,7 +2086,7 @@ async function executePermissionsGrant(
 
   // If user doesn't exist yet, create a pending invite
   if (userRows.length === 0) {
-    const functionsToGrant = (isProTier(callerTier) && functions && functions.length > 0)
+    const functionsToGrant = (functions && functions.length > 0)
       ? functions
       : (app.exports || []);
     if (functionsToGrant.length === 0) {
@@ -2229,20 +2125,16 @@ async function executePermissionsGrant(
   }
 
   const targetUserId = userRows[0].id;
-  const targetTier = (userRows[0].tier || 'free') as Tier;
 
   if (targetUserId === userId) throw new ToolError(INVALID_PARAMS, 'Cannot grant permissions to yourself (owner has full access)');
 
-  // Granular per-function permissions require both parties to be Pro
-  const bothPro = isProTier(callerTier) && isProTier(targetTier);
-
   // Determine which functions to grant
   let functionsToGrant: string[];
-  if (bothPro && functions && functions.length > 0) {
-    // Pro→Pro: honour the granular functions list
+  if (functions && functions.length > 0) {
+    // Granular: honour the specific functions list
     functionsToGrant = functions;
   } else {
-    // Binary access: always grant ALL functions
+    // No functions specified: grant ALL functions
     functionsToGrant = app.exports || [];
   }
 
@@ -2250,12 +2142,12 @@ async function executePermissionsGrant(
     throw new ToolError(VALIDATION_ERROR, 'App has no exported functions to grant');
   }
 
-  // Parse constraints (Pro-only)
+  // Parse constraints
   const constraints = args.constraints as Record<string, unknown> | undefined;
   const constraintFields: Record<string, unknown> = {};
   let appliedConstraints: string[] = [];
 
-  if (constraints && isProTier(callerTier)) {
+  if (constraints) {
     if (constraints.allowed_ips) {
       constraintFields.allowed_ips = constraints.allowed_ips;
       appliedConstraints.push('ip_allowlist');
@@ -2315,12 +2207,6 @@ async function executePermissionsGrant(
     user_id: targetUserId,
     functions_granted: functionsToGrant,
     ...(appliedConstraints.length > 0 ? { constraints_applied: appliedConstraints } : {}),
-    ...(constraints && !isProTier(callerTier)
-      ? { note: 'Constraints require Pro tier. Grant applied without constraints.' }
-      : {}),
-    ...(!bothPro && functions && functions.length > 0
-      ? { note: 'Per-function permissions require both users to be on Pro. Granted all-or-nothing access.' }
-      : {}),
   };
 }
 
@@ -2328,8 +2214,7 @@ async function executePermissionsGrant(
 
 async function executePermissionsRevoke(
   userId: string,
-  args: Record<string, unknown>,
-  callerTier: Tier
+  args: Record<string, unknown>
 ): Promise<unknown> {
   const appIdOrSlug = args.app_id as string;
   const email = args.email as string | undefined;
@@ -2346,16 +2231,6 @@ async function executePermissionsRevoke(
 
   // ── No email: revoke ALL users ──
   if (!email) {
-    // Per-function revoke across all users requires Pro caller
-    if (functions && functions.length > 0 && !isProTier(callerTier)) {
-      // Free: ignore functions filter, revoke all access for all users
-      const deleteUrl = `${SUPABASE_URL}/rest/v1/user_app_permissions?app_id=eq.${app.id}`;
-      const res = await fetch(deleteUrl, { method: 'DELETE', headers });
-      if (!res.ok) throw new ToolError(INTERNAL_ERROR, `Revoke failed: ${await res.text()}`);
-      await fetch(`${SUPABASE_URL}/rest/v1/pending_permissions?app_id=eq.${app.id}`, { method: 'DELETE', headers });
-      return { app_id: app.id, all_users: true, all_access_revoked: true, note: 'Per-function revoke requires Pro. Revoked all access instead.' };
-    }
-
     let deleteUrl = `${SUPABASE_URL}/rest/v1/user_app_permissions?app_id=eq.${app.id}`;
     if (functions && functions.length > 0) {
       deleteUrl += `&function_name=in.(${functions.map(f => encodeURIComponent(f)).join(',')})`;
@@ -2387,29 +2262,19 @@ async function executePermissionsRevoke(
     return { app_id: app.id, email, pending_invite_revoked: true };
   }
   const targetUserId = userRows[0].id;
-  const targetTier = (userRows[0].tier || 'free') as Tier;
 
-  const bothPro = isProTier(callerTier) && isProTier(targetTier);
-
-  if (functions && functions.length > 0 && bothPro) {
-    // Pro→Pro: revoke specific functions for specific user
+  if (functions && functions.length > 0) {
+    // Granular: revoke specific functions for specific user
     const deleteUrl = `${SUPABASE_URL}/rest/v1/user_app_permissions?granted_to_user_id=eq.${targetUserId}&app_id=eq.${app.id}&function_name=in.(${functions.map(f => encodeURIComponent(f)).join(',')})`;
     const res = await fetch(deleteUrl, { method: 'DELETE', headers });
     if (!res.ok) throw new ToolError(INTERNAL_ERROR, `Revoke failed: ${await res.text()}`);
     return { app_id: app.id, email, functions_revoked: functions };
   } else {
-    // Binary: revoke all functions for specific user
+    // No functions specified: revoke all access for specific user
     const deleteUrl = `${SUPABASE_URL}/rest/v1/user_app_permissions?granted_to_user_id=eq.${targetUserId}&app_id=eq.${app.id}`;
     const res = await fetch(deleteUrl, { method: 'DELETE', headers });
     if (!res.ok) throw new ToolError(INTERNAL_ERROR, `Revoke failed: ${await res.text()}`);
-    return {
-      app_id: app.id,
-      email,
-      all_access_revoked: true,
-      ...(functions && functions.length > 0 && !bothPro
-        ? { note: 'Per-function revoke requires both users to be on Pro. Revoked all access instead.' }
-        : {}),
-    };
+    return { app_id: app.id, email, all_access_revoked: true };
   }
 }
 
@@ -2533,13 +2398,8 @@ async function executePermissionsList(
 
 async function executePermissionsExport(
   userId: string,
-  args: Record<string, unknown>,
-  callerTier: Tier
+  args: Record<string, unknown>
 ): Promise<unknown> {
-  if (!isProTier(callerTier)) {
-    throw new ToolError(FORBIDDEN, 'Audit log export requires Pro tier.');
-  }
-
   const appIdOrSlug = args.app_id as string;
   if (!appIdOrSlug) throw new ToolError(INVALID_PARAMS, 'app_id is required');
 
@@ -2605,13 +2465,8 @@ function formatExport(appId: string, entries: unknown[], format: string): unknow
 
 async function executeSetRateLimit(
   userId: string,
-  args: Record<string, unknown>,
-  callerTier: Tier
+  args: Record<string, unknown>
 ): Promise<unknown> {
-  if (!isProTier(callerTier)) {
-    throw new ToolError(FORBIDDEN, 'Custom rate limits require Pro tier.');
-  }
-
   const appIdOrSlug = args.app_id as string;
   if (!appIdOrSlug) throw new ToolError(INVALID_PARAMS, 'app_id is required');
 
@@ -2693,15 +2548,18 @@ async function getPendingUsers(
   }
 }
 
-// ── ul.like / ul.dislike ──────────────────────────────────────
+// ── ul.rate ──────────────────────────────────────
 
-async function executeLikeDislike(
+async function executeRate(
   userId: string,
-  args: Record<string, unknown>,
-  positive: boolean
+  args: Record<string, unknown>
 ): Promise<unknown> {
   const appIdOrSlug = args.app_id as string;
+  const rating = args.rating as string;
   if (!appIdOrSlug) throw new ToolError(INVALID_PARAMS, 'app_id is required');
+  if (!rating || !['like', 'dislike', 'none'].includes(rating)) {
+    throw new ToolError(INVALID_PARAMS, 'rating must be "like", "dislike", or "none"');
+  }
 
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   const headers = {
@@ -2725,24 +2583,15 @@ async function executeLikeDislike(
   if (!app) throw new ToolError(NOT_FOUND, `App not found: ${appIdOrSlug}`);
 
   if (app.owner_id === userId) {
-    throw new ToolError(FORBIDDEN, `You cannot ${positive ? 'like' : 'dislike'} your own app`);
+    throw new ToolError(FORBIDDEN, 'You cannot rate your own app');
   }
 
-  // Check if user already has a like/dislike for this app
-  const existingRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/app_likes?user_id=eq.${userId}&app_id=eq.${app.id}&select=positive&limit=1`,
-    { headers }
-  );
-  const existingRows = existingRes.ok ? await existingRes.json() : [];
-  const existing = existingRows.length > 0 ? existingRows[0] : null;
-
-  // Toggle: if already set to the same value, remove it
-  if (existing && existing.positive === positive) {
+  // "none" → remove any existing rating
+  if (rating === 'none') {
     await fetch(
       `${SUPABASE_URL}/rest/v1/app_likes?user_id=eq.${userId}&app_id=eq.${app.id}`,
       { method: 'DELETE', headers }
     );
-    // Clean up side-effect tables
     await fetch(
       `${SUPABASE_URL}/rest/v1/user_app_library?user_id=eq.${userId}&app_id=eq.${app.id}`,
       { method: 'DELETE', headers }
@@ -2756,7 +2605,29 @@ async function executeLikeDislike(
     return {
       app_id: app.id,
       app_name: app.name,
-      action: positive ? 'unliked' : 'undisliked',
+      action: 'rating_removed',
+      likes: updatedApp?.likes ?? 0,
+      dislikes: updatedApp?.dislikes ?? 0,
+    };
+  }
+
+  const positive = rating === 'like';
+
+  // Check if user already has a like/dislike for this app
+  const existingRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/app_likes?user_id=eq.${userId}&app_id=eq.${app.id}&select=positive&limit=1`,
+    { headers }
+  );
+  const existingRows = existingRes.ok ? await existingRes.json() : [];
+  const existing = existingRows.length > 0 ? existingRows[0] : null;
+
+  // If already set to the same value, it's a no-op
+  if (existing && existing.positive === positive) {
+    const updatedApp = await appsService.findById(app.id);
+    return {
+      app_id: app.id,
+      app_name: app.name,
+      action: positive ? 'already_liked' : 'already_disliked',
       likes: updatedApp?.likes ?? 0,
       dislikes: updatedApp?.dislikes ?? 0,
     };
@@ -2775,14 +2646,14 @@ async function executeLikeDislike(
       body: JSON.stringify({
         app_id: app.id,
         user_id: userId,
-        positive,
+        positive: positive,
         updated_at: new Date().toISOString(),
       }),
     }
   );
 
   if (!upsertRes.ok) {
-    throw new ToolError(INTERNAL_ERROR, `Failed to ${positive ? 'like' : 'dislike'}: ${await upsertRes.text()}`);
+    throw new ToolError(INTERNAL_ERROR, `Failed to ${rating}: ${await upsertRes.text()}`);
   }
 
   // Read back the updated app counters (trigger has already fired)
@@ -2812,7 +2683,7 @@ async function executeLikeDislike(
       );
     }
   } catch (err) {
-    console.error('Like/dislike side-effect error:', err);
+    console.error('Rate side-effect error:', err);
   }
 
   return {
@@ -2830,8 +2701,7 @@ async function executeLikeDislike(
 
 async function executeLogs(
   userId: string,
-  args: Record<string, unknown>,
-  callerTier: Tier
+  args: Record<string, unknown>
 ): Promise<unknown> {
   const appIdOrSlug = args.app_id as string;
   const emails = args.emails as string[] | undefined;
@@ -2857,21 +2727,16 @@ async function executeLogs(
   //   source of truth for the trust relationship, not current visibility.
   let allowedUserIds: string[];
 
-  if (!isProTier(callerTier)) {
-    // Free tier: only own calls
-    allowedUserIds = [userId];
-  } else {
-    // Pro: own calls + any explicitly granted users
-    const permsRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/user_app_permissions?app_id=eq.${app.id}&select=granted_to_user_id`,
-      { headers }
-    );
-    const grantedRows = permsRes.ok
-      ? await permsRes.json() as Array<{ granted_to_user_id: string }>
-      : [];
-    const grantedIds = [...new Set(grantedRows.map(r => r.granted_to_user_id))];
-    allowedUserIds = [userId, ...grantedIds];
-  }
+  // Own calls + any explicitly granted users
+  const permsRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/user_app_permissions?app_id=eq.${app.id}&select=granted_to_user_id`,
+    { headers }
+  );
+  const grantedRows = permsRes.ok
+    ? await permsRes.json() as Array<{ granted_to_user_id: string }>
+    : [];
+  const grantedIds = [...new Set(grantedRows.map(r => r.granted_to_user_id))];
+  allowedUserIds = [userId, ...grantedIds];
 
   // Build PostgREST query against mcp_call_logs
   let url = `${SUPABASE_URL}/rest/v1/mcp_call_logs?app_id=eq.${app.id}&order=created_at.desc&limit=${limit}`;
@@ -2956,7 +2821,7 @@ async function executeLogs(
     logs,
     total: logs.length,
     ...(since ? { since } : {}),
-    ...(!isProTier(callerTier) ? { scope: 'own_calls_only' } : { scope: 'granted_users' }),
+    scope: 'granted_users',
   };
 }
 
@@ -3998,41 +3863,23 @@ async function executeMemoryWrite(
   const content = args.content as string;
   if (!content) throw new ToolError(INVALID_PARAMS, 'content is required');
 
+  const shouldAppend = args.append === true;
+
+  if (shouldAppend) {
+    const updated = await appendUserMemory(userId, content);
+    return {
+      success: true,
+      mode: 'append',
+      length: updated.length,
+    };
+  }
+
   await writeUserMemory(userId, content);
   return {
     success: true,
+    mode: 'overwrite',
     length: content.length,
   };
-}
-
-async function executeMemoryAppend(
-  userId: string,
-  args: Record<string, unknown>
-): Promise<unknown> {
-  const content = args.content as string;
-  if (!content) throw new ToolError(INVALID_PARAMS, 'content is required');
-
-  const updated = await appendUserMemory(userId, content);
-  return {
-    success: true,
-    length: updated.length,
-  };
-}
-
-async function executeMemoryRemember(
-  userId: string,
-  args: Record<string, unknown>
-): Promise<unknown> {
-  const key = args.key as string;
-  const value = args.value;
-  const scope = (args.scope as string) || 'user';
-
-  if (!key) throw new ToolError(INVALID_PARAMS, 'key is required');
-  if (value === undefined) throw new ToolError(INVALID_PARAMS, 'value is required');
-
-  const memoryService = createMemoryService();
-  await memoryService.remember(userId, scope, key, value);
-  return { success: true, key: key, scope: scope };
 }
 
 async function executeMemoryRecall(
@@ -4040,11 +3887,20 @@ async function executeMemoryRecall(
   args: Record<string, unknown>
 ): Promise<unknown> {
   const key = args.key as string;
+  const value = args.value;
   const scope = (args.scope as string) || 'user';
   const ownerEmail = args.owner_email as string | undefined;
 
   if (!key) throw new ToolError(INVALID_PARAMS, 'key is required');
 
+  // SET mode: value is provided → store the key-value pair
+  if (value !== undefined) {
+    const memoryService = createMemoryService();
+    await memoryService.remember(userId, scope, key, value);
+    return { success: true, key: key, scope: scope };
+  }
+
+  // GET mode: no value → retrieve
   if (ownerEmail) {
     // Cross-user KV recall: check memory_shares for matching key pattern
     const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
@@ -4077,13 +3933,13 @@ async function executeMemoryRecall(
     if (!hasAccess) throw new ToolError(INVALID_PARAMS, 'Key not shared with you');
 
     const memoryService = createMemoryService();
-    const value = await memoryService.recall(ownerId, scope, key);
-    return value;
+    const recalledValue = await memoryService.recall(ownerId, scope, key);
+    return recalledValue;
   }
 
   const memoryService = createMemoryService();
-  const value = await memoryService.recall(userId, scope, key);
-  return value;
+  const recalledValue = await memoryService.recall(userId, scope, key);
+  return recalledValue;
 }
 
 /** Match a key against a pattern (exact match or prefix with wildcard *) */
@@ -4103,6 +3959,14 @@ async function executeMemoryQuery(
   const prefix = args.prefix as string | undefined;
   const limit = args.limit as number | undefined;
   const ownerEmail = args.owner_email as string | undefined;
+  const deleteKey = args.delete_key as string | undefined;
+
+  // DELETE mode: delete_key is provided → remove that key
+  if (deleteKey) {
+    const memoryService = createMemoryService();
+    await memoryService.forget(userId, scope, deleteKey);
+    return { success: true, deleted: deleteKey, scope: scope };
+  }
 
   if (ownerEmail) {
     // Cross-user KV query: check memory_shares, filter results to shared patterns
@@ -4152,20 +4016,6 @@ async function executeMemoryQuery(
     limit: limit,
   });
   return { entries: results, total: results.length, scope: scope };
-}
-
-async function executeMemoryForget(
-  userId: string,
-  args: Record<string, unknown>
-): Promise<unknown> {
-  const key = args.key as string;
-  const scope = (args.scope as string) || 'user';
-
-  if (!key) throw new ToolError(INVALID_PARAMS, 'key is required');
-
-  const memoryService = createMemoryService();
-  await memoryService.forget(userId, scope, key);
-  return { success: true, key: key, scope: scope };
 }
 
 // ============================================
