@@ -5,7 +5,7 @@ import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
 import { createUserService } from '../services/user.ts';
 import { validateAPIKey } from '../services/ai.ts';
-import { BYOK_PROVIDERS, type BYOKProvider, isProTier, type Tier } from '../../shared/types/index.ts';
+import { BYOK_PROVIDERS, type BYOKProvider } from '../../shared/types/index.ts';
 import {
   createToken,
   listTokens,
@@ -611,9 +611,8 @@ export async function handleUser(request: Request): Promise<Response> {
         return error('App not found', 404);
       }
 
-      // Resolve target user: either by user_id or email (also fetch tier)
+      // Resolve target user: either by user_id or email
       let resolvedUserId = targetUserId;
-      let targetTier: Tier = 'free';
       if (!resolvedUserId && email) {
         const userRes = await fetch(
           `${SUPABASE_URL}/rest/v1/users?email=eq.${encodeURIComponent(email)}&select=id,tier`,
@@ -668,22 +667,6 @@ export async function handleUser(request: Request): Promise<Response> {
           });
         }
         resolvedUserId = userRows[0].id;
-        targetTier = (userRows[0].tier || 'free') as Tier;
-      } else if (resolvedUserId) {
-        // Look up tier for user_id
-        const userRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/users?id=eq.${resolvedUserId}&select=tier`,
-          {
-            headers: {
-              'apikey': SUPABASE_SERVICE_ROLE_KEY,
-              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-            },
-          }
-        );
-        if (userRes.ok) {
-          const rows = await userRes.json();
-          targetTier = (rows[0]?.tier || 'free') as Tier;
-        }
       }
 
       if (!resolvedUserId) {
@@ -695,20 +678,8 @@ export async function handleUser(request: Request): Promise<Response> {
         return error('Cannot set permissions for the app owner', 400);
       }
 
-      // Check if granular per-function permissions are allowed
-      const owner = await userService.getUser(userId);
-      const ownerTier = (owner?.tier || 'free') as Tier;
-      const bothPro = isProTier(ownerTier) && isProTier(targetTier);
-
-      // If not both Pro, force binary: all functions get the same value
-      let effectivePermsList = permsList;
-      if (!bothPro) {
-        const hasAnyAllowed = permsList.some((p: { allowed: boolean }) => p.allowed);
-        effectivePermsList = permsList.map((p: { function_name: string; allowed: boolean }) => ({
-          function_name: p.function_name,
-          allowed: hasAnyAllowed,
-        }));
-      }
+      // Granular per-function permissions — available to all users
+      const effectivePermsList = permsList;
 
       // Delete existing permissions for this user+app
       await fetch(
@@ -730,7 +701,7 @@ export async function handleUser(request: Request): Promise<Response> {
           granted_by_user_id: userId,
           function_name: p.function_name,
           allowed: !!p.allowed,
-          ...(bothPro && p.allowed_args ? { allowed_args: p.allowed_args } : {}),
+          ...(p.allowed_args ? { allowed_args: p.allowed_args } : {}),
         }));
 
         const insertRes = await fetch(
@@ -749,11 +720,14 @@ export async function handleUser(request: Request): Promise<Response> {
         if (!insertRes.ok) throw new Error(await insertRes.text());
       }
 
+      // Invalidate permission cache for this user+app
+      getPermissionCache().invalidateByUserAndApp(resolvedUserId, appId);
+
       return json({
         success: true,
         message: 'Permissions saved',
         user_id: resolvedUserId,
-        ...(!bothPro ? { granular: false, note: 'Per-function permissions require both users to be on Pro.' } : { granular: true }),
+        granular: true,
       });
     } catch (err) {
       console.error('Set permissions error:', err);
@@ -811,6 +785,9 @@ export async function handleUser(request: Request): Promise<Response> {
           },
         }
       );
+
+      // Invalidate permission cache for this user+app
+      getPermissionCache().invalidateByUserAndApp(targetUserId, appId);
 
       return json({ success: true, message: 'User access revoked' });
     } catch (err) {
@@ -955,6 +932,7 @@ export async function getDecryptedPlatformSupabase(userId: string) {
 // ============================================
 
 import type { PermissionRow } from '../../shared/types/index.ts';
+import { getPermissionCache } from '../services/permission-cache.ts';
 
 /** Result of getPermissionsForUser — includes constraint rows for runtime enforcement */
 export interface PermissionsResult {
@@ -979,7 +957,14 @@ export async function getPermissionsForUser(
     return null; // No restrictions
   }
 
-  // Private app, non-owner: check user_app_permissions
+  // Check permission cache first
+  const cache = getPermissionCache();
+  const cached = cache.get(callerUserId, appId);
+  if (cached) {
+    return { allowed: cached.allowed, rows: cached.rows };
+  }
+
+  // Cache miss: fetch from Supabase
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
   const response = await fetch(
@@ -1001,6 +986,8 @@ export async function getPermissionsForUser(
 
   // If no permission rows exist, this user has no access to this private app
   if (rows.length === 0) {
+    // Cache the empty result too — prevents repeated DB calls for unauthorized users
+    cache.set(callerUserId, appId, new Set<string>(), []);
     return { allowed: new Set<string>(), rows: [] };
   }
 
@@ -1011,6 +998,9 @@ export async function getPermissionsForUser(
       allowed.add(row.function_name);
     }
   }
+
+  // Store in cache
+  cache.set(callerUserId, appId, allowed, rows);
 
   return { allowed, rows };
 }

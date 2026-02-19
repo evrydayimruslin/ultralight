@@ -1,5 +1,5 @@
 // AI Service Implementation (BYOK)
-// Multi-provider support: OpenRouter, OpenAI, Anthropic, DeepSeek, Moonshot
+// Single provider: OpenRouter (covers 100+ models via one API key)
 
 import type { AIRequest, AIResponse, BYOKProvider } from '../../shared/types/index.ts';
 
@@ -23,197 +23,52 @@ interface ProviderConfig {
 }
 
 // ============================================
-// PROVIDER CONFIGURATIONS
+// PROVIDER CONFIGURATION (OpenRouter only)
 // ============================================
 
-const PROVIDER_CONFIGS: Record<BYOKProvider, ProviderConfig> = {
-  openrouter: {
-    baseUrl: 'https://openrouter.ai/api/v1',
-    endpoint: '/chat/completions',
-    defaultModel: 'anthropic/claude-3.5-sonnet',
-    formatHeaders: (apiKey: string) => ({
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://ultralight.dev',
-      'X-Title': 'Ultralight',
-    }),
-    formatRequest: (request: AIRequest, model: string) => ({
-      model,
-      messages: request.messages,
-      temperature: request.temperature ?? 0.7,
-      max_tokens: request.max_tokens,
-      tools: request.tools,
-    }),
-    parseResponse: (data: unknown): AIResponse => {
-      const d = data as {
-        choices?: Array<{ message?: { content?: string } }>;
-        model?: string;
-        usage?: { prompt_tokens?: number; completion_tokens?: number };
-      };
-      return {
-        content: d.choices?.[0]?.message?.content || '',
-        model: d.model || 'unknown',
-        usage: {
-          input_tokens: d.usage?.prompt_tokens || 0,
-          output_tokens: d.usage?.completion_tokens || 0,
-          cost_cents: 0,
-        },
-      };
-    },
+const OPENROUTER_CONFIG: ProviderConfig = {
+  baseUrl: 'https://openrouter.ai/api/v1',
+  endpoint: '/chat/completions',
+  defaultModel: 'anthropic/claude-3.5-sonnet',
+  formatHeaders: (apiKey: string) => ({
+    'Authorization': `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+    'HTTP-Referer': 'https://ultralight.dev',
+    'X-Title': 'Ultralight',
+  }),
+  formatRequest: (request: AIRequest, model: string) => ({
+    model,
+    messages: request.messages,
+    temperature: request.temperature ?? 0.7,
+    max_tokens: request.max_tokens,
+    tools: request.tools,
+  }),
+  parseResponse: (data: unknown): AIResponse => {
+    const d = data as {
+      choices?: Array<{ message?: { content?: string } }>;
+      model?: string;
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+    };
+    return {
+      content: d.choices?.[0]?.message?.content || '',
+      model: d.model || 'unknown',
+      usage: {
+        input_tokens: d.usage?.prompt_tokens || 0,
+        output_tokens: d.usage?.completion_tokens || 0,
+        cost_cents: 0,
+      },
+    };
   },
+};
 
-  openai: {
-    baseUrl: 'https://api.openai.com/v1',
-    endpoint: '/chat/completions',
-    defaultModel: 'gpt-4o',
-    formatHeaders: (apiKey: string) => ({
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    }),
-    formatRequest: (request: AIRequest, model: string) => ({
-      model,
-      messages: request.messages,
-      temperature: request.temperature ?? 0.7,
-      max_tokens: request.max_tokens,
-      tools: request.tools?.map(t => ({
-        type: 'function',
-        function: {
-          name: t.name,
-          description: t.description,
-          parameters: t.parameters,
-        },
-      })),
-    }),
-    parseResponse: (data: unknown): AIResponse => {
-      const d = data as {
-        choices?: Array<{ message?: { content?: string } }>;
-        model?: string;
-        usage?: { prompt_tokens?: number; completion_tokens?: number };
-      };
-      return {
-        content: d.choices?.[0]?.message?.content || '',
-        model: d.model || 'unknown',
-        usage: {
-          input_tokens: d.usage?.prompt_tokens || 0,
-          output_tokens: d.usage?.completion_tokens || 0,
-          cost_cents: 0,
-        },
-      };
-    },
-  },
-
-  anthropic: {
-    baseUrl: 'https://api.anthropic.com/v1',
-    endpoint: '/messages',
-    defaultModel: 'claude-3-5-sonnet-20241022',
-    formatHeaders: (apiKey: string) => ({
-      'x-api-key': apiKey,
-      'Content-Type': 'application/json',
-      'anthropic-version': '2023-06-01',
-    }),
-    formatRequest: (request: AIRequest, model: string) => {
-      // Anthropic has different message format - extract system message
-      const systemMessage = request.messages.find(m => m.role === 'system');
-      const otherMessages = request.messages.filter(m => m.role !== 'system');
-
-      return {
-        model,
-        max_tokens: request.max_tokens || 4096,
-        system: systemMessage?.content,
-        messages: otherMessages.map(m => ({
-          role: m.role === 'assistant' ? 'assistant' : 'user',
-          content: m.content,
-        })),
-        temperature: request.temperature ?? 0.7,
-        tools: request.tools?.map(t => ({
-          name: t.name,
-          description: t.description,
-          input_schema: t.parameters,
-        })),
-      };
-    },
-    parseResponse: (data: unknown): AIResponse => {
-      const d = data as {
-        content?: Array<{ type: string; text?: string }>;
-        model?: string;
-        usage?: { input_tokens?: number; output_tokens?: number };
-      };
-      const textContent = d.content?.find(c => c.type === 'text');
-      return {
-        content: textContent?.text || '',
-        model: d.model || 'unknown',
-        usage: {
-          input_tokens: d.usage?.input_tokens || 0,
-          output_tokens: d.usage?.output_tokens || 0,
-          cost_cents: 0,
-        },
-      };
-    },
-  },
-
-  deepseek: {
-    baseUrl: 'https://api.deepseek.com',
-    endpoint: '/chat/completions',
-    defaultModel: 'deepseek-chat',
-    formatHeaders: (apiKey: string) => ({
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    }),
-    formatRequest: (request: AIRequest, model: string) => ({
-      model,
-      messages: request.messages,
-      temperature: request.temperature ?? 0.7,
-      max_tokens: request.max_tokens,
-    }),
-    parseResponse: (data: unknown): AIResponse => {
-      const d = data as {
-        choices?: Array<{ message?: { content?: string } }>;
-        model?: string;
-        usage?: { prompt_tokens?: number; completion_tokens?: number };
-      };
-      return {
-        content: d.choices?.[0]?.message?.content || '',
-        model: d.model || 'unknown',
-        usage: {
-          input_tokens: d.usage?.prompt_tokens || 0,
-          output_tokens: d.usage?.completion_tokens || 0,
-          cost_cents: 0,
-        },
-      };
-    },
-  },
-
-  moonshot: {
-    baseUrl: 'https://api.moonshot.cn/v1',
-    endpoint: '/chat/completions',
-    defaultModel: 'moonshot-v1-8k',
-    formatHeaders: (apiKey: string) => ({
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    }),
-    formatRequest: (request: AIRequest, model: string) => ({
-      model,
-      messages: request.messages,
-      temperature: request.temperature ?? 0.7,
-      max_tokens: request.max_tokens,
-    }),
-    parseResponse: (data: unknown): AIResponse => {
-      const d = data as {
-        choices?: Array<{ message?: { content?: string } }>;
-        model?: string;
-        usage?: { prompt_tokens?: number; completion_tokens?: number };
-      };
-      return {
-        content: d.choices?.[0]?.message?.content || '',
-        model: d.model || 'unknown',
-        usage: {
-          input_tokens: d.usage?.prompt_tokens || 0,
-          output_tokens: d.usage?.completion_tokens || 0,
-          cost_cents: 0,
-        },
-      };
-    },
-  },
+// All providers route through OpenRouter (legacy provider values accepted but use OpenRouter)
+const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
+  openrouter: OPENROUTER_CONFIG,
+  // Legacy providers — route through OpenRouter
+  openai: OPENROUTER_CONFIG,
+  anthropic: OPENROUTER_CONFIG,
+  deepseek: OPENROUTER_CONFIG,
+  moonshot: OPENROUTER_CONFIG,
 };
 
 // ============================================
@@ -228,14 +83,14 @@ export class AIService {
   constructor(config: AIServiceConfig) {
     this.provider = config.provider;
     this.apiKey = config.apiKey;
-    this.defaultModel = config.defaultModel || PROVIDER_CONFIGS[config.provider].defaultModel;
+    this.defaultModel = config.defaultModel || OPENROUTER_CONFIG.defaultModel;
   }
 
   /**
-   * Make an AI call using the configured provider
+   * Make an AI call using OpenRouter
    */
   async call(request: AIRequest): Promise<AIResponse> {
-    const providerConfig = PROVIDER_CONFIGS[this.provider];
+    const providerConfig = PROVIDER_CONFIGS[this.provider] || OPENROUTER_CONFIG;
     const model = request.model || this.defaultModel;
 
     const url = `${providerConfig.baseUrl}${providerConfig.endpoint}`;
@@ -259,7 +114,7 @@ export class AIService {
         errorMessage = errorText;
       }
 
-      throw new Error(`${this.provider} API error (${response.status}): ${errorMessage}`);
+      throw new Error(`OpenRouter API error (${response.status}): ${errorMessage}`);
     }
 
     const data = await response.json();
@@ -286,9 +141,10 @@ export class AIService {
 // ============================================
 
 /**
- * Create an AI service for a specific provider with an API key
+ * Create an AI service for a specific provider with an API key.
+ * All providers now route through OpenRouter.
  */
-export function createAIService(provider: BYOKProvider, apiKey: string, defaultModel?: string): AIService {
+export function createAIService(provider: BYOKProvider = 'openrouter', apiKey: string = '', defaultModel?: string): AIService {
   return new AIService({
     provider,
     apiKey,
@@ -325,12 +181,12 @@ export async function validateAPIKey(provider: BYOKProvider, apiKey: string): Pr
  * Get the list of supported providers
  */
 export function getSupportedProviders(): BYOKProvider[] {
-  return Object.keys(PROVIDER_CONFIGS) as BYOKProvider[];
+  return ['openrouter'];
 }
 
 /**
  * Get the default model for a provider
  */
-export function getDefaultModel(provider: BYOKProvider): string {
-  return PROVIDER_CONFIGS[provider].defaultModel;
+export function getDefaultModel(_provider: BYOKProvider): string {
+  return OPENROUTER_CONFIG.defaultModel;
 }

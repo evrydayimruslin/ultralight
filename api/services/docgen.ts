@@ -617,8 +617,6 @@ function permissionToCapability(permission: string): string | null {
     'memory:read': 'can access user memory',
     'memory:write': 'can save to user memory',
     'ai:call': 'can call AI models',
-    'cron:read': 'can read scheduled jobs',
-    'cron:write': 'can create scheduled jobs',
     'net:fetch': 'can make HTTP requests',
   };
   return map[permission] || null;

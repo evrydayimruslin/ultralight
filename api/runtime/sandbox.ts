@@ -7,16 +7,6 @@ import type {
   LogEntry,
 } from '../../shared/types/index.ts';
 
-import {
-  createCronJob,
-  getAppCronJobs,
-  updateCronJob,
-  deleteCronJob,
-  isValidCronExpression,
-  describeCronExpression,
-  CRON_PRESETS,
-  type CronJob,
-} from '../services/cron.ts';
 
 // User context passed to apps (subset of full user, safe to expose)
 export interface UserContext {
@@ -1532,70 +1522,6 @@ export async function executeInSandbox(
         return result;
       },
 
-      // CRON - Background scheduled tasks
-      cron: {
-        // Register a new cron job
-        // name: Unique name for this job within your app
-        // schedule: Cron expression like "0 9 * * *" for daily at 9am
-        // handler: Name of the exported function to call
-        register: async (name: string, schedule: string, handler: string): Promise<CronJob> => {
-          if (!config.permissions.includes('cron:write')) {
-            throw new Error('cron:write permission required');
-          }
-          capturedConsole.log(`[SDK] cron.register("${name}", "${schedule}", "${handler}")`);
-          return await createCronJob({
-            appId: config.appId,
-            name,
-            schedule,
-            handler,
-          });
-        },
-
-        // Unregister (delete) a cron job by name
-        unregister: async (name: string): Promise<void> => {
-          if (!config.permissions.includes('cron:write')) {
-            throw new Error('cron:write permission required');
-          }
-          const jobId = `${config.appId}:${name}`;
-          capturedConsole.log(`[SDK] cron.unregister("${name}")`);
-          await deleteCronJob(jobId);
-        },
-
-        // Update an existing cron job (schedule, handler, or enabled)
-        update: async (
-          name: string,
-          updates: Partial<{ schedule: string; handler: string; enabled: boolean }>
-        ): Promise<CronJob> => {
-          if (!config.permissions.includes('cron:write')) {
-            throw new Error('cron:write permission required');
-          }
-          const jobId = `${config.appId}:${name}`;
-          capturedConsole.log(`[SDK] cron.update("${name}", ${JSON.stringify(updates)})`);
-          return await updateCronJob(jobId, updates);
-        },
-
-        // List all cron jobs for this app
-        list: async (): Promise<CronJob[]> => {
-          if (!config.permissions.includes('cron:read')) {
-            throw new Error('cron:read permission required');
-          }
-          capturedConsole.log(`[SDK] cron.list()`);
-          return await getAppCronJobs(config.appId);
-        },
-
-        // Validate a cron expression (returns true if valid)
-        validate: (expression: string): boolean => {
-          return isValidCronExpression(expression);
-        },
-
-        // Get human-readable description of a cron expression
-        describe: (expression: string): string => {
-          return describeCronExpression(expression);
-        },
-
-        // Common cron expression presets
-        presets: CRON_PRESETS,
-      },
     };
 
     // Create Supabase client if configured

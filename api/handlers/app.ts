@@ -6,7 +6,6 @@ import { handleRun } from './run.ts';
 import { handleAuth } from './auth.ts';
 import { handleApps } from './apps.ts';
 import { handleUser } from './user.ts';
-import { handleCron } from './cron.ts';
 import { handleMcp, handleMcpDiscovery } from './mcp.ts';
 import { handlePlatformMcp, handlePlatformMcpDiscovery } from './platform-mcp.ts';
 import { handleOAuth } from './oauth.ts';
@@ -146,11 +145,6 @@ export function createApp() {
       // Apps API routes - handle all /api/apps/* paths
       if (path.startsWith('/api/apps')) {
         return handleApps(request);
-      }
-
-      // Cron API routes - handle all /api/cron/* paths
-      if (path.startsWith('/api/cron')) {
-        return handleCron(request);
       }
 
       // Tier change route (service-to-service, secured by secret)

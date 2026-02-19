@@ -2429,17 +2429,6 @@ export function getLayoutHTML(options: {
         <h1 style="font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem;">Developer Dashboard</h1>
         <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">Your MCP hosting control center</p>
 
-        <!-- Pro paused banner (shown for free users who have granted users on their apps) -->
-        <div id="proPausedBanner" style="display: none; padding: 0.875rem 1rem; background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 8px; margin-bottom: 1rem;">
-          <div style="display: flex; align-items: center; justify-content: space-between;">
-            <div style="font-size: 0.8125rem; color: var(--text-primary);">
-              <strong>Your Pro features are paused.</strong>
-              <span style="color: var(--text-secondary);"> Granular permissions and log oversight require Pro.</span>
-            </div>
-            <a href="#" onclick="event.preventDefault(); showToast('Stripe integration coming soon');" style="font-size: 0.8125rem; font-weight: 600; color: var(--accent-color); text-decoration: none; white-space: nowrap; margin-left: 1rem;">Reactivate →</a>
-          </div>
-        </div>
-
         <!-- Platform MCP URL -->
         <div class="dashboard-card" style="margin-bottom: 1rem;">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem;">
@@ -2913,19 +2902,6 @@ const user = ultralight.requireAuth();</div>
         </div>
 
         <div class="quick-ref-section">
-          <div class="quick-ref-section-title">Cron Jobs</div>
-          <div class="quick-ref-code">// Register a scheduled task
-await ultralight.cron.register(
-  'daily-report',
-  '0 9 * * *',  // Every day at 9am
-  'generateReport'  // Function to call
-);
-
-// Use presets
-ultralight.cron.presets.DAILY_9AM  // "0 9 * * *"</div>
-        </div>
-
-        <div class="quick-ref-section">
           <div class="quick-ref-section-title">Global Utilities</div>
           <div class="quick-ref-code">_.groupBy(items, 'category')
 _.sortBy(items, 'date')
@@ -3101,9 +3077,6 @@ await hash.sha256('data')</div>
           } catch (e) {
             console.warn('Failed to fetch user profile:', e);
           }
-
-          const tier = userProfile?.tier || 'free';
-          const tierText = tier === 'pro' ? 'Pro' : '';
 
           // Extract first name from Supabase Google Auth user_metadata
           const userMeta = payload.user_metadata || {};
@@ -4640,21 +4613,9 @@ await hash.sha256('data')</div>
       document.getElementById('appPageName').value = app.name || '';
       const visSelect = document.getElementById('appPageVisibility');
       visSelect.value = app.visibility || 'private';
-      // Gate public visibility — only Pro can publish publicly
+      // All visibility options available to all users
       const visHint = document.getElementById('appVisibilityHint');
-      const tier = userProfile?.tier || 'free';
-      const isPro = tier === 'pro' || tier === 'scale' || tier === 'enterprise';
-      if (!isPro) {
-        Array.from(visSelect.options).forEach(opt => {
-          if (opt.value === 'public') opt.disabled = true;
-        });
-        if (visHint) {
-          visHint.style.display = 'block';
-          visHint.innerHTML = 'Upgrade to Pro to publish.';
-        }
-      } else if (visHint) {
-        visHint.style.display = 'none';
-      }
+      if (visHint) visHint.style.display = 'none';
       document.getElementById('appPageDownload').value = app.download_access || 'owner';
 
       // Supabase dropdown
@@ -4730,14 +4691,10 @@ await hash.sha256('data')</div>
         }
       }
 
-      // Permissions Pro context
+      // Permissions context
       const proCtx = document.getElementById('permsProContext');
       if (proCtx) {
-        const ownerTier = userProfile?.tier || 'free';
-        const ownerIsPro = ownerTier === 'pro' || ownerTier === 'scale' || ownerTier === 'enterprise';
-        proCtx.textContent = ownerIsPro
-          ? 'Granular per-function control for each user.'
-          : 'All-or-nothing access. Upgrade to Pro for per-function control.';
+        proCtx.textContent = 'Granular per-function control for each user.';
       }
 
       // Hide floating save
@@ -4905,14 +4862,10 @@ await hash.sha256('data')</div>
       document.getElementById('permsUserDetail').style.display = 'none';
       permsSelectedUserId = null;
 
-      // Update modal info box based on tier
+      // Update modal info box
       const infoBox = document.getElementById('permsInfoBox');
       if (infoBox) {
-        const ownerTier = userProfile?.tier || 'free';
-        const ownerIsPro = ownerTier === 'pro' || ownerTier === 'scale' || ownerTier === 'enterprise';
-        infoBox.textContent = ownerIsPro
-          ? 'Grant access to specific users. Pro plan: per-function control for each user.'
-          : 'Grant access to specific users. Free plan: all-or-nothing access. Upgrade to Pro for per-function control.';
+        infoBox.textContent = 'Grant access to specific users with per-function control.';
       }
 
       await loadPermissionsUsers();
@@ -5071,83 +5024,43 @@ await hash.sha256('data')</div>
           return;
         }
 
-        // Check if owner is Pro — only Pro owners get per-function controls
-        const ownerTier = userProfile?.tier || 'free';
-        const ownerIsPro = ownerTier === 'pro' || ownerTier === 'scale' || ownerTier === 'enterprise';
-
-        // Show/hide granular buttons based on tier
+        // Granular per-function controls for all users
         const granularBtns = document.getElementById('permsGranularBtns');
-        if (granularBtns) granularBtns.style.display = ownerIsPro ? 'flex' : 'none';
+        if (granularBtns) granularBtns.style.display = 'flex';
 
-        if (ownerIsPro) {
-          // Pro: show per-function checkboxes with optional arg constraints
-          matrix.innerHTML = fns.map((fn, fnIdx) => {
-            const allowed = permsMap[fn.name] === true;
-            const argConstraints = permsArgsMap[fn.name] || null;
-            const argJson = argConstraints ? JSON.stringify(argConstraints, null, 2) : '';
-            const hasArgs = argConstraints && Object.keys(argConstraints).length > 0;
-            return \`<div class="token-item" style="padding: 0.625rem 0.875rem;">
-              <div style="display: flex; align-items: center; justify-content: space-between;">
-                <div>
-                  <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.8125rem; color: var(--text-primary);">\${fn.name}</div>
-                  <div style="font-size: 0.75rem; color: var(--text-muted);">\${fn.description || 'No description'}</div>
-                </div>
-                <div style="display: flex; align-items: center; gap: 0.75rem;">
-                  <button class="byok-btn byok-btn-secondary" onclick="toggleArgConstraints(\${fnIdx})" style="font-size: 0.6875rem; padding: 2px 8px; \${hasArgs ? 'color: var(--accent-color); border-color: var(--accent-color);' : ''}">\${hasArgs ? 'Args \u2713' : 'Args'}</button>
-                  <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                    <input type="checkbox" data-fn="\${fn.name}" \${allowed ? 'checked' : ''} style="width: 16px; height: 16px; accent-color: var(--accent-color);" />
-                    <span style="font-size: 0.75rem; color: var(--text-secondary);">\${allowed ? 'Allowed' : 'Denied'}</span>
-                  </label>
-                </div>
+        matrix.innerHTML = fns.map((fn, fnIdx) => {
+          const allowed = permsMap[fn.name] === true;
+          const argConstraints = permsArgsMap[fn.name] || null;
+          const argJson = argConstraints ? JSON.stringify(argConstraints, null, 2) : '';
+          const hasArgs = argConstraints && Object.keys(argConstraints).length > 0;
+          return \`<div class="token-item" style="padding: 0.625rem 0.875rem;">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <div>
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.8125rem; color: var(--text-primary);">\${fn.name}</div>
+                <div style="font-size: 0.75rem; color: var(--text-muted);">\${fn.description || 'No description'}</div>
               </div>
-              <div id="argConstraints-\${fnIdx}" style="display: none; margin-top: 0.5rem; padding: 0.5rem; background: var(--bg-secondary, #111); border-radius: 6px;">
-                <div style="font-size: 0.6875rem; color: var(--text-muted); margin-bottom: 0.375rem;">
-                  Arg whitelist (JSON). E.g. <code style="font-size: 0.65rem;">{"region": ["us-east", "eu-west"]}</code>
-                </div>
-                <textarea data-args-fn="\${fn.name}" rows="3" style="width: 100%; padding: 0.375rem 0.5rem; background: var(--bg-primary, #0a0a0a); border: 1px solid var(--border-color, #2a2a2a); border-radius: 4px; color: var(--text-primary); font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; resize: vertical;">\${escapeHtml(argJson)}</textarea>
-              </div>
-            </div>\`;
-          }).join('');
-
-          matrix.querySelectorAll('input[type="checkbox"][data-fn]').forEach(cb => {
-            cb.addEventListener('change', () => {
-              cb.nextElementSibling.textContent = cb.checked ? 'Allowed' : 'Denied';
-            });
-          });
-        } else {
-          // Free: binary toggle (all or nothing) + upgrade hint
-          const anyAllowed = fns.some(fn => permsMap[fn.name] === true);
-          matrix.innerHTML = \`
-            <div style="padding: 1rem;">
-              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
-                <span style="font-size: 0.8125rem; color: var(--text-primary);">Full access to all \${fns.length} functions</span>
+              <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <button class="byok-btn byok-btn-secondary" onclick="toggleArgConstraints(\${fnIdx})" style="font-size: 0.6875rem; padding: 2px 8px; \${hasArgs ? 'color: var(--accent-color); border-color: var(--accent-color);' : ''}">\${hasArgs ? 'Args \u2713' : 'Args'}</button>
                 <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                  <input type="checkbox" id="permsBinaryToggle" \${anyAllowed ? 'checked' : ''} style="width: 16px; height: 16px; accent-color: var(--accent-color);" />
-                  <span id="permsBinaryLabel" style="font-size: 0.75rem; color: var(--text-secondary);">\${anyAllowed ? 'Allowed' : 'Denied'}</span>
+                  <input type="checkbox" data-fn="\${fn.name}" \${allowed ? 'checked' : ''} style="width: 16px; height: 16px; accent-color: var(--accent-color);" />
+                  <span style="font-size: 0.75rem; color: var(--text-secondary);">\${allowed ? 'Allowed' : 'Denied'}</span>
                 </label>
               </div>
-              <div class="upgrade-cta" style="margin-top: 0.5rem;">Upgrade to Pro for per-function permission control.</div>
             </div>
-          \`;
-          // Hidden checkboxes for all functions so savePermissions() works
-          fns.forEach(fn => {
-            const hidden = document.createElement('input');
-            hidden.type = 'checkbox';
-            hidden.dataset.fn = fn.name;
-            hidden.checked = anyAllowed;
-            hidden.style.display = 'none';
-            matrix.appendChild(hidden);
+            <div id="argConstraints-\${fnIdx}" style="display: none; margin-top: 0.5rem; padding: 0.5rem; background: var(--bg-secondary, #111); border-radius: 6px;">
+              <div style="font-size: 0.6875rem; color: var(--text-muted); margin-bottom: 0.375rem;">
+                Arg whitelist (JSON). E.g. <code style="font-size: 0.65rem;">{"region": ["us-east", "eu-west"]}</code>
+              </div>
+              <textarea data-args-fn="\${fn.name}" rows="3" style="width: 100%; padding: 0.375rem 0.5rem; background: var(--bg-primary, #0a0a0a); border: 1px solid var(--border-color, #2a2a2a); border-radius: 4px; color: var(--text-primary); font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; resize: vertical;">\${escapeHtml(argJson)}</textarea>
+            </div>
+          </div>\`;
+        }).join('');
+
+        matrix.querySelectorAll('input[type="checkbox"][data-fn]').forEach(cb => {
+          cb.addEventListener('change', () => {
+            cb.nextElementSibling.textContent = cb.checked ? 'Allowed' : 'Denied';
           });
-          const binaryToggle = document.getElementById('permsBinaryToggle');
-          if (binaryToggle) {
-            binaryToggle.addEventListener('change', () => {
-              const checked = binaryToggle.checked;
-              document.getElementById('permsBinaryLabel').textContent = checked ? 'Allowed' : 'Denied';
-              // Sync all hidden checkboxes
-              matrix.querySelectorAll('input[type="checkbox"][data-fn]').forEach(cb => { cb.checked = checked; });
-            });
-          }
-        }
+        });
       } catch (err) {
         matrix.innerHTML = '<div style="text-align: center; padding: 1rem; color: var(--error-color);">Failed to load permissions</div>';
       }
@@ -5576,31 +5489,6 @@ await hash.sha256('data')</div>
       // Load Supabase servers inline on dashboard
       await loadSupabaseServers();
 
-      // Show "Pro paused" banner for free users who have granted users on any app
-      const banner = document.getElementById('proPausedBanner');
-      if (banner) {
-        const tier = userProfile?.tier || 'free';
-        const isPro = tier === 'pro' || tier === 'scale' || tier === 'enterprise';
-        if (isPro) {
-          banner.style.display = 'none';
-        } else if (apps.length > 0) {
-          // Check first few apps in parallel — short-circuit on first match
-          try {
-            const checks = apps.slice(0, 5).map(app =>
-              fetch(\`/api/user/permissions/\${app.id}\`, {
-                headers: { 'Authorization': \`Bearer \${authToken}\` }
-              }).then(r => r.ok ? r.json() : { users: [] })
-            );
-            const results = await Promise.all(checks);
-            const hasGrantedUsers = results.some(d => d.users && d.users.length > 0);
-            banner.style.display = hasGrantedUsers ? 'block' : 'none';
-          } catch (e) {
-            banner.style.display = 'none';
-          }
-        } else {
-          banner.style.display = 'none';
-        }
-      }
     }
 
     window.refreshCallLog = function() {

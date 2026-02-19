@@ -17,6 +17,7 @@ import { createR2Service } from '../services/storage.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
 import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
 import { getPermissionsForUser } from './user.ts';
+import { getPermissionCache } from '../services/permission-cache.ts';
 import { type Tier } from '../../shared/types/index.ts';
 import { handleUploadFiles, type UploadFile } from './upload.ts';
 import { validateAndParseSkillsMd } from '../services/docgen.ts';
@@ -2201,6 +2202,9 @@ async function executePermissionsGrant(
     throw new ToolError(INTERNAL_ERROR, `Failed to grant permissions: ${await insertRes.text()}`);
   }
 
+  // Invalidate permission cache for this app (grant could affect any user)
+  getPermissionCache().invalidateByApp(app.id);
+
   return {
     app_id: app.id,
     email,
@@ -2241,6 +2245,9 @@ async function executePermissionsRevoke(
     // Also revoke all pending invites for this app
     await fetch(`${SUPABASE_URL}/rest/v1/pending_permissions?app_id=eq.${app.id}`, { method: 'DELETE', headers });
 
+    // Invalidate permission cache for all users of this app
+    getPermissionCache().invalidateByApp(app.id);
+
     return functions && functions.length > 0
       ? { app_id: app.id, all_users: true, functions_revoked: functions }
       : { app_id: app.id, all_users: true, all_access_revoked: true };
@@ -2262,6 +2269,9 @@ async function executePermissionsRevoke(
     return { app_id: app.id, email, pending_invite_revoked: true };
   }
   const targetUserId = userRows[0].id;
+
+  // Invalidate permission cache for this app
+  getPermissionCache().invalidateByApp(app.id);
 
   if (functions && functions.length > 0) {
     // Granular: revoke specific functions for specific user

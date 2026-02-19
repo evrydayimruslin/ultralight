@@ -304,7 +304,7 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
         userId: user?.id || 'anonymous',
         executionId: crypto.randomUUID(),
         code,
-        permissions: ['memory:read', 'memory:write', 'ai:call', 'net:fetch', 'cron:read', 'cron:write'],
+        permissions: ['memory:read', 'memory:write', 'ai:call', 'net:fetch'],
         userApiKey,
         user,
         appDataService,

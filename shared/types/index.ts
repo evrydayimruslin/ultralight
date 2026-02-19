@@ -5,7 +5,8 @@
 // USER & AUTH
 // ============================================
 
-// Supported BYOK providers
+// Supported BYOK providers (OpenRouter only — covers 100+ models via single API)
+// Legacy provider values kept in union for backward compatibility with existing DB records.
 export type BYOKProvider = 'openrouter' | 'openai' | 'anthropic' | 'deepseek' | 'moonshot';
 
 // BYOK configuration for a single provider
@@ -465,33 +466,17 @@ export interface MemoryShare {
 // ============================================
 // TIER LIMITS
 // ============================================
-// Two tiers: Free (generous silent limits) and Pro ($48/mo, unlimited publishing).
-// Legacy tiers (fun/scale/enterprise) alias to free/pro for backward compatibility.
+// Single tier — all features unlocked for everyone.
+// Monetization layer deprecated. Tier field retained for backward compatibility.
 
 export type Tier = 'free' | 'fun' | 'pro' | 'scale' | 'enterprise';
 
-const FREE_LIMITS = {
-  max_apps: 50,
-  weekly_call_limit: 500_000,
-  overage_cost_per_100k_cents: 0,       // Hard cap — silent
-  can_publish: false,
-  price_cents_monthly: 0,
-  daily_ai_credit_cents: 20,
-  monthly_ai_credit_cents: 600,
-  max_file_size_mb: 10,
-  max_files_per_app: 50,
-  max_storage_bytes: 1_073_741_824,     // 1 GB
-  execution_timeout_ms: 30_000,         // 30s
-  log_retention_days: 30,
-  allowed_visibility: ['private', 'unlisted'] as const,
-} as const;
-
-const PRO_LIMITS = {
+const DEFAULT_LIMITS = {
   max_apps: Infinity,
   weekly_call_limit: 10_000_000,
-  overage_cost_per_100k_cents: 150,     // $1.50/100k
+  overage_cost_per_100k_cents: 0,
   can_publish: true,
-  price_cents_monthly: 4_800,           // $48/mo
+  price_cents_monthly: 0,
   daily_ai_credit_cents: 200,
   monthly_ai_credit_cents: 6_000,
   max_file_size_mb: 10,
@@ -503,16 +488,16 @@ const PRO_LIMITS = {
 } as const;
 
 export const TIER_LIMITS = {
-  free: FREE_LIMITS,
-  fun: FREE_LIMITS,                     // Legacy alias → free
-  pro: PRO_LIMITS,
-  scale: PRO_LIMITS,                    // Legacy alias → pro
-  enterprise: PRO_LIMITS,              // Legacy alias → pro
+  free: DEFAULT_LIMITS,
+  fun: DEFAULT_LIMITS,
+  pro: DEFAULT_LIMITS,
+  scale: DEFAULT_LIMITS,
+  enterprise: DEFAULT_LIMITS,
 } as const;
 
-/** Returns true if the tier has Pro-level access (pro, scale, enterprise). */
-export function isProTier(tier: Tier | string): boolean {
-  return tier === 'pro' || tier === 'scale' || tier === 'enterprise';
+/** @deprecated Monetization layer removed — always returns true. */
+export function isProTier(_tier: Tier | string): boolean {
+  return true;
 }
 
 // ============================================
@@ -539,55 +524,6 @@ export const ALLOWED_EXTENSIONS = [
 ] as const;
 export const MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
 export const MAX_FILES_PER_UPLOAD = 50;
-
-// ============================================
-// CRON JOBS
-// ============================================
-
-export interface CronJob {
-  id: string;
-  appId: string;
-  name: string;
-  schedule: string;
-  handler: string;
-  enabled: boolean;
-  lastRunAt: string | null;
-  lastRunResult: 'success' | 'error' | null;
-  lastRunError: string | null;
-  lastRunDurationMs: number | null;
-  runCount: number;
-  errorCount: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface CronRunLog {
-  jobId: string;
-  appId: string;
-  startedAt: string;
-  endedAt: string;
-  durationMs: number;
-  success: boolean;
-  error: string | null;
-  result: unknown;
-}
-
-// Common cron expression presets
-export const CRON_PRESETS = {
-  EVERY_MINUTE: '* * * * *',
-  EVERY_5_MINUTES: '*/5 * * * *',
-  EVERY_15_MINUTES: '*/15 * * * *',
-  EVERY_30_MINUTES: '*/30 * * * *',
-  EVERY_HOUR: '0 * * * *',
-  EVERY_6_HOURS: '0 */6 * * *',
-  EVERY_12_HOURS: '0 */12 * * *',
-  DAILY_MIDNIGHT: '0 0 * * *',
-  DAILY_9AM: '0 9 * * *',
-  DAILY_6PM: '0 18 * * *',
-  WEEKLY_SUNDAY: '0 0 * * 0',
-  WEEKLY_MONDAY: '0 0 * * 1',
-  MONTHLY_FIRST: '0 0 1 * *',
-} as const;
 
 // ============================================
 // USER CONTEXT (exposed to apps)
@@ -647,16 +583,6 @@ export interface UltralightSDK {
   // AI
   ai(request: AIRequest): Promise<AIResponse>;
 
-  // Cron
-  cron: {
-    register(name: string, schedule: string, handler: string): Promise<CronJob>;
-    unregister(name: string): Promise<void>;
-    update(name: string, updates: Partial<{ schedule: string; handler: string; enabled: boolean }>): Promise<CronJob>;
-    list(): Promise<CronJob[]>;
-    validate(expression: string): boolean;
-    describe(expression: string): string;
-    presets: typeof CRON_PRESETS;
-  };
 }
 
 // ============================================
@@ -873,12 +799,12 @@ export interface BYOKModel {
   outputPrice: number; // per 1M tokens in USD
 }
 
-// Provider configurations - used by both frontend and backend
-export const BYOK_PROVIDERS: Record<BYOKProvider, BYOKProviderInfo> = {
+// Provider configurations — OpenRouter only (covers 100+ models via single API key)
+export const BYOK_PROVIDERS: Partial<Record<BYOKProvider, BYOKProviderInfo>> & { openrouter: BYOKProviderInfo } = {
   openrouter: {
     id: 'openrouter',
     name: 'OpenRouter',
-    description: 'Access 100+ models from one API',
+    description: 'Access 100+ models (Claude, GPT-4, Gemini, DeepSeek, and more) from one API key',
     baseUrl: 'https://openrouter.ai/api/v1',
     defaultModel: 'anthropic/claude-3.5-sonnet',
     models: [
@@ -892,63 +818,7 @@ export const BYOK_PROVIDERS: Record<BYOKProvider, BYOKProviderInfo> = {
     docsUrl: 'https://openrouter.ai/docs',
     apiKeyUrl: 'https://openrouter.ai/keys',
   },
-  openai: {
-    id: 'openai',
-    name: 'OpenAI',
-    description: 'GPT-4o, GPT-4, and more',
-    baseUrl: 'https://api.openai.com/v1',
-    defaultModel: 'gpt-4o',
-    models: [
-      { id: 'gpt-4o', name: 'GPT-4o', contextWindow: 128000, inputPrice: 5, outputPrice: 15 },
-      { id: 'gpt-4o-mini', name: 'GPT-4o Mini', contextWindow: 128000, inputPrice: 0.15, outputPrice: 0.6 },
-      { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', contextWindow: 128000, inputPrice: 10, outputPrice: 30 },
-      { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', contextWindow: 16385, inputPrice: 0.5, outputPrice: 1.5 },
-    ],
-    docsUrl: 'https://platform.openai.com/docs',
-    apiKeyUrl: 'https://platform.openai.com/api-keys',
-  },
-  anthropic: {
-    id: 'anthropic',
-    name: 'Anthropic',
-    description: 'Claude 3.5 Sonnet, Opus, and Haiku',
-    baseUrl: 'https://api.anthropic.com/v1',
-    defaultModel: 'claude-3-5-sonnet-20241022',
-    models: [
-      { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', contextWindow: 200000, inputPrice: 3, outputPrice: 15 },
-      { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', contextWindow: 200000, inputPrice: 15, outputPrice: 75 },
-      { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', contextWindow: 200000, inputPrice: 0.25, outputPrice: 1.25 },
-    ],
-    docsUrl: 'https://docs.anthropic.com',
-    apiKeyUrl: 'https://console.anthropic.com/settings/keys',
-  },
-  deepseek: {
-    id: 'deepseek',
-    name: 'DeepSeek',
-    description: 'High-performance models at low cost',
-    baseUrl: 'https://api.deepseek.com',
-    defaultModel: 'deepseek-chat',
-    models: [
-      { id: 'deepseek-chat', name: 'DeepSeek Chat', contextWindow: 64000, inputPrice: 0.14, outputPrice: 0.28 },
-      { id: 'deepseek-coder', name: 'DeepSeek Coder', contextWindow: 64000, inputPrice: 0.14, outputPrice: 0.28 },
-    ],
-    docsUrl: 'https://platform.deepseek.com/docs',
-    apiKeyUrl: 'https://platform.deepseek.com/api_keys',
-  },
-  moonshot: {
-    id: 'moonshot',
-    name: 'Moonshot',
-    description: 'Kimi models from Moonshot AI',
-    baseUrl: 'https://api.moonshot.cn/v1',
-    defaultModel: 'moonshot-v1-8k',
-    models: [
-      { id: 'moonshot-v1-8k', name: 'Moonshot v1 8K', contextWindow: 8000, inputPrice: 0.12, outputPrice: 0.12 },
-      { id: 'moonshot-v1-32k', name: 'Moonshot v1 32K', contextWindow: 32000, inputPrice: 0.24, outputPrice: 0.24 },
-      { id: 'moonshot-v1-128k', name: 'Moonshot v1 128K', contextWindow: 128000, inputPrice: 0.60, outputPrice: 0.60 },
-    ],
-    docsUrl: 'https://platform.moonshot.cn/docs',
-    apiKeyUrl: 'https://platform.moonshot.cn/console/api-keys',
-  },
-} as const;
+};
 
 // ============================================
 // APP MANIFEST (v2 Architecture)

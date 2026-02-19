@@ -17,6 +17,7 @@ import { createUserService } from '../services/user.ts';
 import { createAIService } from '../services/ai.ts';
 import { decryptEnvVars, decryptEnvVar } from '../services/envvars.ts';
 import { getCodeCache } from '../services/codecache.ts';
+import { getPermissionCache } from '../services/permission-cache.ts';
 import { createMemoryService, type MemoryService as MemoryServiceImpl } from '../services/memory.ts';
 import type {
   MCPTool,
@@ -373,95 +374,6 @@ const SDK_TOOLS: MCPTool[] = [
     },
   },
 
-  // ---- Cron Jobs ----
-  {
-    name: 'ultralight.cron.list',
-    title: 'List Cron Jobs',
-    description: 'List all cron jobs for this app.',
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-    },
-    outputSchema: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          name: { type: 'string' },
-          schedule: { type: 'string' },
-          handler: { type: 'string' },
-          enabled: { type: 'boolean' },
-          lastRunAt: { type: 'string', nullable: true },
-        },
-      },
-    },
-  },
-  {
-    name: 'ultralight.cron.register',
-    title: 'Register Cron Job',
-    description: 'Register a new cron job to run on a schedule.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        name: {
-          type: 'string',
-          description: 'Unique name for the job.',
-        },
-        schedule: {
-          type: 'string',
-          description: 'Cron expression (e.g., "0 9 * * *" for daily at 9am).',
-        },
-        handler: {
-          type: 'string',
-          description: 'Name of exported function to call.',
-        },
-      },
-      required: ['name', 'schedule', 'handler'],
-    },
-  },
-  {
-    name: 'ultralight.cron.update',
-    title: 'Update Cron Job',
-    description: 'Update an existing cron job.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        name: {
-          type: 'string',
-          description: 'Name of the job to update.',
-        },
-        schedule: {
-          type: 'string',
-          description: 'New cron expression.',
-        },
-        handler: {
-          type: 'string',
-          description: 'New handler function name.',
-        },
-        enabled: {
-          type: 'boolean',
-          description: 'Enable or disable the job.',
-        },
-      },
-      required: ['name'],
-    },
-  },
-  {
-    name: 'ultralight.cron.delete',
-    title: 'Delete Cron Job',
-    description: 'Delete a cron job.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        name: {
-          type: 'string',
-          description: 'Name of the job to delete.',
-        },
-      },
-      required: ['name'],
-    },
-  },
 ];
 
 // ============================================
@@ -943,6 +855,9 @@ async function handleToolsCall(
               updated_at: new Date().toISOString(),
             }),
           }).catch(err => console.error('Budget increment failed:', err));
+
+          // Keep permission cache in sync with local budget increment
+          getPermissionCache().incrementBudget(userId, app.id, name);
         }
       }
     }
@@ -1196,27 +1111,6 @@ async function executeSDKTool(
         break;
       }
 
-      // Cron
-      case 'ultralight.cron.list':
-        // TODO: Implement cron list
-        result = [];
-        break;
-
-      case 'ultralight.cron.register':
-        // TODO: Implement cron register
-        result = { success: true, message: 'Cron registration via MCP not yet implemented' };
-        break;
-
-      case 'ultralight.cron.update':
-        // TODO: Implement cron update
-        result = { success: true, message: 'Cron update via MCP not yet implemented' };
-        break;
-
-      case 'ultralight.cron.delete':
-        // TODO: Implement cron delete
-        result = { success: true, message: 'Cron delete via MCP not yet implemented' };
-        break;
-
       default:
         return jsonRpcErrorResponse(id, INVALID_PARAMS, `Unknown SDK tool: ${toolName}`);
     }
@@ -1443,7 +1337,7 @@ async function executeAppFunction(
         userId,
         executionId: crypto.randomUUID(),
         code,
-        permissions: ['memory:read', 'memory:write', 'ai:call', 'net:fetch', 'cron:read', 'cron:write', 'app:call'],
+        permissions: ['memory:read', 'memory:write', 'ai:call', 'net:fetch', 'app:call'],
         userApiKey,
         user,
         appDataService,

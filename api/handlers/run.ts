@@ -173,7 +173,7 @@ export async function handleRun(request: Request, appId: string): Promise<Respon
         userId,
         executionId: crypto.randomUUID(),
         code,
-        permissions: ['memory:read', 'memory:write', 'ai:call', 'net:fetch', 'cron:read', 'cron:write'],
+        permissions: ['memory:read', 'memory:write', 'ai:call', 'net:fetch'],
         userApiKey: null,
         // Authenticated user context (null if anonymous)
         user,

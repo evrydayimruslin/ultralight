@@ -714,14 +714,6 @@ function inferPermissions(code: string): string[] {
     permissions.push('ai:call');
   }
 
-  // Cron operations
-  if (/ultralight\.cron\.(register|update|delete)/.test(code)) {
-    permissions.push('cron:write');
-  }
-  if (/ultralight\.cron\.list/.test(code)) {
-    permissions.push('cron:read');
-  }
-
   // Network operations
   if (/\bfetch\s*\(/.test(code)) {
     permissions.push('net:fetch');
