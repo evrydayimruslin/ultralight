@@ -12,7 +12,10 @@ import { handleOAuth } from './oauth.ts';
 import { handleDiscover } from './discover.ts';
 import { handleHttpEndpoint, handleHttpOptions } from './http.ts';
 import { handleTierChange } from './tier.ts';
+import { handleAdmin } from './admin.ts';
 import { getLayoutHTML } from '../../web/layout.ts';
+import { getHomepageHTML, getGapsPageHTML, getLeaderboardPageHTML } from '../../web/homepage.ts';
+import type { HomepageData } from '../../web/homepage.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
 import { getCodeCache } from '../services/codecache.ts';
@@ -86,11 +89,26 @@ export function createApp() {
       const path = url.pathname;
       const method = request.method;
 
-      // Home page (unified landing + upload + dashboard)
+      // Public homepage
       if (path === '/' && method === 'GET') {
+        return handleHomepage(request);
+      }
+
+      // Dashboard (authenticated app management)
+      if (path === '/dash' && method === 'GET') {
         return new Response(getLayoutHTML({ initialView: 'dashboard' }), {
           headers: { 'Content-Type': 'text/html' },
         });
+      }
+
+      // Gaps board (public)
+      if (path === '/gaps' && method === 'GET') {
+        return handleGapsPage(request);
+      }
+
+      // Leaderboard (public)
+      if (path === '/leaderboard' && method === 'GET') {
+        return handleLeaderboardPage(request);
       }
 
       // Health check - includes deploy timestamp and cache stats
@@ -105,11 +123,11 @@ export function createApp() {
       }
 
       // Upload page (HTML UI with sidebar)
-      // Legacy /upload redirects to home
+      // Legacy /upload redirects to dashboard
       if (path === '/upload' && method === 'GET') {
         return new Response(null, {
           status: 302,
-          headers: { 'Location': '/' },
+          headers: { 'Location': '/dash' },
         });
       }
 
@@ -150,6 +168,11 @@ export function createApp() {
       // Tier change route (service-to-service, secured by secret)
       if (path === '/api/tier/change' && method === 'POST') {
         return handleTierChange(request);
+      }
+
+      // Admin routes (service-to-service, secured by service-role key)
+      if (path.startsWith('/api/admin')) {
+        return handleAdmin(request);
       }
 
       // Discovery API routes - semantic search for apps
@@ -1296,7 +1319,50 @@ async function handlePublicUserProfile(request: Request, profileUserId: string):
       }
     } catch { /* */ }
 
-    const html = getPublicUserProfileHTML(user, apps, pages, baseUrl, profileUserId);
+    // Fetch points summary
+    let totalPoints = 0;
+    try {
+      const pointsRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/points_ledger?user_id=eq.${profileUserId}&select=amount`,
+        { headers: dbHeaders }
+      );
+      if (pointsRes.ok) {
+        const points = await pointsRes.json() as Array<{ amount: number }>;
+        totalPoints = points.reduce((sum, p) => sum + p.amount, 0);
+      }
+    } catch { /* */ }
+
+    // Fetch fulfilled gaps
+    let fulfilledGaps: Array<{ gap_title: string; awarded_points: number; reviewed_at: string }> = [];
+    try {
+      const assessRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/gap_assessments?user_id=eq.${profileUserId}&status=eq.approved&select=awarded_points,reviewed_at,gap_id&order=reviewed_at.desc&limit=10`,
+        { headers: dbHeaders }
+      );
+      if (assessRes.ok) {
+        const assessments = await assessRes.json() as Array<{ awarded_points: number; reviewed_at: string; gap_id: string }>;
+        if (assessments.length > 0) {
+          const gapIds = [...new Set(assessments.map(a => a.gap_id))];
+          const gapsRes = await fetch(
+            `${SUPABASE_URL}/rest/v1/gaps?id=in.(${gapIds.join(',')})&select=id,title`,
+            { headers: dbHeaders }
+          );
+          const gapsMap = new Map<string, string>();
+          if (gapsRes.ok) {
+            for (const g of await gapsRes.json() as Array<{ id: string; title: string }>) {
+              gapsMap.set(g.id, g.title);
+            }
+          }
+          fulfilledGaps = assessments.map(a => ({
+            gap_title: gapsMap.get(a.gap_id) || 'Unknown gap',
+            awarded_points: a.awarded_points,
+            reviewed_at: a.reviewed_at,
+          }));
+        }
+      }
+    } catch { /* */ }
+
+    const html = getPublicUserProfileHTML(user, apps, pages, baseUrl, profileUserId, totalPoints, fulfilledGaps);
     return new Response(html, {
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
@@ -1314,7 +1380,9 @@ function getPublicUserProfileHTML(
   apps: Array<{ id: string; name: string; slug: string; description: string | null; current_version: string | null; updated_at: string }>,
   pages: Array<{ slug: string; title: string | null; updated_at: string; tags: string[] | null }>,
   baseUrl: string,
-  userId: string
+  userId: string,
+  totalPoints = 0,
+  fulfilledGaps: Array<{ gap_title: string; awarded_points: number; reviewed_at: string }> = []
 ): string {
   const displayName = escapeHtml(user.display_name || user.email.split('@')[0]);
   const memberSince = new Date(user.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
@@ -1454,6 +1522,28 @@ function getPublicUserProfileHTML(
     font-weight: 500;
   }
   .empty-text { color: #52525b; font-style: italic; font-size: 0.875rem; }
+  .points-badge {
+    display: inline-block;
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+    padding: 0.15rem 0.6rem;
+    border-radius: 9999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-top: 0.35rem;
+  }
+  .gap-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid #1e1e24;
+    font-size: 0.8125rem;
+  }
+  .gap-row:last-child { border-bottom: none; }
+  .gap-name { color: #fafafa; font-weight: 500; }
+  .gap-pts { color: #f59e0b; font-weight: 600; font-size: 0.8rem; }
+  .gap-date { color: #52525b; font-size: 0.75rem; }
   .footer-bar {
     text-align: center;
     padding-top: 1.5rem;
@@ -1475,6 +1565,7 @@ function getPublicUserProfileHTML(
     <div class="profile-info">
       <h1>${displayName}</h1>
       <div class="profile-meta">Member since ${escapeHtml(memberSince)}</div>
+      ${totalPoints > 0 ? `<div class="points-badge">&#127942; ${totalPoints.toLocaleString()} points</div>` : ''}
     </div>
   </div>
 
@@ -1488,12 +1579,307 @@ function getPublicUserProfileHTML(
     ${pageCards}
   </div>
 
+  ${fulfilledGaps.length > 0 ? `
+  <div class="section">
+    <div class="section-title">Fulfilled Gaps (${fulfilledGaps.length})</div>
+    ${fulfilledGaps.map(g => `
+      <div class="gap-row">
+        <span class="gap-name">${escapeHtml(g.gap_title)}</span>
+        <span>
+          <span class="gap-pts">${g.awarded_points} pts</span>
+          <span class="gap-date">${new Date(g.reviewed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+        </span>
+      </div>
+    `).join('')}
+  </div>` : ''}
+
   <div class="footer-bar">
-    Powered by <a href="https://ultralight.dev">Ultralight</a>
+    Powered by <a href="/">Ultralight</a>
   </div>
 </div>
 </body>
 </html>`;
+}
+
+// ============================================
+// PUBLIC HOMEPAGE
+// ============================================
+
+async function handleHomepage(request: Request): Promise<Response> {
+  // @ts-ignore
+  const Deno = globalThis.Deno;
+  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const headers = {
+    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+  };
+  const baseUrl = getBaseUrl(request);
+
+  // Fetch all data sources in parallel
+  const [topAppsRes, topContentRes, gapsRes, fulfillmentsRes, leaderboardRes, seasonRes] = await Promise.allSettled([
+    // Top MCP servers by weighted likes
+    fetch(
+      `${SUPABASE_URL}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&hosting_suspended=eq.false` +
+      `&select=id,name,slug,description,weighted_likes,runs_30d` +
+      `&order=weighted_likes.desc,runs_30d.desc&limit=12`,
+      { headers }
+    ),
+    // Recent published content
+    fetch(
+      `${SUPABASE_URL}/rest/v1/content?type=eq.page&visibility=eq.public&hosting_suspended=eq.false` +
+      `&select=slug,title,owner_id,updated_at,tags` +
+      `&order=updated_at.desc&limit=8`,
+      { headers }
+    ),
+    // Open gaps
+    fetch(
+      `${SUPABASE_URL}/rest/v1/gaps?status=eq.open` +
+      `&select=id,title,description,severity,points_value` +
+      `&order=points_value.desc,severity.desc&limit=8`,
+      { headers }
+    ),
+    // Recent fulfillments (approved assessments)
+    fetch(
+      `${SUPABASE_URL}/rest/v1/gap_assessments?status=eq.approved&select=awarded_points,reviewed_at,gap_id,app_id,user_id&order=reviewed_at.desc&limit=6`,
+      { headers }
+    ),
+    // Leaderboard (top 10 by points in active season)
+    fetch(
+      `${SUPABASE_URL}/rest/v1/rpc/get_leaderboard`,
+      {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ p_limit: 10 }),
+      }
+    ),
+    // Active season
+    fetch(
+      `${SUPABASE_URL}/rest/v1/seasons?active=eq.true&select=id,name&limit=1`,
+      { headers }
+    ),
+  ]);
+
+  // Extract results with safe fallbacks
+  const topApps = topAppsRes.status === 'fulfilled' && topAppsRes.value.ok
+    ? await topAppsRes.value.json() : [];
+  const topContent = topContentRes.status === 'fulfilled' && topContentRes.value.ok
+    ? await topContentRes.value.json() : [];
+  const openGaps = gapsRes.status === 'fulfilled' && gapsRes.value.ok
+    ? await gapsRes.value.json() : [];
+
+  // Fulfillments need enrichment (gap title, app name, user name)
+  let recentFulfillments: HomepageData['recentFulfillments'] = [];
+  if (fulfillmentsRes.status === 'fulfilled' && fulfillmentsRes.value.ok) {
+    const assessments = await fulfillmentsRes.value.json() as Array<{
+      awarded_points: number; reviewed_at: string; gap_id: string; app_id: string; user_id: string;
+    }>;
+    if (assessments.length > 0) {
+      // Batch-fetch related data
+      const gapIds = [...new Set(assessments.map(a => a.gap_id))];
+      const appIds = [...new Set(assessments.map(a => a.app_id))];
+      const userIds = [...new Set(assessments.map(a => a.user_id))];
+
+      const [gapsLookupRes, appsLookupRes, usersLookupRes] = await Promise.allSettled([
+        fetch(`${SUPABASE_URL}/rest/v1/gaps?id=in.(${gapIds.join(',')})&select=id,title`, { headers }),
+        fetch(`${SUPABASE_URL}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,name,slug`, { headers }),
+        fetch(`${SUPABASE_URL}/rest/v1/users?id=in.(${userIds.join(',')})&select=id,display_name,email`, { headers }),
+      ]);
+
+      const gapsMap = new Map<string, string>();
+      if (gapsLookupRes.status === 'fulfilled' && gapsLookupRes.value.ok) {
+        for (const g of await gapsLookupRes.value.json() as Array<{ id: string; title: string }>) {
+          gapsMap.set(g.id, g.title);
+        }
+      }
+      const appsMap = new Map<string, string>();
+      if (appsLookupRes.status === 'fulfilled' && appsLookupRes.value.ok) {
+        for (const a of await appsLookupRes.value.json() as Array<{ id: string; name: string; slug: string }>) {
+          appsMap.set(a.id, a.name || a.slug);
+        }
+      }
+      const usersMap = new Map<string, string>();
+      if (usersLookupRes.status === 'fulfilled' && usersLookupRes.value.ok) {
+        for (const u of await usersLookupRes.value.json() as Array<{ id: string; display_name: string | null; email: string }>) {
+          usersMap.set(u.id, u.display_name || u.email.split('@')[0]);
+        }
+      }
+
+      recentFulfillments = assessments.map(a => ({
+        gap_title: gapsMap.get(a.gap_id) || 'Unknown gap',
+        app_name: appsMap.get(a.app_id) || 'Unknown app',
+        user_name: usersMap.get(a.user_id) || 'Anonymous',
+        user_id: a.user_id,
+        awarded_points: a.awarded_points,
+        reviewed_at: a.reviewed_at,
+      }));
+    }
+  }
+
+  // Leaderboard — try RPC first, fall back to manual aggregation
+  let leaderboard: HomepageData['leaderboard'] = [];
+  if (leaderboardRes.status === 'fulfilled' && leaderboardRes.value.ok) {
+    leaderboard = await leaderboardRes.value.json();
+  } else {
+    // Fallback: manual aggregation if RPC doesn't exist yet
+    try {
+      const pointsRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/points_ledger?select=user_id,amount&order=created_at.desc&limit=500`,
+        { headers }
+      );
+      if (pointsRes.ok) {
+        const points = await pointsRes.json() as Array<{ user_id: string; amount: number }>;
+        const totals = new Map<string, number>();
+        for (const p of points) {
+          totals.set(p.user_id, (totals.get(p.user_id) || 0) + p.amount);
+        }
+        const sorted = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+        if (sorted.length > 0) {
+          const userIds = sorted.map(s => s[0]);
+          const usersRes2 = await fetch(
+            `${SUPABASE_URL}/rest/v1/users?id=in.(${userIds.join(',')})&select=id,display_name,email`,
+            { headers }
+          );
+          const usersMap2 = new Map<string, string>();
+          if (usersRes2.ok) {
+            for (const u of await usersRes2.json() as Array<{ id: string; display_name: string | null; email: string }>) {
+              usersMap2.set(u.id, u.display_name || u.email.split('@')[0]);
+            }
+          }
+          leaderboard = sorted.map(([userId, total]) => ({
+            user_id: userId,
+            display_name: usersMap2.get(userId) || 'Anonymous',
+            total_points: total,
+          }));
+        }
+      }
+    } catch { /* best effort */ }
+  }
+
+  const data: HomepageData = {
+    topApps,
+    topContent,
+    openGaps,
+    recentFulfillments,
+    leaderboard,
+    baseUrl,
+  };
+
+  return new Response(getHomepageHTML(data), {
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'public, max-age=60',
+    },
+  });
+}
+
+// ============================================
+// GAPS PAGE
+// ============================================
+
+async function handleGapsPage(request: Request): Promise<Response> {
+  // @ts-ignore
+  const Deno = globalThis.Deno;
+  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const headers = {
+    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+  };
+
+  const url = new URL(request.url);
+  const status = url.searchParams.get('status') || 'open';
+  const severity = url.searchParams.get('severity') || undefined;
+
+  let query = `${SUPABASE_URL}/rest/v1/gaps?select=id,title,description,severity,points_value,season,status,created_at`;
+  if (status !== 'all') query += `&status=eq.${status}`;
+  if (severity) query += `&severity=eq.${severity}`;
+  query += `&order=points_value.desc,created_at.desc&limit=50`;
+
+  let gaps: Array<{ id: string; title: string; description: string; severity: string; points_value: number; season: number; status: string; created_at: string }> = [];
+  try {
+    const res = await fetch(query, { headers });
+    if (res.ok) gaps = await res.json();
+  } catch { /* */ }
+
+  return new Response(getGapsPageHTML(gaps, { status, severity }), {
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'public, max-age=60',
+    },
+  });
+}
+
+// ============================================
+// LEADERBOARD PAGE
+// ============================================
+
+async function handleLeaderboardPage(request: Request): Promise<Response> {
+  // @ts-ignore
+  const Deno = globalThis.Deno;
+  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const headers = {
+    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+  };
+
+  // Get active season
+  let season: { id: number; name: string } | null = null;
+  try {
+    const seasonRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/seasons?active=eq.true&select=id,name&limit=1`,
+      { headers }
+    );
+    if (seasonRes.ok) {
+      const seasons = await seasonRes.json() as Array<{ id: number; name: string }>;
+      season = seasons.length > 0 ? seasons[0] : null;
+    }
+  } catch { /* */ }
+
+  // Aggregate points from ledger
+  let entries: Array<{ user_id: string; display_name: string; total_points: number }> = [];
+  try {
+    let pointsQuery = `${SUPABASE_URL}/rest/v1/points_ledger?select=user_id,amount`;
+    if (season) pointsQuery += `&season=eq.${season.id}`;
+    pointsQuery += `&order=created_at.desc&limit=1000`;
+
+    const pointsRes = await fetch(pointsQuery, { headers });
+    if (pointsRes.ok) {
+      const points = await pointsRes.json() as Array<{ user_id: string; amount: number }>;
+      const totals = new Map<string, number>();
+      for (const p of points) {
+        totals.set(p.user_id, (totals.get(p.user_id) || 0) + p.amount);
+      }
+      const sorted = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 50);
+
+      if (sorted.length > 0) {
+        const userIds = sorted.map(s => s[0]);
+        const usersRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/users?id=in.(${userIds.join(',')})&select=id,display_name,email`,
+          { headers }
+        );
+        const usersMap = new Map<string, string>();
+        if (usersRes.ok) {
+          for (const u of await usersRes.json() as Array<{ id: string; display_name: string | null; email: string }>) {
+            usersMap.set(u.id, u.display_name || u.email.split('@')[0]);
+          }
+        }
+        entries = sorted.map(([userId, total]) => ({
+          user_id: userId,
+          display_name: usersMap.get(userId) || 'Anonymous',
+          total_points: total,
+        }));
+      }
+    }
+  } catch { /* */ }
+
+  return new Response(getLeaderboardPageHTML(entries, season), {
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'public, max-age=60',
+    },
+  });
 }
 
 // ============================================
@@ -1521,10 +1907,10 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
     'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
   };
 
-  let contentRow: { id: string; visibility: string; access_token: string | null; title: string | null; tags: string[] | null; updated_at: string | null } | null = null;
+  let contentRow: { id: string; visibility: string; access_token: string | null; title: string | null; tags: string[] | null; updated_at: string | null; hosting_suspended: boolean | null } | null = null;
   try {
     const contentRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${userId}&type=eq.page&slug=eq.${encodeURIComponent(slug)}&select=id,visibility,access_token,title,tags,updated_at&limit=1`,
+      `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${userId}&type=eq.page&slug=eq.${encodeURIComponent(slug)}&select=id,visibility,access_token,title,tags,updated_at,hosting_suspended&limit=1`,
       { headers: dbHeaders }
     );
     if (contentRes.ok) {
@@ -1535,6 +1921,13 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
 
   // If content row exists, enforce access control
   if (contentRow) {
+    // Check hosting suspension before access control
+    if (contentRow.hosting_suspended) {
+      return new Response(
+        `<!DOCTYPE html><html><head><title>Page Suspended</title><style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}div{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#666;line-height:1.6}</style></head><body><div><div class="icon">&#9888;</div><h1>Page Suspended</h1><p>This page has been taken offline because the owner's hosting balance has been depleted. The owner can restore it by topping up their hosting balance.</p></div></body></html>`,
+        { status: 402, headers: { 'Content-Type': 'text/html' } }
+      );
+    }
     if (contentRow.visibility === 'private') {
       // Only the owner can view private pages
       try {

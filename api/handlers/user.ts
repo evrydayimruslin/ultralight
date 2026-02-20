@@ -14,6 +14,7 @@ import {
 } from '../services/tokens.ts';
 import { createAppsService } from '../services/apps.ts';
 import { encryptEnvVar, decryptEnvVar } from '../services/envvars.ts';
+import { unsuspendContent } from '../services/hosting-billing.ts';
 
 export async function handleUser(request: Request): Promise<Response> {
   const url = new URL(request.url);
@@ -793,6 +794,98 @@ export async function handleUser(request: Request): Promise<Response> {
     } catch (err) {
       console.error('Revoke permissions error:', err);
       return error('Failed to revoke permissions', 500);
+    }
+  }
+
+  // ============================================
+  // HOSTING BALANCE
+  // ============================================
+
+  // GET /api/user/hosting — get hosting balance and usage
+  if (path === '/api/user/hosting' && method === 'GET') {
+    try {
+      const user = await authenticate(request);
+      const userService = createUserService();
+      const userData = await userService.findById(user.id);
+      if (!userData) return error('User not found', 404);
+
+      return json({
+        hosting_balance_cents: (userData as Record<string, unknown>).hosting_balance_cents ?? 0,
+        hosting_last_billed_at: (userData as Record<string, unknown>).hosting_last_billed_at ?? null,
+      });
+    } catch (err) {
+      return error(err instanceof Error ? err.message : 'Unauthorized', 401);
+    }
+  }
+
+  // POST /api/user/hosting/topup — add funds to hosting balance
+  // Body: { amount_cents: number }
+  // Initially admin-triggered; Stripe integration in a later phase.
+  if (path === '/api/user/hosting/topup' && method === 'POST') {
+    try {
+      const user = await authenticate(request);
+      const body = await request.json() as { amount_cents?: number };
+      const amountCents = body.amount_cents;
+
+      if (!amountCents || typeof amountCents !== 'number' || amountCents <= 0) {
+        return error('amount_cents must be a positive number', 400);
+      }
+
+      // @ts-ignore
+      const Deno = globalThis.Deno;
+      const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+      const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+
+      // Get current balance
+      const getRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=hosting_balance_cents`,
+        {
+          headers: {
+            'apikey': SUPABASE_SERVICE_ROLE_KEY,
+            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          },
+        }
+      );
+      if (!getRes.ok) return error('Failed to read balance', 500);
+      const rows = await getRes.json() as Array<{ hosting_balance_cents: number }>;
+      if (rows.length === 0) return error('User not found', 404);
+
+      const currentBalance = rows[0].hosting_balance_cents ?? 0;
+      const newBalance = currentBalance + amountCents;
+
+      // Update balance
+      const updateRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}`,
+        {
+          method: 'PATCH',
+          headers: {
+            'apikey': SUPABASE_SERVICE_ROLE_KEY,
+            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal',
+          },
+          body: JSON.stringify({ hosting_balance_cents: newBalance }),
+        }
+      );
+
+      if (!updateRes.ok) return error('Failed to update balance', 500);
+
+      // If user had suspended content, unsuspend it
+      let unsuspended = { apps: 0, pages: 0 };
+      if (currentBalance <= 0) {
+        unsuspended = await unsuspendContent(user.id);
+      }
+
+      return json({
+        previous_balance_cents: currentBalance,
+        added_cents: amountCents,
+        new_balance_cents: newBalance,
+        unsuspended_apps: unsuspended.apps,
+        unsuspended_pages: unsuspended.pages,
+      });
+    } catch (err) {
+      if (err instanceof SyntaxError) return error('Invalid JSON body', 400);
+      return error(err instanceof Error ? err.message : 'Unauthorized', 401);
     }
   }
 

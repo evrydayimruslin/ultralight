@@ -535,6 +535,15 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
     return jsonRpcErrorResponse(rpcRequest.id, -32002, 'App not found');
   }
 
+  // Hosting suspension check: apps with depleted hosting balance are offline
+  if ((app as Record<string, unknown>).hosting_suspended === true) {
+    return jsonRpcErrorResponse(
+      rpcRequest.id,
+      -32002,
+      'This app is suspended due to insufficient hosting balance. The owner must top up their hosting balance to restore service.'
+    );
+  }
+
   // Token scoping: if the API token is scoped to specific apps, enforce it
   if (tokenAppIds && tokenAppIds.length > 0 && !tokenAppIds.includes('*')) {
     if (!tokenAppIds.includes(appId) && !tokenAppIds.includes(app.slug)) {

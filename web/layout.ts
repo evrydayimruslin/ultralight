@@ -2312,7 +2312,7 @@ export function getLayoutHTML(options: {
   <aside class="sidebar" id="sidebar">
     <!-- Expanded: header with logo + toolbar buttons -->
     <div class="sidebar-header">
-      <div class="logo">Ultralight</div>
+      <a href="/" class="logo" style="text-decoration:none;color:inherit">Ultralight</a>
       <div class="sidebar-toolbar">
         <button class="sidebar-toolbar-btn theme-toggle" id="themeToggle" title="Toggle light/dark mode">
           <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2378,6 +2378,13 @@ export function getLayoutHTML(options: {
     <div class="apps-section">
       <div class="apps-section-title">Your Apps</div>
       <div id="appsList" class="apps-loading">Loading...</div>
+    </div>
+
+    <!-- Expanded: navigation links -->
+    <div style="padding:0.5rem 0.75rem;display:flex;flex-direction:column;gap:0.25rem;font-size:0.8rem">
+      <a href="/" style="color:var(--text-secondary);text-decoration:none;padding:0.3rem 0.5rem;border-radius:6px;transition:background 0.15s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='none'">&#127968; Homepage</a>
+      <a href="/gaps" style="color:var(--text-secondary);text-decoration:none;padding:0.3rem 0.5rem;border-radius:6px;transition:background 0.15s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='none'">&#128269; Gaps Board</a>
+      <a href="/leaderboard" style="color:var(--text-secondary);text-decoration:none;padding:0.3rem 0.5rem;border-radius:6px;transition:background 0.15s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='none'">&#127942; Leaderboard</a>
     </div>
 
     <!-- Expanded: footer with auth -->

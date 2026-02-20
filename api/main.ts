@@ -4,6 +4,7 @@
 const Deno = globalThis.Deno;
 
 import { createApp } from './handlers/app.ts';
+import { startHostingBillingJob } from './services/hosting-billing.ts';
 
 // Get port from environment or default to 8000
 // @ts-ignore
@@ -31,6 +32,9 @@ const corsHeaders: Record<string, string> = {
 
 // Merge security + CORS for convenience
 const standardHeaders = { ...securityHeaders, ...corsHeaders };
+
+// Start background jobs
+startHostingBillingJob();
 
 // Serve the API
 Deno.serve({ port, hostname: '0.0.0.0' }, async (request: Request) => {

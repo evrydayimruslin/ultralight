@@ -22,6 +22,7 @@ import {
   generateSkillsForVersion,
   rebuildUserLibrary,
 } from '../services/library.ts';
+import { recordUploadStorage } from '../services/storage-quota.ts';
 
 // Export file type for programmatic uploads
 export interface UploadFile {
@@ -358,6 +359,12 @@ export async function handleUpload(request: Request): Promise<Response> {
       app_type: appType,
     });
     log('success', 'App record created');
+
+    // Record storage usage for billing (fire-and-forget)
+    const totalSizeBytes = filesToUpload.reduce((sum, f) => sum + f.content.byteLength, 0);
+    recordUploadStorage(userId, appId, version, totalSizeBytes).catch(err =>
+      console.error('[STORAGE] recordUploadStorage failed:', err)
+    );
 
     // Auto-generate Skills.md + library entry + embedding (fire-and-forget for speed)
     log('info', 'Generating Skills.md...');
@@ -954,6 +961,12 @@ export async function handleUploadFiles(
   if (options.gap_id) createPayload.gap_id = options.gap_id;
   await appsService.create(createPayload as Parameters<typeof appsService.create>[0]);
   log('success', 'App record created');
+
+  // Record storage usage for billing (fire-and-forget)
+  const totalSizeBytes = filesToUpload.reduce((sum, f) => sum + f.content.byteLength, 0);
+  recordUploadStorage(userId, appId, version, totalSizeBytes).catch(err =>
+    console.error('[STORAGE] recordUploadStorage failed:', err)
+  );
 
   // Auto-generate Skills.md + library entry + embedding (fire-and-forget)
   log('info', 'Generating Skills.md...');

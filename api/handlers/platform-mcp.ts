@@ -4103,7 +4103,7 @@ async function executeDiscoverAppstore(
   if (!query) {
     const overFetchLimit = limit + blockedAppIds.size + 5; // over-fetch to cover filtered-out blocks
     const topRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/apps?visibility=eq.public&deleted_at=is.null` +
+      `${SUPABASE_URL}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&hosting_suspended=eq.false` +
       `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,runs_30d` +
       `&order=weighted_likes.desc,likes.desc,runs_30d.desc` +
       `&limit=${overFetchLimit}`,
@@ -4199,7 +4199,9 @@ async function executeDiscoverAppstore(
       0.4
     );
 
-    const filteredResults = results.filter(r => !blockedAppIds.has(r.id));
+    const filteredResults = results.filter(r =>
+      !blockedAppIds.has(r.id) && !(r as Record<string, unknown>).hosting_suspended
+    );
 
     // Fetch env_schema and user connection status for re-ranking
     const appIds = filteredResults.map(r => r.id);
