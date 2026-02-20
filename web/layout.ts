@@ -4,7 +4,7 @@
 export function getLayoutHTML(options: {
   title?: string;
   activeAppId?: string;
-  initialView: 'home' | 'dashboard' | 'app' | 'gaps' | 'leaderboard';
+  initialView: 'home' | 'dashboard' | 'app' | 'leaderboard';
   appCode?: string;
   appName?: string;
 }): string {
@@ -36,7 +36,6 @@ export function getLayoutHTML(options: {
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
-      darkMode: 'class',
       theme: {
         extend: {
           colors: {
@@ -56,16 +55,6 @@ export function getLayoutHTML(options: {
         }
       }
     }
-  </script>
-
-  <!-- Theme: apply dark class before paint to prevent flash -->
-  <script>
-    (function(){
-      var t = localStorage.getItem('ultralight_theme');
-      if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-        document.documentElement.classList.add('dark');
-      }
-    })();
   </script>
 
   <style>
@@ -100,43 +89,24 @@ export function getLayoutHTML(options: {
       --warning-color: #f59e0b;
     }
 
-    /* ===== Dark mode ===== */
-    html.dark {
-      --bg-primary: #0a0a0a;
-      --bg-secondary: #111111;
-      --bg-tertiary: #1a1a1a;
-      --bg-hover: #222222;
-      --border-color: #2a2a2a;
-      --text-primary: #ffffff;
-      --text-secondary: #888888;
-      --text-muted: #555555;
-      --accent-gradient: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
-      --accent-color: #60a5fa;
-      --success-color: #4ade80;
-      --error-color: #f87171;
-      --warning-color: #fbbf24;
-    }
-
     body {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: var(--bg-primary);
       color: var(--text-primary);
       min-height: 100vh;
       display: flex;
-      transition: background-color 0.3s ease, color 0.3s ease;
     }
 
     /* Sidebar */
     .sidebar {
       width: var(--sidebar-width);
-      height: 100vh;
+      height: calc(100vh - 52px);
       background: var(--bg-secondary);
-      border-right: 1px solid var(--border-color);
       display: flex;
       flex-direction: column;
       position: fixed;
       left: 0;
-      top: 0;
+      top: 52px;
       z-index: 100;
       transition: width 0.3s ease;
       overflow: hidden;
@@ -146,28 +116,17 @@ export function getLayoutHTML(options: {
       width: 56px;
     }
 
-    /* Sidebar header: logo on left, toolbar buttons on right */
-    .sidebar-header {
+    /* Sidebar toggle area */
+    .sidebar-toggle-area {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      padding: 0.875rem 0.625rem 0.875rem 1rem;
+      padding: 0.5rem;
       flex-shrink: 0;
     }
-
-    /* Hide expanded header when collapsed */
-    .sidebar.collapsed .sidebar-header {
+    .sidebar.collapsed .sidebar-toggle-area {
       display: none;
     }
-
-    .sidebar-toolbar {
-      display: flex;
-      align-items: center;
-      gap: 2px;
-      flex-shrink: 0;
-    }
-
-    .sidebar-toolbar-btn {
+    .sidebar-toggle-btn {
       width: 30px;
       height: 30px;
       background: transparent;
@@ -181,13 +140,11 @@ export function getLayoutHTML(options: {
       transition: background 0.2s, color 0.2s;
       flex-shrink: 0;
     }
-
-    .sidebar-toolbar-btn:hover {
+    .sidebar-toggle-btn:hover {
       background: var(--bg-hover);
       color: var(--text-primary);
     }
-
-    .sidebar-toolbar-btn svg {
+    .sidebar-toggle-btn svg {
       width: 16px;
       height: 16px;
     }
@@ -612,9 +569,7 @@ export function getLayoutHTML(options: {
       overflow: hidden;
     }
 
-    html.dark .profile-dropdown {
-      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
-    }
+
 
     .profile-dropdown.open {
       opacity: 1;
@@ -2052,12 +2007,6 @@ export function getLayoutHTML(options: {
       white-space: pre;
     }
 
-    /* ===== Theme Toggle ===== */
-    .theme-toggle .sun-icon { display: none; }
-    .theme-toggle .moon-icon { display: block; }
-    html.dark .theme-toggle .sun-icon { display: block; }
-    html.dark .theme-toggle .moon-icon { display: none; }
-
     /* ===== Hero / Landing Section ===== */
     .hero-title {
       font-size: clamp(3rem, 7vw, 4.5rem);
@@ -2106,48 +2055,61 @@ export function getLayoutHTML(options: {
     .site-footer a:hover { color: var(--accent-color); }
     .footer-links { display: flex; gap: 1.5rem; flex-wrap: wrap; }
 
-    /* ===== Smooth transitions for theme switch ===== */
-    .main-content, .sidebar-header, .sidebar-footer,
-    .modal, .modal-overlay, .result,
-    .app-item, .build-logs, .toast, .settings-input, .settings-select,
-    .hero-title, .hero-subtitle {
-      transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
-    }
-    /* Sidebar needs width transition + theme color transitions */
-    .sidebar {
-      transition: width 0.3s ease, background-color 0.3s ease, border-color 0.3s ease;
-    }
     .main-content {
-      transition: margin-left 0.3s ease, background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+      transition: margin-left 0.3s ease;
     }
 
-    /* ===== Top Bar ===== */
+    /* ===== Top Bar (full-width, YouTube-style) ===== */
     .top-bar {
       position: fixed;
       top: 0;
+      left: 0;
       right: 0;
-      left: var(--sidebar-width, 260px);
       height: 52px;
       background: var(--bg-primary);
-      border-bottom: 1px solid var(--border-color);
       display: flex;
       align-items: center;
       padding: 0 1.25rem;
       gap: 0.75rem;
-      z-index: 90;
-      transition: left 0.2s ease;
+      z-index: 200;
     }
-    .sidebar-collapsed .top-bar { left: 52px; }
-    .top-bar-search {
+    .top-bar-left {
+      display: flex;
+      align-items: center;
+      width: 240px;
+      flex-shrink: 0;
+    }
+    .top-bar-left .logo {
+      font-size: 1.2rem;
+      font-weight: 700;
+      background: var(--accent-gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      text-decoration: none;
+    }
+    .top-bar-center {
       flex: 1;
-      max-width: 400px;
+      display: flex;
+      justify-content: center;
+    }
+    .top-bar-right {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      width: 240px;
+      justify-content: flex-end;
+      flex-shrink: 0;
+    }
+    .top-bar-search {
+      width: 100%;
+      max-width: 560px;
       display: flex;
       align-items: center;
       gap: 0.5rem;
-      background: var(--bg-secondary);
+      background: var(--bg-tertiary);
       border: 1px solid var(--border-color);
-      border-radius: 8px;
-      padding: 0.375rem 0.75rem;
+      border-radius: 9999px;
+      padding: 0.5rem 1rem;
     }
     .top-bar-search input {
       flex: 1;
@@ -2158,7 +2120,6 @@ export function getLayoutHTML(options: {
       outline: none;
     }
     .top-bar-search svg { width: 16px; height: 16px; color: var(--text-muted); flex-shrink: 0; }
-    .top-bar-actions { display: flex; align-items: center; gap: 0.5rem; margin-left: auto; }
     .top-bar-btn {
       display: flex;
       align-items: center;
@@ -2174,6 +2135,23 @@ export function getLayoutHTML(options: {
     }
     .top-bar-btn:hover { background: var(--bg-secondary); color: var(--text-primary); }
     .top-bar-btn svg { width: 16px; height: 16px; }
+    .top-bar-connect-btn {
+      display: none;
+      align-items: center;
+      gap: 0.375rem;
+      padding: 0.4rem 0.875rem;
+      background: var(--accent-color);
+      color: #fff;
+      border: none;
+      border-radius: 9999px;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: filter 0.15s;
+      white-space: nowrap;
+    }
+    .top-bar-connect-btn:hover { filter: brightness(1.1); }
+    .top-bar-connect-btn.visible { display: flex; }
     .top-bar-profile {
       position: relative;
       display: flex;
@@ -2196,7 +2174,7 @@ export function getLayoutHTML(options: {
       border: 1px solid var(--border-color);
       border-radius: 8px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-      z-index: 100;
+      z-index: 300;
       padding: 0.5rem;
     }
     .top-bar-profile-dropdown.open { display: block; }
@@ -2223,6 +2201,171 @@ export function getLayoutHTML(options: {
     }
     .top-bar-profile-dropdown-item:hover { background: var(--bg-tertiary); color: var(--text-primary); }
     .top-bar-profile-dropdown-item svg { width: 16px; height: 16px; }
+
+    /* ===== Right Sidebar (X/Twitter-style) ===== */
+    .right-sidebar {
+      position: fixed;
+      top: 72px;
+      right: 20px;
+      width: 300px;
+      max-height: calc(100vh - 92px);
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+      overflow: hidden;
+      display: none;
+      flex-direction: column;
+      z-index: 50;
+    }
+    .right-sidebar.visible { display: flex; }
+    .right-sidebar-header {
+      padding: 0.875rem 1rem 0;
+      flex-shrink: 0;
+    }
+    .right-sidebar-tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid var(--border-color);
+      padding: 0 1rem;
+    }
+    .right-sidebar-tab {
+      flex: 1;
+      padding: 0.625rem 0;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      text-align: center;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .right-sidebar-tab:hover { color: var(--text-primary); }
+    .right-sidebar-tab.active {
+      color: var(--text-primary);
+      border-bottom-color: var(--accent-color);
+    }
+    .right-sidebar-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0.75rem 1rem;
+    }
+    .main-content.has-right-sidebar { margin-right: 340px; }
+
+    /* ===== Home Page Hero ===== */
+    .home-view {
+      flex-direction: column;
+      width: 100%;
+      padding-top: 52px;
+      overflow-y: auto;
+    }
+    .home-hero {
+      min-height: calc(100vh - 52px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 2rem;
+    }
+    .home-hero-title {
+      font-size: clamp(2.75rem, 5vw, 4rem);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      color: var(--text-primary);
+      margin-bottom: 2rem;
+    }
+    .home-cta-row {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+    }
+    .home-cta-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.75rem;
+      background: var(--accent-color);
+      color: #fff;
+      border: none;
+      border-radius: 9999px;
+      font-size: 0.9375rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: filter 0.15s;
+    }
+    .home-cta-primary:hover { filter: brightness(1.1); }
+    .home-cta-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.75rem;
+      background: transparent;
+      color: var(--text-primary);
+      border: 1px solid var(--border-color);
+      border-radius: 9999px;
+      font-size: 0.9375rem;
+      font-weight: 500;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .home-cta-secondary:hover { background: var(--bg-tertiary); border-color: var(--text-muted); }
+    .home-features {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 4rem 2rem;
+      width: 100%;
+    }
+    .home-features-title {
+      font-size: 1.5rem;
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+    .home-feature-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+    }
+    .home-feature-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 1.25rem;
+      transition: border-color 0.15s;
+    }
+    .home-feature-card:hover { border-color: var(--accent-color); }
+    .home-feature-card h4 {
+      font-size: 0.875rem;
+      font-weight: 600;
+      margin-bottom: 0.375rem;
+    }
+    .home-feature-card p {
+      font-size: 0.8125rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+    .home-charts {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 2rem 4rem;
+      width: 100%;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+    }
+    .home-chart-section h3 {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      margin-bottom: 0.75rem;
+    }
 
     /* ===== App Page ===== */
     .app-page {
@@ -2367,27 +2510,46 @@ export function getLayoutHTML(options: {
   </style>
 </head>
 <body>
-  <!-- Sidebar -->
-  <aside class="sidebar" id="sidebar">
-    <!-- Expanded: header with logo + toolbar buttons -->
-    <div class="sidebar-header">
-      <a href="/" class="logo" style="text-decoration:none;color:inherit">Ultralight</a>
-      <div class="sidebar-toolbar">
-        <button class="sidebar-toolbar-btn theme-toggle" id="themeToggle" title="Toggle light/dark mode">
-          <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-          </svg>
-          <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-          </svg>
-        </button>
-        <button class="sidebar-toolbar-btn" id="sidebarToggle" title="Collapse sidebar">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
-            <rect x="3" y="3" width="18" height="18" rx="3"></rect>
-            <line x1="9" y1="3" x2="9" y2="21"></line>
-          </svg>
+  <!-- Top Bar (full-width, YouTube-style) -->
+  <div class="top-bar" id="topBar">
+    <div class="top-bar-left">
+      <a href="/" class="logo" onclick="event.preventDefault(); navigateToHome();">Ultralight</a>
+    </div>
+    <div class="top-bar-center">
+      <div class="top-bar-search" style="position: relative;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        <input type="text" id="searchInput" placeholder="Search apps..." oninput="handleSearch(this.value)" autocomplete="off" />
+        <div id="searchDropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; margin-top: 4px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 300; max-height: 300px; overflow-y: auto;"></div>
+      </div>
+    </div>
+    <div class="top-bar-right">
+      <button class="top-bar-connect-btn" id="topBarConnectBtn" onclick="copyConnectUrl()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+        <span id="connectBtnText">Connect</span>
+      </button>
+      <div class="top-bar-profile" id="topBarProfile" onclick="toggleTopBarDropdown(event)">
+        <!-- Populated by updateAuthUI -->
+      </div>
+      <div class="top-bar-profile-dropdown" id="topBarDropdown">
+        <div class="top-bar-profile-dropdown-email">Not signed in</div>
+        <button class="top-bar-profile-dropdown-item" onclick="event.stopPropagation(); signOut();">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+          Sign Out
         </button>
       </div>
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <!-- Collapse toggle (expanded state only) -->
+    <div class="sidebar-toggle-area">
+      <button class="sidebar-toggle-btn" id="sidebarToggle" title="Collapse sidebar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+          <rect x="3" y="3" width="18" height="18" rx="3"></rect>
+          <line x1="9" y1="3" x2="9" y2="21"></line>
+        </svg>
+      </button>
     </div>
 
     <!-- Expanded: main navigation -->
@@ -2401,22 +2563,12 @@ export function getLayoutHTML(options: {
       </button>
       <button class="upload-btn nav-btn${initialView === 'dashboard' ? ' nav-active' : ''}" id="newAppBtn" data-view="dashboard">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="3" width="7" height="7" rx="1"></rect>
-          <rect x="14" y="3" width="7" height="7" rx="1"></rect>
-          <rect x="3" y="14" width="7" height="7" rx="1"></rect>
-          <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
         </svg>
         Dashboard
       </button>
-      <button class="upload-btn nav-btn${initialView === 'gaps' ? ' nav-active' : ''}" id="navGapsBtn" data-view="gaps" style="font-size:0.8rem">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10"></circle>
-          <line x1="12" y1="8" x2="12" y2="12"></line>
-          <line x1="12" y1="16" x2="12.01" y2="16"></line>
-        </svg>
-        Gaps
-      </button>
-      <button class="upload-btn nav-btn${initialView === 'leaderboard' ? ' nav-active' : ''}" id="navLeaderboardBtn" data-view="leaderboard" style="font-size:0.8rem">
+      <button class="upload-btn nav-btn${initialView === 'leaderboard' ? ' nav-active' : ''}" id="navLeaderboardBtn" data-view="leaderboard">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5C7 4 7 7 7 7"></path>
           <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5C17 4 17 7 17 7"></path>
@@ -2436,20 +2588,10 @@ export function getLayoutHTML(options: {
           <line x1="9" y1="3" x2="9" y2="21"></line>
         </svg>
       </button>
-      <button class="sidebar-rail-btn theme-toggle" id="railThemeToggle" title="Toggle light/dark mode">
-        <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-        </svg>
-        <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-        </svg>
-      </button>
       <button class="sidebar-rail-btn" id="railNewApp" title="Dashboard">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="3" width="7" height="7" rx="1"></rect>
-          <rect x="14" y="3" width="7" height="7" rx="1"></rect>
-          <rect x="3" y="14" width="7" height="7" rx="1"></rect>
-          <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
         </svg>
       </button>
       <div class="sidebar-rail-divider"></div>
@@ -2460,7 +2602,7 @@ export function getLayoutHTML(options: {
 
     <!-- Expanded: full apps list -->
     <div class="apps-section">
-      <div class="apps-section-title">Your Apps</div>
+      <div class="apps-section-title">Library</div>
       <div id="appsList" class="apps-loading">Loading...</div>
     </div>
 
@@ -2480,38 +2622,21 @@ export function getLayoutHTML(options: {
     </div>
   </aside>
 
-  <!-- Top Bar -->
-  <div class="top-bar" id="topBar">
-    <div class="top-bar-search" style="position: relative;">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-      <input type="text" id="searchInput" placeholder="Search apps..." oninput="handleSearch(this.value)" autocomplete="off" />
-      <div id="searchDropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; margin-top: 4px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 100; max-height: 300px; overflow-y: auto;"></div>
-    </div>
-    <div class="top-bar-actions">
-      <button class="top-bar-btn" onclick="openLogsModal()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
-        Logs
-      </button>
-      <div class="top-bar-profile" id="topBarProfile" onclick="toggleTopBarDropdown(event)">
-        <!-- Populated by updateAuthUI -->
-      </div>
-      <div class="top-bar-profile-dropdown" id="topBarDropdown">
-        <div class="top-bar-profile-dropdown-email">Not signed in</div>
-        <button class="top-bar-profile-dropdown-item" onclick="event.stopPropagation(); signOut();">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
-          Sign Out
-        </button>
-      </div>
-    </div>
-  </div>
-
   <!-- Main Content -->
   <main class="main-content">
     <!-- Dashboard View -->
     <div class="dashboard-view" id="dashboardView" style="display: ${initialView === 'dashboard' ? 'flex' : 'none'};">
       <div style="width: 100%; max-width: 900px; margin: 0 auto;">
-        <h1 style="font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem;">Developer Dashboard</h1>
-        <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">Your MCP hosting control center</p>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem">
+          <div>
+            <h1 style="font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem;">Developer Dashboard</h1>
+            <p style="color: var(--text-secondary);">Your MCP hosting control center</p>
+          </div>
+          <button class="top-bar-btn" onclick="openLogsModal()" style="flex-shrink:0">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+            Logs
+          </button>
+        </div>
 
         <!-- Platform MCP URL -->
         <div class="dashboard-card" style="margin-bottom: 1rem;">
@@ -2643,65 +2768,64 @@ export function getLayoutHTML(options: {
     </div>
 
     <!-- Home View -->
-    <div class="dashboard-view" id="homeView" style="display: ${initialView === 'home' ? 'flex' : 'none'};">
-      <div style="width: 100%; max-width: 960px; margin: 0 auto;">
-        <h1 style="font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem;">Ultralight</h1>
-        <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">Build, publish, and discover MCP servers. Earn points by filling platform gaps.</p>
+    <!-- Home View (Hero + Features + Charts) -->
+    <div class="home-view" id="homeView" style="display: ${initialView === 'home' ? 'flex' : 'none'};">
+      <!-- Hero (above the fold) -->
+      <div class="home-hero">
+        <h1 class="home-hero-title">Make agents limitless</h1>
+        <div class="home-cta-row">
+          <a href="#home-features" class="home-cta-secondary" onclick="event.preventDefault(); document.getElementById('home-features').scrollIntoView({behavior:'smooth'});">Learn more</a>
+          <button class="home-cta-primary" id="heroConnectBtn" onclick="copyConnectUrl()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+            <span id="heroConnectText">Connect</span>
+          </button>
+        </div>
+      </div>
 
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
-          <div>
-            <h3 style="font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin-bottom: 0.75rem;">Top MCP Servers</h3>
-            <div id="homeTopApps" style="display:flex;flex-direction:column;gap:0.375rem">
-              <div style="color: var(--text-muted); font-size: 0.8125rem; padding: 1.5rem 0; text-align: center;">Loading...</div>
-            </div>
-
-            <h3 style="font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin: 1.5rem 0 0.75rem;">Recent Content</h3>
-            <div id="homeTopContent" style="display:flex;flex-direction:column;gap:0.375rem">
-              <div style="color: var(--text-muted); font-size: 0.8125rem; padding: 1rem 0; text-align: center;">Loading...</div>
-            </div>
+      <!-- Core Features (below the fold) -->
+      <div class="home-features" id="home-features">
+        <h2 class="home-features-title">Everything agents need</h2>
+        <div class="home-feature-grid">
+          <div class="home-feature-card">
+            <h4>MCP Protocol</h4>
+            <p>Standard Model Context Protocol endpoint. Works with Claude Desktop, Cursor, and any MCP client.</p>
           </div>
-
-          <div>
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem">
-              <h3 style="font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted);">Open Gaps</h3>
-              <a href="javascript:void(0)" onclick="navigateToGaps()" style="font-size:0.75rem;color:var(--accent-color)">View all &rarr;</a>
-            </div>
-            <div id="homeGaps" style="display:flex;flex-direction:column;gap:0.375rem">
-              <div style="color: var(--text-muted); font-size: 0.8125rem; padding: 1.5rem 0; text-align: center;">Loading...</div>
-            </div>
-
-            <h3 style="font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin: 1.5rem 0 0.75rem;">Recent Fulfillments</h3>
-            <div id="homeFulfillments" style="display:flex;flex-direction:column;gap:0.25rem">
-              <div style="color: var(--text-muted); font-size: 0.8125rem; padding: 1rem 0; text-align: center;">Loading...</div>
-            </div>
-
-            <div style="display:flex;align-items:center;justify-content:space-between;margin:1.5rem 0 0.75rem">
-              <h3 style="font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted);">Leaderboard</h3>
-              <a href="javascript:void(0)" onclick="navigateToLeaderboard()" style="font-size:0.75rem;color:var(--accent-color)">Full rankings &rarr;</a>
-            </div>
-            <div id="homeLeaderboard" style="display:flex;flex-direction:column">
-              <div style="color: var(--text-muted); font-size: 0.8125rem; padding: 1rem 0; text-align: center;">Loading...</div>
-            </div>
+          <div class="home-feature-card">
+            <h4>TypeScript Functions</h4>
+            <p>Write plain TypeScript. Export functions, get tool endpoints. No boilerplate or framework lock-in.</p>
+          </div>
+          <div class="home-feature-card">
+            <h4>Key-Value Storage</h4>
+            <p>Built-in persistent storage via ultralight.store() and ultralight.load(). No database setup needed.</p>
+          </div>
+          <div class="home-feature-card">
+            <h4>Supabase Integration</h4>
+            <p>Connect your own Supabase project for relational data, auth, and realtime subscriptions.</p>
+          </div>
+          <div class="home-feature-card">
+            <h4>Environment Secrets</h4>
+            <p>Securely store API keys and credentials. Injected at runtime, never exposed in code.</p>
+          </div>
+          <div class="home-feature-card">
+            <h4>Permissions &amp; Sharing</h4>
+            <p>Granular per-function permissions. Share apps with specific users or make them public.</p>
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- Gaps View -->
-    <div class="dashboard-view" id="gapsView" style="display: ${initialView === 'gaps' ? 'flex' : 'none'};">
-      <div style="width: 100%; max-width: 800px; margin: 0 auto;">
-        <h1 style="font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem;">Platform Gaps</h1>
-        <p style="color: var(--text-secondary); margin-bottom: 1rem;">MCP servers the platform needs. Build one, earn points, strengthen the ecosystem.</p>
-
-        <div id="gapsFilterBar" style="display:flex;gap:0.5rem;margin-bottom:1.25rem;flex-wrap:wrap">
-          <button class="gaps-filter-btn gaps-filter-active" data-status="open" onclick="filterGaps('open')">Open</button>
-          <button class="gaps-filter-btn" data-status="claimed" onclick="filterGaps('claimed')">Claimed</button>
-          <button class="gaps-filter-btn" data-status="fulfilled" onclick="filterGaps('fulfilled')">Fulfilled</button>
-          <button class="gaps-filter-btn" data-status="all" onclick="filterGaps('all')">All</button>
+      <!-- Top Charts -->
+      <div class="home-charts">
+        <div class="home-chart-section">
+          <h3>Top MCP Servers</h3>
+          <div id="homeTopApps" style="display:flex;flex-direction:column;gap:0.375rem">
+            <div style="color: var(--text-muted); font-size: 0.8125rem; padding: 1.5rem 0; text-align: center;">Loading...</div>
+          </div>
         </div>
-
-        <div id="gapsList" style="display:flex;flex-direction:column;gap:0.5rem">
-          <div style="color: var(--text-muted); font-size: 0.8125rem; padding: 2rem 0; text-align: center;">Loading...</div>
+        <div class="home-chart-section">
+          <h3>Recent Content</h3>
+          <div id="homeTopContent" style="display:flex;flex-direction:column;gap:0.375rem">
+            <div style="color: var(--text-muted); font-size: 0.8125rem; padding: 1rem 0; text-align: center;">Loading...</div>
+          </div>
         </div>
       </div>
     </div>
@@ -2871,6 +2995,15 @@ export function getLayoutHTML(options: {
       </div>
     </div>
   </main>
+
+  <!-- Right Sidebar (X/Twitter-style, leaderboard only) -->
+  <aside class="right-sidebar" id="rightSidebar">
+    <div class="right-sidebar-header" id="rightSidebarHeader"></div>
+    <div class="right-sidebar-tabs" id="rightSidebarTabs"></div>
+    <div class="right-sidebar-content" id="rightSidebarContent">
+      <div style="color:var(--text-muted);font-size:0.8125rem;padding:1rem 0;text-align:center">Loading...</div>
+    </div>
+  </aside>
 
   <!-- Hidden BYOK container (deprecated from UI but keeping data layer) -->
   <div style="display: none;">
@@ -3118,7 +3251,6 @@ await hash.sha256('data')</div>
     const newAppBtn = document.getElementById('newAppBtn');
     const dashboardView = document.getElementById('dashboardView');
     const homeView = document.getElementById('homeView');
-    const gapsView = document.getElementById('gapsView');
     const leaderboardView = document.getElementById('leaderboardView');
     const appView = document.getElementById('appView');
     const deleteConfirmModal = document.getElementById('deleteConfirmModal');
@@ -3181,15 +3313,7 @@ await hash.sha256('data')</div>
     // Initialize sidebar state
     updateSidebarState();
 
-    // ============================================
-    // Theme Toggle (both expanded + rail buttons)
-    // ============================================
-    function toggleTheme() {
-      const isDark = document.documentElement.classList.toggle('dark');
-      localStorage.setItem('ultralight_theme', isDark ? 'dark' : 'light');
-    }
-    document.getElementById('themeToggle')?.addEventListener('click', toggleTheme);
-    document.getElementById('railThemeToggle')?.addEventListener('click', toggleTheme);
+
 
     // ============================================
     // Footer visibility (hide when viewing app)
@@ -5576,13 +5700,85 @@ await hash.sha256('data')</div>
     function showView(view) {
       homeView.style.display = view === 'home' ? 'flex' : 'none';
       dashboardView.style.display = view === 'dashboard' ? 'flex' : 'none';
-      gapsView.style.display = view === 'gaps' ? 'flex' : 'none';
       leaderboardView.style.display = view === 'leaderboard' ? 'flex' : 'none';
       appView.style.display = view === 'app' ? 'flex' : 'none';
       currentView = view;
       updateFooterVisibility(view);
       updateNavActive(view);
+      updateConnectButtonVisibility(view);
+      updateRightSidebar(view);
     }
+
+    function updateConnectButtonVisibility(view) {
+      const btn = document.getElementById('topBarConnectBtn');
+      if (btn) btn.classList.toggle('visible', view !== 'home');
+    }
+
+    function updateRightSidebar(view) {
+      const rs = document.getElementById('rightSidebar');
+      const mc = document.querySelector('.main-content');
+      if (view === 'leaderboard') {
+        rs.classList.add('visible');
+        mc.classList.add('has-right-sidebar');
+        loadRightSidebarData();
+      } else {
+        rs.classList.remove('visible');
+        mc.classList.remove('has-right-sidebar');
+      }
+    }
+
+    async function loadRightSidebarData() {
+      const header = document.getElementById('rightSidebarHeader');
+      const tabs = document.getElementById('rightSidebarTabs');
+      const content = document.getElementById('rightSidebarContent');
+      header.innerHTML = '<h3 style="font-size:0.9375rem;font-weight:600;margin-bottom:0.5rem">Platform Gaps</h3>';
+      tabs.innerHTML =
+        '<button class="right-sidebar-tab active" data-status="open" onclick="filterRightGaps(\\\'open\\\')">Open</button>' +
+        '<button class="right-sidebar-tab" data-status="claimed" onclick="filterRightGaps(\\\'claimed\\\')">Claimed</button>' +
+        '<button class="right-sidebar-tab" data-status="fulfilled" onclick="filterRightGaps(\\\'fulfilled\\\')">Fulfilled</button>' +
+        '<button class="right-sidebar-tab" data-status="all" onclick="filterRightGaps(\\\'all\\\')">All</button>';
+      await loadRightSidebarGaps(content, 'open');
+    }
+
+    window.filterRightGaps = async function(status) {
+      const tabs = document.querySelectorAll('.right-sidebar-tab');
+      tabs.forEach(t => t.classList.toggle('active', t.dataset.status === status));
+      const content = document.getElementById('rightSidebarContent');
+      await loadRightSidebarGaps(content, status);
+    };
+
+    async function loadRightSidebarGaps(container, status) {
+      container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:1rem 0;text-align:center">Loading...</div>';
+      try {
+        const res = await fetch('/api/homepage?type=gaps&status=' + status + '&limit=30');
+        if (res.ok) {
+          const data = await res.json();
+          renderGapCards(container, data.results || data || [], 30);
+        } else {
+          container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:1rem 0;text-align:center">Failed to load.</div>';
+        }
+      } catch {
+        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:1rem 0;text-align:center">Failed to load.</div>';
+      }
+    }
+
+    window.copyConnectUrl = function() {
+      const url = window.location.origin + '/mcp/platform';
+      navigator.clipboard.writeText(url).then(() => {
+        // Update hero button text
+        const heroText = document.getElementById('heroConnectText');
+        if (heroText) {
+          heroText.textContent = 'Copied \\u2713';
+          setTimeout(() => { heroText.textContent = 'Connect'; }, 1500);
+        }
+        // Update top bar button text
+        const topText = document.getElementById('connectBtnText');
+        if (topText) {
+          topText.textContent = 'Copied \\u2713';
+          setTimeout(() => { topText.textContent = 'Connect'; }, 1500);
+        }
+      }).catch(() => {});
+    };
 
     function updateNavActive(view) {
       document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -5606,10 +5802,7 @@ await hash.sha256('data')</div>
     }
 
     window.navigateToGaps = function() {
-      history.pushState({}, '', '/gaps');
-      currentAppId = null;
-      showView('gaps');
-      loadGapsData('open');
+      navigateToLeaderboard();
     };
 
     window.navigateToLeaderboard = function() {
@@ -5709,17 +5902,11 @@ await hash.sha256('data')</div>
 
     async function loadHomeData() {
       try {
-        // Fetch all data in parallel via /api/homepage
-        const [appsRes, gapsRes, lbRes] = await Promise.allSettled([
-          fetch('/api/homepage?type=apps&limit=10'),
-          fetch('/api/homepage?type=gaps&limit=6'),
-          fetch('/api/homepage?type=leaderboard&limit=5'),
-        ]);
-
-        // Top apps
+        // Fetch top apps for the charts section
+        const appsRes = await fetch('/api/homepage?type=apps&limit=10');
         const topAppsEl = document.getElementById('homeTopApps');
-        if (appsRes.status === 'fulfilled' && appsRes.value.ok) {
-          const data = await appsRes.value.json();
+        if (appsRes.ok) {
+          const data = await appsRes.json();
           const apps = data.results || [];
           if (apps.length > 0) {
             topAppsEl.innerHTML = apps.slice(0, 10).map((a, i) =>
@@ -5735,25 +5922,9 @@ await hash.sha256('data')</div>
           }
         }
 
-        // Gaps
-        const homeGapsEl = document.getElementById('homeGaps');
-        if (gapsRes.status === 'fulfilled' && gapsRes.value.ok) {
-          const gData = await gapsRes.value.json();
-          renderGapCards(homeGapsEl, gData.results || [], 6);
-        }
-
-        // Leaderboard preview
-        const homeLbEl = document.getElementById('homeLeaderboard');
-        if (lbRes.status === 'fulfilled' && lbRes.value.ok) {
-          const lbData = await lbRes.value.json();
-          renderLeaderboardRows(homeLbEl, lbData.results || [], 5);
-        }
-
-        // Content + fulfillments — placeholder until more data exists
+        // Content placeholder
         const homeContentEl = document.getElementById('homeTopContent');
-        homeContentEl.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:1rem 0;text-align:center">Coming soon</div>';
-        const homeFulfillEl = document.getElementById('homeFulfillments');
-        homeFulfillEl.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:1rem 0;text-align:center">No fulfillments yet</div>';
+        if (homeContentEl) homeContentEl.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:1rem 0;text-align:center">Coming soon</div>';
 
       } catch (err) {
         console.error('[HOME] Failed to load data:', err);
@@ -5862,11 +6033,7 @@ await hash.sha256('data')</div>
         currentAppId = null;
         showView('dashboard');
         renderAppsList();
-      } else if (path === '/gaps') {
-        currentAppId = null;
-        showView('gaps');
-        loadGapsData('open');
-      } else if (path === '/leaderboard') {
+      } else if (path === '/gaps' || path === '/leaderboard') {
         currentAppId = null;
         showView('leaderboard');
         loadLeaderboardData();
@@ -5886,7 +6053,6 @@ await hash.sha256('data')</div>
     // ============================================
     newAppBtn.addEventListener('click', navigateToDashboard);
     document.getElementById('navHomeBtn').addEventListener('click', navigateToHome);
-    document.getElementById('navGapsBtn').addEventListener('click', navigateToGaps);
     document.getElementById('navLeaderboardBtn').addEventListener('click', navigateToLeaderboard);
 
 
@@ -5925,8 +6091,10 @@ await hash.sha256('data')</div>
 
     // Load data for the initial view
     ${initialView === 'home' ? 'loadHomeData();' : ''}
-    ${initialView === 'gaps' ? "loadGapsData('open');" : ''}
     ${initialView === 'leaderboard' ? 'loadLeaderboardData();' : ''}
+    // Initialize connect button and right sidebar visibility
+    updateConnectButtonVisibility('${initialView}');
+    updateRightSidebar('${initialView}');
   </script>
 </body>
 </html>`;

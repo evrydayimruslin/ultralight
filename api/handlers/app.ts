@@ -101,10 +101,11 @@ export function createApp() {
         });
       }
 
-      // Gaps board
+      // Gaps board → redirect to leaderboard
       if (path === '/gaps' && method === 'GET') {
-        return new Response(getLayoutHTML({ initialView: 'gaps' }), {
-          headers: { 'Content-Type': 'text/html' },
+        return new Response(null, {
+          status: 302,
+          headers: { 'Location': '/leaderboard' },
         });
       }
 
