@@ -4,7 +4,7 @@
 export function getLayoutHTML(options: {
   title?: string;
   activeAppId?: string;
-  initialView: 'dashboard' | 'app';
+  initialView: 'home' | 'dashboard' | 'app' | 'gaps' | 'leaderboard';
   appCode?: string;
   appName?: string;
 }): string {
@@ -239,6 +239,65 @@ export function getLayoutHTML(options: {
     .upload-btn svg {
       width: 16px;
       height: 16px;
+    }
+
+    .nav-btn {
+      justify-content: flex-start;
+      border: none;
+      padding: 0.45rem 0.75rem;
+      border-radius: 6px;
+      font-size: 0.8125rem;
+      color: var(--text-secondary);
+    }
+    .nav-btn:hover {
+      border: none;
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+    .nav-active {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+    .nav-active:hover {
+      background: var(--bg-tertiary);
+    }
+
+    .gaps-filter-btn {
+      padding: 0.35rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .gaps-filter-btn:hover {
+      border-color: var(--accent-color);
+      color: var(--accent-color);
+    }
+    .gaps-filter-active {
+      border-color: var(--accent-color);
+      color: var(--accent-color);
+      background: var(--bg-secondary);
+    }
+
+    .home-card {
+      display: flex;
+      gap: 0.625rem;
+      padding: 0.625rem 0.75rem;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      transition: border-color 0.15s;
+      text-decoration: none;
+      color: inherit;
+      cursor: pointer;
+    }
+    .home-card:hover {
+      border-color: var(--text-muted);
     }
 
     .sidebar.collapsed .new-app-section {
@@ -2331,9 +2390,16 @@ export function getLayoutHTML(options: {
       </div>
     </div>
 
-    <!-- Expanded: new app button -->
-    <div class="new-app-section">
-      <button class="upload-btn" id="newAppBtn">
+    <!-- Expanded: main navigation -->
+    <div class="new-app-section" style="display:flex;flex-direction:column;gap:0.25rem">
+      <button class="upload-btn nav-btn${initialView === 'home' ? ' nav-active' : ''}" id="navHomeBtn" data-view="home">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+          <polyline points="9 22 9 12 15 12 15 22"></polyline>
+        </svg>
+        Home
+      </button>
+      <button class="upload-btn nav-btn${initialView === 'dashboard' ? ' nav-active' : ''}" id="newAppBtn" data-view="dashboard">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <rect x="3" y="3" width="7" height="7" rx="1"></rect>
           <rect x="14" y="3" width="7" height="7" rx="1"></rect>
@@ -2341,6 +2407,24 @@ export function getLayoutHTML(options: {
           <rect x="14" y="14" width="7" height="7" rx="1"></rect>
         </svg>
         Dashboard
+      </button>
+      <button class="upload-btn nav-btn${initialView === 'gaps' ? ' nav-active' : ''}" id="navGapsBtn" data-view="gaps" style="font-size:0.8rem">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        Gaps
+      </button>
+      <button class="upload-btn nav-btn${initialView === 'leaderboard' ? ' nav-active' : ''}" id="navLeaderboardBtn" data-view="leaderboard" style="font-size:0.8rem">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5C7 4 7 7 7 7"></path>
+          <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5C17 4 17 7 17 7"></path>
+          <path d="M4 22h16"></path>
+          <path d="M10 22V8a2 2 0 0 0-2-2H6"></path>
+          <path d="M14 22V8a2 2 0 0 1 2-2h2"></path>
+        </svg>
+        Leaderboard
       </button>
     </div>
 
@@ -2378,13 +2462,6 @@ export function getLayoutHTML(options: {
     <div class="apps-section">
       <div class="apps-section-title">Your Apps</div>
       <div id="appsList" class="apps-loading">Loading...</div>
-    </div>
-
-    <!-- Expanded: navigation links -->
-    <div style="padding:0.5rem 0.75rem;display:flex;flex-direction:column;gap:0.25rem;font-size:0.8rem">
-      <a href="/" style="color:var(--text-secondary);text-decoration:none;padding:0.3rem 0.5rem;border-radius:6px;transition:background 0.15s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='none'">&#127968; Homepage</a>
-      <a href="/gaps" style="color:var(--text-secondary);text-decoration:none;padding:0.3rem 0.5rem;border-radius:6px;transition:background 0.15s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='none'">&#128269; Gaps Board</a>
-      <a href="/leaderboard" style="color:var(--text-secondary);text-decoration:none;padding:0.3rem 0.5rem;border-radius:6px;transition:background 0.15s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='none'">&#127942; Leaderboard</a>
     </div>
 
     <!-- Expanded: footer with auth -->
@@ -2561,6 +2638,82 @@ export function getLayoutHTML(options: {
           <div id="callLogList" style="max-height: 320px; overflow-y: auto; font-size: 0.8125rem;">
             <div style="color: var(--text-muted); padding: 2rem 0; text-align: center;">No calls yet. Connect your MCP client to get started.</div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Home View -->
+    <div class="dashboard-view" id="homeView" style="display: ${initialView === 'home' ? 'flex' : 'none'};">
+      <div style="width: 100%; max-width: 960px; margin: 0 auto;">
+        <h1 style="font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem;">Ultralight</h1>
+        <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">Build, publish, and discover MCP servers. Earn points by filling platform gaps.</p>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+          <div>
+            <h3 style="font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin-bottom: 0.75rem;">Top MCP Servers</h3>
+            <div id="homeTopApps" style="display:flex;flex-direction:column;gap:0.375rem">
+              <div style="color: var(--text-muted); font-size: 0.8125rem; padding: 1.5rem 0; text-align: center;">Loading...</div>
+            </div>
+
+            <h3 style="font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin: 1.5rem 0 0.75rem;">Recent Content</h3>
+            <div id="homeTopContent" style="display:flex;flex-direction:column;gap:0.375rem">
+              <div style="color: var(--text-muted); font-size: 0.8125rem; padding: 1rem 0; text-align: center;">Loading...</div>
+            </div>
+          </div>
+
+          <div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem">
+              <h3 style="font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted);">Open Gaps</h3>
+              <a href="javascript:void(0)" onclick="navigateToGaps()" style="font-size:0.75rem;color:var(--accent-color)">View all &rarr;</a>
+            </div>
+            <div id="homeGaps" style="display:flex;flex-direction:column;gap:0.375rem">
+              <div style="color: var(--text-muted); font-size: 0.8125rem; padding: 1.5rem 0; text-align: center;">Loading...</div>
+            </div>
+
+            <h3 style="font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin: 1.5rem 0 0.75rem;">Recent Fulfillments</h3>
+            <div id="homeFulfillments" style="display:flex;flex-direction:column;gap:0.25rem">
+              <div style="color: var(--text-muted); font-size: 0.8125rem; padding: 1rem 0; text-align: center;">Loading...</div>
+            </div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;margin:1.5rem 0 0.75rem">
+              <h3 style="font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted);">Leaderboard</h3>
+              <a href="javascript:void(0)" onclick="navigateToLeaderboard()" style="font-size:0.75rem;color:var(--accent-color)">Full rankings &rarr;</a>
+            </div>
+            <div id="homeLeaderboard" style="display:flex;flex-direction:column">
+              <div style="color: var(--text-muted); font-size: 0.8125rem; padding: 1rem 0; text-align: center;">Loading...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Gaps View -->
+    <div class="dashboard-view" id="gapsView" style="display: ${initialView === 'gaps' ? 'flex' : 'none'};">
+      <div style="width: 100%; max-width: 800px; margin: 0 auto;">
+        <h1 style="font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem;">Platform Gaps</h1>
+        <p style="color: var(--text-secondary); margin-bottom: 1rem;">MCP servers the platform needs. Build one, earn points, strengthen the ecosystem.</p>
+
+        <div id="gapsFilterBar" style="display:flex;gap:0.5rem;margin-bottom:1.25rem;flex-wrap:wrap">
+          <button class="gaps-filter-btn gaps-filter-active" data-status="open" onclick="filterGaps('open')">Open</button>
+          <button class="gaps-filter-btn" data-status="claimed" onclick="filterGaps('claimed')">Claimed</button>
+          <button class="gaps-filter-btn" data-status="fulfilled" onclick="filterGaps('fulfilled')">Fulfilled</button>
+          <button class="gaps-filter-btn" data-status="all" onclick="filterGaps('all')">All</button>
+        </div>
+
+        <div id="gapsList" style="display:flex;flex-direction:column;gap:0.5rem">
+          <div style="color: var(--text-muted); font-size: 0.8125rem; padding: 2rem 0; text-align: center;">Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Leaderboard View -->
+    <div class="dashboard-view" id="leaderboardView" style="display: ${initialView === 'leaderboard' ? 'flex' : 'none'};">
+      <div style="width: 100%; max-width: 600px; margin: 0 auto;">
+        <h1 style="font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem;">Leaderboard</h1>
+        <p style="color: var(--text-secondary); margin-bottom: 0.5rem;">Earn points by building MCP servers that fill platform gaps.</p>
+        <div id="leaderboardSeason" style="margin-bottom:1.25rem"></div>
+        <div id="leaderboardList" style="display:flex;flex-direction:column">
+          <div style="color: var(--text-muted); font-size: 0.8125rem; padding: 2rem 0; text-align: center;">Loading...</div>
         </div>
       </div>
     </div>
@@ -2964,6 +3117,9 @@ await hash.sha256('data')</div>
     const appsList = document.getElementById('appsList');
     const newAppBtn = document.getElementById('newAppBtn');
     const dashboardView = document.getElementById('dashboardView');
+    const homeView = document.getElementById('homeView');
+    const gapsView = document.getElementById('gapsView');
+    const leaderboardView = document.getElementById('leaderboardView');
     const appView = document.getElementById('appView');
     const deleteConfirmModal = document.getElementById('deleteConfirmModal');
     const toast = document.getElementById('toast');
@@ -3040,7 +3196,7 @@ await hash.sha256('data')</div>
     // ============================================
     function updateFooterVisibility(view) {
       const footer = document.getElementById('siteFooter');
-      if (footer) footer.style.display = view === 'dashboard' ? 'flex' : 'none';
+      if (footer) footer.style.display = (view === 'dashboard' || view === 'home') ? 'flex' : 'none';
     }
 
     // ============================================
@@ -5418,19 +5574,50 @@ await hash.sha256('data')</div>
     };
 
     function showView(view) {
+      homeView.style.display = view === 'home' ? 'flex' : 'none';
       dashboardView.style.display = view === 'dashboard' ? 'flex' : 'none';
+      gapsView.style.display = view === 'gaps' ? 'flex' : 'none';
+      leaderboardView.style.display = view === 'leaderboard' ? 'flex' : 'none';
       appView.style.display = view === 'app' ? 'flex' : 'none';
       currentView = view;
       updateFooterVisibility(view);
+      updateNavActive(view);
+    }
+
+    function updateNavActive(view) {
+      document.querySelectorAll('.nav-btn').forEach(btn => {
+        btn.classList.toggle('nav-active', btn.dataset.view === view);
+      });
+    }
+
+    function navigateToHome() {
+      history.pushState({}, '', '/');
+      currentAppId = null;
+      showView('home');
+      loadHomeData();
     }
 
     function navigateToDashboard() {
-      history.pushState({}, '', '/');
+      history.pushState({}, '', '/dash');
       currentAppId = null;
       showView('dashboard');
       renderAppsList();
       loadDashboardData();
     }
+
+    window.navigateToGaps = function() {
+      history.pushState({}, '', '/gaps');
+      currentAppId = null;
+      showView('gaps');
+      loadGapsData('open');
+    };
+
+    window.navigateToLeaderboard = function() {
+      history.pushState({}, '', '/leaderboard');
+      currentAppId = null;
+      showView('leaderboard');
+      loadLeaderboardData();
+    };
 
     // ============================================
     // Dashboard Functions
@@ -5502,13 +5689,187 @@ await hash.sha256('data')</div>
       showToast('Call log refresh coming soon.');
     };
 
+    // ============================================
+    // Home View Data
+    // ============================================
+
+    function escHtml(s) { return s ? String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') : ''; }
+    function relTime(d) {
+      const ms = Date.now() - new Date(d).getTime();
+      const m = Math.floor(ms/60000);
+      if (m < 60) return m + 'm ago';
+      const h = Math.floor(m/60);
+      if (h < 24) return h + 'h ago';
+      const dy = Math.floor(h/24);
+      if (dy < 30) return dy + 'd ago';
+      return new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+    }
+
+    const severityColors = { critical:'#ef4444', high:'#f59e0b', medium:'var(--accent-color)', low:'var(--text-muted)' };
+
+    async function loadHomeData() {
+      try {
+        // Fetch all data in parallel via /api/homepage
+        const [appsRes, gapsRes, lbRes] = await Promise.allSettled([
+          fetch('/api/homepage?type=apps&limit=10'),
+          fetch('/api/homepage?type=gaps&limit=6'),
+          fetch('/api/homepage?type=leaderboard&limit=5'),
+        ]);
+
+        // Top apps
+        const topAppsEl = document.getElementById('homeTopApps');
+        if (appsRes.status === 'fulfilled' && appsRes.value.ok) {
+          const data = await appsRes.value.json();
+          const apps = data.results || [];
+          if (apps.length > 0) {
+            topAppsEl.innerHTML = apps.slice(0, 10).map((a, i) =>
+              '<a href="/app/' + escHtml(a.id) + '" class="home-card" style="text-decoration:none;color:inherit">' +
+              '<div style="width:1.25rem;font-size:0.75rem;font-weight:700;color:var(--text-muted);padding-top:0.1rem">' + (i+1) + '</div>' +
+              '<div style="flex:1;min-width:0">' +
+              '<div style="font-size:0.8125rem;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(a.name || a.slug) + '</div>' +
+              (a.description ? '<div style="font-size:0.75rem;color:var(--text-secondary);margin-top:0.1rem;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden">' + escHtml(a.description).slice(0,100) + '</div>' : '') +
+              '</div></a>'
+            ).join('');
+          } else {
+            topAppsEl.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:1rem 0;text-align:center">No MCP servers published yet.</div>';
+          }
+        }
+
+        // Gaps
+        const homeGapsEl = document.getElementById('homeGaps');
+        if (gapsRes.status === 'fulfilled' && gapsRes.value.ok) {
+          const gData = await gapsRes.value.json();
+          renderGapCards(homeGapsEl, gData.results || [], 6);
+        }
+
+        // Leaderboard preview
+        const homeLbEl = document.getElementById('homeLeaderboard');
+        if (lbRes.status === 'fulfilled' && lbRes.value.ok) {
+          const lbData = await lbRes.value.json();
+          renderLeaderboardRows(homeLbEl, lbData.results || [], 5);
+        }
+
+        // Content + fulfillments — placeholder until more data exists
+        const homeContentEl = document.getElementById('homeTopContent');
+        homeContentEl.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:1rem 0;text-align:center">Coming soon</div>';
+        const homeFulfillEl = document.getElementById('homeFulfillments');
+        homeFulfillEl.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:1rem 0;text-align:center">No fulfillments yet</div>';
+
+      } catch (err) {
+        console.error('[HOME] Failed to load data:', err);
+      }
+    }
+
+    function renderGapCards(container, gaps, limit) {
+      if (!gaps || gaps.length === 0) {
+        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:1.5rem 0;text-align:center">No open gaps right now.</div>';
+        return;
+      }
+      container.innerHTML = gaps.slice(0, limit).map(g =>
+        '<div class="home-card" style="flex-direction:column;gap:0.35rem">' +
+        '<div style="display:flex;align-items:center;gap:0.5rem">' +
+        '<span style="font-size:0.6rem;padding:0.1rem 0.4rem;border-radius:9999px;color:#fff;font-weight:600;text-transform:uppercase;background:' + (severityColors[g.severity]||'var(--text-muted)') + '">' + escHtml(g.severity) + '</span>' +
+        '<span style="font-size:0.75rem;font-weight:600;color:var(--warning-color,#f59e0b);margin-left:auto">' + (g.points_value||0) + ' pts</span>' +
+        '</div>' +
+        '<div style="font-size:0.8125rem;font-weight:600;color:var(--text-primary)">' + escHtml(g.title) + '</div>' +
+        '<div style="font-size:0.75rem;color:var(--text-secondary);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">' + escHtml(g.description).slice(0,160) + '</div>' +
+        '</div>'
+      ).join('');
+    }
+
+    function renderLeaderboardRows(container, entries, limit) {
+      if (!entries || entries.length === 0) {
+        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:1.5rem 0;text-align:center">No points earned yet.</div>';
+        return;
+      }
+      const medals = ['🥇','🥈','🥉'];
+      container.innerHTML = entries.slice(0, limit).map((u, i) =>
+        '<div style="display:flex;align-items:center;gap:0.75rem;padding:0.5rem 0;border-bottom:1px solid var(--border-color)">' +
+        '<span style="width:1.5rem;text-align:center;font-size:' + (i < 3 ? '1.1rem' : '0.8rem') + ';font-weight:700;color:var(--text-muted)">' + (medals[i] || (i+1)) + '</span>' +
+        '<a href="/u/' + escHtml(u.user_id) + '" style="flex:1;font-size:0.8125rem;font-weight:500;color:var(--accent-color);text-decoration:none">' + escHtml(u.display_name) + '</a>' +
+        '<span style="font-size:0.8rem;font-weight:700;color:var(--warning-color,#f59e0b)">' + (u.total_points||0).toLocaleString() + ' pts</span>' +
+        '</div>'
+      ).join('');
+    }
+
+    // ============================================
+    // Gaps View Data
+    // ============================================
+
+    let currentGapFilter = 'open';
+
+    window.filterGaps = function(status) {
+      currentGapFilter = status;
+      document.querySelectorAll('.gaps-filter-btn').forEach(btn => {
+        btn.classList.toggle('gaps-filter-active', btn.dataset.status === status);
+      });
+      loadGapsData(status);
+    };
+
+    async function loadGapsData(status) {
+      const container = document.getElementById('gapsList');
+      container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:2rem 0;text-align:center">Loading...</div>';
+
+      try {
+        const url = '/api/homepage?type=gaps&status=' + status + '&limit=50';
+        const res = await fetch(url);
+        if (res.ok) {
+          const data = await res.json();
+          const gaps = data.results || data || [];
+          renderGapCards(container, gaps, 50);
+        } else {
+          container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:2rem 0;text-align:center">Failed to load gaps.</div>';
+        }
+      } catch {
+        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:2rem 0;text-align:center">Failed to load gaps.</div>';
+      }
+    }
+
+    // ============================================
+    // Leaderboard View Data
+    // ============================================
+
+    async function loadLeaderboardData() {
+      const container = document.getElementById('leaderboardList');
+      const seasonEl = document.getElementById('leaderboardSeason');
+      container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:2rem 0;text-align:center">Loading...</div>';
+
+      try {
+        const res = await fetch('/api/homepage?type=leaderboard&limit=50');
+        if (res.ok) {
+          const data = await res.json();
+          const entries = data.results || data || [];
+          if (data.season) {
+            seasonEl.innerHTML = '<span style="display:inline-block;background:var(--bg-tertiary);padding:0.2rem 0.75rem;border-radius:9999px;font-size:0.8rem;color:var(--accent-color);font-weight:500">' + escHtml(data.season.name) + '</span>';
+          }
+          renderLeaderboardRows(container, entries, 50);
+        } else {
+          container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:2rem 0;text-align:center">Failed to load leaderboard.</div>';
+        }
+      } catch {
+        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:2rem 0;text-align:center">Failed to load leaderboard.</div>';
+      }
+    }
+
     window.addEventListener('popstate', async (event) => {
       const path = window.location.pathname;
 
-      if (path === '/dashboard' || path === '/') {
+      if (path === '/') {
+        currentAppId = null;
+        showView('home');
+        loadHomeData();
+      } else if (path === '/dash' || path === '/dashboard') {
         currentAppId = null;
         showView('dashboard');
         renderAppsList();
+      } else if (path === '/gaps') {
+        currentAppId = null;
+        showView('gaps');
+        loadGapsData('open');
+      } else if (path === '/leaderboard') {
+        currentAppId = null;
+        showView('leaderboard');
+        loadLeaderboardData();
       } else if (path.startsWith('/a/')) {
         const appId = path.slice(3).split('/')[0];
         currentAppId = appId;
@@ -5524,6 +5885,9 @@ await hash.sha256('data')</div>
     // Dashboard
     // ============================================
     newAppBtn.addEventListener('click', navigateToDashboard);
+    document.getElementById('navHomeBtn').addEventListener('click', navigateToHome);
+    document.getElementById('navGapsBtn').addEventListener('click', navigateToGaps);
+    document.getElementById('navLeaderboardBtn').addEventListener('click', navigateToLeaderboard);
 
 
     // ============================================
@@ -5558,6 +5922,11 @@ await hash.sha256('data')</div>
       await loadAppPage('${activeAppId}');
     })();
     ` : ''}
+
+    // Load data for the initial view
+    ${initialView === 'home' ? 'loadHomeData();' : ''}
+    ${initialView === 'gaps' ? "loadGapsData('open');" : ''}
+    ${initialView === 'leaderboard' ? 'loadLeaderboardData();' : ''}
   </script>
 </body>
 </html>`;
