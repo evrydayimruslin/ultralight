@@ -693,6 +693,7 @@ interface UploadOptions {
   // v2 architecture: explicit entry points and app type
   app_type?: 'mcp';
   functions_entry?: string;  // e.g., "functions.ts"
+  gap_id?: string;  // Links upload to a platform gap for assessment
 }
 
 /**
@@ -937,7 +938,7 @@ export async function handleUploadFiles(
 
   // Create app record in database
   log('info', 'Creating app record...');
-  await appsService.create({
+  const createPayload: Record<string, unknown> = {
     id: appId,
     owner_id: userId,
     slug,
@@ -949,7 +950,9 @@ export async function handleUploadFiles(
     // Store manifest data for later use
     manifest: manifest ? JSON.stringify(manifest) : null,
     app_type: appType,
-  });
+  };
+  if (options.gap_id) createPayload.gap_id = options.gap_id;
+  await appsService.create(createPayload as Parameters<typeof appsService.create>[0]);
   log('success', 'App record created');
 
   // Auto-generate Skills.md + library entry + embedding (fire-and-forget)

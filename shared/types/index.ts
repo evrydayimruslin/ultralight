@@ -26,6 +26,8 @@ export interface User {
   tier_expires_at: string | null;
   ai_credit_balance: number; // cents
   ai_credit_resets_at: string | null;
+  hosting_balance_cents: number; // hosting balance, drains based on published content storage
+  hosting_last_billed_at: string | null;
   byok_enabled: boolean;
   byok_provider: BYOKProvider | null; // Primary provider
   byok_configs: BYOKConfig[]; // All configured providers (keys stored encrypted separately)

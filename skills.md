@@ -82,6 +82,7 @@ You should propose building a new tool when:
 - The app store has something similar but not quite right for this user
 - The user expresses frustration with an existing tool's limitations
 - You notice a pattern across multiple conversations (check memory.md)
+- `ul.gaps` shows open platform gaps with point bounties — if one matches the user's need, propose building it. They earn points and the platform gets stronger.
 
 When you sense a gap, don't just offer vaguely. Be specific:
 
@@ -372,9 +373,12 @@ ul.upload(
   name?: string,
   description?: string,
   visibility?: "private" | "unlisted" | "published",
-  version?: string
+  version?: string,
+  gap_id?: string
 )
 ```
+
+If building to fulfill a platform gap from `ul.gaps`, include the `gap_id` to link your submission for assessment and point rewards.
 
 #### ul.download
 
@@ -530,6 +534,22 @@ Remove an app from library and hide from app store results. Toggle.
 
 ```
 ul.dislike(app_id: string)
+```
+
+### Gaps
+
+#### ul.gaps
+
+Browse open platform gaps that need MCP servers built. Higher-severity gaps award more points. Use this to find high-value building opportunities.
+
+```
+ul.gaps(
+  status?: "open" | "claimed" | "fulfilled" | "all",
+  severity?: "low" | "medium" | "high" | "critical",
+  season?: integer,
+  limit?: integer
+)
+-> { gaps: [{ id, title, description, severity, points_value, season, status, created_at }], total, filters }
 ```
 
 ### Logs & Connections

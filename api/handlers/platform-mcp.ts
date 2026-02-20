@@ -1,7 +1,7 @@
 // Platform MCP Handler — v3
 // Implements JSON-RPC 2.0 for the ul.* tool namespace
 // Endpoint: POST /mcp/platform
-// 27 tools:
+// 29 tools:
 //   upload, download, test,
 //   set.version, set.visibility, set.download, set.supabase, set.ratelimit,
 //   permissions.grant, permissions.revoke, permissions.list, permissions.export,
@@ -9,7 +9,7 @@
 //   connect, connections,
 //   memory.read, memory.write, memory.recall, memory.query,
 //   markdown.publish, markdown.list, markdown.share,
-//   shortcomings
+//   shortcomings, gaps
 
 import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
@@ -174,6 +174,7 @@ You should propose building a new tool when:
 - The app store has something similar but not quite right for this user
 - The user expresses frustration with an existing tool's limitations
 - You notice a pattern across multiple conversations (check memory.md)
+- \`ul.gaps\` shows open platform gaps with point bounties — if one matches the user's need, propose building it. They earn points and the platform gets stronger.
 
 When you sense a gap, don't just offer vaguely. Be specific:
 
@@ -464,9 +465,12 @@ ul.upload(
   name?: string,
   description?: string,
   visibility?: "private" | "unlisted" | "published",
-  version?: string
+  version?: string,
+  gap_id?: string
 )
 \`\`\`
+
+If building to fulfill a platform gap from \`ul.gaps\`, include the \`gap_id\` to link your submission for assessment and point rewards.
 
 #### ul.download
 
@@ -622,6 +626,22 @@ Remove an app from library and hide from app store results. Toggle.
 
 \`\`\`
 ul.dislike(app_id: string)
+\`\`\`
+
+### Gaps
+
+#### ul.gaps
+
+Browse open platform gaps that need MCP servers built. Higher-severity gaps award more points. Use this to find high-value building opportunities.
+
+\`\`\`
+ul.gaps(
+  status?: "open" | "claimed" | "fulfilled" | "all",
+  severity?: "low" | "medium" | "high" | "critical",
+  season?: integer,
+  limit?: integer
+)
+-> { gaps: [{ id, title, description, severity, points_value, season, status, created_at }], total, filters }
 \`\`\`
 
 ### Logs & Connections
@@ -826,6 +846,10 @@ const PLATFORM_TOOLS: MCPTool[] = [
         version: {
           type: 'string',
           description: 'Explicit version (e.g. "2.0.0"). Default: patch bump X.Y.Z+1',
+        },
+        gap_id: {
+          type: 'string',
+          description: 'Optional gap ID this app fulfills. Links the upload to a platform gap for assessment.',
         },
       },
       required: ['files'],
@@ -1503,6 +1527,40 @@ const PLATFORM_TOOLS: MCPTool[] = [
       required: ['type', 'summary'],
     },
   },
+
+  // ── Gaps (Browsing Platform Gaps) ──────────────
+  {
+    name: 'ul.gaps',
+    title: 'Browse Platform Gaps',
+    description:
+      'Browse open platform gaps that need MCP servers built. ' +
+      'Higher-severity gaps award more points. ' +
+      'Use this to find high-value building opportunities for the user.',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: {
+          type: 'string',
+          enum: ['open', 'claimed', 'fulfilled', 'all'],
+          description: 'Filter by gap status. Default: open',
+        },
+        severity: {
+          type: 'string',
+          enum: ['low', 'medium', 'high', 'critical'],
+          description: 'Filter by severity level',
+        },
+        season: {
+          type: 'integer',
+          description: 'Filter by season number. Default: current active season',
+        },
+        limit: {
+          type: 'integer',
+          description: 'Max results to return. Default: 10',
+        },
+      },
+    },
+  },
 ];
 
 // ============================================
@@ -1901,6 +1959,11 @@ async function handleToolsCall(
         result = executeShortcomings(userId, toolArgs, sessionId);
         break;
 
+      // Gaps (Browsing)
+      case 'ul.gaps':
+        result = await executeGaps(toolArgs);
+        break;
+
       default:
         return jsonRpcErrorResponse(id, INVALID_PARAMS, `Unknown tool: ${name}`);
     }
@@ -2080,7 +2143,30 @@ async function executeUpload(
     // Update app: add version but do NOT change current_version
     const appsService = createAppsService();
     const versions = [...(app.versions || []), newVersion];
-    await appsService.update(app.id, { versions } as Partial<App>);
+    const gapId = args.gap_id as string | undefined;
+    const updatePayload: Partial<App> = { versions } as Partial<App>;
+    if (gapId) (updatePayload as Record<string, unknown>).gap_id = gapId;
+    await appsService.update(app.id, updatePayload);
+
+    // If gap_id provided, fire-and-forget: create pending assessment
+    if (gapId) {
+      const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+      fetch(`${SUPABASE_URL}/rest/v1/gap_assessments`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_SERVICE_ROLE_KEY,
+          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'Prefer': 'return=minimal',
+        },
+        body: JSON.stringify({
+          gap_id: gapId,
+          app_id: app.id,
+          user_id: userId,
+          status: 'pending',
+        }),
+      }).catch(() => {});
+    }
 
     // Auto-generate Skills.md + embedding for this version
     const skills = await generateSkillsForVersion(app, storageKey, newVersion);
@@ -2093,15 +2179,18 @@ async function executeUpload(
       is_live: false,
       exports,
       skills_generated: !!skills.skillsMd,
-      message: `Version ${newVersion} uploaded. Use ul.set.version to make it live.`,
+      gap_id: gapId || undefined,
+      message: `Version ${newVersion} uploaded.${gapId ? ' Gap submission created for assessment.' : ''} Use ul.set.version to make it live.`,
     };
   } else {
     // ── New app: create + v1.0.0 live ──
+    const gapId = args.gap_id as string | undefined;
     const result = await handleUploadFiles(userId, uploadFiles, {
       name: args.name as string,
       description: args.description as string,
       visibility: requestedVisibility as 'private' | 'unlisted' | 'public',
       app_type: 'mcp',
+      gap_id: gapId,
     });
 
     // Auto-generate Skills.md + embedding
@@ -2113,6 +2202,26 @@ async function executeUpload(
         // Rebuild library for new app
         rebuildUserLibrary(userId).catch(err => console.error('Library rebuild failed:', err));
 
+        // If gap_id provided, fire-and-forget: create pending assessment
+        if (gapId) {
+          const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+          fetch(`${SUPABASE_URL}/rest/v1/gap_assessments`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': SUPABASE_SERVICE_ROLE_KEY,
+              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+              'Prefer': 'return=minimal',
+            },
+            body: JSON.stringify({
+              gap_id: gapId,
+              app_id: result.app_id,
+              user_id: userId,
+              status: 'pending',
+            }),
+          }).catch(() => {});
+        }
+
         return {
           app_id: result.app_id,
           slug: result.slug,
@@ -2123,6 +2232,7 @@ async function executeUpload(
           skills_generated: !!skills.skillsMd,
           url: result.url,
           mcp_endpoint: `/mcp/${result.app_id}`,
+          gap_id: gapId || undefined,
         };
       }
     }
@@ -2364,6 +2474,53 @@ function executeShortcomings(
   }).catch(() => {});
 
   return { received: true };
+}
+
+// ── ul.gaps ──────────────────────────────────────
+
+async function executeGaps(
+  args: Record<string, unknown>
+): Promise<unknown> {
+  const status = (args.status as string) || 'open';
+  const severity = args.severity as string | undefined;
+  const season = args.season as number | undefined;
+  const limit = Math.min((args.limit as number) || 10, 50);
+
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+  const headers = {
+    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+  };
+
+  // Build query filters
+  let query = `${SUPABASE_URL}/rest/v1/gaps?select=id,title,description,severity,points_value,season,status,created_at,updated_at`;
+  if (status !== 'all') {
+    query += `&status=eq.${status}`;
+  }
+  if (severity) {
+    query += `&severity=eq.${severity}`;
+  }
+  if (season) {
+    query += `&season=eq.${season}`;
+  }
+  query += `&order=points_value.desc,severity.desc,created_at.desc&limit=${limit}`;
+
+  const res = await fetch(query, { headers });
+  if (!res.ok) {
+    return { gaps: [], total: 0, error: 'Failed to fetch gaps' };
+  }
+
+  const gaps = await res.json();
+  return {
+    gaps: gaps,
+    total: gaps.length,
+    filters: {
+      status: status,
+      severity: severity || 'all',
+      season: season || 'current',
+      limit: limit,
+    },
+  };
 }
 
 // ── ul.set.version ───────────────────────────────
