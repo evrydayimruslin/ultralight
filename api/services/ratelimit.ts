@@ -82,12 +82,11 @@ export class RateLimitService {
       });
 
       if (!response.ok) {
-        // If rate limit table/function doesn't exist yet, allow the request
-        // This gracefully handles the case before migration is run
-        console.warn('Rate limit check failed, allowing request:', await response.text());
+        // Fail-closed: deny the request when rate limit service is unavailable
+        console.warn('Rate limit check failed, denying request:', await response.text());
         return {
-          allowed: true,
-          remaining: effectiveLimit,
+          allowed: false,
+          remaining: 0,
           resetAt: new Date(Date.now() + effectiveWindow * 60 * 1000),
         };
       }
@@ -106,11 +105,11 @@ export class RateLimitService {
       };
 
     } catch (err) {
-      // On error, allow the request but log it
-      console.error('Rate limit error:', err);
+      // Fail-closed: deny the request when rate limit service errors
+      console.error('Rate limit error, denying request:', err);
       return {
-        allowed: true,
-        remaining: effectiveLimit,
+        allowed: false,
+        remaining: 0,
         resetAt: new Date(Date.now() + effectiveWindow * 60 * 1000),
       };
     }

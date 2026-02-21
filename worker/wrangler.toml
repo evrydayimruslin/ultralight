@@ -1,0 +1,19 @@
+name = "ultralight-data"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+# R2 bucket binding — native access to your existing ultralight bucket
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "ultralight-apps"
+
+# KV namespace for code cache
+[[kv_namespaces]]
+binding = "CODE_CACHE"
+id = "d348ee797036460faf4b3e014921f0b0"
+
+# Only secret needed: WORKER_SECRET (shared secret for DO API → Worker auth)
+# Set via: wrangler secret put WORKER_SECRET
+
+[vars]
+ENVIRONMENT = "production"

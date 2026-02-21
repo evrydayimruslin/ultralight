@@ -191,21 +191,13 @@ export async function authenticate(request: Request): Promise<{ id: string; emai
     throw new Error('Invalid token payload');
   }
 
-  // Ensure user exists in public.users table
-  // Don't block auth - user creation will be retried during upload
-  try {
-    await ensureUserExists(user);
-  } catch {
-    // Don't throw - let auth succeed, user creation will be retried
-  }
-
-  // Look up the actual tier from the database (don't hardcode 'free')
+  // Ensure user exists + look up tier — independent, run in parallel
   let tier = 'free';
-  try {
-    tier = await getUserTier(user.id);
-  } catch {
-    // Default to free on error — conservative
-  }
+  const [, resolvedTier] = await Promise.all([
+    ensureUserExists(user).catch(() => {}),
+    getUserTier(user.id).catch(() => 'free' as string),
+  ]);
+  tier = resolvedTier;
 
   return {
     id: user.id,

@@ -6,7 +6,7 @@ import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
 import { isApiToken } from '../services/tokens.ts';
 import { createAppsService } from '../services/apps.ts';
-import { createAppDataService } from '../services/appdata.ts';
+import { createAppDataService, createWorkerAppDataService } from '../services/appdata.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
 import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
 import { getPermissionsForUser } from './user.ts';
@@ -428,43 +428,25 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
     );
   }
 
-  // Authenticate user
+  // Phase 2A+2B: Authenticate user AND load app in parallel (independent calls)
+  const appsService = createAppsService();
   let userId: string;
   let user: UserContext | null = null;
   let tokenAppIds: string[] | null = null;
   let tokenFunctionNames: string[] | null = null;
+
+  // Run auth and app lookup concurrently — they have no dependency on each other
+  type AuthResult = { id: string; email: string; tier: string; tokenId?: string; tokenAppIds?: string[] | null; tokenFunctionNames?: string[] | null };
+  let authUser: AuthResult;
+  let app: Awaited<ReturnType<typeof appsService.findById>>;
+
   try {
-    const authUser = await authenticate(request);
-    userId = authUser.id;
-    tokenAppIds = authUser.tokenAppIds || null;
-    tokenFunctionNames = authUser.tokenFunctionNames || null;
-
-    // Extract display name and avatar from JWT user_metadata (not available on authenticate() return type)
-    let displayName: string | null = authUser.email.split('@')[0];
-    let avatarUrl: string | null = null;
-    const token = request.headers.get('Authorization')?.slice(7) || '';
-    if (token && !isApiToken(token)) {
-      try {
-        const parts = token.split('.');
-        if (parts.length === 3) {
-          const base64Payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-          const padded = base64Payload + '='.repeat((4 - base64Payload.length % 4) % 4);
-          const payload = JSON.parse(atob(padded));
-          const meta = payload.user_metadata || {};
-          displayName = meta.full_name || meta.name || displayName;
-          avatarUrl = meta.avatar_url || meta.picture || null;
-        }
-      } catch { /* JWT metadata extraction is best-effort */ }
-    }
-
-    user = {
-      id: authUser.id,
-      email: authUser.email,
-      displayName,
-      avatarUrl,
-      tier: authUser.tier as Tier,
-    };
+    [authUser, app] = await Promise.all([
+      authenticate(request),
+      appsService.findById(appId),
+    ]);
   } catch (authErr) {
+    // If findById fails it throws, but authenticate errors are the common case
     const message = authErr instanceof Error ? authErr.message : 'Authentication required';
 
     // Classify the auth error for client-side handling
@@ -504,33 +486,38 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
     });
   }
 
-  // Check per-minute rate limit
-  const rateLimitEndpoint = `mcp:${rpcRequest.method}`;
-  const rateResult = await checkRateLimit(userId, rateLimitEndpoint);
-  if (!rateResult.allowed) {
-    return jsonRpcErrorResponse(
-      rpcRequest.id,
-      RATE_LIMITED,
-      `Rate limit exceeded. Try again after ${rateResult.resetAt.toISOString()}`
-    );
+  // Process auth result
+  userId = authUser.id;
+  tokenAppIds = authUser.tokenAppIds || null;
+  tokenFunctionNames = authUser.tokenFunctionNames || null;
+
+  // Extract display name and avatar from JWT user_metadata (not available on authenticate() return type)
+  let displayName: string | null = authUser.email.split('@')[0];
+  let avatarUrl: string | null = null;
+  const token = request.headers.get('Authorization')?.slice(7) || '';
+  if (token && !isApiToken(token)) {
+    try {
+      const parts = token.split('.');
+      if (parts.length === 3) {
+        const base64Payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+        const padded = base64Payload + '='.repeat((4 - base64Payload.length % 4) % 4);
+        const payload = JSON.parse(atob(padded));
+        const meta = payload.user_metadata || {};
+        displayName = meta.full_name || meta.name || displayName;
+        avatarUrl = meta.avatar_url || meta.picture || null;
+      }
+    } catch { /* JWT metadata extraction is best-effort */ }
   }
 
-  // Check weekly call limit for tool calls
-  if (rpcRequest.method === 'tools/call') {
-    const weeklyResult = await checkAndIncrementWeeklyCalls(userId, user.tier);
-    if (!weeklyResult.allowed) {
-      return jsonRpcErrorResponse(
-        rpcRequest.id,
-        RATE_LIMITED,
-        `Too many requests. Please try again later or upgrade to Pro.`
-      );
-    }
-  }
+  user = {
+    id: authUser.id,
+    email: authUser.email,
+    displayName,
+    avatarUrl,
+    tier: authUser.tier as Tier,
+  };
 
-  // Load app
-  const appsService = createAppsService();
-  const app = await appsService.findById(appId);
-
+  // Validate app result
   if (!app) {
     return jsonRpcErrorResponse(rpcRequest.id, -32002, 'App not found');
   }
@@ -555,38 +542,58 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
     }
   }
 
-  // Per-app rate limit (owner-configurable, Pro feature)
-  // Stored as app.rate_limit_config JSONB: { calls_per_minute, calls_per_day }
-  if (rpcRequest.method === 'tools/call' && app.owner_id !== userId) {
+  // Phase 2B: Run gate checks in parallel — rate limit, weekly calls, per-app RL, permissions
+  // All depend on userId (from auth) and app (from findById), both now resolved
+  {
+    const isToolsCall = rpcRequest.method === 'tools/call';
+    const isNonOwner = app.owner_id !== userId;
     const rlConfig = app.rate_limit_config as { calls_per_minute?: number; calls_per_day?: number } | null;
-    if (rlConfig?.calls_per_minute) {
-      const appRateResult = await checkRateLimit(userId, `app:${appId}:minute`, rlConfig.calls_per_minute, 1);
-      if (!appRateResult.allowed) {
-        return jsonRpcErrorResponse(
-          rpcRequest.id,
-          RATE_LIMITED,
-          `App rate limit exceeded (${rlConfig.calls_per_minute}/min). Try again after ${appRateResult.resetAt.toISOString()}`
-        );
-      }
-    }
-    if (rlConfig?.calls_per_day) {
-      const appDayResult = await checkRateLimit(userId, `app:${appId}:day`, rlConfig.calls_per_day, 1440);
-      if (!appDayResult.allowed) {
-        return jsonRpcErrorResponse(
-          rpcRequest.id,
-          RATE_LIMITED,
-          `App daily limit exceeded (${rlConfig.calls_per_day}/day). Try again tomorrow.`
-        );
-      }
-    }
-  }
 
-  // Check visibility — private apps: accessible by owner or users with granted permissions
-  // (Actual function-level permission check happens in handleToolsList/handleToolsCall)
-  if (app.visibility === 'private' && app.owner_id !== userId) {
-    // Check if user has ANY permissions on this private app
-    const perms = await getPermissionsForUser(userId, app.id, app.owner_id, app.visibility);
-    if (perms !== null && perms.allowed.size === 0) {
+    // Build array of gate checks to run in parallel
+    const gateChecks = await Promise.all([
+      // [0] Per-endpoint rate limit (always)
+      checkRateLimit(userId, `mcp:${rpcRequest.method}`),
+      // [1] Weekly call limit (tools/call only)
+      isToolsCall ? checkAndIncrementWeeklyCalls(userId, user.tier) : null,
+      // [2] Per-app minute rate limit (tools/call, non-owner, if configured)
+      isToolsCall && isNonOwner && rlConfig?.calls_per_minute
+        ? checkRateLimit(userId, `app:${appId}:minute`, rlConfig.calls_per_minute, 1) : null,
+      // [3] Per-app daily rate limit (tools/call, non-owner, if configured)
+      isToolsCall && isNonOwner && rlConfig?.calls_per_day
+        ? checkRateLimit(userId, `app:${appId}:day`, rlConfig.calls_per_day, 1440) : null,
+      // [4] Visibility/permissions (private apps, non-owner)
+      app.visibility === 'private' && isNonOwner
+        ? getPermissionsForUser(userId, app.id, app.owner_id, app.visibility) : undefined,
+    ]);
+
+    // Check results — return first error found
+    const [endpointRL, weeklyRL, appMinuteRL, appDayRL, perms] = gateChecks;
+
+    if (!endpointRL.allowed) {
+      return jsonRpcErrorResponse(
+        rpcRequest.id, RATE_LIMITED,
+        `Rate limit exceeded. Try again after ${endpointRL.resetAt.toISOString()}`
+      );
+    }
+    if (weeklyRL && !weeklyRL.allowed) {
+      return jsonRpcErrorResponse(
+        rpcRequest.id, RATE_LIMITED,
+        `Too many requests. Please try again later or upgrade to Pro.`
+      );
+    }
+    if (appMinuteRL && !appMinuteRL.allowed) {
+      return jsonRpcErrorResponse(
+        rpcRequest.id, RATE_LIMITED,
+        `App rate limit exceeded (${rlConfig!.calls_per_minute}/min). Try again after ${appMinuteRL.resetAt.toISOString()}`
+      );
+    }
+    if (appDayRL && !appDayRL.allowed) {
+      return jsonRpcErrorResponse(
+        rpcRequest.id, RATE_LIMITED,
+        `App daily limit exceeded (${rlConfig!.calls_per_day}/day). Try again tomorrow.`
+      );
+    }
+    if (perms !== undefined && perms !== null && perms.allowed.size === 0) {
       return jsonRpcErrorResponse(rpcRequest.id, -32002, 'App not found');
     }
   }
@@ -929,8 +936,14 @@ async function executeSDKTool(
   request?: Request
 ): Promise<Response> {
   try {
-    // Create app data service for user-partitioned storage
-    const appDataService = createAppDataService(appId, userId);
+    // Create app data service — use Worker-backed service if configured (native R2, ~10x faster)
+    // @ts-ignore - Deno is available in Deno Deploy
+    const __Deno = globalThis.Deno;
+    const _workerUrl = __Deno?.env?.get('WORKER_DATA_URL') || '';
+    const _workerSecret = __Deno?.env?.get('WORKER_SECRET') || '';
+    const appDataService = (_workerUrl && _workerSecret)
+      ? createWorkerAppDataService(appId, userId, _workerUrl, _workerSecret)
+      : createAppDataService(appId, userId);
 
     let result: unknown;
 
@@ -1145,41 +1158,127 @@ async function executeAppFunction(
   meta?: { userQuery?: string; sessionId?: string; authToken?: string }
 ): Promise<Response> {
   try {
+    // @ts-ignore
+    const _Deno = globalThis.Deno;
+
     const r2Service = createR2Service();
-    const appDataService = createAppDataService(app.id, userId);
+    // Use Worker-backed data service if configured (native R2 bindings, ~10x faster)
+    const _wUrl = _Deno?.env?.get('WORKER_DATA_URL') || '';
+    const _wSecret = _Deno?.env?.get('WORKER_SECRET') || '';
+    const appDataService = (_wUrl && _wSecret)
+      ? createWorkerAppDataService(app.id, userId, _wUrl, _wSecret)
+      : createAppDataService(app.id, userId);
     const userService = createUserService();
 
-    // Fetch app code — check in-memory cache first, fall back to R2
+    // Phase 2C: Run independent setup tasks in parallel
+    // - Code fetch (R2, ~50-200ms on cache miss — the bottleneck)
+    // - User profile for BYOK (~30ms)
+    // - Env var decryption (CPU-only, ~0ms)
+    // - Per-user secrets fetch (~30ms, conditional)
+    // - Supabase config fetch (~30ms, conditional)
+
+    // --- Code fetch (check in-memory cache first, fall back to R2) ---
     const codeCache = getCodeCache();
-    let code: string | null = codeCache.get(app.id, app.storage_key);
+    const cachedCode = codeCache.get(app.id, app.storage_key);
 
-    if (code) {
+    const codeFetchPromise = cachedCode
+      ? Promise.resolve(cachedCode)
+      : (async () => {
+          console.log(`[MCP] Code cache MISS for app ${app.id}, fetching from R2...`);
+          const entryFiles = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
+          for (const entryFile of entryFiles) {
+            try {
+              const fetched = await r2Service.fetchTextFile(`${app.storage_key}${entryFile}`);
+              if (fetched) {
+                codeCache.set(app.id, app.storage_key, fetched);
+                return fetched;
+              }
+            } catch { /* Try next */ }
+          }
+          return null;
+        })();
+
+    if (cachedCode) {
       console.log(`[MCP] Code cache HIT for app ${app.id} (${codeCache.stats.hitRate} hit rate)`);
-    } else {
-      console.log(`[MCP] Code cache MISS for app ${app.id}, fetching from R2...`);
-      const entryFiles = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
+    }
 
-      for (const entryFile of entryFiles) {
+    // --- Env var decryption (CPU-only) ---
+    const encryptedEnvVars = (app as Record<string, unknown>).env_vars as Record<string, string> || {};
+    const envVarsPromise = decryptEnvVars(encryptedEnvVars).catch(err => {
+      console.error('Failed to decrypt env vars:', err);
+      return {} as Record<string, string>;
+    });
+
+    // --- Per-user secrets fetch (conditional) ---
+    const envSchema = (app.env_schema || {}) as Record<string, { scope: string; required?: boolean; description?: string }>;
+    const perUserKeys = Object.entries(envSchema)
+      .filter(([, v]) => v.scope === 'per_user')
+      .map(([k]) => k);
+    const _SUPABASE_URL = _Deno.env.get('SUPABASE_URL') || '';
+    const _SUPABASE_SERVICE_ROLE_KEY = _Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+
+    const secretsPromise = perUserKeys.length > 0
+      ? fetch(
+          `${_SUPABASE_URL}/rest/v1/user_app_secrets?user_id=eq.${userId}&app_id=eq.${app.id}&select=key,value_encrypted`,
+          { headers: { 'apikey': _SUPABASE_SERVICE_ROLE_KEY, 'Authorization': `Bearer ${_SUPABASE_SERVICE_ROLE_KEY}` } }
+        ).then(res => res.ok ? res.json() as Promise<Array<{ key: string; value_encrypted: string }>> : [])
+         .catch(() => [] as Array<{ key: string; value_encrypted: string }>)
+      : Promise.resolve([] as Array<{ key: string; value_encrypted: string }>);
+
+    // --- Supabase config fetch (conditional) ---
+    const supabaseConfigPromise = (async (): Promise<{ url: string; anonKey: string; serviceKey?: string } | undefined> => {
+      // Prefer config_id (new model)
+      if (app.supabase_config_id) {
         try {
-          code = await r2Service.fetchTextFile(`${app.storage_key}${entryFile}`);
-          break;
-        } catch {
-          // Try next
+          const { getDecryptedSupabaseConfig } = await import('./user.ts');
+          const config = await getDecryptedSupabaseConfig(app.supabase_config_id as string);
+          if (config) return config;
+        } catch (err) {
+          console.error('Failed to get Supabase config by ID:', err);
         }
       }
-
-      // Cache the code for future calls
-      if (code) {
-        codeCache.set(app.id, app.storage_key, code);
+      // Legacy fallback: app-level creds
+      if (app.supabase_enabled && app.supabase_url && app.supabase_anon_key_encrypted) {
+        try {
+          const anonKey = await decryptEnvVar(app.supabase_anon_key_encrypted as string);
+          const config: { url: string; anonKey: string; serviceKey?: string } = { url: app.supabase_url as string, anonKey };
+          if (app.supabase_service_key_encrypted) {
+            config.serviceKey = await decryptEnvVar(app.supabase_service_key_encrypted as string);
+          }
+          return config;
+        } catch (err) {
+          console.error('Failed to decrypt legacy Supabase config:', err);
+        }
       }
-    }
+      // Legacy fallback: user platform-level config
+      if (app.supabase_enabled) {
+        try {
+          const { getDecryptedPlatformSupabase } = await import('./user.ts');
+          const platformConfig = await getDecryptedPlatformSupabase(app.owner_id);
+          if (platformConfig) return platformConfig;
+        } catch (err) {
+          console.error('Failed to get platform Supabase config:', err);
+        }
+      }
+      return undefined;
+    })();
+
+    // Await all parallel tasks
+    const [code, envVars, userSecrets, userProfile, supabaseConfig] = await Promise.all([
+      codeFetchPromise,
+      envVarsPromise,
+      secretsPromise,
+      userService.getUser(userId),   // Phase 2D: fetch user profile here (BYOK keys included)
+      supabaseConfigPromise,
+    ]);
 
     if (!code) {
       return jsonRpcErrorResponse(id, INTERNAL_ERROR, 'App code not found');
     }
 
-    // Get user's BYOK configuration for AI service
-    const userProfile = await userService.getUser(userId);
+    // Phase 2D: Build AI service from user profile — no redundant re-fetch
+    // getUser() already fetched byok_keys; use getDecryptedApiKey() which will cache-hit
+    // or, even better, we have the profile so we avoid the re-query on the hot path
     let userApiKey: string | null = null;
     let aiServiceInstance: { call: (request: unknown) => Promise<unknown> };
 
@@ -1215,115 +1314,40 @@ async function executeAppFunction(
     // For now, pass as single object argument
     const argsArray = Object.keys(args).length > 0 ? [args] : [];
 
-    // Decrypt environment variables for the app (universal env vars set by owner)
-    const encryptedEnvVars = (app as Record<string, unknown>).env_vars as Record<string, string> || {};
-    let envVars: Record<string, string> = {};
-    try {
-      envVars = await decryptEnvVars(encryptedEnvVars);
-    } catch (err) {
-      console.error('Failed to decrypt env vars:', err);
-      // Continue with empty env vars
-    }
+    // Merge per-user secrets into envVars (per-user overrides universal)
+    if (userSecrets.length > 0) {
+      for (const secret of userSecrets) {
+        try {
+          envVars[secret.key] = await decryptEnvVar(secret.value_encrypted);
+        } catch (err) {
+          console.error(`Failed to decrypt per-user secret ${secret.key}:`, err);
+        }
+      }
 
-    // Merge per-user secrets (from ul.connect) into envVars
-    // Per-user secrets override universal env vars for the same key
-    const envSchema = (app.env_schema || {}) as Record<string, { scope: string; required?: boolean; description?: string }>;
-    const perUserKeys = Object.entries(envSchema)
-      .filter(([, v]) => v.scope === 'per_user')
-      .map(([k]) => k);
+      // Check for missing required per-user secrets
+      const requiredPerUser = Object.entries(envSchema)
+        .filter(([, v]) => v.scope === 'per_user' && v.required)
+        .map(([k]) => k);
+      const missingSecrets = requiredPerUser.filter(k => !envVars[k]);
 
-    if (perUserKeys.length > 0) {
-      try {
-        // @ts-ignore
-        const Deno = globalThis.Deno;
-        const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-        const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-
-        const secretsRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/user_app_secrets?user_id=eq.${userId}&app_id=eq.${app.id}&select=key,value_encrypted`,
+      if (missingSecrets.length > 0) {
+        return jsonRpcErrorResponse(
+          id,
+          -32006,
+          `Missing required secrets: ${missingSecrets.join(', ')}. Use ul.connect to provide them.`,
           {
-            headers: {
-              'apikey': SUPABASE_SERVICE_ROLE_KEY,
-              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-            },
+            type: 'MISSING_SECRETS',
+            missing_secrets: missingSecrets,
+            app_id: app.id,
+            hint: `Call ul.connect with app_id="${app.id}" and provide: ${missingSecrets.join(', ')}`,
           }
         );
-
-        if (secretsRes.ok) {
-          const userSecrets = await secretsRes.json() as Array<{ key: string; value_encrypted: string }>;
-          for (const secret of userSecrets) {
-            try {
-              envVars[secret.key] = await decryptEnvVar(secret.value_encrypted);
-            } catch (err) {
-              console.error(`Failed to decrypt per-user secret ${secret.key}:`, err);
-            }
-          }
-        }
-
-        // Check for missing required per-user secrets
-        const requiredPerUser = Object.entries(envSchema)
-          .filter(([, v]) => v.scope === 'per_user' && v.required)
-          .map(([k]) => k);
-        const missingSecrets = requiredPerUser.filter(k => !envVars[k]);
-
-        if (missingSecrets.length > 0) {
-          return jsonRpcErrorResponse(
-            id,
-            -32006,
-            `Missing required secrets: ${missingSecrets.join(', ')}. Use ul.connect to provide them.`,
-            {
-              type: 'MISSING_SECRETS',
-              missing_secrets: missingSecrets,
-              app_id: app.id,
-              hint: `Call ul.connect with app_id="${app.id}" and provide: ${missingSecrets.join(', ')}`,
-            }
-          );
-        }
-      } catch (err) {
-        console.error('Failed to fetch per-user secrets:', err);
-        // Continue without per-user secrets — app may still work if keys are optional
       }
     }
 
-    // Resolve Supabase config: prefer config_id (new model), fall back to legacy app-level, then platform-level
-    let supabaseConfig: { url: string; anonKey: string; serviceKey?: string } | undefined;
+    // Execute in sandbox (local — Worker handles data layer only)
+    const baseUrl = _Deno?.env?.get('BASE_URL') || undefined;
 
-    if (app.supabase_config_id) {
-      try {
-        const { getDecryptedSupabaseConfig } = await import('./user.ts');
-        const config = await getDecryptedSupabaseConfig(app.supabase_config_id as string);
-        if (config) supabaseConfig = config;
-      } catch (err) {
-        console.error('Failed to get Supabase config by ID:', err);
-      }
-    }
-
-    // Legacy fallback: app-level creds
-    if (!supabaseConfig && app.supabase_enabled && app.supabase_url && app.supabase_anon_key_encrypted) {
-      try {
-        const anonKey = await decryptEnvVar(app.supabase_anon_key_encrypted as string);
-        supabaseConfig = { url: app.supabase_url as string, anonKey };
-        if (app.supabase_service_key_encrypted) {
-          supabaseConfig.serviceKey = await decryptEnvVar(app.supabase_service_key_encrypted as string);
-        }
-      } catch (err) {
-        console.error('Failed to decrypt legacy Supabase config:', err);
-      }
-    }
-
-    // Legacy fallback: user platform-level config
-    if (!supabaseConfig && app.supabase_enabled) {
-      try {
-        const { getDecryptedPlatformSupabase } = await import('./user.ts');
-        const platformConfig = await getDecryptedPlatformSupabase(app.owner_id);
-        if (platformConfig) supabaseConfig = platformConfig;
-      } catch (err) {
-        console.error('Failed to get platform Supabase config:', err);
-      }
-    }
-
-    // Execute in sandbox
-    // Create memory adapter: binds userId + app scope to the sandbox's simple interface
     const memService = getMemoryService();
     const memoryAdapter = memService ? {
       remember: async (key: string, value: unknown) => {
@@ -1333,11 +1357,6 @@ async function executeAppFunction(
         return await memService.recall(userId, `app:${app.id}`, key);
       },
     } : null;
-
-    // Resolve base URL for inter-app calls
-    // @ts-ignore - Deno is available
-    const _Deno = globalThis.Deno;
-    const baseUrl = _Deno?.env?.get('BASE_URL') || undefined;
 
     const execStart = Date.now();
     const result = await executeInSandbox(

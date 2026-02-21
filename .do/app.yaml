@@ -8,8 +8,8 @@ services:
       branch: main
       deploy_on_push: true
     http_port: 8000
-    instance_count: 1
-    instance_size_slug: basic-xxs
+    instance_count: 2
+    instance_size_slug: professional-xs
     routes:
       - path: /
     envs:
@@ -29,6 +29,12 @@ services:
       - key: R2_SECRET_ACCESS_KEY
         type: SECRET
       - key: R2_BUCKET_NAME
+        type: SECRET
+      # CF Worker data layer (native R2 bindings, ~10x faster storage)
+      # Set both to enable; remove WORKER_DATA_URL to fall back to direct R2
+      - key: WORKER_DATA_URL
+        type: SECRET
+      - key: WORKER_SECRET
         type: SECRET
     health_check:
       http_path: /health
