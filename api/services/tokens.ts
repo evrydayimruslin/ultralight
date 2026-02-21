@@ -63,6 +63,19 @@ function generateToken(): string {
 }
 
 /**
+ * Constant-time string comparison to prevent timing attacks on token hashes.
+ * Uses XOR accumulation so execution time is independent of where strings differ.
+ */
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
+/**
  * Hash a token using SHA-256
  */
 async function hashToken(token: string): Promise<string> {
@@ -209,7 +222,7 @@ export async function revokeByToken(token: string): Promise<boolean> {
     .eq('token_prefix', tokenPrefix)
     .single();
 
-  if (lookupErr || !data || data.token_hash !== tokenHash) {
+  if (lookupErr || !data || !constantTimeEqual(data.token_hash, tokenHash)) {
     return false;
   }
 
@@ -304,8 +317,8 @@ export async function validateToken(
     return null;
   }
 
-  // Verify hash matches
-  if (data.token_hash !== tokenHash) {
+  // Verify hash matches (constant-time comparison)
+  if (!constantTimeEqual(data.token_hash, tokenHash)) {
     return null;
   }
 

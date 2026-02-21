@@ -19,7 +19,14 @@ if (!ENCRYPTION_KEY) {
 // ENCRYPTION HELPERS
 // ============================================
 
-async function getEncryptionKey(): Promise<CryptoKey> {
+// Salt sizes: old format used a global string salt, new format uses a random 16-byte per-record salt.
+// Blob format v2: [salt(16) + IV(12) + ciphertext] — detected by checking total length.
+// Blob format v1 (legacy): [IV(12) + ciphertext] — uses global 'ultralight-salt' for backward compat.
+const LEGACY_SALT = 'ultralight-salt';
+const PER_RECORD_SALT_LENGTH = 16;
+const IV_LENGTH = 12;
+
+async function deriveEncryptionKey(salt: Uint8Array): Promise<CryptoKey> {
   if (!ENCRYPTION_KEY) {
     throw new Error('BYOK_ENCRYPTION_KEY is not configured');
   }
@@ -35,7 +42,7 @@ async function getEncryptionKey(): Promise<CryptoKey> {
   return crypto.subtle.deriveKey(
     {
       name: 'PBKDF2',
-      salt: encoder.encode('ultralight-salt'),
+      salt,
       iterations: 100000,
       hash: 'SHA-256',
     },
@@ -47,9 +54,10 @@ async function getEncryptionKey(): Promise<CryptoKey> {
 }
 
 async function encryptApiKey(apiKey: string): Promise<string> {
-  const key = await getEncryptionKey();
+  const salt = crypto.getRandomValues(new Uint8Array(PER_RECORD_SALT_LENGTH));
+  const key = await deriveEncryptionKey(salt);
   const encoder = new TextEncoder();
-  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
 
   const encrypted = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv },
@@ -57,26 +65,41 @@ async function encryptApiKey(apiKey: string): Promise<string> {
     encoder.encode(apiKey)
   );
 
-  // Combine IV and encrypted data, then base64 encode
-  const combined = new Uint8Array(iv.length + encrypted.byteLength);
-  combined.set(iv);
-  combined.set(new Uint8Array(encrypted), iv.length);
+  // Blob v2: salt + IV + ciphertext
+  const combined = new Uint8Array(PER_RECORD_SALT_LENGTH + IV_LENGTH + encrypted.byteLength);
+  combined.set(salt);
+  combined.set(iv, PER_RECORD_SALT_LENGTH);
+  combined.set(new Uint8Array(encrypted), PER_RECORD_SALT_LENGTH + IV_LENGTH);
 
   return btoa(String.fromCharCode(...combined));
 }
 
 async function decryptApiKey(encryptedKey: string): Promise<string> {
-  const key = await getEncryptionKey();
   const combined = Uint8Array.from(atob(encryptedKey), c => c.charCodeAt(0));
 
-  const iv = combined.slice(0, 12);
-  const data = combined.slice(12);
+  // Detect format: AES-GCM adds a 16-byte auth tag, so minimum ciphertext is 1+16=17 bytes.
+  // Legacy v1 blob: IV(12) + ciphertext(>=17) = minimum 29 bytes
+  // New v2 blob: salt(16) + IV(12) + ciphertext(>=17) = minimum 45 bytes
+  // We can distinguish by trying v2 first (extract salt), fall back to v1 on failure.
+  // However, a simpler heuristic: v1 blobs encrypted before this change will all have
+  // total length < 45 only for very short plaintext. Instead, try v2 first, fall back to v1.
 
-  const decrypted = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv },
-    key,
-    data
-  );
+  let decrypted: ArrayBuffer;
+  try {
+    // Try v2: per-record salt
+    const salt = combined.slice(0, PER_RECORD_SALT_LENGTH);
+    const iv = combined.slice(PER_RECORD_SALT_LENGTH, PER_RECORD_SALT_LENGTH + IV_LENGTH);
+    const data = combined.slice(PER_RECORD_SALT_LENGTH + IV_LENGTH);
+    const key = await deriveEncryptionKey(salt);
+    decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
+  } catch {
+    // Fall back to v1: legacy global salt
+    const legacySalt = new TextEncoder().encode(LEGACY_SALT);
+    const iv = combined.slice(0, IV_LENGTH);
+    const data = combined.slice(IV_LENGTH);
+    const key = await deriveEncryptionKey(legacySalt);
+    decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
+  }
 
   return new TextDecoder().decode(decrypted);
 }

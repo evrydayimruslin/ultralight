@@ -351,8 +351,11 @@ export function createApp() {
 
             if (isEmbed) {
               // Return an info page for the iframe showing MCP tools
-              return new Response(getMcpAppInfoHTML(appId, app.name || app.slug, app.skills_parsed || []), {
-                headers: cacheHeaders,
+              return new Response(getMcpAppInfoHTML(appId, escapeHtml(app.name || app.slug), app.skills_parsed || []), {
+                headers: {
+                  ...cacheHeaders,
+                  'Content-Security-Policy': "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'none'",
+                },
               });
             } else {
               // Normal view with sidebar
@@ -449,8 +452,8 @@ function getMcpAppInfoHTML(appId: string, appName: string, skills: Array<{ name:
   const toolsList = skills.length > 0
     ? skills.map(s => `
       <div class="tool-item">
-        <div class="tool-name">${s.name}</div>
-        ${s.description ? `<div class="tool-desc">${s.description}</div>` : ''}
+        <div class="tool-name">${escapeHtml(s.name)}</div>
+        ${s.description ? `<div class="tool-desc">${escapeHtml(s.description)}</div>` : ''}
       </div>
     `).join('')
     : '<p class="no-tools">No tools documented yet. Generate documentation in app settings.</p>';
@@ -595,19 +598,23 @@ async function handleGenericDashboard(request: Request, appId: string): Promise<
       return json({ error: 'App not found' }, 404);
     }
 
-    const appName = app.name || app.slug;
+    const appName = escapeHtml(app.name || app.slug);
     const skills = app.skills_parsed || [];
     const functions = Array.isArray(skills)
       ? skills as Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>
       : (skills as { functions?: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }> }).functions || [];
 
-    // Extract token from query param if provided
+    // Token is now read client-side from URL fragment hash (#token=...) to avoid Referrer leaks.
+    // We still accept ?token= server-side for backward compat, but the client-side JS prefers the hash.
     const url = new URL(request.url);
     const tokenFromQuery = url.searchParams.get('token') || '';
 
     const html = generateGenericDashboardHTML(appId, appName, functions, tokenFromQuery);
     return new Response(html, {
-      headers: { 'Content-Type': 'text/html' },
+      headers: {
+        'Content-Type': 'text/html',
+        'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+      },
     });
   } catch (err) {
     console.error('[Dashboard] Error:', err);
@@ -711,7 +718,7 @@ button{cursor:pointer;border:none;border-radius:8px;font-size:13px;font-weight:6
 <p>Enter your Ultralight API token to access this app's dashboard. Your token stays in the browser only.</p>
 <input type="password" id="token-input" class="token-input" placeholder="ul_..." />
 <button class="btn-primary" onclick="submitToken()">Connect</button>
-<p style="font-size:11px;color:var(--text2)">Tip: add ?token=ul_... to the URL to skip this step</p>
+<p style="font-size:11px;color:var(--text2)">Tip: add #token=ul_... to the URL to skip this step</p>
 </div>
 
 <!-- Main app -->
@@ -736,18 +743,33 @@ button{cursor:pointer;border:none;border-radius:8px;font-size:13px;font-weight:6
 
 <script>
 var APP_ID = ${JSON.stringify(appId)};
-var TOKEN = sessionStorage.getItem("ul_token") || "";
-var PARAM_TOKEN = ${JSON.stringify(tokenFromQuery)};
+var STORAGE_KEY = "ul_token_" + APP_ID;
+var TOKEN = sessionStorage.getItem(STORAGE_KEY) || "";
 var TOOL_PREFIX = "";
 var TOOLS = ${toolDefs};
 
-if (PARAM_TOKEN) { TOKEN = PARAM_TOKEN; sessionStorage.setItem("ul_token", TOKEN); }
+// Read token from fragment hash (#token=...) to avoid Referrer leaks, fall back to query param for backward compat
+(function() {
+  var hashToken = "";
+  if (location.hash) {
+    var m = location.hash.match(/[#&]token=([^&]*)/);
+    if (m) { hashToken = decodeURIComponent(m[1]); }
+  }
+  var paramToken = ${JSON.stringify(tokenFromQuery)};
+  var newToken = hashToken || paramToken;
+  if (newToken) { TOKEN = newToken; sessionStorage.setItem(STORAGE_KEY, TOKEN); }
+  // Strip token from URL (both hash and query) to avoid leaking in browser history
+  if (hashToken || paramToken) {
+    var cleanUrl = location.pathname + location.search.replace(/[?&]token=[^&]*/g, "").replace(/^\?$/, "");
+    history.replaceState(null, "", cleanUrl);
+  }
+})();
 if (TOKEN) { showApp(); }
 
 function submitToken() {
   var t = document.getElementById("token-input").value.trim();
   if (!t) return;
-  TOKEN = t; sessionStorage.setItem("ul_token", TOKEN);
+  TOKEN = t; sessionStorage.setItem(STORAGE_KEY, TOKEN);
   showApp();
 }
 
@@ -780,7 +802,7 @@ async function discoverPrefix() {
       });
       if (hasCustomUI) {
         document.getElementById("custom-ui-banner").innerHTML =
-          '<a class="custom-ui-link" href="/http/' + APP_ID + '/ui' + (TOKEN ? '?token=' + encodeURIComponent(TOKEN) : '') + '">&#10024; This app has a custom UI &rarr; Open it</a>';
+          '<a class="custom-ui-link" href="/http/' + APP_ID + '/ui' + (TOKEN ? '#token=' + encodeURIComponent(TOKEN) : '') + '">&#10024; This app has a custom UI &rarr; Open it</a>';
       }
     }
   } catch(e) { console.warn("Could not discover prefix:", e); }

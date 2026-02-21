@@ -18,10 +18,17 @@ function getEncryptionKey(): string {
   return key;
 }
 
+// Salt sizes: old format used a global string salt, new format uses a random 16-byte per-record salt.
+// Blob format v2: [salt(16) + IV(12) + ciphertext] — detected by trying v2 first on decrypt.
+// Blob format v1 (legacy): [IV(12) + ciphertext] — uses global 'ultralight-env-vars-salt' for backward compat.
+const LEGACY_SALT = 'ultralight-env-vars-salt';
+const PER_RECORD_SALT_LENGTH = 16;
+const IV_LENGTH = 12;
+
 /**
- * Derive a crypto key from the master key
+ * Derive a crypto key from the master key with a given salt
  */
-async function deriveKey(masterKey: string): Promise<CryptoKey> {
+async function deriveKey(masterKey: string, salt: Uint8Array): Promise<CryptoKey> {
   const encoder = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey(
     'raw',
@@ -34,7 +41,7 @@ async function deriveKey(masterKey: string): Promise<CryptoKey> {
   return crypto.subtle.deriveKey(
     {
       name: 'PBKDF2',
-      salt: encoder.encode('ultralight-env-vars-salt'),
+      salt,
       iterations: 100000,
       hash: 'SHA-256',
     },
@@ -46,14 +53,15 @@ async function deriveKey(masterKey: string): Promise<CryptoKey> {
 }
 
 /**
- * Encrypt a single environment variable value
+ * Encrypt a single environment variable value (v2 format with per-record salt)
  */
 export async function encryptEnvVar(value: string): Promise<string> {
   const masterKey = getEncryptionKey();
-  const key = await deriveKey(masterKey);
+  const salt = crypto.getRandomValues(new Uint8Array(PER_RECORD_SALT_LENGTH));
+  const key = await deriveKey(masterKey, salt);
 
   const encoder = new TextEncoder();
-  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
 
   const encrypted = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv },
@@ -61,36 +69,40 @@ export async function encryptEnvVar(value: string): Promise<string> {
     encoder.encode(value)
   );
 
-  // Combine IV and encrypted data
-  const combined = new Uint8Array(iv.length + encrypted.byteLength);
-  combined.set(iv);
-  combined.set(new Uint8Array(encrypted), iv.length);
+  // Blob v2: salt + IV + ciphertext
+  const combined = new Uint8Array(PER_RECORD_SALT_LENGTH + IV_LENGTH + encrypted.byteLength);
+  combined.set(salt);
+  combined.set(iv, PER_RECORD_SALT_LENGTH);
+  combined.set(new Uint8Array(encrypted), PER_RECORD_SALT_LENGTH + IV_LENGTH);
 
-  // Return as base64
   return btoa(String.fromCharCode(...combined));
 }
 
 /**
- * Decrypt a single environment variable value
+ * Decrypt a single environment variable value (supports v1 legacy and v2 per-record salt)
  */
 export async function decryptEnvVar(encryptedValue: string): Promise<string> {
   const masterKey = getEncryptionKey();
-  const key = await deriveKey(masterKey);
-
-  // Decode from base64
   const combined = new Uint8Array(
     atob(encryptedValue).split('').map(c => c.charCodeAt(0))
   );
 
-  // Extract IV and encrypted data
-  const iv = combined.slice(0, 12);
-  const encrypted = combined.slice(12);
-
-  const decrypted = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv },
-    key,
-    encrypted
-  );
+  let decrypted: ArrayBuffer;
+  try {
+    // Try v2: per-record salt
+    const salt = combined.slice(0, PER_RECORD_SALT_LENGTH);
+    const iv = combined.slice(PER_RECORD_SALT_LENGTH, PER_RECORD_SALT_LENGTH + IV_LENGTH);
+    const data = combined.slice(PER_RECORD_SALT_LENGTH + IV_LENGTH);
+    const key = await deriveKey(masterKey, salt);
+    decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
+  } catch {
+    // Fall back to v1: legacy global salt
+    const legacySalt = new TextEncoder().encode(LEGACY_SALT);
+    const iv = combined.slice(0, IV_LENGTH);
+    const data = combined.slice(IV_LENGTH);
+    const key = await deriveKey(masterKey, legacySalt);
+    decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
+  }
 
   return new TextDecoder().decode(decrypted);
 }

@@ -117,7 +117,7 @@ export function generateSkillsMd(
   lines.push('GET /http/{appId}/ui');
   lines.push('```');
   lines.push('');
-  lines.push('Direct users to this URL when they want to view or manage their data visually. Supports `?token=ul_...` for authentication.');
+  lines.push('Direct users to this URL when they want to view or manage their data visually. Supports `#token=ul_...` (fragment hash) for authentication.');
   lines.push('');
 
   return lines.join('\n');
