@@ -97,6 +97,12 @@ interface AuthorizationCode {
  * Codes auto-expire via the `expires_at` column (5 min from creation).
  */
 async function saveAuthorizationCode(entry: AuthorizationCode): Promise<void> {
+  // Encrypt Supabase tokens before storing — they're sensitive session credentials
+  const encryptedAccessToken = await encryptToken(entry.supabase_access_token);
+  const encryptedRefreshToken = entry.supabase_refresh_token
+    ? await encryptToken(entry.supabase_refresh_token)
+    : null;
+
   const { error: err } = await supabase
     .from('oauth_authorization_codes')
     .insert({
@@ -105,8 +111,8 @@ async function saveAuthorizationCode(entry: AuthorizationCode): Promise<void> {
       redirect_uri: entry.redirect_uri,
       code_challenge: entry.code_challenge,
       code_challenge_method: entry.code_challenge_method,
-      supabase_access_token: entry.supabase_access_token,
-      supabase_refresh_token: entry.supabase_refresh_token || null,
+      supabase_access_token: encryptedAccessToken,
+      supabase_refresh_token: encryptedRefreshToken,
       user_id: entry.user_id,
       user_email: entry.user_email,
       scope: entry.scope,
@@ -138,14 +144,25 @@ async function getAndDeleteAuthorizationCode(code: string): Promise<Authorizatio
     .delete()
     .eq('code', code);
 
+  // Decrypt Supabase tokens, with backward compat for legacy plaintext rows
+  let accessToken = data.supabase_access_token;
+  let refreshToken = data.supabase_refresh_token || undefined;
+
+  if (accessToken && isEncryptedBlob(accessToken)) {
+    accessToken = await decryptToken(accessToken);
+  }
+  if (refreshToken && isEncryptedBlob(refreshToken)) {
+    refreshToken = await decryptToken(refreshToken);
+  }
+
   return {
     code: data.code,
     client_id: data.client_id,
     redirect_uri: data.redirect_uri,
     code_challenge: data.code_challenge,
     code_challenge_method: data.code_challenge_method,
-    supabase_access_token: data.supabase_access_token,
-    supabase_refresh_token: data.supabase_refresh_token || undefined,
+    supabase_access_token: accessToken,
+    supabase_refresh_token: refreshToken,
     user_id: data.user_id,
     user_email: data.user_email,
     scope: data.scope,
@@ -170,6 +187,119 @@ async function cleanupExpiredCodes(): Promise<void> {
 
 // Periodic cleanup every 5 minutes
 setInterval(() => { cleanupExpiredCodes(); }, 5 * 60 * 1000);
+
+// ============================================
+// TOKEN ENCRYPTION (AES-256-GCM with per-record salt)
+// ============================================
+
+// Supabase access/refresh tokens stored in oauth_authorization_codes are encrypted at rest.
+// Uses the same blob format as BYOK/envvars: [salt(16) + IV(12) + ciphertext].
+const TOKEN_SALT_LENGTH = 16;
+const TOKEN_IV_LENGTH = 12;
+
+async function deriveTokenEncryptionKey(salt: Uint8Array): Promise<CryptoKey> {
+  const encoder = new TextEncoder();
+  // Domain-separated key derivation from the service role key
+  const keyData = encoder.encode(`oauth-token-encryption:${SUPABASE_SERVICE_ROLE_KEY}`);
+  const keyMaterial = await crypto.subtle.importKey('raw', keyData, 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function encryptToken(token: string): Promise<string> {
+  const salt = crypto.getRandomValues(new Uint8Array(TOKEN_SALT_LENGTH));
+  const iv = crypto.getRandomValues(new Uint8Array(TOKEN_IV_LENGTH));
+  const key = await deriveTokenEncryptionKey(salt);
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    new TextEncoder().encode(token)
+  );
+  const combined = new Uint8Array(TOKEN_SALT_LENGTH + TOKEN_IV_LENGTH + encrypted.byteLength);
+  combined.set(salt);
+  combined.set(iv, TOKEN_SALT_LENGTH);
+  combined.set(new Uint8Array(encrypted), TOKEN_SALT_LENGTH + TOKEN_IV_LENGTH);
+  return btoa(String.fromCharCode(...combined));
+}
+
+async function decryptToken(encryptedToken: string): Promise<string> {
+  const combined = Uint8Array.from(atob(encryptedToken), c => c.charCodeAt(0));
+  const salt = combined.slice(0, TOKEN_SALT_LENGTH);
+  const iv = combined.slice(TOKEN_SALT_LENGTH, TOKEN_SALT_LENGTH + TOKEN_IV_LENGTH);
+  const data = combined.slice(TOKEN_SALT_LENGTH + TOKEN_IV_LENGTH);
+  const key = await deriveTokenEncryptionKey(salt);
+  const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
+  return new TextDecoder().decode(decrypted);
+}
+
+/**
+ * Check if a string looks like an encrypted blob (base64-encoded, long enough for salt+IV+tag).
+ * Supabase JWTs are plaintext and start with "eyJ" (base64-encoded JSON header).
+ * Encrypted blobs are also base64 but their decoded form starts with random salt bytes.
+ */
+function isEncryptedBlob(value: string): boolean {
+  // Supabase JWTs always start with eyJ (base64 of '{"'), encrypted blobs do not
+  return !value.startsWith('eyJ');
+}
+
+// ============================================
+// STATE SIGNING (HMAC-SHA256)
+// ============================================
+
+// Derive a signing key from the Supabase service role key (always available, never exposed to clients).
+// This prevents OAuth state forgery — attackers cannot craft valid state params without this key.
+let _stateSigningKey: CryptoKey | null = null;
+
+async function getStateSigningKey(): Promise<CryptoKey> {
+  if (_stateSigningKey) return _stateSigningKey;
+  const encoder = new TextEncoder();
+  // Use a domain-separated derivation so the signing key differs from the raw service key
+  const keyData = encoder.encode(`oauth-state-signing:${SUPABASE_SERVICE_ROLE_KEY}`);
+  _stateSigningKey = await crypto.subtle.importKey(
+    'raw',
+    keyData,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign', 'verify']
+  );
+  return _stateSigningKey;
+}
+
+/**
+ * Sign an encoded OAuth state string. Returns "encodedState.signature".
+ */
+async function signState(encodedState: string): Promise<string> {
+  const key = await getStateSigningKey();
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(encodedState));
+  const sigHex = Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('');
+  return `${encodedState}.${sigHex}`;
+}
+
+/**
+ * Verify and extract a signed OAuth state string. Returns the encoded state or null if invalid.
+ */
+async function verifySignedState(signedState: string): Promise<string | null> {
+  const dotIdx = signedState.lastIndexOf('.');
+  if (dotIdx === -1) return null; // no signature present
+
+  const encodedState = signedState.substring(0, dotIdx);
+  const sigHex = signedState.substring(dotIdx + 1);
+
+  // Decode hex signature
+  const sigBytes = new Uint8Array(sigHex.length / 2);
+  for (let i = 0; i < sigBytes.length; i++) {
+    sigBytes[i] = parseInt(sigHex.substring(i * 2, i * 2 + 2), 16);
+  }
+
+  const key = await getStateSigningKey();
+  const valid = await crypto.subtle.verify('HMAC', key, sigBytes, new TextEncoder().encode(encodedState));
+  return valid ? encodedState : null;
+}
 
 // ============================================
 // HELPERS
@@ -401,6 +531,7 @@ async function handleAuthorize(request: Request): Promise<Response> {
 
   // Store the OAuth state in a secure cookie-like param through the Supabase redirect.
   // We encode the OAuth params into our callback URL so we can reconstruct the flow.
+  // The state is HMAC-signed to prevent forgery of redirect_uri, code_challenge, etc.
   const oauthState = JSON.stringify({
     client_id: clientId,
     redirect_uri: redirectUri,
@@ -410,9 +541,10 @@ async function handleAuthorize(request: Request): Promise<Response> {
     scope,
   });
   const encodedState = btoa(oauthState);
+  const signedState = await signState(encodedState);
 
   // Redirect to Supabase Google OAuth, with our /oauth/callback as the redirect
-  const callbackUrl = `${baseUrl}/oauth/callback?oauth_state=${encodeURIComponent(encodedState)}`;
+  const callbackUrl = `${baseUrl}/oauth/callback?oauth_state=${encodeURIComponent(signedState)}`;
   const authUrl = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(callbackUrl)}`;
 
   return new Response(null, {
@@ -427,10 +559,16 @@ async function handleAuthorize(request: Request): Promise<Response> {
 
 async function handleOAuthCallback(request: Request): Promise<Response> {
   const url = new URL(request.url);
-  const encodedState = url.searchParams.get('oauth_state') || '';
+  const signedState = url.searchParams.get('oauth_state') || '';
 
   // Supabase may return with a code (PKCE flow) or hash-based tokens
   const code = url.searchParams.get('code');
+
+  // Verify HMAC signature on the OAuth state to prevent forgery
+  const encodedState = await verifySignedState(signedState);
+  if (!encodedState) {
+    return error('Invalid or tampered OAuth state', 400);
+  }
 
   // Try to decode the OAuth state
   let oauthState: {
@@ -470,7 +608,8 @@ async function handleOAuthCallback(request: Request): Promise<Response> {
 
   // Supabase implicit flow — tokens come in URL hash (client-side only).
   // Return HTML that extracts the hash token and POSTs it to complete the flow.
-  return new Response(getOAuthCallbackHTML(encodedState), {
+  // Pass the full signed state so the complete endpoint can verify it too.
+  return new Response(getOAuthCallbackHTML(signedState), {
     headers: { 'Content-Type': 'text/html' },
   });
 }
@@ -653,10 +792,16 @@ async function handleOAuthCallbackComplete(request: Request): Promise<Response> 
 
   const accessToken = body.access_token;
   const refreshToken = body.refresh_token;
-  const encodedState = body.oauth_state;
+  const signedState = body.oauth_state;
 
-  if (!accessToken || !encodedState) {
+  if (!accessToken || !signedState) {
     return error('Missing access_token or oauth_state', 400);
+  }
+
+  // Verify HMAC signature on the OAuth state
+  const encodedState = await verifySignedState(signedState);
+  if (!encodedState) {
+    return error('Invalid or tampered OAuth state', 400);
   }
 
   let oauthState: {

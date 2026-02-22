@@ -76,7 +76,7 @@ function constantTimeEqual(a: string, b: string): boolean {
 }
 
 /**
- * Hash a token using SHA-256
+ * Hash a token using SHA-256 (legacy, unsalted — used for backward compat with old tokens)
  */
 async function hashToken(token: string): Promise<string> {
   const encoder = new TextEncoder();
@@ -84,6 +84,32 @@ async function hashToken(token: string): Promise<string> {
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Hash a token with a per-token salt using HMAC-SHA256.
+ * The salt acts as key material, making each token's hash unique even if tokens collide.
+ */
+async function hashTokenWithSalt(token: string, salt: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(salt),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(token));
+  return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Generate a random hex salt for token hashing (16 bytes = 32 hex chars).
+ */
+function generateTokenSalt(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 /**
@@ -112,9 +138,10 @@ export async function createToken(
     throw new Error(`Token with name "${name}" already exists`);
   }
 
-  // Generate token
+  // Generate token with per-token salt
   const plaintextToken = generateToken();
-  const tokenHash = await hashToken(plaintextToken);
+  const tokenSalt = generateTokenSalt();
+  const tokenHash = await hashTokenWithSalt(plaintextToken, tokenSalt);
   const tokenPrefix = plaintextToken.substring(0, 8); // "ul_xxxxx"
 
   // Calculate expiry if specified
@@ -125,7 +152,7 @@ export async function createToken(
     expiresAt = expiry.toISOString();
   }
 
-  // Insert token
+  // Insert token (token_salt column enables per-token salted hashing)
   const { data, error } = await supabase
     .from('user_api_tokens')
     .insert({
@@ -133,6 +160,7 @@ export async function createToken(
       name,
       token_prefix: tokenPrefix,
       token_hash: tokenHash,
+      token_salt: tokenSalt,
       scopes: options?.scopes || ['*'],
       app_ids: options?.app_ids || null,
       function_names: options?.function_names || null,
@@ -213,16 +241,24 @@ export async function revokeByToken(token: string): Promise<boolean> {
   }
 
   const tokenPrefix = token.substring(0, 8);
-  const tokenHash = await hashToken(token);
 
-  // Look up by prefix (indexed), verify hash
+  // Look up by prefix (indexed), then verify hash with appropriate method
   const { data, error: lookupErr } = await supabase
     .from('user_api_tokens')
-    .select('id, token_hash')
+    .select('id, token_hash, token_salt')
     .eq('token_prefix', tokenPrefix)
     .single();
 
-  if (lookupErr || !data || !constantTimeEqual(data.token_hash, tokenHash)) {
+  if (lookupErr || !data) {
+    return false;
+  }
+
+  // Use salted hash if token has a salt, otherwise fall back to legacy unsalted SHA-256
+  const tokenHash = data.token_salt
+    ? await hashTokenWithSalt(token, data.token_salt)
+    : await hashToken(token);
+
+  if (!constantTimeEqual(data.token_hash, tokenHash)) {
     return false;
   }
 
@@ -304,18 +340,22 @@ export async function validateToken(
   }
 
   const tokenPrefix = token.substring(0, 8);
-  const tokenHash = await hashToken(token);
 
   // Look up token by prefix first (indexed), then verify hash
   const { data, error } = await supabase
     .from('user_api_tokens')
-    .select('id, user_id, token_hash, scopes, app_ids, function_names, expires_at')
+    .select('id, user_id, token_hash, token_salt, scopes, app_ids, function_names, expires_at')
     .eq('token_prefix', tokenPrefix)
     .single();
 
   if (error || !data) {
     return null;
   }
+
+  // Use salted hash if token has a salt, otherwise fall back to legacy unsalted SHA-256
+  const tokenHash = data.token_salt
+    ? await hashTokenWithSalt(token, data.token_salt)
+    : await hashToken(token);
 
   // Verify hash matches (constant-time comparison)
   if (!constantTimeEqual(data.token_hash, tokenHash)) {
