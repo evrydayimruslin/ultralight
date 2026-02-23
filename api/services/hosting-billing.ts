@@ -16,6 +16,10 @@ interface BillingUser {
   id: string;
   hosting_balance_cents: number;
   hosting_last_billed_at: string;
+  auto_topup_enabled: boolean;
+  auto_topup_threshold_cents: number;
+  auto_topup_amount_cents: number;
+  stripe_customer_id: string | null;
 }
 
 interface UserStorage {
@@ -71,7 +75,7 @@ export async function processHostingBilling(): Promise<BillingResult> {
     //    We query users who have hosting_balance_cents > 0 OR have active published content.
     //    Users with balance=0 and already-suspended content are skipped.
     const usersRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?hosting_balance_cents=gt.0&select=id,hosting_balance_cents,hosting_last_billed_at`,
+      `${SUPABASE_URL}/rest/v1/users?hosting_balance_cents=gt.0&select=id,hosting_balance_cents,hosting_last_billed_at,auto_topup_enabled,auto_topup_threshold_cents,auto_topup_amount_cents,stripe_customer_id`,
       { headers }
     );
 
@@ -165,7 +169,27 @@ export async function processHostingBilling(): Promise<BillingResult> {
           continue;
         }
 
-        // 2f. If balance depleted, suspend all their published content
+        // 2f. Auto top-up: if balance dropped below threshold, trigger a charge
+        if (
+          user.auto_topup_enabled &&
+          user.stripe_customer_id &&
+          newBalance < (user.auto_topup_threshold_cents || 0)
+        ) {
+          // Fire-and-forget — don't block the billing loop for other users
+          triggerAutoTopup(
+            user.id,
+            user.stripe_customer_id,
+            user.auto_topup_amount_cents || 1000,
+            SUPABASE_URL,
+            SUPABASE_SERVICE_ROLE_KEY
+          ).catch(err => {
+            console.error(`[BILLING] Auto top-up trigger failed for ${user.id}:`, err);
+          });
+          // Note: we still proceed with suspension if balance hit zero.
+          // The webhook will unsuspend when payment succeeds (fail-CLOSED).
+        }
+
+        // 2g. If balance depleted, suspend all their published content
         if (suspended) {
           // Suspend apps
           await fetch(
@@ -269,6 +293,133 @@ export async function unsuspendContent(userId: string): Promise<{ apps: number; 
   }
 
   return { apps: appsUnsuspended, pages: pagesUnsuspended };
+}
+
+/**
+ * Trigger an auto top-up charge via Stripe PaymentIntent.
+ * Creates an off-session PaymentIntent using the customer's saved payment method.
+ * On success, the payment_intent.succeeded webhook will credit the balance.
+ * On failure, disables auto-topup for this user.
+ */
+async function triggerAutoTopup(
+  userId: string,
+  stripeCustomerId: string,
+  amountCents: number,
+  supabaseUrl: string,
+  supabaseKey: string
+): Promise<void> {
+  const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY') || '';
+
+  if (!STRIPE_SECRET_KEY) {
+    console.warn('[BILLING] Stripe not configured, skipping auto top-up');
+    return;
+  }
+
+  console.log(`[BILLING] Triggering auto top-up for user ${userId}: ${amountCents} cents`);
+
+  // Step 1: Get the customer's default payment method
+  const custRes = await fetch(
+    `https://api.stripe.com/v1/customers/${stripeCustomerId}`,
+    {
+      headers: { 'Authorization': `Bearer ${STRIPE_SECRET_KEY}` },
+    }
+  );
+
+  if (!custRes.ok) {
+    console.error(`[BILLING] Failed to fetch Stripe customer for ${userId}:`, await custRes.text());
+    await disableAutoTopup(userId, supabaseUrl, supabaseKey);
+    return;
+  }
+
+  const customer = await custRes.json() as {
+    invoice_settings?: { default_payment_method?: string };
+    default_source?: string;
+  };
+
+  // Try default payment method, then fall back to listing payment methods
+  let paymentMethodId = customer.invoice_settings?.default_payment_method || customer.default_source;
+
+  if (!paymentMethodId) {
+    const pmRes = await fetch(
+      `https://api.stripe.com/v1/payment_methods?customer=${stripeCustomerId}&type=card&limit=1`,
+      {
+        headers: { 'Authorization': `Bearer ${STRIPE_SECRET_KEY}` },
+      }
+    );
+    if (pmRes.ok) {
+      const pmData = await pmRes.json() as { data: Array<{ id: string }> };
+      paymentMethodId = pmData.data?.[0]?.id;
+    }
+  }
+
+  if (!paymentMethodId) {
+    console.warn(`[BILLING] No payment method found for user ${userId}, disabling auto top-up`);
+    await disableAutoTopup(userId, supabaseUrl, supabaseKey);
+    return;
+  }
+
+  // Step 2: Create PaymentIntent (off-session, confirm immediately)
+  const intentRes = await fetch('https://api.stripe.com/v1/payment_intents', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${STRIPE_SECRET_KEY}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      'amount': String(amountCents),
+      'currency': 'usd',
+      'customer': stripeCustomerId,
+      'payment_method': paymentMethodId,
+      'off_session': 'true',
+      'confirm': 'true',
+      'metadata[user_id]': userId,
+      'metadata[amount_cents]': String(amountCents),
+      'metadata[type]': 'auto_topup',
+      'description': `Ultralight auto top-up: $${(amountCents / 100).toFixed(2)}`,
+    }).toString(),
+  });
+
+  if (!intentRes.ok) {
+    const stripeErr = await intentRes.text();
+    console.error(`[BILLING] Auto top-up PaymentIntent failed for ${userId}:`, stripeErr);
+    await disableAutoTopup(userId, supabaseUrl, supabaseKey);
+    return;
+  }
+
+  const intent = await intentRes.json() as { id: string; status: string };
+  console.log(`[BILLING] Auto top-up PaymentIntent created: ${intent.id} (status: ${intent.status})`);
+  // Balance credit happens via the payment_intent.succeeded webhook
+}
+
+/**
+ * Disable auto top-up for a user after a payment failure.
+ */
+async function disableAutoTopup(
+  userId: string,
+  supabaseUrl: string,
+  supabaseKey: string
+): Promise<void> {
+  try {
+    await fetch(
+      `${supabaseUrl}/rest/v1/users?id=eq.${userId}`,
+      {
+        method: 'PATCH',
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal',
+        },
+        body: JSON.stringify({
+          auto_topup_enabled: false,
+          auto_topup_last_failed_at: new Date().toISOString(),
+        }),
+      }
+    );
+    console.log(`[BILLING] Disabled auto top-up for user ${userId} due to payment failure`);
+  } catch (err) {
+    console.error(`[BILLING] Failed to disable auto top-up for ${userId}:`, err);
+  }
 }
 
 /**

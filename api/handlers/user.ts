@@ -56,7 +56,7 @@ export async function handleUser(request: Request): Promise<Response> {
         };
       };
 
-      // Handle checkout.session.completed
+      // Handle checkout.session.completed (manual deposits)
       if (event.type === 'checkout.session.completed') {
         const session = event.data.object;
         const eventUserId = session.metadata?.user_id;
@@ -65,6 +65,19 @@ export async function handleUser(request: Request): Promise<Response> {
 
         if (eventUserId && amountCents > 0 && depositType === 'hosting_deposit' && session.payment_status === 'paid') {
           console.log(`[STRIPE] Crediting ${amountCents} cents to user ${eventUserId}`);
+          await creditHostingBalance(eventUserId, amountCents);
+        }
+      }
+
+      // Handle payment_intent.succeeded (auto top-up charges)
+      if (event.type === 'payment_intent.succeeded') {
+        const intent = event.data.object;
+        const eventUserId = intent.metadata?.user_id;
+        const amountCents = parseInt(intent.metadata?.amount_cents || '0', 10);
+        const intentType = intent.metadata?.type;
+
+        if (eventUserId && amountCents > 0 && intentType === 'auto_topup') {
+          console.log(`[STRIPE] Auto top-up succeeded: crediting ${amountCents} cents to user ${eventUserId}`);
           await creditHostingBalance(eventUserId, amountCents);
         }
       }
@@ -860,19 +873,117 @@ export async function handleUser(request: Request): Promise<Response> {
   // HOSTING BALANCE
   // ============================================
 
-  // GET /api/user/hosting — get hosting balance and usage
+  // GET /api/user/hosting — get hosting balance, usage, and auto-topup settings
   if (path === '/api/user/hosting' && method === 'GET') {
     try {
       const user = await authenticate(request);
-      const userService = createUserService();
-      const userData = await userService.findById(user.id);
-      if (!userData) return error('User not found', 404);
+      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
+      const userRes = await fetch(
+        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=hosting_balance_cents,hosting_last_billed_at,auto_topup_enabled,auto_topup_threshold_cents,auto_topup_amount_cents,auto_topup_last_failed_at,stripe_customer_id`,
+        {
+          headers: {
+            'apikey': sbKey,
+            'Authorization': `Bearer ${sbKey}`,
+          },
+        }
+      );
+      if (!userRes.ok) throw new Error('Failed to read user');
+      const rows = await userRes.json();
+      if (rows.length === 0) return error('User not found', 404);
+      const ud = rows[0];
 
       return json({
-        hosting_balance_cents: (userData as Record<string, unknown>).hosting_balance_cents ?? 0,
-        hosting_last_billed_at: (userData as Record<string, unknown>).hosting_last_billed_at ?? null,
+        hosting_balance_cents: ud.hosting_balance_cents ?? 0,
+        hosting_last_billed_at: ud.hosting_last_billed_at ?? null,
+        auto_topup: {
+          enabled: ud.auto_topup_enabled ?? false,
+          threshold_cents: ud.auto_topup_threshold_cents ?? 100,
+          amount_cents: ud.auto_topup_amount_cents ?? 1000,
+          last_failed_at: ud.auto_topup_last_failed_at ?? null,
+        },
+        has_payment_method: !!ud.stripe_customer_id,
       });
     } catch (err) {
+      return error(err instanceof Error ? err.message : 'Unauthorized', 401);
+    }
+  }
+
+  // PATCH /api/user/hosting/auto-topup — configure auto top-up settings
+  // Body: { enabled?: boolean, threshold_cents?: number, amount_cents?: number }
+  if (path === '/api/user/hosting/auto-topup' && method === 'PATCH') {
+    try {
+      const user = await authenticate(request);
+      const body = await request.json() as {
+        enabled?: boolean;
+        threshold_cents?: number;
+        amount_cents?: number;
+      };
+
+      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
+
+      // If enabling, verify user has a saved payment method (stripe_customer_id)
+      if (body.enabled === true) {
+        const custRes = await fetch(
+          `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_customer_id`,
+          {
+            headers: {
+              'apikey': sbKey,
+              'Authorization': `Bearer ${sbKey}`,
+            },
+          }
+        );
+        const custRows = await custRes.json();
+        if (!custRows[0]?.stripe_customer_id) {
+          return error(
+            'No saved payment method. Make a deposit first to save your card, then enable auto top-up.',
+            400
+          );
+        }
+      }
+
+      // Validate thresholds
+      if (body.threshold_cents !== undefined) {
+        if (typeof body.threshold_cents !== 'number' || body.threshold_cents < 0 || body.threshold_cents > 100_000) {
+          return error('threshold_cents must be between 0 and 100000', 400);
+        }
+      }
+      if (body.amount_cents !== undefined) {
+        if (typeof body.amount_cents !== 'number' || body.amount_cents < 500 || body.amount_cents > 100_000) {
+          return error('amount_cents must be between 500 ($5.00) and 100000 ($1000.00)', 400);
+        }
+      }
+
+      // Build update payload
+      const update: Record<string, unknown> = {};
+      if (body.enabled !== undefined) update.auto_topup_enabled = body.enabled;
+      if (body.threshold_cents !== undefined) update.auto_topup_threshold_cents = body.threshold_cents;
+      if (body.amount_cents !== undefined) update.auto_topup_amount_cents = body.amount_cents;
+      // If re-enabling, clear the last failure timestamp
+      if (body.enabled === true) update.auto_topup_last_failed_at = null;
+
+      if (Object.keys(update).length === 0) {
+        return error('No fields to update. Provide enabled, threshold_cents, or amount_cents.', 400);
+      }
+
+      const updateRes = await fetch(
+        `${sbUrl}/rest/v1/users?id=eq.${user.id}`,
+        {
+          method: 'PATCH',
+          headers: {
+            'apikey': sbKey,
+            'Authorization': `Bearer ${sbKey}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal',
+          },
+          body: JSON.stringify(update),
+        }
+      );
+
+      if (!updateRes.ok) throw new Error('Failed to update auto top-up settings');
+
+      return json({ success: true, updated: update });
+    } catch (err) {
+      if (err instanceof SyntaxError) return error('Invalid JSON body', 400);
       return error(err instanceof Error ? err.message : 'Unauthorized', 401);
     }
   }
@@ -924,7 +1035,62 @@ export async function handleUser(request: Request): Promise<Response> {
         );
       }
 
-      // Create Stripe Checkout Session via API (no SDK needed)
+      // Ensure user has a Stripe Customer (create if needed) so payment method is saved
+      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
+      const userDataRes = await fetch(
+        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_customer_id,email`,
+        {
+          headers: {
+            'apikey': sbKey,
+            'Authorization': `Bearer ${sbKey}`,
+          },
+        }
+      );
+      if (!userDataRes.ok) throw new Error('Failed to read user');
+      const userData = (await userDataRes.json())[0] as { stripe_customer_id: string | null; email: string };
+      let stripeCustomerId = userData?.stripe_customer_id;
+
+      if (!stripeCustomerId) {
+        // Create Stripe Customer
+        const custRes = await fetch('https://api.stripe.com/v1/customers', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${STRIPE_SECRET_KEY}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({
+            'email': userData.email || '',
+            'metadata[user_id]': user.id,
+            'metadata[platform]': 'ultralight',
+          }).toString(),
+        });
+
+        if (!custRes.ok) {
+          console.error('[STRIPE] Customer creation failed:', await custRes.text());
+          return error('Failed to create payment profile', 500);
+        }
+
+        const customer = await custRes.json() as { id: string };
+        stripeCustomerId = customer.id;
+
+        // Save Stripe Customer ID to DB
+        await fetch(
+          `${sbUrl}/rest/v1/users?id=eq.${user.id}`,
+          {
+            method: 'PATCH',
+            headers: {
+              'apikey': sbKey,
+              'Authorization': `Bearer ${sbKey}`,
+              'Content-Type': 'application/json',
+              'Prefer': 'return=minimal',
+            },
+            body: JSON.stringify({ stripe_customer_id: stripeCustomerId }),
+          }
+        );
+      }
+
+      // Create Stripe Checkout Session with customer + setup_future_usage
+      // setup_future_usage saves the payment method for off-session auto top-ups
       const checkoutRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
         method: 'POST',
         headers: {
@@ -933,7 +1099,9 @@ export async function handleUser(request: Request): Promise<Response> {
         },
         body: new URLSearchParams({
           'mode': 'payment',
+          'customer': stripeCustomerId,
           'payment_method_types[0]': 'card',
+          'payment_intent_data[setup_future_usage]': 'off_session',
           'line_items[0][price_data][currency]': 'usd',
           'line_items[0][price_data][product_data][name]': 'Ultralight Hosting Deposit',
           'line_items[0][price_data][product_data][description]': `$${(amountCents / 100).toFixed(2)} hosting credit for publishing apps`,
@@ -975,7 +1143,8 @@ export async function handleUser(request: Request): Promise<Response> {
 
 /**
  * Credit a user's hosting balance and unsuspend content if needed.
- * Used by both the admin topup endpoint and the Stripe webhook.
+ * Uses atomic Postgres RPC to prevent race conditions between
+ * concurrent webhook calls and the billing loop.
  */
 async function creditHostingBalance(
   userId: string,
@@ -987,63 +1156,53 @@ async function creditHostingBalance(
   unsuspended_apps: number;
   unsuspended_pages: number;
 }> {
-  // @ts-ignore
-  const Deno = globalThis.Deno;
-  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
-  // Get current balance
-  const getRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=hosting_balance_cents`,
+  // Atomic balance credit via Postgres function (no read-modify-write race)
+  const rpcRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/rpc/credit_hosting_balance`,
     {
-      headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      },
-    }
-  );
-  if (!getRes.ok) throw new Error('Failed to read balance');
-  const rows = await getRes.json() as Array<{ hosting_balance_cents: number }>;
-  if (rows.length === 0) throw new Error('User not found');
-
-  const currentBalance = rows[0].hosting_balance_cents ?? 0;
-  const newBalance = currentBalance + amountCents;
-
-  // Update balance
-  const updateRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`,
-    {
-      method: 'PATCH',
+      method: 'POST',
       headers: {
         'apikey': SUPABASE_SERVICE_ROLE_KEY,
         'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
         'Content-Type': 'application/json',
-        'Prefer': 'return=minimal',
       },
-      body: JSON.stringify({ hosting_balance_cents: newBalance }),
+      body: JSON.stringify({
+        p_user_id: userId,
+        p_amount_cents: amountCents,
+      }),
     }
   );
 
-  if (!updateRes.ok) throw new Error('Failed to update balance');
+  if (!rpcRes.ok) {
+    const err = await rpcRes.text();
+    throw new Error(`Failed to credit balance: ${err}`);
+  }
 
-  // If user had suspended content, unsuspend it
+  const rows = await rpcRes.json() as Array<{ old_balance: number; new_balance: number }>;
+  if (!rows || rows.length === 0) throw new Error('User not found');
+
+  const { old_balance, new_balance } = rows[0];
+
+  // If user had suspended content (balance was zero or negative), unsuspend it
   let unsuspended = { apps: 0, pages: 0 };
-  if (currentBalance <= 0) {
+  if (old_balance <= 0) {
     unsuspended = await unsuspendContent(userId);
   }
 
   console.log(
     `[HOSTING] Credited ${amountCents}¢ to user ${userId}: ` +
-    `${currentBalance}¢ → ${newBalance}¢` +
+    `${old_balance}¢ → ${new_balance}¢` +
     (unsuspended.apps + unsuspended.pages > 0
       ? `, unsuspended ${unsuspended.apps} app(s) + ${unsuspended.pages} page(s)`
       : '')
   );
 
   return {
-    previous_balance_cents: currentBalance,
+    previous_balance_cents: old_balance,
     added_cents: amountCents,
-    new_balance_cents: newBalance,
+    new_balance_cents: new_balance,
     unsuspended_apps: unsuspended.apps,
     unsuspended_pages: unsuspended.pages,
   };

@@ -484,6 +484,15 @@ export const MIN_PUBLISH_DEPOSIT_CENTS = 500; // $5.00
 /** Hosting rate for published content. */
 export const HOSTING_RATE_CENTS_PER_MB_PER_HOUR = 0.025;
 
+/** Default auto top-up threshold (cents). When balance drops below this, auto-charge triggers. */
+export const AUTO_TOPUP_DEFAULT_THRESHOLD_CENTS = 100; // $1.00
+
+/** Default auto top-up charge amount (cents). */
+export const AUTO_TOPUP_DEFAULT_AMOUNT_CENTS = 1000; // $10.00
+
+/** Minimum auto top-up amount (cents). Same as minimum deposit. */
+export const AUTO_TOPUP_MIN_AMOUNT_CENTS = 500; // $5.00
+
 const PLATFORM_LIMITS = {
   max_apps: 10,
   weekly_call_limit: 50_000,
