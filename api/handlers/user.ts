@@ -21,7 +21,66 @@ export async function handleUser(request: Request): Promise<Response> {
   const path = url.pathname;
   const method = request.method;
 
-  // All user endpoints require authentication
+  // ============================================
+  // UNAUTHENTICATED ROUTES (webhooks)
+  // ============================================
+
+  // POST /api/webhooks/stripe — handle Stripe webhook events
+  // Verified by webhook signature, no auth token needed.
+  if (path === '/api/webhooks/stripe' && method === 'POST') {
+    try {
+      // @ts-ignore
+      const Deno = globalThis.Deno;
+      const STRIPE_WEBHOOK_SECRET = Deno.env.get('STRIPE_WEBHOOK_SECRET') || '';
+
+      if (!STRIPE_WEBHOOK_SECRET) {
+        return error('Stripe webhooks not configured', 503);
+      }
+
+      const rawBody = await request.text();
+      const signature = request.headers.get('stripe-signature') || '';
+
+      // Verify webhook signature
+      const verified = await verifyStripeSignature(rawBody, signature, STRIPE_WEBHOOK_SECRET);
+      if (!verified) {
+        return error('Invalid webhook signature', 400);
+      }
+
+      const event = JSON.parse(rawBody) as {
+        type: string;
+        data: {
+          object: {
+            metadata?: { user_id?: string; amount_cents?: string; type?: string };
+            payment_status?: string;
+          };
+        };
+      };
+
+      // Handle checkout.session.completed
+      if (event.type === 'checkout.session.completed') {
+        const session = event.data.object;
+        const eventUserId = session.metadata?.user_id;
+        const amountCents = parseInt(session.metadata?.amount_cents || '0', 10);
+        const depositType = session.metadata?.type;
+
+        if (eventUserId && amountCents > 0 && depositType === 'hosting_deposit' && session.payment_status === 'paid') {
+          console.log(`[STRIPE] Crediting ${amountCents} cents to user ${eventUserId}`);
+          await creditHostingBalance(eventUserId, amountCents);
+        }
+      }
+
+      return json({ received: true });
+    } catch (err) {
+      console.error('[STRIPE] Webhook error:', err);
+      return error('Webhook processing failed', 500);
+    }
+  }
+
+  // ============================================
+  // AUTHENTICATED ROUTES
+  // ============================================
+
+  // All remaining user endpoints require authentication
   let userId: string;
   try {
     const auth = await authenticate(request);
@@ -820,7 +879,7 @@ export async function handleUser(request: Request): Promise<Response> {
 
   // POST /api/user/hosting/topup — add funds to hosting balance
   // Body: { amount_cents: number }
-  // Initially admin-triggered; Stripe integration in a later phase.
+  // Used internally after Stripe confirms payment. Can also be admin-triggered.
   if (path === '/api/user/hosting/topup' && method === 'POST') {
     try {
       const user = await authenticate(request);
@@ -831,57 +890,75 @@ export async function handleUser(request: Request): Promise<Response> {
         return error('amount_cents must be a positive number', 400);
       }
 
-      // @ts-ignore
-      const Deno = globalThis.Deno;
-      const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-      const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      const result = await creditHostingBalance(user.id, amountCents);
+      return json(result);
+    } catch (err) {
+      if (err instanceof SyntaxError) return error('Invalid JSON body', 400);
+      return error(err instanceof Error ? err.message : 'Unauthorized', 401);
+    }
+  }
 
-      // Get current balance
-      const getRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=hosting_balance_cents`,
-        {
-          headers: {
-            'apikey': SUPABASE_SERVICE_ROLE_KEY,
-            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          },
-        }
-      );
-      if (!getRes.ok) return error('Failed to read balance', 500);
-      const rows = await getRes.json() as Array<{ hosting_balance_cents: number }>;
-      if (rows.length === 0) return error('User not found', 404);
+  // POST /api/user/hosting/checkout — create a Stripe Checkout session for hosting deposit
+  // Body: { amount_cents: number } (minimum 500 = $5.00)
+  // Returns: { checkout_url: string } or error if Stripe not configured
+  if (path === '/api/user/hosting/checkout' && method === 'POST') {
+    try {
+      const user = await authenticate(request);
+      const body = await request.json() as { amount_cents?: number };
+      const amountCents = body.amount_cents;
 
-      const currentBalance = rows[0].hosting_balance_cents ?? 0;
-      const newBalance = currentBalance + amountCents;
-
-      // Update balance
-      const updateRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}`,
-        {
-          method: 'PATCH',
-          headers: {
-            'apikey': SUPABASE_SERVICE_ROLE_KEY,
-            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=minimal',
-          },
-          body: JSON.stringify({ hosting_balance_cents: newBalance }),
-        }
-      );
-
-      if (!updateRes.ok) return error('Failed to update balance', 500);
-
-      // If user had suspended content, unsuspend it
-      let unsuspended = { apps: 0, pages: 0 };
-      if (currentBalance <= 0) {
-        unsuspended = await unsuspendContent(user.id);
+      if (!amountCents || typeof amountCents !== 'number' || amountCents < 500) {
+        return error('amount_cents must be at least 500 ($5.00 minimum deposit)', 400);
       }
 
+      // @ts-ignore
+      const Deno = globalThis.Deno;
+      const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY') || '';
+      const BASE_URL = Deno.env.get('BASE_URL') || '';
+
+      if (!STRIPE_SECRET_KEY) {
+        return error(
+          'Stripe is not yet configured. Hosting deposits will be available soon. ' +
+          'In the meantime, contact support to add funds manually.',
+          503
+        );
+      }
+
+      // Create Stripe Checkout Session via API (no SDK needed)
+      const checkoutRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${STRIPE_SECRET_KEY}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          'mode': 'payment',
+          'payment_method_types[0]': 'card',
+          'line_items[0][price_data][currency]': 'usd',
+          'line_items[0][price_data][product_data][name]': 'Ultralight Hosting Deposit',
+          'line_items[0][price_data][product_data][description]': `$${(amountCents / 100).toFixed(2)} hosting credit for publishing apps`,
+          'line_items[0][price_data][unit_amount]': String(amountCents),
+          'line_items[0][quantity]': '1',
+          'metadata[user_id]': user.id,
+          'metadata[amount_cents]': String(amountCents),
+          'metadata[type]': 'hosting_deposit',
+          'success_url': `${BASE_URL}/settings?topup=success&amount=${amountCents}`,
+          'cancel_url': `${BASE_URL}/settings?topup=cancelled`,
+        }).toString(),
+      });
+
+      if (!checkoutRes.ok) {
+        const stripeErr = await checkoutRes.text();
+        console.error('[STRIPE] Checkout session creation failed:', stripeErr);
+        return error('Failed to create checkout session', 500);
+      }
+
+      const session = await checkoutRes.json() as { url: string; id: string };
+
       return json({
-        previous_balance_cents: currentBalance,
-        added_cents: amountCents,
-        new_balance_cents: newBalance,
-        unsuspended_apps: unsuspended.apps,
-        unsuspended_pages: unsuspended.pages,
+        checkout_url: session.url,
+        session_id: session.id,
+        amount_cents: amountCents,
       });
     } catch (err) {
       if (err instanceof SyntaxError) return error('Invalid JSON body', 400);
@@ -890,6 +967,137 @@ export async function handleUser(request: Request): Promise<Response> {
   }
 
   return error('User endpoint not found', 404);
+}
+
+// ============================================
+// Hosting balance helper
+// ============================================
+
+/**
+ * Credit a user's hosting balance and unsuspend content if needed.
+ * Used by both the admin topup endpoint and the Stripe webhook.
+ */
+async function creditHostingBalance(
+  userId: string,
+  amountCents: number
+): Promise<{
+  previous_balance_cents: number;
+  added_cents: number;
+  new_balance_cents: number;
+  unsuspended_apps: number;
+  unsuspended_pages: number;
+}> {
+  // @ts-ignore
+  const Deno = globalThis.Deno;
+  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+
+  // Get current balance
+  const getRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=hosting_balance_cents`,
+    {
+      headers: {
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+    }
+  );
+  if (!getRes.ok) throw new Error('Failed to read balance');
+  const rows = await getRes.json() as Array<{ hosting_balance_cents: number }>;
+  if (rows.length === 0) throw new Error('User not found');
+
+  const currentBalance = rows[0].hosting_balance_cents ?? 0;
+  const newBalance = currentBalance + amountCents;
+
+  // Update balance
+  const updateRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`,
+    {
+      method: 'PATCH',
+      headers: {
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal',
+      },
+      body: JSON.stringify({ hosting_balance_cents: newBalance }),
+    }
+  );
+
+  if (!updateRes.ok) throw new Error('Failed to update balance');
+
+  // If user had suspended content, unsuspend it
+  let unsuspended = { apps: 0, pages: 0 };
+  if (currentBalance <= 0) {
+    unsuspended = await unsuspendContent(userId);
+  }
+
+  console.log(
+    `[HOSTING] Credited ${amountCents}¢ to user ${userId}: ` +
+    `${currentBalance}¢ → ${newBalance}¢` +
+    (unsuspended.apps + unsuspended.pages > 0
+      ? `, unsuspended ${unsuspended.apps} app(s) + ${unsuspended.pages} page(s)`
+      : '')
+  );
+
+  return {
+    previous_balance_cents: currentBalance,
+    added_cents: amountCents,
+    new_balance_cents: newBalance,
+    unsuspended_apps: unsuspended.apps,
+    unsuspended_pages: unsuspended.pages,
+  };
+}
+
+// ============================================
+// Stripe webhook signature verification
+// ============================================
+
+/**
+ * Verify a Stripe webhook signature using HMAC-SHA256.
+ * This avoids needing the Stripe SDK — just raw crypto.
+ */
+async function verifyStripeSignature(
+  payload: string,
+  signatureHeader: string,
+  secret: string
+): Promise<boolean> {
+  try {
+    // Parse the signature header: t=timestamp,v1=signature
+    const parts = signatureHeader.split(',').reduce((acc, part) => {
+      const [key, value] = part.split('=');
+      acc[key] = value;
+      return acc;
+    }, {} as Record<string, string>);
+
+    const timestamp = parts['t'];
+    const expectedSig = parts['v1'];
+
+    if (!timestamp || !expectedSig) return false;
+
+    // Check timestamp tolerance (5 minutes)
+    const now = Math.floor(Date.now() / 1000);
+    if (Math.abs(now - parseInt(timestamp, 10)) > 300) return false;
+
+    // Compute expected signature
+    const signedPayload = `${timestamp}.${payload}`;
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+    const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(signedPayload));
+    const computedSig = Array.from(new Uint8Array(sig))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+
+    return computedSig === expectedSig;
+  } catch (err) {
+    console.error('[STRIPE] Signature verification failed:', err);
+    return false;
+  }
 }
 
 // ============================================

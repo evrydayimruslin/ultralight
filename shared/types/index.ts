@@ -468,36 +468,48 @@ export interface MemoryShare {
 // ============================================
 // TIER LIMITS
 // ============================================
-// Single tier — all features unlocked for everyone.
-// Monetization layer deprecated. Tier field retained for backward compatibility.
+// Platform Limits & Billing Constants
+//
+// No tiers. Everyone gets the same generous limits for development.
+// Publishing (going live) is the only gate: deposit $5, then pay-as-you-go.
+// All published content costs $0.025/MB/hr from the first byte.
+// The Tier type is retained for backward compatibility with the DB column
+// but all values map to the same PLATFORM_LIMITS.
 
 export type Tier = 'free' | 'fun' | 'pro' | 'scale' | 'enterprise';
 
-const DEFAULT_LIMITS = {
-  max_apps: Infinity,
-  weekly_call_limit: 10_000_000,
+/** Minimum hosting balance (in cents) required to publish an app. */
+export const MIN_PUBLISH_DEPOSIT_CENTS = 500; // $5.00
+
+/** Hosting rate for published content. */
+export const HOSTING_RATE_CENTS_PER_MB_PER_HOUR = 0.025;
+
+const PLATFORM_LIMITS = {
+  max_apps: 10,
+  weekly_call_limit: 50_000,
   overage_cost_per_100k_cents: 0,
-  can_publish: true,
+  can_publish: true,                     // gated by deposit, not tier
   price_cents_monthly: 0,
   daily_ai_credit_cents: 200,
   monthly_ai_credit_cents: 6_000,
   max_file_size_mb: 10,
   max_files_per_app: 50,
-  max_storage_bytes: 107_374_182_400,   // 100 GB
-  execution_timeout_ms: 120_000,        // 2min
+  max_storage_bytes: 26_214_400,         // 25 MB
+  execution_timeout_ms: 120_000,         // 2min
   log_retention_days: 90,
   allowed_visibility: ['private', 'unlisted', 'public'] as const,
 } as const;
 
+// All tier keys map to the same limits — no differentiation.
 export const TIER_LIMITS = {
-  free: DEFAULT_LIMITS,
-  fun: DEFAULT_LIMITS,
-  pro: DEFAULT_LIMITS,
-  scale: DEFAULT_LIMITS,
-  enterprise: DEFAULT_LIMITS,
+  free: PLATFORM_LIMITS,
+  fun: PLATFORM_LIMITS,
+  pro: PLATFORM_LIMITS,
+  scale: PLATFORM_LIMITS,
+  enterprise: PLATFORM_LIMITS,
 } as const;
 
-/** @deprecated Monetization layer removed — always returns true. */
+/** @deprecated No tiers — always returns true for backward compatibility. */
 export function isProTier(_tier: Tier | string): boolean {
   return true;
 }

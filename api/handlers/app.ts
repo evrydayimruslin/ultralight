@@ -165,6 +165,11 @@ export function createApp() {
         return handleHomepageApi(request);
       }
 
+      // Stripe webhook route — unauthenticated, verified by signature
+      if (path === '/api/webhooks/stripe' && method === 'POST') {
+        return handleUser(request);
+      }
+
       // User API routes - handle all /api/user/* paths (must be before /api/apps)
       if (path.startsWith('/api/user')) {
         return handleUser(request);

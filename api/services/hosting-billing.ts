@@ -1,5 +1,6 @@
 // Hosting Billing Service
-// Charges $0.025/MB/hour for published apps + markdown pages.
+// Charges $0.025/MB/hour for ALL published apps + markdown pages.
+// No free tier — every published MB costs from the first byte.
 // Users hold a hosting_balance_cents that drains continuously.
 // Balance → 0 = content goes offline (hosting_suspended = true).
 // Runs hourly via setInterval (same pattern as subscription-expiry.ts).
@@ -7,7 +8,9 @@
 // @ts-ignore
 const Deno = globalThis.Deno;
 
-const RATE_CENTS_PER_MB_PER_HOUR = 0.025;
+import { HOSTING_RATE_CENTS_PER_MB_PER_HOUR } from '../../shared/types/index.ts';
+
+const RATE_CENTS_PER_MB_PER_HOUR = HOSTING_RATE_CENTS_PER_MB_PER_HOUR;
 
 interface BillingUser {
   id: string;
@@ -132,7 +135,7 @@ export async function processHostingBilling(): Promise<BillingResult> {
         // Skip if less than 1 minute since last bill (prevent double-billing)
         if (hoursSinceLastBilled < 1 / 60) continue;
 
-        // 2d. Calculate cost
+        // 2d. Calculate cost — every published MB costs from the first byte
         const totalMb = totalBytes / (1024 * 1024);
         const costCents = totalMb * RATE_CENTS_PER_MB_PER_HOUR * hoursSinceLastBilled;
 

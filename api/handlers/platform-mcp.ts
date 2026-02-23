@@ -20,7 +20,8 @@ import { checkRateLimit } from '../services/ratelimit.ts';
 import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
 import { getPermissionsForUser } from './user.ts';
 import { getPermissionCache } from '../services/permission-cache.ts';
-import { type Tier } from '../../shared/types/index.ts';
+import { type Tier, MIN_PUBLISH_DEPOSIT_CENTS } from '../../shared/types/index.ts';
+import { checkPublishDeposit } from '../services/tier-enforcement.ts';
 import { handleUploadFiles, type UploadFile } from './upload.ts';
 import { validateAndParseSkillsMd } from '../services/docgen.ts';
 import { createEmbeddingService } from '../services/embedding.ts';
@@ -2625,6 +2626,14 @@ async function executeSetVisibility(
 
   // Map 'published' → 'public' for DB storage (DB uses 'public')
   const dbVisibility = visibility === 'published' ? 'public' : visibility;
+
+  // Gate: publishing requires minimum deposit
+  if (dbVisibility !== 'private') {
+    const depositErr = await checkPublishDeposit(userId);
+    if (depositErr) {
+      throw new ToolError(INVALID_PARAMS, depositErr);
+    }
+  }
 
   const app = await resolveApp(userId, appIdOrSlug);
   const previousVisibility = app.visibility;

@@ -30,6 +30,9 @@ export interface McpCallLogEntry {
   sessionId?: string;
   sequenceNumber?: number;
   userQuery?: string;
+  // Cost telemetry fields — for per-call pricing calibration
+  responseSizeBytes?: number;
+  executionCostEstimateCents?: number;
 }
 
 /**
@@ -91,6 +94,9 @@ async function _insertLog(entry: McpCallLogEntry): Promise<void> {
         session_id: entry.sessionId || null,
         sequence_number: entry.sequenceNumber ?? null,
         user_query: entry.userQuery || null,
+        // Cost telemetry
+        response_size_bytes: entry.responseSizeBytes ?? null,
+        execution_cost_estimate_cents: entry.executionCostEstimateCents ?? null,
       }),
     }
   );

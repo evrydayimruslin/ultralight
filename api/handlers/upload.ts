@@ -16,13 +16,15 @@ import { bundleCode, quickBundle } from '../services/bundler.ts';
 import { authenticate } from './auth.ts';
 import {
   checkVisibilityAllowed,
+  checkPublishDeposit,
+  checkAppLimit,
   getUserTier,
 } from '../services/tier-enforcement.ts';
 import {
   generateSkillsForVersion,
   rebuildUserLibrary,
 } from '../services/library.ts';
-import { recordUploadStorage } from '../services/storage-quota.ts';
+import { checkStorageQuota, recordUploadStorage, formatBytes } from '../services/storage-quota.ts';
 
 // Export file type for programmatic uploads
 export interface UploadFile {
@@ -337,6 +339,22 @@ export async function handleUpload(request: Request): Promise<Response> {
           content: new TextEncoder().encode(f.content),
           contentType: getContentType(f.name),
         }));
+
+    // Check app count limit (10 apps max)
+    const appLimitErr = await checkAppLimit(userId);
+    if (appLimitErr) {
+      throw new Error(appLimitErr);
+    }
+
+    // Check storage quota before uploading (25MB platform limit)
+    const totalUploadBytes = filesToUpload.reduce((sum, f) => sum + f.content.byteLength, 0);
+    const quotaCheck = await checkStorageQuota(userId, totalUploadBytes);
+    if (!quotaCheck.allowed) {
+      throw new Error(
+        `Storage limit exceeded. Using ${formatBytes(quotaCheck.used_bytes)} of ${formatBytes(quotaCheck.limit_bytes)}. ` +
+        `This upload requires ${formatBytes(totalUploadBytes)}, but only ${formatBytes(quotaCheck.remaining_bytes)} remaining.`
+      );
+    }
 
     // Upload files to R2
     log('info', 'Uploading to storage...');
@@ -927,19 +945,40 @@ export async function handleUploadFiles(
         contentType: getContentType(f.name),
       }));
 
+  // Check app count limit (10 apps max)
+  const appCountErr = await checkAppLimit(userId);
+  if (appCountErr) {
+    throw new Error(appCountErr);
+  }
+
+  // Check storage quota before uploading (25MB platform limit)
+  const totalUploadSizeBytes = filesToUpload.reduce((sum, f) => sum + f.content.byteLength, 0);
+  const uploadQuotaCheck = await checkStorageQuota(userId, totalUploadSizeBytes);
+  if (!uploadQuotaCheck.allowed) {
+    throw new Error(
+      `Storage limit exceeded. Using ${formatBytes(uploadQuotaCheck.used_bytes)} of ${formatBytes(uploadQuotaCheck.limit_bytes)}. ` +
+      `This upload requires ${formatBytes(totalUploadSizeBytes)}, but only ${formatBytes(uploadQuotaCheck.remaining_bytes)} remaining.`
+    );
+  }
+
   // Upload files to R2
   log('info', 'Uploading to storage...');
   const storageKey = `apps/${appId}/${version}/`;
   await r2Service.uploadFiles(storageKey, filesToUpload);
   log('success', 'Upload complete');
 
-  // Gate visibility by tier before creating app
+  // Gate visibility by deposit before creating app
   const requestedVisibility = options.visibility || 'private';
   if (requestedVisibility !== 'private') {
-    const userTier = await getUserTier(userId);
-    const visibilityErr = checkVisibilityAllowed(userTier, requestedVisibility);
+    const uploaderTier = await getUserTier(userId);
+    const visibilityErr = checkVisibilityAllowed(uploaderTier, requestedVisibility);
     if (visibilityErr) {
       throw new Error(visibilityErr);
+    }
+    // Require minimum deposit to publish
+    const depositErr = await checkPublishDeposit(userId);
+    if (depositErr) {
+      throw new Error(depositErr);
     }
   }
 

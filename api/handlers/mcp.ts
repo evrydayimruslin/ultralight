@@ -1381,6 +1381,16 @@ async function executeAppFunction(
     );
     const execDuration = Date.now() - execStart;
 
+    // Measure response size for cost telemetry
+    const resultJson = JSON.stringify(result.success ? result.result : result.error);
+    const responseSizeBytes = new TextEncoder().encode(resultJson).byteLength;
+
+    // Estimate execution cost (WfP pricing: $0.30/M requests + $0.02/M CPU-ms)
+    // This is a rough estimate — actual WfP costs will be measured post-migration
+    const requestCost = 0.0000003;        // $0.30 per million requests
+    const cpuCost = execDuration * 0.00000002; // $0.02 per million CPU-ms
+    const executionCostEstimateCents = (requestCost + cpuCost) * 100;
+
     // Log the call (fire-and-forget)
     const { logMcpCall } = await import('../services/call-logger.ts');
     logMcpCall({
@@ -1400,6 +1410,8 @@ async function executeAppFunction(
       sessionId: meta?.sessionId,
       sequenceNumber: nextSequenceNumber(meta?.sessionId),
       userQuery: meta?.userQuery,
+      responseSizeBytes,
+      executionCostEstimateCents,
     });
 
     if (result.success) {

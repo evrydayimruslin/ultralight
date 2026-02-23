@@ -1,9 +1,15 @@
 // Storage Quota Service
 // Tracks storage usage per app and per user via Supabase RPC functions.
 // Used by the hosting billing system to calculate hosting costs.
+// Enforces a platform-wide 25MB storage limit per user.
 
 // @ts-ignore
 const Deno = globalThis.Deno;
+
+import { TIER_LIMITS } from '../../shared/types/index.ts';
+
+/** Platform-wide storage limit — same for everyone. */
+const STORAGE_LIMIT_BYTES = TIER_LIMITS.free.max_storage_bytes; // 25 MB
 
 export interface StorageQuotaResult {
   allowed: boolean;
@@ -12,12 +18,54 @@ export interface StorageQuotaResult {
   remaining_bytes: number;
 }
 
-/** @deprecated Storage quota checks removed. Always returns allowed. */
+/**
+ * Check whether a user has enough storage quota for an upload.
+ * Queries users.storage_used_bytes and compares against platform limit (25MB).
+ * Falls back to allowing the upload if the DB query fails (fail-open).
+ */
 export async function checkStorageQuota(
-  _userId: string,
-  _uploadSizeBytes: number
+  userId: string,
+  uploadSizeBytes: number
 ): Promise<StorageQuotaResult> {
-  return { allowed: true, used_bytes: 0, limit_bytes: 0, remaining_bytes: 0 };
+  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    // Can't check — fail open
+    return { allowed: true, used_bytes: 0, limit_bytes: 0, remaining_bytes: 0 };
+  }
+
+  try {
+    // Query current storage usage from users table
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=storage_used_bytes`,
+      {
+        headers: {
+          'apikey': SUPABASE_SERVICE_ROLE_KEY,
+          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        },
+      }
+    );
+
+    if (!res.ok) {
+      console.warn('[STORAGE] Failed to query storage_used_bytes, allowing upload:', await res.text());
+      return { allowed: true, used_bytes: 0, limit_bytes: STORAGE_LIMIT_BYTES, remaining_bytes: STORAGE_LIMIT_BYTES };
+    }
+
+    const rows = await res.json() as Array<{ storage_used_bytes: number | null }>;
+    const usedBytes = rows[0]?.storage_used_bytes ?? 0;
+    const remaining = Math.max(0, STORAGE_LIMIT_BYTES - usedBytes);
+
+    return {
+      allowed: (usedBytes + uploadSizeBytes) <= STORAGE_LIMIT_BYTES,
+      used_bytes: usedBytes,
+      limit_bytes: STORAGE_LIMIT_BYTES,
+      remaining_bytes: remaining,
+    };
+  } catch (err) {
+    console.error('[STORAGE] Error checking storage quota, allowing upload:', err);
+    return { allowed: true, used_bytes: 0, limit_bytes: STORAGE_LIMIT_BYTES, remaining_bytes: STORAGE_LIMIT_BYTES };
+  }
 }
 
 /**

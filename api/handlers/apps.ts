@@ -31,6 +31,7 @@ import {
 } from '../services/envvars.ts';
 import {
   checkVisibilityAllowed,
+  checkPublishDeposit,
   getUserTier,
 } from '../services/tier-enforcement.ts';
 
@@ -412,7 +413,7 @@ async function handleUpdateApp(request: Request, appId: string): Promise<Respons
       return error('No valid fields to update', 400);
     }
 
-    // Gate visibility changes by tier
+    // Gate visibility changes by tier and deposit
     if ('visibility' in filteredUpdates) {
       const userTier = await getUserTier(user.id);
       const visibilityErr = checkVisibilityAllowed(
@@ -421,6 +422,13 @@ async function handleUpdateApp(request: Request, appId: string): Promise<Respons
       );
       if (visibilityErr) {
         return error(visibilityErr, 403);
+      }
+      // Require minimum deposit to publish
+      if (filteredUpdates.visibility !== 'private') {
+        const depositErr = await checkPublishDeposit(user.id);
+        if (depositErr) {
+          return error(depositErr, 402); // 402 Payment Required
+        }
       }
     }
 
@@ -1252,15 +1260,16 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
       return error('No draft to publish', 400);
     }
 
-    // Gate: free tier cannot publish non-private apps
+    // Gate: check tier visibility and deposit for non-private apps
     if (app.visibility !== 'private') {
       const userTier = await getUserTier(user.id);
       const visibilityErr = checkVisibilityAllowed(userTier, app.visibility as 'private' | 'unlisted' | 'public');
       if (visibilityErr) {
-        return error(
-          `Cannot publish: ${visibilityErr}`,
-          403
-        );
+        return error(`Cannot publish: ${visibilityErr}`, 403);
+      }
+      const depositErr = await checkPublishDeposit(user.id);
+      if (depositErr) {
+        return error(depositErr, 402); // 402 Payment Required
       }
     }
 
