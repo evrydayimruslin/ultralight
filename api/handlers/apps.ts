@@ -2178,11 +2178,13 @@ async function handleGetEarnings(request: Request, appId: string): Promise<Respo
 }
 
 // ============================================
-// HEALTH / AUTO-HEAL HANDLERS
+// HEALTH MONITORING HANDLERS
 // ============================================
 
 /**
- * Get health status and healing history for an app (owner only)
+ * Get health status and detected issues for an app (owner only).
+ * Failures are detected automatically every 30 min.
+ * Agents fix issues via ul.health + ul.upload.
  * GET /api/apps/:appId/health
  */
 async function handleGetHealth(request: Request, appId: string): Promise<Response> {
@@ -2238,7 +2240,6 @@ async function handleGetHealth(request: Request, appId: string): Promise<Respons
     return json({
       health_status: (app as Record<string, unknown>).health_status || 'healthy',
       auto_heal_enabled: (app as Record<string, unknown>).auto_heal_enabled !== false,
-      last_healed_at: (app as Record<string, unknown>).last_healed_at || null,
       function_health: functionHealth,
       events,
     });
@@ -2253,7 +2254,7 @@ async function handleGetHealth(request: Request, appId: string): Promise<Respons
 }
 
 /**
- * Toggle auto-heal for an app (owner only)
+ * Toggle health monitoring for an app (owner only)
  * PATCH /api/apps/:appId/health
  * Body: { auto_heal_enabled: boolean }
  */

@@ -117,10 +117,10 @@ export interface App {
   pricing_config: AppPricingConfig | null;
   // Hosting billing
   hosting_suspended: boolean;
-  // Auto-healing
-  health_status: string;         // 'healthy' | 'failing' | 'healing' | 'healed'
-  last_healed_at: string | null;
-  auto_heal_enabled: boolean;
+  // Health monitoring
+  health_status: string;         // 'healthy' | 'unhealthy'
+  last_healed_at: string | null; // kept for migration compat
+  auto_heal_enabled: boolean;    // opt-out of health monitoring
   created_at: string;
   updated_at: string;
   deleted_at: string | null;

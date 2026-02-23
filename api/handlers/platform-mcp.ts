@@ -1,7 +1,7 @@
 // Platform MCP Handler — v3
 // Implements JSON-RPC 2.0 for the ul.* tool namespace
 // Endpoint: POST /mcp/platform
-// 29 tools:
+// 30 tools:
 //   upload, download, test,
 //   set.version, set.visibility, set.download, set.supabase, set.ratelimit,
 //   permissions.grant, permissions.revoke, permissions.list, permissions.export,
@@ -9,7 +9,7 @@
 //   connect, connections,
 //   memory.read, memory.write, memory.recall, memory.query,
 //   markdown.publish, markdown.list, markdown.share,
-//   shortcomings, gaps
+//   shortcomings, gaps, health
 
 import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
@@ -643,6 +643,22 @@ ul.gaps(
   limit?: integer
 )
 -> { gaps: [{ id, title, description, severity, points_value, season, status, created_at }], total, filters }
+\`\`\`
+
+### Health Monitoring
+
+#### ul.health
+
+View health events for your apps. The platform automatically detects failing functions (>50% error rate) every 30 minutes and records events. Use this to check what's broken, read error samples, then fix with \`ul.download\` → fix → \`ul.test\` → \`ul.upload\`. Resolve events after fixing.
+
+\`\`\`
+ul.health(
+  app_id?: string,           // Omit to check all your apps
+  status?: "detected" | "acknowledged" | "resolved" | "all",
+  resolve_event_id?: string, // Mark event as resolved after fixing
+  limit?: number
+)
+-> { events: [{ event_id, app_id, app_name, function_name, status, error_rate, common_error, error_samples, detected_at }], total, tip }
 \`\`\`
 
 ### Logs & Connections
@@ -1588,6 +1604,40 @@ const PLATFORM_TOOLS: MCPTool[] = [
       },
     },
   },
+
+  // ── Health Monitoring ──────────────────────
+  {
+    name: 'ul.health',
+    title: 'App Health Monitor',
+    description:
+      'View health events and error reports for your apps. ' +
+      'The platform automatically detects failing functions (>50% error rate) and records events. ' +
+      'Use this to check what\'s broken, read error samples, and then fix issues with ul.upload. ' +
+      'You can also dismiss resolved events.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        app_id: {
+          type: 'string',
+          description: 'App ID or slug. Omit to check health across all your apps.',
+        },
+        status: {
+          type: 'string',
+          enum: ['detected', 'acknowledged', 'resolved', 'all'],
+          description: 'Filter events by status. Default: detected (unresolved issues).',
+        },
+        resolve_event_id: {
+          type: 'string',
+          description: 'Mark a specific health event as resolved (pass the event UUID). Use after you\'ve fixed and re-uploaded the app.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max events to return. Default: 20.',
+        },
+      },
+    },
+  },
 ];
 
 // ============================================
@@ -1992,6 +2042,11 @@ async function handleToolsCall(
       // Gaps (Browsing)
       case 'ul.gaps':
         result = await executeGaps(toolArgs);
+        break;
+
+      // Health Monitoring
+      case 'ul.health':
+        result = await executeHealth(userId, toolArgs);
         break;
 
       default:
@@ -2550,6 +2605,169 @@ async function executeGaps(
       season: season || 'current',
       limit: limit,
     },
+  };
+}
+
+// ── ul.health ────────────────────────────────────
+
+async function executeHealth(
+  userId: string,
+  args: Record<string, unknown>
+): Promise<unknown> {
+  const appIdOrSlug = args.app_id as string | undefined;
+  const status = (args.status as string) || 'detected';
+  const resolveEventId = args.resolve_event_id as string | undefined;
+  const limit = Math.min((args.limit as number) || 20, 100);
+
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+  const headers = {
+    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+  };
+
+  // If resolving a specific event, handle that first
+  if (resolveEventId) {
+    // Verify the event belongs to one of the user's apps
+    const eventRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/app_health_events?id=eq.${resolveEventId}&select=id,app_id`,
+      { headers }
+    );
+    if (!eventRes.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to fetch event');
+    const events = await eventRes.json() as Array<{ id: string; app_id: string }>;
+    if (events.length === 0) throw new ToolError(NOT_FOUND, 'Health event not found');
+
+    // Verify ownership
+    const app = await resolveApp(userId, events[0].app_id);
+
+    // Mark as resolved
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/app_health_events?id=eq.${resolveEventId}`,
+      {
+        method: 'PATCH',
+        headers: { ...headers, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+        body: JSON.stringify({
+          status: 'resolved',
+          resolved_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }),
+      }
+    );
+
+    // Check if there are any remaining detected events for this app
+    const remainingRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/app_health_events?app_id=eq.${app.id}&status=eq.detected`,
+      { headers: { ...headers, 'Prefer': 'count=exact' } }
+    );
+    const remaining = parseInt(remainingRes.headers.get('content-range')?.split('/')[1] || '0', 10);
+
+    // If no more detected events, mark app as healthy
+    if (remaining === 0) {
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/apps?id=eq.${app.id}`,
+        {
+          method: 'PATCH',
+          headers: { ...headers, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+          body: JSON.stringify({ health_status: 'healthy' }),
+        }
+      ).catch(() => {});
+    }
+
+    return {
+      resolved: true,
+      event_id: resolveEventId,
+      app_id: app.id,
+      remaining_issues: remaining,
+      message: remaining === 0
+        ? 'Event resolved. App is now healthy — no remaining issues.'
+        : `Event resolved. ${remaining} issue(s) still open.`,
+    };
+  }
+
+  // Fetch health events
+  let appIds: string[] = [];
+
+  if (appIdOrSlug) {
+    // Single app — verify ownership
+    const app = await resolveApp(userId, appIdOrSlug);
+    appIds = [app.id];
+  } else {
+    // All apps owned by user
+    const appsRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${userId}&deleted_at=is.null&select=id`,
+      { headers }
+    );
+    if (appsRes.ok) {
+      const apps = await appsRes.json() as Array<{ id: string }>;
+      appIds = apps.map(a => a.id);
+    }
+  }
+
+  if (appIds.length === 0) {
+    return { events: [], total: 0, message: 'No apps found.' };
+  }
+
+  let query = `${SUPABASE_URL}/rest/v1/app_health_events?app_id=in.(${appIds.join(',')})`;
+  query += `&select=id,app_id,function_name,status,error_rate,total_calls,failed_calls,common_error,error_sample,patch_description,created_at,resolved_at`;
+
+  if (status !== 'all') {
+    query += `&status=eq.${status}`;
+  }
+  query += `&order=created_at.desc&limit=${limit}`;
+
+  const res = await fetch(query, { headers });
+  if (!res.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to fetch health events');
+
+  const rows = await res.json() as Array<{
+    id: string;
+    app_id: string;
+    function_name: string;
+    status: string;
+    error_rate: number;
+    total_calls: number;
+    failed_calls: number;
+    common_error: string;
+    error_sample: unknown;
+    patch_description: string | null;
+    created_at: string;
+    resolved_at: string | null;
+  }>;
+
+  // Also fetch app names for context
+  const appNameMap = new Map<string, string>();
+  if (rows.length > 0) {
+    const uniqueAppIds = [...new Set(rows.map(r => r.app_id))];
+    const namesRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/apps?id=in.(${uniqueAppIds.join(',')})&select=id,name,slug`,
+      { headers }
+    );
+    if (namesRes.ok) {
+      const names = await namesRes.json() as Array<{ id: string; name: string; slug: string }>;
+      for (const n of names) appNameMap.set(n.id, n.name || n.slug);
+    }
+  }
+
+  const events = rows.map(r => ({
+    event_id: r.id,
+    app_id: r.app_id,
+    app_name: appNameMap.get(r.app_id) || r.app_id,
+    function_name: r.function_name,
+    status: r.status,
+    error_rate: `${(r.error_rate * 100).toFixed(0)}%`,
+    total_calls: r.total_calls,
+    failed_calls: r.failed_calls,
+    common_error: r.common_error,
+    error_samples: r.error_sample,
+    detected_at: r.created_at,
+    resolved_at: r.resolved_at,
+  }));
+
+  return {
+    events: events,
+    total: events.length,
+    filter: { status: status, app_id: appIdOrSlug || 'all' },
+    tip: events.length > 0
+      ? 'To fix: download the app source with ul.download, fix the failing function, test with ul.test, then re-upload with ul.upload. Resolve the event with ul.health(resolve_event_id: "EVENT_ID").'
+      : undefined,
   };
 }
 

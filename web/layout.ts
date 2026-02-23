@@ -3139,15 +3139,15 @@ export function getLayoutHTML(options: {
               </div>
               <label style="font-size: 0.75rem; color: var(--text-secondary); display: flex; align-items: center; gap: 0.375rem; cursor: pointer;">
                 <input type="checkbox" id="autoHealToggle" checked onchange="toggleAutoHeal()" style="width: 0.875rem; height: 0.875rem; cursor: pointer;" />
-                Auto-heal
+                Monitor
               </label>
             </div>
             <p style="font-size: 0.6875rem; color: var(--text-tertiary); margin: 0 0 0.75rem;">
-              When enabled, failing functions are automatically diagnosed and patched using AI. Patches are tested before deploying.
+              Ultralight monitors your functions for failures every 30 minutes. When issues are detected, they appear here and are available to agents via <code style="font-size: 0.625rem;">ul.health</code>. Agents can read errors, fix the code, and re-upload.
             </p>
             <!-- Function health -->
             <div id="healthFunctions" style="margin-bottom: 0.75rem;"></div>
-            <!-- Healing history -->
+            <!-- Health events -->
             <div id="healthEvents"></div>
           </div>
         </div>
@@ -5301,20 +5301,16 @@ await hash.sha256('data')</div>
         const status = data.health_status || 'healthy';
         const statusColors = {
           healthy: 'var(--success-color)',
-          failing: 'var(--error-color, #ef4444)',
-          healing: 'var(--warning-color, #f59e0b)',
-          healed: 'var(--accent-primary, #3b82f6)',
+          unhealthy: 'var(--error-color, #ef4444)',
         };
         const statusLabels = {
           healthy: 'Healthy',
-          failing: 'Failing',
-          healing: 'Healing in progress',
-          healed: 'Recently healed',
+          unhealthy: 'Issues detected',
         };
         if (dotEl) dotEl.style.background = statusColors[status] || statusColors.healthy;
         if (textEl) textEl.textContent = statusLabels[status] || 'Healthy';
 
-        // Auto-heal toggle
+        // Monitor toggle
         const toggleEl = document.getElementById('autoHealToggle');
         if (toggleEl) toggleEl.checked = data.auto_heal_enabled !== false;
 
@@ -5339,24 +5335,26 @@ await hash.sha256('data')</div>
           fnEl.innerHTML = '<div style="font-size:0.6875rem;color:var(--text-tertiary);">No recent calls to analyze.</div>';
         }
 
-        // Healing events history
+        // Health events
         const eventsEl = document.getElementById('healthEvents');
         if (eventsEl && data.events && data.events.length > 0) {
-          eventsEl.innerHTML = '<div style="font-size:0.6875rem;color:var(--text-secondary);font-weight:600;margin-bottom:0.375rem;">Healing history</div>' +
-            data.events.slice(0, 5).map(e => {
+          eventsEl.innerHTML = '<div style="font-size:0.6875rem;color:var(--text-secondary);font-weight:600;margin-bottom:0.375rem;">Detected issues</div>' +
+            data.events.slice(0, 8).map(e => {
               const date = new Date(e.created_at);
               const timeStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-              const statusIcon = e.status === 'deployed' ? '&#10003;' : e.status === 'failed' ? '&#10007;' : '&#8987;';
-              const statusColor = e.status === 'deployed' ? 'var(--success-color)' : e.status === 'failed' ? 'var(--error-color, #ef4444)' : 'var(--warning-color, #f59e0b)';
+              const isResolved = e.status === 'resolved';
+              const statusIcon = isResolved ? '&#10003;' : '&#9888;';
+              const statusColor = isResolved ? 'var(--success-color)' : 'var(--error-color, #ef4444)';
               return \`<div style="display:flex;justify-content:space-between;align-items:center;padding:0.25rem 0;border-bottom:1px solid var(--border-color);font-size:0.6875rem;">
-                <div>
+                <div style="min-width:0;overflow:hidden;">
                   <span style="color:\${statusColor};font-weight:700;">\${statusIcon}</span>
                   <span style="font-family:monospace;color:var(--text-primary);margin:0 0.25rem;">\${e.function_name}</span>
-                  <span style="color:var(--text-tertiary);">\${e.patch_description || e.common_error || ''}</span>
+                  <span style="color:var(--text-tertiary);">\${e.common_error ? e.common_error.slice(0, 60) : ''}</span>
                 </div>
                 <span style="color:var(--text-tertiary);white-space:nowrap;margin-left:0.5rem;">\${timeStr}</span>
               </div>\`;
-            }).join('');
+            }).join('') +
+            '<div style="font-size:0.625rem;color:var(--text-tertiary);margin-top:0.5rem;">Agents can fix issues via <code style="font-size:0.5625rem;">ul.health</code> &rarr; <code style="font-size:0.5625rem;">ul.download</code> &rarr; fix &rarr; <code style="font-size:0.5625rem;">ul.upload</code></div>';
         } else if (eventsEl) {
           eventsEl.innerHTML = '';
         }
@@ -5378,7 +5376,7 @@ await hash.sha256('data')</div>
           body: JSON.stringify({ auto_heal_enabled: enabled }),
         });
         if (res.ok) {
-          showToast(enabled ? 'Auto-heal enabled' : 'Auto-heal disabled');
+          showToast(enabled ? 'Health monitoring enabled' : 'Health monitoring disabled');
         } else {
           showToast('Failed to update auto-heal', 'error');
           if (toggleEl) toggleEl.checked = !enabled;
