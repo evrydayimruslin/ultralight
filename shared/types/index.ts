@@ -117,6 +117,10 @@ export interface App {
   pricing_config: AppPricingConfig | null;
   // Hosting billing
   hosting_suspended: boolean;
+  // Auto-healing
+  health_status: string;         // 'healthy' | 'failing' | 'healing' | 'healed'
+  last_healed_at: string | null;
+  auto_heal_enabled: boolean;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -436,6 +440,20 @@ export interface AppPricingConfig {
   default_price_cents: number;
   /** Per-function price overrides. Key = function name, value = cents per call. */
   functions?: Record<string, number>;
+  /** Product catalog for in-app purchases via ultralight.charge(). */
+  products?: AppProduct[];
+}
+
+/** A purchasable product defined by the app owner. */
+export interface AppProduct {
+  /** Unique product ID (e.g., "premium_report", "export_pdf") */
+  id: string;
+  /** Human-readable name */
+  name: string;
+  /** Price in cents */
+  price_cents: number;
+  /** Optional description */
+  description?: string;
 }
 
 /**

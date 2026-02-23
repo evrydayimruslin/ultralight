@@ -20,6 +20,7 @@ export interface UserContext {
 export interface RuntimeConfig {
   appId: string;
   userId: string;
+  ownerId: string;
   executionId: string;
   code: string;
   permissions: string[];
@@ -1520,6 +1521,79 @@ export async function executeInSandbox(
           }
         }
         return result;
+      },
+
+      // PAYMENTS - In-app purchases via internal ledger transfers
+      // Charges the calling user and credits the app owner. Feeless.
+      charge: async (amountCents: number, reason?: string): Promise<{ success: boolean; from_balance: number; to_balance: number }> => {
+        if (!config.user) {
+          throw new Error('Authentication required. User must be signed in to make purchases.');
+        }
+        if (typeof amountCents !== 'number' || amountCents < 1 || amountCents > 100000) {
+          throw new Error('amountCents must be between 1 and 100000');
+        }
+        if (config.userId === config.ownerId) {
+          throw new Error('Cannot charge yourself');
+        }
+
+        capturedConsole.log(`[SDK] charge(${amountCents}, "${reason || 'in_app_purchase'}")`);
+
+        // @ts-ignore
+        const _Deno = globalThis.Deno;
+        const SUPABASE_URL = _Deno?.env?.get('SUPABASE_URL') || '';
+        const SUPABASE_KEY = _Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+
+        if (!SUPABASE_URL || !SUPABASE_KEY) {
+          throw new Error('Payment system unavailable');
+        }
+
+        // Atomic transfer: caller → owner
+        const transferRes = await openFetch(`${SUPABASE_URL}/rest/v1/rpc/transfer_balance`, {
+          method: 'POST',
+          headers: {
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${SUPABASE_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            p_from_user: config.userId,
+            p_to_user: config.ownerId,
+            p_amount_cents: Math.round(amountCents),
+          }),
+        });
+
+        if (!transferRes.ok) {
+          throw new Error('Payment transfer failed');
+        }
+
+        const rows = await transferRes.json() as Array<{ from_new_balance: number; to_new_balance: number }>;
+        if (!rows || rows.length === 0) {
+          throw new Error(`Insufficient balance. This purchase costs ${amountCents}¢. Top up your hosting balance to continue.`);
+        }
+
+        // Log to transfers table (fire-and-forget)
+        openFetch(`${SUPABASE_URL}/rest/v1/transfers`, {
+          method: 'POST',
+          headers: {
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${SUPABASE_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal',
+          },
+          body: JSON.stringify({
+            from_user_id: config.userId,
+            to_user_id: config.ownerId,
+            amount_cents: Math.round(amountCents),
+            reason: reason || 'in_app_purchase',
+            app_id: config.appId,
+          }),
+        }).catch(() => {});
+
+        return {
+          success: true,
+          from_balance: rows[0].from_new_balance,
+          to_balance: rows[0].to_new_balance,
+        };
       },
 
     };

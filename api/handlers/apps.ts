@@ -18,7 +18,7 @@ import {
   isEmbeddingAvailable,
   storeAppEmbedding
 } from '../services/embedding.ts';
-import type { GenerationResult, GenerationError } from '../../shared/types/index.ts';
+import type { GenerationResult, GenerationError, AppPricingConfig } from '../../shared/types/index.ts';
 import {
   validateEnvVarKey,
   validateEnvVarValue,
@@ -190,6 +190,21 @@ export async function handleApps(request: Request): Promise<Response> {
     // DELETE /api/apps/:appId/supabase - Remove Supabase configuration
     if (subPath === '/supabase' && method === 'DELETE') {
       return handleDeleteSupabaseConfig(request, appId);
+    }
+
+    // GET /api/apps/:appId/earnings - Get app earnings & revenue data
+    if (subPath === '/earnings' && method === 'GET') {
+      return handleGetEarnings(request, appId);
+    }
+
+    // GET /api/apps/:appId/health - Get health events & auto-heal history
+    if (subPath === '/health' && method === 'GET') {
+      return handleGetHealth(request, appId);
+    }
+
+    // PATCH /api/apps/:appId/health - Toggle auto-heal on/off
+    if (subPath === '/health' && method === 'PATCH') {
+      return handleUpdateHealth(request, appId);
     }
   }
 
@@ -983,6 +998,7 @@ async function handleGenerateDocs(request: Request, appId: string): Promise<Resp
         skills_md = generateSkillsMd(app.name || app.slug, parseResult, {
           includeExamples: true,
           includePermissions: true,
+          pricingConfig: (app as Record<string, unknown>).pricing_config as AppPricingConfig | undefined,
         });
       } catch (genErr) {
         errors.push({
@@ -1370,7 +1386,9 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
 
         if (code) {
           const parseResult = parseTypeScript(code, 'index.ts');
-          const skills_md = generateSkillsMd(app.name || app.slug, parseResult);
+          const skills_md = generateSkillsMd(app.name || app.slug, parseResult, {
+            pricingConfig: (app as Record<string, unknown>).pricing_config as AppPricingConfig | undefined,
+          });
           const skills_parsed = toSkillsParsed(parseResult);
           const embedding_text = generateEmbeddingText(app.name || app.slug, app.description, skills_parsed);
 
@@ -2001,5 +2019,270 @@ async function handleDeleteSupabaseConfig(request: Request, appId: string): Prom
     }
     console.error('Failed to delete Supabase config:', err);
     return error('Failed to delete Supabase configuration', 500);
+  }
+}
+
+// ============================================
+// EARNINGS / REVENUE HANDLERS
+// ============================================
+
+/**
+ * Get earnings data for an app (owner only)
+ * GET /api/apps/:appId/earnings?period=7d|30d|90d|all
+ *
+ * Returns:
+ * - total_earned_cents: lifetime earnings
+ * - period_earned_cents: earnings in the requested period
+ * - total_transfers: count of paid calls
+ * - daily: array of { date, earned_cents, transfer_count } for charting
+ * - by_function: array of { function_name, earned_cents, call_count } breakdown
+ * - recent: last 20 transfers
+ */
+async function handleGetEarnings(request: Request, appId: string): Promise<Response> {
+  try {
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+
+    const app = await appsService.findById(appId);
+    if (!app) return error('App not found', 404);
+    if (app.owner_id !== user.id) return error('Unauthorized', 403);
+
+    // @ts-ignore
+    const Deno = globalThis.Deno;
+    const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+    const headers = {
+      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    };
+
+    const url = new URL(request.url);
+    const period = url.searchParams.get('period') || '30d';
+
+    // Calculate date cutoff for period
+    let periodDays = 30;
+    if (period === '7d') periodDays = 7;
+    else if (period === '90d') periodDays = 90;
+    else if (period === 'all') periodDays = 3650; // ~10 years
+
+    const cutoff = new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000).toISOString();
+
+    // Fetch all transfers to this app within the period
+    // (and also lifetime total for the summary)
+    const [periodRes, lifetimeRes, recentRes] = await Promise.all([
+      // Period transfers (for daily chart + by-function breakdown)
+      fetch(
+        `${SUPABASE_URL}/rest/v1/transfers?app_id=eq.${app.id}&to_user_id=eq.${user.id}&created_at=gte.${cutoff}&select=amount_cents,function_name,reason,created_at&order=created_at.asc&limit=10000`,
+        { headers }
+      ),
+      // Lifetime aggregate: just count and sum
+      fetch(
+        `${SUPABASE_URL}/rest/v1/transfers?app_id=eq.${app.id}&to_user_id=eq.${user.id}&select=amount_cents`,
+        { headers: { ...headers, 'Prefer': 'count=exact' } }
+      ),
+      // Recent transfers (last 20)
+      fetch(
+        `${SUPABASE_URL}/rest/v1/transfers?app_id=eq.${app.id}&to_user_id=eq.${user.id}&select=amount_cents,function_name,reason,from_user_id,created_at&order=created_at.desc&limit=20`,
+        { headers }
+      ),
+    ]);
+
+    if (!periodRes.ok || !lifetimeRes.ok || !recentRes.ok) {
+      throw new Error('Failed to query transfers');
+    }
+
+    const periodTransfers = await periodRes.json() as Array<{
+      amount_cents: number;
+      function_name: string | null;
+      reason: string;
+      created_at: string;
+    }>;
+
+    const lifetimeTransfers = await lifetimeRes.json() as Array<{ amount_cents: number }>;
+    const lifetimeCount = parseInt(lifetimeRes.headers.get('content-range')?.split('/')[1] || '0', 10);
+
+    const recentTransfers = await recentRes.json() as Array<{
+      amount_cents: number;
+      function_name: string | null;
+      reason: string;
+      from_user_id: string;
+      created_at: string;
+    }>;
+
+    // Calculate lifetime total
+    const totalEarnedCents = lifetimeTransfers.reduce((sum, t) => sum + t.amount_cents, 0);
+
+    // Calculate period total
+    const periodEarnedCents = periodTransfers.reduce((sum, t) => sum + t.amount_cents, 0);
+
+    // Build daily aggregation for charting
+    const dailyMap = new Map<string, { earned_cents: number; transfer_count: number }>();
+    for (const t of periodTransfers) {
+      const date = t.created_at.slice(0, 10); // YYYY-MM-DD
+      const entry = dailyMap.get(date) || { earned_cents: 0, transfer_count: 0 };
+      entry.earned_cents += t.amount_cents;
+      entry.transfer_count += 1;
+      dailyMap.set(date, entry);
+    }
+
+    // Fill in missing days with zeros for a complete chart
+    const daily: Array<{ date: string; earned_cents: number; transfer_count: number }> = [];
+    const startDate = new Date(cutoff);
+    const endDate = new Date();
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      const dateStr = d.toISOString().slice(0, 10);
+      const entry = dailyMap.get(dateStr);
+      daily.push({
+        date: dateStr,
+        earned_cents: entry?.earned_cents || 0,
+        transfer_count: entry?.transfer_count || 0,
+      });
+    }
+
+    // Build by-function breakdown
+    const fnMap = new Map<string, { earned_cents: number; call_count: number }>();
+    for (const t of periodTransfers) {
+      const fn = t.function_name || t.reason || 'unknown';
+      const entry = fnMap.get(fn) || { earned_cents: 0, call_count: 0 };
+      entry.earned_cents += t.amount_cents;
+      entry.call_count += 1;
+      fnMap.set(fn, entry);
+    }
+    const byFunction = Array.from(fnMap.entries())
+      .map(([function_name, data]) => ({ function_name, ...data }))
+      .sort((a, b) => b.earned_cents - a.earned_cents);
+
+    return json({
+      total_earned_cents: totalEarnedCents,
+      total_transfers: lifetimeCount,
+      period,
+      period_earned_cents: periodEarnedCents,
+      period_transfers: periodTransfers.length,
+      daily,
+      by_function: byFunction,
+      recent: recentTransfers.map(t => ({
+        amount_cents: t.amount_cents,
+        function_name: t.function_name,
+        reason: t.reason,
+        created_at: t.created_at,
+      })),
+    });
+
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Authentication')) {
+      return error('Authentication required', 401);
+    }
+    console.error('Failed to get earnings:', err);
+    return error('Failed to get earnings data', 500);
+  }
+}
+
+// ============================================
+// HEALTH / AUTO-HEAL HANDLERS
+// ============================================
+
+/**
+ * Get health status and healing history for an app (owner only)
+ * GET /api/apps/:appId/health
+ */
+async function handleGetHealth(request: Request, appId: string): Promise<Response> {
+  try {
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+    const app = await appsService.findById(appId);
+    if (!app) return error('App not found', 404);
+    if (app.owner_id !== user.id) return error('Unauthorized', 403);
+
+    // @ts-ignore
+    const Deno = globalThis.Deno;
+    const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+    const headers = {
+      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    };
+
+    // Fetch recent health events
+    const eventsRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/app_health_events?app_id=eq.${appId}&select=*&order=created_at.desc&limit=20`,
+      { headers }
+    );
+
+    const events = eventsRes.ok ? await eventsRes.json() : [];
+
+    // Fetch recent error rate from call logs (last 2 hours)
+    const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const logsRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/mcp_call_logs?app_id=eq.${appId}&created_at=gte.${cutoff}&select=function_name,success&limit=5000`,
+      { headers }
+    );
+
+    const logs = logsRes.ok ? await logsRes.json() as Array<{ function_name: string; success: boolean }> : [];
+
+    // Aggregate error rates per function
+    const fnStats = new Map<string, { total: number; failed: number }>();
+    for (const log of logs) {
+      const entry = fnStats.get(log.function_name) || { total: 0, failed: 0 };
+      entry.total++;
+      if (!log.success) entry.failed++;
+      fnStats.set(log.function_name, entry);
+    }
+
+    const functionHealth = Array.from(fnStats.entries()).map(([fn, stats]) => ({
+      function_name: fn,
+      total_calls: stats.total,
+      failed_calls: stats.failed,
+      error_rate: stats.total > 0 ? stats.failed / stats.total : 0,
+    })).sort((a, b) => b.error_rate - a.error_rate);
+
+    return json({
+      health_status: (app as Record<string, unknown>).health_status || 'healthy',
+      auto_heal_enabled: (app as Record<string, unknown>).auto_heal_enabled !== false,
+      last_healed_at: (app as Record<string, unknown>).last_healed_at || null,
+      function_health: functionHealth,
+      events,
+    });
+
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Authentication')) {
+      return error('Authentication required', 401);
+    }
+    console.error('Failed to get health:', err);
+    return error('Failed to get health data', 500);
+  }
+}
+
+/**
+ * Toggle auto-heal for an app (owner only)
+ * PATCH /api/apps/:appId/health
+ * Body: { auto_heal_enabled: boolean }
+ */
+async function handleUpdateHealth(request: Request, appId: string): Promise<Response> {
+  try {
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+    const app = await appsService.findById(appId);
+    if (!app) return error('App not found', 404);
+    if (app.owner_id !== user.id) return error('Unauthorized', 403);
+
+    const body = await request.json() as { auto_heal_enabled?: boolean };
+    if (typeof body.auto_heal_enabled !== 'boolean') {
+      return error('auto_heal_enabled (boolean) is required', 400);
+    }
+
+    await appsService.update(appId, {
+      auto_heal_enabled: body.auto_heal_enabled,
+    } as Record<string, unknown>);
+
+    return json({
+      success: true,
+      auto_heal_enabled: body.auto_heal_enabled,
+    });
+
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Authentication')) {
+      return error('Authentication required', 401);
+    }
+    return error('Failed to update health settings', 500);
   }
 }

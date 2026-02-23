@@ -1152,6 +1152,88 @@ export async function handleUser(request: Request): Promise<Response> {
     }
   }
 
+  // GET /api/user/earnings — aggregate earnings across all owned apps
+  // Returns: { total_earned_cents, period_earned_cents, by_app: [...], recent: [...] }
+  if (path === '/api/user/earnings' && method === 'GET') {
+    try {
+      const user = await authenticate(request);
+      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
+      const headers = {
+        'apikey': sbKey,
+        'Authorization': `Bearer ${sbKey}`,
+      };
+
+      const url = new URL(request.url);
+      const period = url.searchParams.get('period') || '30d';
+      let periodDays = 30;
+      if (period === '7d') periodDays = 7;
+      else if (period === '90d') periodDays = 90;
+      else if (period === 'all') periodDays = 3650;
+
+      const cutoff = new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000).toISOString();
+
+      const [periodRes, lifetimeRes, recentRes] = await Promise.all([
+        fetch(
+          `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&created_at=gte.${cutoff}&select=amount_cents,app_id,function_name,reason,created_at&order=created_at.asc&limit=10000`,
+          { headers }
+        ),
+        fetch(
+          `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&select=amount_cents`,
+          { headers: { ...headers, 'Prefer': 'count=exact' } }
+        ),
+        fetch(
+          `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&select=amount_cents,app_id,function_name,reason,created_at&order=created_at.desc&limit=10`,
+          { headers }
+        ),
+      ]);
+
+      if (!periodRes.ok || !lifetimeRes.ok || !recentRes.ok) {
+        throw new Error('Failed to query transfers');
+      }
+
+      const periodTransfers = await periodRes.json() as Array<{
+        amount_cents: number; app_id: string | null; function_name: string | null; reason: string; created_at: string;
+      }>;
+      const lifetimeTransfers = await lifetimeRes.json() as Array<{ amount_cents: number }>;
+      const recentTransfers = await recentRes.json() as Array<{
+        amount_cents: number; app_id: string | null; function_name: string | null; reason: string; created_at: string;
+      }>;
+
+      const totalEarnedCents = lifetimeTransfers.reduce((sum, t) => sum + t.amount_cents, 0);
+      const periodEarnedCents = periodTransfers.reduce((sum, t) => sum + t.amount_cents, 0);
+
+      // By-app breakdown
+      const appMap = new Map<string, { earned_cents: number; call_count: number }>();
+      for (const t of periodTransfers) {
+        const key = t.app_id || 'unknown';
+        const entry = appMap.get(key) || { earned_cents: 0, call_count: 0 };
+        entry.earned_cents += t.amount_cents;
+        entry.call_count += 1;
+        appMap.set(key, entry);
+      }
+      const byApp = Array.from(appMap.entries())
+        .map(([app_id, data]) => ({ app_id, ...data }))
+        .sort((a, b) => b.earned_cents - a.earned_cents);
+
+      return json({
+        total_earned_cents: totalEarnedCents,
+        period,
+        period_earned_cents: periodEarnedCents,
+        period_transfers: periodTransfers.length,
+        by_app: byApp,
+        recent: recentTransfers.map(t => ({
+          amount_cents: t.amount_cents,
+          app_id: t.app_id,
+          function_name: t.function_name,
+          reason: t.reason,
+          created_at: t.created_at,
+        })),
+      });
+    } catch (err) {
+      return error(err instanceof Error ? err.message : 'Unauthorized', 401);
+    }
+  }
+
   return error('User endpoint not found', 404);
 }
 

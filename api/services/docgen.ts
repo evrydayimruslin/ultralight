@@ -48,7 +48,7 @@ export interface ValidationError {
 export function generateSkillsMd(
   appName: string,
   parseResult: ParseResult,
-  options: { includeExamples?: boolean; includePermissions?: boolean } = {}
+  options: { includeExamples?: boolean; includePermissions?: boolean; pricingConfig?: { default_price_cents?: number; functions?: Record<string, number>; products?: Array<{ id: string; name: string; price_cents: number; description?: string }> } } = {}
 ): string {
   const { includeExamples = true, includePermissions = true } = options;
   const lines: string[] = [];
@@ -106,6 +106,41 @@ export function generateSkillsMd(
       lines.push('```');
       lines.push('');
     }
+  }
+
+  // Pricing section — generated from pricing_config if present
+  const pc = options.pricingConfig;
+  if (pc && (pc.default_price_cents || pc.functions || (pc.products && pc.products.length > 0))) {
+    lines.push('## Pricing');
+    lines.push('');
+    if (pc.default_price_cents) {
+      lines.push(`Default: **${pc.default_price_cents}¢** per call`);
+    } else {
+      lines.push('Default: **free**');
+    }
+    if (pc.functions && Object.keys(pc.functions).length > 0) {
+      lines.push('');
+      lines.push('| Function | Price |');
+      lines.push('|----------|-------|');
+      for (const [fn, cents] of Object.entries(pc.functions)) {
+        lines.push(`| \`${fn}\` | ${cents}¢ |`);
+      }
+    }
+    if (pc.products && pc.products.length > 0) {
+      lines.push('');
+      lines.push('### Products (In-App Purchases)');
+      lines.push('');
+      lines.push('Available via `ultralight.charge(price_cents, product_id)`:');
+      lines.push('');
+      lines.push('| Product | Price | Description |');
+      lines.push('|---------|-------|-------------|');
+      for (const p of pc.products) {
+        lines.push(`| \`${p.id}\` — ${p.name} | ${p.price_cents}¢ | ${p.description || ''} |`);
+      }
+    }
+    lines.push('');
+    lines.push('*All transfers are feeless internal ledger operations. Callers need a hosting balance to use paid functions.*');
+    lines.push('');
   }
 
   // Web Dashboard section — always present so agents know about the UI endpoint

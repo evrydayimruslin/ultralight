@@ -2746,6 +2746,27 @@ export function getLayoutHTML(options: {
           <div id="billingLoading" style="color: var(--text-muted); font-size: 0.8125rem; padding: 0.5rem 0;">Loading billing info...</div>
         </div>
 
+        <!-- Earnings Overview -->
+        <div class="dashboard-card" id="earningsOverviewCard" style="margin-bottom: 1rem; display: none;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+            <h3 style="font-size: 0.9375rem; font-weight: 600;">Earnings</h3>
+            <select id="dashEarningsPeriod" onchange="loadDashEarnings()" style="font-size: 0.75rem; padding: 2px 8px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary);">
+              <option value="7d">7 days</option>
+              <option value="30d" selected>30 days</option>
+              <option value="90d">90 days</option>
+            </select>
+          </div>
+          <div style="display: flex; align-items: baseline; gap: 0.75rem; margin-bottom: 0.5rem;">
+            <span id="dashEarningsTotal" style="font-size: 1.5rem; font-weight: 700; color: var(--text-primary);">$0.00</span>
+            <span style="font-size: 0.75rem; color: var(--text-muted);">lifetime earned</span>
+          </div>
+          <div style="font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 0.75rem;">
+            <span id="dashEarningsPeriodAmt">$0.00</span> in period &middot;
+            <span id="dashEarningsPeriodCnt">0</span> paid calls
+          </div>
+          <div id="dashEarningsByApp" style="font-size: 0.75rem;"></div>
+        </div>
+
         <!-- API Tokens -->
         <div class="dashboard-card" style="margin-bottom: 1rem;">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
@@ -3061,6 +3082,73 @@ export function getLayoutHTML(options: {
               <textarea id="appPricingFunctions" class="settings-input" rows="3" placeholder='{ "search": 5, "generate": 25 }' style="font-family: monospace; font-size: 0.75rem;"></textarea>
               <span style="font-size: 0.6875rem; color: var(--text-tertiary);">JSON: { "functionName": centsPerCall }</span>
             </div>
+            <div class="app-field" style="margin-top: 0.75rem;">
+              <label>Product Catalog (In-App Purchases)</label>
+              <textarea id="appPricingProducts" class="settings-input" rows="4" placeholder='[{ "id": "export_pdf", "name": "PDF Export", "price_cents": 50, "description": "Export data as PDF" }]' style="font-family: monospace; font-size: 0.75rem;"></textarea>
+              <span style="font-size: 0.6875rem; color: var(--text-tertiary);">JSON array. Purchasable via <code>ultralight.charge(price_cents, product_id)</code> in your code. Shows in Skills.md.</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Collapsible: Revenue -->
+        <div class="app-section" id="sectionRevenue">
+          <button class="app-section-header" onclick="toggleAppSection('Revenue')">
+            <span class="app-section-title">Revenue</span>
+            <svg class="app-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+          <div class="app-section-body">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+              <div>
+                <span style="font-size: 1.25rem; font-weight: 700; color: var(--text-primary);" id="revenueTotal">$0.00</span>
+                <span style="font-size: 0.6875rem; color: var(--text-tertiary); margin-left: 0.25rem;">earned</span>
+              </div>
+              <select id="revenuePeriod" onchange="loadAppEarnings()" style="font-size: 0.75rem; padding: 0.25rem 0.5rem; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary);">
+                <option value="7d">7 days</option>
+                <option value="30d" selected>30 days</option>
+                <option value="90d">90 days</option>
+                <option value="all">All time</option>
+              </select>
+            </div>
+            <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
+              <span id="revenuePeriodAmount">$0.00</span> in selected period &middot;
+              <span id="revenuePeriodCount">0</span> paid calls
+            </div>
+            <!-- Daily chart -->
+            <div id="revenueChart" style="display: flex; align-items: flex-end; gap: 1px; height: 60px; margin: 0.75rem 0; border-bottom: 1px solid var(--border-color);"></div>
+            <!-- By-function breakdown -->
+            <div id="revenueByFunction" style="margin-top: 0.75rem;"></div>
+            <!-- Recent transfers -->
+            <details style="margin-top: 0.75rem;">
+              <summary style="font-size: 0.75rem; color: var(--text-secondary); cursor: pointer;">Recent transfers</summary>
+              <div id="revenueRecent" style="margin-top: 0.5rem; font-size: 0.6875rem; color: var(--text-tertiary);"></div>
+            </details>
+          </div>
+        </div>
+
+        <!-- Collapsible: Health & Auto-Heal -->
+        <div class="app-section" id="sectionHealth">
+          <button class="app-section-header" onclick="toggleAppSection('Health')">
+            <span class="app-section-title">Health</span>
+            <svg class="app-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+          <div class="app-section-body">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+              <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <span id="healthStatusDot" style="width: 8px; height: 8px; border-radius: 50%; background: var(--success-color); display: inline-block;"></span>
+                <span id="healthStatusText" style="font-size: 0.8125rem; font-weight: 600; color: var(--text-primary);">Healthy</span>
+              </div>
+              <label style="font-size: 0.75rem; color: var(--text-secondary); display: flex; align-items: center; gap: 0.375rem; cursor: pointer;">
+                <input type="checkbox" id="autoHealToggle" checked onchange="toggleAutoHeal()" style="width: 0.875rem; height: 0.875rem; cursor: pointer;" />
+                Auto-heal
+              </label>
+            </div>
+            <p style="font-size: 0.6875rem; color: var(--text-tertiary); margin: 0 0 0.75rem;">
+              When enabled, failing functions are automatically diagnosed and patched using AI. Patches are tested before deploying.
+            </p>
+            <!-- Function health -->
+            <div id="healthFunctions" style="margin-bottom: 0.75rem;"></div>
+            <!-- Healing history -->
+            <div id="healthEvents"></div>
           </div>
         </div>
 
@@ -5088,17 +5176,27 @@ await hash.sha256('data')</div>
       // Pricing config
       const pricingDefaultEl = document.getElementById('appPricingDefault');
       const pricingFnsEl = document.getElementById('appPricingFunctions');
+      const pricingProductsEl = document.getElementById('appPricingProducts');
       if (pricingDefaultEl && pricingFnsEl) {
         const pc = app.pricing_config;
         pricingDefaultEl.value = pc?.default_price_cents || 0;
         pricingFnsEl.value = pc?.functions ? JSON.stringify(pc.functions, null, 2) : '';
+        if (pricingProductsEl) {
+          pricingProductsEl.value = pc?.products && pc.products.length > 0 ? JSON.stringify(pc.products, null, 2) : '';
+        }
       }
+
+      // Load revenue data
+      loadAppEarnings();
+
+      // Load health data
+      loadAppHealth();
 
       // Hide floating save
       document.getElementById('floatingSave').style.display = 'none';
 
       // Track changes for floating save
-      ['appPageName', 'appPageVisibility', 'appPageDownload', 'appPageSupabase', 'appVersionSelect', 'appPricingDefault', 'appPricingFunctions'].forEach(id => {
+      ['appPageName', 'appPageVisibility', 'appPageDownload', 'appPageSupabase', 'appVersionSelect', 'appPricingDefault', 'appPricingFunctions', 'appPricingProducts'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
           el.onchange = () => { document.getElementById('floatingSave').style.display = 'block'; };
@@ -5106,6 +5204,190 @@ await hash.sha256('data')</div>
         }
       });
     }
+
+    // Load App Earnings / Revenue data
+    window.loadAppEarnings = async function() {
+      if (!currentAppId || !authToken) return;
+      const period = document.getElementById('revenuePeriod')?.value || '30d';
+      try {
+        const res = await fetch(\`/api/apps/\${currentAppId}/earnings?period=\${period}\`, {
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+        if (!res.ok) { return; }
+        const data = await res.json();
+
+        // Total earned (lifetime)
+        const totalEl = document.getElementById('revenueTotal');
+        if (totalEl) totalEl.textContent = '$' + (data.total_earned_cents / 100).toFixed(2);
+
+        // Period summary
+        const periodAmtEl = document.getElementById('revenuePeriodAmount');
+        if (periodAmtEl) periodAmtEl.textContent = '$' + (data.period_earned_cents / 100).toFixed(2);
+        const periodCntEl = document.getElementById('revenuePeriodCount');
+        if (periodCntEl) periodCntEl.textContent = data.period_transfers || 0;
+
+        // Daily chart (CSS bar chart)
+        const chartEl = document.getElementById('revenueChart');
+        if (chartEl && data.daily && data.daily.length > 0) {
+          const maxVal = Math.max(...data.daily.map(d => d.earned_cents), 1);
+          // Limit to last N bars that fit
+          const maxBars = Math.min(data.daily.length, 60);
+          const days = data.daily.slice(-maxBars);
+          chartEl.innerHTML = days.map(d => {
+            const pct = Math.max((d.earned_cents / maxVal) * 100, d.earned_cents > 0 ? 4 : 0);
+            const cents = d.earned_cents;
+            const label = d.date.slice(5); // MM-DD
+            return \`<div title="\${label}: \${cents}¢ (\${d.transfer_count} calls)" style="flex:1;min-width:2px;max-width:12px;height:\${pct}%;background:\${cents > 0 ? 'var(--accent-primary)' : 'var(--border-color)'};border-radius:2px 2px 0 0;transition:height 0.3s;"></div>\`;
+          }).join('');
+        } else if (chartEl) {
+          chartEl.innerHTML = '<div style="width:100%;text-align:center;font-size:0.6875rem;color:var(--text-tertiary);padding:1rem 0;">No revenue data yet</div>';
+        }
+
+        // By-function breakdown
+        const fnEl = document.getElementById('revenueByFunction');
+        if (fnEl && data.by_function && data.by_function.length > 0) {
+          const maxFnEarned = Math.max(...data.by_function.map(f => f.earned_cents), 1);
+          fnEl.innerHTML = '<div style="font-size:0.6875rem;color:var(--text-secondary);margin-bottom:0.375rem;font-weight:600;">By function</div>' +
+            data.by_function.slice(0, 8).map(f => {
+              const pct = (f.earned_cents / maxFnEarned) * 100;
+              return \`<div style="margin-bottom:0.25rem;">
+                <div style="display:flex;justify-content:space-between;font-size:0.6875rem;">
+                  <span style="color:var(--text-primary);font-family:monospace;">\${f.function_name}</span>
+                  <span style="color:var(--text-secondary);">\${f.call_count} calls &middot; \${f.earned_cents}¢</span>
+                </div>
+                <div style="height:3px;background:var(--border-color);border-radius:2px;margin-top:2px;">
+                  <div style="height:100%;width:\${pct}%;background:var(--accent-primary);border-radius:2px;"></div>
+                </div>
+              </div>\`;
+            }).join('');
+        } else if (fnEl) {
+          fnEl.innerHTML = '';
+        }
+
+        // Recent transfers
+        const recentEl = document.getElementById('revenueRecent');
+        if (recentEl && data.recent && data.recent.length > 0) {
+          recentEl.innerHTML = '<div style="display:flex;flex-direction:column;gap:0.25rem;">' +
+            data.recent.map(t => {
+              const date = new Date(t.created_at);
+              const timeStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              return \`<div style="display:flex;justify-content:space-between;">
+                <span>\${t.function_name || t.reason} &middot; \${t.amount_cents}¢</span>
+                <span style="color:var(--text-tertiary);">\${timeStr}</span>
+              </div>\`;
+            }).join('') + '</div>';
+        } else if (recentEl) {
+          recentEl.innerHTML = '<div style="color:var(--text-tertiary);">No transfers yet. Set a price above and callers will be charged automatically.</div>';
+        }
+
+      } catch (e) {
+        console.error('Failed to load earnings:', e);
+      }
+    };
+
+    // Load App Health data
+    window.loadAppHealth = async function() {
+      if (!currentAppId || !authToken) return;
+      try {
+        const res = await fetch(\`/api/apps/\${currentAppId}/health\`, {
+          headers: { 'Authorization': \`Bearer \${authToken}\` }
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // Status indicator
+        const dotEl = document.getElementById('healthStatusDot');
+        const textEl = document.getElementById('healthStatusText');
+        const status = data.health_status || 'healthy';
+        const statusColors = {
+          healthy: 'var(--success-color)',
+          failing: 'var(--error-color, #ef4444)',
+          healing: 'var(--warning-color, #f59e0b)',
+          healed: 'var(--accent-primary, #3b82f6)',
+        };
+        const statusLabels = {
+          healthy: 'Healthy',
+          failing: 'Failing',
+          healing: 'Healing in progress',
+          healed: 'Recently healed',
+        };
+        if (dotEl) dotEl.style.background = statusColors[status] || statusColors.healthy;
+        if (textEl) textEl.textContent = statusLabels[status] || 'Healthy';
+
+        // Auto-heal toggle
+        const toggleEl = document.getElementById('autoHealToggle');
+        if (toggleEl) toggleEl.checked = data.auto_heal_enabled !== false;
+
+        // Function health bars
+        const fnEl = document.getElementById('healthFunctions');
+        if (fnEl && data.function_health && data.function_health.length > 0) {
+          fnEl.innerHTML = data.function_health.slice(0, 8).map(f => {
+            const pct = (f.error_rate * 100).toFixed(0);
+            const color = f.error_rate > 0.5 ? 'var(--error-color, #ef4444)' : f.error_rate > 0.1 ? 'var(--warning-color, #f59e0b)' : 'var(--success-color)';
+            const barWidth = Math.min(f.error_rate * 100, 100);
+            return \`<div style="margin-bottom:0.375rem;">
+              <div style="display:flex;justify-content:space-between;font-size:0.6875rem;">
+                <span style="font-family:monospace;color:var(--text-primary);">\${f.function_name}</span>
+                <span style="color:var(--text-secondary);">\${f.failed_calls}/\${f.total_calls} failed (\${pct}%)</span>
+              </div>
+              <div style="height:3px;background:var(--border-color);border-radius:2px;margin-top:2px;">
+                <div style="height:100%;width:\${barWidth}%;background:\${color};border-radius:2px;transition:width 0.3s;"></div>
+              </div>
+            </div>\`;
+          }).join('');
+        } else if (fnEl) {
+          fnEl.innerHTML = '<div style="font-size:0.6875rem;color:var(--text-tertiary);">No recent calls to analyze.</div>';
+        }
+
+        // Healing events history
+        const eventsEl = document.getElementById('healthEvents');
+        if (eventsEl && data.events && data.events.length > 0) {
+          eventsEl.innerHTML = '<div style="font-size:0.6875rem;color:var(--text-secondary);font-weight:600;margin-bottom:0.375rem;">Healing history</div>' +
+            data.events.slice(0, 5).map(e => {
+              const date = new Date(e.created_at);
+              const timeStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              const statusIcon = e.status === 'deployed' ? '&#10003;' : e.status === 'failed' ? '&#10007;' : '&#8987;';
+              const statusColor = e.status === 'deployed' ? 'var(--success-color)' : e.status === 'failed' ? 'var(--error-color, #ef4444)' : 'var(--warning-color, #f59e0b)';
+              return \`<div style="display:flex;justify-content:space-between;align-items:center;padding:0.25rem 0;border-bottom:1px solid var(--border-color);font-size:0.6875rem;">
+                <div>
+                  <span style="color:\${statusColor};font-weight:700;">\${statusIcon}</span>
+                  <span style="font-family:monospace;color:var(--text-primary);margin:0 0.25rem;">\${e.function_name}</span>
+                  <span style="color:var(--text-tertiary);">\${e.patch_description || e.common_error || ''}</span>
+                </div>
+                <span style="color:var(--text-tertiary);white-space:nowrap;margin-left:0.5rem;">\${timeStr}</span>
+              </div>\`;
+            }).join('');
+        } else if (eventsEl) {
+          eventsEl.innerHTML = '';
+        }
+
+      } catch (e) {
+        console.error('Failed to load health:', e);
+      }
+    };
+
+    // Toggle auto-heal for current app
+    window.toggleAutoHeal = async function() {
+      if (!currentAppId || !authToken) return;
+      const toggleEl = document.getElementById('autoHealToggle');
+      const enabled = toggleEl?.checked || false;
+      try {
+        const res = await fetch(\`/api/apps/\${currentAppId}/health\`, {
+          method: 'PATCH',
+          headers: { 'Authorization': \`Bearer \${authToken}\`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ auto_heal_enabled: enabled }),
+        });
+        if (res.ok) {
+          showToast(enabled ? 'Auto-heal enabled' : 'Auto-heal disabled');
+        } else {
+          showToast('Failed to update auto-heal', 'error');
+          if (toggleEl) toggleEl.checked = !enabled;
+        }
+      } catch (e) {
+        showToast('Failed to update', 'error');
+        if (toggleEl) toggleEl.checked = !enabled;
+      }
+    };
 
     // Save App Page Changes
     window.saveAppPageChanges = async function() {
@@ -5118,13 +5400,22 @@ await hash.sha256('data')</div>
         let pricingConfig = null;
         const pricingDefault = parseInt(document.getElementById('appPricingDefault').value, 10) || 0;
         const pricingFnsRaw = document.getElementById('appPricingFunctions').value.trim();
-        if (pricingDefault > 0 || pricingFnsRaw) {
+        const pricingProductsRaw = document.getElementById('appPricingProducts')?.value?.trim() || '';
+        if (pricingDefault > 0 || pricingFnsRaw || pricingProductsRaw) {
           pricingConfig = { default_price_cents: pricingDefault };
           if (pricingFnsRaw) {
             try {
               pricingConfig.functions = JSON.parse(pricingFnsRaw);
             } catch (e) {
               showToast('Invalid pricing JSON — check per-function overrides', 'error');
+              return;
+            }
+          }
+          if (pricingProductsRaw) {
+            try {
+              pricingConfig.products = JSON.parse(pricingProductsRaw);
+            } catch (e) {
+              showToast('Invalid products JSON — check product catalog', 'error');
               return;
             }
           }
@@ -6174,9 +6465,61 @@ await hash.sha256('data')</div>
       }
     };
 
+    // ============================================
+    // Dashboard Earnings
+    // ============================================
+
+    window.loadDashEarnings = async function() {
+      if (!authToken) return;
+      const period = document.getElementById('dashEarningsPeriod')?.value || '30d';
+      try {
+        const res = await fetch('/api/user/earnings?period=' + period, {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+
+        const card = document.getElementById('earningsOverviewCard');
+        // Only show if user has ever earned anything or has apps with pricing
+        if (card && (data.total_earned_cents > 0 || data.period_transfers > 0)) {
+          card.style.display = 'block';
+        }
+
+        const totalEl = document.getElementById('dashEarningsTotal');
+        if (totalEl) totalEl.textContent = '$' + (data.total_earned_cents / 100).toFixed(2);
+
+        const periodAmtEl = document.getElementById('dashEarningsPeriodAmt');
+        if (periodAmtEl) periodAmtEl.textContent = '$' + (data.period_earned_cents / 100).toFixed(2);
+
+        const periodCntEl = document.getElementById('dashEarningsPeriodCnt');
+        if (periodCntEl) periodCntEl.textContent = data.period_transfers || 0;
+
+        // By-app breakdown
+        const byAppEl = document.getElementById('dashEarningsByApp');
+        if (byAppEl && data.by_app && data.by_app.length > 0) {
+          const appNames = {};
+          (apps || []).forEach(a => { appNames[a.id] = a.name || a.slug; });
+          byAppEl.innerHTML = data.by_app.slice(0, 5).map(a => {
+            const name = appNames[a.app_id] || a.app_id?.slice(0, 8) || 'unknown';
+            return '<div style="display:flex;justify-content:space-between;padding:0.25rem 0;border-bottom:1px solid var(--border-color);">' +
+              '<span style="color:var(--text-primary);">' + name + '</span>' +
+              '<span style="color:var(--text-secondary);">' + a.call_count + ' calls &middot; ' + (a.earned_cents / 100).toFixed(2) + '</span>' +
+            '</div>';
+          }).join('');
+        } else if (byAppEl) {
+          byAppEl.innerHTML = '<div style="color:var(--text-tertiary);font-size:0.75rem;">Set pricing on your apps to start earning from tool calls.</div>';
+        }
+      } catch (e) {
+        console.error('[EARNINGS] Failed to load dashboard earnings:', e);
+      }
+    };
+
     async function loadDashboardData() {
       // Load hosting balance & billing
       loadHostingData();
+
+      // Load earnings overview
+      loadDashEarnings();
 
       // Load tokens inline on dashboard
       await loadTokens();

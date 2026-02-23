@@ -1363,6 +1363,7 @@ async function executeAppFunction(
       {
         appId: app.id,
         userId,
+        ownerId: app.owner_id,
         executionId: crypto.randomUUID(),
         code,
         permissions: ['memory:read', 'memory:write', 'ai:call', 'net:fetch', 'app:call'],
