@@ -16,6 +16,18 @@ import { createAppsService } from '../services/apps.ts';
 import { encryptEnvVar, decryptEnvVar } from '../services/envvars.ts';
 import { unsuspendContent } from '../services/hosting-billing.ts';
 
+// Stripe webhook idempotency: track processed event IDs in memory (1hr TTL).
+// Prevents double-crediting from Stripe's automatic webhook retries.
+const processedStripeEvents = new Map<string, number>();
+
+// Cleanup old entries every 10 minutes (events older than 1 hour are removed)
+setInterval(() => {
+  const cutoff = Date.now() - 60 * 60 * 1000;
+  for (const [id, ts] of processedStripeEvents) {
+    if (ts < cutoff) processedStripeEvents.delete(id);
+  }
+}, 10 * 60 * 1000);
+
 export async function handleUser(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -27,6 +39,7 @@ export async function handleUser(request: Request): Promise<Response> {
 
   // POST /api/webhooks/stripe — handle Stripe webhook events
   // Verified by webhook signature, no auth token needed.
+  // Idempotent: deduplicates by Stripe event ID (in-memory cache, 1hr TTL).
   if (path === '/api/webhooks/stripe' && method === 'POST') {
     try {
       // @ts-ignore
@@ -47,6 +60,7 @@ export async function handleUser(request: Request): Promise<Response> {
       }
 
       const event = JSON.parse(rawBody) as {
+        id: string;
         type: string;
         data: {
           object: {
@@ -56,6 +70,13 @@ export async function handleUser(request: Request): Promise<Response> {
         };
       };
 
+      // Idempotency: skip if we've already processed this event
+      if (processedStripeEvents.has(event.id)) {
+        console.log(`[STRIPE] Skipping duplicate event ${event.id}`);
+        return json({ received: true, duplicate: true });
+      }
+      processedStripeEvents.set(event.id, Date.now());
+
       // Handle checkout.session.completed (manual deposits)
       if (event.type === 'checkout.session.completed') {
         const session = event.data.object;
@@ -64,7 +85,7 @@ export async function handleUser(request: Request): Promise<Response> {
         const depositType = session.metadata?.type;
 
         if (eventUserId && amountCents > 0 && depositType === 'hosting_deposit' && session.payment_status === 'paid') {
-          console.log(`[STRIPE] Crediting ${amountCents} cents to user ${eventUserId}`);
+          console.log(`[STRIPE] Crediting ${amountCents} cents to user ${eventUserId} (event: ${event.id})`);
           await creditHostingBalance(eventUserId, amountCents);
         }
       }
@@ -77,7 +98,7 @@ export async function handleUser(request: Request): Promise<Response> {
         const intentType = intent.metadata?.type;
 
         if (eventUserId && amountCents > 0 && intentType === 'auto_topup') {
-          console.log(`[STRIPE] Auto top-up succeeded: crediting ${amountCents} cents to user ${eventUserId}`);
+          console.log(`[STRIPE] Auto top-up succeeded: crediting ${amountCents} cents to user ${eventUserId} (event: ${event.id})`);
           await creditHostingBalance(eventUserId, amountCents);
         }
       }
@@ -988,27 +1009,6 @@ export async function handleUser(request: Request): Promise<Response> {
     }
   }
 
-  // POST /api/user/hosting/topup — add funds to hosting balance
-  // Body: { amount_cents: number }
-  // Used internally after Stripe confirms payment. Can also be admin-triggered.
-  if (path === '/api/user/hosting/topup' && method === 'POST') {
-    try {
-      const user = await authenticate(request);
-      const body = await request.json() as { amount_cents?: number };
-      const amountCents = body.amount_cents;
-
-      if (!amountCents || typeof amountCents !== 'number' || amountCents <= 0) {
-        return error('amount_cents must be a positive number', 400);
-      }
-
-      const result = await creditHostingBalance(user.id, amountCents);
-      return json(result);
-    } catch (err) {
-      if (err instanceof SyntaxError) return error('Invalid JSON body', 400);
-      return error(err instanceof Error ? err.message : 'Unauthorized', 401);
-    }
-  }
-
   // POST /api/user/hosting/checkout — create a Stripe Checkout session for hosting deposit
   // Body: { amount_cents: number } (minimum 500 = $5.00)
   // Returns: { checkout_url: string } or error if Stripe not configured
@@ -1090,37 +1090,37 @@ export async function handleUser(request: Request): Promise<Response> {
       }
 
       // Calculate gross charge: deposit + Stripe fee pass-through
-      // Tax (if enabled in Stripe dashboard) is calculated on top of this by Stripe
       const grossCents = calcGrossWithStripeFee(amountCents);
       const feeCents = grossCents - amountCents;
 
-      // Create Stripe Checkout Session with customer + setup_future_usage + automatic tax
-      // - setup_future_usage saves the payment method for off-session auto top-ups
-      // - automatic_tax calculates sales tax on the gross amount (including fee)
-      // - line item is the gross (deposit + processing fee); tax added on top by Stripe
+      // Create Stripe Checkout Session with card + ACH + Link
+      // - Cards: setup_future_usage saves for off-session auto top-ups
+      // - ACH (us_bank_account): lower fees (0.8% capped $5), Plaid bank-linking handled by Stripe
+      // - Link: one-click checkout, remembers payment methods across Stripe merchants
+      // - No tax at deposit — tax applies at service consumption (hosting/calls)
       // - metadata.amount_cents is the NET deposit credited to the user's balance
       const checkoutParams: Record<string, string> = {
         'mode': 'payment',
         'customer': stripeCustomerId,
         'payment_method_types[0]': 'card',
-        'payment_intent_data[setup_future_usage]': 'off_session',
-        'automatic_tax[enabled]': 'true',
+        'payment_method_types[1]': 'us_bank_account',
+        'payment_method_types[2]': 'link',
+        // Save card for future off-session charges (auto top-up)
+        'payment_method_options[card][setup_future_usage]': 'off_session',
+        // ACH: verification handled by Stripe/Plaid, mandate auto-created
+        'payment_method_options[us_bank_account][financial_connections][permissions][0]': 'payment_method',
         'line_items[0][price_data][currency]': 'usd',
         'line_items[0][price_data][product_data][name]': 'Ultralight Hosting Deposit',
         'line_items[0][price_data][product_data][description]':
           `$${(amountCents / 100).toFixed(2)} hosting credit + $${(feeCents / 100).toFixed(2)} processing fee`,
         'line_items[0][price_data][unit_amount]': String(grossCents),
-        'line_items[0][price_data][tax_behavior]': 'exclusive',
         'line_items[0][quantity]': '1',
         'metadata[user_id]': user.id,
         'metadata[amount_cents]': String(amountCents),
         'metadata[type]': 'hosting_deposit',
-        'success_url': `${BASE_URL}/settings?topup=success&amount=${amountCents}`,
-        'cancel_url': `${BASE_URL}/settings?topup=cancelled`,
+        'success_url': `${BASE_URL}/dash?topup=success&amount=${amountCents}`,
+        'cancel_url': `${BASE_URL}/dash?topup=cancelled`,
       };
-
-      // customer_update allows Stripe to collect/update the customer's address for tax
-      checkoutParams['customer_update[address]'] = 'auto';
 
       const checkoutRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
         method: 'POST',
@@ -1134,34 +1134,6 @@ export async function handleUser(request: Request): Promise<Response> {
       if (!checkoutRes.ok) {
         const stripeErr = await checkoutRes.text();
         console.error('[STRIPE] Checkout session creation failed:', stripeErr);
-        // If automatic_tax fails (not configured), fall back without it
-        if (stripeErr.includes('tax') || stripeErr.includes('Tax')) {
-          console.warn('[STRIPE] Automatic tax not configured, retrying without it');
-          delete checkoutParams['automatic_tax[enabled]'];
-          delete checkoutParams['line_items[0][price_data][tax_behavior]'];
-          delete checkoutParams['customer_update[address]'];
-          const retryRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${STRIPE_SECRET_KEY}`,
-              'Content-Type': 'application/x-www-form-urlencoded',
-            },
-            body: new URLSearchParams(checkoutParams).toString(),
-          });
-          if (!retryRes.ok) {
-            console.error('[STRIPE] Retry also failed:', await retryRes.text());
-            return error('Failed to create checkout session', 500);
-          }
-          const fallbackSession = await retryRes.json() as { url: string; id: string };
-          return json({
-            checkout_url: fallbackSession.url,
-            session_id: fallbackSession.id,
-            deposit_cents: amountCents,
-            processing_fee_cents: feeCents,
-            charge_cents: grossCents,
-            tax_note: 'Tax calculation unavailable — configure Stripe Tax in dashboard',
-          });
-        }
         return error('Failed to create checkout session', 500);
       }
 
@@ -1173,7 +1145,6 @@ export async function handleUser(request: Request): Promise<Response> {
         deposit_cents: amountCents,
         processing_fee_cents: feeCents,
         charge_cents: grossCents,
-        tax: 'calculated at checkout by Stripe',
       });
     } catch (err) {
       if (err instanceof SyntaxError) return error('Invalid JSON body', 400);

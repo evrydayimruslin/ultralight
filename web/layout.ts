@@ -2667,6 +2667,85 @@ export function getLayoutHTML(options: {
         </div>
 
 
+        <!-- Balance & Billing -->
+        <div class="dashboard-card" style="margin-bottom: 1rem;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+            <h3 style="font-size: 0.9375rem; font-weight: 600;">Balance &amp; Billing</h3>
+            <span id="billingStatus" style="font-size: 0.75rem; padding: 2px 8px; border-radius: 9999px; background: rgba(34,197,94,0.15); color: var(--success-color); display: none;">Active</span>
+          </div>
+
+          <!-- Balance display -->
+          <div id="billingBalanceSection" style="display: none;">
+            <div style="display: flex; align-items: baseline; gap: 0.75rem; margin-bottom: 0.75rem;">
+              <span id="billingBalance" style="font-size: 1.75rem; font-weight: 700; color: var(--text-primary);">$0.00</span>
+              <span style="font-size: 0.8125rem; color: var(--text-muted);">hosting balance</span>
+            </div>
+
+            <!-- Add Funds -->
+            <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+              <select id="depositAmount" style="padding: 0.5rem 0.75rem; font-size: 0.8125rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-primary); cursor: pointer;">
+                <option value="500">$5.00</option>
+                <option value="1000">$10.00</option>
+                <option value="2500" selected>$25.00</option>
+                <option value="5000">$50.00</option>
+                <option value="10000">$100.00</option>
+              </select>
+              <button onclick="startDeposit()" style="padding: 0.5rem 1rem; font-size: 0.8125rem; font-weight: 600; background: var(--accent-color); color: #fff; border: none; border-radius: 8px; cursor: pointer; transition: opacity 0.2s;" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">Add Funds</button>
+            </div>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1rem;">Pay with card, bank account (ACH), or Link. Processing fee added at checkout (lower with ACH).</p>
+
+            <!-- Auto Top-Up Settings -->
+            <details id="autoTopupDetails" style="border-top: 1px solid var(--border-color); padding-top: 0.75rem;">
+              <summary style="font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary); cursor: pointer; user-select: none; display: flex; align-items: center; gap: 0.5rem;">
+                Auto Top-Up
+                <span id="autoTopupBadge" style="font-size: 0.6875rem; padding: 1px 6px; border-radius: 9999px; display: none;"></span>
+              </summary>
+              <div style="margin-top: 0.75rem;">
+                <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.75rem;">Automatically recharge your balance when it drops below a threshold. Requires a saved payment method (created on first deposit).</p>
+
+                <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem;">
+                  <label style="font-size: 0.8125rem; color: var(--text-secondary); display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                    <input type="checkbox" id="autoTopupEnabled" style="width: 1rem; height: 1rem; cursor: pointer;" />
+                    Enable auto top-up
+                  </label>
+                  <span id="autoTopupPaymentWarning" style="font-size: 0.75rem; color: var(--warning-color, #f59e0b); display: none;">No saved card yet</span>
+                </div>
+
+                <div id="autoTopupFields" style="display: none;">
+                  <div style="display: flex; gap: 0.75rem; margin-bottom: 0.75rem; flex-wrap: wrap;">
+                    <div style="flex: 1; min-width: 140px;">
+                      <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">When balance drops below</label>
+                      <select id="autoTopupThreshold" style="width: 100%; padding: 0.5rem 0.75rem; font-size: 0.8125rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-primary); cursor: pointer;">
+                        <option value="100">$1.00</option>
+                        <option value="250">$2.50</option>
+                        <option value="500">$5.00</option>
+                        <option value="1000">$10.00</option>
+                        <option value="2500">$25.00</option>
+                      </select>
+                    </div>
+                    <div style="flex: 1; min-width: 140px;">
+                      <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Recharge amount</label>
+                      <select id="autoTopupAmount" style="width: 100%; padding: 0.5rem 0.75rem; font-size: 0.8125rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-primary); cursor: pointer;">
+                        <option value="500">$5.00</option>
+                        <option value="1000">$10.00</option>
+                        <option value="2500">$25.00</option>
+                        <option value="5000">$50.00</option>
+                        <option value="10000">$100.00</option>
+                      </select>
+                    </div>
+                  </div>
+                  <button onclick="saveAutoTopup()" style="padding: 0.5rem 1rem; font-size: 0.8125rem; font-weight: 500; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; cursor: pointer; color: var(--text-primary); transition: border-color 0.2s;" onmouseover="this.style.borderColor='var(--accent-color)'" onmouseout="this.style.borderColor='var(--border-color)'">Save Settings</button>
+                </div>
+
+                <div id="autoTopupLastFailed" style="display: none; font-size: 0.75rem; color: var(--error-color, #ef4444); margin-top: 0.5rem;"></div>
+              </div>
+            </details>
+          </div>
+
+          <!-- Loading state -->
+          <div id="billingLoading" style="color: var(--text-muted); font-size: 0.8125rem; padding: 0.5rem 0;">Loading billing info...</div>
+        </div>
+
         <!-- API Tokens -->
         <div class="dashboard-card" style="margin-bottom: 1rem;">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
@@ -5917,7 +5996,188 @@ await hash.sha256('data')</div>
       }
     })();
 
+    // ============================================
+    // Balance & Billing
+    // ============================================
+
+    async function loadHostingData() {
+      const loadingEl = document.getElementById('billingLoading');
+      const balanceSection = document.getElementById('billingBalanceSection');
+      const statusBadge = document.getElementById('billingStatus');
+
+      if (!authToken) {
+        if (loadingEl) loadingEl.textContent = 'Sign in to view billing.';
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/user/hosting', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+
+        if (!res.ok) {
+          if (loadingEl) loadingEl.textContent = 'Could not load billing info.';
+          return;
+        }
+
+        const data = await res.json();
+        if (loadingEl) loadingEl.style.display = 'none';
+        if (balanceSection) balanceSection.style.display = 'block';
+
+        // Balance display
+        const balanceCents = data.hosting_balance_cents || 0;
+        const balanceEl = document.getElementById('billingBalance');
+        if (balanceEl) {
+          const dollars = (balanceCents / 100).toFixed(2);
+          balanceEl.textContent = '$' + dollars;
+          balanceEl.style.color = balanceCents <= 0 ? 'var(--error-color, #ef4444)' : 'var(--text-primary)';
+        }
+
+        // Status badge
+        if (statusBadge) {
+          if (balanceCents > 0) {
+            statusBadge.style.display = 'inline';
+            statusBadge.textContent = 'Active';
+            statusBadge.style.background = 'rgba(34,197,94,0.15)';
+            statusBadge.style.color = 'var(--success-color)';
+          } else {
+            statusBadge.style.display = 'inline';
+            statusBadge.textContent = 'No Balance';
+            statusBadge.style.background = 'rgba(239,68,68,0.15)';
+            statusBadge.style.color = 'var(--error-color, #ef4444)';
+          }
+        }
+
+        // Auto top-up settings
+        const autoTopup = data.auto_topup || {};
+        const hasPayment = data.has_payment_method;
+
+        const enabledEl = document.getElementById('autoTopupEnabled');
+        const fieldsEl = document.getElementById('autoTopupFields');
+        const warningEl = document.getElementById('autoTopupPaymentWarning');
+        const badgeEl = document.getElementById('autoTopupBadge');
+        const thresholdEl = document.getElementById('autoTopupThreshold');
+        const amountEl = document.getElementById('autoTopupAmount');
+        const lastFailedEl = document.getElementById('autoTopupLastFailed');
+
+        if (enabledEl) enabledEl.checked = autoTopup.enabled || false;
+        if (fieldsEl) fieldsEl.style.display = (autoTopup.enabled || false) ? 'block' : 'none';
+
+        // Show/hide payment warning
+        if (warningEl) warningEl.style.display = hasPayment ? 'none' : 'inline';
+
+        // Badge
+        if (badgeEl) {
+          if (autoTopup.enabled) {
+            badgeEl.textContent = 'On';
+            badgeEl.style.display = 'inline';
+            badgeEl.style.background = 'rgba(34,197,94,0.15)';
+            badgeEl.style.color = 'var(--success-color)';
+          } else {
+            badgeEl.textContent = 'Off';
+            badgeEl.style.display = 'inline';
+            badgeEl.style.background = 'var(--bg-tertiary)';
+            badgeEl.style.color = 'var(--text-muted)';
+          }
+        }
+
+        // Set select values
+        if (thresholdEl) thresholdEl.value = String(autoTopup.threshold_cents || 100);
+        if (amountEl) amountEl.value = String(autoTopup.amount_cents || 1000);
+
+        // Toggle fields on checkbox change
+        if (enabledEl) {
+          enabledEl.onchange = function() {
+            if (fieldsEl) fieldsEl.style.display = enabledEl.checked ? 'block' : 'none';
+          };
+        }
+
+        // Last failed
+        if (lastFailedEl && autoTopup.last_failed_at) {
+          lastFailedEl.style.display = 'block';
+          const failDate = new Date(autoTopup.last_failed_at);
+          lastFailedEl.textContent = 'Last auto top-up failed on ' + failDate.toLocaleDateString() + '. Check your payment method in Stripe.';
+        }
+      } catch (err) {
+        console.error('[BILLING] Failed to load hosting data:', err);
+        if (loadingEl) loadingEl.textContent = 'Could not load billing info.';
+      }
+    }
+
+    window.startDeposit = async function() {
+      const selectEl = document.getElementById('depositAmount');
+      const amountCents = parseInt(selectEl?.value || '2500', 10);
+
+      try {
+        const res = await fetch('/api/user/hosting/checkout', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + authToken,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ amount_cents: amountCents }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          showToast(data.error || 'Failed to start checkout', 'error');
+          return;
+        }
+
+        if (data.checkout_url) {
+          window.open(data.checkout_url, '_blank');
+          showToast('Checkout opened in new tab. Balance updates automatically after payment.');
+        } else {
+          showToast('No checkout URL returned', 'error');
+        }
+      } catch (err) {
+        showToast('Failed to start deposit', 'error');
+      }
+    };
+
+    window.saveAutoTopup = async function() {
+      const enabledEl = document.getElementById('autoTopupEnabled');
+      const thresholdEl = document.getElementById('autoTopupThreshold');
+      const amountEl = document.getElementById('autoTopupAmount');
+
+      const enabled = enabledEl?.checked || false;
+      const thresholdCents = parseInt(thresholdEl?.value || '100', 10);
+      const amountCents = parseInt(amountEl?.value || '1000', 10);
+
+      try {
+        const res = await fetch('/api/user/hosting/auto-topup', {
+          method: 'PATCH',
+          headers: {
+            'Authorization': 'Bearer ' + authToken,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            enabled: enabled,
+            threshold_cents: thresholdCents,
+            amount_cents: amountCents,
+          }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          showToast(data.error || 'Failed to save auto top-up settings', 'error');
+          return;
+        }
+
+        showToast('Auto top-up settings saved');
+        // Refresh billing display
+        await loadHostingData();
+      } catch (err) {
+        showToast('Failed to save settings', 'error');
+      }
+    };
+
     async function loadDashboardData() {
+      // Load hosting balance & billing
+      loadHostingData();
+
       // Load tokens inline on dashboard
       await loadTokens();
 
@@ -6081,6 +6341,7 @@ await hash.sha256('data')</div>
         currentAppId = null;
         showView('dashboard');
         renderAppsList();
+        loadDashboardData();
       } else if (path === '/gaps' || path === '/leaderboard') {
         currentAppId = null;
         showView('leaderboard');
@@ -6143,6 +6404,25 @@ await hash.sha256('data')</div>
     // Initialize connect button and right sidebar visibility
     updateConnectButtonVisibility('${initialView}');
     updateRightSidebar('${initialView}');
+
+    // Handle Stripe checkout redirect (success/cancel)
+    (function() {
+      const params = new URLSearchParams(window.location.search);
+      const topup = params.get('topup');
+      if (topup === 'success') {
+        const amountCents = parseInt(params.get('amount') || '0', 10);
+        const dollars = amountCents > 0 ? ' ($' + (amountCents / 100).toFixed(2) + ')' : '';
+        showToast('Deposit successful' + dollars + '! Balance will update shortly.');
+        // Clean up the URL params
+        history.replaceState({}, '', window.location.pathname);
+        // Refresh balance after a short delay (webhook may still be processing)
+        setTimeout(() => { loadHostingData(); }, 2000);
+        setTimeout(() => { loadHostingData(); }, 5000);
+      } else if (topup === 'cancelled') {
+        showToast('Deposit cancelled.', 'error');
+        history.replaceState({}, '', window.location.pathname);
+      }
+    })();
   </script>
 </body>
 </html>`;

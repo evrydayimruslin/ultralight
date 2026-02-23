@@ -26,8 +26,14 @@ export interface User {
   tier_expires_at: string | null;
   ai_credit_balance: number; // cents
   ai_credit_resets_at: string | null;
-  hosting_balance_cents: number; // hosting balance, drains based on published content storage
+  hosting_balance_cents: number; // hosting balance (FLOAT), drains based on published content storage
   hosting_last_billed_at: string | null;
+  // Stripe & auto top-up
+  stripe_customer_id: string | null;
+  auto_topup_enabled: boolean;
+  auto_topup_threshold_cents: number;
+  auto_topup_amount_cents: number;
+  auto_topup_last_failed_at: string | null;
   byok_enabled: boolean;
   byok_provider: BYOKProvider | null; // Primary provider
   byok_configs: BYOKConfig[]; // All configured providers (keys stored encrypted separately)
@@ -109,6 +115,8 @@ export interface App {
   rate_limit_config: AppRateLimitConfig | null;
   // Per-function pricing config (owner-configurable)
   pricing_config: AppPricingConfig | null;
+  // Hosting billing
+  hosting_suspended: boolean;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -467,6 +475,9 @@ export interface ContentRow {
   size: number | null;
   tags: string[] | null;
   published: boolean;
+  // Billing fields
+  hosting_suspended: boolean;
+  price_cents: number;
   created_at: string;
   updated_at: string;
 }

@@ -143,31 +143,44 @@ export async function processHostingBilling(): Promise<BillingResult> {
         const totalMb = totalBytes / (1024 * 1024);
         const costCents = totalMb * RATE_CENTS_PER_MB_PER_HOUR * hoursSinceLastBilled;
 
-        // Round to nearest cent (minimum 1 cent if there's any cost)
+        // Round to 2 decimal places (sub-cent precision for fractional rates)
         const chargedCents = Math.max(Math.round(costCents * 100) / 100, costCents > 0 ? 0.01 : 0);
 
-        // 2e. Deduct from balance
-        const newBalance = Math.max(user.hosting_balance_cents - chargedCents, 0);
-        const suspended = newBalance <= 0;
-
-        // Update user balance
-        const updateRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}`,
+        // 2e. Atomic debit via Postgres RPC — prevents race with concurrent webhook credits
+        const debitRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/rpc/debit_hosting_balance`,
           {
-            method: 'PATCH',
-            headers: writeHeaders,
+            method: 'POST',
+            headers: {
+              ...headers,
+              'Content-Type': 'application/json',
+            },
             body: JSON.stringify({
-              hosting_balance_cents: newBalance,
-              hosting_last_billed_at: now.toISOString(),
+              p_user_id: user.id,
+              p_amount: chargedCents,
+              p_update_billed_at: true,
             }),
           }
         );
 
-        if (!updateRes.ok) {
-          const err = await updateRes.text();
-          result.errors.push(`Failed to update balance for ${user.id}: ${err}`);
+        if (!debitRes.ok) {
+          const err = await debitRes.text();
+          result.errors.push(`Failed to debit balance for ${user.id}: ${err}`);
           continue;
         }
+
+        const debitResult = await debitRes.json() as Array<{
+          old_balance: number;
+          new_balance: number;
+          was_depleted: boolean;
+        }>;
+
+        if (!debitResult || debitResult.length === 0) {
+          result.errors.push(`Debit RPC returned empty for ${user.id}`);
+          continue;
+        }
+
+        const { new_balance: newBalance, was_depleted: suspended } = debitResult[0];
 
         // 2f. Auto top-up: if balance dropped below threshold, trigger a charge
         if (
@@ -337,18 +350,34 @@ async function triggerAutoTopup(
   };
 
   // Try default payment method, then fall back to listing payment methods
+  // Check cards first, then bank accounts (ACH)
   let paymentMethodId = customer.invoice_settings?.default_payment_method || customer.default_source;
 
   if (!paymentMethodId) {
-    const pmRes = await fetch(
+    // Try cards first
+    const cardRes = await fetch(
       `https://api.stripe.com/v1/payment_methods?customer=${stripeCustomerId}&type=card&limit=1`,
       {
         headers: { 'Authorization': `Bearer ${STRIPE_SECRET_KEY}` },
       }
     );
-    if (pmRes.ok) {
-      const pmData = await pmRes.json() as { data: Array<{ id: string }> };
-      paymentMethodId = pmData.data?.[0]?.id;
+    if (cardRes.ok) {
+      const cardData = await cardRes.json() as { data: Array<{ id: string }> };
+      paymentMethodId = cardData.data?.[0]?.id;
+    }
+  }
+
+  if (!paymentMethodId) {
+    // Fall back to ACH bank accounts
+    const bankRes = await fetch(
+      `https://api.stripe.com/v1/payment_methods?customer=${stripeCustomerId}&type=us_bank_account&limit=1`,
+      {
+        headers: { 'Authorization': `Bearer ${STRIPE_SECRET_KEY}` },
+      }
+    );
+    if (bankRes.ok) {
+      const bankData = await bankRes.json() as { data: Array<{ id: string }> };
+      paymentMethodId = bankData.data?.[0]?.id;
     }
   }
 
