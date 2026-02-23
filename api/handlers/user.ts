@@ -5,7 +5,7 @@ import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
 import { createUserService } from '../services/user.ts';
 import { validateAPIKey } from '../services/ai.ts';
-import { BYOK_PROVIDERS, type BYOKProvider } from '../../shared/types/index.ts';
+import { BYOK_PROVIDERS, type BYOKProvider, calcGrossWithStripeFee } from '../../shared/types/index.ts';
 import {
   createToken,
   listTokens,
@@ -1089,35 +1089,79 @@ export async function handleUser(request: Request): Promise<Response> {
         );
       }
 
-      // Create Stripe Checkout Session with customer + setup_future_usage
-      // setup_future_usage saves the payment method for off-session auto top-ups
+      // Calculate gross charge: deposit + Stripe fee pass-through
+      // Tax (if enabled in Stripe dashboard) is calculated on top of this by Stripe
+      const grossCents = calcGrossWithStripeFee(amountCents);
+      const feeCents = grossCents - amountCents;
+
+      // Create Stripe Checkout Session with customer + setup_future_usage + automatic tax
+      // - setup_future_usage saves the payment method for off-session auto top-ups
+      // - automatic_tax calculates sales tax on the gross amount (including fee)
+      // - line item is the gross (deposit + processing fee); tax added on top by Stripe
+      // - metadata.amount_cents is the NET deposit credited to the user's balance
+      const checkoutParams: Record<string, string> = {
+        'mode': 'payment',
+        'customer': stripeCustomerId,
+        'payment_method_types[0]': 'card',
+        'payment_intent_data[setup_future_usage]': 'off_session',
+        'automatic_tax[enabled]': 'true',
+        'line_items[0][price_data][currency]': 'usd',
+        'line_items[0][price_data][product_data][name]': 'Ultralight Hosting Deposit',
+        'line_items[0][price_data][product_data][description]':
+          `$${(amountCents / 100).toFixed(2)} hosting credit + $${(feeCents / 100).toFixed(2)} processing fee`,
+        'line_items[0][price_data][unit_amount]': String(grossCents),
+        'line_items[0][price_data][tax_behavior]': 'exclusive',
+        'line_items[0][quantity]': '1',
+        'metadata[user_id]': user.id,
+        'metadata[amount_cents]': String(amountCents),
+        'metadata[type]': 'hosting_deposit',
+        'success_url': `${BASE_URL}/settings?topup=success&amount=${amountCents}`,
+        'cancel_url': `${BASE_URL}/settings?topup=cancelled`,
+      };
+
+      // customer_update allows Stripe to collect/update the customer's address for tax
+      checkoutParams['customer_update[address]'] = 'auto';
+
       const checkoutRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${STRIPE_SECRET_KEY}`,
           'Content-Type': 'application/x-www-form-urlencoded',
         },
-        body: new URLSearchParams({
-          'mode': 'payment',
-          'customer': stripeCustomerId,
-          'payment_method_types[0]': 'card',
-          'payment_intent_data[setup_future_usage]': 'off_session',
-          'line_items[0][price_data][currency]': 'usd',
-          'line_items[0][price_data][product_data][name]': 'Ultralight Hosting Deposit',
-          'line_items[0][price_data][product_data][description]': `$${(amountCents / 100).toFixed(2)} hosting credit for publishing apps`,
-          'line_items[0][price_data][unit_amount]': String(amountCents),
-          'line_items[0][quantity]': '1',
-          'metadata[user_id]': user.id,
-          'metadata[amount_cents]': String(amountCents),
-          'metadata[type]': 'hosting_deposit',
-          'success_url': `${BASE_URL}/settings?topup=success&amount=${amountCents}`,
-          'cancel_url': `${BASE_URL}/settings?topup=cancelled`,
-        }).toString(),
+        body: new URLSearchParams(checkoutParams).toString(),
       });
 
       if (!checkoutRes.ok) {
         const stripeErr = await checkoutRes.text();
         console.error('[STRIPE] Checkout session creation failed:', stripeErr);
+        // If automatic_tax fails (not configured), fall back without it
+        if (stripeErr.includes('tax') || stripeErr.includes('Tax')) {
+          console.warn('[STRIPE] Automatic tax not configured, retrying without it');
+          delete checkoutParams['automatic_tax[enabled]'];
+          delete checkoutParams['line_items[0][price_data][tax_behavior]'];
+          delete checkoutParams['customer_update[address]'];
+          const retryRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${STRIPE_SECRET_KEY}`,
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: new URLSearchParams(checkoutParams).toString(),
+          });
+          if (!retryRes.ok) {
+            console.error('[STRIPE] Retry also failed:', await retryRes.text());
+            return error('Failed to create checkout session', 500);
+          }
+          const fallbackSession = await retryRes.json() as { url: string; id: string };
+          return json({
+            checkout_url: fallbackSession.url,
+            session_id: fallbackSession.id,
+            deposit_cents: amountCents,
+            processing_fee_cents: feeCents,
+            charge_cents: grossCents,
+            tax_note: 'Tax calculation unavailable — configure Stripe Tax in dashboard',
+          });
+        }
         return error('Failed to create checkout session', 500);
       }
 
@@ -1126,7 +1170,10 @@ export async function handleUser(request: Request): Promise<Response> {
       return json({
         checkout_url: session.url,
         session_id: session.id,
-        amount_cents: amountCents,
+        deposit_cents: amountCents,
+        processing_fee_cents: feeCents,
+        charge_cents: grossCents,
+        tax: 'calculated at checkout by Stripe',
       });
     } catch (err) {
       if (err instanceof SyntaxError) return error('Invalid JSON body', 400);

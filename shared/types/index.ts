@@ -493,6 +493,22 @@ export const AUTO_TOPUP_DEFAULT_AMOUNT_CENTS = 1000; // $10.00
 /** Minimum auto top-up amount (cents). Same as minimum deposit. */
 export const AUTO_TOPUP_MIN_AMOUNT_CENTS = 500; // $5.00
 
+/**
+ * Stripe processing fee pass-through.
+ * Standard Stripe rate: 2.9% + 30¢ per successful charge.
+ * We pass this through to the user so we net the exact deposit amount.
+ *
+ * Formula: grossCents = Math.ceil((desiredCents + 30) / (1 - 0.029))
+ * This ensures: grossCents - (grossCents * 0.029 + 30) ≈ desiredCents
+ */
+export const STRIPE_FEE_PERCENT = 0.029;  // 2.9%
+export const STRIPE_FEE_FIXED_CENTS = 30; // 30¢
+
+/** Calculate the gross charge amount that nets the desired deposit after Stripe fees. */
+export function calcGrossWithStripeFee(desiredCents: number): number {
+  return Math.ceil((desiredCents + STRIPE_FEE_FIXED_CENTS) / (1 - STRIPE_FEE_PERCENT));
+}
+
 const PLATFORM_LIMITS = {
   max_apps: 10,
   weekly_call_limit: 50_000,

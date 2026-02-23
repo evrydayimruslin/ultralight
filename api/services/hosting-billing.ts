@@ -8,7 +8,7 @@
 // @ts-ignore
 const Deno = globalThis.Deno;
 
-import { HOSTING_RATE_CENTS_PER_MB_PER_HOUR } from '../../shared/types/index.ts';
+import { HOSTING_RATE_CENTS_PER_MB_PER_HOUR, calcGrossWithStripeFee } from '../../shared/types/index.ts';
 
 const RATE_CENTS_PER_MB_PER_HOUR = HOSTING_RATE_CENTS_PER_MB_PER_HOUR;
 
@@ -359,6 +359,11 @@ async function triggerAutoTopup(
   }
 
   // Step 2: Create PaymentIntent (off-session, confirm immediately)
+  // Charge the gross amount (deposit + Stripe fee pass-through).
+  // metadata.amount_cents is the NET deposit credited to the user's balance.
+  const grossCents = calcGrossWithStripeFee(amountCents);
+  const feeCents = grossCents - amountCents;
+
   const intentRes = await fetch('https://api.stripe.com/v1/payment_intents', {
     method: 'POST',
     headers: {
@@ -366,7 +371,7 @@ async function triggerAutoTopup(
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: new URLSearchParams({
-      'amount': String(amountCents),
+      'amount': String(grossCents),
       'currency': 'usd',
       'customer': stripeCustomerId,
       'payment_method': paymentMethodId,
@@ -374,8 +379,10 @@ async function triggerAutoTopup(
       'confirm': 'true',
       'metadata[user_id]': userId,
       'metadata[amount_cents]': String(amountCents),
+      'metadata[gross_cents]': String(grossCents),
+      'metadata[fee_cents]': String(feeCents),
       'metadata[type]': 'auto_topup',
-      'description': `Ultralight auto top-up: $${(amountCents / 100).toFixed(2)}`,
+      'description': `Ultralight auto top-up: $${(amountCents / 100).toFixed(2)} deposit + $${(feeCents / 100).toFixed(2)} processing fee`,
     }).toString(),
   });
 
