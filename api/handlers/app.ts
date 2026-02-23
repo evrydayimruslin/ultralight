@@ -1741,10 +1741,10 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
     'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
   };
 
-  let contentRow: { id: string; visibility: string; access_token: string | null; title: string | null; tags: string[] | null; updated_at: string | null; hosting_suspended: boolean | null } | null = null;
+  let contentRow: { id: string; visibility: string; access_token: string | null; title: string | null; tags: string[] | null; updated_at: string | null; hosting_suspended: boolean | null; price_cents: number | null } | null = null;
   try {
     const contentRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${userId}&type=eq.page&slug=eq.${encodeURIComponent(slug)}&select=id,visibility,access_token,title,tags,updated_at,hosting_suspended&limit=1`,
+      `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${userId}&type=eq.page&slug=eq.${encodeURIComponent(slug)}&select=id,visibility,access_token,title,tags,updated_at,hosting_suspended,price_cents&limit=1`,
       { headers: dbHeaders }
     );
     if (contentRes.ok) {
@@ -1762,6 +1762,66 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
         { status: 402, headers: { 'Content-Type': 'text/html' } }
       );
     }
+    // Check paid page access: if price_cents > 0, charge the viewer
+    if (contentRow.price_cents && contentRow.price_cents > 0) {
+      let viewerUserId: string | null = null;
+      try {
+        const { authenticate } = await import('./auth.ts');
+        const viewer = await authenticate(request);
+        viewerUserId = viewer.id;
+      } catch {
+        // Not authenticated — show a paywall message
+        return new Response(
+          `<!DOCTYPE html><html><head><title>Paid Content</title><style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}div{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#666;line-height:1.6}.price{font-size:1.25rem;font-weight:600;color:#333;margin:1rem 0}</style></head><body><div><div class="icon">&#128176;</div><h1>Paid Page</h1><p class="price">${contentRow.price_cents}¢ per view</p><p>Sign in and have a hosting balance to view this page. The fee is transferred directly to the page owner.</p></div></body></html>`,
+          { status: 402, headers: { 'Content-Type': 'text/html' } }
+        );
+      }
+
+      // Don't charge the owner for viewing their own page
+      if (viewerUserId !== userId) {
+        try {
+          const transferRes = await fetch(
+            `${SUPABASE_URL}/rest/v1/rpc/transfer_balance`,
+            {
+              method: 'POST',
+              headers: { ...dbHeaders, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                p_from_user: viewerUserId,
+                p_to_user: userId,
+                p_amount_cents: contentRow.price_cents,
+              }),
+            }
+          );
+
+          if (transferRes.ok) {
+            const rows = await transferRes.json() as Array<{ from_new_balance: number }>;
+            if (!rows || rows.length === 0) {
+              // Insufficient balance
+              return new Response(
+                `<!DOCTYPE html><html><head><title>Insufficient Balance</title><style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}div{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#666;line-height:1.6}.price{font-size:1.25rem;font-weight:600;color:#333;margin:1rem 0}</style></head><body><div><div class="icon">&#9888;</div><h1>Insufficient Balance</h1><p class="price">This page costs ${contentRow.price_cents}¢</p><p>Top up your hosting balance to view this page.</p></div></body></html>`,
+                { status: 402, headers: { 'Content-Type': 'text/html' } }
+              );
+            }
+            // Log the transfer (fire-and-forget)
+            fetch(`${SUPABASE_URL}/rest/v1/transfers`, {
+              method: 'POST',
+              headers: { ...dbHeaders, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+              body: JSON.stringify({
+                from_user_id: viewerUserId,
+                to_user_id: userId,
+                amount_cents: contentRow.price_cents,
+                reason: 'page_view',
+                content_id: contentRow.id,
+              }),
+            }).catch(() => {});
+          }
+          // If transfer RPC fails, serve the page anyway (fail-open for reads)
+        } catch {
+          // Transfer failed — serve the page anyway
+        }
+      }
+    }
+
     if (contentRow.visibility === 'private') {
       // Only the owner can view private pages
       try {

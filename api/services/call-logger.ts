@@ -33,6 +33,8 @@ export interface McpCallLogEntry {
   // Cost telemetry fields — for per-call pricing calibration
   responseSizeBytes?: number;
   executionCostEstimateCents?: number;
+  // Per-call pricing: amount charged to caller and transferred to owner
+  callChargeCents?: number;
 }
 
 /**
@@ -97,6 +99,7 @@ async function _insertLog(entry: McpCallLogEntry): Promise<void> {
         // Cost telemetry
         response_size_bytes: entry.responseSizeBytes ?? null,
         execution_cost_estimate_cents: entry.executionCostEstimateCents ?? null,
+        call_charge_cents: entry.callChargeCents ?? null,
       }),
     }
   );

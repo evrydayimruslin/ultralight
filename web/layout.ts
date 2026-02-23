@@ -2963,6 +2963,28 @@ export function getLayoutHTML(options: {
           </div>
         </div>
 
+        <!-- Collapsible: Pricing -->
+        <div class="app-section" id="sectionPricing">
+          <button class="app-section-header" onclick="toggleAppSection('Pricing')">
+            <span class="app-section-title">Pricing</span>
+            <svg class="app-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+          <div class="app-section-body">
+            <p style="font-size: 0.75rem; color: var(--text-secondary); margin: 0 0 0.75rem;">
+              Charge callers per tool call. Fees transfer directly to your balance — zero platform fees.
+            </p>
+            <div class="app-field">
+              <label>Default Price (cents per call)</label>
+              <input type="number" id="appPricingDefault" class="settings-input" min="0" max="10000" step="1" value="0" placeholder="0 = free">
+            </div>
+            <div class="app-field" style="margin-top: 0.75rem;">
+              <label>Per-Function Overrides</label>
+              <textarea id="appPricingFunctions" class="settings-input" rows="3" placeholder='{ "search": 5, "generate": 25 }' style="font-family: monospace; font-size: 0.75rem;"></textarea>
+              <span style="font-size: 0.6875rem; color: var(--text-tertiary);">JSON: { "functionName": centsPerCall }</span>
+            </div>
+          </div>
+        </div>
+
         <!-- Collapsible: Environment -->
         <div class="app-section" id="sectionEnvironment">
           <button class="app-section-header" onclick="toggleAppSection('Environment')">
@@ -4984,11 +5006,20 @@ await hash.sha256('data')</div>
         proCtx.textContent = 'Granular per-function control for each user.';
       }
 
+      // Pricing config
+      const pricingDefaultEl = document.getElementById('appPricingDefault');
+      const pricingFnsEl = document.getElementById('appPricingFunctions');
+      if (pricingDefaultEl && pricingFnsEl) {
+        const pc = app.pricing_config;
+        pricingDefaultEl.value = pc?.default_price_cents || 0;
+        pricingFnsEl.value = pc?.functions ? JSON.stringify(pc.functions, null, 2) : '';
+      }
+
       // Hide floating save
       document.getElementById('floatingSave').style.display = 'none';
 
       // Track changes for floating save
-      ['appPageName', 'appPageVisibility', 'appPageDownload', 'appPageSupabase', 'appVersionSelect'].forEach(id => {
+      ['appPageName', 'appPageVisibility', 'appPageDownload', 'appPageSupabase', 'appVersionSelect', 'appPricingDefault', 'appPricingFunctions'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
           el.onchange = () => { document.getElementById('floatingSave').style.display = 'block'; };
@@ -5004,7 +5035,23 @@ await hash.sha256('data')</div>
       btn.disabled = true;
       btn.textContent = 'Saving...';
       try {
-        // Save general settings
+        // Build pricing config from UI
+        let pricingConfig = null;
+        const pricingDefault = parseInt(document.getElementById('appPricingDefault').value, 10) || 0;
+        const pricingFnsRaw = document.getElementById('appPricingFunctions').value.trim();
+        if (pricingDefault > 0 || pricingFnsRaw) {
+          pricingConfig = { default_price_cents: pricingDefault };
+          if (pricingFnsRaw) {
+            try {
+              pricingConfig.functions = JSON.parse(pricingFnsRaw);
+            } catch (e) {
+              showToast('Invalid pricing JSON — check per-function overrides', 'error');
+              return;
+            }
+          }
+        }
+
+        // Save general settings + pricing
         const res = await fetch(\`/api/apps/\${currentAppId}\`, {
           method: 'PATCH',
           headers: { 'Authorization': \`Bearer \${authToken}\`, 'Content-Type': 'application/json' },
@@ -5012,6 +5059,7 @@ await hash.sha256('data')</div>
             name: document.getElementById('appPageName').value.trim(),
             visibility: document.getElementById('appPageVisibility').value,
             download_access: document.getElementById('appPageDownload').value,
+            pricing_config: pricingConfig,
           })
         });
         if (!res.ok) throw new Error('Failed to save');

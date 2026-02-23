@@ -107,6 +107,8 @@ export interface App {
   app_type: 'mcp' | null;  // null means legacy auto-detect; ui/hybrid removed
   // Per-app rate limit config (Pro, owner-configurable)
   rate_limit_config: AppRateLimitConfig | null;
+  // Per-function pricing config (owner-configurable)
+  pricing_config: AppPricingConfig | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -414,6 +416,34 @@ export interface AppRateLimitConfig {
   calls_per_minute?: number | null;
   /** Max calls per consumer per day. null = unlimited. */
   calls_per_day?: number | null;
+}
+
+/**
+ * Per-app pricing config — set by app owner.
+ * Enables agent-to-agent micropayments: caller's balance → owner's balance per call.
+ * Zero-fee internal ledger transfer.
+ */
+export interface AppPricingConfig {
+  /** Default price in cents per tool call. Applies to any function not in `functions`. 0 = free. */
+  default_price_cents: number;
+  /** Per-function price overrides. Key = function name, value = cents per call. */
+  functions?: Record<string, number>;
+}
+
+/**
+ * Get the price in cents for a specific function call on an app.
+ * Returns 0 if no pricing is configured.
+ */
+export function getCallPriceCents(
+  pricingConfig: AppPricingConfig | null | undefined,
+  functionName: string
+): number {
+  if (!pricingConfig) return 0;
+  // Check per-function override first, then default
+  if (pricingConfig.functions && functionName in pricingConfig.functions) {
+    return pricingConfig.functions[functionName];
+  }
+  return pricingConfig.default_price_cents || 0;
 }
 
 // ============================================

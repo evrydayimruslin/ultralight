@@ -1120,6 +1120,32 @@ const PLATFORM_TOOLS: MCPTool[] = [
     },
   },
 
+  {
+    name: 'ul.set.pricing',
+    title: 'Set App Pricing',
+    description:
+      'Set per-function pricing for your app. Callers are charged from their hosting balance ' +
+      'and the amount is transferred to your balance (zero platform fees). ' +
+      'Pass null to remove all pricing (make app free).',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        app_id: { type: 'string', description: 'App ID or slug' },
+        default_price_cents: {
+          type: ['number', 'null'],
+          description: 'Default price in cents per tool call. Applies to functions not listed in `functions`. 0 = free. null = remove pricing.',
+        },
+        functions: {
+          type: ['object', 'null'],
+          description: 'Per-function price overrides. Object mapping function names to cents per call. e.g. { "search": 5, "generate": 25 }',
+          additionalProperties: { type: 'number' },
+        },
+      },
+      required: ['app_id'],
+    },
+  },
+
   // ── Discovery ──────────────────────────────────
   {
     name: 'ul.discover.desk',
@@ -1867,6 +1893,9 @@ async function handleToolsCall(
         break;
       case 'ul.set.ratelimit':
         result = await executeSetRateLimit(userId, toolArgs);
+        break;
+      case 'ul.set.pricing':
+        result = await executeSetPricing(userId, toolArgs);
         break;
 
       // Permissions
@@ -3224,6 +3253,106 @@ async function executeSetRateLimit(
     message: rateLimitConfig
       ? `Rate limit set: ${rateLimitConfig.calls_per_minute ? rateLimitConfig.calls_per_minute + '/min' : 'default'}, ${rateLimitConfig.calls_per_day ? rateLimitConfig.calls_per_day + '/day' : 'unlimited/day'}`
       : 'Rate limits removed. Using platform defaults.',
+  };
+}
+
+async function executeSetPricing(
+  userId: string,
+  args: Record<string, unknown>
+): Promise<unknown> {
+  const appIdOrSlug = args.app_id as string;
+  if (!appIdOrSlug) throw new ToolError(INVALID_PARAMS, 'app_id is required');
+
+  const app = await resolveApp(userId, appIdOrSlug);
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+
+  const defaultPrice = args.default_price_cents as number | null | undefined;
+  const functions = args.functions as Record<string, number> | null | undefined;
+
+  // If both are null/undefined, clear pricing entirely
+  if (
+    (defaultPrice === null || defaultPrice === undefined) &&
+    (functions === null || functions === undefined)
+  ) {
+    const patchRes = await fetch(`${SUPABASE_URL}/rest/v1/apps?id=eq.${app.id}`, {
+      method: 'PATCH',
+      headers: {
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        pricing_config: null,
+        updated_at: new Date().toISOString(),
+      }),
+    });
+    if (!patchRes.ok) {
+      throw new ToolError(INTERNAL_ERROR, `Failed to clear pricing: ${await patchRes.text()}`);
+    }
+    return {
+      app_id: app.id,
+      pricing_config: null,
+      message: 'Pricing removed. All functions are now free.',
+    };
+  }
+
+  // Validate
+  const config: Record<string, unknown> = {};
+  if (defaultPrice !== undefined && defaultPrice !== null) {
+    if (defaultPrice < 0 || defaultPrice > 10000) {
+      throw new ToolError(INVALID_PARAMS, 'default_price_cents must be 0-10000 (max $100 per call)');
+    }
+    config.default_price_cents = defaultPrice;
+  } else {
+    config.default_price_cents = 0;
+  }
+
+  if (functions !== undefined && functions !== null) {
+    if (typeof functions !== 'object' || Array.isArray(functions)) {
+      throw new ToolError(INVALID_PARAMS, 'functions must be an object { fnName: cents }');
+    }
+    for (const [fn, price] of Object.entries(functions)) {
+      if (typeof price !== 'number' || price < 0 || price > 10000) {
+        throw new ToolError(INVALID_PARAMS, `Price for "${fn}" must be 0-10000 cents`);
+      }
+    }
+    config.functions = functions;
+  }
+
+  const patchRes = await fetch(`${SUPABASE_URL}/rest/v1/apps?id=eq.${app.id}`, {
+    method: 'PATCH',
+    headers: {
+      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      pricing_config: config,
+      updated_at: new Date().toISOString(),
+    }),
+  });
+
+  if (!patchRes.ok) {
+    throw new ToolError(INTERNAL_ERROR, `Failed to update pricing: ${await patchRes.text()}`);
+  }
+
+  // Build a human-readable summary
+  const parts: string[] = [];
+  if (config.default_price_cents) {
+    parts.push(`default: ${config.default_price_cents}¢/call`);
+  }
+  if (config.functions && typeof config.functions === 'object') {
+    for (const [fn, price] of Object.entries(config.functions as Record<string, number>)) {
+      parts.push(`${fn}: ${price}¢/call`);
+    }
+  }
+
+  return {
+    app_id: app.id,
+    pricing_config: config,
+    message: parts.length > 0
+      ? `Pricing set: ${parts.join(', ')}. Callers will be charged from their hosting balance.`
+      : 'Pricing set but all prices are 0 (free).',
   };
 }
 

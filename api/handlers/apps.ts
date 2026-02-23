@@ -400,7 +400,7 @@ async function handleUpdateApp(request: Request, appId: string): Promise<Respons
     const updates = await request.json();
 
     // Whitelist allowed updates
-    const allowedFields = ['name', 'description', 'visibility', 'icon_url', 'tags', 'category', 'download_access'];
+    const allowedFields = ['name', 'description', 'visibility', 'icon_url', 'tags', 'category', 'download_access', 'pricing_config'];
     const filteredUpdates: Record<string, unknown> = {};
 
     for (const field of allowedFields) {
@@ -428,6 +428,32 @@ async function handleUpdateApp(request: Request, appId: string): Promise<Respons
         const depositErr = await checkPublishDeposit(user.id);
         if (depositErr) {
           return error(depositErr, 402); // 402 Payment Required
+        }
+      }
+    }
+
+    // Validate pricing_config structure if provided
+    if ('pricing_config' in filteredUpdates) {
+      const pc = filteredUpdates.pricing_config;
+      if (pc !== null) {
+        const cfg = pc as Record<string, unknown>;
+        if (typeof cfg !== 'object' || Array.isArray(cfg)) {
+          return error('pricing_config must be an object or null', 400);
+        }
+        if (cfg.default_price_cents !== undefined) {
+          if (typeof cfg.default_price_cents !== 'number' || cfg.default_price_cents < 0 || cfg.default_price_cents > 10000) {
+            return error('default_price_cents must be 0-10000 (max $100 per call)', 400);
+          }
+        }
+        if (cfg.functions !== undefined) {
+          if (typeof cfg.functions !== 'object' || cfg.functions === null || Array.isArray(cfg.functions)) {
+            return error('pricing_config.functions must be an object mapping function names to cents', 400);
+          }
+          for (const [fn, price] of Object.entries(cfg.functions as Record<string, unknown>)) {
+            if (typeof price !== 'number' || price < 0 || price > 10000) {
+              return error(`Price for "${fn}" must be 0-10000 cents`, 400);
+            }
+          }
         }
       }
     }

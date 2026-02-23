@@ -10,7 +10,7 @@ import { createAppDataService, createWorkerAppDataService } from '../services/ap
 import { checkRateLimit } from '../services/ratelimit.ts';
 import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
 import { getPermissionsForUser } from './user.ts';
-import { type Tier } from '../../shared/types/index.ts';
+import { type Tier, type AppPricingConfig, getCallPriceCents } from '../../shared/types/index.ts';
 import { executeInSandbox, type UserContext } from '../runtime/sandbox.ts';
 import { createR2Service } from '../services/storage.ts';
 import { createUserService } from '../services/user.ts';
@@ -1381,6 +1381,80 @@ async function executeAppFunction(
     );
     const execDuration = Date.now() - execStart;
 
+    // ── Per-call pricing: charge caller → app owner ──
+    // Only charge if: call succeeded, caller is not the owner, price > 0
+    let callChargeCents = 0;
+    if (result.success && userId !== app.owner_id) {
+      const pricingConfig = (app as Record<string, unknown>).pricing_config as AppPricingConfig | null;
+      callChargeCents = getCallPriceCents(pricingConfig, functionName);
+
+      if (callChargeCents > 0) {
+        try {
+          // @ts-ignore
+          const Deno = globalThis.Deno;
+          const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+          const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+
+          // Atomic transfer: caller → owner (fails if insufficient balance)
+          const transferRes = await fetch(
+            `${SUPABASE_URL}/rest/v1/rpc/transfer_balance`,
+            {
+              method: 'POST',
+              headers: {
+                'apikey': SUPABASE_SERVICE_ROLE_KEY,
+                'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                p_from_user: userId,
+                p_to_user: app.owner_id,
+                p_amount_cents: callChargeCents,
+              }),
+            }
+          );
+
+          if (transferRes.ok) {
+            const rows = await transferRes.json() as Array<{ from_new_balance: number; to_new_balance: number }>;
+            if (!rows || rows.length === 0) {
+              // Empty result = insufficient balance. Return payment-required error.
+              return jsonRpcResponse(id, {
+                isError: true,
+                content: [{
+                  type: 'text',
+                  text: `Insufficient balance. This tool costs ${callChargeCents}¢ per call. Top up your hosting balance to continue.`,
+                }],
+              });
+            }
+            // Log the transfer (fire-and-forget)
+            fetch(`${SUPABASE_URL}/rest/v1/transfers`, {
+              method: 'POST',
+              headers: {
+                'apikey': SUPABASE_SERVICE_ROLE_KEY,
+                'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal',
+              },
+              body: JSON.stringify({
+                from_user_id: userId,
+                to_user_id: app.owner_id,
+                amount_cents: callChargeCents,
+                reason: 'tool_call',
+                app_id: app.id,
+                function_name: functionName,
+              }),
+            }).catch(() => {});
+          } else {
+            // Transfer RPC failed — don't block the call, just log it
+            console.error(`[PRICING] Transfer failed for ${userId} → ${app.owner_id}:`, await transferRes.text());
+            callChargeCents = 0; // Reset so telemetry doesn't show a charge that didn't happen
+          }
+        } catch (chargeErr) {
+          console.error(`[PRICING] Charge error:`, chargeErr);
+          callChargeCents = 0;
+        }
+      }
+    }
+
     // Measure response size for cost telemetry
     const resultJson = JSON.stringify(result.success ? result.result : result.error);
     const responseSizeBytes = new TextEncoder().encode(resultJson).byteLength;
@@ -1412,6 +1486,7 @@ async function executeAppFunction(
       userQuery: meta?.userQuery,
       responseSizeBytes,
       executionCostEstimateCents,
+      callChargeCents,
     });
 
     if (result.success) {
