@@ -1,24 +1,66 @@
 // Discovery Handler
-// Semantic search API for finding apps by natural language queries
-// Uses embeddings stored in pgvector for similarity search
+// REST API for agent-accessible app discovery
+// Supports both authenticated (private + public) and unauthenticated (public only) access
+//
+// Endpoints:
+//   GET  /api/discover?q=<query>&limit=<n>     — Semantic search (no auth = public only)
+//   POST /api/discover                          — Semantic search (body: { query, limit, threshold })
+//   GET  /api/discover/featured?limit=<n>       — Top apps by community signal
+//   GET  /api/discover/status                   — Service health check
+//   GET  /api/discover/openapi.json             — OpenAPI 3.1 spec for self-describing API
 
 import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
 import {
   createEmbeddingService,
   isEmbeddingAvailable,
-  searchAppsByEmbedding
 } from '../services/embedding.ts';
+import { createAppsService } from '../services/apps.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
-import type { DiscoverRequest, DiscoverResult, DiscoveredApp } from '../../shared/types/index.ts';
+import type { EnvSchemaEntry } from '../../shared/types/index.ts';
+
+// @ts-ignore - Deno is available in Deno Deploy
+const Deno = globalThis.Deno;
 
 // ============================================
 // TYPES
 // ============================================
 
-interface User {
+interface AuthUser {
   id: string;
   openrouter_api_key?: string;
+}
+
+interface AppRow {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  owner_id: string;
+  visibility: string;
+  likes: number;
+  dislikes: number;
+  weighted_likes: number;
+  weighted_dislikes: number;
+  runs_30d: number;
+  env_schema: Record<string, EnvSchemaEntry> | null;
+  similarity?: number;
+  hosting_suspended?: boolean;
+}
+
+interface ScoredApp {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  similarity: number;
+  final_score: number;
+  type: 'app';
+  mcp_endpoint: string;
+  likes: number;
+  dislikes: number;
+  runs_30d: number;
+  fully_native: boolean;
 }
 
 // ============================================
@@ -26,139 +68,454 @@ interface User {
 // ============================================
 
 /**
- * Handle discovery requests
- * POST /api/discover - Search apps by semantic query
+ * Handle all /api/discover/* routes
  */
 export async function handleDiscover(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
 
-  // POST /api/discover - Semantic search
-  if (path === '/api/discover' && method === 'POST') {
-    return handleSearch(request);
+  // GET /api/discover — Semantic search via query params (agent-friendly)
+  if (path === '/api/discover' && method === 'GET') {
+    return handleGetSearch(request, url);
   }
 
-  // GET /api/discover/status - Check if discovery is available
+  // POST /api/discover — Semantic search via JSON body (backward-compatible)
+  if (path === '/api/discover' && method === 'POST') {
+    return handlePostSearch(request);
+  }
+
+  // GET /api/discover/featured — Top apps by community signal (no embedding needed)
+  if (path === '/api/discover/featured' && method === 'GET') {
+    return handleFeatured(request, url);
+  }
+
+  // GET /api/discover/status — Service health check
   if (path === '/api/discover/status' && method === 'GET') {
     return handleStatus(request);
+  }
+
+  // GET /api/discover/openapi.json — Self-describing API spec
+  if (path === '/api/discover/openapi.json' && method === 'GET') {
+    return handleOpenApiSpec();
   }
 
   return error('Not found', 404);
 }
 
-/**
- * Search apps by semantic query
- * Requires authentication - searches owner's private apps + all public apps
- */
-async function handleSearch(request: Request): Promise<Response> {
-  // Authenticate user
-  let user: User;
-  try {
-    user = await authenticate(request);
-  } catch (err) {
-    return error('Authentication required', 401);
+// ============================================
+// GET /api/discover?q=<query>&limit=<n>
+// ============================================
+// The primary agent-accessible endpoint.
+// Auth optional: with auth, includes private apps + personalized ranking.
+// Without auth, returns public apps only.
+
+async function handleGetSearch(request: Request, url: URL): Promise<Response> {
+  const query = url.searchParams.get('q') || url.searchParams.get('query') || '';
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '10', 10), 50);
+  const threshold = parseFloat(url.searchParams.get('threshold') || '0.4');
+
+  if (!query) {
+    return json({
+      error: 'Missing query parameter: ?q=<search term>',
+      hint: 'Try GET /api/discover?q=weather+api or GET /api/discover/featured for top apps',
+      docs: '/api/discover/openapi.json',
+    }, 400);
   }
 
-  // Rate limit check
-  const rateLimitResult = await checkRateLimit(user.id, 'discover');
-  if (!rateLimitResult.allowed) {
-    return json(
-      {
-        error: 'Rate limit exceeded',
-        resetAt: rateLimitResult.resetAt.toISOString(),
-      },
-      429
-    );
-  }
-
-  // Parse request body
-  let body: DiscoverRequest;
-  try {
-    body = await request.json();
-  } catch {
-    return error('Invalid JSON body', 400);
-  }
-
-  const { query, limit = 20, threshold = 0.5 } = body;
-
-  if (!query || typeof query !== 'string') {
-    return error('Query is required', 400);
-  }
-
-  if (query.length < 3) {
-    return error('Query must be at least 3 characters', 400);
+  if (query.length < 2) {
+    return error('Query must be at least 2 characters', 400);
   }
 
   if (query.length > 500) {
     return error('Query must be at most 500 characters', 400);
   }
 
-  // Check if embedding service is available
-  const embeddingService = createEmbeddingService(user.openrouter_api_key);
+  // Optional auth — unauthenticated requests get public-only results
+  let user: AuthUser | null = null;
+  try {
+    user = await authenticate(request);
+  } catch {
+    // No auth = public-only search, which is fine
+  }
+
+  // IP-based rate limiting for unauthenticated requests
+  const rateLimitKey = user?.id || getClientIp(request) || 'anonymous';
+  const rateLimitResult = await checkRateLimit(rateLimitKey, 'discover');
+  if (!rateLimitResult.allowed) {
+    return json({ error: 'Rate limit exceeded', resetAt: rateLimitResult.resetAt.toISOString() }, 429);
+  }
+
+  return executeSearch(query, limit, threshold, user);
+}
+
+// ============================================
+// POST /api/discover (backward-compatible)
+// ============================================
+
+async function handlePostSearch(request: Request): Promise<Response> {
+  // Auth required for POST (backward compat)
+  let user: AuthUser;
+  try {
+    user = await authenticate(request);
+  } catch {
+    return error('Authentication required. Use GET /api/discover?q=<query> for unauthenticated access.', 401);
+  }
+
+  const rateLimitResult = await checkRateLimit(user.id, 'discover');
+  if (!rateLimitResult.allowed) {
+    return json({ error: 'Rate limit exceeded', resetAt: rateLimitResult.resetAt.toISOString() }, 429);
+  }
+
+  let body: { query?: string; limit?: number; threshold?: number };
+  try {
+    body = await request.json();
+  } catch {
+    return error('Invalid JSON body', 400);
+  }
+
+  const { query, limit = 20, threshold = 0.4 } = body;
+
+  if (!query || typeof query !== 'string') {
+    return error('Query is required', 400);
+  }
+
+  if (query.length < 2) {
+    return error('Query must be at least 2 characters', 400);
+  }
+
+  if (query.length > 500) {
+    return error('Query must be at most 500 characters', 400);
+  }
+
+  return executeSearch(query, Math.min(limit, 50), threshold, user);
+}
+
+// ============================================
+// GET /api/discover/featured
+// ============================================
+// Returns top apps ranked by community signal — no embedding needed.
+// Fast, cacheable, works without an API key.
+
+async function handleFeatured(request: Request, url: URL): Promise<Response> {
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '20', 10), 50);
+
+  const supabaseUrl = Deno?.env?.get('SUPABASE_URL');
+  const supabaseKey = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY');
+
+  if (!supabaseUrl || !supabaseKey) {
+    return error('Service unavailable', 503);
+  }
+
+  const headers = {
+    'apikey': supabaseKey,
+    'Authorization': `Bearer ${supabaseKey}`,
+  };
+
+  // Optional auth for personalization (blocked apps filtering)
+  let user: AuthUser | null = null;
+  try {
+    user = await authenticate(request);
+  } catch { /* public access is fine */ }
+
+  // Fetch blocked apps if authenticated
+  let blockedAppIds = new Set<string>();
+  if (user) {
+    try {
+      const blocksRes = await fetch(
+        `${supabaseUrl}/rest/v1/user_app_blocks?user_id=eq.${user.id}&select=app_id`,
+        { headers }
+      );
+      if (blocksRes.ok) {
+        const rows = await blocksRes.json() as Array<{ app_id: string }>;
+        blockedAppIds = new Set(rows.map(r => r.app_id));
+      }
+    } catch { /* best effort */ }
+  }
+
+  const overFetchLimit = limit + blockedAppIds.size + 5;
+
+  const topRes = await fetch(
+    `${supabaseUrl}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&hosting_suspended=eq.false` +
+    `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,runs_30d` +
+    `&order=weighted_likes.desc,likes.desc,runs_30d.desc` +
+    `&limit=${overFetchLimit}`,
+    { headers }
+  );
+
+  if (!topRes.ok) {
+    return error('Failed to fetch featured apps', 500);
+  }
+
+  const topApps = await topRes.json() as AppRow[];
+  const filtered = topApps.filter(a => !blockedAppIds.has(a.id)).slice(0, limit);
+
+  const results = filtered.map(a => {
+    const schema = a.env_schema || {};
+    const perUserEntries = Object.entries(schema).filter(([, v]) => v.scope === 'per_user');
+    const fullyNative = perUserEntries.length === 0;
+
+    return {
+      id: a.id,
+      name: a.name,
+      slug: a.slug,
+      description: a.description,
+      type: 'app' as const,
+      mcp_endpoint: `/mcp/${a.id}`,
+      likes: a.likes ?? 0,
+      dislikes: a.dislikes ?? 0,
+      runs_30d: a.runs_30d ?? 0,
+      fully_native: fullyNative,
+    };
+  });
+
+  return json({
+    mode: 'featured',
+    results: results,
+    total: results.length,
+    _links: {
+      search: '/api/discover?q={query}',
+      openapi: '/api/discover/openapi.json',
+      mcp_platform: '/mcp/platform',
+    },
+  });
+}
+
+// ============================================
+// CORE SEARCH — Full appstore ranking
+// ============================================
+// Composite score: (similarity * 0.7) + (native_boost * 0.15) + (like_signal * 0.15)
+// Same algorithm as ul.discover.appstore in platform-mcp.ts
+
+async function executeSearch(
+  query: string,
+  limit: number,
+  threshold: number,
+  user: AuthUser | null
+): Promise<Response> {
+  // Check embedding service
+  const embeddingService = createEmbeddingService(user?.openrouter_api_key);
   if (!embeddingService) {
     return json({
       error: 'Embedding service not available',
-      message: 'Enable BYOK (Bring Your Own Key) with OpenRouter to use semantic search',
-      apps: [],
+      message: 'Semantic search requires the embedding service. Try GET /api/discover/featured instead.',
+      results: [],
       total: 0,
-    }, 200);
+    }, 503);
   }
 
+  const supabaseUrl = Deno?.env?.get('SUPABASE_URL');
+  const supabaseKey = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY');
+
+  if (!supabaseUrl || !supabaseKey) {
+    return error('Service unavailable', 503);
+  }
+
+  const dbHeaders = {
+    'apikey': supabaseKey,
+    'Authorization': `Bearer ${supabaseKey}`,
+  };
+
   try {
-    // Generate embedding for the query
+    // Generate query embedding
     const embeddingResult = await embeddingService.embed(query);
 
+    // Over-fetch 3x for re-ranking pool
+    const overFetchLimit = limit * 3;
+
     // Search apps by embedding similarity
-    const searchResults = await searchAppsByEmbedding(
+    const appsService = createAppsService();
+    const results = await appsService.searchByEmbedding(
       embeddingResult.embedding,
-      user.id,
-      { limit, threshold }
+      user?.id || '00000000-0000-0000-0000-000000000000', // dummy UUID for public-only
+      false, // public only (authenticated users also search public — private via MCP)
+      overFetchLimit,
+      threshold,
     );
 
-    // Transform results to DiscoveredApp format
-    const apps: DiscoveredApp[] = searchResults.map(result => ({
-      id: result.id,
-      name: result.name,
-      slug: result.slug,
-      description: result.description,
-      isPublic: result.is_public,
-      isOwner: result.owner_id === user.id,
-      similarity: result.similarity,
-      mcpEndpoint: `/mcp/${result.id}`,
-    }));
+    // Fetch blocked apps if authenticated
+    let blockedAppIds = new Set<string>();
+    if (user) {
+      try {
+        const blocksRes = await fetch(
+          `${supabaseUrl}/rest/v1/user_app_blocks?user_id=eq.${user.id}&select=app_id`,
+          { headers: dbHeaders }
+        );
+        if (blocksRes.ok) {
+          const rows = await blocksRes.json() as Array<{ app_id: string }>;
+          blockedAppIds = new Set(rows.map(r => r.app_id));
+        }
+      } catch { /* best effort */ }
+    }
 
-    const response: DiscoverResult = {
-      apps,
-      total: apps.length,
-      query,
-      model: embeddingResult.model,
-    };
+    // Filter blocked/suspended
+    const filteredResults = results.filter(r =>
+      !blockedAppIds.has(r.id) && !(r as Record<string, unknown>).hosting_suspended
+    );
 
-    return json(response);
+    // Fetch env schemas for native_boost calculation
+    const appIds = filteredResults.map(r => r.id);
+
+    let envSchemas = new Map<string, Record<string, EnvSchemaEntry>>();
+    if (appIds.length > 0) {
+      try {
+        const schemaRes = await fetch(
+          `${supabaseUrl}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,env_schema,likes,dislikes,weighted_likes,weighted_dislikes,runs_30d`,
+          { headers: dbHeaders }
+        );
+        if (schemaRes.ok) {
+          const rows = await schemaRes.json() as AppRow[];
+          for (const row of rows) {
+            if (row.env_schema) envSchemas.set(row.id, row.env_schema);
+          }
+        }
+      } catch { /* best effort */ }
+    }
+
+    // Fetch app metadata for likes/runs (from the env_schema query above, we already have it)
+    let appMeta = new Map<string, { weighted_likes: number; weighted_dislikes: number; runs_30d: number }>();
+    if (appIds.length > 0) {
+      try {
+        const metaRes = await fetch(
+          `${supabaseUrl}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,weighted_likes,weighted_dislikes,runs_30d`,
+          { headers: dbHeaders }
+        );
+        if (metaRes.ok) {
+          const rows = await metaRes.json() as Array<{ id: string; weighted_likes: number; weighted_dislikes: number; runs_30d: number }>;
+          for (const row of rows) {
+            appMeta.set(row.id, {
+              weighted_likes: row.weighted_likes ?? 0,
+              weighted_dislikes: row.weighted_dislikes ?? 0,
+              runs_30d: row.runs_30d ?? 0,
+            });
+          }
+        }
+      } catch { /* best effort */ }
+    }
+
+    // Composite re-ranking
+    const scored: ScoredApp[] = filteredResults.map(r => {
+      const rr = r as AppRow & { similarity: number };
+
+      const schema = envSchemas.get(rr.id) || {};
+      const perUserEntries = Object.entries(schema).filter(([, v]) => v.scope === 'per_user');
+      const requiredPerUser = perUserEntries.filter(([, v]) => v.required);
+
+      let nativeBoost: number;
+      if (perUserEntries.length === 0) {
+        nativeBoost = 1.0;  // No integrations needed — fully native
+      } else if (requiredPerUser.length === 0) {
+        nativeBoost = 0.3;  // Optional integrations only
+      } else {
+        nativeBoost = 0.0;  // Requires setup (unauthenticated can't check connection)
+      }
+
+      const meta = appMeta.get(rr.id);
+      const wLikes = meta?.weighted_likes ?? 0;
+      const wDislikes = meta?.weighted_dislikes ?? 0;
+      const likeSignal = wLikes / (wLikes + wDislikes + 1);
+
+      const finalScore = (rr.similarity * 0.7) + (nativeBoost * 0.15) + (likeSignal * 0.15);
+
+      return {
+        id: rr.id,
+        name: rr.name,
+        slug: rr.slug,
+        description: rr.description,
+        similarity: Math.round(rr.similarity * 10000) / 10000,
+        final_score: Math.round(finalScore * 10000) / 10000,
+        type: 'app' as const,
+        mcp_endpoint: `/mcp/${rr.id}`,
+        likes: rr.likes ?? 0,
+        dislikes: rr.dislikes ?? 0,
+        runs_30d: meta?.runs_30d ?? 0,
+        fully_native: perUserEntries.length === 0,
+      };
+    });
+
+    // Sort by final_score DESC
+    scored.sort((a, b) => b.final_score - a.final_score);
+
+    // Luck shuffle top 5
+    if (scored.length >= 2) {
+      const shuffleCount = Math.min(5, scored.length);
+      const topSlice = scored.slice(0, shuffleCount);
+      const topScore = topSlice[0].final_score;
+
+      const shuffled = topSlice.map(item => {
+        const gap = topScore - item.final_score;
+        const luckBonus = Math.random() * gap * 0.5;
+        return { item: item, shuffledScore: item.final_score + luckBonus };
+      });
+      shuffled.sort((a, b) => b.shuffledScore - a.shuffledScore);
+
+      for (let i = 0; i < shuffleCount; i++) {
+        scored[i] = shuffled[i].item;
+      }
+    }
+
+    // Truncate
+    const finalResults = scored.slice(0, limit);
+
+    // Log query (fire-and-forget)
+    const queryId = crypto.randomUUID();
+    try {
+      fetch(`${supabaseUrl}/rest/v1/appstore_queries`, {
+        method: 'POST',
+        headers: { ...dbHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: queryId,
+          query: query,
+          top_similarity: finalResults.length > 0 ? finalResults[0].similarity : null,
+          top_final_score: finalResults.length > 0 ? finalResults[0].final_score : null,
+          result_count: finalResults.length,
+          results: finalResults.map((r, i) => ({
+            app_id: r.id,
+            content_id: null,
+            position: i + 1,
+            final_score: r.final_score,
+            similarity: r.similarity,
+            type: 'app',
+          })),
+        }),
+      }).catch(err => console.error('Failed to log discovery query:', err));
+    } catch { /* best effort */ }
+
+    return json({
+      mode: 'search',
+      query: query,
+      query_id: queryId,
+      authenticated: !!user,
+      results: finalResults,
+      total: finalResults.length,
+      _links: {
+        featured: '/api/discover/featured',
+        openapi: '/api/discover/openapi.json',
+        mcp_platform: '/mcp/platform',
+      },
+    });
 
   } catch (err) {
     console.error('Discovery search error:', err);
     return json({
       error: 'Search failed',
       message: err instanceof Error ? err.message : String(err),
-      apps: [],
+      results: [],
       total: 0,
     }, 500);
   }
 }
 
-/**
- * Check discovery service status
- * Returns whether embedding is available and configuration info
- */
+// ============================================
+// GET /api/discover/status
+// ============================================
+
 async function handleStatus(request: Request): Promise<Response> {
-  // Authenticate user (optional - status can be checked without auth)
-  let user: User | null = null;
+  let user: AuthUser | null = null;
   try {
     user = await authenticate(request);
   } catch {
-    // Auth is optional for status check
+    // Auth optional for status check
   }
 
   const hasUserKey = !!user?.openrouter_api_key;
@@ -167,10 +524,159 @@ async function handleStatus(request: Request): Promise<Response> {
 
   return json({
     available: isAvailable,
-    hasUserKey,
-    hasSystemKey,
+    authenticated: !!user,
+    endpoints: {
+      search_get: 'GET /api/discover?q={query}&limit={n}',
+      search_post: 'POST /api/discover { query, limit, threshold }',
+      featured: 'GET /api/discover/featured?limit={n}',
+      status: 'GET /api/discover/status',
+      openapi: 'GET /api/discover/openapi.json',
+      mcp_platform: 'POST /mcp/platform (full MCP access)',
+    },
     message: isAvailable
-      ? 'Discovery service is available'
-      : 'Enable BYOK (Bring Your Own Key) with OpenRouter to use semantic search',
+      ? 'Discovery service is available. Use ?q=<query> to search.'
+      : 'Semantic search available with system key. Authenticate for personalized results.',
   });
+}
+
+// ============================================
+// GET /api/discover/openapi.json
+// ============================================
+// Self-describing API spec so agents can auto-discover our discovery endpoint.
+
+function handleOpenApiSpec(): Response {
+  const spec = {
+    openapi: '3.1.0',
+    info: {
+      title: 'Ultralight Discovery API',
+      description: 'Semantic search across the Ultralight MCP app ecosystem. Find agent-callable tools by natural language query. Every result includes an mcp_endpoint for direct JSON-RPC 2.0 access.',
+      version: '1.0.0',
+      contact: { name: 'Ultralight', url: 'https://ultralight.dev' },
+    },
+    servers: [
+      { url: 'https://ultralight-api-iikqz.ondigitalocean.app', description: 'Production' },
+    ],
+    paths: {
+      '/api/discover': {
+        get: {
+          operationId: 'searchApps',
+          summary: 'Search for MCP apps by natural language query',
+          description: 'Semantic search using pgvector embeddings with composite ranking (similarity * 0.7 + native_boost * 0.15 + community_signal * 0.15). Auth optional — unauthenticated requests return public apps only.',
+          parameters: [
+            { name: 'q', in: 'query', required: true, schema: { type: 'string', minLength: 2, maxLength: 500 }, description: 'Natural language search query', example: 'weather API' },
+            { name: 'limit', in: 'query', required: false, schema: { type: 'integer', default: 10, maximum: 50 }, description: 'Max results to return' },
+            { name: 'threshold', in: 'query', required: false, schema: { type: 'number', default: 0.4, minimum: 0, maximum: 1 }, description: 'Minimum similarity threshold' },
+          ],
+          security: [{ bearerAuth: [] }, {}],
+          responses: {
+            '200': {
+              description: 'Search results with MCP endpoints',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      mode: { type: 'string', enum: ['search'] },
+                      query: { type: 'string' },
+                      query_id: { type: 'string', format: 'uuid' },
+                      authenticated: { type: 'boolean' },
+                      results: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            id: { type: 'string', format: 'uuid' },
+                            name: { type: 'string' },
+                            slug: { type: 'string' },
+                            description: { type: 'string', nullable: true },
+                            similarity: { type: 'number', description: 'Cosine similarity (0-1)' },
+                            final_score: { type: 'number', description: 'Composite ranking score' },
+                            mcp_endpoint: { type: 'string', description: 'JSON-RPC 2.0 endpoint for this app' },
+                            likes: { type: 'integer' },
+                            runs_30d: { type: 'integer' },
+                            fully_native: { type: 'boolean', description: 'True if no per-user setup needed' },
+                          },
+                        },
+                      },
+                      total: { type: 'integer' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        post: {
+          operationId: 'searchAppsPost',
+          summary: 'Search for MCP apps (POST, auth required)',
+          description: 'Same as GET but accepts JSON body. Requires authentication.',
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['query'],
+                  properties: {
+                    query: { type: 'string' },
+                    limit: { type: 'integer', default: 20 },
+                    threshold: { type: 'number', default: 0.4 },
+                  },
+                },
+              },
+            },
+          },
+          responses: { '200': { description: 'Search results (same shape as GET)' } },
+        },
+      },
+      '/api/discover/featured': {
+        get: {
+          operationId: 'getFeaturedApps',
+          summary: 'Get top-ranked apps by community signal',
+          description: 'No embedding needed. Returns apps ranked by weighted likes, total likes, and 30-day run count.',
+          parameters: [
+            { name: 'limit', in: 'query', required: false, schema: { type: 'integer', default: 20, maximum: 50 } },
+          ],
+          security: [{ bearerAuth: [] }, {}],
+          responses: { '200': { description: 'Featured apps list' } },
+        },
+      },
+      '/mcp/platform': {
+        post: {
+          operationId: 'mcpPlatform',
+          summary: 'Full MCP platform access (JSON-RPC 2.0)',
+          description: 'Complete platform MCP with 32 tools: upload, test, lint, scaffold, discover.desk/library/appstore, settings, permissions, and more. Use this for the richest agent experience.',
+          security: [{ bearerAuth: [] }],
+        },
+      },
+    },
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          description: 'Ultralight API token (ul_xxx) or OAuth 2.1 token. Obtain via POST /oauth/token or create at ultralight.dev settings.',
+        },
+      },
+    },
+  };
+
+  return new Response(JSON.stringify(spec, null, 2), {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'public, max-age=3600',
+    },
+  });
+}
+
+// ============================================
+// HELPERS
+// ============================================
+
+function getClientIp(request: Request): string | null {
+  return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+    || request.headers.get('x-real-ip')
+    || null;
 }

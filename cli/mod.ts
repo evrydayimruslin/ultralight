@@ -11,12 +11,15 @@
  *   login           Authenticate with Ultralight
  *   logout          Clear stored credentials
  *   whoami          Show current user
+ *   scaffold        Generate a structured app skeleton (ul.scaffold)
  *   upload          Upload a new app or update existing
+ *   test            Test functions without deploying (ul.test)
+ *   lint            Validate code against conventions (ul.lint)
  *   apps            App management commands
  *   draft           Draft management commands
  *   docs            Documentation commands
- *   run             Execute an app function
- *   discover        Search for apps
+ *   run             Execute a deployed app function
+ *   discover        Search the App Store for MCP tools
  *
  * Run `ultralight <command> --help` for more information on a command.
  */
@@ -25,7 +28,7 @@ import { parseArgs, getConfig, saveConfig, clearConfig, type Config } from './co
 import { ApiClient } from './api.ts';
 import { colors } from './colors.ts';
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 
 // Command handlers
 const commands: Record<string, (args: string[], client: ApiClient, config: Config) => Promise<void>> = {
@@ -37,6 +40,9 @@ const commands: Record<string, (args: string[], client: ApiClient, config: Confi
   apps,
   draft,
   docs,
+  test: testCmd,
+  lint,
+  scaffold,
   run,
   discover,
   config: configCmd,
@@ -93,36 +99,43 @@ ${colors.dim('USAGE')}
   ultralight <command> [options]
 
 ${colors.dim('COMMANDS')}
-  ${colors.cyan('init')} [name]     Create a new Ultralight app project
-  ${colors.cyan('login')}           Authenticate with Ultralight
-  ${colors.cyan('logout')}          Clear stored credentials
-  ${colors.cyan('whoami')}          Show current user
+  ${colors.cyan('init')} [name]        Create a new Ultralight app project
+  ${colors.cyan('scaffold')} <name>    Generate a structured app skeleton (uses ul.scaffold)
+  ${colors.cyan('login')}              Authenticate with Ultralight
+  ${colors.cyan('logout')}             Clear stored credentials
+  ${colors.cyan('whoami')}             Show current user
 
-  ${colors.cyan('upload')} [dir]    Upload a new app or update existing
-  ${colors.cyan('apps')}            App management (list, get, delete, update)
-  ${colors.cyan('draft')}           Draft management (upload, status, publish, discard)
-  ${colors.cyan('docs')}            Documentation (generate, get, update)
+  ${colors.cyan('upload')} [dir]       Upload a new app or update existing
+  ${colors.cyan('test')} [dir]         Test functions without deploying (uses ul.test)
+  ${colors.cyan('lint')} [dir]         Validate code against platform conventions (uses ul.lint)
+  ${colors.cyan('apps')}               App management (list, get, delete, update)
+  ${colors.cyan('draft')}              Draft management (upload, status, publish, discard)
+  ${colors.cyan('docs')}               Documentation (generate, get, update)
 
-  ${colors.cyan('run')} <app> <fn>  Execute an app function
-  ${colors.cyan('discover')} <q>    Search for apps by capability
+  ${colors.cyan('run')} <app> <fn>     Execute a deployed app function
+  ${colors.cyan('discover')} <q>       Search the App Store for MCP tools
 
-  ${colors.cyan('config')}          CLI configuration
-  ${colors.cyan('help')}            Show this help message
-  ${colors.cyan('version')}         Show version
+  ${colors.cyan('config')}             CLI configuration
+  ${colors.cyan('help')}               Show this help message
+  ${colors.cyan('version')}            Show version
 
 ${colors.dim('OPTIONS')}
   --help, -h      Show help for a command
   --version, -v   Show version
 
+${colors.dim('BUILD WORKFLOW')}
+  1. ${colors.cyan('ultralight scaffold my-app')}        Generate skeleton
+  2. Fill in function implementations
+  3. ${colors.cyan('ultralight test .')}                  Verify functions work
+  4. ${colors.cyan('ultralight lint .')}                  Validate conventions
+  5. ${colors.cyan('ultralight upload .')}                Deploy
+
 ${colors.dim('EXAMPLES')}
-  ultralight init my-app
-  ultralight init my-app --react
-  ultralight login --token ul_abc123...
-  ultralight upload ./my-app
-  ultralight apps list
-  ultralight draft publish my-app
-  ultralight run my-app myFunction '{"arg": "value"}'
+  ultralight scaffold my-app --storage supabase
+  ultralight test . --function hello '{"name":"World"}'
+  ultralight lint . --strict
   ultralight discover "weather API"
+  ultralight run my-app hello '{"name": "World"}'
 
 ${colors.dim('DOCUMENTATION')}
   https://ultralight.dev/docs/cli
@@ -1084,50 +1097,370 @@ ${colors.dim('EXAMPLES')}
   }
 }
 
-async function discover(args: string[], client: ApiClient, _config: Config) {
-  const query = args.join(' ');
+// ============================================
+// TEST COMMAND
+// ============================================
 
-  if (!query) {
+async function testCmd(args: string[], client: ApiClient, _config: Config) {
+  const parsed = parseArgs(args, {
+    string: ['function'],
+    boolean: ['help', 'json'],
+    alias: { f: 'function', h: 'help' },
+  });
+
+  if (parsed.help) {
     console.log(`
-${colors.bold('ultralight discover')} <query>
+${colors.bold('ultralight test')} [directory] [options]
 
-Search for apps by capability using natural language.
+Test your app functions without deploying. Builds and executes in the Ultralight sandbox.
+
+${colors.dim('OPTIONS')}
+  --function, -f <name>  Test a specific function (with optional JSON args after)
+  --json                 Output raw JSON result
 
 ${colors.dim('EXAMPLES')}
-  ultralight discover "weather API"
-  ultralight discover "send email notifications"
-  ultralight discover "data visualization"
+  ultralight test .                                    # Build-check all exports
+  ultralight test . --function hello '{"name":"World"}'  # Test one function
+  ultralight test ./my-app -f process '{"data":[1,2]}'
 `);
     return;
   }
 
+  // Determine directory (first positional arg or current dir)
+  let dir = '.';
+  const positional = parsed._ as string[];
+  if (positional.length > 0 && !positional[0].startsWith('{')) {
+    dir = positional[0];
+  }
+
+  const files = await collectFiles(dir);
+  if (files.length === 0) {
+    throw new Error('No valid files found in directory');
+  }
+
+  const fnName = parsed.function as string | undefined;
+  let fnArgs: Record<string, unknown> | undefined;
+
+  // Parse function args — look for JSON in remaining positional args
+  if (fnName) {
+    const jsonArg = positional.find(a => a.startsWith('{'));
+    if (jsonArg) {
+      try {
+        fnArgs = JSON.parse(jsonArg);
+      } catch {
+        throw new Error('Invalid JSON arguments. Must be valid JSON object.');
+      }
+    }
+  }
+
+  console.log(colors.dim(`Testing${fnName ? ` ${fnName}()` : ''} from ${dir}...`));
+  console.log();
+
+  const toolArgs: Record<string, unknown> = {
+    files: files.map(f => ({ path: f.name, content: f.content })),
+  };
+  if (fnName) {
+    toolArgs.function_name = fnName;
+    if (fnArgs) toolArgs.args = fnArgs;
+  }
+
+  const result = await client.callTool('platform.test', toolArgs);
+
+  if (parsed.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (result.success) {
+    console.log(colors.green('✓ Test passed') + ` (${result.duration_ms}ms)`);
+    if (result.exports) {
+      console.log(`  Exports: ${(result.exports as string[]).join(', ')}`);
+    }
+    if (result.result !== undefined) {
+      console.log();
+      console.log(colors.dim('Result:'));
+      console.log(typeof result.result === 'string' ? result.result : JSON.stringify(result.result, null, 2));
+    }
+  } else {
+    console.log(colors.red('✗ Test failed'));
+    if (result.error_type) {
+      console.log(`  Type: ${result.error_type}`);
+    }
+    console.log(`  ${result.error}`);
+  }
+
+  if (result.logs && (result.logs as unknown[]).length > 0) {
+    console.log();
+    console.log(colors.dim('--- Logs ---'));
+    for (const log of result.logs as Array<{ message: string }>) {
+      console.log(log.message);
+    }
+  }
+}
+
+// ============================================
+// LINT COMMAND
+// ============================================
+
+async function lint(args: string[], client: ApiClient, _config: Config) {
   const parsed = parseArgs(args, {
-    number: ['limit'],
-    boolean: ['private'],
-    alias: { l: 'limit', p: 'private' },
+    boolean: ['strict', 'help', 'json'],
+    alias: { s: 'strict', h: 'help' },
   });
 
+  if (parsed.help) {
+    console.log(`
+${colors.bold('ultralight lint')} [directory]
+
+Validate source code and manifest against Ultralight conventions.
+Checks: single-args-object, no-shorthand-return, function-count, manifest sync, permissions.
+
+${colors.dim('OPTIONS')}
+  --strict, -s    Treat warnings as errors
+  --json          Output raw JSON result
+
+${colors.dim('EXAMPLES')}
+  ultralight lint .
+  ultralight lint ./my-app --strict
+`);
+    return;
+  }
+
+  const dir = (parsed._[0] as string) || '.';
+  const files = await collectFiles(dir);
+  if (files.length === 0) {
+    throw new Error('No valid files found in directory');
+  }
+
+  console.log(colors.dim(`Linting ${files.length} files from ${dir}...`));
+  console.log();
+
+  const result = await client.callTool('platform.lint', {
+    files: files.map(f => ({ path: f.name, content: f.content })),
+    strict: parsed.strict || false,
+  });
+
+  if (parsed.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  const issues = result.issues as Array<{ severity: string; rule: string; message: string; suggestion?: string }> || [];
+
+  if (result.valid) {
+    console.log(colors.green('✓ All checks passed'));
+  } else {
+    console.log(colors.red(`✗ ${issues.length} issue(s) found`));
+  }
+
+  if (result.summary) {
+    console.log(`  ${colors.dim(result.summary as string)}`);
+  }
+
+  console.log();
+  for (const issue of issues) {
+    const icon = issue.severity === 'error' ? colors.red('✗') : colors.yellow('⚠');
+    console.log(`  ${icon} ${colors.bold(issue.rule)}: ${issue.message}`);
+    if (issue.suggestion) {
+      console.log(`    ${colors.dim(`→ ${issue.suggestion}`)}`);
+    }
+  }
+
+  if (!result.valid) {
+    console.log();
+    console.log(colors.dim('Fix issues and run again before uploading.'));
+    Deno.exit(1);
+  }
+}
+
+// ============================================
+// SCAFFOLD COMMAND
+// ============================================
+
+async function scaffold(args: string[], client: ApiClient, _config: Config) {
+  const parsed = parseArgs(args, {
+    string: ['description', 'storage'],
+    boolean: ['help'],
+    alias: { d: 'description', h: 'help' },
+  });
+
+  if (parsed.help) {
+    console.log(`
+${colors.bold('ultralight scaffold')} <name>
+
+Generate a properly structured app skeleton following all Ultralight conventions.
+Outputs index.ts + manifest.json + .ultralightrc.json with correct patterns.
+
+${colors.dim('OPTIONS')}
+  --description, -d <text>       App description
+  --storage <none|kv|supabase>   Storage type (default: kv)
+
+${colors.dim('EXAMPLES')}
+  ultralight scaffold my-app
+  ultralight scaffold weather-api -d "Get weather data" --storage none
+  ultralight scaffold my-db-app --storage supabase
+`);
+    return;
+  }
+
+  const name = parsed._[0] as string;
+  if (!name) {
+    throw new Error('Usage: ultralight scaffold <name>');
+  }
+
+  // Check if directory exists
+  try {
+    const stat = await Deno.stat(name);
+    if (stat.isDirectory) {
+      throw new Error(`Directory '${name}' already exists`);
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('already exists')) throw err;
+    // Directory doesn't exist — good
+  }
+
+  console.log(colors.dim(`Scaffolding ${name}...`));
+
+  const result = await client.callTool('platform.scaffold', {
+    name: name,
+    description: parsed.description || `${name} — an Ultralight MCP app`,
+    storage: parsed.storage || 'kv',
+  });
+
+  const generatedFiles = result.files as Array<{ path: string; content: string }>;
+
+  if (!generatedFiles || generatedFiles.length === 0) {
+    throw new Error('No files generated. Check that ul.scaffold is available.');
+  }
+
+  // Create directory and write files
+  await Deno.mkdir(name, { recursive: true });
+
+  for (const file of generatedFiles) {
+    const filePath = `${name}/${file.path}`;
+    await Deno.writeTextFile(filePath, file.content);
+    console.log(colors.dim(`  Created ${filePath}`));
+  }
+
+  console.log();
+  console.log(colors.green('✓ Scaffold created'));
+
+  if (result.next_steps) {
+    console.log();
+    console.log(colors.dim('Next steps:'));
+    for (const step of result.next_steps as string[]) {
+      console.log(`  ${step}`);
+    }
+  }
+
+  if (result.tip) {
+    console.log();
+    console.log(colors.dim(`💡 ${result.tip}`));
+  }
+
+  console.log();
+  console.log(colors.dim('Build workflow:'));
+  console.log(`  cd ${name}`);
+  console.log(`  ${colors.cyan('ultralight test .')}       # verify`);
+  console.log(`  ${colors.cyan('ultralight lint .')}       # validate`);
+  console.log(`  ${colors.cyan('ultralight upload .')}     # deploy`);
+}
+
+// ============================================
+// DISCOVER COMMAND
+// ============================================
+
+async function discover(args: string[], client: ApiClient, _config: Config) {
+  const parsed = parseArgs(args, {
+    number: ['limit'],
+    boolean: ['featured', 'help'],
+    alias: { l: 'limit', f: 'featured', h: 'help' },
+  });
+
+  if (parsed.help) {
+    console.log(`
+${colors.bold('ultralight discover')} [query]
+
+Search the App Store for MCP tools by natural language.
+Uses semantic search with composite ranking (similarity + community signal + native capability).
+
+${colors.dim('OPTIONS')}
+  --limit, -l <n>     Max results (default: 10, max: 50)
+  --featured, -f      Show top-ranked apps instead of searching
+
+${colors.dim('EXAMPLES')}
+  ultralight discover "weather API"
+  ultralight discover "send email notifications" --limit 20
+  ultralight discover --featured
+`);
+    return;
+  }
+
+  if (parsed.featured) {
+    // Featured mode — top apps by community signal
+    console.log(colors.dim('Fetching featured apps...'));
+    console.log();
+
+    const result = await client.callTool('platform.discover.appstore', {
+      limit: parsed.limit || 10,
+    });
+
+    if (!result.results || result.results.length === 0) {
+      console.log(colors.dim('No featured apps found.'));
+      return;
+    }
+
+    console.log(`${colors.bold('Featured Apps')} (${result.total} apps)\n`);
+    for (const app of result.results) {
+      const likes = app.likes || 0;
+      const owner = app.is_owner ? colors.cyan(' (yours)') : '';
+      const native = app.fully_connected ? colors.green(' ★') : '';
+      console.log(`  ${colors.cyan(app.slug)}${owner}${native} ${colors.dim(`${likes} likes`)}`);
+      console.log(`    ${app.name}`);
+      if (app.description) {
+        console.log(`    ${colors.dim(app.description.substring(0, 80))}`);
+      }
+      console.log(`    ${colors.dim(app.mcp_endpoint)}`);
+      console.log();
+    }
+    return;
+  }
+
   const searchQuery = parsed._.join(' ');
+
+  if (!searchQuery) {
+    console.log(`
+${colors.bold('ultralight discover')} [query]
+
+Search the App Store for MCP tools by natural language.
+
+${colors.dim('EXAMPLES')}
+  ultralight discover "weather API"
+  ultralight discover "send email notifications"
+  ultralight discover --featured
+`);
+    return;
+  }
 
   console.log(colors.dim(`Searching for "${searchQuery}"...`));
   console.log();
 
-  const result = await client.callTool('platform.discover', {
+  const result = await client.callTool('platform.discover.appstore', {
     query: searchQuery,
     limit: parsed.limit || 10,
-    include_private: parsed.private,
   });
 
-  if (result.results.length === 0) {
+  if (!result.results || result.results.length === 0) {
     console.log(colors.dim('No apps found matching your query.'));
     return;
   }
 
-  console.log(`${colors.bold('Results')} (${result.results.length} apps)\n`);
+  console.log(`${colors.bold('Results')} (${result.total} apps)\n`);
   for (const app of result.results) {
-    const similarity = Math.round(app.similarity * 100);
+    const score = app.final_score ? Math.round(app.final_score * 100) : Math.round((app.similarity || 0) * 100);
     const owner = app.is_owner ? colors.cyan(' (yours)') : '';
-    console.log(`  ${colors.cyan(app.slug)}${owner} ${colors.dim(`${similarity}% match`)}`);
+    const native = app.fully_connected ? colors.green(' ★') : '';
+    console.log(`  ${colors.cyan(app.slug)}${owner}${native} ${colors.dim(`${score}% match`)}`);
     console.log(`    ${app.name}`);
     if (app.description) {
       console.log(`    ${colors.dim(app.description.substring(0, 80))}`);

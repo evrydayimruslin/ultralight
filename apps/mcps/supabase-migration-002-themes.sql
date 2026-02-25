@@ -129,7 +129,7 @@ create policy "Service role full access" on themes for all using (true);
 create policy "Service role full access" on convictions for all using (true);
 
 -- ============================================
--- SEED — All 15 rooms
+-- SEED — All 12 rooms (Ultravision)
 -- ============================================
 
 -- INDEX rooms (hemisphere = 'index', no cluster)
@@ -140,9 +140,9 @@ insert into themes (name, slug, description, hemisphere, cluster, room_name, boo
 
 -- DIGEST Cluster 1 — Hard Signal
 insert into themes (name, slug, description, hemisphere, cluster, room_name, bookmark_categories, color, icon, sort_order) values
-  ('AI', 'ai', 'Models, agents, infrastructure, capabilities.', 'digest', 1, 'data-center', '{"ai"}', '#06b6d4', '🖥️', 10),
-  ('Tech', 'tech', 'Industry moves, platforms, developer ecosystem.', 'digest', 1, 'trading-floor', '{"tech"}', '#3b82f6', '📈', 11),
-  ('Crypto', 'crypto', 'Protocols, markets, on-chain activity.', 'digest', 1, 'on-chain', '{"crypto"}', '#f97316', '⛓️', 12);
+  ('Tech', 'tech', 'Industry moves, platforms, developer ecosystem.', 'digest', 1, 'trading-floor', '{"tech"}', '#3b82f6', '📈', 10),
+  ('AI', 'ai', 'Models, agents, infrastructure, capabilities.', 'digest', 1, 'data-center', '{"ai"}', '#06b6d4', '🖥️', 11),
+  ('Rumors', 'rumors', 'Industry rumors, speculation, back-channel signal.', 'digest', 1, 'back-rooms', '{"rumors", "crypto"}', '#f97316', '🚪', 12);
 
 -- DIGEST Cluster 2 — Inner Game
 insert into themes (name, slug, description, hemisphere, cluster, room_name, bookmark_categories, color, icon, sort_order) values
@@ -150,17 +150,11 @@ insert into themes (name, slug, description, hemisphere, cluster, room_name, boo
   ('History', 'history', 'Archives, timeless patterns, precedent.', 'digest', 2, 'old-library', '{"history"}', '#78716c', '📚', 21),
   ('Mindset', 'mindset', 'Frameworks, mental models, discipline.', 'digest', 2, 'classroom', '{"mindset"}', '#eab308', '🧠', 22);
 
--- DIGEST Cluster 3 — Craft + Culture
+-- DIGEST Cluster 3 — Life
 insert into themes (name, slug, description, hemisphere, cluster, room_name, bookmark_categories, color, icon, sort_order) values
-  ('Aesthetic', 'aesthetic', 'Visual beauty, natural world, curation.', 'digest', 3, 'museum', '{"aesthetic"}', '#10b981', '🏛️', 30),
-  ('Design', 'design', 'Interface craft, visual systems, UI making.', 'digest', 3, 'studio', '{"design"}', '#f43f5e', '🎨', 31),
-  ('Asia', 'asia', 'Asian studies, culture, philosophy, markets.', 'digest', 3, 'orient', '{"asia"}', '#ef4444', '🏯', 32);
-
--- DIGEST Cluster 4 — Life
-insert into themes (name, slug, description, hemisphere, cluster, room_name, bookmark_categories, color, icon, sort_order) values
-  ('Life', 'life', 'Casual, social, humor.', 'digest', 4, 'living-room', '{"life", "funny"}', '#22c55e', '🛋️', 40),
-  ('Nutrition', 'nutrition', 'Food, nourishment, longevity.', 'digest', 4, 'kitchen', '{"health"}', '#84cc16', '🍳', 41),
-  ('Fitness', 'fitness', 'Discipline, performance, body.', 'digest', 4, 'gym', '{"health", "mindset"}', '#14b8a6', '💪', 42);
+  ('Life', 'life', 'Casual, social, humor.', 'digest', 3, 'living-room', '{"life", "funny"}', '#22c55e', '🛋️', 30),
+  ('Nutrition', 'nutrition', 'Food, nourishment, longevity.', 'digest', 3, 'kitchen', '{"health"}', '#84cc16', '🍳', 31),
+  ('Fitness', 'fitness', 'Discipline, performance, body.', 'digest', 3, 'gym', '{"health", "mindset"}', '#14b8a6', '💪', 32);
 
 -- ============================================
 -- HELPER: Resolve theme from bookmark category
