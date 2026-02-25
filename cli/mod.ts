@@ -1,8 +1,12 @@
 #!/usr/bin/env -S deno run --allow-net --allow-read --allow-write --allow-env
 
 /**
- * Ultralight CLI
+ * Ultralight CLI v1.2.0
  * Command-line interface for managing Ultralight apps
+ *
+ * All platform MCP tools use the `ul.*` namespace.
+ * Per-app MCP calls go to POST /mcp/{appId}.
+ * User REST API lives at GET/PATCH /api/user.
  *
  * Usage:
  *   ultralight <command> [options]
@@ -12,14 +16,19 @@
  *   logout          Clear stored credentials
  *   whoami          Show current user
  *   scaffold        Generate a structured app skeleton (ul.scaffold)
- *   upload          Upload a new app or update existing
+ *   upload          Upload a new app or update existing (ul.upload)
  *   test            Test functions without deploying (ul.test)
  *   lint            Validate code against conventions (ul.lint)
+ *   download        Download app source code (ul.download)
  *   apps            App management commands
  *   draft           Draft management commands
  *   docs            Documentation commands
+ *   set             App settings (version, visibility, ratelimit, pricing, supabase)
+ *   permissions     Permission management (grant, revoke, list, export)
  *   run             Execute a deployed app function
  *   discover        Search the App Store for MCP tools
+ *   logs            View MCP call logs (ul.logs)
+ *   health          App health monitoring (ul.health)
  *
  * Run `ultralight <command> --help` for more information on a command.
  */
@@ -28,7 +37,7 @@ import { parseArgs, getConfig, saveConfig, clearConfig, type Config } from './co
 import { ApiClient } from './api.ts';
 import { colors } from './colors.ts';
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 
 // Command handlers
 const commands: Record<string, (args: string[], client: ApiClient, config: Config) => Promise<void>> = {
@@ -37,14 +46,19 @@ const commands: Record<string, (args: string[], client: ApiClient, config: Confi
   logout,
   whoami,
   upload,
+  download: downloadCmd,
   apps,
   draft,
   docs,
+  set: setCmd,
+  permissions,
   test: testCmd,
   lint,
   scaffold,
   run,
   discover,
+  logs: logsCmd,
+  health,
   config: configCmd,
   help,
   version,
@@ -98,30 +112,36 @@ ${colors.bold('Ultralight CLI')} v${VERSION}
 ${colors.dim('USAGE')}
   ultralight <command> [options]
 
-${colors.dim('COMMANDS')}
-  ${colors.cyan('init')} [name]        Create a new Ultralight app project
-  ${colors.cyan('scaffold')} <name>    Generate a structured app skeleton (uses ul.scaffold)
+${colors.dim('AUTH')}
   ${colors.cyan('login')}              Authenticate with Ultralight
   ${colors.cyan('logout')}             Clear stored credentials
   ${colors.cyan('whoami')}             Show current user
 
-  ${colors.cyan('upload')} [dir]       Upload a new app or update existing
-  ${colors.cyan('test')} [dir]         Test functions without deploying (uses ul.test)
-  ${colors.cyan('lint')} [dir]         Validate code against platform conventions (uses ul.lint)
-  ${colors.cyan('apps')}               App management (list, get, delete, update)
+${colors.dim('BUILD')}
+  ${colors.cyan('scaffold')} <name>    Generate a structured app skeleton (ul.scaffold)
+  ${colors.cyan('upload')} [dir]       Upload app or new version (ul.upload)
+  ${colors.cyan('test')} [dir]         Test functions in sandbox (ul.test)
+  ${colors.cyan('lint')} [dir]         Validate against conventions (ul.lint)
+  ${colors.cyan('download')} <app>     Download app source code (ul.download)
+
+${colors.dim('MANAGE')}
+  ${colors.cyan('apps')}               App management (list, get, delete)
+  ${colors.cyan('set')}                App settings (version, visibility, ratelimit, pricing, supabase)
+  ${colors.cyan('permissions')}        Permission management (grant, revoke, list, export)
   ${colors.cyan('draft')}              Draft management (upload, status, publish, discard)
-  ${colors.cyan('docs')}               Documentation (generate, get, update)
+  ${colors.cyan('docs')}               Documentation (generate, get)
 
+${colors.dim('USE')}
   ${colors.cyan('run')} <app> <fn>     Execute a deployed app function
-  ${colors.cyan('discover')} <q>       Search the App Store for MCP tools
+  ${colors.cyan('discover')} <query>   Search the App Store for MCP tools
+  ${colors.cyan('logs')} <app>         View MCP call logs (ul.logs)
+  ${colors.cyan('health')} [app]       View app health events (ul.health)
 
+${colors.dim('OTHER')}
+  ${colors.cyan('init')} [name]        Create a local app project (offline)
   ${colors.cyan('config')}             CLI configuration
   ${colors.cyan('help')}               Show this help message
   ${colors.cyan('version')}            Show version
-
-${colors.dim('OPTIONS')}
-  --help, -h      Show help for a command
-  --version, -v   Show version
 
 ${colors.dim('BUILD WORKFLOW')}
   1. ${colors.cyan('ultralight scaffold my-app')}        Generate skeleton
@@ -134,8 +154,13 @@ ${colors.dim('EXAMPLES')}
   ultralight scaffold my-app --storage supabase
   ultralight test . --function hello '{"name":"World"}'
   ultralight lint . --strict
+  ultralight upload . --name "My App"
   ultralight discover "weather API"
   ultralight run my-app hello '{"name": "World"}'
+  ultralight logs my-app --limit 20
+  ultralight health
+  ultralight set version my-app 2.0.0
+  ultralight permissions grant my-app user@email.com
 
 ${colors.dim('DOCUMENTATION')}
   https://ultralight.dev/docs/cli
@@ -147,7 +172,7 @@ async function version(_args: string[], _client: ApiClient, _config: Config) {
 }
 
 // ============================================
-// INIT COMMAND
+// INIT COMMAND (offline — local template)
 // ============================================
 
 async function init(args: string[], _client: ApiClient, _config: Config) {
@@ -161,6 +186,7 @@ async function init(args: string[], _client: ApiClient, _config: Config) {
 ${colors.bold('ultralight init')} [name]
 
 Create a new Ultralight app project with TypeScript types and starter template.
+This is an offline command — use ${colors.cyan('ultralight scaffold')} for server-generated skeletons.
 
 ${colors.dim('OPTIONS')}
   --react, -r     Use React template instead of basic TypeScript
@@ -208,55 +234,58 @@ ${colors.dim('WHAT IT CREATES')}
   console.log(colors.green('\n✓ Project created successfully!\n'));
   console.log(`${colors.dim('Next steps:')}`);
   console.log(`  cd ${projectName}`);
-  console.log(`  npm install`);
-  console.log(`  ${colors.cyan('ultralight upload .')}`);
+  console.log(`  ${colors.cyan('ultralight test .')}       # verify`);
+  console.log(`  ${colors.cyan('ultralight lint .')}       # validate`);
+  console.log(`  ${colors.cyan('ultralight upload .')}     # deploy`);
   console.log('');
 }
 
 async function createBasicTemplate(dir: string) {
-  // index.ts
+  // index.ts — uses correct single-args-object pattern
   const indexTs = `/// <reference types="@ultralightpro/types" />
 
 /**
  * Hello World function
- * @param name - Name to greet
+ * @param args.name - Name to greet
  * @returns Greeting message
  */
-export function hello(name: string = 'World') {
-  return \`Hello, \${name}!\`;
+export function hello(args: { name?: string }) {
+  const name = args.name || 'World';
+  return { message: \`Hello, \${name}!\` };
 }
 
 /**
  * Example using AI (requires BYOK setup in Settings)
- * @param question - Question to ask the AI
+ * @param args.question - Question to ask the AI
  * @returns AI response
  */
-export async function ask(question: string) {
+export async function ask(args: { question: string }) {
   const response = await ultralight.ai({
-    messages: [{ role: 'user', content: question }],
+    messages: [{ role: 'user', content: args.question }],
   });
-  return response.content;
+  return { answer: response.content };
 }
 
 /**
  * Example using data storage
- * @param title - Note title
- * @param content - Note content
+ * @param args.title - Note title
+ * @param args.content - Note content
  */
-export async function saveNote(title: string, content: string) {
-  await ultralight.store(\`notes/\${title}\`, {
-    content,
+export async function saveNote(args: { title: string; content: string }) {
+  await ultralight.store(\`notes/\${args.title}\`, {
+    content: args.content,
     createdAt: new Date().toISOString(),
   });
-  return { saved: true, title };
+  return { saved: true, title: args.title };
 }
 
 /**
  * Load a note by title
- * @param title - Note title to load
+ * @param args.title - Note title to load
  */
-export async function getNote(title: string) {
-  return await ultralight.load(\`notes/\${title}\`);
+export async function getNote(args: { title: string }) {
+  const data = await ultralight.load(\`notes/\${args.title}\`);
+  return { title: args.title, data: data };
 }
 
 /**
@@ -265,7 +294,7 @@ export async function getNote(title: string) {
  */
 export async function listNotes() {
   const keys = await ultralight.list('notes/');
-  return keys.map(k => k.replace('notes/', ''));
+  return { notes: keys.map(k => k.replace('notes/', '')) };
 }
 `;
 
@@ -302,7 +331,8 @@ An Ultralight app.
 ## Development
 
 \`\`\`bash
-npm install
+ultralight test .       # Test functions in sandbox
+ultralight lint .       # Validate conventions
 \`\`\`
 
 ## Deploy
@@ -310,6 +340,22 @@ npm install
 \`\`\`bash
 ultralight upload .
 \`\`\`
+
+## Function Pattern
+
+All functions receive a single args object (NOT positional params):
+
+\`\`\`typescript
+// Correct
+export function search(args: { query: string; limit?: number }) {
+  return { query: args.query, results: [] };
+}
+
+// Wrong — will fail in sandbox
+export function search(query: string, limit?: number) { ... }
+\`\`\`
+
+Return values must use explicit \`key: value\` form (no shorthand) for IIFE bundling safety.
 
 ## SDK Reference
 
@@ -351,7 +397,7 @@ if (ultralight.isAuthenticated()) {
 }
 
 async function createReactTemplate(dir: string) {
-  // index.tsx
+  // index.tsx — uses correct single-args-object pattern for exported MCP functions
   const indexTsx = `/// <reference types="@ultralightpro/types" />
 import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
@@ -429,13 +475,18 @@ const UltralightApp: UltralightApp = (container, sdk) => {
 export default UltralightApp;
 
 // Also export server-side functions for MCP
+// Note: MCP functions use single-args-object pattern
 export async function getNotes() {
   const keys = await ultralight.list('notes/');
-  return keys.map(k => k.replace('notes/', ''));
+  return { notes: keys.map(k => k.replace('notes/', '')) };
 }
 
-export async function saveNote(title: string, content: string) {
-  await ultralight.store(\`notes/\${title}\`, { title, content, createdAt: new Date().toISOString() });
+export async function saveNote(args: { title: string; content: string }) {
+  await ultralight.store(\`notes/\${args.title}\`, {
+    title: args.title,
+    content: args.content,
+    createdAt: new Date().toISOString(),
+  });
   return { saved: true };
 }
 `;
@@ -480,7 +531,8 @@ A React app running on Ultralight.
 ## Development
 
 \`\`\`bash
-npm install
+ultralight test .       # Test functions in sandbox
+ultralight lint .       # Validate conventions
 \`\`\`
 
 ## Deploy
@@ -506,8 +558,9 @@ export default App;
 You can also export server-side functions for MCP:
 
 \`\`\`typescript
-export async function myServerFunction() {
-  return await ultralight.load('data');
+// Must use single-args-object pattern
+export async function myServerFunction(args: { key: string }) {
+  return { data: await ultralight.load(args.key) };
 }
 \`\`\`
 
@@ -531,7 +584,11 @@ export async function myServerFunction() {
   console.log(colors.dim(`  Created ${dir}/.gitignore`));
 }
 
-async function login(args: string[], client: ApiClient, config: Config) {
+// ============================================
+// AUTH COMMANDS
+// ============================================
+
+async function login(args: string[], _client: ApiClient, config: Config) {
   const parsed = parseArgs(args, {
     string: ['token'],
     alias: { t: 'token' },
@@ -599,45 +656,51 @@ async function logout(_args: string[], _client: ApiClient, _config: Config) {
 }
 
 async function whoami(_args: string[], client: ApiClient, _config: Config) {
-  const user = await client.callTool('platform.user.profile', {});
+  // Use REST API: GET /api/user
+  const user = await client.restGet('/api/user');
   console.log(`
 ${colors.bold('Logged in as:')}
-  Email: ${colors.cyan(user.email)}
+  Email: ${colors.cyan(String(user.email || ''))}
   Name:  ${user.display_name || colors.dim('(not set)')}
-  Tier:  ${user.tier}
-  ID:    ${colors.dim(user.id)}
+  Tier:  ${user.tier || 'free'}
+  ID:    ${colors.dim(String(user.id || ''))}
 `);
 }
 
+// ============================================
+// UPLOAD COMMAND — uses ul.upload
+// ============================================
+
 async function upload(args: string[], client: ApiClient, _config: Config) {
   const parsed = parseArgs(args, {
-    string: ['name', 'slug', 'description', 'visibility'],
-    boolean: ['no-docs', 'draft'],
-    alias: { n: 'name', s: 'slug', d: 'description', v: 'visibility' },
+    string: ['name', 'description', 'visibility', 'version', 'app-id'],
+    boolean: ['help'],
+    alias: { n: 'name', d: 'description', v: 'visibility', a: 'app-id', h: 'help' },
   });
 
   if (parsed.help) {
     console.log(`
 ${colors.bold('ultralight upload')} [directory]
 
-Upload a new app or update an existing one.
+Upload source code to create a new app or update an existing one (ul.upload).
+No app_id → creates new app (v1.0.0, set live automatically).
+With app_id → creates new version (NOT set live — use: ultralight set version).
 
 ${colors.dim('ARGUMENTS')}
   directory             Directory to upload (default: current directory)
 
 ${colors.dim('OPTIONS')}
-  --name, -n <name>     App display name
-  --slug, -s <slug>     URL slug (auto-generated if omitted)
+  --name, -n <name>     App display name (new apps only)
   --description, -d     App description
-  --visibility, -v      Visibility: private, unlisted, public (default: private)
-  --draft               Upload as draft (requires existing app)
-  --no-docs             Skip automatic documentation generation
+  --visibility, -v      Visibility: private, unlisted, published (default: private)
+  --version             Explicit version (e.g. "2.0.0"). Default: patch bump
+  --app-id, -a          Existing app ID or slug (auto-detected from .ultralightrc.json)
 
 ${colors.dim('EXAMPLES')}
-  ultralight upload                     # Upload current directory
-  ultralight upload ./my-app            # Upload specific directory
-  ultralight upload --name "My App"     # With custom name
-  ultralight upload --draft             # Upload as draft
+  ultralight upload                       # Upload current directory as new app
+  ultralight upload ./my-app              # Upload specific directory
+  ultralight upload --name "My App"       # With custom name
+  ultralight upload -a my-slug            # New version of existing app
 `);
     return;
   }
@@ -649,456 +712,127 @@ ${colors.dim('EXAMPLES')}
     throw new Error('No valid files found in directory');
   }
 
-  console.log(colors.dim(`Found ${files.length} files to upload...`));
-
-  // Check if this is an existing app (has .ultralightrc.json)
-  let existingAppId: string | null = null;
-  try {
-    const rcPath = `${dir}/.ultralightrc.json`;
-    const rc = JSON.parse(await Deno.readTextFile(rcPath));
-    existingAppId = rc.app_id;
-  } catch {
-    // No existing app
+  // Check if this is an existing app (has .ultralightrc.json or --app-id)
+  let appId: string | undefined = parsed['app-id'] as string | undefined;
+  if (!appId) {
+    try {
+      const rcPath = `${dir}/.ultralightrc.json`;
+      const rc = JSON.parse(await Deno.readTextFile(rcPath));
+      appId = rc.app_id;
+    } catch {
+      // No existing app
+    }
   }
 
-  if (parsed.draft && !existingAppId) {
-    throw new Error('--draft requires an existing app. Run upload first without --draft.');
-  }
+  console.log(colors.dim(`Uploading ${files.length} files${appId ? ` to ${appId}` : ' (new app)'}...`));
 
-  if (parsed.draft && existingAppId) {
-    // Draft upload
-    console.log(colors.dim('Uploading draft...'));
-    const result = await client.callTool('platform.draft.upload', {
-      app_id: existingAppId,
-      files: files.map(f => ({
-        path: f.name,
-        content: f.content,
-      })),
-    });
+  const toolArgs: Record<string, unknown> = {
+    files: files.map(f => ({
+      path: f.name,
+      content: f.content,
+    })),
+  };
+  if (appId) toolArgs.app_id = appId;
+  if (parsed.name) toolArgs.name = parsed.name;
+  if (parsed.description) toolArgs.description = parsed.description;
+  if (parsed.visibility) toolArgs.visibility = parsed.visibility;
+  if (parsed.version) toolArgs.version = parsed.version;
 
-    console.log();
-    console.log(colors.green('✓ Draft uploaded successfully'));
-    console.log(`  Version: ${result.draft_version}`);
-    console.log(`  Exports: ${result.exports?.join(', ') || 'none'}`);
-    console.log();
-    console.log(`Run ${colors.cyan(`ultralight draft publish ${existingAppId}`)} to publish.`);
-  } else {
-    // New app or overwrite
-    console.log(colors.dim('Creating app...'));
-    const result = await client.callTool('platform.apps.create', {
-      name: parsed.name,
-      slug: parsed.slug,
-      description: parsed.description,
-      visibility: parsed.visibility || 'private',
-      auto_generate_docs: !parsed['no-docs'],
-      files: files.map(f => ({
-        path: f.name,
-        content: f.content,
-      })),
-    });
+  const result = await client.callTool('ul.upload', toolArgs);
 
-    // Save app ID to .ultralightrc.json
+  // Save app ID to .ultralightrc.json for future uploads
+  if (result.app_id) {
     const rc = {
       app_id: result.app_id,
       slug: result.slug,
       name: parsed.name || result.slug,
     };
-    await Deno.writeTextFile(`${dir}/.ultralightrc.json`, JSON.stringify(rc, null, 2));
-
-    console.log();
-    console.log(colors.green('✓ App created successfully'));
-    console.log(`  ID:      ${result.app_id}`);
-    console.log(`  Slug:    ${result.slug}`);
-    console.log(`  Version: ${result.version}`);
-    console.log(`  URL:     ${colors.cyan(result.url)}`);
-    console.log(`  Exports: ${result.exports?.join(', ') || 'none'}`);
-    if (result.docs_generated) {
-      console.log(`  Docs:    ${colors.green('generated')}`);
+    try {
+      await Deno.writeTextFile(`${dir}/.ultralightrc.json`, JSON.stringify(rc, null, 2));
+    } catch {
+      // Best-effort — dir may be read-only
     }
   }
+
+  console.log();
+  console.log(colors.green(appId ? '✓ New version uploaded' : '✓ App created'));
+  if (result.app_id) console.log(`  ID:       ${result.app_id}`);
+  if (result.slug) console.log(`  Slug:     ${result.slug}`);
+  if (result.version) console.log(`  Version:  ${result.version}`);
+  if (result.exports) console.log(`  Exports:  ${(result.exports as string[]).join(', ')}`);
+  if (result.is_live !== undefined) console.log(`  Live:     ${result.is_live ? colors.green('yes') : colors.yellow('no — use: ultralight set version')}`);
+  if (result.mcp_endpoint) console.log(`  MCP:      ${colors.cyan(String(result.mcp_endpoint))}`);
 }
 
-async function apps(args: string[], client: ApiClient, _config: Config) {
-  const subcommand = args[0];
-  const subArgs = args.slice(1);
+// ============================================
+// DOWNLOAD COMMAND — uses ul.download
+// ============================================
 
-  switch (subcommand) {
-    case 'list':
-    case 'ls': {
-      const parsed = parseArgs(subArgs, {
-        string: ['visibility'],
-        boolean: ['drafts'],
-        alias: { v: 'visibility', d: 'drafts' },
-      });
+async function downloadCmd(args: string[], client: ApiClient, _config: Config) {
+  const parsed = parseArgs(args, {
+    string: ['version', 'output'],
+    boolean: ['help'],
+    alias: { v: 'version', o: 'output', h: 'help' },
+  });
 
-      const result = await client.callTool('platform.apps.list', {
-        visibility: parsed.visibility || 'all',
-        include_drafts: parsed.drafts,
-      });
-
-      if (result.apps.length === 0) {
-        console.log(colors.dim('No apps found.'));
-        return;
-      }
-
-      console.log(`${colors.bold('Your Apps')} (${result.total} total)\n`);
-      for (const app of result.apps) {
-        const draft = app.has_draft ? colors.yellow(' [draft]') : '';
-        const vis = app.visibility === 'public' ? colors.green('public') :
-                    app.visibility === 'unlisted' ? colors.yellow('unlisted') :
-                    colors.dim('private');
-        console.log(`  ${colors.cyan(app.slug)}${draft}`);
-        console.log(`    ${app.name} · ${vis} · v${app.current_version}`);
-        console.log(`    ${colors.dim(`${app.runs_30d || 0} runs (30d) · ${app.id}`)}`);
-        console.log();
-      }
-      break;
-    }
-
-    case 'get': {
-      const appId = subArgs[0];
-      if (!appId) {
-        throw new Error('Usage: ultralight apps get <app-id>');
-      }
-
-      const parsed = parseArgs(subArgs.slice(1), {
-        boolean: ['code', 'skills'],
-      });
-
-      const result = await client.callTool('platform.apps.get', {
-        app_id: appId,
-        include_code: parsed.code,
-        include_skills: parsed.skills,
-      });
-
-      console.log(`
-${colors.bold(result.name)} (${result.slug})
-
-  ID:          ${result.id}
-  Version:     ${result.current_version}
-  Visibility:  ${result.visibility}
-  Exports:     ${result.exports?.join(', ') || 'none'}
-
-  Runs (30d):  ${result.runs_30d || 0}
-  Total runs:  ${result.total_runs || 0}
-
-  MCP:         ${colors.cyan(result.mcp_endpoint)}
-  URL:         ${colors.cyan(result.app_url)}
-
-  Created:     ${new Date(result.created_at).toLocaleString()}
-  Updated:     ${new Date(result.updated_at).toLocaleString()}
-`);
-      break;
-    }
-
-    case 'delete': {
-      const appId = subArgs[0];
-      if (!appId) {
-        throw new Error('Usage: ultralight apps delete <app-id>');
-      }
-
-      const parsed = parseArgs(subArgs.slice(1), {
-        boolean: ['yes'],
-        alias: { y: 'yes' },
-      });
-
-      if (!parsed.yes) {
-        console.log(colors.yellow(`Warning: This will delete the app "${appId}"`));
-        console.log('Run with --yes to confirm.');
-        return;
-      }
-
-      await client.callTool('platform.apps.delete', {
-        app_id: appId,
-        confirm: true,
-      });
-
-      console.log(colors.green('✓ App deleted'));
-      break;
-    }
-
-    case 'update': {
-      const appId = subArgs[0];
-      if (!appId) {
-        throw new Error('Usage: ultralight apps update <app-id> [options]');
-      }
-
-      const parsed = parseArgs(subArgs.slice(1), {
-        string: ['name', 'description', 'visibility'],
-        alias: { n: 'name', d: 'description', v: 'visibility' },
-      });
-
-      const updates: Record<string, unknown> = { app_id: appId };
-      if (parsed.name) updates.name = parsed.name;
-      if (parsed.description) updates.description = parsed.description;
-      if (parsed.visibility) updates.visibility = parsed.visibility;
-
-      await client.callTool('platform.apps.update', updates);
-      console.log(colors.green('✓ App updated'));
-      break;
-    }
-
-    default:
-      console.log(`
-${colors.bold('ultralight apps')} <command>
-
-Manage your Ultralight apps.
-
-${colors.dim('COMMANDS')}
-  list, ls        List your apps
-  get <app>       Get app details
-  update <app>    Update app metadata
-  delete <app>    Delete an app
-
-${colors.dim('EXAMPLES')}
-  ultralight apps list
-  ultralight apps get my-app
-  ultralight apps update my-app --name "New Name"
-  ultralight apps delete my-app --yes
-`);
-  }
-}
-
-async function draft(args: string[], client: ApiClient, _config: Config) {
-  const subcommand = args[0];
-  const subArgs = args.slice(1);
-
-  switch (subcommand) {
-    case 'status': {
-      const appId = subArgs[0];
-      if (!appId) {
-        throw new Error('Usage: ultralight draft status <app-id>');
-      }
-
-      const result = await client.callTool('platform.draft.get', {
-        app_id: appId,
-        include_diff: true,
-      });
-
-      if (!result.has_draft) {
-        console.log(colors.dim('No draft exists for this app.'));
-        return;
-      }
-
-      console.log(`
-${colors.bold('Draft Status')}
-
-  App:         ${appId}
-  Draft:       ${result.draft_version}
-  Uploaded:    ${new Date(result.draft_uploaded_at).toLocaleString()}
-  Production:  v${result.current_version}
-
-${colors.dim('Exports diff:')}
-  Added:       ${result.exports_diff?.added?.join(', ') || 'none'}
-  Removed:     ${result.exports_diff?.removed?.join(', ') || 'none'}
-`);
-      break;
-    }
-
-    case 'publish': {
-      const appId = subArgs[0];
-      if (!appId) {
-        throw new Error('Usage: ultralight draft publish <app-id>');
-      }
-
-      const parsed = parseArgs(subArgs.slice(1), {
-        string: ['bump'],
-        boolean: ['no-docs'],
-        alias: { b: 'bump' },
-      });
-
-      console.log(colors.dim('Publishing draft...'));
-
-      const result = await client.callTool('platform.draft.publish', {
-        app_id: appId,
-        version_bump: parsed.bump || 'patch',
-        regenerate_docs: !parsed['no-docs'],
-      });
-
-      console.log();
-      console.log(colors.green('✓ Draft published'));
-      console.log(`  Previous: v${result.previous_version}`);
-      console.log(`  New:      v${result.new_version}`);
-      if (result.docs_regenerated) {
-        console.log(`  Docs:     ${colors.green('regenerated')}`);
-      }
-      break;
-    }
-
-    case 'discard': {
-      const appId = subArgs[0];
-      if (!appId) {
-        throw new Error('Usage: ultralight draft discard <app-id>');
-      }
-
-      await client.callTool('platform.draft.discard', { app_id: appId });
-      console.log(colors.green('✓ Draft discarded'));
-      break;
-    }
-
-    default:
-      console.log(`
-${colors.bold('ultralight draft')} <command>
-
-Manage app drafts for safe deployments.
-
-${colors.dim('COMMANDS')}
-  status <app>    Show draft status
-  publish <app>   Publish draft to production
-  discard <app>   Discard draft without publishing
-
-${colors.dim('OPTIONS')}
-  --bump, -b      Version bump type: patch, minor, major (default: patch)
-  --no-docs       Skip documentation regeneration on publish
-
-${colors.dim('EXAMPLES')}
-  ultralight draft status my-app
-  ultralight draft publish my-app --bump minor
-  ultralight draft discard my-app
-`);
-  }
-}
-
-async function docs(args: string[], client: ApiClient, _config: Config) {
-  const subcommand = args[0];
-  const subArgs = args.slice(1);
-
-  switch (subcommand) {
-    case 'generate': {
-      const appId = subArgs[0];
-      if (!appId) {
-        throw new Error('Usage: ultralight docs generate <app-id>');
-      }
-
-      console.log(colors.dim('Generating documentation...'));
-
-      const result = await client.callTool('platform.docs.generate', {
-        app_id: appId,
-      });
-
-      console.log();
-      console.log(colors.green('✓ Documentation generated'));
-      console.log(`  Functions: ${result.functions_found}`);
-      console.log(`  Embedding: ${result.embedding_generated ? 'generated' : 'skipped'}`);
-      break;
-    }
-
-    case 'get': {
-      const appId = subArgs[0];
-      if (!appId) {
-        throw new Error('Usage: ultralight docs get <app-id>');
-      }
-
-      const parsed = parseArgs(subArgs.slice(1), {
-        string: ['format'],
-        alias: { f: 'format' },
-      });
-
-      const result = await client.callTool('platform.docs.get', {
-        app_id: appId,
-        format: parsed.format || 'markdown',
-      });
-
-      if (!result.exists) {
-        console.log(colors.dim('No documentation generated yet.'));
-        console.log(`Run ${colors.cyan(`ultralight docs generate ${appId}`)} to create.`);
-        return;
-      }
-
-      if (parsed.format === 'json') {
-        console.log(JSON.stringify(result.skills_parsed, null, 2));
-      } else {
-        console.log(result.skills_md);
-      }
-      break;
-    }
-
-    default:
-      console.log(`
-${colors.bold('ultralight docs')} <command>
-
-Manage app documentation (Skills.md).
-
-${colors.dim('COMMANDS')}
-  generate <app>  Generate documentation from code
-  get <app>       Get documentation content
-
-${colors.dim('OPTIONS')}
-  --format, -f    Output format: markdown, json, mcp (default: markdown)
-
-${colors.dim('EXAMPLES')}
-  ultralight docs generate my-app
-  ultralight docs get my-app
-  ultralight docs get my-app --format json
-`);
-  }
-}
-
-async function run(args: string[], client: ApiClient, _config: Config) {
-  if (args.length < 2) {
+  if (parsed.help) {
     console.log(`
-${colors.bold('ultralight run')} <app> <function> [args]
+${colors.bold('ultralight download')} <app-id>
 
-Execute a function exported by an app.
-
-${colors.dim('ARGUMENTS')}
-  app         App ID or slug
-  function    Function name to execute
-  args        JSON arguments (optional)
+Download source code for an app (ul.download). Respects download_access settings.
 
 ${colors.dim('OPTIONS')}
-  --draft     Run against draft code instead of production
-  --json      Output result as JSON
+  --version, -v <ver>   Specific version to download (default: live version)
+  --output, -o <dir>    Output directory (default: ./<slug>)
 
 ${colors.dim('EXAMPLES')}
-  ultralight run my-app hello
-  ultralight run my-app greet '{"name": "World"}'
-  ultralight run my-app process --draft
+  ultralight download my-app
+  ultralight download my-app --version 1.0.0
+  ultralight download my-app -o ./downloaded
 `);
     return;
   }
 
-  const appId = args[0];
-  const fnName = args[1];
-  const fnArgs = args[2] ? JSON.parse(args[2]) : undefined;
-
-  const parsed = parseArgs(args.slice(3), {
-    boolean: ['draft', 'json'],
-  });
-
-  const result = await client.callTool('platform.run', {
-    app_id: appId,
-    function: fnName,
-    args: fnArgs,
-    use_draft: parsed.draft,
-  });
-
-  if (parsed.json) {
-    console.log(JSON.stringify(result, null, 2));
-  } else {
-    if (result.success) {
-      console.log(colors.green('✓ Success') + ` (${result.duration_ms}ms)`);
-      console.log();
-      if (result.result !== undefined) {
-        console.log(typeof result.result === 'string' ? result.result : JSON.stringify(result.result, null, 2));
-      }
-    } else {
-      console.log(colors.red('✗ Error'));
-      console.log(result.error);
-    }
-
-    if (result.logs?.length > 0) {
-      console.log();
-      console.log(colors.dim('--- Logs ---'));
-      for (const log of result.logs) {
-        console.log(log.message);
-      }
-    }
+  const appId = parsed._[0] as string;
+  if (!appId) {
+    throw new Error('Usage: ultralight download <app-id>');
   }
+
+  const toolArgs: Record<string, unknown> = { app_id: appId };
+  if (parsed.version) toolArgs.version = parsed.version;
+
+  console.log(colors.dim(`Downloading ${appId}...`));
+
+  const result = await client.callTool('ul.download', toolArgs);
+
+  const downloadFiles = result.files as Array<{ path: string; content: string }>;
+  if (!downloadFiles || downloadFiles.length === 0) {
+    throw new Error('No files returned. You may not have download access.');
+  }
+
+  const outputDir = (parsed.output as string) || String(result.slug || appId);
+
+  // Create directory and write files
+  await Deno.mkdir(outputDir, { recursive: true });
+
+  for (const file of downloadFiles) {
+    const filePath = `${outputDir}/${file.path}`;
+    // Ensure subdirectories exist
+    const dirPart = filePath.substring(0, filePath.lastIndexOf('/'));
+    if (dirPart !== outputDir) {
+      await Deno.mkdir(dirPart, { recursive: true });
+    }
+    await Deno.writeTextFile(filePath, file.content);
+    console.log(colors.dim(`  ${filePath}`));
+  }
+
+  console.log();
+  console.log(colors.green(`✓ Downloaded ${downloadFiles.length} files to ${outputDir}/`));
+  if (result.version) console.log(`  Version: ${result.version}`);
 }
 
 // ============================================
-// TEST COMMAND
+// TEST COMMAND — uses ul.test
 // ============================================
 
 async function testCmd(args: string[], client: ApiClient, _config: Config) {
@@ -1112,15 +846,15 @@ async function testCmd(args: string[], client: ApiClient, _config: Config) {
     console.log(`
 ${colors.bold('ultralight test')} [directory] [options]
 
-Test your app functions without deploying. Builds and executes in the Ultralight sandbox.
+Test your app functions in the Ultralight sandbox without deploying (ul.test).
+Supports all sandbox globals (fetch, crypto, lodash, dateFns, etc).
 
 ${colors.dim('OPTIONS')}
-  --function, -f <name>  Test a specific function (with optional JSON args after)
+  --function, -f <name>  Function to test (with optional JSON args after)
   --json                 Output raw JSON result
 
 ${colors.dim('EXAMPLES')}
-  ultralight test .                                    # Build-check all exports
-  ultralight test . --function hello '{"name":"World"}'  # Test one function
+  ultralight test . --function hello '{"name":"World"}'
   ultralight test ./my-app -f process '{"data":[1,2]}'
 `);
     return;
@@ -1156,15 +890,16 @@ ${colors.dim('EXAMPLES')}
   console.log(colors.dim(`Testing${fnName ? ` ${fnName}()` : ''} from ${dir}...`));
   console.log();
 
+  // ul.test uses function_name and test_args
   const toolArgs: Record<string, unknown> = {
     files: files.map(f => ({ path: f.name, content: f.content })),
   };
   if (fnName) {
     toolArgs.function_name = fnName;
-    if (fnArgs) toolArgs.args = fnArgs;
+    if (fnArgs) toolArgs.test_args = fnArgs;
   }
 
-  const result = await client.callTool('platform.test', toolArgs);
+  const result = await client.callTool('ul.test', toolArgs);
 
   if (parsed.json) {
     console.log(JSON.stringify(result, null, 2));
@@ -1172,7 +907,7 @@ ${colors.dim('EXAMPLES')}
   }
 
   if (result.success) {
-    console.log(colors.green('✓ Test passed') + ` (${result.duration_ms}ms)`);
+    console.log(colors.green('✓ Test passed') + (result.duration_ms ? ` (${result.duration_ms}ms)` : ''));
     if (result.exports) {
       console.log(`  Exports: ${(result.exports as string[]).join(', ')}`);
     }
@@ -1199,7 +934,7 @@ ${colors.dim('EXAMPLES')}
 }
 
 // ============================================
-// LINT COMMAND
+// LINT COMMAND — uses ul.lint
 // ============================================
 
 async function lint(args: string[], client: ApiClient, _config: Config) {
@@ -1212,11 +947,11 @@ async function lint(args: string[], client: ApiClient, _config: Config) {
     console.log(`
 ${colors.bold('ultralight lint')} [directory]
 
-Validate source code and manifest against Ultralight conventions.
+Validate source code and manifest against Ultralight conventions (ul.lint).
 Checks: single-args-object, no-shorthand-return, function-count, manifest sync, permissions.
 
 ${colors.dim('OPTIONS')}
-  --strict, -s    Treat warnings as errors
+  --strict, -s    Treat warnings as errors (useful for CI)
   --json          Output raw JSON result
 
 ${colors.dim('EXAMPLES')}
@@ -1235,7 +970,7 @@ ${colors.dim('EXAMPLES')}
   console.log(colors.dim(`Linting ${files.length} files from ${dir}...`));
   console.log();
 
-  const result = await client.callTool('platform.lint', {
+  const result = await client.callTool('ul.lint', {
     files: files.map(f => ({ path: f.name, content: f.content })),
     strict: parsed.strict || false,
   });
@@ -1274,7 +1009,7 @@ ${colors.dim('EXAMPLES')}
 }
 
 // ============================================
-// SCAFFOLD COMMAND
+// SCAFFOLD COMMAND — uses ul.scaffold
 // ============================================
 
 async function scaffold(args: string[], client: ApiClient, _config: Config) {
@@ -1288,11 +1023,11 @@ async function scaffold(args: string[], client: ApiClient, _config: Config) {
     console.log(`
 ${colors.bold('ultralight scaffold')} <name>
 
-Generate a properly structured app skeleton following all Ultralight conventions.
-Outputs index.ts + manifest.json + .ultralightrc.json with correct patterns.
+Generate a properly structured app skeleton following all Ultralight conventions (ul.scaffold).
+Returns index.ts + manifest.json with correct patterns.
 
 ${colors.dim('OPTIONS')}
-  --description, -d <text>       App description
+  --description, -d <text>       App description (used to generate function stubs)
   --storage <none|kv|supabase>   Storage type (default: kv)
 
 ${colors.dim('EXAMPLES')}
@@ -1321,7 +1056,7 @@ ${colors.dim('EXAMPLES')}
 
   console.log(colors.dim(`Scaffolding ${name}...`));
 
-  const result = await client.callTool('platform.scaffold', {
+  const result = await client.callTool('ul.scaffold', {
     name: name,
     description: parsed.description || `${name} — an Ultralight MCP app`,
     storage: parsed.storage || 'kv',
@@ -1367,13 +1102,646 @@ ${colors.dim('EXAMPLES')}
 }
 
 // ============================================
-// DISCOVER COMMAND
+// APPS COMMAND
+// ============================================
+
+async function apps(args: string[], client: ApiClient, _config: Config) {
+  const subcommand = args[0];
+  const subArgs = args.slice(1);
+
+  switch (subcommand) {
+    case 'list':
+    case 'ls': {
+      const result = await client.callTool('ul.discover.library', {});
+
+      if (result.text) {
+        // Library returns markdown
+        console.log(result.text);
+      } else if (result.results) {
+        const appList = result.results as Array<Record<string, unknown>>;
+        if (appList.length === 0) {
+          console.log(colors.dim('No apps found.'));
+          return;
+        }
+        console.log(`${colors.bold('Your Apps')} (${appList.length} total)\n`);
+        for (const app of appList) {
+          const vis = app.visibility === 'published' ? colors.green('published') :
+                      app.visibility === 'unlisted' ? colors.yellow('unlisted') :
+                      colors.dim('private');
+          console.log(`  ${colors.cyan(String(app.slug || app.name))}`);
+          console.log(`    ${app.name} · ${vis}${app.version ? ` · v${app.version}` : ''}`);
+          if (app.id) console.log(`    ${colors.dim(String(app.id))}`);
+          console.log();
+        }
+      } else {
+        console.log(JSON.stringify(result, null, 2));
+      }
+      break;
+    }
+
+    case 'get': {
+      const appId = subArgs[0];
+      if (!appId) {
+        throw new Error('Usage: ultralight apps get <app-id>');
+      }
+
+      const result = await client.callTool('ul.download', {
+        app_id: appId,
+      });
+
+      console.log(JSON.stringify(result, null, 2));
+      break;
+    }
+
+    case 'delete': {
+      const appId = subArgs[0];
+      if (!appId) {
+        throw new Error('Usage: ultralight apps delete <app-id>');
+      }
+
+      const parsed = parseArgs(subArgs.slice(1), {
+        boolean: ['yes'],
+        alias: { y: 'yes' },
+      });
+
+      if (!parsed.yes) {
+        console.log(colors.yellow(`Warning: This will delete the app "${appId}"`));
+        console.log('Run with --yes to confirm.');
+        return;
+      }
+
+      // No direct delete tool — guide user to web UI
+      console.log(colors.yellow('App deletion is available via the web dashboard.'));
+      console.log(`Visit your app settings to delete: ${colors.cyan(`https://ultralight.dev/app/${appId}/settings`)}`);
+      break;
+    }
+
+    default:
+      console.log(`
+${colors.bold('ultralight apps')} <command>
+
+Manage your Ultralight apps.
+
+${colors.dim('COMMANDS')}
+  list, ls        List your apps (ul.discover.library)
+  get <app>       Get app details
+  delete <app>    Delete an app
+
+${colors.dim('EXAMPLES')}
+  ultralight apps list
+  ultralight apps get my-app
+`);
+  }
+}
+
+// ============================================
+// SET COMMAND — app settings
+// ============================================
+
+async function setCmd(args: string[], client: ApiClient, _config: Config) {
+  const subcommand = args[0];
+  const subArgs = args.slice(1);
+
+  switch (subcommand) {
+    case 'version': {
+      const appId = subArgs[0];
+      const ver = subArgs[1];
+      if (!appId || !ver) {
+        throw new Error('Usage: ultralight set version <app-id> <version>');
+      }
+      await client.callTool('ul.set.version', { app_id: appId, version: ver });
+      console.log(colors.green(`✓ Live version set to ${ver}`));
+      break;
+    }
+
+    case 'visibility': {
+      const appId = subArgs[0];
+      const vis = subArgs[1];
+      if (!appId || !vis) {
+        throw new Error('Usage: ultralight set visibility <app-id> <private|unlisted|published>');
+      }
+      await client.callTool('ul.set.visibility', { app_id: appId, visibility: vis });
+      console.log(colors.green(`✓ Visibility set to ${vis}`));
+      break;
+    }
+
+    case 'ratelimit': {
+      const parsed = parseArgs(subArgs, {
+        string: ['app'],
+        number: ['per-minute', 'per-day'],
+        alias: { a: 'app' },
+      });
+      const appId = parsed._[0] as string || parsed.app as string;
+      if (!appId) {
+        throw new Error('Usage: ultralight set ratelimit <app-id> [--per-minute N] [--per-day N]');
+      }
+      const toolArgs: Record<string, unknown> = { app_id: appId };
+      if (parsed['per-minute'] !== undefined) toolArgs.calls_per_minute = parsed['per-minute'];
+      if (parsed['per-day'] !== undefined) toolArgs.calls_per_day = parsed['per-day'];
+      await client.callTool('ul.set.ratelimit', toolArgs);
+      console.log(colors.green('✓ Rate limits updated'));
+      break;
+    }
+
+    case 'pricing': {
+      const parsed = parseArgs(subArgs, {
+        number: ['default'],
+      });
+      const appId = parsed._[0] as string;
+      if (!appId) {
+        throw new Error('Usage: ultralight set pricing <app-id> --default <cents>');
+      }
+      const toolArgs: Record<string, unknown> = { app_id: appId };
+      if (parsed.default !== undefined) toolArgs.default_price_cents = parsed.default;
+      await client.callTool('ul.set.pricing', toolArgs);
+      console.log(colors.green('✓ Pricing updated'));
+      break;
+    }
+
+    case 'supabase': {
+      const appId = subArgs[0];
+      const serverName = subArgs[1];
+      if (!appId) {
+        throw new Error('Usage: ultralight set supabase <app-id> <server-name|null>');
+      }
+      await client.callTool('ul.set.supabase', {
+        app_id: appId,
+        server_name: serverName === 'null' ? null : serverName,
+      });
+      console.log(colors.green(serverName === 'null' ? '✓ Supabase unassigned' : `✓ Supabase set to ${serverName}`));
+      break;
+    }
+
+    case 'download-access': {
+      const appId = subArgs[0];
+      const access = subArgs[1];
+      if (!appId || !access) {
+        throw new Error('Usage: ultralight set download-access <app-id> <owner|public>');
+      }
+      await client.callTool('ul.set.download', { app_id: appId, access: access });
+      console.log(colors.green(`✓ Download access set to ${access}`));
+      break;
+    }
+
+    default:
+      console.log(`
+${colors.bold('ultralight set')} <setting> <app-id> <value>
+
+Configure app settings.
+
+${colors.dim('SETTINGS')}
+  version <app> <ver>                  Set the live version (ul.set.version)
+  visibility <app> <private|unlisted|published>  Change visibility (ul.set.visibility)
+  ratelimit <app> [--per-minute N] [--per-day N]  Set rate limits (ul.set.ratelimit)
+  pricing <app> --default <cents>      Set per-function pricing (ul.set.pricing)
+  supabase <app> <server-name|null>    Assign Supabase server (ul.set.supabase)
+  download-access <app> <owner|public> Set download access (ul.set.download)
+
+${colors.dim('EXAMPLES')}
+  ultralight set version my-app 2.0.0
+  ultralight set visibility my-app published
+  ultralight set ratelimit my-app --per-minute 60 --per-day 10000
+  ultralight set pricing my-app --default 5
+  ultralight set supabase my-app my-db
+  ultralight set download-access my-app public
+`);
+  }
+}
+
+// ============================================
+// PERMISSIONS COMMAND — ul.permissions.*
+// ============================================
+
+async function permissions(args: string[], client: ApiClient, _config: Config) {
+  const subcommand = args[0];
+  const subArgs = args.slice(1);
+
+  switch (subcommand) {
+    case 'grant': {
+      const parsed = parseArgs(subArgs, {
+        string: ['functions', 'constraints', 'expires'],
+        alias: { f: 'functions', c: 'constraints', e: 'expires' },
+      });
+
+      const appId = parsed._[0] as string;
+      const email = parsed._[1] as string;
+      if (!appId || !email) {
+        throw new Error('Usage: ultralight permissions grant <app-id> <email> [--functions fn1,fn2] [--expires ISO]');
+      }
+
+      const toolArgs: Record<string, unknown> = { app_id: appId, email: email };
+      if (parsed.functions) {
+        toolArgs.functions = (parsed.functions as string).split(',');
+      }
+      if (parsed.expires || parsed.constraints) {
+        const constraints: Record<string, unknown> = {};
+        if (parsed.expires) constraints.expires_at = parsed.expires;
+        if (parsed.constraints) {
+          try {
+            Object.assign(constraints, JSON.parse(parsed.constraints as string));
+          } catch {
+            throw new Error('Invalid --constraints JSON');
+          }
+        }
+        toolArgs.constraints = constraints;
+      }
+
+      await client.callTool('ul.permissions.grant', toolArgs);
+      console.log(colors.green(`✓ Access granted to ${email}`));
+      break;
+    }
+
+    case 'revoke': {
+      const parsed = parseArgs(subArgs, {
+        string: ['functions', 'email'],
+        alias: { f: 'functions', e: 'email' },
+      });
+
+      const appId = parsed._[0] as string;
+      if (!appId) {
+        throw new Error('Usage: ultralight permissions revoke <app-id> [email] [--functions fn1,fn2]');
+      }
+
+      const toolArgs: Record<string, unknown> = { app_id: appId };
+      const email = (parsed._[1] as string) || (parsed.email as string);
+      if (email) toolArgs.email = email;
+      if (parsed.functions) {
+        toolArgs.functions = (parsed.functions as string).split(',');
+      }
+
+      await client.callTool('ul.permissions.revoke', toolArgs);
+      console.log(colors.green(email ? `✓ Access revoked for ${email}` : '✓ All access revoked'));
+      break;
+    }
+
+    case 'list':
+    case 'ls': {
+      const appId = subArgs[0];
+      if (!appId) {
+        throw new Error('Usage: ultralight permissions list <app-id>');
+      }
+
+      const result = await client.callTool('ul.permissions.list', { app_id: appId });
+
+      if (result.grants) {
+        const grants = result.grants as Array<Record<string, unknown>>;
+        if (grants.length === 0) {
+          console.log(colors.dim('No permissions granted.'));
+          return;
+        }
+        console.log(`${colors.bold('Permissions')} for ${appId}\n`);
+        for (const grant of grants) {
+          console.log(`  ${colors.cyan(String(grant.email))}`);
+          if (grant.functions) {
+            console.log(`    Functions: ${(grant.functions as string[]).join(', ')}`);
+          } else {
+            console.log(`    Functions: ${colors.dim('all')}`);
+          }
+          if (grant.constraints) {
+            console.log(`    Constraints: ${colors.dim(JSON.stringify(grant.constraints))}`);
+          }
+          console.log();
+        }
+      } else {
+        console.log(JSON.stringify(result, null, 2));
+      }
+      break;
+    }
+
+    case 'export': {
+      const parsed = parseArgs(subArgs, {
+        string: ['format', 'since', 'until'],
+        number: ['limit'],
+        alias: { f: 'format' },
+      });
+
+      const appId = parsed._[0] as string;
+      if (!appId) {
+        throw new Error('Usage: ultralight permissions export <app-id> [--format json|csv] [--since ISO] [--limit N]');
+      }
+
+      const toolArgs: Record<string, unknown> = { app_id: appId };
+      if (parsed.format) toolArgs.format = parsed.format;
+      if (parsed.since) toolArgs.since = parsed.since;
+      if (parsed.until) toolArgs.until = parsed.until;
+      if (parsed.limit) toolArgs.limit = parsed.limit;
+
+      const result = await client.callTool('ul.permissions.export', toolArgs);
+      if (parsed.format === 'csv' && result.csv) {
+        console.log(result.csv);
+      } else {
+        console.log(JSON.stringify(result, null, 2));
+      }
+      break;
+    }
+
+    default:
+      console.log(`
+${colors.bold('ultralight permissions')} <command>
+
+Manage app permissions.
+
+${colors.dim('COMMANDS')}
+  grant <app> <email>   Grant access (ul.permissions.grant)
+  revoke <app> [email]  Revoke access (ul.permissions.revoke)
+  list <app>            List granted users (ul.permissions.list)
+  export <app>          Export audit log (ul.permissions.export)
+
+${colors.dim('OPTIONS (grant)')}
+  --functions, -f <fn1,fn2>    Specific functions to grant (default: all)
+  --expires, -e <ISO>          Auto-expire date
+  --constraints, -c <JSON>     Full constraint JSON (IP, time, budget, args)
+
+${colors.dim('OPTIONS (revoke)')}
+  --functions, -f <fn1,fn2>    Revoke specific functions only
+
+${colors.dim('OPTIONS (export)')}
+  --format, -f <json|csv>      Export format (default: json)
+  --since <ISO>                 Logs after this time
+  --until <ISO>                 Logs before this time
+  --limit <N>                   Max entries (default: 500)
+
+${colors.dim('EXAMPLES')}
+  ultralight permissions grant my-app user@email.com
+  ultralight permissions grant my-app user@email.com --functions search,analyze --expires 2025-12-31T00:00:00Z
+  ultralight permissions revoke my-app user@email.com
+  ultralight permissions list my-app
+  ultralight permissions export my-app --format csv --since 2025-01-01T00:00:00Z
+`);
+  }
+}
+
+// ============================================
+// DRAFT COMMAND
+// ============================================
+
+async function draft(args: string[], client: ApiClient, _config: Config) {
+  const subcommand = args[0];
+  const subArgs = args.slice(1);
+
+  switch (subcommand) {
+    case 'upload': {
+      const parsed = parseArgs(subArgs, {
+        string: ['app-id'],
+        alias: { a: 'app-id' },
+      });
+
+      let appId = parsed['app-id'] as string | undefined;
+      const dir = (parsed._[0] as string) || '.';
+
+      // Try to read app_id from .ultralightrc.json
+      if (!appId) {
+        try {
+          const rcPath = `${dir}/.ultralightrc.json`;
+          const rc = JSON.parse(await Deno.readTextFile(rcPath));
+          appId = rc.app_id;
+        } catch {
+          // No existing app
+        }
+      }
+
+      if (!appId) {
+        throw new Error('No app_id found. Use --app-id or run from a directory with .ultralightrc.json');
+      }
+
+      const files = await collectFiles(dir);
+      if (files.length === 0) {
+        throw new Error('No valid files found in directory');
+      }
+
+      console.log(colors.dim(`Uploading new version for ${appId}...`));
+
+      // ul.upload with app_id creates new version (not set live)
+      const result = await client.callTool('ul.upload', {
+        app_id: appId,
+        files: files.map(f => ({ path: f.name, content: f.content })),
+      });
+
+      console.log();
+      console.log(colors.green('✓ New version uploaded'));
+      if (result.version) console.log(`  Version: ${result.version}`);
+      if (result.exports) console.log(`  Exports: ${(result.exports as string[]).join(', ')}`);
+      console.log();
+      console.log(`Set live: ${colors.cyan(`ultralight set version ${appId} ${result.version}`)}`);
+      break;
+    }
+
+    case 'status': {
+      const appId = subArgs[0];
+      if (!appId) {
+        throw new Error('Usage: ultralight draft status <app-id>');
+      }
+
+      // Show app versions via download info
+      const result = await client.callTool('ul.download', { app_id: appId });
+      console.log(JSON.stringify(result, null, 2));
+      break;
+    }
+
+    case 'publish': {
+      const appId = subArgs[0];
+      const ver = subArgs[1];
+      if (!appId) {
+        throw new Error('Usage: ultralight draft publish <app-id> [version]');
+      }
+
+      if (ver) {
+        await client.callTool('ul.set.version', { app_id: appId, version: ver });
+        console.log(colors.green(`✓ Version ${ver} set live`));
+      } else {
+        console.log(colors.yellow('Specify which version to set live:'));
+        console.log(`  ${colors.cyan(`ultralight set version ${appId} <version>`)}`);
+      }
+      break;
+    }
+
+    default:
+      console.log(`
+${colors.bold('ultralight draft')} <command>
+
+Manage app versions.
+
+${colors.dim('COMMANDS')}
+  upload [dir]        Upload a new version without setting it live
+  status <app>        Show app version info
+  publish <app> <ver> Set a version as live (alias for: set version)
+
+${colors.dim('OPTIONS (upload)')}
+  --app-id, -a <id>   App ID or slug (auto-detected from .ultralightrc.json)
+
+${colors.dim('EXAMPLES')}
+  ultralight draft upload .
+  ultralight draft upload . --app-id my-app
+  ultralight draft publish my-app 2.0.0
+`);
+  }
+}
+
+// ============================================
+// DOCS COMMAND
+// ============================================
+
+async function docs(args: string[], client: ApiClient, _config: Config) {
+  const subcommand = args[0];
+  const subArgs = args.slice(1);
+
+  switch (subcommand) {
+    case 'generate': {
+      const appId = subArgs[0];
+      if (!appId) {
+        throw new Error('Usage: ultralight docs generate <app-id>');
+      }
+
+      console.log(colors.dim('Documentation is auto-generated on upload.'));
+      console.log(`To regenerate, re-upload: ${colors.cyan(`ultralight upload . --app-id ${appId}`)}`);
+      break;
+    }
+
+    case 'get': {
+      const appId = subArgs[0];
+      if (!appId) {
+        throw new Error('Usage: ultralight docs get <app-id>');
+      }
+
+      // Download source to get skills.md
+      const result = await client.callTool('ul.download', { app_id: appId });
+      const files = result.files as Array<{ path: string; content: string }> || [];
+      const skillsFile = files.find(f => f.path === 'skills.md' || f.path === 'Skills.md');
+
+      if (skillsFile) {
+        console.log(skillsFile.content);
+      } else {
+        console.log(colors.dim('No Skills.md found. Upload your app to auto-generate documentation.'));
+      }
+      break;
+    }
+
+    default:
+      console.log(`
+${colors.bold('ultralight docs')} <command>
+
+Manage app documentation (Skills.md).
+
+${colors.dim('COMMANDS')}
+  generate <app>  Regenerate documentation (re-upload)
+  get <app>       Get documentation content
+
+${colors.dim('EXAMPLES')}
+  ultralight docs get my-app
+`);
+  }
+}
+
+// ============================================
+// RUN COMMAND — calls per-app MCP endpoint
+// ============================================
+
+async function run(args: string[], client: ApiClient, _config: Config) {
+  const parsed = parseArgs(args, {
+    boolean: ['json', 'help'],
+    alias: { h: 'help' },
+  });
+
+  if (parsed.help || args.length < 2) {
+    console.log(`
+${colors.bold('ultralight run')} <app> <function> [args]
+
+Execute a function on a deployed app via its MCP endpoint (POST /mcp/{appId}).
+
+${colors.dim('ARGUMENTS')}
+  app         App ID or slug
+  function    Function name to execute
+  args        JSON arguments (optional)
+
+${colors.dim('OPTIONS')}
+  --json      Output raw JSON result
+
+${colors.dim('EXAMPLES')}
+  ultralight run my-app hello
+  ultralight run my-app greet '{"name": "World"}'
+  ultralight run my-app search '{"query": "test"}' --json
+`);
+    return;
+  }
+
+  const appId = parsed._[0] as string;
+  const fnName = parsed._[1] as string;
+  const rawArgs = parsed._[2] as string | undefined;
+
+  let fnArgs: Record<string, unknown> | undefined;
+  if (rawArgs) {
+    try {
+      fnArgs = JSON.parse(rawArgs);
+    } catch {
+      throw new Error('Invalid JSON arguments. Must be valid JSON object.');
+    }
+  }
+
+  console.log(colors.dim(`Calling ${appId}.${fnName}()...`));
+  console.log();
+
+  // Per-app tools are prefixed: {slug}_{fnName}
+  // Try slug-based name first, fallback to listing tools
+  try {
+    const toolName = `${appId}_${fnName}`;
+    const result = await client.callAppTool(appId, toolName, fnArgs);
+
+    if (parsed.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(colors.green('✓ Success'));
+      console.log();
+      if (Object.keys(result).length > 0) {
+        console.log(JSON.stringify(result, null, 2));
+      }
+    }
+  } catch (err) {
+    // If tool name was wrong, try listing tools to find the right prefix
+    const errMsg = err instanceof Error ? err.message : String(err);
+    if (errMsg.includes('not found') || errMsg.includes('Unknown tool')) {
+      console.log(colors.dim('Looking up tool name...'));
+      try {
+        const tools = await client.listAppTools(appId);
+        const matchingTool = tools.find(t => t.name.endsWith(`_${fnName}`));
+        if (matchingTool) {
+          const result = await client.callAppTool(appId, matchingTool.name, fnArgs);
+          if (parsed.json) {
+            console.log(JSON.stringify(result, null, 2));
+          } else {
+            console.log(colors.green('✓ Success'));
+            console.log();
+            if (Object.keys(result).length > 0) {
+              console.log(JSON.stringify(result, null, 2));
+            }
+          }
+        } else {
+          console.log(colors.red(`✗ Function "${fnName}" not found on ${appId}`));
+          if (tools.length > 0) {
+            console.log();
+            console.log(colors.dim('Available functions:'));
+            for (const tool of tools) {
+              const name = tool.name.includes('_') ? tool.name.split('_').slice(1).join('_') : tool.name;
+              console.log(`  ${colors.cyan(name)} — ${tool.description || ''}`);
+            }
+          }
+        }
+      } catch {
+        throw err; // Re-throw original error
+      }
+    } else {
+      throw err;
+    }
+  }
+}
+
+// ============================================
+// DISCOVER COMMAND — uses ul.discover.appstore
 // ============================================
 
 async function discover(args: string[], client: ApiClient, _config: Config) {
   const parsed = parseArgs(args, {
     number: ['limit'],
-    boolean: ['featured', 'help'],
+    boolean: ['featured', 'help', 'desk', 'library'],
     alias: { l: 'limit', f: 'featured', h: 'help' },
   });
 
@@ -1381,52 +1749,99 @@ async function discover(args: string[], client: ApiClient, _config: Config) {
     console.log(`
 ${colors.bold('ultralight discover')} [query]
 
-Search the App Store for MCP tools by natural language.
+Search the App Store for MCP tools by natural language (ul.discover.appstore).
 Uses semantic search with composite ranking (similarity + community signal + native capability).
 
 ${colors.dim('OPTIONS')}
-  --limit, -l <n>     Max results (default: 10, max: 50)
-  --featured, -f      Show top-ranked apps instead of searching
+  --limit, -l <n>     Max results (default: 10)
+  --featured, -f      Show top-ranked apps (no query needed)
+  --desk              Show last 3 apps you called (ul.discover.desk)
+  --library           Search your library instead (ul.discover.library)
 
 ${colors.dim('EXAMPLES')}
   ultralight discover "weather API"
   ultralight discover "send email notifications" --limit 20
   ultralight discover --featured
+  ultralight discover --desk
+  ultralight discover --library "notes"
 `);
     return;
   }
 
+  // Desk mode
+  if (parsed.desk) {
+    console.log(colors.dim('Checking desk...'));
+    console.log();
+    const result = await client.callTool('ul.discover.desk', {});
+    if (result.text) {
+      console.log(result.text);
+    } else if (result.apps) {
+      const deskApps = result.apps as Array<Record<string, unknown>>;
+      if (deskApps.length === 0) {
+        console.log(colors.dim('Desk is empty — call some apps first.'));
+        return;
+      }
+      console.log(colors.bold('Recent Apps (Desk)\n'));
+      for (const app of deskApps) {
+        console.log(`  ${colors.cyan(String(app.slug || app.name))}`);
+        if (app.description) console.log(`    ${colors.dim(String(app.description).substring(0, 80))}`);
+        if (app.mcp_endpoint) console.log(`    ${colors.dim(String(app.mcp_endpoint))}`);
+        console.log();
+      }
+    } else {
+      console.log(JSON.stringify(result, null, 2));
+    }
+    return;
+  }
+
+  // Library mode
+  if (parsed.library) {
+    const query = (parsed._ as string[]).join(' ') || undefined;
+    console.log(colors.dim(query ? `Searching library for "${query}"...` : 'Loading library...'));
+    console.log();
+    const toolArgs: Record<string, unknown> = {};
+    if (query) toolArgs.query = query;
+    const result = await client.callTool('ul.discover.library', toolArgs);
+    if (result.text) {
+      console.log(result.text);
+    } else {
+      console.log(JSON.stringify(result, null, 2));
+    }
+    return;
+  }
+
+  // Featured mode
   if (parsed.featured) {
-    // Featured mode — top apps by community signal
     console.log(colors.dim('Fetching featured apps...'));
     console.log();
 
-    const result = await client.callTool('platform.discover.appstore', {
+    const result = await client.callTool('ul.discover.appstore', {
       limit: parsed.limit || 10,
     });
 
-    if (!result.results || result.results.length === 0) {
+    if (!result.results || (result.results as unknown[]).length === 0) {
       console.log(colors.dim('No featured apps found.'));
       return;
     }
 
-    console.log(`${colors.bold('Featured Apps')} (${result.total} apps)\n`);
-    for (const app of result.results) {
+    console.log(`${colors.bold('Featured Apps')}\n`);
+    for (const app of result.results as Array<Record<string, unknown>>) {
       const likes = app.likes || 0;
       const owner = app.is_owner ? colors.cyan(' (yours)') : '';
       const native = app.fully_connected ? colors.green(' ★') : '';
-      console.log(`  ${colors.cyan(app.slug)}${owner}${native} ${colors.dim(`${likes} likes`)}`);
+      console.log(`  ${colors.cyan(String(app.slug))}${owner}${native} ${colors.dim(`${likes} likes`)}`);
       console.log(`    ${app.name}`);
       if (app.description) {
-        console.log(`    ${colors.dim(app.description.substring(0, 80))}`);
+        console.log(`    ${colors.dim(String(app.description).substring(0, 80))}`);
       }
-      console.log(`    ${colors.dim(app.mcp_endpoint)}`);
+      if (app.mcp_endpoint) console.log(`    ${colors.dim(String(app.mcp_endpoint))}`);
       console.log();
     }
     return;
   }
 
-  const searchQuery = parsed._.join(' ');
+  // Search mode
+  const searchQuery = (parsed._ as string[]).join(' ');
 
   if (!searchQuery) {
     console.log(`
@@ -1438,6 +1853,7 @@ ${colors.dim('EXAMPLES')}
   ultralight discover "weather API"
   ultralight discover "send email notifications"
   ultralight discover --featured
+  ultralight discover --desk
 `);
     return;
   }
@@ -1445,30 +1861,183 @@ ${colors.dim('EXAMPLES')}
   console.log(colors.dim(`Searching for "${searchQuery}"...`));
   console.log();
 
-  const result = await client.callTool('platform.discover.appstore', {
+  const result = await client.callTool('ul.discover.appstore', {
     query: searchQuery,
     limit: parsed.limit || 10,
   });
 
-  if (!result.results || result.results.length === 0) {
+  if (!result.results || (result.results as unknown[]).length === 0) {
     console.log(colors.dim('No apps found matching your query.'));
     return;
   }
 
-  console.log(`${colors.bold('Results')} (${result.total} apps)\n`);
-  for (const app of result.results) {
-    const score = app.final_score ? Math.round(app.final_score * 100) : Math.round((app.similarity || 0) * 100);
+  console.log(`${colors.bold('Results')}\n`);
+  for (const app of result.results as Array<Record<string, unknown>>) {
+    const score = app.final_score ? Math.round(Number(app.final_score) * 100) : Math.round((Number(app.similarity) || 0) * 100);
     const owner = app.is_owner ? colors.cyan(' (yours)') : '';
     const native = app.fully_connected ? colors.green(' ★') : '';
-    console.log(`  ${colors.cyan(app.slug)}${owner}${native} ${colors.dim(`${score}% match`)}`);
+    console.log(`  ${colors.cyan(String(app.slug))}${owner}${native} ${colors.dim(`${score}% match`)}`);
     console.log(`    ${app.name}`);
     if (app.description) {
-      console.log(`    ${colors.dim(app.description.substring(0, 80))}`);
+      console.log(`    ${colors.dim(String(app.description).substring(0, 80))}`);
     }
-    console.log(`    ${colors.dim(app.mcp_endpoint)}`);
+    if (app.mcp_endpoint) console.log(`    ${colors.dim(String(app.mcp_endpoint))}`);
     console.log();
   }
 }
+
+// ============================================
+// LOGS COMMAND — uses ul.logs
+// ============================================
+
+async function logsCmd(args: string[], client: ApiClient, _config: Config) {
+  const parsed = parseArgs(args, {
+    string: ['emails', 'functions', 'since'],
+    number: ['limit'],
+    boolean: ['help', 'json'],
+    alias: { l: 'limit', h: 'help', e: 'emails', f: 'functions' },
+  });
+
+  if (parsed.help) {
+    console.log(`
+${colors.bold('ultralight logs')} <app-id>
+
+View MCP call logs for an app you own (ul.logs).
+
+${colors.dim('OPTIONS')}
+  --limit, -l <n>          Max entries (default: 50)
+  --emails, -e <a,b>       Filter by caller emails (comma-separated)
+  --functions, -f <a,b>    Filter by function names (comma-separated)
+  --since <ISO>            Only logs after this timestamp
+  --json                   Output raw JSON
+
+${colors.dim('EXAMPLES')}
+  ultralight logs my-app
+  ultralight logs my-app --limit 20
+  ultralight logs my-app --emails user@email.com
+  ultralight logs my-app --functions search,analyze --since 2025-01-01T00:00:00Z
+`);
+    return;
+  }
+
+  const appId = parsed._[0] as string;
+  if (!appId) {
+    throw new Error('Usage: ultralight logs <app-id>');
+  }
+
+  const toolArgs: Record<string, unknown> = { app_id: appId };
+  if (parsed.limit) toolArgs.limit = parsed.limit;
+  if (parsed.since) toolArgs.since = parsed.since;
+  if (parsed.emails) toolArgs.emails = (parsed.emails as string).split(',');
+  if (parsed.functions) toolArgs.functions = (parsed.functions as string).split(',');
+
+  const result = await client.callTool('ul.logs', toolArgs);
+
+  if (parsed.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  const logs = result.logs as Array<Record<string, unknown>> || [];
+  if (logs.length === 0) {
+    console.log(colors.dim('No logs found.'));
+    return;
+  }
+
+  console.log(`${colors.bold('Call Logs')} for ${appId} (${logs.length} entries)\n`);
+  for (const log of logs) {
+    const ts = log.created_at ? new Date(String(log.created_at)).toLocaleString() : '';
+    const status = log.success ? colors.green('✓') : colors.red('✗');
+    const fn = log.function_name || log.tool_name || '?';
+    const caller = log.caller_email || log.caller_id || '';
+    const duration = log.duration_ms ? `${log.duration_ms}ms` : '';
+
+    console.log(`  ${status} ${colors.cyan(String(fn))} ${colors.dim(String(caller))} ${colors.dim(duration)} ${colors.dim(ts)}`);
+    if (!log.success && log.error) {
+      console.log(`    ${colors.red(String(log.error))}`);
+    }
+  }
+}
+
+// ============================================
+// HEALTH COMMAND — uses ul.health
+// ============================================
+
+async function health(args: string[], client: ApiClient, _config: Config) {
+  const parsed = parseArgs(args, {
+    string: ['status', 'resolve'],
+    number: ['limit'],
+    boolean: ['help', 'json'],
+    alias: { s: 'status', r: 'resolve', l: 'limit', h: 'help' },
+  });
+
+  if (parsed.help) {
+    console.log(`
+${colors.bold('ultralight health')} [app-id]
+
+View health events and error reports for your apps (ul.health).
+The platform auto-detects failing functions (>50% error rate) and records events.
+
+${colors.dim('OPTIONS')}
+  --status, -s <state>    Filter: detected, acknowledged, resolved, all (default: detected)
+  --resolve, -r <id>      Mark a health event as resolved
+  --limit, -l <n>         Max events (default: 20)
+  --json                  Output raw JSON
+
+${colors.dim('EXAMPLES')}
+  ultralight health                          # Check all your apps
+  ultralight health my-app                   # Check specific app
+  ultralight health --status all             # Show all events including resolved
+  ultralight health --resolve <event-id>     # Mark event as resolved
+`);
+    return;
+  }
+
+  const appId = parsed._[0] as string | undefined;
+
+  const toolArgs: Record<string, unknown> = {};
+  if (appId) toolArgs.app_id = appId;
+  if (parsed.status) toolArgs.status = parsed.status;
+  if (parsed.limit) toolArgs.limit = parsed.limit;
+  if (parsed.resolve) toolArgs.resolve_event_id = parsed.resolve;
+
+  const result = await client.callTool('ul.health', toolArgs);
+
+  if (parsed.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (parsed.resolve) {
+    console.log(colors.green('✓ Event resolved'));
+    return;
+  }
+
+  const events = result.events as Array<Record<string, unknown>> || [];
+  if (events.length === 0) {
+    console.log(colors.green('✓ No health issues detected'));
+    return;
+  }
+
+  console.log(`${colors.bold('Health Events')}${appId ? ` for ${appId}` : ''} (${events.length} events)\n`);
+  for (const event of events) {
+    const statusIcon = event.status === 'detected' ? colors.red('●') :
+                       event.status === 'acknowledged' ? colors.yellow('●') :
+                       colors.green('●');
+    const ts = event.detected_at ? new Date(String(event.detected_at)).toLocaleString() : '';
+
+    console.log(`  ${statusIcon} ${colors.bold(String(event.function_name || event.app_slug || '?'))}`);
+    console.log(`    ${event.description || event.summary || ''}`);
+    if (event.error_rate) console.log(`    Error rate: ${colors.red(String(event.error_rate))}`);
+    if (event.sample_error) console.log(`    Sample: ${colors.dim(String(event.sample_error).substring(0, 100))}`);
+    console.log(`    ${colors.dim(ts)} ${colors.dim(`ID: ${event.id}`)}`);
+    console.log();
+  }
+}
+
+// ============================================
+// CONFIG COMMAND
+// ============================================
 
 async function configCmd(args: string[], _client: ApiClient, config: Config) {
   const subcommand = args[0];
