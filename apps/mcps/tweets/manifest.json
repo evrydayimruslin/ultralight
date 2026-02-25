@@ -1,0 +1,167 @@
+{
+  "name": "Tweets",
+  "version": "1.0.0",
+  "type": "mcp",
+  "description": "Twitter/X content feeder for the Research Intelligence Hub. Saves tweets (single, batch, threads) into the shared vector store with auto-embedding. Provides tweet-specific queries by author, timeline, and threads. All content flows into the shared Embeds backbone for cross-source semantic search.",
+  "author": "russell",
+  "entry": {
+    "functions": "index.ts"
+  },
+  "permissions": [
+    "ai:call",
+    "net:fetch"
+  ],
+  "env": {
+    "SUPABASE_URL": {
+      "description": "Supabase project URL for the Research Intelligence Hub database",
+      "required": true
+    },
+    "SUPABASE_SERVICE_KEY": {
+      "description": "Supabase service role key (encrypted via ul.set.supabase)",
+      "required": true
+    }
+  },
+  "functions": {
+    "save": {
+      "description": "Ingest a single tweet into the hub. Auto-generates embedding. Deduplicates by tweet URL. Use this to save individual tweets encountered during research.",
+      "parameters": {
+        "content": {
+          "type": "string",
+          "description": "The full tweet text",
+          "required": true
+        },
+        "author_handle": {
+          "type": "string",
+          "description": "Twitter/X handle (without @)",
+          "required": true
+        },
+        "url": {
+          "type": "string",
+          "description": "Tweet URL (x.com/user/status/123). Used for deduplication and linking."
+        },
+        "author_name": {
+          "type": "string",
+          "description": "Display name of the author"
+        },
+        "posted_at": {
+          "type": "string",
+          "description": "ISO timestamp of when the tweet was posted"
+        },
+        "metrics": {
+          "type": "object",
+          "description": "Engagement metrics: { likes, retweets, replies, views }"
+        },
+        "thread_id": {
+          "type": "string",
+          "description": "Thread identifier to group related tweets"
+        },
+        "thread_position": {
+          "type": "number",
+          "description": "Position in thread (0-indexed)"
+        },
+        "tags": {
+          "type": "array",
+          "description": "Tags for categorization",
+          "items": { "type": "string" }
+        },
+        "auto_embed": {
+          "type": "boolean",
+          "description": "Generate embedding immediately (default true)"
+        }
+      },
+      "returns": { "type": "object", "description": "{ success, content_id, embedded, duplicate }" }
+    },
+    "batch": {
+      "description": "Ingest multiple tweets at once. Max 10 per call to stay under execution limits. Each tweet is saved and embedded individually.",
+      "parameters": {
+        "tweets": {
+          "type": "array",
+          "description": "Array of tweet objects (same fields as save). Max 10.",
+          "required": true,
+          "items": { "type": "object" }
+        },
+        "auto_embed": {
+          "type": "boolean",
+          "description": "Generate embeddings for all tweets (default true)"
+        }
+      },
+      "returns": { "type": "object", "description": "{ saved, duplicates, failed, ids }" }
+    },
+    "feed": {
+      "description": "Query tweets with filters. Actions: 'list' (paginated, default), 'get' (single by id), 'tag' (add/remove tags), 'thread' (all tweets in a thread).",
+      "parameters": {
+        "action": {
+          "type": "string",
+          "description": "Action: 'list', 'get', 'tag', or 'thread'",
+          "enum": ["list", "get", "tag", "thread"]
+        },
+        "author": {
+          "type": "string",
+          "description": "Filter by author handle (list action)"
+        },
+        "thread_id": {
+          "type": "string",
+          "description": "Thread identifier (thread action)"
+        },
+        "tags": {
+          "type": "array",
+          "description": "Filter by tags (list action)",
+          "items": { "type": "string" }
+        },
+        "since": {
+          "type": "string",
+          "description": "ISO timestamp — only tweets after this date (list action)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max results (list action, default 20)"
+        },
+        "offset": {
+          "type": "number",
+          "description": "Pagination offset (list action)"
+        },
+        "id": {
+          "type": "string",
+          "description": "Content UUID (get and tag actions)"
+        },
+        "add_tags": {
+          "type": "array",
+          "description": "Tags to add (tag action)",
+          "items": { "type": "string" }
+        },
+        "remove_tags": {
+          "type": "array",
+          "description": "Tags to remove (tag action)",
+          "items": { "type": "string" }
+        }
+      },
+      "returns": { "type": "object", "description": "{ tweets, total, action }" }
+    },
+    "parse": {
+      "description": "Extract tweet data from URLs or raw text. Supports tweet URLs (x.com/user/status/123), '@handle: content' format, and plain text. Use this to pre-process content before calling save or batch.",
+      "parameters": {
+        "input": {
+          "type": "string",
+          "description": "Raw input — tweet URLs, '@handle: content' lines, or plain text",
+          "required": true
+        },
+        "format": {
+          "type": "string",
+          "description": "Force parse format: 'auto' (default), 'url', or 'text'",
+          "enum": ["auto", "url", "text"]
+        }
+      },
+      "returns": { "type": "object", "description": "{ parsed, tweets: [{ content, author_handle, url, tweet_id }] }" }
+    },
+    "status": {
+      "description": "Tweet-specific stats: total count, embedding progress, top authors, recent activity (24h/7d).",
+      "parameters": {},
+      "returns": { "type": "object", "description": "{ health, total_tweets, total_embedded, top_authors, recent_activity }" }
+    },
+    "ui": {
+      "description": "Web dashboard showing tweet stats, top authors, and recent tweets. Access at GET /http/{appId}/ui.",
+      "parameters": {},
+      "returns": { "type": "string" }
+    }
+  }
+}

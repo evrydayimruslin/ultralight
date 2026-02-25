@@ -1,0 +1,141 @@
+{
+  "name": "Digest",
+  "version": "1.0.0",
+  "type": "mcp",
+  "description": "Synthesis engine for the Research Intelligence Hub. Processes undigested content into insights using AI, manages the human-in-the-loop review pipeline (approve/reject/revise), composes newsletters from approved insights, and tracks the full draft→approved→sent lifecycle. Designed for micro-step execution (<30s per call).",
+  "author": "russell",
+  "entry": {
+    "functions": "index.ts"
+  },
+  "permissions": [
+    "ai:call",
+    "net:fetch"
+  ],
+  "env": {
+    "SUPABASE_URL": {
+      "description": "Supabase project URL for the Research Intelligence Hub database",
+      "required": true
+    },
+    "SUPABASE_SERVICE_KEY": {
+      "description": "Supabase service role key (encrypted via ul.set.supabase)",
+      "required": true
+    }
+  },
+  "functions": {
+    "synthesize": {
+      "description": "Process undigested content into insights using AI. Fetches a batch of unembedded content, sends to GPT-4o for synthesis, creates insight rows with embeddings. Each call processes one batch — run repeatedly via cron or manually to clear the queue.",
+      "parameters": {
+        "batch_size": {
+          "type": "number",
+          "description": "How many content items to process (default 15, keep low for 30s limit)"
+        },
+        "source_type": {
+          "type": "string",
+          "description": "Filter to a specific source type (e.g. 'tweet', 'note', 'article')"
+        },
+        "focus": {
+          "type": "string",
+          "description": "Optional focus area to guide AI synthesis (e.g. 'AI tooling trends', 'MCP ecosystem')"
+        }
+      },
+      "returns": { "type": "object", "description": "{ success, insights_created, content_digested, run_id }" }
+    },
+    "review": {
+      "description": "Manage the insight review pipeline. Actions: 'pending' (list awaiting review), 'approve' (mark as approved), 'reject' (mark as rejected), 'revise' (add revision notes), 'approved' (list approved), 'rejected' (list rejected).",
+      "parameters": {
+        "action": {
+          "type": "string",
+          "description": "Action to perform",
+          "enum": ["pending", "approve", "reject", "revise", "approved", "rejected"],
+          "required": true
+        },
+        "insight_id": {
+          "type": "string",
+          "description": "Insight UUID (required for approve/reject/revise)"
+        },
+        "revision_notes": {
+          "type": "string",
+          "description": "Notes for revision (revise action)"
+        },
+        "newsletter_section": {
+          "type": "string",
+          "description": "Override newsletter section on approve: 'lead', 'analysis', 'links', 'coda'",
+          "enum": ["lead", "analysis", "links", "coda"]
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max results for list actions (default 20)"
+        }
+      },
+      "returns": { "type": "object", "description": "{ insights, total, action }" }
+    },
+    "compose": {
+      "description": "Build a newsletter draft from approved insights. Either specify insight_ids or let auto_select pick unassigned approved insights. Creates a newsletter with ordered sections.",
+      "parameters": {
+        "title": {
+          "type": "string",
+          "description": "Newsletter title",
+          "required": true
+        },
+        "insight_ids": {
+          "type": "array",
+          "description": "Specific insight UUIDs to include",
+          "items": { "type": "string" }
+        },
+        "auto_select": {
+          "type": "boolean",
+          "description": "Auto-select approved insights not yet in a newsletter (default true)"
+        },
+        "max_sections": {
+          "type": "number",
+          "description": "Max sections when auto-selecting (default 8)"
+        }
+      },
+      "returns": { "type": "object", "description": "{ success, newsletter_id, title, section_count, status }" }
+    },
+    "newsletter": {
+      "description": "Manage the newsletter pipeline. Actions: 'list' (all newsletters), 'get' (single by ID), 'update' (edit title/sections), 'approve' (mark ready for sending), 'render' (generate markdown).",
+      "parameters": {
+        "action": {
+          "type": "string",
+          "description": "Action to perform",
+          "enum": ["list", "get", "update", "approve", "render"],
+          "required": true
+        },
+        "newsletter_id": {
+          "type": "string",
+          "description": "Newsletter UUID (required for get/update/approve/render)"
+        },
+        "status_filter": {
+          "type": "string",
+          "description": "Filter by status for list action",
+          "enum": ["draft", "approved", "sending", "sent", "failed"]
+        },
+        "title": {
+          "type": "string",
+          "description": "New title (update action)"
+        },
+        "sections": {
+          "type": "array",
+          "description": "Replacement sections array (update action)",
+          "items": { "type": "object" }
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max results for list action (default 20)"
+        }
+      },
+      "returns": { "type": "object", "description": "{ newsletters, total, action }" }
+    },
+    "status": {
+      "description": "Full pipeline overview: undigested content count, insight review stats, newsletter status counts, recent digest runs, and cumulative AI usage.",
+      "parameters": {},
+      "returns": { "type": "object", "description": "{ health, pipeline, recent_runs, ai_usage }" }
+    },
+    "ui": {
+      "description": "Web dashboard showing the synthesis pipeline flow: Undigested → Pending → Approved → Draft → Sent. Access at GET /http/{appId}/ui.",
+      "parameters": {},
+      "returns": { "type": "string" }
+    }
+  }
+}

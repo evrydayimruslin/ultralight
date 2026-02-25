@@ -42,7 +42,7 @@ Every Ultralight app MCP at `/mcp/{appId}` also supports `resources/list` and `r
 |----------|-----|-------------|
 | Skills.md | `ultralight://app/{appId}/skills.md` | Auto-generated documentation: function signatures, parameters, return types, examples |
 
-**When connecting to any Ultralight MCP endpoint**, call `resources/list` first to load the app's Skills.md into your context before calling tools. This gives you complete understanding of the app's capabilities, parameter types, and usage patterns.
+**REQUIRED: When connecting to any Ultralight MCP endpoint**, immediately call `resources/read` for each resource URI listed above to load context before calling any tools. The platform `initialize` response includes instructions to this effect. Skills.md contains critical conventions — building without reading it first will produce incompatible apps.
 
 ---
 
@@ -219,11 +219,62 @@ Notes:
 - Network calls via `fetch()` work normally in tests — be mindful of side effects.
 - If the build fails, `ul.test` returns the build error without executing.
 
-**Test-then-deploy workflow:**
-1. Write code
-2. `ul.test` — verify it works
-3. Fix issues, `ul.test` again
-4. When satisfied: `ul.upload` to deploy
+**Build workflow:**
+1. `ul.scaffold` — generate a properly structured skeleton (or write code manually following the conventions above)
+2. Fill in function implementations
+3. `ul.test` — verify each function works
+4. `ul.lint` — validate against platform conventions
+5. Fix any issues, re-test
+6. `ul.upload` — deploy
+
+---
+
+## Linting — ul.lint
+
+Before deploying, **validate your code** with `ul.lint`. This checks your source code and manifest against all Ultralight conventions without executing anything.
+
+```
+ul.lint(
+  files: [{ path: "index.ts", content: "..." }, { path: "manifest.json", content: "..." }],
+  strict?: boolean  // warnings become errors
+)
+-> { valid, issues: [{ severity, rule, message, suggestion? }], summary }
+```
+
+Checks performed:
+- **single-args-object** — functions must accept `(args: { ... })`, not positional params
+- **no-shorthand-return** — return `{ key: value }` not `{ key }` (IIFE bundling safety)
+- **function-count** — 3-7 exported functions recommended per app
+- **ui-export** — ui() export for web dashboard observability
+- **manifest completeness** — permissions, env, function schemas, name, description
+- **manifest-functions-sync** — exported functions match manifest declarations
+- **permission detection** — warns if code uses ai/fetch but manifest doesn't declare permissions
+
+Always run `ul.lint` before `ul.upload`. A clean lint means your app follows all platform conventions.
+
+---
+
+## Scaffolding — ul.scaffold
+
+Generate a properly structured app skeleton to start from:
+
+```
+ul.scaffold(
+  name: string,
+  description: string,
+  functions?: [{ name, description?, parameters?: [{ name, type, required?, description? }] }],
+  storage?: "none" | "kv" | "supabase",
+  permissions?: string[]
+)
+-> { files: [{ path, content }], next_steps, tip }
+```
+
+The output includes:
+- **index.ts** — function stubs following all conventions (single args object, explicit returns, proper globals, ui() export)
+- **manifest.json** — complete with permissions, env (if supabase), and function schemas
+- **.ultralightrc.json** — empty app_id/slug to be filled after first deploy
+
+Use this as your starting point. Fill in the TODOs, then follow the build workflow: `ul.test` → `ul.lint` → `ul.upload`.
 
 ---
 
@@ -402,6 +453,33 @@ ul.test(
   test_args?: Record<string, unknown>
 )
 -> { success, result, error?, error_type?, duration_ms, exports, logs? }
+```
+
+#### ul.lint
+
+Validate source code and manifest against Ultralight conventions. Run before `ul.upload`.
+
+```
+ul.lint(
+  files: [{ path: string, content: string }],
+  strict?: boolean
+)
+-> { valid, issues: [{ severity, rule, message, suggestion? }], summary }
+```
+
+#### ul.scaffold
+
+Generate a properly structured app skeleton following all platform conventions.
+
+```
+ul.scaffold(
+  name: string,
+  description: string,
+  functions?: [{ name, description?, parameters? }],
+  storage?: "none" | "kv" | "supabase",
+  permissions?: string[]
+)
+-> { files: [{ path, content }], next_steps, tip }
 ```
 
 ### Settings

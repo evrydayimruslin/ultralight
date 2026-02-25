@@ -1,0 +1,206 @@
+{
+  "name": "Embeds",
+  "version": "1.0.0",
+  "type": "mcp",
+  "description": "Shared embedding backbone for the Research Intelligence Hub. Ingests content from all sources (tweets, notes, chats), generates vector embeddings, and exposes semantic search across everything you've consumed and produced. All other MCPs read and write through this one.",
+  "author": "russell",
+  "entry": {
+    "functions": "index.ts"
+  },
+  "permissions": [
+    "ai:call",
+    "net:fetch"
+  ],
+  "env": {
+    "SUPABASE_URL": {
+      "description": "Supabase project URL for the Research Intelligence Hub database",
+      "required": true
+    },
+    "SUPABASE_SERVICE_KEY": {
+      "description": "Supabase service role key (encrypted via ul.set.supabase)",
+      "required": true
+    }
+  },
+  "functions": {
+    "ingest": {
+      "description": "Ingest raw content into the shared store. Auto-generates a vector embedding. Deduplicates by source_type + source_id. Use this from any MCP or agent to add tweets, notes, chats, articles, or manual entries.",
+      "parameters": {
+        "source_type": {
+          "type": "string",
+          "description": "Content source: 'tweet', 'note', 'chat', 'article', 'manual'",
+          "required": true
+        },
+        "body": {
+          "type": "string",
+          "description": "The full text content to store and embed",
+          "required": true
+        },
+        "source_id": {
+          "type": "string",
+          "description": "Original ID from source system for deduplication"
+        },
+        "source_url": {
+          "type": "string",
+          "description": "Original URL if applicable"
+        },
+        "source_meta": {
+          "type": "object",
+          "description": "Source-specific metadata (metrics, conversation context, etc.)"
+        },
+        "title": {
+          "type": "string",
+          "description": "Optional title. Prepended to body for richer embedding."
+        },
+        "author": {
+          "type": "string",
+          "description": "Author handle, name, or system name"
+        },
+        "tags": {
+          "type": "array",
+          "description": "Tags for categorization and filtered search",
+          "items": { "type": "string" }
+        },
+        "source_created_at": {
+          "type": "string",
+          "description": "ISO timestamp of when the original content was created"
+        },
+        "auto_embed": {
+          "type": "boolean",
+          "description": "Generate embedding immediately (default true). Set false to batch-embed later."
+        }
+      },
+      "returns": { "type": "object", "description": "{ success, content_id, embedded, duplicate }" }
+    },
+    "search": {
+      "description": "Semantic search across ALL ingested content or synthesized insights. The primary research tool — finds everything you've consumed about any topic, ranked by vector similarity. Set scope='insights' to search digest output instead.",
+      "parameters": {
+        "query": {
+          "type": "string",
+          "description": "Natural language search query",
+          "required": true
+        },
+        "scope": {
+          "type": "string",
+          "description": "What to search: 'content' (default) or 'insights'",
+          "enum": ["content", "insights"]
+        },
+        "source_type": {
+          "type": "string",
+          "description": "Filter to a specific source type (content scope only)"
+        },
+        "tags": {
+          "type": "array",
+          "description": "Filter to content with ANY of these tags (content scope only)",
+          "items": { "type": "string" }
+        },
+        "theme_id": {
+          "type": "string",
+          "description": "Filter to a specific theme UUID (both scopes)"
+        },
+        "theme_slug": {
+          "type": "string",
+          "description": "Filter by theme slug (e.g. 'ai', 'crypto', 'esoteric'). Resolved to theme_id internally."
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max results (default 20)"
+        },
+        "threshold": {
+          "type": "number",
+          "description": "Minimum similarity 0-1 (default 0.3)"
+        }
+      },
+      "returns": { "type": "object", "description": "{ results, query, scope, total }" }
+    },
+    "getRelated": {
+      "description": "Find content similar to a specific item. Discovers cross-source connections between tweets, notes, and chats.",
+      "parameters": {
+        "content_id": {
+          "type": "string",
+          "description": "UUID of the content item to find related items for",
+          "required": true
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max related items (default 10)"
+        },
+        "threshold": {
+          "type": "number",
+          "description": "Minimum similarity 0-1 (default 0.3)"
+        },
+        "cross_type": {
+          "type": "boolean",
+          "description": "Search all source types (default true). Set false for same-type only."
+        }
+      },
+      "returns": { "type": "object", "description": "{ results, source_id, total }" }
+    },
+    "embedBatch": {
+      "description": "Process unembedded content items. Run on a cron schedule or manually to catch up items ingested with auto_embed=false or where embedding failed. Keeps batch small to stay under 30s execution limit.",
+      "parameters": {
+        "batch_size": {
+          "type": "number",
+          "description": "Items to process (default 15, max ~20 for 30s limit)"
+        }
+      },
+      "returns": { "type": "object", "description": "{ processed, failed, remaining }" }
+    },
+    "manage": {
+      "description": "Read, list, or tag content items. Actions: 'get' (single item by id), 'list' (paginated with filters), 'tag' (add/remove tags on an item).",
+      "parameters": {
+        "action": {
+          "type": "string",
+          "description": "Action to perform: 'get', 'list', or 'tag'",
+          "required": true,
+          "enum": ["get", "list", "tag"]
+        },
+        "id": {
+          "type": "string",
+          "description": "Content UUID (required for 'get' and 'tag')"
+        },
+        "ids": {
+          "type": "array",
+          "description": "Multiple UUIDs for batch fetch (list action)",
+          "items": { "type": "string" }
+        },
+        "source_type": {
+          "type": "string",
+          "description": "Filter by source type (list action)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Page size (list action, default 20)"
+        },
+        "offset": {
+          "type": "number",
+          "description": "Pagination offset (list action)"
+        },
+        "undigested_only": {
+          "type": "boolean",
+          "description": "Only undigested content (list action)"
+        },
+        "add_tags": {
+          "type": "array",
+          "description": "Tags to add (tag action)",
+          "items": { "type": "string" }
+        },
+        "remove_tags": {
+          "type": "array",
+          "description": "Tags to remove (tag action)",
+          "items": { "type": "string" }
+        }
+      },
+      "returns": { "type": "object", "description": "{ items, total, action }" }
+    },
+    "status": {
+      "description": "Hub overview: health check (Supabase + AI), content counts, embedding progress, digest progress, insights, newsletters, subscribers, and source type breakdown.",
+      "parameters": {},
+      "returns": { "type": "object", "description": "Full stats with health, counts, and by_source_type breakdown" }
+    },
+    "ui": {
+      "description": "Web dashboard showing hub stats, source breakdown, and recent content. Access at GET /http/{appId}/ui.",
+      "parameters": {},
+      "returns": { "type": "string" }
+    }
+  }
+}

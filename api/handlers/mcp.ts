@@ -650,9 +650,28 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
  */
 function handleInitialize(
   id: string | number,
-  _appId: string,
-  app: { name: string; slug: string; description: string | null }
+  appId: string,
+  app: { name: string; slug: string; description: string | null; skills_md?: string | null }
 ): Response {
+  // Level 2: Inline the app's Skills.md directly into the instructions field.
+  // This guarantees agents receive function signatures, parameter types, and usage
+  // examples even if they never call resources/read. The skills_md is auto-generated
+  // per app and is typically 1-3KB (~300-800 tokens) — compact enough to inline.
+  //
+  // If skills_md isn't generated yet (new app, still building), fall back to the
+  // description + a directive to check resources/read.
+  let instructions: string;
+
+  if (app.skills_md) {
+    // Inline the full auto-generated Skills.md — it's already concise
+    instructions = app.skills_md;
+  } else {
+    // Skills.md not yet generated — use description + resource directive
+    instructions = (app.description || `${app.name || app.slug} — an Ultralight MCP server.`) +
+      `\n\nCall resources/read with uri "ultralight://app/${appId}/skills.md" ` +
+      'to load full documentation once available.';
+  }
+
   const result: MCPServerInfo = {
     protocolVersion: '2025-03-26',
     capabilities: {
@@ -663,7 +682,7 @@ function handleInitialize(
       name: app.name || app.slug,
       version: '1.0.0',
     },
-    instructions: app.description || undefined,
+    instructions: instructions,
   };
 
   return jsonRpcResponse(id, result);

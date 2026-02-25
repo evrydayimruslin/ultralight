@@ -1,8 +1,8 @@
 // Platform MCP Handler — v3
 // Implements JSON-RPC 2.0 for the ul.* tool namespace
 // Endpoint: POST /mcp/platform
-// 30 tools:
-//   upload, download, test,
+// 32 tools:
+//   upload, download, test, lint, scaffold,
 //   set.version, set.visibility, set.download, set.supabase, set.ratelimit,
 //   permissions.grant, permissions.revoke, permissions.list, permissions.export,
 //   discover.desk, discover.library, discover.appstore, rate, logs,
@@ -135,7 +135,7 @@ Every Ultralight app MCP at \`/mcp/{appId}\` also supports \`resources/list\` an
 |----------|-----|-------------|
 | Skills.md | \`ultralight://app/{appId}/skills.md\` | Auto-generated documentation: function signatures, parameters, return types, examples |
 
-**When connecting to any Ultralight MCP endpoint**, call \`resources/list\` first to load the app's Skills.md into your context before calling tools. This gives you complete understanding of the app's capabilities, parameter types, and usage patterns.
+**REQUIRED: When connecting to any Ultralight MCP endpoint**, immediately call \`resources/read\` for each resource URI listed above to load context before calling any tools. The platform \`initialize\` response includes instructions to this effect. Skills.md contains critical conventions — building without reading it first will produce incompatible apps.
 
 ---
 
@@ -312,11 +312,62 @@ Notes:
 - Network calls via \`fetch()\` work normally in tests — be mindful of side effects.
 - If the build fails, \`ul.test\` returns the build error without executing.
 
-**Test-then-deploy workflow:**
-1. Write code
-2. \`ul.test\` — verify it works
-3. Fix issues, \`ul.test\` again
-4. When satisfied: \`ul.upload\` to deploy
+**Build workflow:**
+1. \`ul.scaffold\` — generate a properly structured skeleton (or write code manually following the conventions above)
+2. Fill in function implementations
+3. \`ul.test\` — verify each function works
+4. \`ul.lint\` — validate against platform conventions
+5. Fix any issues, re-test
+6. \`ul.upload\` — deploy
+
+---
+
+## Linting — ul.lint
+
+Before deploying, **validate your code** with \`ul.lint\`. This checks your source code and manifest against all Ultralight conventions without executing anything.
+
+\`\`\`
+ul.lint(
+  files: [{ path: "index.ts", content: "..." }, { path: "manifest.json", content: "..." }],
+  strict?: boolean  // warnings become errors
+)
+-> { valid, issues: [{ severity, rule, message, suggestion? }], summary }
+\`\`\`
+
+Checks performed:
+- **single-args-object** — functions must accept \`(args: { ... })\`, not positional params
+- **no-shorthand-return** — return \`{ key: value }\` not \`{ key }\` (IIFE bundling safety)
+- **function-count** — 3-7 exported functions recommended per app
+- **ui-export** — ui() export for web dashboard observability
+- **manifest completeness** — permissions, env, function schemas, name, description
+- **manifest-functions-sync** — exported functions match manifest declarations
+- **permission detection** — warns if code uses ai/fetch but manifest doesn't declare permissions
+
+Always run \`ul.lint\` before \`ul.upload\`. A clean lint means your app follows all platform conventions.
+
+---
+
+## Scaffolding — ul.scaffold
+
+Generate a properly structured app skeleton to start from:
+
+\`\`\`
+ul.scaffold(
+  name: string,
+  description: string,
+  functions?: [{ name, description?, parameters?: [{ name, type, required?, description? }] }],
+  storage?: "none" | "kv" | "supabase",
+  permissions?: string[]
+)
+-> { files: [{ path, content }], next_steps, tip }
+\`\`\`
+
+The output includes:
+- **index.ts** — function stubs following all conventions (single args object, explicit returns, proper globals, ui() export)
+- **manifest.json** — complete with permissions, env (if supabase), and function schemas
+- **.ultralightrc.json** — empty app_id/slug to be filled after first deploy
+
+Use this as your starting point. Fill in the TODOs, then follow the build workflow: \`ul.test\` → \`ul.lint\` → \`ul.upload\`.
 
 ---
 
@@ -495,6 +546,33 @@ ul.test(
   test_args?: Record<string, unknown>
 )
 -> { success, result, error?, error_type?, duration_ms, exports, logs? }
+\`\`\`
+
+#### ul.lint
+
+Validate source code and manifest against Ultralight conventions. Run before \`ul.upload\`.
+
+\`\`\`
+ul.lint(
+  files: [{ path: string, content: string }],
+  strict?: boolean
+)
+-> { valid, issues: [{ severity, rule, message, suggestion? }], summary }
+\`\`\`
+
+#### ul.scaffold
+
+Generate a properly structured app skeleton following all platform conventions.
+
+\`\`\`
+ul.scaffold(
+  name: string,
+  description: string,
+  functions?: [{ name, description?, parameters? }],
+  storage?: "none" | "kv" | "supabase",
+  permissions?: string[]
+)
+-> { files: [{ path, content }], next_steps, tip }
 \`\`\`
 
 ### Settings
@@ -1638,6 +1716,105 @@ const PLATFORM_TOOLS: MCPTool[] = [
       },
     },
   },
+
+  // ── Lint (Code Validation) ──────────────────────
+  {
+    name: 'ul.lint',
+    title: 'Lint App Code',
+    description:
+      'Validate source code and manifest against Ultralight conventions BEFORE uploading. ' +
+      'Checks function patterns (single args object), return value safety (no shorthand properties), ' +
+      'function count (3-7 recommended), manifest completeness (permissions, env), ' +
+      'ui() export presence, naming conventions, and more. ' +
+      'Returns a structured report with errors, warnings, and suggestions. ' +
+      'Always run this before ul.upload to catch compatibility issues early.',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        files: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: 'Relative file path (e.g. "index.ts", "manifest.json")' },
+              content: { type: 'string', description: 'File content' },
+            },
+            required: ['path', 'content'],
+          },
+          description: 'Source files to lint. Should include index.ts and optionally manifest.json.',
+        },
+        strict: {
+          type: 'boolean',
+          description: 'Enable strict mode — warnings become errors. Default: false.',
+        },
+      },
+      required: ['files'],
+    },
+  },
+
+  // ── Scaffold (App Template Generation) ──────────────────────
+  {
+    name: 'ul.scaffold',
+    title: 'Scaffold New App',
+    description:
+      'Generate a properly structured Ultralight MCP app skeleton. ' +
+      'Provide a description of what you want to build and optionally the function names. ' +
+      'Returns index.ts + manifest.json following all platform conventions: ' +
+      'single args object pattern, explicit return values, permissions, env declarations, ui() export. ' +
+      'Use this as a starting point — fill in the function bodies, then ul.test → ul.lint → ul.upload.',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'App name (e.g. "Weather Dashboard", "Tweet Analyzer")',
+        },
+        description: {
+          type: 'string',
+          description: 'What the app does — used to generate function stubs and manifest description.',
+        },
+        functions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: 'Function name (e.g. "analyze", "search")' },
+              description: { type: 'string', description: 'What this function does' },
+              parameters: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    name: { type: 'string' },
+                    type: { type: 'string', description: 'TypeScript type (e.g. "string", "number", "string[]")' },
+                    required: { type: 'boolean' },
+                    description: { type: 'string' },
+                  },
+                  required: ['name', 'type'],
+                },
+                description: 'Function parameters',
+              },
+            },
+            required: ['name'],
+          },
+          description: 'Functions to scaffold. Omit to auto-generate based on description.',
+        },
+        storage: {
+          type: 'string',
+          enum: ['none', 'kv', 'supabase'],
+          description: 'Storage strategy: "none", "kv" (R2 key-value), or "supabase" (BYOS). Default: kv.',
+        },
+        permissions: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Required permissions (e.g. ["ai:call", "net:fetch"]). Auto-detected if omitted.',
+        },
+      },
+      required: ['name', 'description'],
+    },
+  },
 ];
 
 // ============================================
@@ -1798,6 +1975,56 @@ export async function handlePlatformMcp(request: Request): Promise<Response> {
 // METHOD HANDLERS
 // ============================================
 
+// Condensed essential conventions inlined into every initialize response.
+// This guarantees agents receive critical rules even if they never call resources/read.
+// The full Skills.md (~700 lines) remains available via resources/read for complete reference.
+// Target: ~800 tokens — the minimum viable context to prevent broken apps.
+const ESSENTIAL_CONVENTIONS = `Ultralight — MCP-first app hosting platform. Turns TypeScript functions into MCP servers.
+
+## Critical Build Rules (violations = broken apps)
+
+1. FUNCTION SIGNATURE: Every exported function receives a SINGLE args object from the sandbox.
+   CORRECT: export async function search(args: { query: string; limit?: number }) { ... }
+   WRONG:   export async function search(query: string, limit: number) { ... }
+   The sandbox calls: const result = await fn(args) — positional params will fail silently.
+
+2. RETURN VALUES: Always use explicit key: value pairs. Never use shorthand properties.
+   CORRECT: return { query: query, count: results.length };
+   WRONG:   return { query, count };
+   Shorthand can cause "X is not defined" errors in the IIFE bundle.
+
+3. GLOBALS: Access sandbox globals via (globalThis as any):
+   const ultralight = (globalThis as any).ultralight;  // store/load/list/remove/ai
+   const supabase = (globalThis as any).supabase;      // BYOS Supabase client
+   const uuid = (globalThis as any).uuid;              // uuid.v4()
+   Also available: fetch, _, dateFns, crypto, http, base64, hash, str, jwt, schema, markdown
+
+4. HTTP ENDPOINTS: ui() function must return via the http global:
+   return http.html(htmlString);  // or http.json(obj), http.redirect(url)
+
+5. EXECUTION LIMIT: 30 seconds per function call. fetch() has 15s timeout per request.
+
+## Build Workflow
+
+1. ul.scaffold — generate a skeleton following these conventions
+2. Fill in implementations
+3. ul.test — execute in real sandbox without deploying
+4. ul.lint — validate against all conventions
+5. ul.upload — deploy (no app_id = new app, with app_id = new version)
+
+## Discovery Before Building
+
+Before building anything, check if a tool already exists:
+1. ul.discover.desk — last 3 apps used (check first)
+2. ul.discover.library — owned + liked apps
+3. ul.discover.appstore — all published apps
+Only build if nothing matches the user's exact intent.
+
+## Full Reference
+
+Call resources/read with uri "ultralight://platform/skills.md" for the complete 700-line developer guide (all tools, memory conventions, permissions, detailed examples).
+Call resources/read with uri "ultralight://platform/library.md" for the user's app library.`;
+
 function handleInitialize(id: string | number): Response {
   const result: MCPServerInfo = {
     protocolVersion: '2025-03-26',
@@ -1809,7 +2036,7 @@ function handleInitialize(id: string | number): Response {
       name: 'Ultralight Platform',
       version: '2.0.0',
     },
-    instructions: 'MCP-first app hosting platform. Upload, configure, and discover apps.',
+    instructions: ESSENTIAL_CONVENTIONS,
   };
   return jsonRpcResponse(id, result);
 }
@@ -2047,6 +2274,16 @@ async function handleToolsCall(
       // Health Monitoring
       case 'ul.health':
         result = await executeHealth(userId, toolArgs);
+        break;
+
+      // Lint (Code Validation)
+      case 'ul.lint':
+        result = executeLint(toolArgs);
+        break;
+
+      // Scaffold (App Template Generation)
+      case 'ul.scaffold':
+        result = executeScaffold(toolArgs);
         break;
 
       default:
@@ -2769,6 +3006,521 @@ async function executeHealth(
       ? 'To fix: download the app source with ul.download, fix the failing function, test with ul.test, then re-upload with ul.upload. Resolve the event with ul.health(resolve_event_id: "EVENT_ID").'
       : undefined,
   };
+}
+
+// ── ul.lint ──────────────────────────────────────
+
+interface LintIssue {
+  severity: 'error' | 'warning' | 'info';
+  rule: string;
+  message: string;
+  line?: number;
+  suggestion?: string;
+}
+
+function executeLint(args: Record<string, unknown>): unknown {
+  const files = args.files as Array<{ path: string; content: string }> | undefined;
+  const strict = (args.strict as boolean) || false;
+
+  if (!files || !Array.isArray(files) || files.length === 0) {
+    throw new ToolError(INVALID_PARAMS, 'files array is required and must not be empty');
+  }
+
+  const issues: LintIssue[] = [];
+
+  // Find entry file
+  const entryFileNames = ['index.ts', 'index.tsx', 'index.js', 'index.jsx'];
+  const entryFile = files.find(f => entryFileNames.includes(f.path.split('/').pop() || f.path));
+  const manifestFile = files.find(f => f.path === 'manifest.json' || f.path.endsWith('/manifest.json'));
+
+  if (!entryFile) {
+    issues.push({
+      severity: 'error',
+      rule: 'entry-file',
+      message: 'No entry file found. Must include index.ts, index.tsx, index.js, or index.jsx.',
+    });
+    return { valid: false, issues: issues, summary: 'Cannot lint without an entry file.' };
+  }
+
+  const code = entryFile.content;
+
+  // ── Extract exports ──
+  const exportFuncRegex = /export\s+(?:async\s+)?function\s+(\w+)\s*\(/g;
+  const exportConstRegex = /export\s+(?:const|let|var)\s+(\w+)\s*=/g;
+  const exportedFunctions: string[] = [];
+  const allExports: string[] = [];
+  let match;
+
+  while ((match = exportFuncRegex.exec(code)) !== null) {
+    exportedFunctions.push(match[1]);
+    allExports.push(match[1]);
+  }
+  while ((match = exportConstRegex.exec(code)) !== null) {
+    allExports.push(match[1]);
+  }
+
+  // ── Rule: Function count ──
+  if (exportedFunctions.length === 0) {
+    issues.push({
+      severity: 'error',
+      rule: 'no-exports',
+      message: 'No exported functions found. Ultralight apps need at least one exported function.',
+    });
+  } else if (exportedFunctions.length > 7) {
+    issues.push({
+      severity: strict ? 'error' : 'warning',
+      rule: 'function-count',
+      message: `${exportedFunctions.length} exported functions. Platform recommends 3-7 per app. Consider splitting into multiple apps or using a multi-action pattern (e.g. a "manage" function with an action parameter).`,
+    });
+  } else if (exportedFunctions.length < 3) {
+    issues.push({
+      severity: 'info',
+      rule: 'function-count',
+      message: `Only ${exportedFunctions.length} exported function(s). Consider if more utility functions would make this app more useful.`,
+    });
+  }
+
+  // ── Rule: Single args object pattern ──
+  for (const funcName of exportedFunctions) {
+    // Match the function signature — look for (param1, param2) pattern (positional params)
+    const sigRegex = new RegExp(
+      `export\\s+(?:async\\s+)?function\\s+${funcName}\\s*\\(([^)]*?)\\)`,
+      's'
+    );
+    const sigMatch = sigRegex.exec(code);
+    if (sigMatch) {
+      const params = sigMatch[1].trim();
+      if (params) {
+        // Count top-level commas (outside braces/angles) to detect positional params
+        let depth = 0;
+        let commaCount = 0;
+        for (const ch of params) {
+          if (ch === '{' || ch === '<' || ch === '(') depth++;
+          else if (ch === '}' || ch === '>' || ch === ')') depth--;
+          else if (ch === ',' && depth === 0) commaCount++;
+        }
+
+        if (commaCount > 0) {
+          issues.push({
+            severity: 'error',
+            rule: 'single-args-object',
+            message: `Function "${funcName}" uses positional parameters. Ultralight sandbox passes a single args object. Use: export function ${funcName}(args: { ... }) instead.`,
+            suggestion: `Refactor to accept a single destructured object: export async function ${funcName}(args: { param1: type; param2?: type })`,
+          });
+        }
+
+        // Check if first param is typed as an object (good pattern)
+        const hasArgsPattern = /^args\s*[?]?\s*:\s*\{/.test(params) || /^args\s*[?]?\s*:\s*Record/.test(params);
+        const hasObjectDestructure = /^\{/.test(params);
+        if (!hasArgsPattern && !hasObjectDestructure && commaCount === 0) {
+          // Single param but not object-typed — could be fine (like a simple string param in some cases)
+          // but warn about it
+          issues.push({
+            severity: 'info',
+            rule: 'single-args-object',
+            message: `Function "${funcName}" parameter may not follow the args object pattern. Ensure it accepts (args: { ... }) for sandbox compatibility.`,
+          });
+        }
+      }
+    }
+  }
+
+  // ── Rule: Return value shorthand ──
+  // Look for return { identifier } patterns (shorthand properties)
+  const shorthandReturnRegex = /return\s*\{([^}]*)\}/g;
+  let returnMatch;
+  while ((returnMatch = shorthandReturnRegex.exec(code)) !== null) {
+    const returnBody = returnMatch[1];
+    // Split by comma and check each property
+    const props = returnBody.split(',').map(p => p.trim()).filter(Boolean);
+    for (const prop of props) {
+      // Shorthand: just an identifier with no colon
+      // But skip spread (...), computed ([]), method definitions
+      const trimmed = prop.trim();
+      if (trimmed.startsWith('...') || trimmed.startsWith('[')) continue;
+      if (!trimmed.includes(':') && !trimmed.includes('(') && /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(trimmed)) {
+        // Find the line number
+        const beforeReturn = code.substring(0, returnMatch.index);
+        const lineNum = (beforeReturn.match(/\n/g) || []).length + 1;
+        issues.push({
+          severity: strict ? 'error' : 'warning',
+          rule: 'no-shorthand-return',
+          message: `Shorthand property "${trimmed}" in return statement at line ~${lineNum}. Use explicit "key: value" form to avoid IIFE bundling issues.`,
+          line: lineNum,
+          suggestion: `Change "{ ${trimmed} }" to "{ ${trimmed}: ${trimmed} }"`,
+        });
+      }
+    }
+  }
+
+  // ── Rule: ui() export ──
+  const hasUi = allExports.includes('ui');
+  if (!hasUi) {
+    issues.push({
+      severity: strict ? 'error' : 'warning',
+      rule: 'ui-export',
+      message: 'No ui() export found. A web dashboard at GET /http/{appId}/ui helps with observability. Consider adding one.',
+      suggestion: 'Add: export async function ui(args: { method?: string; ... }) { return http.html(htmlContent); }',
+    });
+  }
+
+  // ── Rule: http global usage in ui ──
+  if (hasUi && !code.includes('http.html') && !code.includes('http.json') && !code.includes('http.redirect')) {
+    issues.push({
+      severity: 'warning',
+      rule: 'ui-http-response',
+      message: 'ui() function found but does not use http.html(), http.json(), or http.redirect(). HTTP endpoints must return via the http global.',
+    });
+  }
+
+  // ── Rule: Globals usage ──
+  if (code.includes('globalThis') || code.includes('(globalThis as any)')) {
+    // Check for proper declaration pattern
+    const globalDecls = code.match(/const\s+(\w+)\s*=\s*\(globalThis\s+as\s+any\)\.\w+/g) || [];
+    if (globalDecls.length > 0) {
+      issues.push({
+        severity: 'info',
+        rule: 'globals-access',
+        message: `Found ${globalDecls.length} globalThis casts. This is the correct pattern for accessing sandbox globals (ultralight, supabase, uuid, etc.).`,
+      });
+    }
+  }
+
+  // ── Rule: console.log in production ──
+  const consoleLogCount = (code.match(/console\.log\(/g) || []).length;
+  if (consoleLogCount > 5) {
+    issues.push({
+      severity: 'info',
+      rule: 'excessive-logging',
+      message: `${consoleLogCount} console.log() calls found. Consider reducing for production — logs are captured but excessive logging affects performance.`,
+    });
+  }
+
+  // ── Manifest validation ──
+  let manifest: Record<string, unknown> | null = null;
+  if (manifestFile) {
+    try {
+      manifest = JSON.parse(manifestFile.content);
+    } catch (e) {
+      issues.push({
+        severity: 'error',
+        rule: 'manifest-json',
+        message: 'manifest.json is not valid JSON: ' + (e instanceof Error ? e.message : String(e)),
+      });
+    }
+  } else {
+    issues.push({
+      severity: strict ? 'error' : 'warning',
+      rule: 'manifest-missing',
+      message: 'No manifest.json found. The manifest declares permissions, env vars, and function schemas. Strongly recommended.',
+      suggestion: 'Create manifest.json with: { "name": "...", "version": "1.0.0", "type": "mcp", "description": "...", "permissions": [...], "functions": { ... } }',
+    });
+  }
+
+  if (manifest) {
+    // Check required manifest fields
+    if (!manifest.name) {
+      issues.push({ severity: 'error', rule: 'manifest-name', message: 'manifest.json missing "name" field.' });
+    }
+    if (!manifest.version) {
+      issues.push({ severity: 'warning', rule: 'manifest-version', message: 'manifest.json missing "version" field.' });
+    }
+    if (!manifest.description) {
+      issues.push({ severity: 'warning', rule: 'manifest-description', message: 'manifest.json missing "description" field.' });
+    }
+
+    // Permissions check
+    const permissions = manifest.permissions as string[] | undefined;
+    if (!permissions || !Array.isArray(permissions) || permissions.length === 0) {
+      // Check if code uses features that need permissions
+      if (code.includes('ultralight.ai(') || code.includes('ultralight.ai (')) {
+        issues.push({
+          severity: 'error',
+          rule: 'manifest-permissions',
+          message: 'Code calls ultralight.ai() but manifest does not declare "ai:call" permission.',
+          suggestion: 'Add "permissions": ["ai:call"] to manifest.json',
+        });
+      }
+      if (code.includes('fetch(') || code.includes('fetch (')) {
+        issues.push({
+          severity: strict ? 'error' : 'warning',
+          rule: 'manifest-permissions',
+          message: 'Code uses fetch() but manifest does not declare "net:fetch" permission.',
+          suggestion: 'Add "net:fetch" to the "permissions" array in manifest.json',
+        });
+      }
+    } else {
+      // Check for unnecessary permissions
+      if (permissions.includes('ai:call') && !code.includes('ultralight.ai(') && !code.includes('ultralight.ai (')) {
+        issues.push({
+          severity: 'info',
+          rule: 'unused-permission',
+          message: 'manifest declares "ai:call" permission but code does not appear to use ultralight.ai().',
+        });
+      }
+    }
+
+    // Env vars check
+    if (code.includes('supabase') && !manifest.env) {
+      issues.push({
+        severity: strict ? 'error' : 'warning',
+        rule: 'manifest-env',
+        message: 'Code uses Supabase but manifest does not declare "env" with SUPABASE_URL and SUPABASE_SERVICE_KEY.',
+        suggestion: 'Add "env": { "SUPABASE_URL": { "description": "...", "required": true }, "SUPABASE_SERVICE_KEY": { "description": "...", "required": true } }',
+      });
+    }
+
+    // Functions schema check
+    const manifestFunctions = manifest.functions as Record<string, unknown> | undefined;
+    if (manifestFunctions && typeof manifestFunctions === 'object') {
+      const manifestFuncNames = Object.keys(manifestFunctions);
+      // Check for functions in code not in manifest
+      for (const fn of exportedFunctions) {
+        if (fn !== 'ui' && !manifestFuncNames.includes(fn)) {
+          issues.push({
+            severity: 'warning',
+            rule: 'manifest-functions-sync',
+            message: `Exported function "${fn}" is not declared in manifest.json functions. Add it for better tool discovery.`,
+          });
+        }
+      }
+      // Check for manifest functions not in code
+      for (const fn of manifestFuncNames) {
+        if (!exportedFunctions.includes(fn)) {
+          issues.push({
+            severity: 'warning',
+            rule: 'manifest-functions-sync',
+            message: `Manifest declares function "${fn}" but it is not exported in the code.`,
+          });
+        }
+      }
+    } else if (exportedFunctions.length > 0) {
+      issues.push({
+        severity: strict ? 'error' : 'warning',
+        rule: 'manifest-functions',
+        message: 'Manifest does not declare "functions" schemas. Function parameter schemas improve agent tool discovery.',
+        suggestion: 'Add "functions": { "functionName": { "description": "...", "parameters": { ... }, "returns": { ... } } }',
+      });
+    }
+  }
+
+  // ── Summary ──
+  const errors = issues.filter(i => i.severity === 'error');
+  const warnings = issues.filter(i => i.severity === 'warning');
+  const infos = issues.filter(i => i.severity === 'info');
+
+  return {
+    valid: errors.length === 0,
+    issues: issues,
+    summary: {
+      errors: errors.length,
+      warnings: warnings.length,
+      info: infos.length,
+      exports: allExports,
+      functions: exportedFunctions,
+    },
+    tip: errors.length > 0
+      ? 'Fix all errors before uploading with ul.upload. Warnings are recommendations for best compatibility.'
+      : warnings.length > 0
+        ? 'No errors! Address warnings for optimal Ultralight compatibility, then upload with ul.upload.'
+        : 'Clean lint! Ready for ul.test → ul.upload.',
+  };
+}
+
+// ── ul.scaffold ──────────────────────────────────────
+
+function executeScaffold(args: Record<string, unknown>): unknown {
+  const name = args.name as string;
+  const description = args.description as string;
+  const functions = args.functions as Array<{
+    name: string;
+    description?: string;
+    parameters?: Array<{ name: string; type: string; required?: boolean; description?: string }>;
+  }> | undefined;
+  const storage = (args.storage as string) || 'kv';
+  const permissions = args.permissions as string[] | undefined;
+
+  if (!name) throw new ToolError(INVALID_PARAMS, 'name is required');
+  if (!description) throw new ToolError(INVALID_PARAMS, 'description is required');
+
+  // Derive function stubs
+  const funcs = functions && functions.length > 0
+    ? functions
+    : [
+        { name: 'run', description: description, parameters: [] as Array<{ name: string; type: string; required?: boolean; description?: string }> },
+        { name: 'status', description: `Get ${name} status and stats`, parameters: [] as Array<{ name: string; type: string; required?: boolean; description?: string }> },
+      ];
+
+  // Auto-detect permissions
+  const detectedPerms: string[] = permissions || [];
+  if (!detectedPerms.includes('net:fetch') && (description.toLowerCase().includes('api') || description.toLowerCase().includes('fetch') || description.toLowerCase().includes('http'))) {
+    detectedPerms.push('net:fetch');
+  }
+  if (!detectedPerms.includes('ai:call') && (description.toLowerCase().includes('ai') || description.toLowerCase().includes('embed') || description.toLowerCase().includes('llm') || description.toLowerCase().includes('gpt') || description.toLowerCase().includes('claude'))) {
+    detectedPerms.push('ai:call');
+  }
+
+  // Globals based on storage type
+  const globalsLines: string[] = [];
+  globalsLines.push('const ultralight = (globalThis as any).ultralight;');
+  if (storage === 'supabase') {
+    globalsLines.push('const supabase = (globalThis as any).supabase;');
+  }
+  if (detectedPerms.includes('ai:call')) {
+    // No extra global needed — ultralight.ai() covers it
+  }
+  globalsLines.push('const uuid = (globalThis as any).uuid;');
+
+  // Build index.ts
+  const indexLines: string[] = [];
+  indexLines.push(`// ${name} — Ultralight MCP Server`);
+  indexLines.push('//');
+  indexLines.push(`// ${description}`);
+  indexLines.push('//');
+  if (storage === 'kv') indexLines.push('// Storage: R2 key-value (ultralight.store/load/list)');
+  if (storage === 'supabase') indexLines.push('// Storage: BYOS Supabase');
+  if (detectedPerms.includes('ai:call')) indexLines.push('// AI: ultralight.ai() via OpenRouter');
+  if (detectedPerms.includes('net:fetch')) indexLines.push('// Network: fetch() for external API calls');
+  indexLines.push('');
+  indexLines.push(globalsLines.join('\n'));
+  indexLines.push('');
+
+  // Function stubs
+  for (const func of funcs) {
+    const paramFields: string[] = [];
+    const paramDocs: string[] = [];
+
+    if (func.parameters && func.parameters.length > 0) {
+      for (const p of func.parameters) {
+        const optional = p.required === false ? '?' : '';
+        paramFields.push(`  ${p.name}${optional}: ${p.type};`);
+        if (p.description) {
+          paramDocs.push(`// ${p.name}: ${p.description}`);
+        }
+      }
+    }
+
+    const argsType = paramFields.length > 0
+      ? `args: {\n${paramFields.join('\n')}\n}`
+      : `args?: Record<string, never>`;
+
+    indexLines.push(`// ============================================`);
+    indexLines.push(`// ${func.name.toUpperCase()}`);
+    indexLines.push(`// ============================================`);
+    indexLines.push('');
+    indexLines.push(`export async function ${func.name}(${argsType}): Promise<unknown> {`);
+    if (paramDocs.length > 0) {
+      for (const doc of paramDocs) {
+        indexLines.push(`  ${doc}`);
+      }
+      indexLines.push('');
+    }
+    indexLines.push(`  // TODO: Implement ${func.name}`);
+    indexLines.push(`  // ${func.description || 'Add implementation here'}`);
+    indexLines.push('');
+    if (storage === 'kv') {
+      indexLines.push('  // Example KV storage:');
+      indexLines.push('  // await ultralight.store("key", value);');
+      indexLines.push('  // const data = await ultralight.load("key");');
+    } else if (storage === 'supabase') {
+      indexLines.push('  // Example Supabase query:');
+      indexLines.push('  // const { data, error } = await supabase.from("table").select("*");');
+    }
+    indexLines.push('');
+    indexLines.push(`  return { success: true, message: "${func.name} not yet implemented" };`);
+    indexLines.push('}');
+    indexLines.push('');
+  }
+
+  // UI function stub
+  indexLines.push('// ============================================');
+  indexLines.push('// UI — Web dashboard at GET /http/{appId}/ui');
+  indexLines.push('// ============================================');
+  indexLines.push('');
+  indexLines.push('export async function ui(args: {');
+  indexLines.push('  method?: string;');
+  indexLines.push('  url?: string;');
+  indexLines.push('  path?: string;');
+  indexLines.push('  query?: Record<string, string>;');
+  indexLines.push('  headers?: Record<string, string>;');
+  indexLines.push('}): Promise<any> {');
+  indexLines.push('  const htmlContent = \'<!DOCTYPE html><html><head>\'');
+  indexLines.push(`    + '<title>${name}</title>'`);
+  indexLines.push('    + \'<style>body{font-family:-apple-system,sans-serif;background:#0a0a0a;color:#e5e5e5;padding:24px;max-width:800px;margin:0 auto}\'');
+  indexLines.push('    + \'h1{background:linear-gradient(90deg,#06b6d4,#8b5cf6);-webkit-background-clip:text;-webkit-text-fill-color:transparent}</style>\'');
+  indexLines.push('    + \'</head><body>\'');
+  indexLines.push(`    + '<h1>${name}</h1>'`);
+  indexLines.push(`    + '<p>${description}</p>'`);
+  indexLines.push('    + \'</body></html>\';');
+  indexLines.push('');
+  indexLines.push('  return http.html(htmlContent);');
+  indexLines.push('}');
+  indexLines.push('');
+
+  // Build manifest.json
+  const manifestFunctions: Record<string, unknown> = {};
+  for (const func of funcs) {
+    const params: Record<string, unknown> = {};
+    if (func.parameters) {
+      for (const p of func.parameters) {
+        const paramDef: Record<string, unknown> = { type: tsTypeToJsonSchemaType(p.type) };
+        if (p.description) paramDef.description = p.description;
+        if (p.required !== false) paramDef.required = true;
+        params[p.name] = paramDef;
+      }
+    }
+    manifestFunctions[func.name] = {
+      description: func.description || `${func.name} function`,
+      parameters: params,
+      returns: { type: 'object' },
+    };
+  }
+
+  const manifestObj = {
+    name: name,
+    version: '1.0.0',
+    type: 'mcp',
+    description: description,
+    author: '',
+    entry: { functions: 'index.ts' },
+    permissions: detectedPerms.length > 0 ? detectedPerms : undefined,
+    env: storage === 'supabase' ? {
+      SUPABASE_URL: { description: 'Supabase project URL', required: true },
+      SUPABASE_SERVICE_KEY: { description: 'Supabase service role key', required: true },
+    } : undefined,
+    functions: manifestFunctions,
+  };
+
+  const rcObj = {
+    app_id: '',
+    slug: '',
+    name: name,
+  };
+
+  return {
+    files: [
+      { path: 'index.ts', content: indexLines.join('\n') },
+      { path: 'manifest.json', content: JSON.stringify(manifestObj, null, 2) },
+      { path: '.ultralightrc.json', content: JSON.stringify(rcObj, null, 2) },
+    ],
+    next_steps: [
+      'Fill in the TODO implementations in index.ts',
+      'Test each function: ul.test({ files: [...], function_name: "...", test_args: {...} })',
+      'Validate: ul.lint({ files: [...] })',
+      'Deploy: ul.upload({ files: [...], name: "' + name + '" })',
+    ],
+    tip: 'After ul.upload, read the generated Skills.md via resources/read to verify documentation.',
+  };
+}
+
+function tsTypeToJsonSchemaType(tsType: string): string {
+  const t = tsType.toLowerCase().replace(/\s/g, '');
+  if (t === 'string') return 'string';
+  if (t === 'number' || t === 'integer') return 'number';
+  if (t === 'boolean') return 'boolean';
+  if (t.endsWith('[]') || t.startsWith('array')) return 'array';
+  if (t.startsWith('record') || t === 'object') return 'object';
+  return 'string'; // default fallback
 }
 
 // ── ul.set.version ───────────────────────────────

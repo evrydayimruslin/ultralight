@@ -1,0 +1,157 @@
+{
+  "name": "Sending",
+  "version": "1.0.0",
+  "type": "mcp",
+  "description": "Distribution layer for the Research Intelligence Hub. Sends newsletters via email (Resend), web (ul.markdown.publish), and Discord (per-room routing via theme webhooks). Broadcasts individual insights to themed rooms. Manages the subscriber list.",
+  "author": "russell",
+  "entry": {
+    "functions": "index.ts"
+  },
+  "permissions": [
+    "net:fetch"
+  ],
+  "env": {
+    "SUPABASE_URL": {
+      "description": "Supabase project URL for the Research Intelligence Hub database",
+      "required": true
+    },
+    "SUPABASE_SERVICE_KEY": {
+      "description": "Supabase service role key (encrypted via ul.set.supabase)",
+      "required": true
+    }
+  },
+  "functions": {
+    "send": {
+      "description": "Distribute a newsletter across one or more channels. The newsletter must be in 'approved' status. Channels: 'email' (via Resend API), 'web' (renders markdown for ul.markdown.publish), 'discord' (webhook post). Email sends to all active subscribers (optionally filtered by tags).",
+      "parameters": {
+        "newsletter_id": {
+          "type": "string",
+          "description": "Newsletter UUID to send",
+          "required": true
+        },
+        "channels": {
+          "type": "array",
+          "description": "Distribution channels: 'email', 'web', 'discord'",
+          "required": true,
+          "items": { "type": "string", "enum": ["email", "web", "discord"] }
+        },
+        "resend_api_key": {
+          "type": "string",
+          "description": "Resend API key (or store via ultralight.store('env_RESEND_API_KEY', ...))"
+        },
+        "discord_webhook_url": {
+          "type": "string",
+          "description": "Discord webhook URL (or store via ultralight.store('env_DISCORD_WEBHOOK_URL', ...))"
+        },
+        "from_email": {
+          "type": "string",
+          "description": "Sender email address (default: newsletter@resend.dev)"
+        },
+        "from_name": {
+          "type": "string",
+          "description": "Sender display name (default: Research Intelligence Hub)"
+        },
+        "subject": {
+          "type": "string",
+          "description": "Email subject line (default: newsletter title)"
+        },
+        "tag_filter": {
+          "type": "array",
+          "description": "Only send to subscribers with these tags",
+          "items": { "type": "string" }
+        }
+      },
+      "returns": { "type": "object", "description": "{ results: [{ channel, success, message }], newsletter_id }" }
+    },
+    "broadcast": {
+      "description": "Push individual insights directly to their themed Discord rooms, bypassing the newsletter pipeline. Each insight is routed to its theme's Discord webhook (e.g. AI → #data-center, Crypto → #on-chain). Use for real-time intelligence drops.",
+      "parameters": {
+        "insight_ids": {
+          "type": "array",
+          "description": "Specific insight UUIDs to broadcast",
+          "items": { "type": "string" }
+        },
+        "theme_slug": {
+          "type": "string",
+          "description": "Filter auto-selected insights to this theme (e.g. 'ai', 'crypto')"
+        },
+        "auto_select": {
+          "type": "boolean",
+          "description": "Auto-select approved insights (default: true)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max insights to broadcast (default: 10)"
+        },
+        "discord_webhook_url": {
+          "type": "string",
+          "description": "Fallback webhook if theme has no configured webhook"
+        }
+      },
+      "returns": { "type": "object", "description": "{ posted, skipped, rooms, insight_ids }" }
+    },
+    "subscribers": {
+      "description": "Manage the email subscriber list. Actions: 'list' (active subscribers), 'add' (subscribe email), 'remove' (unsubscribe), 'update' (change name/tags). Deduplicates by email — re-subscribing reactivates a previously unsubscribed entry.",
+      "parameters": {
+        "action": {
+          "type": "string",
+          "description": "Action to perform",
+          "enum": ["list", "add", "remove", "update"],
+          "required": true
+        },
+        "email": {
+          "type": "string",
+          "description": "Subscriber email (required for add, remove, update)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Subscriber display name"
+        },
+        "tags": {
+          "type": "array",
+          "description": "Tags for segmentation (e.g. 'ai', 'engineering', 'weekly')",
+          "items": { "type": "string" }
+        },
+        "source": {
+          "type": "string",
+          "description": "How they subscribed: 'manual', 'form', 'import' (default: manual)"
+        },
+        "subscriber_id": {
+          "type": "string",
+          "description": "Subscriber UUID (alternative to email for remove/update)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max results for list action (default 50)"
+        }
+      },
+      "returns": { "type": "object", "description": "{ subscribers, total, action }" }
+    },
+    "preview": {
+      "description": "Render a newsletter for review before sending. Returns the full content in markdown or HTML format without actually distributing it.",
+      "parameters": {
+        "newsletter_id": {
+          "type": "string",
+          "description": "Newsletter UUID to preview",
+          "required": true
+        },
+        "format": {
+          "type": "string",
+          "description": "Output format: 'markdown' (default) or 'html'",
+          "enum": ["markdown", "html"]
+        }
+      },
+      "returns": { "type": "object", "description": "{ newsletter_id, title, format, content }" }
+    },
+    "status": {
+      "description": "Subscriber and sending stats: active/unsubscribed counts, subscriber sources, newsletters sent, total emails delivered.",
+      "parameters": {},
+      "returns": { "type": "object", "description": "{ health, subscribers, newsletters }" }
+    },
+    "ui": {
+      "description": "Web dashboard showing subscriber count, newsletters sent, and email delivery stats. Access at GET /http/{appId}/ui.",
+      "parameters": {},
+      "returns": { "type": "string" }
+    }
+  }
+}
