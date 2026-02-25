@@ -10,6 +10,7 @@ import { handleMcp, handleMcpDiscovery } from './mcp.ts';
 import { handlePlatformMcp, handlePlatformMcpDiscovery } from './platform-mcp.ts';
 import { handleOAuth } from './oauth.ts';
 import { handleDiscover } from './discover.ts';
+import { handleMcpConfig } from './config.ts';
 import { handleHttpEndpoint, handleHttpOptions } from './http.ts';
 import { handleTierChange } from './tier.ts';
 import { handleAdmin } from './admin.ts';
@@ -188,6 +189,12 @@ export function createApp() {
       // Admin routes (service-to-service, secured by service-role key)
       if (path.startsWith('/api/admin')) {
         return handleAdmin(request);
+      }
+
+      // MCP config generator - ready-to-paste client configs
+      if (path.startsWith('/api/mcp-config/') && method === 'GET') {
+        const appId = path.slice('/api/mcp-config/'.length).split('/')[0];
+        return handleMcpConfig(request, appId);
       }
 
       // Discovery API routes - semantic search for apps

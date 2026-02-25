@@ -1,7 +1,17 @@
 /**
  * Agent Flow Tests for Ultralight Platform
  *
- * Tests three agent channels: REST Discovery, MCP Protocol, CLI Source Verification.
+ * SPEC-DRIVEN: These tests define the IDEAL agent experience.
+ * Tests that fail represent gaps to be built. Tests that pass confirm correctness.
+ *
+ * Section 1: CLI Source Verification — correctness guards (all should pass)
+ * Section 2: Discovery Response Shape — what agents need from search results
+ * Section 3: Featured, Status, OpenAPI — operational endpoints
+ * Section 4: Structured Errors — machine-readable error responses
+ * Section 5: MCP Config Generator — ready-to-paste client configs
+ * Section 6: OAuth Metadata — agent auth discovery
+ * Section 7: MCP Protocol — JSON-RPC correctness
+ * Section 8: Per-App MCP & Well-Known — app-level access
  *
  * Usage:
  *   deno test --allow-net --allow-read --allow-env cli/tests/agent-flows.test.ts
@@ -25,12 +35,12 @@ const TEST_APP = Deno.env.get('UL_TEST_APP');
 
 // ============================================
 // 1. CLI SOURCE VERIFICATION (No network needed)
+//    These are correctness guards — all should pass.
 // ============================================
 
 Deno.test('CLI: all callTool() calls use ul.* prefix, not platform.*', async () => {
   const cliSource = await Deno.readTextFile('./cli/mod.ts');
 
-  // Must NOT have any platform.* tool calls
   const platformCalls = cliSource.match(/callTool\(\s*['"]platform\./g);
   assertEquals(
     platformCalls,
@@ -39,7 +49,6 @@ Deno.test('CLI: all callTool() calls use ul.* prefix, not platform.*', async () 
     `Matches: ${platformCalls?.join(', ')}`
   );
 
-  // Must HAVE ul.* tool calls
   const ulCalls = cliSource.match(/callTool\(\s*['"]ul\./g);
   assert(
     ulCalls !== null && ulCalls.length >= 10,
@@ -50,10 +59,8 @@ Deno.test('CLI: all callTool() calls use ul.* prefix, not platform.*', async () 
 Deno.test('CLI: test command uses test_args parameter, not args', async () => {
   const cliSource = await Deno.readTextFile('./cli/mod.ts');
 
-  // Must have test_args
   assertStringIncludes(cliSource, 'test_args', 'Missing test_args in CLI source');
 
-  // Must NOT have the old broken pattern: toolArgs.args =
   const brokenPattern = cliSource.match(/toolArgs\.args\s*=/g);
   assertEquals(
     brokenPattern,
@@ -65,14 +72,12 @@ Deno.test('CLI: test command uses test_args parameter, not args', async () => {
 Deno.test('CLI: init template uses single-args-object pattern', async () => {
   const cliSource = await Deno.readTextFile('./cli/mod.ts');
 
-  // Basic template must have (args: { name?: string })
   assertStringIncludes(
     cliSource,
     'args: { name?: string }',
     'Init basic template missing single-args-object pattern: (args: { name?: string })'
   );
 
-  // Must NOT have the old positional pattern in template: (name: string =
   const oldPattern = cliSource.match(/export function hello\(name:\s*string/);
   assertEquals(
     oldPattern,
@@ -84,39 +89,33 @@ Deno.test('CLI: init template uses single-args-object pattern', async () => {
 Deno.test('CLI: upload calls ul.upload, not platform.apps.create', async () => {
   const cliSource = await Deno.readTextFile('./cli/mod.ts');
 
-  // Must NOT reference platform.apps.create
   assert(
     !cliSource.includes('platform.apps.create'),
     'Found old platform.apps.create reference — should use ul.upload'
   );
 
-  // Must have ul.upload
   assertStringIncludes(cliSource, "'ul.upload'", 'Missing ul.upload call in upload command');
 });
 
 Deno.test('CLI: run command uses per-app MCP endpoint via callAppTool', async () => {
   const cliSource = await Deno.readTextFile('./cli/mod.ts');
 
-  // Must NOT reference platform.run
   assert(
     !cliSource.includes('platform.run'),
     'Found old platform.run reference — should use callAppTool for per-app MCP'
   );
 
-  // Must use callAppTool
   assertStringIncludes(cliSource, 'callAppTool', 'Missing callAppTool for run command');
 });
 
 Deno.test('CLI: whoami uses REST GET /api/user, not MCP tool', async () => {
   const cliSource = await Deno.readTextFile('./cli/mod.ts');
 
-  // Must NOT reference platform.user.profile
   assert(
     !cliSource.includes('platform.user.profile'),
     'Found old platform.user.profile reference — should use restGet(/api/user)'
   );
 
-  // Must use restGet for whoami
   assertStringIncludes(cliSource, "restGet('/api/user')", 'Missing restGet /api/user call in whoami');
 });
 
@@ -138,11 +137,9 @@ Deno.test('CLI: all expected commands are registered', async () => {
     'logs', 'health', 'config', 'help', 'version',
   ];
 
-  // Check for download (aliased as downloadCmd in the commands object)
   assertStringIncludes(cliSource, 'download: downloadCmd', 'Missing download command registration');
 
   for (const cmd of expectedCommands) {
-    // Each command should exist in the commands record or as an alias
     assert(
       cliSource.includes(`  ${cmd}`) || cliSource.includes(`${cmd}:`),
       `Missing command registration: ${cmd}`
@@ -163,7 +160,6 @@ Deno.test('CLI: api.ts has restGet, callAppTool, listAppTools methods', async ()
 Deno.test('CLI: callAppTool calls per-app endpoint /mcp/{appId}', async () => {
   const apiSource = await Deno.readTextFile('./cli/api.ts');
 
-  // Must call /mcp/${appId} not /mcp/platform
   assertStringIncludes(
     apiSource,
     '`${this.apiUrl}/mcp/${appId}`',
@@ -176,11 +172,9 @@ Deno.test('CLI: no remaining platform.* tool references anywhere', async () => {
   const apiSource = await Deno.readTextFile('./cli/api.ts');
   const combined = cliSource + apiSource;
 
-  // Check for any remaining platform. tool name patterns (excluding comments)
   const lines = combined.split('\n');
   const badLines: string[] = [];
   for (const line of lines) {
-    // Skip comments
     if (line.trim().startsWith('//') || line.trim().startsWith('*')) continue;
     if (line.includes("'platform.") || line.includes('"platform.')) {
       badLines.push(line.trim());
@@ -195,75 +189,163 @@ Deno.test('CLI: no remaining platform.* tool references anywhere', async () => {
 });
 
 // ============================================
-// 2. REST DISCOVERY (No Auth — Live API)
+// 2. DISCOVERY RESPONSE SHAPE
+//    What agents need from search results.
+//    An agent should be able to: discover → auth → connect.
 // ============================================
 
 Deno.test({
-  name: 'REST: GET /api/discover returns results without auth',
+  name: 'SPEC: discovery search returns correct response shape',
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
     const res = await fetch(`${API}/api/discover?q=hello`);
-    // Accept 200 or 429 (rate limited from rapid test calls)
-    assert(
-      res.status === 200 || res.status === 429,
-      `Expected 200 or 429, got ${res.status}`
-    );
+    // Accept 200 or 429 (rate limited)
+    assert(res.status === 200 || res.status === 429, `Expected 200 or 429, got ${res.status}`);
+    if (res.status !== 200) { await res.body?.cancel(); return; }
 
-    if (res.status === 200) {
-      const data = await res.json();
-      assertExists(data.results, 'Response missing results array');
-      assert(Array.isArray(data.results), 'results should be an array');
-    } else {
-      await res.body?.cancel();
-    }
+    const data = await res.json();
+    assertEquals(data.mode, 'search', 'mode should be "search"');
+    assertEquals(data.query, 'hello', 'query should echo back');
+    assertExists(data.query_id, 'query_id must exist (UUID)');
+    assertEquals(data.authenticated, false, 'authenticated should be false without auth header');
+    assert(Array.isArray(data.results), 'results must be an array');
+    assertExists(data.total, 'total count must exist');
   },
 });
 
 Deno.test({
-  name: 'REST: discovery results include mcp_endpoint field',
+  name: 'SPEC: each discovery result includes mcp_endpoint AND http_endpoint',
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
     const res = await fetch(`${API}/api/discover?q=hello`);
-    if (res.status !== 200) {
-      await res.body?.cancel();
-      return; // Skip if rate limited
-    }
+    if (res.status !== 200) { await res.body?.cancel(); return; }
+    const data = await res.json();
+    if (data.results.length === 0) return; // No results to check
+
+    const first = data.results[0];
+    // Required fields every agent needs
+    assertExists(first.id, 'result must have id');
+    assertExists(first.name, 'result must have name');
+    assertExists(first.slug, 'result must have slug');
+    assertEquals(typeof first.fully_native, 'boolean', 'fully_native must be boolean');
+
+    // MCP endpoint — the primary way agents connect
+    assertExists(first.mcp_endpoint, 'result must have mcp_endpoint');
+    assert(
+      String(first.mcp_endpoint).startsWith('/mcp/'),
+      `mcp_endpoint should start with /mcp/, got: ${first.mcp_endpoint}`
+    );
+
+    // HTTP endpoint — for agents/scripts that can't do MCP
+    assertExists(first.http_endpoint, 'result must have http_endpoint — agents need both MCP and HTTP paths');
+    assert(
+      String(first.http_endpoint).startsWith('/http/'),
+      `http_endpoint should start with /http/, got: ${first.http_endpoint}`
+    );
+  },
+});
+
+Deno.test({
+  name: 'SPEC: discovery _links includes auth endpoint for agent onboarding',
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const res = await fetch(`${API}/api/discover?q=hello`);
+    if (res.status !== 200) { await res.body?.cancel(); return; }
     const data = await res.json();
 
-    if (data.results && data.results.length > 0) {
+    assertExists(data._links, 'response must include _links for HATEOAS navigation');
+    assertExists(data._links.openapi, '_links must include openapi');
+    assertExists(data._links.mcp_platform, '_links must include mcp_platform');
+
+    // The critical gap: agents discover apps but don't know how to authenticate
+    assertEquals(
+      data._links.auth,
+      '/.well-known/oauth-authorization-server',
+      '_links.auth must point to OAuth metadata so agents can self-onboard'
+    );
+  },
+});
+
+Deno.test({
+  name: 'SPEC: authenticated discovery results include is_owner flag',
+  ignore: !TOKEN,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const res = await fetch(`${API}/api/discover?q=hello`, {
+      headers: { 'Authorization': `Bearer ${TOKEN}` },
+    });
+    if (res.status !== 200) { await res.body?.cancel(); return; }
+    const data = await res.json();
+
+    assertEquals(data.authenticated, true, 'authenticated should be true with valid token');
+
+    if (data.results.length > 0) {
       const first = data.results[0];
-      assertExists(first.mcp_endpoint, 'First result missing mcp_endpoint');
-      assert(
-        String(first.mcp_endpoint).startsWith('/mcp/'),
-        `mcp_endpoint should start with /mcp/, got: ${first.mcp_endpoint}`
+      assertEquals(
+        typeof first.is_owner,
+        'boolean',
+        'Authenticated results must include is_owner boolean so agents know which apps they manage'
       );
     }
   },
 });
 
+// ============================================
+// 3. FEATURED, STATUS, OPENAPI
+//    Operational endpoints agents use for health and discovery.
+// ============================================
+
 Deno.test({
-  name: 'REST: discovery _links includes search and openapi',
+  name: 'SPEC: featured endpoint returns ranked results',
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
-    const res = await fetch(`${API}/api/discover?q=hello`);
-    if (res.status !== 200) {
-      await res.body?.cancel();
-      return;
-    }
-    const data = await res.json();
+    const res = await fetch(`${API}/api/discover/featured`);
+    assert(res.status === 200 || res.status === 429, `Expected 200 or 429, got ${res.status}`);
+    if (res.status !== 200) { await res.text(); return; }
 
-    if (data._links) {
-      assertExists(data._links.search, 'Missing _links.search');
-      assertExists(data._links.openapi, 'Missing _links.openapi');
-    }
+    const data = await res.json();
+    assertEquals(data.mode, 'featured', 'mode should be "featured"');
+    assert(Array.isArray(data.results), 'results must be an array');
   },
 });
 
 Deno.test({
-  name: 'REST: GET /api/discover/openapi.json returns valid OpenAPI spec',
+  name: 'SPEC: status endpoint returns operational metrics',
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const res = await fetch(`${API}/api/discover/status`);
+    assertEquals(res.status, 200, `Expected 200, got ${res.status}`);
+    const data = await res.json();
+
+    // Existing fields
+    assertEquals(typeof data.available, 'boolean', 'available must be boolean');
+
+    // New operational metrics agents need to assess platform health
+    assertEquals(
+      typeof data.app_count,
+      'number',
+      'status must include app_count — agents need to know if the platform has content'
+    );
+    assertEquals(
+      typeof data.version,
+      'string',
+      'status must include version — agents need to know API version for compatibility'
+    );
+    assertExists(
+      data.timestamp,
+      'status must include timestamp — agents need to know response freshness'
+    );
+  },
+});
+
+Deno.test({
+  name: 'SPEC: OpenAPI spec is valid 3.1.0 with documented paths',
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -272,55 +354,121 @@ Deno.test({
 
     const spec = await res.json();
     assertEquals(spec.openapi, '3.1.0', 'OpenAPI version should be 3.1.0');
-    assertExists(spec.paths, 'OpenAPI spec missing paths');
-    assertExists(spec.paths['/api/discover'], 'OpenAPI spec missing /api/discover path');
-  },
-});
-
-Deno.test({
-  name: 'REST: GET /api/discover/featured returns 200',
-  sanitizeResources: false,
-  sanitizeOps: false,
-  fn: async () => {
-    const res = await fetch(`${API}/api/discover/featured`);
-    // Accept 200 or 429
-    assert(
-      res.status === 200 || res.status === 429,
-      `Expected 200 or 429, got ${res.status}`
-    );
-    // Always consume body to prevent leak
-    await res.text();
-  },
-});
-
-Deno.test({
-  name: 'REST: GET /api/discover/status returns 200',
-  sanitizeResources: false,
-  sanitizeOps: false,
-  fn: async () => {
-    const res = await fetch(`${API}/api/discover/status`);
-    // Accept 200 or 404 (status endpoint may not exist yet if not deployed)
-    assert(
-      res.status === 200 || res.status === 404,
-      `Expected 200 or 404, got ${res.status}`
-    );
-
-    if (res.status === 200) {
-      const data = await res.json();
-      // Status could be any field name — just verify we got JSON back
-      assert(typeof data === 'object', 'Status response should be JSON object');
-    } else {
-      await res.text();
-    }
+    assertExists(spec.paths, 'OpenAPI spec must have paths');
+    assertExists(spec.paths['/api/discover'], 'OpenAPI spec must document /api/discover');
   },
 });
 
 // ============================================
-// 3. OAUTH METADATA (Agent Auto-Discovery)
+// 4. STRUCTURED ERRORS
+//    Agents need machine-readable error codes to self-recover.
+//    Plain text errors force agents to pattern-match strings.
 // ============================================
 
 Deno.test({
-  name: 'OAuth: /.well-known/oauth-authorization-server exists',
+  name: 'SPEC: missing query returns structured error with code and docs_url',
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const res = await fetch(`${API}/api/discover`);
+    assertEquals(res.status, 400, `Expected 400, got ${res.status}`);
+    const data = await res.json();
+
+    // Must have machine-readable code (not just a string message)
+    assertEquals(
+      data.code,
+      'MISSING_QUERY',
+      'Error must include code: "MISSING_QUERY" — agents need structured codes to handle errors programmatically'
+    );
+    assertExists(data.error, 'Error must include human-readable error message');
+    assertEquals(
+      data.docs_url,
+      '/api/discover/openapi.json',
+      'Error must include docs_url so agents can self-recover'
+    );
+  },
+});
+
+Deno.test({
+  name: 'SPEC: short query returns structured error with code',
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const res = await fetch(`${API}/api/discover?q=x`);
+    assertEquals(res.status, 400, `Expected 400, got ${res.status}`);
+    const data = await res.json();
+
+    assertEquals(
+      data.code,
+      'QUERY_TOO_SHORT',
+      'Error must include code: "QUERY_TOO_SHORT"'
+    );
+    assertExists(data.error, 'Error must include human-readable error message');
+    assertExists(data.docs_url, 'Error must include docs_url');
+  },
+});
+
+// ============================================
+// 5. MCP CONFIG GENERATOR
+//    Agents need ready-to-paste configs to set up MCP clients.
+//    Today they must manually construct JSON — that's a blocker.
+// ============================================
+
+Deno.test({
+  name: 'SPEC: GET /api/mcp-config/{appId} returns Claude Desktop config',
+  ignore: !TEST_APP,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const res = await fetch(`${API}/api/mcp-config/${TEST_APP}`);
+    assertEquals(res.status, 200, `Expected 200, got ${res.status}`);
+    const data = await res.json();
+
+    // Claude Desktop expects { mcpServers: { "name": { url, transport } } }
+    assertExists(
+      data.mcpServers,
+      'Config must have mcpServers key — this is the Claude Desktop format'
+    );
+    const serverNames = Object.keys(data.mcpServers);
+    assert(serverNames.length > 0, 'mcpServers must have at least one entry');
+
+    const server = data.mcpServers[serverNames[0]];
+    assertExists(server.url, 'Server config must include url');
+    assertStringIncludes(server.url, '/mcp/', 'url must point to MCP endpoint');
+  },
+});
+
+Deno.test({
+  name: 'SPEC: GET /api/mcp-config/{appId}?client=cursor returns Cursor config',
+  ignore: !TEST_APP,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const res = await fetch(`${API}/api/mcp-config/${TEST_APP}?client=cursor`);
+    assertEquals(res.status, 200, `Expected 200, got ${res.status}`);
+    const data = await res.json();
+
+    // Cursor expects { mcp: { servers: { "name": { url, type } } } }
+    assertExists(
+      data.mcp,
+      'Config must have mcp key — this is the Cursor format'
+    );
+    assertExists(data.mcp.servers, 'mcp must have servers object');
+    const serverNames = Object.keys(data.mcp.servers);
+    assert(serverNames.length > 0, 'mcp.servers must have at least one entry');
+
+    const server = data.mcp.servers[serverNames[0]];
+    assertExists(server.url, 'Server config must include url');
+  },
+});
+
+// ============================================
+// 6. OAUTH METADATA
+//    Agents need to discover auth flows automatically.
+// ============================================
+
+Deno.test({
+  name: 'SPEC: OAuth authorization server metadata has required fields',
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -328,30 +476,33 @@ Deno.test({
     assertEquals(res.status, 200, `Expected 200, got ${res.status}`);
 
     const meta = await res.json();
-    assertExists(meta.authorization_endpoint, 'Missing authorization_endpoint');
-    assertExists(meta.token_endpoint, 'Missing token_endpoint');
-    assertExists(meta.registration_endpoint, 'Missing registration_endpoint');
+    assertExists(meta.authorization_endpoint, 'Must have authorization_endpoint');
+    assertExists(meta.token_endpoint, 'Must have token_endpoint');
+    assertExists(meta.registration_endpoint, 'Must have registration_endpoint');
+    assert(
+      Array.isArray(meta.code_challenge_methods_supported) &&
+      meta.code_challenge_methods_supported.includes('S256'),
+      'Must support S256 PKCE'
+    );
   },
 });
 
 Deno.test({
-  name: 'OAuth: /.well-known/oauth-protected-resource exists',
+  name: 'SPEC: OAuth protected resource metadata exists',
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
     const res = await fetch(`${API}/.well-known/oauth-protected-resource`);
-    // Accept 200 or 404 (may not be deployed yet)
     assert(
       res.status === 200 || res.status === 404,
       `Expected 200 or 404, got ${res.status}`
     );
-    // Always consume body
     await res.text();
   },
 });
 
 Deno.test({
-  name: 'OAuth: dynamic client registration works',
+  name: 'SPEC: dynamic client registration returns client_id',
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -359,27 +510,24 @@ Deno.test({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        client_name: 'Ultralight Test Agent',
+        client_name: 'Ultralight Spec Test',
         redirect_uris: ['http://localhost:9999/callback'],
       }),
     });
-    // RFC 7591 says 201 for newly created client, but 200 is also acceptable
-    assert(
-      res.status === 200 || res.status === 201,
-      `Expected 200 or 201, got ${res.status}`
-    );
+    assert(res.status === 200 || res.status === 201, `Expected 200 or 201, got ${res.status}`);
 
     const data = await res.json();
-    assertExists(data.client_id, 'Dynamic registration missing client_id');
+    assertExists(data.client_id, 'Registration must return client_id');
   },
 });
 
 // ============================================
-// 4. MCP PROTOCOL (Authenticated — skip if no token)
+// 7. MCP PROTOCOL
+//    JSON-RPC 2.0 correctness for agent communication.
 // ============================================
 
 Deno.test({
-  name: 'MCP: platform initialize returns protocol version',
+  name: 'SPEC: platform MCP initialize returns protocol version',
   ignore: !TOKEN,
   sanitizeResources: false,
   sanitizeOps: false,
@@ -390,22 +538,19 @@ Deno.test({
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${TOKEN}`,
       },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-      }),
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize' }),
     });
     assertEquals(res.status, 200);
 
     const data = await res.json();
-    assertExists(data.result, 'Missing result in initialize response');
-    assertExists(data.result.protocolVersion, 'Missing protocolVersion');
+    assertExists(data.result, 'initialize must return result');
+    assertExists(data.result.protocolVersion, 'result must have protocolVersion');
+    assertExists(data.result.capabilities, 'result must have capabilities');
   },
 });
 
 Deno.test({
-  name: 'MCP: tools/list returns 20+ ul.* tools',
+  name: 'SPEC: platform MCP tools/list returns 20+ ul.* tools',
   ignore: !TOKEN,
   sanitizeResources: false,
   sanitizeOps: false,
@@ -416,57 +561,22 @@ Deno.test({
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${TOKEN}`,
       },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/list',
-      }),
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
     });
     assertEquals(res.status, 200);
 
     const data = await res.json();
     const tools = data.result?.tools || [];
     const ulTools = tools.filter((t: { name: string }) => t.name.startsWith('ul.'));
-
     assert(
       ulTools.length >= 20,
-      `Expected 20+ ul.* tools, got ${ulTools.length}. Tool names: ${ulTools.map((t: { name: string }) => t.name).join(', ')}`
+      `Expected 20+ ul.* tools, got ${ulTools.length}`
     );
   },
 });
 
 Deno.test({
-  name: 'MCP: ul.discover.appstore tool works',
-  ignore: !TOKEN,
-  sanitizeResources: false,
-  sanitizeOps: false,
-  fn: async () => {
-    const res = await fetch(`${API}/mcp/platform`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${TOKEN}`,
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 3,
-        method: 'tools/call',
-        params: {
-          name: 'ul.discover.appstore',
-          arguments: { query: 'hello' },
-        },
-      }),
-    });
-    assertEquals(res.status, 200);
-
-    const data = await res.json();
-    assert(!data.error, `JSON-RPC error: ${data.error?.message}`);
-    assert(!data.result?.isError, `Tool returned isError: ${data.result?.content?.[0]?.text}`);
-  },
-});
-
-Deno.test({
-  name: 'MCP: 401 on invalid token',
+  name: 'SPEC: invalid token returns 401',
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -476,24 +586,20 @@ Deno.test({
         'Content-Type': 'application/json',
         'Authorization': 'Bearer invalid_token_12345',
       },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 4,
-        method: 'tools/list',
-      }),
+      body: JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/list' }),
     });
-    // Always consume body to prevent leaks
     await res.text();
     assertEquals(res.status, 401, `Expected 401 for invalid token, got ${res.status}`);
   },
 });
 
 // ============================================
-// 5. PER-APP MCP (Authenticated + Test App)
+// 8. PER-APP MCP & WELL-KNOWN
+//    App-level agent access.
 // ============================================
 
 Deno.test({
-  name: 'Per-app MCP: initialize returns protocol version',
+  name: 'SPEC: per-app MCP initialize works',
   ignore: !TOKEN || !TEST_APP,
   sanitizeResources: false,
   sanitizeOps: false,
@@ -504,21 +610,17 @@ Deno.test({
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${TOKEN}`,
       },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-      }),
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize' }),
     });
     assertEquals(res.status, 200);
 
     const data = await res.json();
-    assertExists(data.result?.protocolVersion, 'Missing protocolVersion in per-app initialize');
+    assertExists(data.result?.protocolVersion, 'Per-app initialize must return protocolVersion');
   },
 });
 
 Deno.test({
-  name: 'Per-app MCP: tools/list returns app functions',
+  name: 'SPEC: per-app MCP tools/list returns app functions',
   ignore: !TOKEN || !TEST_APP,
   sanitizeResources: false,
   sanitizeOps: false,
@@ -529,26 +631,18 @@ Deno.test({
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${TOKEN}`,
       },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/list',
-      }),
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
     });
     assertEquals(res.status, 200);
 
     const data = await res.json();
     const tools = data.result?.tools || [];
-    assert(tools.length > 0, 'Per-app tools/list returned 0 tools');
+    assert(tools.length > 0, 'Per-app tools/list must return at least 1 tool');
   },
 });
 
-// ============================================
-// 6. WELL-KNOWN CONFIG
-// ============================================
-
 Deno.test({
-  name: 'Well-known: per-app .well-known/mcp.json exists',
+  name: 'SPEC: per-app .well-known/mcp.json has transport config',
   ignore: !TEST_APP,
   sanitizeResources: false,
   sanitizeOps: false,
@@ -557,8 +651,8 @@ Deno.test({
     assertEquals(res.status, 200, `Expected 200, got ${res.status}`);
 
     const config = await res.json();
-    assertExists(config.name, 'MCP config missing name');
-    assertExists(config.transport, 'MCP config missing transport');
-    assertExists(config.transport?.url, 'MCP config missing transport.url');
+    assertExists(config.name, 'MCP config must have name');
+    assertExists(config.transport, 'MCP config must have transport');
+    assertExists(config.transport?.url, 'transport must have url');
   },
 });

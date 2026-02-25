@@ -57,10 +57,32 @@ interface ScoredApp {
   final_score: number;
   type: 'app';
   mcp_endpoint: string;
+  http_endpoint: string;
   likes: number;
   dislikes: number;
   runs_30d: number;
   fully_native: boolean;
+  is_owner?: boolean;
+}
+
+const DISCOVER_VERSION = '1.1.0';
+
+// ============================================
+// STRUCTURED ERROR HELPER
+// ============================================
+
+function discoverError(
+  code: string,
+  message: string,
+  status: number,
+  hint?: string,
+): Response {
+  return json({
+    code,
+    error: message,
+    ...(hint ? { hint } : {}),
+    docs_url: '/api/discover/openapi.json',
+  }, status);
 }
 
 // ============================================
@@ -116,19 +138,20 @@ async function handleGetSearch(request: Request, url: URL): Promise<Response> {
   const threshold = parseFloat(url.searchParams.get('threshold') || '0.4');
 
   if (!query) {
-    return json({
-      error: 'Missing query parameter: ?q=<search term>',
-      hint: 'Try GET /api/discover?q=weather+api or GET /api/discover/featured for top apps',
-      docs: '/api/discover/openapi.json',
-    }, 400);
+    return discoverError(
+      'MISSING_QUERY',
+      'Missing query parameter: ?q=<search term>',
+      400,
+      'Try GET /api/discover?q=weather+api or GET /api/discover/featured for top apps',
+    );
   }
 
   if (query.length < 2) {
-    return error('Query must be at least 2 characters', 400);
+    return discoverError('QUERY_TOO_SHORT', 'Query must be at least 2 characters', 400);
   }
 
   if (query.length > 500) {
-    return error('Query must be at most 500 characters', 400);
+    return discoverError('QUERY_TOO_LONG', 'Query must be at most 500 characters', 400);
   }
 
   // Optional auth — unauthenticated requests get public-only results
@@ -143,7 +166,12 @@ async function handleGetSearch(request: Request, url: URL): Promise<Response> {
   const rateLimitKey = user?.id || getClientIp(request) || 'anonymous';
   const rateLimitResult = await checkRateLimit(rateLimitKey, 'discover');
   if (!rateLimitResult.allowed) {
-    return json({ error: 'Rate limit exceeded', resetAt: rateLimitResult.resetAt.toISOString() }, 429);
+    return json({
+      code: 'RATE_LIMITED',
+      error: 'Rate limit exceeded',
+      resetAt: rateLimitResult.resetAt.toISOString(),
+      docs_url: '/api/discover/openapi.json',
+    }, 429);
   }
 
   return executeSearch(query, limit, threshold, user);
@@ -262,10 +290,12 @@ async function handleFeatured(request: Request, url: URL): Promise<Response> {
       description: a.description,
       type: 'app' as const,
       mcp_endpoint: `/mcp/${a.id}`,
+      http_endpoint: `/http/${a.id}`,
       likes: a.likes ?? 0,
       dislikes: a.dislikes ?? 0,
       runs_30d: a.runs_30d ?? 0,
       fully_native: fullyNative,
+      ...(user ? { is_owner: a.owner_id === user.id } : {}),
     };
   });
 
@@ -277,6 +307,7 @@ async function handleFeatured(request: Request, url: URL): Promise<Response> {
       search: '/api/discover?q={query}',
       openapi: '/api/discover/openapi.json',
       mcp_platform: '/mcp/platform',
+      auth: '/.well-known/oauth-authorization-server',
     },
   });
 }
@@ -426,10 +457,12 @@ async function executeSearch(
         final_score: Math.round(finalScore * 10000) / 10000,
         type: 'app' as const,
         mcp_endpoint: `/mcp/${rr.id}`,
+        http_endpoint: `/http/${rr.id}`,
         likes: rr.likes ?? 0,
         dislikes: rr.dislikes ?? 0,
         runs_30d: meta?.runs_30d ?? 0,
         fully_native: perUserEntries.length === 0,
+        ...(user ? { is_owner: rr.owner_id === user.id } : {}),
       };
     });
 
@@ -492,6 +525,7 @@ async function executeSearch(
         featured: '/api/discover/featured',
         openapi: '/api/discover/openapi.json',
         mcp_platform: '/mcp/platform',
+        auth: '/.well-known/oauth-authorization-server',
       },
     });
 
@@ -522,9 +556,39 @@ async function handleStatus(request: Request): Promise<Response> {
   const hasSystemKey = isEmbeddingAvailable();
   const isAvailable = hasUserKey || hasSystemKey;
 
+  // Fetch public app count for operational metrics
+  let appCount = 0;
+  try {
+    const supabaseUrl = Deno?.env?.get('SUPABASE_URL');
+    const supabaseKey = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY');
+    if (supabaseUrl && supabaseKey) {
+      const countRes = await fetch(
+        `${supabaseUrl}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&select=id`,
+        {
+          method: 'HEAD',
+          headers: {
+            'apikey': supabaseKey,
+            'Authorization': `Bearer ${supabaseKey}`,
+            'Prefer': 'count=exact',
+          },
+        }
+      );
+      const contentRange = countRes.headers.get('content-range');
+      if (contentRange) {
+        const total = contentRange.split('/')[1];
+        if (total && total !== '*') {
+          appCount = parseInt(total, 10);
+        }
+      }
+    }
+  } catch { /* best effort */ }
+
   return json({
     available: isAvailable,
     authenticated: !!user,
+    version: DISCOVER_VERSION,
+    timestamp: new Date().toISOString(),
+    app_count: appCount,
     endpoints: {
       search_get: 'GET /api/discover?q={query}&limit={n}',
       search_post: 'POST /api/discover { query, limit, threshold }',
@@ -592,9 +656,11 @@ function handleOpenApiSpec(): Response {
                             similarity: { type: 'number', description: 'Cosine similarity (0-1)' },
                             final_score: { type: 'number', description: 'Composite ranking score' },
                             mcp_endpoint: { type: 'string', description: 'JSON-RPC 2.0 endpoint for this app' },
+                            http_endpoint: { type: 'string', description: 'HTTP REST endpoint base path for this app' },
                             likes: { type: 'integer' },
                             runs_30d: { type: 'integer' },
                             fully_native: { type: 'boolean', description: 'True if no per-user setup needed' },
+                            is_owner: { type: 'boolean', description: 'True if authenticated user owns this app (only present when authenticated)' },
                           },
                         },
                       },
@@ -648,6 +714,21 @@ function handleOpenApiSpec(): Response {
           summary: 'Full MCP platform access (JSON-RPC 2.0)',
           description: 'Complete platform MCP with 32 tools: upload, test, lint, scaffold, discover.desk/library/appstore, settings, permissions, and more. Use this for the richest agent experience.',
           security: [{ bearerAuth: [] }],
+        },
+      },
+      '/api/mcp-config/{appId}': {
+        get: {
+          operationId: 'getMcpConfig',
+          summary: 'Get ready-to-paste MCP client config for an app',
+          description: 'Returns a JSON config snippet you can paste directly into Claude Desktop, Cursor, or other MCP clients.',
+          parameters: [
+            { name: 'appId', in: 'path', required: true, schema: { type: 'string' }, description: 'App ID' },
+            { name: 'client', in: 'query', required: false, schema: { type: 'string', enum: ['claude', 'cursor', 'raw'], default: 'claude' }, description: 'Client format' },
+          ],
+          responses: {
+            '200': { description: 'MCP client config JSON' },
+            '404': { description: 'App not found or not public' },
+          },
         },
       },
     },
