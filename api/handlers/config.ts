@@ -8,6 +8,7 @@
 
 import { json, error } from './app.ts';
 import { createAppsService } from '../services/apps.ts';
+import { authenticate } from './auth.ts';
 
 // @ts-ignore - Deno is available in Deno Deploy
 const Deno = globalThis.Deno;
@@ -20,6 +21,7 @@ interface AppInfo {
   slug: string;
   description: string | null;
   visibility: string;
+  owner_id?: string;
 }
 
 /**
@@ -38,9 +40,18 @@ export async function handleMcpConfig(request: Request, appId: string): Promise<
     return json({ error: 'App not found', code: 'APP_NOT_FOUND' }, 404);
   }
 
-  // Only generate configs for public apps
+  // Allow public apps (anyone) or private/unlisted apps (owner only)
   if (app.visibility !== 'public') {
-    return json({ error: 'Config generation only available for public apps', code: 'APP_NOT_PUBLIC' }, 403);
+    let isOwner = false;
+    try {
+      const user = await authenticate(request);
+      isOwner = user.id === app.owner_id;
+    } catch {
+      // Not authenticated
+    }
+    if (!isOwner) {
+      return json({ error: 'Config generation only available for public apps', code: 'APP_NOT_PUBLIC' }, 403);
+    }
   }
 
   const url = new URL(request.url);

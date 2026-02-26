@@ -31,7 +31,7 @@ import {
 
 const API = Deno.env.get('UL_API_URL') || 'https://ultralight-api-iikqz.ondigitalocean.app';
 const TOKEN = Deno.env.get('UL_TOKEN');
-const TEST_APP = Deno.env.get('UL_TEST_APP');
+const TEST_APP = Deno.env.get('UL_TEST_APP') || 'cd118f84-fbca-4cb3-a680-3974585bc319';
 
 // ============================================
 // 1. CLI SOURCE VERIFICATION (No network needed)
@@ -416,11 +416,13 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: GET /api/mcp-config/{appId} returns Claude Desktop config',
-  ignore: !TEST_APP,
+  ignore: !TOKEN,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
-    const res = await fetch(`${API}/api/mcp-config/${TEST_APP}`);
+    const res = await fetch(`${API}/api/mcp-config/${TEST_APP}`, {
+      headers: { 'Authorization': `Bearer ${TOKEN}` },
+    });
     assertEquals(res.status, 200, `Expected 200, got ${res.status}`);
     const data = await res.json();
 
@@ -440,11 +442,13 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: GET /api/mcp-config/{appId}?client=cursor returns Cursor config',
-  ignore: !TEST_APP,
+  ignore: !TOKEN,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
-    const res = await fetch(`${API}/api/mcp-config/${TEST_APP}?client=cursor`);
+    const res = await fetch(`${API}/api/mcp-config/${TEST_APP}?client=cursor`, {
+      headers: { 'Authorization': `Bearer ${TOKEN}` },
+    });
     assertEquals(res.status, 200, `Expected 200, got ${res.status}`);
     const data = await res.json();
 
@@ -643,11 +647,13 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: per-app .well-known/mcp.json has transport config',
-  ignore: !TEST_APP,
+  ignore: !TOKEN,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
-    const res = await fetch(`${API}/a/${TEST_APP}/.well-known/mcp.json`);
+    const res = await fetch(`${API}/a/${TEST_APP}/.well-known/mcp.json`, {
+      headers: TOKEN ? { 'Authorization': `Bearer ${TOKEN}` } : {},
+    });
     assertEquals(res.status, 200, `Expected 200, got ${res.status}`);
 
     const config = await res.json();
