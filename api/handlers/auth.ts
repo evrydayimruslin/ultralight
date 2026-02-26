@@ -67,7 +67,10 @@ export async function handleAuth(request: Request): Promise<Response> {
       if (tokenResponse.ok) {
         const tokens = await tokenResponse.json();
         return new Response(getCallbackSuccessHTML(tokens.access_token, tokens.refresh_token), {
-          headers: { 'Content-Type': 'text/html' },
+          headers: {
+            'Content-Type': 'text/html',
+            'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'",
+          },
         });
       }
     }
@@ -76,7 +79,10 @@ export async function handleAuth(request: Request): Promise<Response> {
     // Supabase implicit flow returns tokens in URL hash (e.g., #access_token=...)
     // The hash is only accessible client-side via JavaScript
     return new Response(getCallbackHTML(), {
-      headers: { 'Content-Type': 'text/html' },
+      headers: {
+        'Content-Type': 'text/html',
+        'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'",
+      },
     });
   }
 
@@ -337,6 +343,11 @@ async function resolvePendingPermissions(userId: string, email: string): Promise
 }
 
 // Callback page HTML - handles Supabase's hash-based token return
+// TODO: Post-MVP — migrate from localStorage to HttpOnly Secure cookies for token storage.
+// This requires: (1) server-side Set-Cookie on callback, (2) API authenticate() reading cookies,
+// (3) frontend fetch calls using credentials:'include', (4) CORS origin whitelist (not *).
+// For now, XSS is mitigated by: HTML entity escaping on error_description, token sanitization,
+// CSP headers blocking external resource loads, and HTTPS-only in production.
 function getCallbackHTML(): string {
   return `<!DOCTYPE html>
 <html>
@@ -372,7 +383,9 @@ function getCallbackHTML(): string {
       const urlParams = new URLSearchParams(window.location.search);
       const error = urlParams.get('error_description');
       if (error) {
-        document.body.innerHTML = '<div class="container"><p style="color: #f87171;">Error: ' + error + '</p><a href="/upload" style="color: #667eea;">Go back</a></div>';
+        // Sanitize error to prevent XSS via crafted error_description
+        const safe = error.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#x27;');
+        document.body.innerHTML = '<div class="container"><p style="color: #f87171;">Error: ' + safe + '</p><a href="/upload" style="color: #667eea;">Go back</a></div>';
       } else {
         // No token found, redirect to login
         window.location.href = '/auth/login';
@@ -384,13 +397,16 @@ function getCallbackHTML(): string {
 }
 
 function getCallbackSuccessHTML(token: string, refreshToken?: string): string {
+  // Sanitize tokens to prevent injection via template interpolation
+  const safeToken = token.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/</g, '\\x3c');
+  const safeRefresh = refreshToken ? refreshToken.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/</g, '\\x3c') : '';
   return `<!DOCTYPE html>
 <html>
 <head><title>Signed in!</title></head>
 <body>
   <script>
-    localStorage.setItem('ultralight_token', '${token}');
-    ${refreshToken ? `localStorage.setItem('ultralight_refresh_token', '${refreshToken}');` : ''}
+    localStorage.setItem('ultralight_token', '${safeToken}');
+    ${safeRefresh ? `localStorage.setItem('ultralight_refresh_token', '${safeRefresh}');` : ''}
     window.location.href = '/upload';
   </script>
 </body>

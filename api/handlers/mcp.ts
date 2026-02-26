@@ -872,24 +872,48 @@ async function handleToolsCall(
           );
         }
 
-        // Increment budget_used if budget_limit is set (fire and forget)
+        // Increment budget_used atomically if budget_limit is set
         if (matchingRow.budget_limit !== null && matchingRow.budget_limit > 0) {
           // @ts-ignore
           const _Deno = globalThis.Deno;
           const sbUrl = _Deno.env.get('SUPABASE_URL') || '';
           const sbKey = _Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-          fetch(`${sbUrl}/rest/v1/user_app_permissions?granted_to_user_id=eq.${userId}&app_id=eq.${app.id}&function_name=eq.${encodeURIComponent(name)}`, {
-            method: 'PATCH',
-            headers: {
-              'apikey': sbKey,
-              'Authorization': `Bearer ${sbKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              budget_used: (matchingRow.budget_used || 0) + 1,
-              updated_at: new Date().toISOString(),
-            }),
-          }).catch(err => console.error('Budget increment failed:', err));
+          try {
+            // Use Supabase RPC for atomic increment to avoid race conditions
+            const rpcRes = await fetch(`${sbUrl}/rest/v1/rpc/increment_budget_used`, {
+              method: 'POST',
+              headers: {
+                'apikey': sbKey,
+                'Authorization': `Bearer ${sbKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                p_user_id: userId,
+                p_app_id: app.id,
+                p_function_name: name,
+              }),
+            });
+            if (!rpcRes.ok) {
+              // Fallback: use PostgREST PATCH with atomic SQL expression
+              // PostgREST doesn't support SET col = col + 1 directly,
+              // so we await the non-atomic version but log a warning
+              console.warn('Budget RPC not available, falling back to non-atomic increment');
+              await fetch(`${sbUrl}/rest/v1/user_app_permissions?granted_to_user_id=eq.${userId}&app_id=eq.${app.id}&function_name=eq.${encodeURIComponent(name)}`, {
+                method: 'PATCH',
+                headers: {
+                  'apikey': sbKey,
+                  'Authorization': `Bearer ${sbKey}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  budget_used: (matchingRow.budget_used || 0) + 1,
+                  updated_at: new Date().toISOString(),
+                }),
+              });
+            }
+          } catch (err) {
+            console.error('Budget increment failed:', err);
+          }
 
           // Keep permission cache in sync with local budget increment
           getPermissionCache().incrementBudget(userId, app.id, name);
