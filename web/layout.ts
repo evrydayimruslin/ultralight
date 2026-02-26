@@ -25,6 +25,7 @@ export function getLayoutHTML(options: {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${title} - Ultralight</title>
   <meta name="description" content="The fastest way to deploy AI-powered apps. Drop your code, get a live URL instantly.">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%233b82f6'/%3E%3Cstop offset='100%25' stop-color='%232563eb'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M6 4 L6 22 Q6 28 12 28 L12 28 L12 4 L17 4 L17 28 Q17 28 20 28 Q26 28 26 22 L26 4 L21 4 L21 22 Q21 24 20 24 L12 24 Q10.5 24 10.5 22 L10.5 4 Z' fill='url(%23g)'/%3E%3C/svg%3E">
 
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -121,11 +122,32 @@ export function getLayoutHTML(options: {
       display: flex;
       align-items: center;
       padding: 0.5rem;
+      gap: 0.375rem;
       flex-shrink: 0;
     }
     .sidebar.collapsed .sidebar-toggle-area {
       display: none;
     }
+    .sidebar-search {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 0.375rem;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 0.3rem 0.5rem;
+    }
+    .sidebar-search input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text-primary);
+      font-size: 0.75rem;
+      outline: none;
+      min-width: 0;
+    }
+    .sidebar-search svg { width: 14px; height: 14px; color: var(--text-muted); flex-shrink: 0; }
     .sidebar-toggle-btn {
       width: 30px;
       height: 30px;
@@ -154,14 +176,13 @@ export function getLayoutHTML(options: {
     }
 
     .logo {
-      font-size: 1.2rem;
-      font-weight: 700;
-      background: var(--accent-gradient);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-      white-space: nowrap;
-      letter-spacing: -0.01em;
+      display: flex;
+      align-items: center;
+      text-decoration: none;
+    }
+    .logo-icon {
+      width: 24px;
+      height: 24px;
     }
 
     /* New App button (expanded) */
@@ -481,6 +502,79 @@ export function getLayoutHTML(options: {
       color: var(--text-muted);
       font-size: 0.875rem;
     }
+
+    /* Sidebar profile (bottom) */
+    .sidebar-profile {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.375rem 0.5rem;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s;
+      margin-top: 0.25rem;
+    }
+    .sidebar-profile:hover { background: var(--bg-hover); }
+    .sidebar-profile-info {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .sidebar-profile-name {
+      font-size: 0.8125rem;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.3;
+    }
+    .sidebar-profile-email {
+      font-size: 0.6875rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.3;
+    }
+    .sidebar-profile-dropdown {
+      display: none;
+      position: absolute;
+      bottom: 100%;
+      left: 0.5rem;
+      right: 0.5rem;
+      margin-bottom: 4px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      z-index: 300;
+      padding: 0.5rem;
+    }
+    .sidebar-profile-dropdown.open { display: block; }
+    .sidebar-profile-dropdown-email {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border-color);
+      margin-bottom: 0.25rem;
+    }
+    .sidebar-profile-dropdown-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      width: 100%;
+      padding: 0.5rem 0.75rem;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      color: var(--text-secondary);
+      font-size: 0.8125rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .sidebar-profile-dropdown-item:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+    .sidebar-profile-dropdown-item svg { width: 16px; height: 16px; }
 
     /* User Section — exact height matches .site-footer */
     .sidebar-footer {
@@ -2076,16 +2170,16 @@ export function getLayoutHTML(options: {
     .top-bar-left {
       display: flex;
       align-items: center;
-      width: 240px;
       flex-shrink: 0;
     }
     .top-bar-left .logo {
-      font-size: 1.2rem;
-      font-weight: 700;
-      background: var(--accent-gradient);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+      display: flex;
+      align-items: center;
       text-decoration: none;
+    }
+    .top-bar-left .logo-icon {
+      width: 24px;
+      height: 24px;
     }
     .top-bar-center {
       flex: 1;
@@ -2096,7 +2190,6 @@ export function getLayoutHTML(options: {
       display: flex;
       align-items: center;
       gap: 0.75rem;
-      width: 240px;
       justify-content: flex-end;
       flex-shrink: 0;
     }
@@ -2513,36 +2606,26 @@ export function getLayoutHTML(options: {
   <!-- Top Bar (full-width, YouTube-style) -->
   <div class="top-bar" id="topBar">
     <div class="top-bar-left">
-      <a href="/" class="logo" onclick="event.preventDefault(); navigateToHome();">Ultralight</a>
+      <a href="/" class="logo" onclick="event.preventDefault(); navigateToHome();" title="Ultralight">
+        <svg class="logo-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs><linearGradient id="logoGrad" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#3b82f6"/><stop offset="100%" stop-color="#2563eb"/></linearGradient></defs>
+          <path d="M6 4L6 22Q6 28 12 28L12 4L17 4L17 28Q17 28 20 28Q26 28 26 22L26 4L21 4L21 22Q21 24 20 24L12 24Q10.5 24 10.5 22L10.5 4Z" fill="url(#logoGrad)"/>
+        </svg>
+      </a>
     </div>
     <div class="top-bar-center">
-      <div class="top-bar-search" style="position: relative;">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-        <input type="text" id="searchInput" placeholder="Search apps..." oninput="handleSearch(this.value)" autocomplete="off" />
-        <div id="searchDropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; margin-top: 4px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 300; max-height: 300px; overflow-y: auto;"></div>
-      </div>
     </div>
     <div class="top-bar-right">
       <button class="top-bar-connect-btn" id="topBarConnectBtn" onclick="copyConnectUrl()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
         <span id="connectBtnText">Connect</span>
       </button>
-      <div class="top-bar-profile" id="topBarProfile" onclick="toggleTopBarDropdown(event)">
-        <!-- Populated by updateAuthUI -->
-      </div>
-      <div class="top-bar-profile-dropdown" id="topBarDropdown">
-        <div class="top-bar-profile-dropdown-email">Not signed in</div>
-        <button class="top-bar-profile-dropdown-item" onclick="event.stopPropagation(); signOut();">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
-          Sign Out
-        </button>
-      </div>
     </div>
   </div>
 
   <!-- Sidebar -->
   <aside class="sidebar" id="sidebar">
-    <!-- Collapse toggle (expanded state only) -->
+    <!-- Sidebar header: toggle + search -->
     <div class="sidebar-toggle-area">
       <button class="sidebar-toggle-btn" id="sidebarToggle" title="Collapse sidebar">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
@@ -2550,6 +2633,11 @@ export function getLayoutHTML(options: {
           <line x1="9" y1="3" x2="9" y2="21"></line>
         </svg>
       </button>
+      <div class="sidebar-search" style="position: relative;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        <input type="text" id="searchInput" placeholder="Search apps..." oninput="handleSearch(this.value)" autocomplete="off" />
+        <div id="searchDropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; margin-top: 4px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 300; max-height: 300px; overflow-y: auto;"></div>
+      </div>
     </div>
 
     <!-- Expanded: main navigation -->
@@ -2568,7 +2656,7 @@ export function getLayoutHTML(options: {
         </svg>
         Dashboard
       </button>
-      <button class="upload-btn nav-btn${initialView === 'leaderboard' ? ' nav-active' : ''}" id="navLeaderboardBtn" data-view="leaderboard">
+      <button class="upload-btn nav-btn${initialView === 'leaderboard' ? ' nav-active' : ''}" id="navLeaderboardBtn" data-view="leaderboard" style="display:none">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5C7 4 7 7 7 7"></path>
           <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5C17 4 17 7 17 7"></path>
@@ -2606,7 +2694,7 @@ export function getLayoutHTML(options: {
       <div id="appsList" class="apps-loading">Loading...</div>
     </div>
 
-    <!-- Expanded: footer with auth -->
+    <!-- Expanded: footer with auth / profile -->
     <div class="sidebar-footer">
       <div id="authSection">
         <a href="/auth/login" class="auth-btn google">
@@ -2618,6 +2706,21 @@ export function getLayoutHTML(options: {
           </svg>
           Sign in with Google
         </a>
+      </div>
+      <div id="sidebarProfile" class="sidebar-profile" style="display: none;" onclick="toggleSidebarProfileDropdown(event)">
+        <div class="user-avatar" id="sidebarAvatar" style="width: 28px; height: 28px; font-size: 0.75rem;"></div>
+        <div class="sidebar-profile-info">
+          <span class="sidebar-profile-name" id="sidebarProfileName"></span>
+          <span class="sidebar-profile-email" id="sidebarProfileEmail"></span>
+        </div>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;color:var(--text-muted)"><polyline points="6 9 12 15 18 9"></polyline></svg>
+      </div>
+      <div class="sidebar-profile-dropdown" id="sidebarProfileDropdown">
+        <div class="sidebar-profile-dropdown-email" id="sidebarDropdownEmail">Not signed in</div>
+        <button class="sidebar-profile-dropdown-item" onclick="event.stopPropagation(); signOut();">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+          Sign Out
+        </button>
       </div>
     </div>
   </aside>
@@ -3560,20 +3663,17 @@ await hash.sha256('data')</div>
           const firstName = fullName.split(' ')[0] || email.split('@')[0];
           const initial = (firstName || email).charAt(0).toUpperCase();
 
-          // Sidebar: hide auth when logged in (profile moves to top bar)
+          // Sidebar: hide auth when logged in, show profile
           authSection.innerHTML = '';
 
-          // Top bar profile
-          const topBarProfile = document.getElementById('topBarProfile');
-          if (topBarProfile) {
-            topBarProfile.innerHTML = \`
-              <div class="user-avatar" style="width: 28px; height: 28px; font-size: 0.75rem;">\${initial}</div>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-            \`;
-            const topBarDropdown = document.getElementById('topBarDropdown');
-            if (topBarDropdown) {
-              topBarDropdown.querySelector('.top-bar-profile-dropdown-email').textContent = email;
-            }
+          // Sidebar profile
+          const sidebarProfile = document.getElementById('sidebarProfile');
+          if (sidebarProfile) {
+            sidebarProfile.style.display = 'flex';
+            document.getElementById('sidebarAvatar').textContent = initial;
+            document.getElementById('sidebarProfileName').textContent = firstName;
+            document.getElementById('sidebarProfileEmail').textContent = email;
+            document.getElementById('sidebarDropdownEmail').textContent = email;
           }
           loadApps();
           loadDashboardData();
@@ -3627,7 +3727,7 @@ await hash.sha256('data')</div>
     // ============================================
     window.toggleTopBarDropdown = function(e) {
       e.stopPropagation();
-      const dropdown = document.getElementById('topBarDropdown');
+      const dropdown = document.getElementById('sidebarProfileDropdown');
       if (!dropdown) return;
       const isOpen = dropdown.classList.contains('open');
       if (isOpen) {
@@ -3637,17 +3737,34 @@ await hash.sha256('data')</div>
       }
     };
 
+    window.toggleSidebarProfileDropdown = function(e) {
+      e.stopPropagation();
+      const dropdown = document.getElementById('sidebarProfileDropdown');
+      if (!dropdown) return;
+      const isOpen = dropdown.classList.contains('open');
+      if (isOpen) {
+        closeSidebarProfileDropdown();
+      } else {
+        dropdown.classList.add('open');
+      }
+    };
+
     function closeTopBarDropdown() {
-      const dropdown = document.getElementById('topBarDropdown');
+      const dropdown = document.getElementById('sidebarProfileDropdown');
+      if (dropdown) dropdown.classList.remove('open');
+    }
+
+    function closeSidebarProfileDropdown() {
+      const dropdown = document.getElementById('sidebarProfileDropdown');
       if (dropdown) dropdown.classList.remove('open');
     }
 
     // Close dropdown when clicking outside
     document.addEventListener('click', (e) => {
-      const dropdown = document.getElementById('topBarDropdown');
+      const dropdown = document.getElementById('sidebarProfileDropdown');
       if (dropdown && dropdown.classList.contains('open')) {
-        if (!e.target.closest('.top-bar-profile') && !e.target.closest('.top-bar-profile-dropdown')) {
-          closeTopBarDropdown();
+        if (!e.target.closest('.sidebar-profile') && !e.target.closest('.sidebar-profile-dropdown')) {
+          closeSidebarProfileDropdown();
         }
       }
     });
@@ -5991,7 +6108,7 @@ await hash.sha256('data')</div>
 
     // Close search on click outside
     document.addEventListener('click', (e) => {
-      const search = document.querySelector('.top-bar-search');
+      const search = document.querySelector('.sidebar-search');
       if (search && !search.contains(e.target)) {
         document.getElementById('searchDropdown').style.display = 'none';
       }
