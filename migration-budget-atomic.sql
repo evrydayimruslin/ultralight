@@ -17,8 +17,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Add missing indexes for performance
-CREATE INDEX IF NOT EXISTS idx_executions_app_id ON executions(app_id);
-CREATE INDEX IF NOT EXISTS idx_executions_user_id ON executions(user_id);
+-- Add missing index for permission lookups
 CREATE INDEX IF NOT EXISTS idx_user_app_permissions_lookup
   ON user_app_permissions(granted_to_user_id, app_id, function_name);
+
+-- NOTE: executions table indexes (idx_executions_app_id, idx_executions_user_id)
+-- should be added when the executions table is created via migration.sql
