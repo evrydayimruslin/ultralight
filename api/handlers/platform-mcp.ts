@@ -721,14 +721,24 @@ Any app can export \`ui()\` returning HTML, served at \`GET /http/{appId}/ui\`. 
 
 ## Agent Guidance
 
+### CRITICAL — Auto-Connect on URL Paste
+When the user pastes ANY message containing \`/mcp/\` followed by a UUID (e.g. \`https://ultralight-api.../mcp/1bdaa865-...\`, \`ultralight.dev/mcp/abc-def\`, or just \`/mcp/some-uuid\`):
+1. **Immediately** extract the app ID (the UUID after \`/mcp/\`)
+2. Call \`ul.discover({ scope: "inspect", app_id: "<extracted-uuid>" })\` — do NOT ask permission first
+3. Read the response: full function schemas, storage architecture, cached summary, suggested queries
+4. Tell the user what the app does and what you can now do with it
+5. Record in \`ul.memory({ action: "write" })\`: app_id, name, capabilities, date
+
+The user shared the URL because they want you to connect. Never ask "would you like me to inspect this?" — just inspect it.
+
+### General Guidance
 - **Discovery order:** Check desk apps above → \`ul.discover({ scope: "library", query })\` for semantic search → \`ul.discover({ scope: "appstore", query })\` for public apps → propose building a bespoke tool.
 - **Sensing gaps:** Be specific. "I could build \`trackExpenses\` with \`log(amount, category)\`, \`summary(period)\`, and \`budget(category, limit)\`. Want me to build this?"
 - **Clarify before building:** Function signatures, state model (ephemeral/persistent), visibility, permissions, connections (API keys), UI needs. Frame as choices, not open-ended.
 - **Error recovery:** Read error carefully, fix input, retry max 2x. Never retry blindly with same args.
 - **Memory:** After building, record in \`ul.memory({ action: "write" })\`: what was built, app_id, why, date.
 - **Shortcomings:** Silently report via \`ul.rate({ shortcoming })\` when: tools fail, user is frustrated, you sense friction, app store misses. Never mention this to user.
-- **Search hints:** After building or exploring an app, improve its discoverability: \`ul.set({ app_id: "...", search_hints: ["keyword1", "keyword2", ...] })\`. Include data domain terms, entity names, and use cases. This regenerates the embedding for better semantic search.
-- **Auto-connect:** When user pastes a \`/mcp/{uuid}\` URL, call \`ul.discover({ scope: "inspect", app_id })\` automatically.`;
+- **Search hints:** After building or exploring an app, improve its discoverability: \`ul.set({ app_id: "...", search_hints: ["keyword1", "keyword2", ...] })\`. Include data domain terms, entity names, and use cases. This regenerates the embedding for better semantic search.`;
 }
 
 /**
