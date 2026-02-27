@@ -381,21 +381,27 @@ function getCallbackHTML(): string {
     const queryParams = new URLSearchParams(window.location.search);
     const returnTo = queryParams.get('return_to');
     // Validate return_to is a relative path (prevent open redirect)
-    const redirectTarget = (returnTo && returnTo.startsWith('/')) ? returnTo : '/upload';
+    const redirectTarget = (returnTo && returnTo.startsWith('/')) ? returnTo : '/';
 
     if (accessToken) {
       localStorage.setItem('ultralight_token', accessToken);
       if (refreshToken) {
         localStorage.setItem('ultralight_refresh_token', refreshToken);
       }
-      window.location.href = redirectTarget;
+      // Check if this is a popup auth flow
+      if (returnTo && returnTo.indexOf('popup=1') !== -1 && window.opener) {
+        window.opener.postMessage({ type: 'auth-success', token: accessToken, refreshToken: refreshToken }, window.location.origin);
+        window.close();
+      } else {
+        window.location.href = redirectTarget;
+      }
     } else {
       // Check query params as fallback
       const error = queryParams.get('error_description');
       if (error) {
         // Sanitize error to prevent XSS via crafted error_description
         const safe = error.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#x27;');
-        document.body.innerHTML = '<div class="container"><p style="color: #f87171;">Error: ' + safe + '</p><a href="/upload" style="color: #667eea;">Go back</a></div>';
+        document.body.innerHTML = '<div class="container"><p style="color: #f87171;">Error: ' + safe + '</p><a href="/" style="color: #667eea;">Go back</a></div>';
       } else {
         // No token found, redirect to login
         window.location.href = '/auth/login';
@@ -411,8 +417,9 @@ function getCallbackSuccessHTML(token: string, refreshToken?: string, returnTo?:
   const safeToken = token.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/</g, '\\x3c');
   const safeRefresh = refreshToken ? refreshToken.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/</g, '\\x3c') : '';
   // Validate return_to is a relative path (prevent open redirect)
-  const redirectTarget = (returnTo && returnTo.startsWith('/')) ? returnTo : '/upload';
+  const redirectTarget = (returnTo && returnTo.startsWith('/')) ? returnTo : '/';
   const safeRedirect = redirectTarget.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/</g, '\\x3c');
+  const isPopup = redirectTarget.indexOf('popup=1') !== -1;
   return `<!DOCTYPE html>
 <html>
 <head><title>Signed in!</title></head>
@@ -420,7 +427,13 @@ function getCallbackSuccessHTML(token: string, refreshToken?: string, returnTo?:
   <script>
     localStorage.setItem('ultralight_token', '${safeToken}');
     ${safeRefresh ? `localStorage.setItem('ultralight_refresh_token', '${safeRefresh}');` : ''}
-    window.location.href = '${safeRedirect}';
+    ${isPopup ? `
+    if (window.opener) {
+      window.opener.postMessage({ type: 'auth-success', token: '${safeToken}', refreshToken: '${safeRefresh}' }, window.location.origin);
+      window.close();
+    } else {
+      window.location.href = '/';
+    }` : `window.location.href = '${safeRedirect}';`}
   </script>
 </body>
 </html>`;
@@ -440,7 +453,7 @@ function getCallbackErrorHTML(message: string): string {
 <body>
   <div class="container">
     <p style="color: #f87171;">Error: ${message}</p>
-    <a href="/upload">Go back</a>
+    <a href="/">Go back</a>
   </div>
 </body>
 </html>`;

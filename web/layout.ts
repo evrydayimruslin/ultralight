@@ -1,5 +1,5 @@
-// Shared Layout Component
-// ChatGPT-like UI with persistent sidebar
+// Ultralight Layout — Complete Rewrite
+// World-class dark-mode UI with Linear/Vercel-inspired design language
 
 export function getLayoutHTML(options: {
   title?: string;
@@ -10,12 +10,8 @@ export function getLayoutHTML(options: {
 }): string {
   const { title = 'Ultralight', activeAppId, initialView, appCode, appName } = options;
 
-  // Escape app code if provided
   const escapedCode = appCode
-    ? appCode
-        .replace(/\\/g, '\\\\')
-        .replace(/`/g, '\\`')
-        .replace(/\$/g, '\\$')
+    ? appCode.replace(/\\\\/g, '\\\\\\\\').replace(/\`/g, '\\\\\`').replace(/\\$/g, '\\\\\\$')
     : '';
 
   return `<!DOCTYPE html>
@@ -24,1614 +20,1511 @@ export function getLayoutHTML(options: {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${title} - Ultralight</title>
-  <meta name="description" content="The fastest way to deploy AI-powered apps. Drop your code, get a live URL instantly.">
+  <meta name="description" content="TypeScript functions become MCP servers. Instantly.">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%233b82f6'/%3E%3Cstop offset='100%25' stop-color='%232563eb'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M6 4 L6 22 Q6 28 12 28 L12 28 L12 4 L17 4 L17 28 Q17 28 20 28 Q26 28 26 22 L26 4 L21 4 L21 22 Q21 24 20 24 L12 24 Q10.5 24 10.5 22 L10.5 4 Z' fill='url(%23g)'/%3E%3C/svg%3E">
-
-  <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-
-
-  <!-- Tailwind CSS (for utility classes) -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            'ultralight': {
-              50: '#eff6ff',
-              100: '#dbeafe',
-              200: '#bfdbfe',
-              300: '#93c5fd',
-              400: '#60a5fa',
-              500: '#3b82f6',
-              600: '#2563eb',
-              700: '#1d4ed8',
-              800: '#1e40af',
-              900: '#1e3a8a',
-            }
-          }
-        }
-      }
-    }
-  </script>
-
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    /* ===== Liquid Metal Animation ===== */
-    @property --border-angle {
-      syntax: "<angle>";
-      initial-value: 0deg;
-      inherits: false;
+    /* ============================================
+       CSS RESET
+       ============================================ */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
     }
 
-    @keyframes spin-border {
-      to { --border-angle: 360deg; }
-    }
-
-    /* ===== Light mode (default) ===== */
-    :root {
-      --sidebar-width: 260px;
-      --bg-primary: #fafafa;
-      --bg-secondary: #ffffff;
-      --bg-tertiary: #f4f4f5;
-      --bg-hover: #e4e4e7;
-      --border-color: #e4e4e7;
-      --text-primary: #18181b;
-      --text-secondary: #71717a;
-      --text-muted: #a1a1aa;
-      --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-      --accent-color: #3b82f6;
-      --success-color: #22c55e;
-      --error-color: #ef4444;
-      --warning-color: #f59e0b;
+    html {
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
+      scroll-behavior: smooth;
     }
 
     body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: var(--bg-primary);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      line-height: 1.6;
       color: var(--text-primary);
+      background: var(--bg-base);
       min-height: 100vh;
-      display: flex;
+      overflow-x: hidden;
     }
 
-    /* Sidebar */
-    .sidebar {
-      width: var(--sidebar-width);
-      height: calc(100vh - 52px);
-      background: var(--bg-secondary);
+    a { color: inherit; text-decoration: none; }
+    button { font-family: inherit; cursor: pointer; border: none; background: none; }
+    input, textarea, select { font-family: inherit; }
+    img, svg { display: block; max-width: 100%; }
+    ul, ol { list-style: none; }
+
+    /* ============================================
+       CSS VARIABLES — DESIGN TOKENS
+       ============================================ */
+    :root {
+      /* Background */
+      --bg-base: #0a0a0a;
+      --bg-raised: #141414;
+      --bg-overlay: #1a1a1a;
+      --bg-hover: rgba(255,255,255,0.06);
+      --bg-active: rgba(255,255,255,0.09);
+      --bg-subtle: rgba(255,255,255,0.03);
+
+      /* Borders */
+      --border: rgba(255,255,255,0.08);
+      --border-strong: rgba(255,255,255,0.14);
+      --border-focus: rgba(59,130,246,0.5);
+
+      /* Text */
+      --text-primary: #ededed;
+      --text-secondary: #a1a1a1;
+      --text-muted: #666;
+      --text-inverse: #0a0a0a;
+
+      /* Accent */
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --accent-soft: rgba(59,130,246,0.12);
+      --accent-text: #60a5fa;
+
+      /* Semantic */
+      --success: #22c55e;
+      --success-soft: rgba(34,197,94,0.12);
+      --error: #ef4444;
+      --error-soft: rgba(239,68,68,0.12);
+      --warning: #f59e0b;
+      --warning-soft: rgba(245,158,11,0.12);
+
+      /* Spacing scale */
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 20px;
+      --space-6: 24px;
+      --space-8: 32px;
+      --space-10: 40px;
+      --space-12: 48px;
+      --space-16: 64px;
+      --space-20: 80px;
+
+      /* Radius */
+      --radius-sm: 6px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --radius-xl: 16px;
+      --radius-full: 9999px;
+
+      /* Shadows */
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+      --shadow-lg: 0 8px 30px rgba(0,0,0,0.5);
+      --shadow-xl: 0 16px 50px rgba(0,0,0,0.6);
+      --shadow-glow: 0 0 20px rgba(59,130,246,0.15);
+
+      /* Typography */
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+
+      /* Z-index scale */
+      --z-dropdown: 100;
+      --z-sticky: 200;
+      --z-overlay: 300;
+      --z-modal: 400;
+      --z-toast: 500;
+      --z-tooltip: 600;
+
+      /* Transitions */
+      --transition-fast: 120ms ease;
+      --transition-base: 200ms ease;
+      --transition-slow: 300ms ease;
+
+      /* Layout */
+      --nav-height: 56px;
+      --content-max: 1200px;
+      --content-narrow: 720px;
+    }
+
+    /* ============================================
+       TYPOGRAPHY SYSTEM
+       ============================================ */
+    .text-display {
+      font-size: 48px;
+      font-weight: 700;
+      line-height: 1.1;
+      letter-spacing: -0.03em;
+    }
+
+    .text-h1 {
+      font-size: 32px;
+      font-weight: 700;
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+    }
+
+    .text-h2 {
+      font-size: 24px;
+      font-weight: 600;
+      line-height: 1.3;
+      letter-spacing: -0.015em;
+    }
+
+    .text-h3 {
+      font-size: 18px;
+      font-weight: 600;
+      line-height: 1.4;
+      letter-spacing: -0.01em;
+    }
+
+    .text-body {
+      font-size: 14px;
+      font-weight: 400;
+      line-height: 1.6;
+    }
+
+    .text-body-lg {
+      font-size: 16px;
+      font-weight: 400;
+      line-height: 1.6;
+    }
+
+    .text-small {
+      font-size: 13px;
+      font-weight: 400;
+      line-height: 1.5;
+    }
+
+    .text-caption {
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 1.4;
+      letter-spacing: 0.01em;
+    }
+
+    .text-mono {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 400;
+    }
+
+    .text-secondary { color: var(--text-secondary); }
+    .text-muted { color: var(--text-muted); }
+    .text-accent { color: var(--accent-text); }
+
+    /* ============================================
+       LAYOUT — TOP NAV + MAIN CONTENT
+       ============================================ */
+    .app-wrapper {
       display: flex;
       flex-direction: column;
-      position: fixed;
-      left: 0;
-      top: 52px;
-      z-index: 100;
-      transition: width 0.3s ease;
-      overflow: hidden;
+      min-height: 100vh;
     }
 
-    .sidebar.collapsed {
-      width: 56px;
+    /* Top Navigation */
+    .top-nav {
+      position: sticky;
+      top: 0;
+      z-index: var(--z-sticky);
+      height: var(--nav-height);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 var(--space-6);
+      background: rgba(10,10,10,0.8);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
     }
 
-    /* Sidebar toggle area */
-    .sidebar-toggle-area {
+    .nav-left {
       display: flex;
       align-items: center;
-      padding: 0.5rem;
-      gap: 0.375rem;
-      flex-shrink: 0;
+      gap: var(--space-6);
     }
-    .sidebar.collapsed .sidebar-toggle-area {
-      display: none;
-    }
-    .sidebar-search {
-      flex: 1;
+
+    .nav-logo {
       display: flex;
       align-items: center;
-      gap: 0.375rem;
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
-      border-radius: 6px;
-      padding: 0.3rem 0.5rem;
-    }
-    .sidebar-search input {
-      flex: 1;
-      background: transparent;
-      border: none;
+      gap: var(--space-3);
+      font-weight: 600;
+      font-size: 15px;
       color: var(--text-primary);
-      font-size: 0.75rem;
-      outline: none;
-      min-width: 0;
-    }
-    .sidebar-search svg { width: 14px; height: 14px; color: var(--text-muted); flex-shrink: 0; }
-    .sidebar-toggle-btn {
-      width: 30px;
-      height: 30px;
-      background: transparent;
-      border: none;
-      border-radius: 6px;
-      color: var(--text-muted);
       cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: background 0.2s, color 0.2s;
-      flex-shrink: 0;
-    }
-    .sidebar-toggle-btn:hover {
-      background: var(--bg-hover);
-      color: var(--text-primary);
-    }
-    .sidebar-toggle-btn svg {
-      width: 16px;
-      height: 16px;
+      transition: opacity var(--transition-fast);
     }
 
-    .main-content.sidebar-collapsed {
-      margin-left: 56px;
-    }
+    .nav-logo:hover { opacity: 0.8; }
 
-    .logo {
-      display: flex;
-      align-items: center;
-      text-decoration: none;
-    }
-    .logo-icon {
+    .nav-logo svg {
       width: 24px;
       height: 24px;
     }
 
-    /* New App button (expanded) */
-    .new-app-section {
-      padding: 0 0.75rem 0.75rem;
-      flex-shrink: 0;
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: var(--space-1);
     }
 
-    .upload-btn {
-      width: 100%;
-      padding: 0.5rem 0.75rem;
-      background: transparent;
-      color: var(--text-primary);
-      border: 1px solid var(--border-color);
-      border-radius: 8px;
-      font-size: 0.875rem;
+    .nav-link {
+      padding: var(--space-2) var(--space-3);
+      font-size: 13px;
       font-weight: 500;
-      cursor: pointer;
-      transition: color 0.2s, border-color 0.2s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.5rem;
-    }
-
-    .upload-btn:hover {
-      background: transparent;
-      border-color: var(--text-muted);
-      color: var(--text-primary);
-    }
-
-    .upload-btn svg {
-      width: 16px;
-      height: 16px;
-    }
-
-    .nav-btn {
-      justify-content: flex-start;
-      border: none;
-      padding: 0.45rem 0.75rem;
-      border-radius: 6px;
-      font-size: 0.8125rem;
       color: var(--text-secondary);
+      border-radius: var(--radius-sm);
+      transition: all var(--transition-fast);
     }
-    .nav-btn:hover {
-      border: none;
-      background: var(--bg-hover);
+
+    .nav-link:hover {
       color: var(--text-primary);
-    }
-    .nav-active {
-      background: var(--bg-tertiary);
-      color: var(--text-primary);
-      font-weight: 600;
-    }
-    .nav-active:hover {
-      background: var(--bg-tertiary);
-    }
-
-    .gaps-filter-btn {
-      padding: 0.35rem 0.75rem;
-      border-radius: 9999px;
-      font-size: 0.75rem;
-      font-weight: 500;
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
-      color: var(--text-secondary);
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-    .gaps-filter-btn:hover {
-      border-color: var(--accent-color);
-      color: var(--accent-color);
-    }
-    .gaps-filter-active {
-      border-color: var(--accent-color);
-      color: var(--accent-color);
-      background: var(--bg-secondary);
-    }
-
-    .home-card {
-      display: flex;
-      gap: 0.625rem;
-      padding: 0.625rem 0.75rem;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: 8px;
-      transition: border-color 0.15s;
-      text-decoration: none;
-      color: inherit;
-      cursor: pointer;
-    }
-    .home-card:hover {
-      border-color: var(--text-muted);
-    }
-
-    .sidebar.collapsed .new-app-section {
-      display: none;
-    }
-
-    /* Collapsed rail: action icons */
-    .sidebar-rail {
-      display: none;
-      flex-direction: column;
-      align-items: center;
-      padding: 8px 0;
-      gap: 6px;
-      flex-shrink: 0;
-    }
-
-    .sidebar.collapsed .sidebar-rail {
-      display: flex;
-    }
-
-    .sidebar-rail-btn {
-      width: 36px;
-      height: 36px;
-      background: var(--bg-tertiary);
-      border: none;
-      border-radius: 10px;
-      color: var(--text-secondary);
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: background 0.15s, color 0.15s;
-      flex-shrink: 0;
-    }
-
-    .sidebar-rail-btn:hover {
-      background: var(--bg-hover);
-      color: var(--text-primary);
-    }
-
-    .sidebar-rail-btn svg {
-      width: 16px;
-      height: 16px;
-    }
-
-    /* Collapsed rail: divider */
-    .sidebar-rail-divider {
-      width: 24px;
-      height: 1px;
-      background: var(--border-color);
-      margin: 2px 0;
-    }
-
-    /* Collapsed rail apps list */
-    .sidebar-rail-apps {
-      display: none;
-      flex-direction: column;
-      align-items: center;
-      padding: 4px 0;
-      gap: 6px;
-      flex: 1;
-      overflow-y: auto;
-    }
-
-    .sidebar.collapsed .sidebar-rail-apps {
-      display: flex;
-    }
-
-    .sidebar-rail-app {
-      width: 36px;
-      height: 36px;
-      border-radius: 10px;
-      background: var(--bg-tertiary);
-      border: none;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.9rem;
-      cursor: pointer;
-      transition: background 0.15s;
-      flex-shrink: 0;
-      color: var(--text-primary);
-    }
-
-    .sidebar-rail-app:hover {
       background: var(--bg-hover);
     }
 
-    .sidebar-rail-app.active {
-      background: var(--accent-color);
-      color: #fff;
-    }
-
-    .sidebar-rail-app img {
-      width: 100%;
-      height: 100%;
-      border-radius: 10px;
-      object-fit: cover;
-    }
-
-    /* Apps List */
-    .apps-section {
-      flex: 1;
-      overflow-y: auto;
-      padding: 0.5rem;
-    }
-
-    /* Hide expanded apps section when collapsed */
-    .sidebar.collapsed .apps-section {
-      display: none;
-    }
-
-    .apps-section-title {
-      font-size: 0.75rem;
-      text-transform: uppercase;
-      color: var(--text-muted);
-      padding: 0.75rem 0.5rem 0.5rem;
-      font-weight: 600;
-      letter-spacing: 0.05em;
-    }
-
-    .app-list {
-      list-style: none;
-    }
-
-    .app-item {
-      display: flex;
-      align-items: center;
-      gap: 0.625rem;
-      padding: 0.5rem 0.5rem;
-      border-radius: 8px;
-      cursor: pointer;
-      transition: background 0.15s;
-      color: var(--text-secondary);
-      text-decoration: none;
-      position: relative;
-    }
-
-    .app-item:hover {
-      background: var(--bg-hover);
+    .nav-link.active {
       color: var(--text-primary);
+      background: var(--bg-active);
     }
 
-    .app-item.active {
-      background: var(--bg-tertiary);
-      color: var(--text-primary);
-    }
-
-    .app-item:hover .app-settings-btn {
-      opacity: 1;
-    }
-
-    .app-icon {
-      width: 32px;
-      height: 32px;
-      border-radius: 6px;
-      background: var(--bg-tertiary);
+    .nav-right {
       display: flex;
       align-items: center;
-      justify-content: center;
-      font-size: 1rem;
-      flex-shrink: 0;
+      gap: var(--space-3);
     }
-
-    .app-icon img {
-      width: 100%;
-      height: 100%;
-      border-radius: 6px;
-      object-fit: cover;
-    }
-
-    .app-info {
-      flex: 1;
-      min-width: 0;
-    }
-
-    .app-name {
-      font-size: 0.875rem;
-      font-weight: 500;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .app-meta {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-    }
-
-    .app-settings-btn {
-      opacity: 0;
-      background: transparent;
-      border: none;
-      color: var(--text-muted);
-      cursor: pointer;
-      padding: 0.25rem;
-      border-radius: 4px;
-      transition: all 0.15s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .app-settings-btn:hover {
-      color: var(--text-primary);
-      background: var(--bg-tertiary);
-    }
-
-    .app-settings-btn svg {
-      width: 16px;
-      height: 16px;
-    }
-
-    .apps-empty {
-      padding: 1.5rem 1rem;
-      text-align: center;
-      color: var(--text-muted);
-      font-size: 0.875rem;
-    }
-
-    .apps-loading {
-      padding: 1.5rem 1rem;
-      text-align: center;
-      color: var(--text-muted);
-      font-size: 0.875rem;
-    }
-
-    /* Sidebar profile (bottom) */
-    .sidebar-profile {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.375rem 0.5rem;
-      border-radius: 6px;
-      cursor: pointer;
-      transition: background 0.15s;
-      margin-top: 0.25rem;
-    }
-    .sidebar-profile:hover { background: var(--bg-hover); }
-    .sidebar-profile-info {
-      flex: 1;
-      min-width: 0;
-      display: flex;
-      flex-direction: column;
-    }
-    .sidebar-profile-name {
-      font-size: 0.8125rem;
-      font-weight: 500;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      line-height: 1.3;
-    }
-    .sidebar-profile-email {
-      font-size: 0.6875rem;
-      color: var(--text-muted);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      line-height: 1.3;
-    }
-    .sidebar-profile-dropdown {
-      display: none;
-      position: absolute;
-      bottom: 100%;
-      left: 0.5rem;
-      right: 0.5rem;
-      margin-bottom: 4px;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: 8px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-      z-index: 300;
-      padding: 0.5rem;
-    }
-    .sidebar-profile-dropdown.open { display: block; }
-    .sidebar-profile-dropdown-email {
-      padding: 0.5rem 0.75rem;
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      border-bottom: 1px solid var(--border-color);
-      margin-bottom: 0.25rem;
-    }
-    .sidebar-profile-dropdown-item {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      width: 100%;
-      padding: 0.5rem 0.75rem;
-      background: transparent;
-      border: none;
-      border-radius: 4px;
-      color: var(--text-secondary);
-      font-size: 0.8125rem;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-    .sidebar-profile-dropdown-item:hover { background: var(--bg-tertiary); color: var(--text-primary); }
-    .sidebar-profile-dropdown-item svg { width: 16px; height: 16px; }
-
-    /* User Section — exact height matches .site-footer */
-    .sidebar-footer {
-      padding: 0 0.5rem;
-      border-top: 1px solid var(--border-color);
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      height: 64px;
-      flex-shrink: 0;
-      position: relative;
-      overflow: visible;
-    }
-
-    .sidebar.collapsed .sidebar-footer {
-      display: none;
-    }
-
-    .user-section {
-      display: flex;
-      align-items: center;
-      gap: 0.625rem;
-      cursor: pointer;
-      padding: 0.375rem 0.5rem;
-      position: relative;
-    }
-
-    .user-avatar {
-      width: 32px;
-      height: 32px;
-      border-radius: 50%;
-      background: var(--bg-tertiary);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.875rem;
-      flex-shrink: 0;
-    }
-
-    .user-info {
-      flex: 1;
-      min-width: 0;
-    }
-
-    .user-name {
-      font-size: 0.875rem;
-      font-weight: 500;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      line-height: 1.3;
-    }
-
-    .user-tier-text {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      line-height: 1.3;
-      margin-top: 1px;
-    }
-
-    .user-chevron {
-      flex-shrink: 0;
-      color: var(--text-muted);
-      transition: transform 0.2s;
-    }
-
-    .user-section.menu-open .user-chevron {
-      transform: rotate(180deg);
-    }
-
-    /* Profile Dropdown Menu */
-    .profile-dropdown {
-      position: absolute;
-      bottom: calc(100% + 6px);
-      left: 0;
-      right: 0;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: 10px;
-      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
-      opacity: 0;
-      visibility: hidden;
-      transform: translateY(4px);
-      transition: opacity 0.15s, visibility 0.15s, transform 0.15s;
-      z-index: 100;
-      overflow: hidden;
-    }
-
-
-
-    .profile-dropdown.open {
-      opacity: 1;
-      visibility: visible;
-      transform: translateY(0);
-    }
-
-    .profile-dropdown-email {
-      padding: 0.75rem 1rem 0.5rem;
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      border-bottom: 1px solid var(--border-color);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .profile-dropdown-items {
-      padding: 0.375rem;
-    }
-
-    .profile-dropdown-item {
-      display: flex;
-      align-items: center;
-      gap: 0.625rem;
-      padding: 0.5rem 0.625rem;
-      font-size: 0.8125rem;
-      color: var(--text-primary);
-      border-radius: 6px;
-      cursor: pointer;
-      transition: background 0.12s;
-      border: none;
-      background: none;
-      width: 100%;
-      text-align: left;
-    }
-
-    .profile-dropdown-item:hover {
-      background: var(--bg-hover);
-    }
-
-    .profile-dropdown-item svg {
-      width: 16px;
-      height: 16px;
-      flex-shrink: 0;
-      color: var(--text-secondary);
-    }
-
-    .profile-dropdown-divider {
-      height: 1px;
-      background: var(--border-color);
-      margin: 0.25rem 0.375rem;
-    }
-
-    .profile-dropdown-item.logout {
-      color: var(--text-primary);
-    }
-
-
-    /* Version history (app settings) */
-    .version-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0.5rem 0.75rem;
-      border: 1px solid var(--border-color);
-      border-radius: 6px;
-      margin-bottom: 0.375rem;
-      font-size: 0.8125rem;
-    }
-    .version-item:hover { background: var(--bg-tertiary); }
-    .version-info {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-    }
-    .version-label {
-      font-weight: 600;
-      font-family: monospace;
-      color: var(--text-primary);
-    }
-    .version-meta {
-      color: var(--text-muted);
-      font-size: 0.75rem;
-    }
-    .version-current-badge {
-      font-size: 0.6875rem;
-      color: var(--success-color);
-      font-weight: 600;
-    }
-    .version-delete-btn {
-      background: none;
-      border: 1px solid transparent;
-      color: var(--text-muted);
-      cursor: pointer;
-      padding: 0.25rem 0.5rem;
-      border-radius: 4px;
-      font-size: 0.75rem;
-      transition: all 0.15s;
-    }
-    .version-delete-btn:hover {
-      color: var(--error-color);
-      border-color: var(--error-color);
-      background: rgba(239, 68, 68, 0.08);
-    }
-
-    /* Upgrade CTA */
-    .upgrade-cta {
-      padding: 0.75rem 1rem;
-      background: rgba(59, 130, 246, 0.08);
-      border: 1px solid rgba(59, 130, 246, 0.25);
-      border-radius: 6px;
-      font-size: 0.8125rem;
-      color: var(--text-secondary);
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      margin-top: 0.5rem;
-    }
-    .upgrade-cta a {
-      color: var(--accent-color);
-      font-weight: 600;
-      text-decoration: none;
-    }
-    .upgrade-cta a:hover { text-decoration: underline; }
-
-    /* Token count (in dashboard card header) — no limits, all tiers unlimited */
-
-    .auth-btn {
-      padding: 0.375rem 0.75rem;
-      background: var(--bg-tertiary);
-      color: var(--text-primary);
-      border: 1px solid var(--border-color);
-      border-radius: 6px;
-      font-size: 0.8125rem;
-      cursor: pointer;
-      transition: all 0.2s;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      text-decoration: none;
-    }
-
-    .auth-btn:hover {
-      background: var(--bg-hover);
-    }
-
-    .auth-btn.google {
-      background: #fff;
-      color: #333;
-      border-color: #ddd;
-      width: 100%;
-      justify-content: center;
-    }
-
-    .auth-btn.google:hover {
-      background: #f5f5f5;
-    }
-
-    /* (signout-btn removed — now in profile dropdown) */
 
     /* Main Content */
     .main-content {
       flex: 1;
-      margin-left: var(--sidebar-width);
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-    }
-
-    /* Dashboard View */
-    .dashboard-view {
-      flex-direction: column;
-      align-items: center;
-      padding: 2rem 1.5rem;
-      padding-top: 52px;
-      min-height: 100vh;
       width: 100%;
+      max-width: var(--content-max);
+      margin: 0 auto;
+      padding: var(--space-8) var(--space-6);
     }
 
-    .dashboard-card {
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: 12px;
-      padding: 1.25rem;
+    .main-content.narrow {
+      max-width: var(--content-narrow);
     }
 
-    /* App View */
-    .app-view {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
+    .main-content.full {
+      max-width: 100%;
     }
 
-    .app-view #app {
-      flex: 1;
-      min-height: 100vh;
-    }
-
-    /* Settings Modal */
-    .modal-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0, 0, 0, 0.7);
-      display: flex;
+    /* ============================================
+       BUTTON STYLES
+       ============================================ */
+    .btn {
+      display: inline-flex;
       align-items: center;
       justify-content: center;
-      z-index: 1000;
-      opacity: 0;
-      visibility: hidden;
-      transition: opacity 0.2s, visibility 0.2s;
-    }
-
-    .modal-overlay.open {
-      opacity: 1;
-      visibility: visible;
-    }
-
-    .modal {
-      background: var(--bg-secondary);
-      border-radius: 12px;
-      border: 1px solid var(--border-color);
-      width: 90%;
-      max-width: 500px;
-      max-height: 90vh;
-      overflow-y: auto;
-      transform: scale(0.95);
-      transition: transform 0.2s;
-    }
-
-    .modal.wide {
-      max-width: 700px;
-    }
-
-    /* Tabs */
-    .settings-tabs {
-      display: flex;
-      border-bottom: 1px solid var(--border-color);
-      padding: 0 1rem;
-    }
-
-    .settings-tab {
-      padding: 0.875rem 1rem;
-      background: transparent;
-      border: none;
-      color: var(--text-muted);
-      font-size: 0.875rem;
+      gap: var(--space-2);
+      padding: 0 var(--space-4);
+      height: 36px;
+      font-size: 13px;
       font-weight: 500;
-      cursor: pointer;
+      border-radius: var(--radius-md);
+      transition: all var(--transition-fast);
+      white-space: nowrap;
+      user-select: none;
       position: relative;
-      transition: color 0.2s;
+      overflow: hidden;
     }
 
-    .settings-tab:hover {
-      color: var(--text-secondary);
-    }
-
-    .settings-tab.active {
-      color: var(--text-primary);
-    }
-
-    .settings-tab.active::after {
-      content: '';
-      position: absolute;
-      bottom: -1px;
-      left: 0;
-      right: 0;
-      height: 2px;
-      background: var(--accent-gradient);
-    }
-
-    .settings-tab-content {
-      display: none;
-    }
-
-    .settings-tab-content.active {
-      display: block;
-    }
-
-    /* MCP Endpoint */
-    .mcp-endpoint {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.75rem 1rem;
-      background: var(--bg-tertiary);
-      border-radius: 6px;
-      font-family: monospace;
-      font-size: 0.8125rem;
-      margin-bottom: 1rem;
-    }
-
-    .mcp-endpoint-url {
-      flex: 1;
-      word-break: break-all;
-    }
-
-    .mcp-endpoint-copy {
-      padding: 0.375rem;
-      background: transparent;
-      border: 1px solid var(--border-color);
-      border-radius: 4px;
-      color: var(--text-muted);
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-
-    .mcp-endpoint-copy:hover {
-      background: var(--bg-hover);
-      color: var(--text-primary);
-    }
-
-    .mcp-endpoint-copy svg {
-      width: 14px;
-      height: 14px;
-      display: block;
-    }
-
-    /* Skills Editor */
-    .skills-editor {
-      width: 100%;
-      min-height: 300px;
-      padding: 1rem;
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
-      border-radius: 6px;
-      color: var(--text-primary);
-      font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
-      font-size: 0.8125rem;
-      line-height: 1.5;
-      resize: vertical;
-    }
-
-    .skills-editor:focus {
-      outline: none;
-      border-color: var(--accent-color);
-    }
-
-    .skills-status {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.5rem 0;
-      font-size: 0.8125rem;
-    }
-
-    .skills-status.success { color: var(--success-color); }
-    .skills-status.error { color: var(--error-color); }
-    .skills-status.warning { color: var(--warning-color); }
-    .skills-status.info { color: var(--text-muted); }
-
-    /* Draft Banner */
-    .draft-banner {
-      padding: 0.875rem 1rem;
-      background: rgba(251, 191, 36, 0.1);
-      border: 1px solid var(--warning-color);
-      border-radius: 8px;
-      margin-bottom: 1rem;
-    }
-
-    .draft-banner-title {
-      font-weight: 600;
-      color: var(--warning-color);
-      margin-bottom: 0.25rem;
-      font-size: 0.875rem;
-    }
-
-    .draft-banner-info {
-      font-size: 0.8125rem;
-      color: var(--text-secondary);
-    }
-
-    .draft-actions {
-      display: flex;
-      gap: 0.5rem;
-      margin-top: 0.75rem;
-    }
-
-    .draft-actions button {
-      padding: 0.5rem 0.875rem;
-      border-radius: 6px;
-      font-size: 0.8125rem;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-
-    .btn-publish {
-      background: var(--success-color);
-      border: none;
-      color: #000;
-      font-weight: 500;
-    }
-
-    .btn-publish:hover {
-      opacity: 0.9;
-    }
-
-    .btn-discard {
-      background: transparent;
-      border: 1px solid var(--border-color);
-      color: var(--text-secondary);
-    }
-
-    .btn-discard:hover {
-      border-color: var(--error-color);
-      color: var(--error-color);
-    }
-
-    /* Generate Button */
-    .generate-docs-btn {
-      width: 100%;
-      padding: 0.75rem 1rem;
-      background: var(--accent-gradient);
-      border: none;
-      border-radius: 6px;
-      color: white;
-      font-size: 0.875rem;
-      font-weight: 500;
-      cursor: pointer;
-      transition: opacity 0.2s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.5rem;
-    }
-
-    .generate-docs-btn:hover {
-      opacity: 0.9;
-    }
-
-    .generate-docs-btn:disabled {
+    .btn:disabled {
       opacity: 0.5;
       cursor: not-allowed;
+      pointer-events: none;
     }
 
-    .generate-docs-btn svg {
+    .btn-sm {
+      height: 30px;
+      padding: 0 var(--space-3);
+      font-size: 12px;
+      border-radius: var(--radius-sm);
+    }
+
+    .btn-lg {
+      height: 42px;
+      padding: 0 var(--space-6);
+      font-size: 14px;
+      border-radius: var(--radius-lg);
+    }
+
+    .btn-icon {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      border-radius: var(--radius-md);
+    }
+
+    .btn-icon.sm {
+      width: 30px;
+      height: 30px;
+    }
+
+    /* Primary */
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+      border: 1px solid transparent;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-hover);
+      box-shadow: var(--shadow-glow);
+    }
+
+    .btn-primary:active {
+      transform: scale(0.98);
+    }
+
+    /* Secondary */
+    .btn-secondary {
+      background: var(--bg-raised);
+      color: var(--text-primary);
+      border: 1px solid var(--border-strong);
+    }
+
+    .btn-secondary:hover {
+      background: var(--bg-hover);
+      border-color: rgba(255,255,255,0.2);
+    }
+
+    .btn-secondary:active {
+      background: var(--bg-active);
+    }
+
+    /* Ghost */
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-secondary);
+      border: 1px solid transparent;
+    }
+
+    .btn-ghost:hover {
+      color: var(--text-primary);
+      background: var(--bg-hover);
+    }
+
+    .btn-ghost:active {
+      background: var(--bg-active);
+    }
+
+    /* Danger */
+    .btn-danger {
+      background: var(--error-soft);
+      color: var(--error);
+      border: 1px solid transparent;
+    }
+
+    .btn-danger:hover {
+      background: rgba(239,68,68,0.2);
+    }
+
+    /* ============================================
+       CARD STYLES
+       ============================================ */
+    .card {
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      transition: all var(--transition-base);
+    }
+
+    .card-interactive:hover {
+      border-color: var(--border-strong);
+      box-shadow: var(--shadow-md);
+      transform: translateY(-1px);
+    }
+
+    .card-interactive:active {
+      transform: translateY(0);
+    }
+
+    .card-header {
+      padding: var(--space-5) var(--space-5) 0;
+    }
+
+    .card-body {
+      padding: var(--space-5);
+    }
+
+    .card-footer {
+      padding: var(--space-4) var(--space-5);
+      border-top: 1px solid var(--border);
+      background: var(--bg-subtle);
+    }
+
+    .card-compact .card-body {
+      padding: var(--space-4);
+    }
+
+    /* App Card */
+    .app-card {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-3);
+      cursor: pointer;
+    }
+
+    .app-card .app-card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+    }
+
+    .app-card .app-card-desc {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .app-card .app-card-meta {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .app-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: var(--space-4);
+    }
+
+    /* ============================================
+       INPUT / FORM STYLES
+       ============================================ */
+    .input {
+      width: 100%;
+      height: 36px;
+      padding: 0 var(--space-3);
+      font-size: 13px;
+      color: var(--text-primary);
+      background: var(--bg-base);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-md);
+      transition: all var(--transition-fast);
+      outline: none;
+    }
+
+    .input:hover {
+      border-color: rgba(255,255,255,0.2);
+    }
+
+    .input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+
+    .input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .input-lg {
+      height: 42px;
+      padding: 0 var(--space-4);
+      font-size: 14px;
+    }
+
+    textarea.input {
+      height: auto;
+      min-height: 80px;
+      padding: var(--space-3);
+      resize: vertical;
+      line-height: 1.5;
+    }
+
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+    }
+
+    .input-label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+
+    .input-hint {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .input-error {
+      border-color: var(--error) !important;
+      box-shadow: 0 0 0 3px var(--error-soft) !important;
+    }
+
+    /* Search input */
+    .search-input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .search-input-wrapper svg {
+      position: absolute;
+      left: var(--space-3);
       width: 16px;
       height: 16px;
+      color: var(--text-muted);
+      pointer-events: none;
     }
 
-    /* Info Box */
-    .info-box {
-      padding: 0.75rem 1rem;
-      background: rgba(102, 126, 234, 0.1);
-      border: 1px solid var(--accent-color);
-      border-radius: 6px;
-      font-size: 0.8125rem;
-      color: var(--text-secondary);
-      margin-bottom: 1rem;
+    .search-input-wrapper .input {
+      padding-left: 36px;
     }
 
-    .info-box a {
-      color: var(--accent-color);
+    /* ============================================
+       TOAST NOTIFICATIONS
+       ============================================ */
+    .toast-container {
+      position: fixed;
+      bottom: var(--space-6);
+      right: var(--space-6);
+      z-index: var(--z-toast);
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-3);
+      pointer-events: none;
     }
 
-    .modal-overlay.open .modal {
-      transform: scale(1);
+    .toast {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      padding: var(--space-3) var(--space-4);
+      min-width: 280px;
+      max-width: 420px;
+      background: var(--bg-overlay);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg);
+      font-size: 13px;
+      color: var(--text-primary);
+      pointer-events: auto;
+      animation: toast-in 0.3s ease forwards;
+    }
+
+    .toast.toast-out {
+      animation: toast-out 0.2s ease forwards;
+    }
+
+    .toast-success { border-left: 3px solid var(--success); }
+    .toast-error   { border-left: 3px solid var(--error); }
+    .toast-warning { border-left: 3px solid var(--warning); }
+    .toast-info    { border-left: 3px solid var(--accent); }
+
+    .toast-close {
+      margin-left: auto;
+      padding: var(--space-1);
+      color: var(--text-muted);
+      cursor: pointer;
+      border-radius: var(--radius-sm);
+      transition: color var(--transition-fast);
+    }
+
+    .toast-close:hover { color: var(--text-primary); }
+
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(8px) scale(0.96); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    @keyframes toast-out {
+      from { opacity: 1; transform: translateY(0) scale(1); }
+      to   { opacity: 0; transform: translateY(8px) scale(0.96); }
+    }
+
+    /* ============================================
+       MODAL / OVERLAY STYLES
+       ============================================ */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: var(--z-modal);
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: var(--space-6);
+      animation: fade-in 0.2s ease;
+    }
+
+    .modal-backdrop.hidden { display: none; }
+
+    .modal {
+      width: 100%;
+      max-width: 520px;
+      max-height: 85vh;
+      background: var(--bg-raised);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow-xl);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      animation: modal-in 0.25s ease;
     }
 
     .modal-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 1.25rem 1.5rem;
-      border-bottom: 1px solid var(--border-color);
+      padding: var(--space-5) var(--space-6);
+      border-bottom: 1px solid var(--border);
     }
 
-    .modal-title {
-      font-size: 1.125rem;
+    .modal-header h2 {
+      font-size: 16px;
       font-weight: 600;
-    }
-
-    .modal-close {
-      background: transparent;
-      border: none;
-      color: var(--text-muted);
-      cursor: pointer;
-      padding: 0.25rem;
-      border-radius: 4px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .modal-close:hover {
-      color: var(--text-primary);
-      background: var(--bg-tertiary);
-    }
-
-    .modal-close svg {
-      width: 20px;
-      height: 20px;
     }
 
     .modal-body {
-      padding: 1.5rem;
-    }
-
-    .settings-section {
-      margin-bottom: 1.5rem;
-    }
-
-    .settings-section:last-child {
-      margin-bottom: 0;
-    }
-
-    .settings-section-title {
-      font-size: 0.75rem;
-      text-transform: uppercase;
-      color: var(--text-muted);
-      margin-bottom: 0.75rem;
-      font-weight: 600;
-      letter-spacing: 0.05em;
-    }
-
-    .settings-field {
-      margin-bottom: 1rem;
-    }
-
-    .settings-field:last-child {
-      margin-bottom: 0;
-    }
-
-    .settings-field label {
-      display: block;
-      font-size: 0.875rem;
-      color: var(--text-secondary);
-      margin-bottom: 0.5rem;
-    }
-
-    .settings-input {
-      width: 100%;
-      padding: 0.625rem 0.875rem;
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
-      border-radius: 6px;
-      color: var(--text-primary);
-      font-size: 0.875rem;
-      transition: border-color 0.2s;
-    }
-
-    .settings-input:focus {
-      outline: none;
-      border-color: var(--accent-color);
-    }
-
-    .settings-select {
-      width: 100%;
-      padding: 0.625rem 0.875rem;
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
-      border-radius: 6px;
-      color: var(--text-primary);
-      font-size: 0.875rem;
-      cursor: pointer;
-      appearance: none;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%23888' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10l-5 5z'/%3E%3C/svg%3E");
-      background-repeat: no-repeat;
-      background-position: right 0.75rem center;
-    }
-
-    .settings-select:focus {
-      outline: none;
-      border-color: var(--accent-color);
-    }
-
-    /* Icon Upload */
-    .icon-upload-container {
-      display: flex;
-      align-items: center;
-      gap: 1rem;
-    }
-
-    .icon-preview {
-      width: 64px;
-      height: 64px;
-      border-radius: 12px;
-      background: var(--bg-tertiary);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1.5rem;
-      flex-shrink: 0;
-      overflow: hidden;
-    }
-
-    .icon-preview img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-
-    .icon-upload-actions {
+      padding: var(--space-6);
+      overflow-y: auto;
       flex: 1;
-    }
-
-    .icon-upload-btn {
-      padding: 0.5rem 1rem;
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
-      border-radius: 6px;
-      color: var(--text-primary);
-      font-size: 0.8125rem;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-
-    .icon-upload-btn:hover {
-      background: var(--bg-hover);
-      border-color: var(--accent-color);
-    }
-
-    .icon-upload-hint {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      margin-top: 0.5rem;
-    }
-
-    /* Action Buttons */
-    .settings-actions {
-      display: flex;
-      gap: 0.75rem;
-      flex-wrap: wrap;
-    }
-
-    .settings-action-btn {
-      flex: 1;
-      min-width: 120px;
-      padding: 0.625rem 1rem;
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
-      border-radius: 6px;
-      color: var(--text-primary);
-      font-size: 0.875rem;
-      cursor: pointer;
-      transition: all 0.2s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.5rem;
-    }
-
-    .settings-action-btn:hover {
-      background: var(--bg-hover);
-      border-color: var(--accent-color);
-    }
-
-    .settings-action-btn.danger {
-      border-color: var(--error-color);
-      color: var(--error-color);
-    }
-
-    .settings-action-btn.danger:hover {
-      background: var(--error-color);
-      color: white;
-    }
-
-    .settings-action-btn svg {
-      width: 16px;
-      height: 16px;
-    }
-
-    /* Environment Variables */
-    .env-vars-container {
-      display: flex;
-      flex-direction: column;
-      gap: 0.75rem;
-    }
-
-    .env-var-row {
-      display: flex;
-      gap: 0.5rem;
-      align-items: flex-start;
-    }
-
-    .env-var-key {
-      flex: 0 0 180px;
-      padding: 0.625rem 0.75rem;
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
-      border-radius: 6px;
-      color: var(--text-primary);
-      font-family: 'Monaco', 'Menlo', monospace;
-      font-size: 0.8125rem;
-    }
-
-    .env-var-key:focus {
-      outline: none;
-      border-color: var(--accent-color);
-    }
-
-    .env-var-key::placeholder {
-      color: var(--text-muted);
-      text-transform: none;
-    }
-
-    .env-var-value {
-      flex: 1;
-      padding: 0.625rem 0.75rem;
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
-      border-radius: 6px;
-      color: var(--text-primary);
-      font-family: 'Monaco', 'Menlo', monospace;
-      font-size: 0.8125rem;
-    }
-
-    .env-var-value:focus {
-      outline: none;
-      border-color: var(--accent-color);
-    }
-
-    .env-var-value::placeholder {
-      color: var(--text-muted);
-    }
-
-    .env-var-delete {
-      flex: 0 0 auto;
-      padding: 0.625rem;
-      background: transparent;
-      border: 1px solid transparent;
-      border-radius: 6px;
-      color: var(--text-muted);
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-
-    .env-var-delete:hover {
-      background: rgba(248, 113, 113, 0.1);
-      border-color: var(--error-color);
-      color: var(--error-color);
-    }
-
-    .env-var-delete svg {
-      width: 16px;
-      height: 16px;
-    }
-
-    .env-var-add-btn {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.5rem 0.75rem;
-      background: transparent;
-      border: 1px dashed var(--border-color);
-      border-radius: 6px;
-      color: var(--text-secondary);
-      font-size: 0.8125rem;
-      cursor: pointer;
-      transition: all 0.15s;
-      width: fit-content;
-    }
-
-    .env-var-add-btn:hover {
-      border-color: var(--accent-color);
-      color: var(--accent-color);
-    }
-
-    .env-var-add-btn svg {
-      width: 14px;
-      height: 14px;
-    }
-
-    .env-vars-empty {
-      padding: 1.5rem;
-      text-align: center;
-      color: var(--text-muted);
-      font-size: 0.875rem;
-      border: 1px dashed var(--border-color);
-      border-radius: 8px;
-    }
-
-    .env-vars-limits {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      margin-top: 0.5rem;
-    }
-
-    .env-var-masked {
-      color: var(--text-muted);
-      font-style: italic;
-    }
-
-    .env-var-toggle-visibility {
-      flex: 0 0 auto;
-      padding: 0.625rem;
-      background: transparent;
-      border: 1px solid transparent;
-      border-radius: 6px;
-      color: var(--text-muted);
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-
-    .env-var-toggle-visibility:hover {
-      background: var(--bg-hover);
-      color: var(--text-primary);
-    }
-
-    .env-var-toggle-visibility svg {
-      width: 16px;
-      height: 16px;
     }
 
     .modal-footer {
-      padding: 1rem 1.5rem;
-      border-top: 1px solid var(--border-color);
       display: flex;
+      align-items: center;
       justify-content: flex-end;
-      gap: 0.75rem;
+      gap: var(--space-3);
+      padding: var(--space-4) var(--space-6);
+      border-top: 1px solid var(--border);
     }
 
-    .modal-btn {
-      padding: 0.625rem 1.25rem;
-      border-radius: 6px;
-      font-size: 0.875rem;
+    @keyframes modal-in {
+      from { opacity: 0; transform: scale(0.95) translateY(8px); }
+      to   { opacity: 1; transform: scale(1) translateY(0); }
+    }
+
+    @keyframes fade-in {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+
+    /* ============================================
+       AUTH POPUP OVERLAY
+       ============================================ */
+    .auth-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: var(--z-modal);
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: var(--space-6);
+      animation: fade-in 0.3s ease;
+    }
+
+    .auth-overlay.hidden { display: none; }
+
+    .auth-card {
+      width: 100%;
+      max-width: 400px;
+      background: var(--bg-raised);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow-xl);
+      padding: var(--space-10) var(--space-8);
+      text-align: center;
+      animation: modal-in 0.3s ease;
+    }
+
+    .auth-card h2 {
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: var(--space-2);
+      letter-spacing: -0.02em;
+    }
+
+    .auth-card p {
+      font-size: 14px;
+      color: var(--text-secondary);
+      margin-bottom: var(--space-8);
+      line-height: 1.6;
+    }
+
+    .auth-divider {
+      display: flex;
+      align-items: center;
+      gap: var(--space-4);
+      margin: var(--space-6) 0;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    .auth-divider::before,
+    .auth-divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    .auth-provider-btn {
+      width: 100%;
+      height: 42px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-3);
+      font-size: 14px;
       font-weight: 500;
+      color: var(--text-primary);
+      background: var(--bg-base);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-md);
+      transition: all var(--transition-fast);
       cursor: pointer;
-      transition: all 0.2s;
+      margin-bottom: var(--space-3);
     }
 
-    .modal-btn.secondary {
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
+    .auth-provider-btn:hover {
+      background: var(--bg-hover);
+      border-color: rgba(255,255,255,0.2);
+    }
+
+    /* ============================================
+       TAB SYSTEM
+       ============================================ */
+    .tabs {
+      display: flex;
+      align-items: center;
+      gap: var(--space-1);
+      border-bottom: 1px solid var(--border);
+      margin-bottom: var(--space-6);
+    }
+
+    .tab {
+      position: relative;
+      padding: var(--space-3) var(--space-4);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: color var(--transition-fast);
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+    }
+
+    .tab:hover {
+      color: var(--text-secondary);
+    }
+
+    .tab.active {
+      color: var(--text-primary);
+      border-bottom-color: var(--accent);
+    }
+
+    .tab-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--bg-active);
+      color: var(--text-secondary);
+      border-radius: var(--radius-full);
+      margin-left: var(--space-2);
+    }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Pill tabs variant */
+    .tabs-pill {
+      display: flex;
+      align-items: center;
+      gap: var(--space-1);
+      padding: var(--space-1);
+      background: var(--bg-subtle);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      width: fit-content;
+    }
+
+    .tabs-pill .tab {
+      padding: var(--space-2) var(--space-3);
+      border-bottom: none;
+      border-radius: var(--radius-sm);
+      margin-bottom: 0;
+    }
+
+    .tabs-pill .tab.active {
+      background: var(--bg-raised);
+      color: var(--text-primary);
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* ============================================
+       ANIMATIONS & TRANSITIONS
+       ============================================ */
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    @keyframes slide-up {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes slide-down {
+      from { opacity: 0; transform: translateY(-12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes slide-in-right {
+      from { opacity: 0; transform: translateX(12px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    @keyframes scale-in {
+      from { opacity: 0; transform: scale(0.95); }
+      to   { opacity: 1; transform: scale(1); }
+    }
+
+    @keyframes shimmer {
+      0% { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+
+    .animate-in { animation: slide-up 0.3s ease forwards; }
+    .animate-fade { animation: fade-in 0.2s ease forwards; }
+    .animate-spin { animation: spin 1s linear infinite; }
+    .animate-pulse { animation: pulse 2s ease-in-out infinite; }
+
+    .skeleton {
+      background: linear-gradient(90deg, var(--bg-raised) 25%, var(--bg-hover) 50%, var(--bg-raised) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s ease-in-out infinite;
+      border-radius: var(--radius-md);
+    }
+
+    /* Staggered children */
+    .stagger > * {
+      opacity: 0;
+      animation: slide-up 0.3s ease forwards;
+    }
+    .stagger > *:nth-child(1) { animation-delay: 0ms; }
+    .stagger > *:nth-child(2) { animation-delay: 50ms; }
+    .stagger > *:nth-child(3) { animation-delay: 100ms; }
+    .stagger > *:nth-child(4) { animation-delay: 150ms; }
+    .stagger > *:nth-child(5) { animation-delay: 200ms; }
+    .stagger > *:nth-child(6) { animation-delay: 250ms; }
+
+    /* ============================================
+       CONNECTION STATE MACHINE STYLES
+       ============================================ */
+    .connection-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-2);
+      padding: var(--space-1) var(--space-3);
+      font-size: 12px;
+      font-weight: 500;
+      border-radius: var(--radius-full);
+      transition: all var(--transition-base);
+    }
+
+    .connection-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .connection-badge[data-state="connected"] {
+      background: var(--success-soft);
+      color: var(--success);
+    }
+    .connection-badge[data-state="connected"] .connection-dot {
+      background: var(--success);
+      box-shadow: 0 0 6px var(--success);
+    }
+
+    .connection-badge[data-state="connecting"] {
+      background: var(--warning-soft);
+      color: var(--warning);
+    }
+    .connection-badge[data-state="connecting"] .connection-dot {
+      background: var(--warning);
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    .connection-badge[data-state="disconnected"] {
+      background: var(--bg-active);
+      color: var(--text-muted);
+    }
+    .connection-badge[data-state="disconnected"] .connection-dot {
+      background: var(--text-muted);
+    }
+
+    .connection-badge[data-state="error"] {
+      background: var(--error-soft);
+      color: var(--error);
+    }
+    .connection-badge[data-state="error"] .connection-dot {
+      background: var(--error);
+    }
+
+    /* ============================================
+       LANDING PAGE / HERO STYLES
+       ============================================ */
+    .hero {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      padding: var(--space-20) 0 var(--space-16);
+      max-width: 680px;
+      margin: 0 auto;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-2);
+      padding: var(--space-1) var(--space-3);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--accent-text);
+      background: var(--accent-soft);
+      border: 1px solid rgba(59,130,246,0.2);
+      border-radius: var(--radius-full);
+      margin-bottom: var(--space-6);
+    }
+
+    .hero h1 {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      letter-spacing: -0.035em;
+      margin-bottom: var(--space-5);
+      background: linear-gradient(180deg, #fff 0%, rgba(255,255,255,0.7) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero p {
+      font-size: 18px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+      margin-bottom: var(--space-8);
+      max-width: 520px;
+    }
+
+    .hero-actions {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: var(--space-4);
+      margin-top: var(--space-16);
+      width: 100%;
+      max-width: 900px;
+    }
+
+    .hero-stat {
+      text-align: center;
+      padding: var(--space-6);
+    }
+
+    .hero-stat .stat-value {
+      font-size: 36px;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+    }
+
+    .hero-stat .stat-label {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: var(--space-1);
+    }
+
+    /* Code showcase on landing */
+    .code-showcase {
+      width: 100%;
+      max-width: 640px;
+      margin: var(--space-12) auto 0;
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+
+    .code-showcase-header {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      padding: var(--space-3) var(--space-4);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .code-showcase-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--bg-active);
+    }
+
+    .code-showcase pre {
+      padding: var(--space-5);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--text-secondary);
+      overflow-x: auto;
+    }
+
+    /* ============================================
+       DASHBOARD STYLES
+       ============================================ */
+    .dashboard-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: var(--space-6);
+    }
+
+    .dashboard-header h1 {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .dashboard-actions {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+    }
+
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: var(--space-4);
+      margin-bottom: var(--space-8);
+    }
+
+    .stat-card {
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: var(--space-5);
+    }
+
+    .stat-card .stat-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: var(--space-2);
+    }
+
+    .stat-card .stat-value {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+    }
+
+    .stat-card .stat-change {
+      font-size: 12px;
+      margin-top: var(--space-1);
+    }
+
+    .stat-card .stat-change.positive { color: var(--success); }
+    .stat-card .stat-change.negative { color: var(--error); }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: var(--space-16) var(--space-8);
+      color: var(--text-muted);
+    }
+
+    .empty-state svg {
+      width: 48px;
+      height: 48px;
+      margin-bottom: var(--space-4);
+      opacity: 0.4;
+    }
+
+    .empty-state h3 {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: var(--space-2);
+    }
+
+    .empty-state p {
+      font-size: 14px;
+      max-width: 360px;
+      margin-bottom: var(--space-6);
+    }
+
+    /* ============================================
+       APP DETAIL VIEW STYLES
+       ============================================ */
+    .app-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: var(--space-6);
+      gap: var(--space-4);
+    }
+
+    .app-header-left {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+    }
+
+    .app-header h1 {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+    }
+
+    .app-header .app-slug {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .app-header-right {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      flex-shrink: 0;
+    }
+
+    .endpoint-display {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      padding: var(--space-2) var(--space-3);
+      background: var(--bg-base);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+
+    .endpoint-display:hover {
+      border-color: var(--border-strong);
       color: var(--text-primary);
     }
 
-    .modal-btn.secondary:hover {
+    .function-list {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-3);
+    }
+
+    .function-card {
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: var(--space-5);
+      transition: border-color var(--transition-fast);
+    }
+
+    .function-card:hover {
+      border-color: var(--border-strong);
+    }
+
+    .function-card .fn-name {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--accent-text);
+      margin-bottom: var(--space-2);
+    }
+
+    .function-card .fn-desc {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-bottom: var(--space-3);
+      line-height: 1.5;
+    }
+
+    .function-card .fn-params {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-2);
+    }
+
+    .param-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-1);
+      padding: 2px var(--space-2);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+      background: var(--bg-subtle);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+    }
+
+    .param-tag .param-required {
+      color: var(--warning);
+    }
+
+    /* Code editor area */
+    .code-editor-wrapper {
+      position: relative;
+      background: var(--bg-base);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+
+    .code-editor-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: var(--space-3) var(--space-4);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-raised);
+    }
+
+    .code-editor-header .file-name {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .code-editor textarea {
+      width: 100%;
+      min-height: 400px;
+      padding: var(--space-4);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--text-primary);
+      background: transparent;
+      border: none;
+      outline: none;
+      resize: vertical;
+      tab-size: 2;
+    }
+
+    /* ============================================
+       PROFILE DROPDOWN STYLES
+       ============================================ */
+    .profile-trigger {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      padding: var(--space-1) var(--space-2);
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      transition: background var(--transition-fast);
+    }
+
+    .profile-trigger:hover {
       background: var(--bg-hover);
     }
 
-    .modal-btn.primary {
-      background: var(--accent-gradient);
-      border: none;
-      color: white;
-    }
-
-    .modal-btn.primary:hover {
-      opacity: 0.9;
-    }
-
-    .modal-btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    /* Toast Notifications */
-    .toast {
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      padding: 0.875rem 1.25rem;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: 8px;
-      color: var(--text-primary);
-      font-size: 0.875rem;
-      z-index: 2000;
-      transform: translateY(100px);
-      opacity: 0;
-      transition: transform 0.3s, opacity 0.3s;
-    }
-
-    .toast.show {
-      transform: translateY(0);
-      opacity: 1;
-    }
-
-    .toast.success {
-      border-color: var(--success-color);
-    }
-
-    .toast.error {
-      border-color: var(--error-color);
-    }
-
-    .toast.warning {
-      border-color: var(--warning-color);
-    }
-
-    /* Error display */
-    .ultralight-error {
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      max-width: 400px;
-      padding: 1rem;
-      background: var(--bg-secondary);
-      border: 1px solid var(--error-color);
-      border-radius: 8px;
-      color: var(--text-primary);
-      font-family: monospace;
-      font-size: 0.875rem;
-      z-index: 10000;
-    }
-
-    .ultralight-error-title {
-      color: var(--error-color);
-      font-weight: bold;
-      margin-bottom: 0.5rem;
-    }
-
-    .ultralight-error-close {
-      position: absolute;
-      top: 8px;
-      right: 8px;
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      cursor: pointer;
-      font-size: 1.25rem;
-    }
-
-    /* Confirm Dialog */
-    .confirm-dialog {
-      text-align: center;
-      padding: 1rem 0;
-    }
-
-    .confirm-dialog-icon {
-      font-size: 3rem;
-      margin-bottom: 1rem;
-    }
-
-    .confirm-dialog-title {
-      font-size: 1.125rem;
-      font-weight: 600;
-      margin-bottom: 0.5rem;
-    }
-
-    .confirm-dialog-message {
-      color: var(--text-secondary);
-      font-size: 0.875rem;
-      margin-bottom: 1.5rem;
-    }
-
-    .confirm-dialog-actions {
+    .profile-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--accent-soft);
+      color: var(--accent);
       display: flex;
-      gap: 0.75rem;
+      align-items: center;
       justify-content: center;
+      font-size: 12px;
+      font-weight: 600;
+      overflow: hidden;
     }
 
-    /* Responsive */
-    @media (max-width: 768px) {
-      .sidebar {
-        width: 100%;
-        height: auto;
-        position: relative;
-        border-right: none;
-        border-bottom: 1px solid var(--border-color);
-      }
-
-      .main-content {
-        margin-left: 0;
-      }
-
-      .modal {
-        width: 95%;
-        margin: 1rem;
-      }
+    .profile-avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 50%;
     }
 
-    /* Scrollbar styling */
+    .profile-dropdown {
+      position: absolute;
+      top: calc(100% + var(--space-2));
+      right: 0;
+      z-index: var(--z-dropdown);
+      min-width: 220px;
+      background: var(--bg-overlay);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg);
+      padding: var(--space-2);
+      animation: slide-down 0.15s ease forwards;
+    }
+
+    .profile-dropdown { display: none; }
+    .profile-dropdown.open { display: block; }
+
+    .profile-dropdown-item {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      padding: var(--space-2) var(--space-3);
+      font-size: 13px;
+      color: var(--text-secondary);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+
+    .profile-dropdown-item:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .profile-dropdown-item.danger {
+      color: var(--error);
+    }
+
+    .profile-dropdown-item.danger:hover {
+      background: var(--error-soft);
+    }
+
+    .profile-dropdown-divider {
+      height: 1px;
+      background: var(--border);
+      margin: var(--space-2) 0;
+    }
+
+    .profile-dropdown-header {
+      padding: var(--space-2) var(--space-3);
+      font-size: 12px;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    /* ============================================
+       FAQ ACCORDION STYLES
+       ============================================ */
+    .faq-section {
+      max-width: 640px;
+      margin: var(--space-16) auto 0;
+    }
+
+    .faq-section h2 {
+      font-size: 24px;
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: var(--space-8);
+      letter-spacing: -0.02em;
+    }
+
+    .faq-list {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-1);
+    }
+
+    .faq-item {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      transition: border-color var(--transition-fast);
+    }
+
+    .faq-item:hover {
+      border-color: var(--border-strong);
+    }
+
+    .faq-trigger {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: var(--space-4) var(--space-5);
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-primary);
+      background: none;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .faq-trigger svg {
+      width: 16px;
+      height: 16px;
+      color: var(--text-muted);
+      transition: transform var(--transition-base);
+      flex-shrink: 0;
+    }
+
+    .faq-item.open .faq-trigger svg {
+      transform: rotate(180deg);
+    }
+
+    .faq-content {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height var(--transition-slow);
+    }
+
+    .faq-item.open .faq-content {
+      max-height: 500px;
+    }
+
+    .faq-content-inner {
+      padding: 0 var(--space-5) var(--space-5);
+      font-size: 14px;
+      color: var(--text-secondary);
+      line-height: 1.7;
+    }
+
+    /* ============================================
+       SCROLLBAR STYLES
+       ============================================ */
     ::-webkit-scrollbar {
       width: 6px;
+      height: 6px;
     }
 
     ::-webkit-scrollbar-track {
@@ -1639,2112 +1532,868 @@ export function getLayoutHTML(options: {
     }
 
     ::-webkit-scrollbar-thumb {
-      background: var(--border-color);
+      background: rgba(255,255,255,0.1);
       border-radius: 3px;
     }
 
     ::-webkit-scrollbar-thumb:hover {
-      background: var(--text-muted);
+      background: rgba(255,255,255,0.18);
     }
 
-    /* (settings-btn removed from profile — now in profile dropdown) */
-
-    /* BYOK Settings */
-    .byok-providers {
-      display: flex;
-      flex-direction: column;
-      gap: 0.75rem;
+    /* Firefox */
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.1) transparent;
     }
 
-    .byok-provider-card {
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
-      border-radius: 8px;
-      padding: 1rem;
-      transition: border-color 0.2s;
-    }
+    /* ============================================
+       RESPONSIVE BREAKPOINTS
+       ============================================ */
+    @media (max-width: 1024px) {
+      .app-grid {
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      }
 
-    .byok-provider-card:hover {
-      border-color: var(--text-muted);
-    }
+      .hero h1 {
+        font-size: 44px;
+      }
 
-    .byok-provider-card.configured {
-      border-color: var(--success-color);
-    }
-
-    .byok-provider-card.primary {
-      border-color: var(--accent-color);
-      background: rgba(102, 126, 234, 0.1);
-    }
-
-    .byok-provider-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 0.5rem;
-    }
-
-    .byok-provider-info {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-    }
-
-    .byok-provider-icon {
-      width: 32px;
-      height: 32px;
-      border-radius: 6px;
-      background: var(--bg-secondary);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1rem;
-    }
-
-    .byok-provider-name {
-      font-weight: 500;
-    }
-
-    .byok-provider-desc {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-    }
-
-    .byok-provider-actions {
-      display: flex;
-      gap: 0.5rem;
-    }
-
-    .byok-status {
-      font-size: 0.75rem;
-      padding: 0.25rem 0.5rem;
-      border-radius: 4px;
-    }
-
-    .byok-status.configured {
-      background: rgba(74, 222, 128, 0.15);
-      color: var(--success-color);
-    }
-
-    .byok-status.primary {
-      background: rgba(102, 126, 234, 0.15);
-      color: var(--accent-color);
-    }
-
-    .byok-key-input {
-      display: flex;
-      gap: 0.5rem;
-      margin-top: 0.75rem;
-    }
-
-    .byok-key-input input {
-      flex: 1;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: 6px;
-      padding: 0.5rem 0.75rem;
-      color: var(--text-primary);
-      font-size: 0.875rem;
-      font-family: monospace;
-    }
-
-    .byok-key-input input:focus {
-      outline: none;
-      border-color: var(--accent-color);
-    }
-
-    .byok-key-input input::placeholder {
-      color: var(--text-muted);
-    }
-
-    .byok-btn {
-      padding: 0.5rem 0.75rem;
-      border-radius: 6px;
-      font-size: 0.75rem;
-      font-weight: 500;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-
-    .byok-btn-primary {
-      background: var(--accent-gradient);
-      border: none;
-      color: white;
-    }
-
-    .byok-btn-primary:hover {
-      opacity: 0.9;
-    }
-
-    .byok-btn-primary:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    .byok-btn-secondary {
-      background: transparent;
-      border: 1px solid var(--border-color);
-      color: var(--text-secondary);
-    }
-
-    .byok-btn-secondary:hover {
-      background: var(--bg-hover);
-      color: var(--text-primary);
-    }
-
-    .byok-btn-danger {
-      background: transparent;
-      border: 1px solid var(--error-color);
-      color: var(--error-color);
-    }
-
-    .byok-btn-danger:hover {
-      background: rgba(248, 113, 113, 0.1);
-    }
-
-    .byok-help {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      margin-top: 0.5rem;
-    }
-
-    .byok-help a {
-      color: var(--accent-color);
-      text-decoration: none;
-    }
-
-    .byok-help a:hover {
-      text-decoration: underline;
-    }
-
-    .byok-loading {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 2rem;
-      color: var(--text-muted);
-    }
-
-    .byok-message {
-      padding: 0.75rem 1rem;
-      border-radius: 6px;
-      margin-bottom: 1rem;
-      font-size: 0.875rem;
-    }
-
-    .byok-message.success {
-      background: rgba(74, 222, 128, 0.15);
-      color: var(--success-color);
-    }
-
-    .byok-message.error {
-      background: rgba(248, 113, 113, 0.15);
-      color: var(--error-color);
-    }
-
-    /* Settings Tabs */
-    .settings-tabs {
-      display: flex;
-      border-bottom: 1px solid var(--border-color);
-      padding: 0 1.5rem;
-      background: var(--bg-secondary);
-    }
-
-    .settings-tab {
-      padding: 0.75rem 1.25rem;
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      cursor: pointer;
-      font-size: 0.875rem;
-      font-weight: 500;
-      border-bottom: 2px solid transparent;
-      margin-bottom: -1px;
-      transition: all 0.2s;
-    }
-
-    .settings-tab:hover {
-      color: var(--text-secondary);
-    }
-
-    .settings-tab.active {
-      color: var(--accent-color);
-      border-bottom-color: var(--accent-color);
-    }
-
-    .settings-tab-content {
-      display: none;
-    }
-
-    .settings-tab-content.active {
-      display: block;
-    }
-
-    /* API Tokens */
-    .token-create-form {
-      display: flex;
-      gap: 0.5rem;
-      margin-bottom: 1rem;
-    }
-
-    .token-create-form input {
-      flex: 1;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: 6px;
-      padding: 0.5rem 0.75rem;
-      color: var(--text-primary);
-      font-size: 0.875rem;
-    }
-
-    .token-create-form input:focus {
-      outline: none;
-      border-color: var(--accent-color);
-    }
-
-    .token-create-form select {
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: 6px;
-      padding: 0.5rem 0.75rem;
-      color: var(--text-primary);
-      font-size: 0.875rem;
-      cursor: pointer;
-    }
-
-    .new-token-display {
-      background: rgba(251, 191, 36, 0.1);
-      border: 1px solid rgba(251, 191, 36, 0.3);
-      border-radius: 8px;
-      padding: 1rem;
-      margin-bottom: 1rem;
-    }
-
-    .new-token-warning {
-      font-size: 0.875rem;
-      color: #fbbf24;
-      margin-bottom: 0.75rem;
-      font-weight: 500;
-    }
-
-    .new-token-value {
-      display: flex;
-      gap: 0.5rem;
-      align-items: center;
-    }
-
-    .new-token-value code {
-      flex: 1;
-      background: var(--bg-tertiary);
-      padding: 0.75rem;
-      border-radius: 6px;
-      font-family: monospace;
-      font-size: 0.875rem;
-      word-break: break-all;
-      color: var(--text-primary);
-    }
-
-    .tokens-list {
-      display: flex;
-      flex-direction: column;
-      gap: 0.5rem;
-    }
-
-    .token-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0.75rem 1rem;
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
-      border-radius: 8px;
-    }
-
-    .token-item.expired {
-      opacity: 0.6;
-    }
-
-    .token-info {
-      display: flex;
-      flex-direction: column;
-      gap: 0.25rem;
-      flex: 1;
-    }
-
-    .token-name {
-      font-weight: 500;
-      font-size: 0.875rem;
-    }
-
-    .token-meta {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      display: flex;
-      gap: 1rem;
-      flex-wrap: wrap;
-    }
-
-    .token-prefix {
-      font-family: monospace;
-      color: var(--accent-color);
-    }
-
-    .token-expired-badge {
-      background: rgba(239, 68, 68, 0.2);
-      color: #ef4444;
-      padding: 0.125rem 0.5rem;
-      border-radius: 4px;
-      font-size: 0.625rem;
-      font-weight: 600;
-      text-transform: uppercase;
-    }
-
-    .tokens-empty {
-      text-align: center;
-      padding: 2rem;
-      color: var(--text-muted);
-      font-size: 0.875rem;
-    }
-
-    /* Developer Resources */
-    .dev-resources {
-      margin-top: 2rem;
-      padding-top: 2rem;
-      border-top: 1px solid var(--border-color);
-      width: 100%;
-    }
-
-    .dev-resources-title {
-      font-size: 0.875rem;
-      color: var(--text-muted);
-      margin-bottom: 1rem;
-      text-align: center;
-    }
-
-    .dev-resources-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 0.75rem;
-    }
-
-    @media (max-width: 600px) {
-      .dev-resources-grid {
-        grid-template-columns: 1fr;
+      .hero-grid {
+        grid-template-columns: repeat(2, 1fr);
       }
     }
 
-    .dev-resource-card {
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: 8px;
-      padding: 0.875rem;
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      text-decoration: none;
-      color: inherit;
-      transition: all 0.2s;
+    @media (max-width: 768px) {
+      :root {
+        --nav-height: 52px;
+      }
+
+      .top-nav {
+        padding: 0 var(--space-4);
+      }
+
+      .nav-links {
+        display: none;
+      }
+
+      .main-content {
+        padding: var(--space-5) var(--space-4);
+      }
+
+      .hero {
+        padding: var(--space-12) 0 var(--space-8);
+      }
+
+      .hero h1 {
+        font-size: 34px;
+      }
+
+      .hero p {
+        font-size: 16px;
+      }
+
+      .hero-grid {
+        grid-template-columns: 1fr;
+        gap: var(--space-3);
+      }
+
+      .hero-actions {
+        flex-direction: column;
+        width: 100%;
+      }
+
+      .hero-actions .btn {
+        width: 100%;
+      }
+
+      .app-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .app-header {
+        flex-direction: column;
+      }
+
+      .app-header-right {
+        width: 100%;
+        flex-wrap: wrap;
+      }
+
+      .stats-row {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .dashboard-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--space-3);
+      }
+
+      .modal {
+        max-width: 100%;
+        border-radius: var(--radius-lg);
+      }
+
+      .toast-container {
+        left: var(--space-4);
+        right: var(--space-4);
+        bottom: var(--space-4);
+      }
+
+      .toast {
+        min-width: unset;
+        max-width: 100%;
+      }
     }
 
-    .dev-resource-card:hover {
-      border-color: var(--accent-color);
-      background: var(--bg-tertiary);
+    @media (max-width: 480px) {
+      .hero h1 {
+        font-size: 28px;
+      }
+
+      .stats-row {
+        grid-template-columns: 1fr;
+      }
+
+      .text-display {
+        font-size: 32px;
+      }
+
+      .auth-card {
+        padding: var(--space-8) var(--space-5);
+      }
     }
 
-    .dev-resource-icon {
-      font-size: 1.25rem;
-    }
-
-    .dev-resource-content {
-      flex: 1;
-      min-width: 0;
-    }
-
-    .dev-resource-name {
-      font-weight: 500;
-      font-size: 0.875rem;
-      margin-bottom: 0.125rem;
-    }
-
-    .dev-resource-desc {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      font-family: monospace;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    /* Quick Reference Modal */
-    .quick-ref-content {
-      font-family: monospace;
-      font-size: 0.8125rem;
-      line-height: 1.6;
-    }
-
-    .quick-ref-section {
-      margin-bottom: 1.5rem;
-    }
-
-    .quick-ref-section-title {
-      font-weight: 600;
-      color: var(--accent-color);
-      margin-bottom: 0.5rem;
-      font-family: system-ui;
-    }
-
-    .quick-ref-code {
-      background: var(--bg-tertiary);
-      padding: 0.75rem;
-      border-radius: 6px;
-      overflow-x: auto;
-      white-space: pre;
-    }
-
-    /* ===== Hero / Landing Section ===== */
-    .hero-title {
-      font-size: clamp(3rem, 7vw, 4.5rem);
-      font-weight: 800;
-      letter-spacing: -0.03em;
-      line-height: 1.15;
-      text-align: center;
-      color: var(--text-primary);
-    }
-    .hero-title .accent {
-      background: var(--accent-gradient);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
-    .hero-subtitle {
-      text-align: center;
-      color: var(--text-secondary);
-      font-size: 1.15rem;
-      max-width: 520px;
-      margin: 0.75rem auto 2.5rem;
-      line-height: 1.6;
-    }
-
-    /* ===== Footer — exact height matches .sidebar-footer ===== */
-    .site-footer {
-      width: 100%;
-      border-top: 1px solid var(--border-color);
-      padding: 0 2rem;
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: 0.75rem;
-      font-size: 0.8125rem;
-      color: var(--text-muted);
-      margin-top: auto;
-      height: 64px;
-      flex-shrink: 0;
-    }
-    .site-footer a {
-      color: var(--text-secondary);
-      text-decoration: none;
-      transition: color 0.2s;
-    }
-    .site-footer a:hover { color: var(--accent-color); }
-    .footer-links { display: flex; gap: 1.5rem; flex-wrap: wrap; }
-
-    .main-content {
-      transition: margin-left 0.3s ease;
-    }
-
-    /* ===== Top Bar (full-width, YouTube-style) ===== */
-    .top-bar {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 52px;
-      background: var(--bg-primary);
-      display: flex;
-      align-items: center;
-      padding: 0 1.25rem;
-      gap: 0.75rem;
-      z-index: 200;
-    }
-    .top-bar-left {
-      display: flex;
-      align-items: center;
-      flex-shrink: 0;
-    }
-    .top-bar-left .logo {
-      display: flex;
-      align-items: center;
-      text-decoration: none;
-    }
-    .top-bar-left .logo-icon {
-      width: 24px;
-      height: 24px;
-    }
-    .top-bar-center {
-      flex: 1;
-      display: flex;
-      justify-content: center;
-    }
-    .top-bar-right {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      justify-content: flex-end;
-      flex-shrink: 0;
-    }
-    .top-bar-search {
-      width: 100%;
-      max-width: 560px;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
-      border-radius: 9999px;
-      padding: 0.5rem 1rem;
-    }
-    .top-bar-search input {
-      flex: 1;
-      background: transparent;
-      border: none;
-      color: var(--text-primary);
-      font-size: 0.8125rem;
-      outline: none;
-    }
-    .top-bar-search svg { width: 16px; height: 16px; color: var(--text-muted); flex-shrink: 0; }
-    .top-bar-btn {
-      display: flex;
-      align-items: center;
-      gap: 0.375rem;
-      padding: 0.375rem 0.75rem;
-      background: transparent;
-      border: 1px solid var(--border-color);
-      border-radius: 6px;
-      color: var(--text-secondary);
-      font-size: 0.8125rem;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-    .top-bar-btn:hover { background: var(--bg-secondary); color: var(--text-primary); }
-    .top-bar-btn svg { width: 16px; height: 16px; }
-    .top-bar-connect-btn {
-      display: none;
-      align-items: center;
-      gap: 0.375rem;
-      padding: 0.4rem 0.875rem;
-      background: var(--accent-color);
-      color: #fff;
-      border: none;
-      border-radius: 9999px;
-      font-size: 0.8125rem;
-      font-weight: 500;
-      cursor: pointer;
-      transition: filter 0.15s;
-      white-space: nowrap;
-    }
-    .top-bar-connect-btn:hover { filter: brightness(1.1); }
-    .top-bar-connect-btn.visible { display: flex; }
-    .top-bar-profile {
-      position: relative;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.25rem 0.5rem;
-      border-radius: 6px;
-      cursor: pointer;
-      transition: background 0.15s;
-    }
-    .top-bar-profile:hover { background: var(--bg-secondary); }
-    .top-bar-profile-dropdown {
-      display: none;
+    /* ============================================
+       UTILITY CLASSES
+       ============================================ */
+    .sr-only {
       position: absolute;
-      top: 100%;
-      right: 0;
-      margin-top: 4px;
-      min-width: 220px;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: 8px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-      z-index: 300;
-      padding: 0.5rem;
-    }
-    .top-bar-profile-dropdown.open { display: block; }
-    .top-bar-profile-dropdown-email {
-      padding: 0.5rem 0.75rem;
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      border-bottom: 1px solid var(--border-color);
-      margin-bottom: 0.25rem;
-    }
-    .top-bar-profile-dropdown-item {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      width: 100%;
-      padding: 0.5rem 0.75rem;
-      background: transparent;
-      border: none;
-      border-radius: 4px;
-      color: var(--text-secondary);
-      font-size: 0.8125rem;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-    .top-bar-profile-dropdown-item:hover { background: var(--bg-tertiary); color: var(--text-primary); }
-    .top-bar-profile-dropdown-item svg { width: 16px; height: 16px; }
-
-    /* ===== Right Sidebar (X/Twitter-style) ===== */
-    .right-sidebar {
-      position: fixed;
-      top: 72px;
-      right: 20px;
-      width: 300px;
-      max-height: calc(100vh - 92px);
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: 16px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
       overflow: hidden;
-      display: none;
-      flex-direction: column;
-      z-index: 50;
-    }
-    .right-sidebar.visible { display: flex; }
-    .right-sidebar-header {
-      padding: 0.875rem 1rem 0;
-      flex-shrink: 0;
-    }
-    .right-sidebar-tabs {
-      display: flex;
-      gap: 0;
-      border-bottom: 1px solid var(--border-color);
-      padding: 0 1rem;
-    }
-    .right-sidebar-tab {
-      flex: 1;
-      padding: 0.625rem 0;
-      font-size: 0.8125rem;
-      font-weight: 500;
-      color: var(--text-muted);
-      background: none;
-      border: none;
-      border-bottom: 2px solid transparent;
-      cursor: pointer;
-      text-align: center;
-      transition: color 0.15s, border-color 0.15s;
-    }
-    .right-sidebar-tab:hover { color: var(--text-primary); }
-    .right-sidebar-tab.active {
-      color: var(--text-primary);
-      border-bottom-color: var(--accent-color);
-    }
-    .right-sidebar-content {
-      flex: 1;
-      overflow-y: auto;
-      padding: 0.75rem 1rem;
-    }
-    .main-content.has-right-sidebar { margin-right: 340px; }
-
-    /* ===== Home Page Hero ===== */
-    .home-view {
-      flex-direction: column;
-      width: 100%;
-      padding-top: 52px;
-      overflow-y: auto;
-    }
-    .home-hero {
-      min-height: calc(100vh - 52px);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      text-align: center;
-      padding: 2rem;
-    }
-    .home-hero-title {
-      font-size: clamp(2.75rem, 5vw, 4rem);
-      font-weight: 800;
-      letter-spacing: -0.03em;
-      line-height: 1.1;
-      color: var(--text-primary);
-      margin-bottom: 2rem;
-    }
-    .home-cta-row {
-      display: flex;
-      gap: 0.75rem;
-      align-items: center;
-    }
-    .home-cta-primary {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.75rem 1.75rem;
-      background: var(--accent-color);
-      color: #fff;
-      border: none;
-      border-radius: 9999px;
-      font-size: 0.9375rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: filter 0.15s;
-    }
-    .home-cta-primary:hover { filter: brightness(1.1); }
-    .home-cta-secondary {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.75rem 1.75rem;
-      background: transparent;
-      color: var(--text-primary);
-      border: 1px solid var(--border-color);
-      border-radius: 9999px;
-      font-size: 0.9375rem;
-      font-weight: 500;
-      cursor: pointer;
-      text-decoration: none;
-      transition: background 0.15s, border-color 0.15s;
-    }
-    .home-cta-secondary:hover { background: var(--bg-tertiary); border-color: var(--text-muted); }
-
-    /* Setup Modal */
-    .setup-modal-overlay {
-      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.7); backdrop-filter: blur(4px);
-      z-index: 1000; display: flex; align-items: center; justify-content: center;
-      animation: fadeIn 0.2s ease;
-    }
-    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-    .setup-modal-card {
-      background: var(--bg-secondary); border: 1px solid var(--border-color);
-      border-radius: 16px; padding: 2rem; max-width: 520px; width: 90%;
-      position: relative; box-shadow: 0 20px 60px rgba(0,0,0,0.4);
-    }
-    .setup-modal-close {
-      position: absolute; top: 12px; right: 16px; background: none; border: none;
-      color: var(--text-muted); font-size: 1.5rem; cursor: pointer; padding: 4px;
-      line-height: 1; transition: color 0.15s;
-    }
-    .setup-modal-close:hover { color: var(--text-primary); }
-    .setup-modal-icon { font-size: 1.5rem; margin-bottom: 0.5rem; }
-    .setup-modal-title {
-      font-size: 1.125rem; font-weight: 600; color: var(--text-primary);
-      margin-bottom: 1rem;
-    }
-    .setup-modal-code {
-      background: var(--bg-tertiary); border: 1px solid var(--border-color);
-      border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
-      font-family: 'JetBrains Mono', monospace; font-size: 0.8125rem;
-      line-height: 1.6; color: var(--text-primary); white-space: pre-wrap; word-break: break-all;
-    }
-    .setup-modal-copy-btn {
-      display: inline-flex; align-items: center; gap: 0.5rem; width: 100%;
-      justify-content: center; padding: 0.75rem 1.5rem;
-      background: var(--accent-color); color: white; border: none;
-      border-radius: 10px; font-size: 0.875rem; font-weight: 600;
-      cursor: pointer; transition: filter 0.15s;
-    }
-    .setup-modal-copy-btn:hover { filter: brightness(1.1); }
-    .setup-modal-hint {
-      font-size: 0.75rem; color: var(--text-muted); text-align: center;
-      margin-top: 0.75rem; line-height: 1.5;
+      clip: rect(0,0,0,0);
+      border: 0;
     }
 
-    .home-features {
-      max-width: 960px;
-      margin: 0 auto;
-      padding: 4rem 2rem;
-      width: 100%;
-    }
-    .home-features-title {
-      font-size: 1.5rem;
-      font-weight: 700;
-      text-align: center;
-      margin-bottom: 2rem;
-    }
-    .home-feature-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 1rem;
-    }
-    .home-feature-card {
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: 12px;
-      padding: 1.25rem;
-      transition: border-color 0.15s;
-    }
-    .home-feature-card:hover { border-color: var(--accent-color); }
-    .home-feature-card h4 {
-      font-size: 0.875rem;
-      font-weight: 600;
-      margin-bottom: 0.375rem;
-    }
-    .home-feature-card p {
-      font-size: 0.8125rem;
-      color: var(--text-secondary);
-      line-height: 1.5;
-    }
-    .home-charts {
-      max-width: 960px;
-      margin: 0 auto;
-      padding: 0 2rem 4rem;
-      width: 100%;
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 2rem;
-    }
-    .home-chart-section h3 {
-      font-size: 0.75rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--text-muted);
-      margin-bottom: 0.75rem;
-    }
-
-    /* ===== App Page ===== */
-    .app-page {
-      flex-direction: column;
-      padding-top: 52px;
-      min-height: 100vh;
-      overflow-y: auto;
-    }
-    .app-page-inner {
-      width: 100%;
-      max-width: 700px;
-      margin: 0 auto;
-      padding: 1.5rem 1rem 4rem;
-    }
-    .app-endpoint-bar {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      padding: 0.875rem 1rem;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: 10px;
-      margin-bottom: 1.5rem;
-    }
-    .app-endpoint-url {
-      flex: 1;
-      overflow: hidden;
-    }
-    .app-endpoint-url code {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.8125rem;
-      color: var(--text-primary);
-      white-space: nowrap;
+    .truncate {
       overflow: hidden;
       text-overflow: ellipsis;
-      display: block;
-    }
-    .app-endpoint-actions {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      flex-shrink: 0;
-    }
-    .app-version-select {
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
-      border-radius: 6px;
-      padding: 0.375rem 0.5rem;
-      color: var(--text-primary);
-      font-size: 0.75rem;
-      cursor: pointer;
-    }
-    .app-endpoint-copy {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 32px;
-      height: 32px;
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
-      border-radius: 6px;
-      cursor: pointer;
-      color: var(--text-secondary);
-      transition: all 0.15s;
-    }
-    .app-endpoint-copy:hover { background: var(--accent-color); color: #fff; border-color: var(--accent-color); }
-    .app-endpoint-copy svg { width: 16px; height: 16px; }
-
-    /* Collapsible sections */
-    .app-section {
-      border: 1px solid var(--border-color);
-      border-radius: 10px;
-      margin-bottom: 0.75rem;
-      overflow: hidden;
-      background: var(--bg-primary);
-    }
-    .app-section-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      width: 100%;
-      padding: 0.875rem 1rem;
-      background: transparent;
-      border: none;
-      cursor: pointer;
-      color: var(--text-primary);
-      transition: background 0.15s;
-    }
-    .app-section-header:hover { background: var(--bg-secondary); }
-    .app-section-title { font-size: 0.9375rem; font-weight: 600; }
-    .app-section-chevron {
-      width: 18px;
-      height: 18px;
-      color: var(--text-muted);
-      transition: transform 0.2s;
-    }
-    .app-section.collapsed .app-section-chevron { transform: rotate(-90deg); }
-    .app-section-body {
-      padding: 0 1rem 1rem;
-    }
-    .app-section.collapsed .app-section-body { display: none; }
-    .app-field { margin-bottom: 0.75rem; }
-    .app-field label {
-      display: block;
-      font-size: 0.8125rem;
-      font-weight: 500;
-      color: var(--text-secondary);
-      margin-bottom: 0.375rem;
-    }
-    .app-section-actions {
-      display: flex;
-      gap: 0.75rem;
-      margin-top: 0.5rem;
+      white-space: nowrap;
     }
 
-    /* Floating save */
-    .floating-save {
-      position: fixed;
-      bottom: 1.5rem;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 80;
-      animation: floatIn 0.2s ease;
-    }
-    @keyframes floatIn {
-      from { opacity: 0; transform: translateX(-50%) translateY(10px); }
-      to { opacity: 1; transform: translateX(-50%) translateY(0); }
-    }
-    .floating-save-btn {
-      padding: 0.625rem 1.5rem;
-      background: var(--accent-color);
-      color: #fff;
-      border: none;
-      border-radius: 8px;
-      font-size: 0.875rem;
-      font-weight: 500;
-      cursor: pointer;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-      transition: all 0.15s;
-    }
-    .floating-save-btn:hover { filter: brightness(1.1); }
+    .flex { display: flex; }
+    .flex-col { flex-direction: column; }
+    .items-center { align-items: center; }
+    .justify-between { justify-content: space-between; }
+    .gap-1 { gap: var(--space-1); }
+    .gap-2 { gap: var(--space-2); }
+    .gap-3 { gap: var(--space-3); }
+    .gap-4 { gap: var(--space-4); }
+    .gap-6 { gap: var(--space-6); }
+    .gap-8 { gap: var(--space-8); }
+    .w-full { width: 100%; }
+    .relative { position: relative; }
+    .hidden { display: none !important; }
   </style>
-</head>
-<body>
-  <!-- Top Bar (full-width, YouTube-style) -->
-  <div class="top-bar" id="topBar">
-    <div class="top-bar-left">
-      <a href="/" class="logo" onclick="event.preventDefault(); navigateToHome();" title="Ultralight">
-        <svg class="logo-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <defs><linearGradient id="logoGrad" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#3b82f6"/><stop offset="100%" stop-color="#2563eb"/></linearGradient></defs>
-          <path d="M6 4L6 22Q6 28 12 28L12 4L17 4L17 28Q17 28 20 28Q26 28 26 22L26 4L21 4L21 22Q21 24 20 24L12 24Q10.5 24 10.5 22L10.5 4Z" fill="url(#logoGrad)"/>
+  </head>
+  <body>
+
+  <!-- ============================================
+       TOAST CONTAINER
+       ============================================ -->
+  <div id="toast-container" class="toast-container">
+    <div id="toast" class="toast"></div>
+  </div>
+
+  <!-- ============================================
+       AUTH POPUP OVERLAY
+       ============================================ -->
+  <div id="authOverlay" class="auth-overlay hidden">
+    <div class="auth-card">
+      <button id="authCloseBtn" style="position:absolute;top:16px;right:16px;background:none;border:none;color:var(--text-muted);cursor:pointer;padding:4px;font-size:18px;line-height:1;" aria-label="Close">&times;</button>
+      <div style="display:flex;justify-content:center;margin-bottom:var(--space-6);">
+        <svg width="48" height="48" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="authLogoGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#3b82f6"/>
+              <stop offset="100%" stop-color="#2563eb"/>
+            </linearGradient>
+          </defs>
+          <path d="M6 4 L6 22 Q6 28 12 28 L12 28 L12 4 L17 4 L17 28 Q17 28 20 28 Q26 28 26 22 L26 4 L21 4 L21 22 Q21 24 20 24 L12 24 Q10.5 24 10.5 22 L10.5 4 Z" fill="url(#authLogoGrad)"/>
         </svg>
-      </a>
-    </div>
-    <div class="top-bar-center">
-    </div>
-    <div class="top-bar-right">
-      <button class="top-bar-connect-btn" id="topBarConnectBtn" onclick="connectAgent()">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
-        <span id="connectBtnText">Connect</span>
+      </div>
+      <h2 style="text-align:center;">Sign in to Ultralight</h2>
+      <p style="text-align:center;margin-bottom:var(--space-6);">Deploy MCP servers from TypeScript functions</p>
+      <div class="auth-divider">or continue with</div>
+      <button id="googleAuthBtn" class="auth-provider-btn">
+        <svg width="18" height="18" viewBox="0 0 24 24">
+          <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
+          <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+          <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+          <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+        </svg>
+        Continue with Google
       </button>
+      <p style="font-size:11px;color:var(--text-muted);text-align:center;margin-top:var(--space-4);line-height:1.5;">
+        By continuing, you agree to our
+        <a href="/terms" style="color:var(--text-secondary);text-decoration:underline;">Terms</a> and
+        <a href="/privacy" style="color:var(--text-secondary);text-decoration:underline;">Privacy Policy</a>.
+      </p>
     </div>
   </div>
 
-  <!-- Sidebar -->
-  <aside class="sidebar" id="sidebar">
-    <!-- Sidebar header: toggle + search -->
-    <div class="sidebar-toggle-area">
-      <button class="sidebar-toggle-btn" id="sidebarToggle" title="Collapse sidebar">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
-          <rect x="3" y="3" width="18" height="18" rx="3"></rect>
-          <line x1="9" y1="3" x2="9" y2="21"></line>
+  <!-- ============================================
+       TOP NAVIGATION BAR
+       ============================================ -->
+  <nav class="top-nav">
+    <div class="nav-left">
+      <a href="/" id="navLogoLink" class="nav-logo" style="text-decoration:none;">
+        <svg width="24" height="24" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="navLogoGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#3b82f6"/>
+              <stop offset="100%" stop-color="#2563eb"/>
+            </linearGradient>
+          </defs>
+          <path d="M6 4 L6 22 Q6 28 12 28 L12 28 L12 4 L17 4 L17 28 Q17 28 20 28 Q26 28 26 22 L26 4 L21 4 L21 22 Q21 24 20 24 L12 24 Q10.5 24 10.5 22 L10.5 4 Z" fill="url(#navLogoGrad)"/>
         </svg>
-      </button>
-      <div class="sidebar-search" style="position: relative;">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-        <input type="text" id="searchInput" placeholder="Search apps..." oninput="handleSearch(this.value)" autocomplete="off" />
-        <div id="searchDropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; margin-top: 4px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 300; max-height: 300px; overflow-y: auto;"></div>
+        Ultralight
+      </a>
+    </div>
+    <div class="nav-right">
+      <!-- Pre-auth nav items -->
+      <div id="navPreAuth">
+        <a id="docsLink" href="https://www.npmjs.com/package/ultralightpro" target="_blank" class="btn btn-ghost btn-sm">Docs</a>
+        <button id="navAuthBtn" class="btn btn-ghost btn-sm">Log in</button>
       </div>
-    </div>
-
-    <!-- Expanded: main navigation -->
-    <div class="new-app-section" style="display:flex;flex-direction:column;gap:0.25rem">
-      <button class="upload-btn nav-btn${initialView === 'home' ? ' nav-active' : ''}" id="navHomeBtn" data-view="home">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
-          <polyline points="9 22 9 12 15 12 15 22"></polyline>
-        </svg>
-        Home
-      </button>
-      <button class="upload-btn nav-btn${initialView === 'dashboard' ? ' nav-active' : ''}" id="newAppBtn" data-view="dashboard">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="3"></circle>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-        </svg>
-        Dashboard
-      </button>
-      <button class="upload-btn nav-btn${initialView === 'leaderboard' ? ' nav-active' : ''}" id="navLeaderboardBtn" data-view="leaderboard" style="display:none">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5C7 4 7 7 7 7"></path>
-          <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5C17 4 17 7 17 7"></path>
-          <path d="M4 22h16"></path>
-          <path d="M10 22V8a2 2 0 0 0-2-2H6"></path>
-          <path d="M14 22V8a2 2 0 0 1 2-2h2"></path>
-        </svg>
-        Leaderboard
-      </button>
-    </div>
-
-    <!-- Collapsed rail: action icons -->
-    <div class="sidebar-rail">
-      <button class="sidebar-rail-btn" id="railSidebarToggle" title="Expand sidebar">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
-          <rect x="3" y="3" width="18" height="18" rx="3"></rect>
-          <line x1="9" y1="3" x2="9" y2="21"></line>
-        </svg>
-      </button>
-      <button class="sidebar-rail-btn" id="railNewApp" title="Dashboard">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="3"></circle>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-        </svg>
-      </button>
-      <div class="sidebar-rail-divider"></div>
-    </div>
-
-    <!-- Collapsed rail: app icons -->
-    <div class="sidebar-rail-apps" id="railAppsList"></div>
-
-    <!-- Expanded: full apps list -->
-    <div class="apps-section">
-      <div class="apps-section-title">Library</div>
-      <div id="appsList" class="apps-loading">Loading...</div>
-    </div>
-
-    <!-- Expanded: footer with auth / profile -->
-    <div class="sidebar-footer">
-      <div id="authSection">
-        <a href="/auth/login" class="auth-btn google">
-          <svg width="18" height="18" viewBox="0 0 24 24">
-            <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-            <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-          </svg>
-          Sign in with Google
-        </a>
-      </div>
-      <div id="sidebarProfile" class="sidebar-profile" style="display: none;" onclick="toggleSidebarProfileDropdown(event)">
-        <div class="user-avatar" id="sidebarAvatar" style="width: 28px; height: 28px; font-size: 0.75rem;"></div>
-        <div class="sidebar-profile-info">
-          <span class="sidebar-profile-name" id="sidebarProfileName"></span>
-          <span class="sidebar-profile-email" id="sidebarProfileEmail"></span>
+      <!-- Post-auth nav items (hidden by default) -->
+      <div id="navPostAuth" class="hidden flex items-center gap-3">
+        <a id="docsLinkAuth" href="https://www.npmjs.com/package/ultralightpro" target="_blank" class="btn btn-ghost btn-sm">Docs</a>
+        <div class="relative">
+          <div id="profileTrigger" class="profile-trigger">
+            <div id="profileAvatar" class="profile-avatar">U</div>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div id="profileDropdown" class="profile-dropdown">
+            <div id="profileDropdownHeader" class="profile-dropdown-header"><span id="profileEmail" style="font-size:12px;color:var(--text-muted);display:block;margin-top:2px;"></span></div>
+            <div class="profile-dropdown-item" data-action="settings">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+              Settings
+            </div>
+            <div class="profile-dropdown-item" data-action="tokens">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+              API Tokens
+            </div>
+            <div class="profile-dropdown-item" data-action="billing">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+              Billing
+            </div>
+            <div class="profile-dropdown-item" data-action="supabase">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+              Supabase
+            </div>
+            <div class="profile-dropdown-divider"></div>
+            <div class="profile-dropdown-item danger" data-action="signout">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+              Sign Out
+            </div>
+          </div>
         </div>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;color:var(--text-muted)"><polyline points="6 9 12 15 18 9"></polyline></svg>
-      </div>
-      <div class="sidebar-profile-dropdown" id="sidebarProfileDropdown">
-        <div class="sidebar-profile-dropdown-email" id="sidebarDropdownEmail">Not signed in</div>
-        <button class="sidebar-profile-dropdown-item" onclick="event.stopPropagation(); signOut();">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
-          Sign Out
-        </button>
       </div>
     </div>
-  </aside>
+  </nav>
 
-  <!-- Main Content -->
+  <!-- ============================================
+       MAIN CONTENT AREA
+       ============================================ -->
   <main class="main-content">
-    <!-- Dashboard View -->
-    <div class="dashboard-view" id="dashboardView" style="display: ${initialView === 'dashboard' ? 'flex' : 'none'};">
-      <div style="width: 100%; max-width: 900px; margin: 0 auto;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem">
+
+    <!-- ==========================================
+         HOME / LANDING VIEW
+         ========================================== -->
+    <div id="homeView">
+      <section class="hero">
+        <div class="hero-badge" style="display:inline-flex;align-items:center;gap:var(--space-2);padding:var(--space-2) var(--space-4);background:var(--accent-soft);color:var(--accent);font-size:12px;font-weight:600;border-radius:var(--radius-full);margin-bottom:var(--space-6);border:1px solid rgba(59,130,246,0.2);">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          MCP App Platform
+        </div>
+        <h1>TypeScript functions become<br>MCP servers. Instantly.</h1>
+        <p>Write a function. Run one command. Every AI agent can use it.</p>
+        <div class="hero-actions">
+          <button id="heroCTA" class="btn btn-primary">Copy Setup Instructions</button>
+          <a href="https://www.npmjs.com/package/ultralightpro" target="_blank" class="btn btn-ghost" style="color:var(--text-secondary);">Read the docs &rarr;</a>
+        </div>
+        <div style="margin-top:var(--space-8);display:flex;align-items:center;gap:var(--space-4);color:var(--text-muted);font-size:12px;">
+          <span>Works with</span>
+          <span style="color:var(--text-secondary);font-weight:500;">Claude Code</span>
+          <span style="opacity:0.3;">|</span>
+          <span style="color:var(--text-secondary);font-weight:500;">Cursor</span>
+          <span style="opacity:0.3;">|</span>
+          <span style="color:var(--text-secondary);font-weight:500;">Windsurf</span>
+          <span style="opacity:0.3;">|</span>
+          <span style="color:var(--text-secondary);font-weight:500;">Cline</span>
+        </div>
+      </section>
+
+      <!-- Setup Instructions Block (hidden until authenticated) -->
+      <div id="setupBlock" class="setup-block" style="display:none;max-width:640px;margin:var(--space-8) auto 0;background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-5);overflow:hidden;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-3);">
+          <span style="font-size:13px;font-weight:500;color:var(--text-secondary);">Paste this into your agent:</span>
+          <button id="setupCopyBtn" class="btn btn-ghost btn-sm" style="font-size:12px;">Copy</button>
+        </div>
+        <pre id="setupCode" style="background:var(--bg-base);border:1px solid var(--border);border-radius:var(--radius-md);padding:var(--space-4);font-family:var(--font-mono);font-size:13px;line-height:1.6;color:var(--text-secondary);overflow-x:auto;white-space:pre-wrap;word-break:break-all;"></pre>
+        <div id="connectionStatus" style="margin-top:var(--space-3);font-size:12px;color:var(--text-muted);"></div>
+      </div>
+
+      <!-- How It Works Section -->
+      <section style="max-width:900px;margin:var(--space-16) auto 0;text-align:center;">
+        <h2 style="font-size:24px;font-weight:700;letter-spacing:-0.02em;margin-bottom:var(--space-8);">How it works</h2>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-6);">
+          <div style="text-align:left;padding:var(--space-6);background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-lg);">
+            <div style="width:32px;height:32px;border-radius:var(--radius-full);background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;margin-bottom:var(--space-4);">1</div>
+            <h3 style="font-size:15px;font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Write TypeScript</h3>
+            <p style="font-size:13px;color:var(--text-muted);line-height:1.6;">Export functions with typed parameters. That's your entire API.</p>
+          </div>
+          <div style="text-align:left;padding:var(--space-6);background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-lg);">
+            <div style="width:32px;height:32px;border-radius:var(--radius-full);background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;margin-bottom:var(--space-4);">2</div>
+            <h3 style="font-size:15px;font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Deploy instantly</h3>
+            <p style="font-size:13px;color:var(--text-muted);line-height:1.6;">One terminal command. No config, no Docker, no infra.</p>
+          </div>
+          <div style="text-align:left;padding:var(--space-6);background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-lg);">
+            <div style="width:32px;height:32px;border-radius:var(--radius-full);background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;margin-bottom:var(--space-4);">3</div>
+            <h3 style="font-size:15px;font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Agents use it</h3>
+            <p style="font-size:13px;color:var(--text-muted);line-height:1.6;">Any MCP-compatible agent can discover and call your functions.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- FAQ Section -->
+      <section class="faq-section">
+        <h2>Frequently asked questions</h2>
+        <div class="faq-list">
+          <div class="faq-item">
+            <button class="faq-trigger" onclick="this.parentElement.classList.toggle('open')">
+              What is an MCP server?
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="faq-content">
+              <div class="faq-content-inner">MCP (Model Context Protocol) is an open standard that lets AI agents call external tools. An MCP server exposes functions that agents like Claude, Cursor, and Windsurf can discover and invoke. Ultralight turns your TypeScript functions into fully hosted MCP servers with zero configuration.</div>
+            </div>
+          </div>
+          <div class="faq-item">
+            <button class="faq-trigger" onclick="this.parentElement.classList.toggle('open')">
+              How do I deploy my first app?
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="faq-content">
+              <div class="faq-content-inner">Install the CLI with <code style="background:var(--bg-active);padding:2px 6px;border-radius:4px;font-family:var(--font-mono);font-size:12px;">npm i -g ultralightpro</code>, write an index.ts file that exports functions, then run <code style="background:var(--bg-active);padding:2px 6px;border-radius:4px;font-family:var(--font-mono);font-size:12px;">ultralight deploy</code>. Your MCP server is live in seconds.</div>
+            </div>
+          </div>
+          <div class="faq-item">
+            <button class="faq-trigger" onclick="this.parentElement.classList.toggle('open')">
+              What languages and runtimes are supported?
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="faq-content">
+              <div class="faq-content-inner">Ultralight currently supports TypeScript and JavaScript. Your code runs on Deno v2.2 in a secure sandbox with access to fetch, crypto, lodash, date-fns, and a built-in key-value store. No node_modules needed.</div>
+            </div>
+          </div>
+          <div class="faq-item">
+            <button class="faq-trigger" onclick="this.parentElement.classList.toggle('open')">
+              Is there a free tier?
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="faq-content">
+              <div class="faq-content-inner">Yes. The free tier includes up to 3 apps, 1,000 calls per month, and 10MB of storage. Upgrade to Pro for unlimited apps, higher call limits, custom domains, and Supabase database integration.</div>
+            </div>
+          </div>
+          <div class="faq-item">
+            <button class="faq-trigger" onclick="this.parentElement.classList.toggle('open')">
+              Can I control who accesses my functions?
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="faq-content">
+              <div class="faq-content-inner">Absolutely. Apps are private by default. You can grant granular per-function permissions, restrict argument values, set IP allowlists, time windows, and budget constraints. Share a permission link and revoke access anytime.</div>
+            </div>
+          </div>
+          <div class="faq-item">
+            <button class="faq-trigger" onclick="this.parentElement.classList.toggle('open')">
+              How does billing work?
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="faq-content">
+              <div class="faq-content-inner">Ultralight uses a prepaid balance model. Add funds to your account and each API call deducts a small amount. You can also monetize your apps by setting a per-call price that callers pay. No surprise bills, no subscriptions.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Footer -->
+      <footer style="max-width:640px;margin:var(--space-16) auto 0;padding:var(--space-8) 0;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--text-muted);">
+        <span>&copy; 2026 Ultralight</span>
+        <div style="display:flex;gap:var(--space-4);">
+          <a href="https://www.npmjs.com/package/ultralightpro" target="_blank" style="color:var(--text-muted);transition:color 0.15s;" onmouseover="this.style.color='var(--text-secondary)'" onmouseout="this.style.color='var(--text-muted)'">SDK Reference</a>
+          <a href="https://www.npmjs.com/package/ultralightpro" target="_blank" style="color:var(--text-muted);transition:color 0.15s;" onmouseover="this.style.color='var(--text-secondary)'" onmouseout="this.style.color='var(--text-muted)'">CLI Tool</a>
+          <a href="/api" style="color:var(--text-muted);transition:color 0.15s;" onmouseover="this.style.color='var(--text-secondary)'" onmouseout="this.style.color='var(--text-muted)'">API / MCP</a>
+        </div>
+      </footer>
+    </div>
+
+    <!-- ==========================================
+         DASHBOARD VIEW
+         ========================================== -->
+    <div id="dashboardView" style="display:none;">
+      <div class="dashboard-header">
+        <h1>Your Apps</h1>
+        <div class="dashboard-actions" style="display:flex;align-items:center;gap:var(--space-3);">
+          <button id="dashSetupBtn" class="btn btn-ghost btn-sm" title="Setup instructions">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            Setup
+          </button>
+          <button id="newAppBtn" class="btn btn-primary btn-sm" onclick="generateSetupInstructions()">+ New App</button>
+        </div>
+      </div>
+
+      <!-- Dashboard Setup Block (expandable) -->
+      <div id="dashSetupBlock" class="hidden" style="background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-4);margin-bottom:var(--space-6);">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-3);">
+          <span style="font-size:13px;font-weight:500;color:var(--text-secondary);">Setup Instructions</span>
+          <button id="copyDashSetup" class="btn btn-ghost btn-sm" style="font-size:12px;">Copy</button>
+        </div>
+        <pre id="dashSetupText" style="background:var(--bg-base);border:1px solid var(--border);border-radius:var(--radius-md);padding:var(--space-3);font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);white-space:pre-wrap;word-break:break-all;"></pre>
+      </div>
+
+      <!-- Dashboard Stats -->
+      <div id="dashStats" class="stats-row">
+        <div class="stat-card">
+          <div class="stat-label">Total Apps</div>
+          <div class="stat-value" id="statTotalApps">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Total Calls</div>
+          <div class="stat-value" id="statTotalCalls">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Status</div>
+          <div class="stat-value" id="statStatus" style="color:var(--success);">Operational</div>
+        </div>
+      </div>
+
+      <!-- App Grid -->
+      <div id="appGrid" class="app-grid"></div>
+
+      <!-- Activity Feed -->
+      <section id="activityFeed" style="margin-top:var(--space-8);">
+        <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Recent Activity</h2>
+        <div id="activityList" style="display:flex;flex-direction:column;gap:var(--space-2);"></div>
+      </section>
+    </div>
+
+    <!-- ==========================================
+         APP DETAIL VIEW
+         ========================================== -->
+    <div id="appView" style="display:none;">
+      <!-- Back to Dashboard -->
+      <button id="appBackBtn" class="btn btn-ghost btn-sm" style="margin-bottom:var(--space-4);gap:var(--space-2);display:inline-flex;align-items:center;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        Back to Dashboard
+      </button>
+
+      <!-- App Header -->
+      <div class="app-header">
+        <div class="app-header-left">
+          <h1 id="appDetailName">App Name</h1>
+          <div style="display:flex;align-items:center;gap:var(--space-3);margin-top:var(--space-2);">
+            <span id="appDetailVersion" style="font-size:12px;padding:2px 8px;background:var(--accent-soft);color:var(--accent);border-radius:var(--radius-full);font-weight:500;">v1.0.0</span>
+            <span id="appDetailStatus" style="font-size:12px;padding:2px 8px;background:rgba(52,211,153,0.1);color:var(--success);border-radius:var(--radius-full);font-weight:500;">Active</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:var(--space-2);margin-top:var(--space-3);">
+            <span style="font-size:12px;color:var(--text-muted);">MCP Endpoint:</span>
+            <code id="appDetailEndpoint" style="font-size:12px;font-family:var(--font-mono);color:var(--text-secondary);background:var(--bg-active);padding:2px 8px;border-radius:var(--radius-sm);"></code>
+            <button id="appEndpointCopy" class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:11px;" onclick="copyAppEndpoint()">Copy</button>
+          </div>
+        </div>
+        <div class="app-header-right">
+          <button id="appEditBtn" class="btn btn-ghost btn-sm">Edit Code</button>
+          <button id="appDeleteBtn" class="btn btn-danger btn-sm">Delete</button>
+        </div>
+      </div>
+
+      <!-- Tab Bar -->
+      <div class="tabs" style="margin-top:var(--space-6);">
+        <button class="tab active" data-tab="overview">Overview</button>
+        <button class="tab" data-tab="settings">Settings</button>
+        <button class="tab" data-tab="logs">Logs</button>
+        <button class="tab" data-tab="business">Business</button>
+      </div>
+
+      <!-- Tab Content: Overview -->
+      <div id="appOverview" class="tab-content active" data-tab-content="overview">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-6);">
+          <!-- Functions List -->
           <div>
-            <h1 style="font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem;">Developer Dashboard</h1>
-            <p style="color: var(--text-secondary);">Your MCP hosting control center</p>
+            <h3 style="font-size:14px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Functions</h3>
+            <div id="appFunctionsList" style="display:flex;flex-direction:column;gap:var(--space-2);"></div>
           </div>
-          <button class="top-bar-btn" onclick="openLogsModal()" style="flex-shrink:0">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
-            Logs
-          </button>
+          <!-- Health / Recent Calls -->
+          <div>
+            <h3 style="font-size:14px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Health</h3>
+            <div id="appHealthSummary" style="background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-4);font-size:13px;color:var(--text-secondary);line-height:1.6;">Loading...</div>
+            <h3 style="font-size:14px;font-weight:600;margin-top:var(--space-6);margin-bottom:var(--space-4);color:var(--text-primary);">Recent Calls</h3>
+            <div id="appRecentCalls" style="display:flex;flex-direction:column;gap:var(--space-2);"></div>
+          </div>
         </div>
+      </div>
 
-        <!-- Platform MCP URL -->
-        <div class="dashboard-card" style="margin-bottom: 1rem;">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem;">
-            <h3 style="font-size: 0.9375rem; font-weight: 600;">Platform MCP Endpoint</h3>
-            <span style="font-size: 0.75rem; padding: 2px 8px; border-radius: 9999px; background: rgba(34,197,94,0.15); color: var(--success-color);">Active</span>
-          </div>
-          <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <code id="platformMcpUrl" style="flex: 1; font-family: 'JetBrains Mono', monospace; font-size: 0.8125rem; background: var(--bg-tertiary); padding: 0.625rem 0.75rem; border-radius: 8px; border: 1px solid var(--border-color); overflow-x: auto; white-space: nowrap;"></code>
-            <button onclick="copyPlatformMcpUrl()" style="flex-shrink: 0; padding: 0.625rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; cursor: pointer; color: var(--text-secondary); transition: color 0.2s, border-color 0.2s;" title="Copy URL">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            </button>
-          </div>
-          <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem;">Connect this URL to Claude Desktop, Cursor, or any MCP-compatible client.</p>
-          <details style="margin-top: 0.75rem;">
-            <summary style="font-size: 0.75rem; color: var(--text-secondary); cursor: pointer; user-select: none;">Setup instructions for Claude Desktop &amp; Cursor</summary>
-            <div style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--text-muted); line-height: 1.6;">
-              <p style="margin-bottom: 0.5rem;">Add this to your MCP client config (<code style="font-size: 0.6875rem; padding: 1px 4px; background: var(--bg-tertiary); border-radius: 4px;">claude_desktop_config.json</code> or <code style="font-size: 0.6875rem; padding: 1px 4px; background: var(--bg-tertiary); border-radius: 4px;">.cursor/mcp.json</code>):</p>
-              <div style="position: relative;">
-                <pre id="platformBridgeConfig" style="background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; padding: 0.75rem; font-family: 'JetBrains Mono', monospace; font-size: 0.6875rem; overflow-x: auto; white-space: pre; margin: 0;"></pre>
-                <button onclick="copyPlatformBridgeConfig()" style="position: absolute; top: 6px; right: 6px; padding: 4px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 4px; cursor: pointer; color: var(--text-secondary);" title="Copy config">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
+      <!-- Tab Content: Settings -->
+      <div id="appSettings" class="tab-content" data-tab-content="settings">
+        <!-- General Settings -->
+        <details open style="margin-bottom:var(--space-4);">
+          <summary style="font-size:14px;font-weight:600;color:var(--text-primary);cursor:pointer;padding:var(--space-3) 0;border-bottom:1px solid var(--border);">General</summary>
+          <div id="appSettingsGeneral" style="padding:var(--space-4) 0;">
+            <div style="display:flex;flex-direction:column;gap:var(--space-4);">
+              <div>
+                <label style="font-size:12px;font-weight:500;color:var(--text-secondary);display:block;margin-bottom:var(--space-2);">App Name</label>
+                <input id="settingAppName" type="text" class="input" placeholder="My App">
               </div>
-              <p style="margin-top: 0.5rem;">Replace <code style="font-size: 0.6875rem; padding: 1px 4px; background: var(--bg-tertiary); border-radius: 4px;">YOUR_TOKEN</code> with an API token from below. Requires <code style="font-size: 0.6875rem; padding: 1px 4px; background: var(--bg-tertiary); border-radius: 4px;">npx</code> (Node.js 18+).</p>
-            </div>
-          </details>
-        </div>
-
-
-        <!-- Balance & Billing -->
-        <div class="dashboard-card" style="margin-bottom: 1rem;">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
-            <h3 style="font-size: 0.9375rem; font-weight: 600;">Balance &amp; Billing</h3>
-            <span id="billingStatus" style="font-size: 0.75rem; padding: 2px 8px; border-radius: 9999px; background: rgba(34,197,94,0.15); color: var(--success-color); display: none;">Active</span>
-          </div>
-
-          <!-- Balance display -->
-          <div id="billingBalanceSection" style="display: none;">
-            <div style="display: flex; align-items: baseline; gap: 0.75rem; margin-bottom: 0.75rem;">
-              <span id="billingBalance" style="font-size: 1.75rem; font-weight: 700; color: var(--text-primary);">$0.00</span>
-              <span style="font-size: 0.8125rem; color: var(--text-muted);">hosting balance</span>
-            </div>
-
-            <!-- Add Funds -->
-            <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
-              <select id="depositAmount" style="padding: 0.5rem 0.75rem; font-size: 0.8125rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-primary); cursor: pointer;">
-                <option value="500">$5.00</option>
-                <option value="1000">$10.00</option>
-                <option value="2500" selected>$25.00</option>
-                <option value="5000">$50.00</option>
-                <option value="10000">$100.00</option>
-              </select>
-              <button onclick="startDeposit()" style="padding: 0.5rem 1rem; font-size: 0.8125rem; font-weight: 600; background: var(--accent-color); color: #fff; border: none; border-radius: 8px; cursor: pointer; transition: opacity 0.2s;" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">Add Funds</button>
-            </div>
-            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1rem;">Pay with card, bank account (ACH), or Link. Processing fee added at checkout (lower with ACH).</p>
-
-            <!-- Auto Top-Up Settings -->
-            <details id="autoTopupDetails" style="border-top: 1px solid var(--border-color); padding-top: 0.75rem;">
-              <summary style="font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary); cursor: pointer; user-select: none; display: flex; align-items: center; gap: 0.5rem;">
-                Auto Top-Up
-                <span id="autoTopupBadge" style="font-size: 0.6875rem; padding: 1px 6px; border-radius: 9999px; display: none;"></span>
-              </summary>
-              <div style="margin-top: 0.75rem;">
-                <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.75rem;">Automatically recharge your balance when it drops below a threshold. Requires a saved payment method (created on first deposit).</p>
-
-                <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem;">
-                  <label style="font-size: 0.8125rem; color: var(--text-secondary); display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                    <input type="checkbox" id="autoTopupEnabled" style="width: 1rem; height: 1rem; cursor: pointer;" />
-                    Enable auto top-up
-                  </label>
-                  <span id="autoTopupPaymentWarning" style="font-size: 0.75rem; color: var(--warning-color, #f59e0b); display: none;">No saved card yet</span>
-                </div>
-
-                <div id="autoTopupFields" style="display: none;">
-                  <div style="display: flex; gap: 0.75rem; margin-bottom: 0.75rem; flex-wrap: wrap;">
-                    <div style="flex: 1; min-width: 140px;">
-                      <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">When balance drops below</label>
-                      <select id="autoTopupThreshold" style="width: 100%; padding: 0.5rem 0.75rem; font-size: 0.8125rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-primary); cursor: pointer;">
-                        <option value="100">$1.00</option>
-                        <option value="250">$2.50</option>
-                        <option value="500">$5.00</option>
-                        <option value="1000">$10.00</option>
-                        <option value="2500">$25.00</option>
-                      </select>
-                    </div>
-                    <div style="flex: 1; min-width: 140px;">
-                      <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Recharge amount</label>
-                      <select id="autoTopupAmount" style="width: 100%; padding: 0.5rem 0.75rem; font-size: 0.8125rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-primary); cursor: pointer;">
-                        <option value="500">$5.00</option>
-                        <option value="1000">$10.00</option>
-                        <option value="2500">$25.00</option>
-                        <option value="5000">$50.00</option>
-                        <option value="10000">$100.00</option>
-                      </select>
-                    </div>
-                  </div>
-                  <button onclick="saveAutoTopup()" style="padding: 0.5rem 1rem; font-size: 0.8125rem; font-weight: 500; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; cursor: pointer; color: var(--text-primary); transition: border-color 0.2s;" onmouseover="this.style.borderColor='var(--accent-color)'" onmouseout="this.style.borderColor='var(--border-color)'">Save Settings</button>
-                </div>
-
-                <div id="autoTopupLastFailed" style="display: none; font-size: 0.75rem; color: var(--error-color, #ef4444); margin-top: 0.5rem;"></div>
+              <div>
+                <label style="font-size:12px;font-weight:500;color:var(--text-secondary);display:block;margin-bottom:var(--space-2);">Description</label>
+                <textarea id="settingAppDesc" class="input" rows="3" placeholder="What does this app do?" style="resize:vertical;"></textarea>
               </div>
-            </details>
-          </div>
-
-          <!-- Loading state -->
-          <div id="billingLoading" style="color: var(--text-muted); font-size: 0.8125rem; padding: 0.5rem 0;">Loading billing info...</div>
-        </div>
-
-        <!-- Earnings Overview -->
-        <div class="dashboard-card" id="earningsOverviewCard" style="margin-bottom: 1rem; display: none;">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
-            <h3 style="font-size: 0.9375rem; font-weight: 600;">Earnings</h3>
-            <select id="dashEarningsPeriod" onchange="loadDashEarnings()" style="font-size: 0.75rem; padding: 2px 8px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary);">
-              <option value="7d">7 days</option>
-              <option value="30d" selected>30 days</option>
-              <option value="90d">90 days</option>
-            </select>
-          </div>
-          <div style="display: flex; align-items: baseline; gap: 0.75rem; margin-bottom: 0.5rem;">
-            <span id="dashEarningsTotal" style="font-size: 1.5rem; font-weight: 700; color: var(--text-primary);">$0.00</span>
-            <span style="font-size: 0.75rem; color: var(--text-muted);">lifetime earned</span>
-          </div>
-          <div style="font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 0.75rem;">
-            <span id="dashEarningsPeriodAmt">$0.00</span> in period &middot;
-            <span id="dashEarningsPeriodCnt">0</span> paid calls
-          </div>
-          <div id="dashEarningsByApp" style="font-size: 0.75rem;"></div>
-        </div>
-
-        <!-- API Tokens -->
-        <div class="dashboard-card" style="margin-bottom: 1rem;">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
-            <h3 style="font-size: 0.9375rem; font-weight: 600;">API Tokens</h3>
-            <span id="tokenCount" style="font-size: 0.75rem; color: var(--text-muted);"></span>
-          </div>
-          <p style="font-size: 0.8125rem; color: var(--text-muted); margin-bottom: 0.75rem;">Personal access tokens for CLI and API access. Tokens are shown only once when created.</p>
-
-          <div id="tokensMessage" class="byok-message" style="display: none;"></div>
-
-          <!-- Create Token Form -->
-          <div class="token-create-form">
-            <input type="text" id="newTokenName" placeholder="Token name (e.g., CLI, Corin Bot)" maxlength="50" />
-            <select id="newTokenExpiry">
-              <option value="">Never expires</option>
-              <option value="7">7 days</option>
-              <option value="30">30 days</option>
-              <option value="90">90 days</option>
-              <option value="365">1 year</option>
-            </select>
-            <button class="byok-btn byok-btn-primary" onclick="createToken()">Create Token</button>
-          </div>
-
-          <!-- New Token Display (shown after creation) -->
-          <div id="newTokenDisplay" class="new-token-display" style="display: none;">
-            <div class="new-token-warning">⚠️ Copy this token now! You won't be able to see it again.</div>
-            <div class="new-token-value">
-              <code id="newTokenValue"></code>
-              <button class="byok-btn byok-btn-secondary" onclick="copyToken()">Copy</button>
+              <button id="settingSaveGeneral" class="btn btn-primary btn-sm" style="align-self:flex-start;">Save Changes</button>
             </div>
-          </div>
-
-          <!-- Tokens List -->
-          <div id="tokensList" class="tokens-list">
-            <div class="byok-loading">Loading tokens...</div>
-          </div>
-        </div>
-
-        <!-- Supabase Servers -->
-        <div class="dashboard-card" style="margin-bottom: 1rem;">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
-            <h3 style="font-size: 0.9375rem; font-weight: 600;">Supabase Servers</h3>
-            <span id="supabaseServerCount" style="font-size: 0.75rem; color: var(--text-muted);"></span>
-          </div>
-          <p style="font-size: 0.8125rem; color: var(--text-muted); margin-bottom: 0.75rem;">Save your Supabase projects here, then assign them to apps from app settings.</p>
-
-          <div id="supabaseMessage" class="byok-message" style="display: none;"></div>
-
-          <!-- Add Server Form -->
-          <div class="supabase-add-form" id="supabaseAddForm" style="display: none;">
-            <div class="settings-field" style="margin-bottom: 0.5rem;">
-              <input type="text" id="sbNewName" class="settings-input" placeholder="Server name (e.g., Production, Staging)" maxlength="100" style="font-size: 0.8125rem;" />
-            </div>
-            <div class="settings-field" style="margin-bottom: 0.5rem;">
-              <input type="text" id="sbNewUrl" class="settings-input" placeholder="https://xxxxx.supabase.co" style="font-size: 0.8125rem;" />
-            </div>
-            <div class="settings-field" style="margin-bottom: 0.5rem;">
-              <div style="display: flex; gap: 0.5rem;">
-                <input type="password" id="sbNewAnonKey" class="settings-input" placeholder="Anon key (required)" style="flex: 1; font-size: 0.8125rem;" />
-                <button class="env-var-toggle-visibility" onclick="toggleSupabaseKeyVisibility('sbNewAnonKey')" title="Toggle visibility">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-                </button>
-              </div>
-            </div>
-            <div class="settings-field" style="margin-bottom: 0.75rem;">
-              <div style="display: flex; gap: 0.5rem;">
-                <input type="password" id="sbNewServiceKey" class="settings-input" placeholder="Service role key (optional)" style="flex: 1; font-size: 0.8125rem;" />
-                <button class="env-var-toggle-visibility" onclick="toggleSupabaseKeyVisibility('sbNewServiceKey')" title="Toggle visibility">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-                </button>
-              </div>
-            </div>
-            <div style="display: flex; gap: 0.5rem;">
-              <button class="byok-btn byok-btn-primary" onclick="saveNewSupabaseServer()">Save Server</button>
-              <button class="byok-btn byok-btn-secondary" onclick="cancelAddSupabaseServer()">Cancel</button>
-            </div>
-          </div>
-
-          <!-- Add Server Button (shown when form is hidden) -->
-          <button id="supabaseAddBtn" class="byok-btn byok-btn-secondary" onclick="showAddSupabaseForm()" style="margin-bottom: 0.75rem;">+ Add Server</button>
-
-          <!-- Servers List -->
-          <div id="supabaseServersList" class="tokens-list">
-            <div class="byok-loading">Loading servers...</div>
-          </div>
-        </div>
-
-        <!-- MCP Call Log -->
-        <div class="dashboard-card">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
-            <h3 style="font-size: 0.9375rem; font-weight: 600;">Recent MCP Calls</h3>
-            <button onclick="refreshCallLog()" style="font-size: 0.8125rem; padding: 4px 12px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer; color: var(--text-secondary); transition: color 0.2s, border-color 0.2s;">Refresh</button>
-          </div>
-          <div id="callLogList" style="max-height: 320px; overflow-y: auto; font-size: 0.8125rem;">
-            <div style="color: var(--text-muted); padding: 2rem 0; text-align: center;">No calls yet. Connect your MCP client to get started.</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Home View -->
-    <!-- Home View (Hero + Features + Charts) -->
-    <div class="home-view" id="homeView" style="display: ${initialView === 'home' ? 'flex' : 'none'};">
-      <!-- Hero (above the fold) -->
-      <div class="home-hero">
-        <h1 class="home-hero-title">Make agents limitless</h1>
-        <div class="home-cta-row">
-          <a href="#home-features" class="home-cta-secondary" onclick="event.preventDefault(); document.getElementById('home-features').scrollIntoView({behavior:'smooth'});">Learn more</a>
-          <button class="home-cta-primary" id="heroConnectBtn" onclick="connectAgent()">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
-            <span id="heroConnectText">Connect</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Setup Modal (shown after auth + token generation) -->
-      <div id="setupModal" class="setup-modal-overlay" style="display: none;" onclick="if(event.target===this)dismissSetupModal()">
-        <div class="setup-modal-card">
-          <button class="setup-modal-close" onclick="dismissSetupModal()" title="Close">&times;</button>
-          <div class="setup-modal-icon">⚡</div>
-          <h3 class="setup-modal-title">Paste this into your agent</h3>
-          <div class="setup-modal-code" id="setupCommandBlock">
-            <code id="setupCommandText"></code>
-          </div>
-          <button class="setup-modal-copy-btn" id="setupCopyBtn" onclick="copySetupCommand()">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            <span id="setupCopyText">Copy to Clipboard</span>
-          </button>
-          <p class="setup-modal-hint">Works with Claude Code, Cursor, Windsurf, and any agent that can run terminal commands.</p>
-        </div>
-      </div>
-
-      <!-- Core Features (below the fold) -->
-      <div class="home-features" id="home-features">
-        <h2 class="home-features-title">Everything agents need</h2>
-        <div class="home-feature-grid">
-          <div class="home-feature-card">
-            <h4>MCP Protocol</h4>
-            <p>Standard Model Context Protocol endpoint. Works with Claude Desktop, Cursor, and any MCP client.</p>
-          </div>
-          <div class="home-feature-card">
-            <h4>TypeScript Functions</h4>
-            <p>Write plain TypeScript. Export functions, get tool endpoints. No boilerplate or framework lock-in.</p>
-          </div>
-          <div class="home-feature-card">
-            <h4>Key-Value Storage</h4>
-            <p>Built-in persistent storage via ultralight.store() and ultralight.load(). No database setup needed.</p>
-          </div>
-          <div class="home-feature-card">
-            <h4>Supabase Integration</h4>
-            <p>Connect your own Supabase project for relational data, auth, and realtime subscriptions.</p>
-          </div>
-          <div class="home-feature-card">
-            <h4>Environment Secrets</h4>
-            <p>Securely store API keys and credentials. Injected at runtime, never exposed in code.</p>
-          </div>
-          <div class="home-feature-card">
-            <h4>Permissions &amp; Sharing</h4>
-            <p>Granular per-function permissions. Share apps with specific users or make them public.</p>
-          </div>
-        </div>
-      </div>
-
-      <!-- Top Charts -->
-      <div class="home-charts">
-        <div class="home-chart-section">
-          <h3>Top MCP Servers</h3>
-          <div id="homeTopApps" style="display:flex;flex-direction:column;gap:0.375rem">
-            <div style="color: var(--text-muted); font-size: 0.8125rem; padding: 1.5rem 0; text-align: center;">Loading...</div>
-          </div>
-        </div>
-        <div class="home-chart-section">
-          <h3>Recent Content</h3>
-          <div id="homeTopContent" style="display:flex;flex-direction:column;gap:0.375rem">
-            <div style="color: var(--text-muted); font-size: 0.8125rem; padding: 1rem 0; text-align: center;">Loading...</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Leaderboard View -->
-    <div class="dashboard-view" id="leaderboardView" style="display: ${initialView === 'leaderboard' ? 'flex' : 'none'};">
-      <div style="width: 100%; max-width: 600px; margin: 0 auto;">
-        <h1 style="font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem;">Leaderboard</h1>
-        <p style="color: var(--text-secondary); margin-bottom: 0.5rem;">Earn points by building MCP servers that fill platform gaps.</p>
-        <div id="leaderboardSeason" style="margin-bottom:1.25rem"></div>
-        <div id="leaderboardList" style="display:flex;flex-direction:column">
-          <div style="color: var(--text-muted); font-size: 0.8125rem; padding: 2rem 0; text-align: center;">Loading...</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- App View / App Page -->
-    <div class="app-page" id="appView" style="display: ${initialView === 'app' ? 'flex' : 'none'};">
-      <div class="app-page-inner">
-        <!-- MCP Endpoint + Version -->
-        <div class="app-endpoint-bar">
-          <div class="app-endpoint-url">
-            <code id="appMcpUrl">Loading...</code>
-          </div>
-          <div class="app-endpoint-actions">
-            <select id="appVersionSelect" class="app-version-select">
-              <option>Loading...</option>
-            </select>
-            <button class="app-endpoint-copy" id="copyAppMcpBtn" title="Copy MCP URL" onclick="copyAppMcpUrl()">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            </button>
-            <button class="app-endpoint-copy" id="openDashboardBtn" title="Open Dashboard" onclick="openAppDashboard()">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>
-            </button>
-          </div>
-        </div>
-
-        <!-- Client Setup Instructions -->
-        <details style="margin: 0.5rem 0 0.75rem 0;">
-          <summary style="font-size: 0.75rem; color: var(--text-secondary); cursor: pointer; user-select: none; padding: 0.25rem 0;">Setup for Claude Desktop &amp; Cursor</summary>
-          <div style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--text-muted); line-height: 1.6;">
-            <p style="margin-bottom: 0.5rem;">Add to your MCP client config:</p>
-            <div style="position: relative;">
-              <pre id="appBridgeConfig" style="background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; padding: 0.75rem; font-family: 'JetBrains Mono', monospace; font-size: 0.6875rem; overflow-x: auto; white-space: pre; margin: 0;"></pre>
-              <button onclick="copyAppBridgeConfig()" style="position: absolute; top: 6px; right: 6px; padding: 4px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 4px; cursor: pointer; color: var(--text-secondary);" title="Copy config">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              </button>
-            </div>
-            <p style="margin-top: 0.5rem;">Replace <code style="font-size: 0.6875rem; padding: 1px 4px; background: var(--bg-tertiary); border-radius: 4px;">YOUR_TOKEN</code> with your API token. Requires <code style="font-size: 0.6875rem; padding: 1px 4px; background: var(--bg-tertiary); border-radius: 4px;">npx</code> (Node.js 18+).</p>
           </div>
         </details>
 
-        <!-- Collapsible: General -->
-        <div class="app-section" id="sectionGeneral">
-          <button class="app-section-header" onclick="toggleAppSection('General')">
-            <span class="app-section-title">General</span>
-            <svg class="app-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-          </button>
-          <div class="app-section-body">
-            <div class="app-field">
-              <label>App Name</label>
-              <input type="text" id="appPageName" class="settings-input" placeholder="My App" />
-            </div>
-            <div class="app-field">
-              <label>Visibility</label>
-              <select id="appPageVisibility" class="settings-select">
-                <option value="private">Private — Only you and granted users</option>
-                <option value="unlisted">Unlisted — Anyone with link</option>
-                <option value="published">Published — Listed publicly</option>
-              </select>
-              <div id="appVisibilityHint" class="upgrade-cta" style="display: none;"></div>
-            </div>
-            <div class="app-field">
-              <label>Code Download Access</label>
-              <select id="appPageDownload" class="settings-select">
-                <option value="owner">Owner Only</option>
-                <option value="public">Public — Anyone can download</option>
-              </select>
-            </div>
-            <div class="app-section-actions">
-              <button class="settings-action-btn" onclick="downloadAppCode()">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                Download Code
-              </button>
-              <button class="settings-action-btn danger" onclick="deleteApp()">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                Delete App
-              </button>
-            </div>
+        <!-- Permissions -->
+        <details style="margin-bottom:var(--space-4);">
+          <summary style="font-size:14px;font-weight:600;color:var(--text-primary);cursor:pointer;padding:var(--space-3) 0;border-bottom:1px solid var(--border);">Permissions</summary>
+          <div id="appSettingsPermissions" style="padding:var(--space-4) 0;">
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Control who can call your functions. Apps are private by default.</p>
+            <button id="managePermissionsBtn" class="btn btn-ghost btn-sm">Manage Permissions</button>
           </div>
-        </div>
+        </details>
 
-        <!-- Collapsible: Permissions -->
-        <div class="app-section" id="sectionPermissions">
-          <button class="app-section-header" onclick="toggleAppSection('Permissions')">
-            <span class="app-section-title">Permissions</span>
-            <svg class="app-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-          </button>
-          <div class="app-section-body">
-            <div id="permsProContext" style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.5rem;">Control who can access this app.</div>
-            <div style="display: flex; align-items: center; justify-content: space-between;">
-              <span id="appPermsSummary" style="font-size: 0.8125rem; color: var(--text-secondary);">No users granted access</span>
-              <button class="byok-btn byok-btn-secondary" onclick="openPermissionsModal()">Manage</button>
-            </div>
+        <!-- Database -->
+        <details style="margin-bottom:var(--space-4);">
+          <summary style="font-size:14px;font-weight:600;color:var(--text-primary);cursor:pointer;padding:var(--space-3) 0;border-bottom:1px solid var(--border);">Database</summary>
+          <div id="appSettingsDatabase" style="padding:var(--space-4) 0;">
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Built-in KV store is available to all apps. Pro users can connect a Supabase database.</p>
+            <div id="dbConnectionStatus" style="font-size:12px;color:var(--text-muted);">Not connected</div>
           </div>
-        </div>
+        </details>
 
-        <!-- Collapsible: Database -->
-        <div class="app-section" id="sectionDatabase">
-          <button class="app-section-header" onclick="toggleAppSection('Database')">
-            <span class="app-section-title">Database</span>
-            <svg class="app-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-          </button>
-          <div class="app-section-body">
-            <div class="app-field">
-              <label>Supabase Server</label>
-              <select id="appPageSupabase" class="settings-select">
-                <option value="">None — Supabase disabled</option>
-              </select>
-            </div>
+        <!-- Environment Variables -->
+        <details style="margin-bottom:var(--space-4);">
+          <summary style="font-size:14px;font-weight:600;color:var(--text-primary);cursor:pointer;padding:var(--space-3) 0;border-bottom:1px solid var(--border);">Environment Variables</summary>
+          <div id="appSettingsEnv" style="padding:var(--space-4) 0;">
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Set environment variables accessible via the Ultralight SDK.</p>
+            <div id="envVarsList" style="display:flex;flex-direction:column;gap:var(--space-2);"></div>
           </div>
-        </div>
+        </details>
+      </div>
 
-        <!-- Collapsible: Skills -->
-        <div class="app-section" id="sectionSkills">
-          <button class="app-section-header" onclick="toggleAppSection('Skills')">
-            <span class="app-section-title">Skills</span>
-            <svg class="app-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-          </button>
-          <div class="app-section-body">
-            <div style="display: flex; align-items: center; justify-content: space-between;">
-              <span id="appSkillsSummary" style="font-size: 0.8125rem; color: var(--text-secondary);">No skills documented</span>
-              <button class="byok-btn byok-btn-secondary" onclick="openSkillsModal()">Edit Skills</button>
-            </div>
-          </div>
+      <!-- Tab Content: Logs -->
+      <div id="appLogs" class="tab-content" data-tab-content="logs">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-4);">
+          <h3 style="font-size:14px;font-weight:600;color:var(--text-primary);">Call Log</h3>
+          <button id="refreshLogsBtn" class="btn btn-ghost btn-sm">Refresh</button>
         </div>
-
-        <!-- Collapsible: Pricing -->
-        <div class="app-section" id="sectionPricing">
-          <button class="app-section-header" onclick="toggleAppSection('Pricing')">
-            <span class="app-section-title">Pricing</span>
-            <svg class="app-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-          </button>
-          <div class="app-section-body">
-            <p style="font-size: 0.75rem; color: var(--text-secondary); margin: 0 0 0.75rem;">
-              Charge callers per tool call. Fees transfer directly to your balance — zero platform fees.
-            </p>
-            <div class="app-field">
-              <label>Default Price (cents per call)</label>
-              <input type="number" id="appPricingDefault" class="settings-input" min="0" max="10000" step="1" value="0" placeholder="0 = free">
-            </div>
-            <div class="app-field" style="margin-top: 0.75rem;">
-              <label>Per-Function Overrides</label>
-              <textarea id="appPricingFunctions" class="settings-input" rows="3" placeholder='{ "search": 5, "generate": 25 }' style="font-family: monospace; font-size: 0.75rem;"></textarea>
-              <span style="font-size: 0.6875rem; color: var(--text-tertiary);">JSON: { "functionName": centsPerCall }</span>
-            </div>
-            <div class="app-field" style="margin-top: 0.75rem;">
-              <label>Product Catalog (In-App Purchases)</label>
-              <textarea id="appPricingProducts" class="settings-input" rows="4" placeholder='[{ "id": "export_pdf", "name": "PDF Export", "price_cents": 50, "description": "Export data as PDF" }]' style="font-family: monospace; font-size: 0.75rem;"></textarea>
-              <span style="font-size: 0.6875rem; color: var(--text-tertiary);">JSON array. Purchasable via <code>ultralight.charge(price_cents, product_id)</code> in your code. Shows in Skills.md.</span>
-            </div>
-          </div>
+        <div style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border);">
+                <th style="text-align:left;padding:var(--space-3) var(--space-4);color:var(--text-muted);font-weight:500;font-size:12px;">Time</th>
+                <th style="text-align:left;padding:var(--space-3) var(--space-4);color:var(--text-muted);font-weight:500;font-size:12px;">Function</th>
+                <th style="text-align:left;padding:var(--space-3) var(--space-4);color:var(--text-muted);font-weight:500;font-size:12px;">Status</th>
+                <th style="text-align:left;padding:var(--space-3) var(--space-4);color:var(--text-muted);font-weight:500;font-size:12px;">Duration</th>
+                <th style="text-align:left;padding:var(--space-3) var(--space-4);color:var(--text-muted);font-weight:500;font-size:12px;">Caller</th>
+              </tr>
+            </thead>
+            <tbody id="logsTableBody"></tbody>
+          </table>
         </div>
+        <div id="logsEmpty" style="text-align:center;padding:var(--space-8);color:var(--text-muted);font-size:13px;">No calls recorded yet.</div>
+      </div>
 
-        <!-- Collapsible: Revenue -->
-        <div class="app-section" id="sectionRevenue">
-          <button class="app-section-header" onclick="toggleAppSection('Revenue')">
-            <span class="app-section-title">Revenue</span>
-            <svg class="app-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-          </button>
-          <div class="app-section-body">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
-              <div>
-                <span style="font-size: 1.25rem; font-weight: 700; color: var(--text-primary);" id="revenueTotal">$0.00</span>
-                <span style="font-size: 0.6875rem; color: var(--text-tertiary); margin-left: 0.25rem;">earned</span>
+      <!-- Tab Content: Business -->
+      <div id="appBusiness" class="tab-content" data-tab-content="business">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-6);">
+          <div>
+            <h3 style="font-size:14px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Pricing Configuration</h3>
+            <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-5);">
+              <div style="margin-bottom:var(--space-4);">
+                <label style="font-size:12px;font-weight:500;color:var(--text-secondary);display:block;margin-bottom:var(--space-2);">Price per call (USD)</label>
+                <input id="appPriceInput" type="number" class="input" placeholder="0.00" step="0.001" min="0">
               </div>
-              <select id="revenuePeriod" onchange="loadAppEarnings()" style="font-size: 0.75rem; padding: 0.25rem 0.5rem; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary);">
-                <option value="7d">7 days</option>
-                <option value="30d" selected>30 days</option>
-                <option value="90d">90 days</option>
-                <option value="all">All time</option>
-              </select>
-            </div>
-            <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
-              <span id="revenuePeriodAmount">$0.00</span> in selected period &middot;
-              <span id="revenuePeriodCount">0</span> paid calls
-            </div>
-            <!-- Daily chart -->
-            <div id="revenueChart" style="display: flex; align-items: flex-end; gap: 1px; height: 60px; margin: 0.75rem 0; border-bottom: 1px solid var(--border-color);"></div>
-            <!-- By-function breakdown -->
-            <div id="revenueByFunction" style="margin-top: 0.75rem;"></div>
-            <!-- Recent transfers -->
-            <details style="margin-top: 0.75rem;">
-              <summary style="font-size: 0.75rem; color: var(--text-secondary); cursor: pointer;">Recent transfers</summary>
-              <div id="revenueRecent" style="margin-top: 0.5rem; font-size: 0.6875rem; color: var(--text-tertiary);"></div>
-            </details>
-          </div>
-        </div>
-
-        <!-- Collapsible: Health & Auto-Heal -->
-        <div class="app-section" id="sectionHealth">
-          <button class="app-section-header" onclick="toggleAppSection('Health')">
-            <span class="app-section-title">Health</span>
-            <svg class="app-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-          </button>
-          <div class="app-section-body">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
-              <div style="display: flex; align-items: center; gap: 0.5rem;">
-                <span id="healthStatusDot" style="width: 8px; height: 8px; border-radius: 50%; background: var(--success-color); display: inline-block;"></span>
-                <span id="healthStatusText" style="font-size: 0.8125rem; font-weight: 600; color: var(--text-primary);">Healthy</span>
-              </div>
-              <label style="font-size: 0.75rem; color: var(--text-secondary); display: flex; align-items: center; gap: 0.375rem; cursor: pointer;">
-                <input type="checkbox" id="autoHealToggle" checked onchange="toggleAutoHeal()" style="width: 0.875rem; height: 0.875rem; cursor: pointer;" />
-                Monitor
-              </label>
-            </div>
-            <p style="font-size: 0.6875rem; color: var(--text-tertiary); margin: 0 0 0.75rem;">
-              Ultralight monitors your functions for failures every 30 minutes. When issues are detected, they appear here and are available to agents via <code style="font-size: 0.625rem;">ul.health</code>. Agents can read errors, fix the code, and re-upload.
-            </p>
-            <!-- Function health -->
-            <div id="healthFunctions" style="margin-bottom: 0.75rem;"></div>
-            <!-- Health events -->
-            <div id="healthEvents"></div>
-          </div>
-        </div>
-
-        <!-- Collapsible: Environment -->
-        <div class="app-section" id="sectionEnvironment">
-          <button class="app-section-header" onclick="toggleAppSection('Environment')">
-            <span class="app-section-title">Environment</span>
-            <svg class="app-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-          </button>
-          <div class="app-section-body">
-            <div style="display: flex; align-items: center; justify-content: space-between;">
-              <span id="appEnvSummary" style="font-size: 0.8125rem; color: var(--text-secondary);">No variables configured</span>
-              <button class="byok-btn byok-btn-secondary" onclick="openEnvModal()">Edit</button>
+              <button id="savePricingBtn" class="btn btn-primary btn-sm">Save Pricing</button>
             </div>
           </div>
-        </div>
-
-        <!-- Floating Save Button -->
-        <div class="floating-save" id="floatingSave" style="display: none;">
-          <button class="floating-save-btn" onclick="saveAppPageChanges()">Save Changes</button>
+          <div>
+            <h3 style="font-size:14px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Revenue</h3>
+            <div id="appRevenueSummary" style="background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-5);">
+              <div style="font-size:24px;font-weight:700;color:var(--text-primary);margin-bottom:var(--space-2);" id="revenueTotal">$0.00</div>
+              <div style="font-size:12px;color:var(--text-muted);">Total earned from paid calls</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Footer -->
-    <div class="site-footer" id="siteFooter" style="display: ${initialView === 'dashboard' ? 'flex' : 'none'}">
-      <span>&copy; 2026 Ultralight</span>
-      <div class="footer-links">
-        <a href="https://www.npmjs.com/package/@ultralightpro/types" target="_blank">SDK Reference</a>
-        <a href="https://www.npmjs.com/package/ultralightpro" target="_blank">CLI Tool</a>
-        <a href="/mcp/platform">API / MCP</a>
-        <a href="#" onclick="showQuickRef(); return false;">Quick Ref</a>
-      </div>
+    <!-- ==========================================
+         ACCOUNT SETTINGS VIEW
+         ========================================== -->
+    <div id="accountView" style="display:none;">
+      <button id="accountBackBtn" class="btn btn-ghost btn-sm" style="margin-bottom:var(--space-4);gap:var(--space-2);display:inline-flex;align-items:center;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        Back
+      </button>
+      <h1 style="font-size:22px;font-weight:700;margin-bottom:var(--space-8);letter-spacing:-0.02em;">Account Settings</h1>
+
+      <!-- API Tokens Section -->
+      <section style="margin-bottom:var(--space-8);">
+        <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">API Tokens</h2>
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Manage your API tokens for CLI authentication and programmatic access.</p>
+        <div id="tokensList" style="display:flex;flex-direction:column;gap:var(--space-2);margin-bottom:var(--space-4);"></div>
+        <button id="createTokenBtn" class="btn btn-primary btn-sm">Create New Token</button>
+      </section>
+
+      <!-- Billing Section -->
+      <section style="margin-bottom:var(--space-8);">
+        <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Billing &amp; Balance</h2>
+        <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-5);">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-4);">
+            <div>
+              <div style="font-size:12px;color:var(--text-muted);margin-bottom:var(--space-1);">Current Balance</div>
+              <div id="accountBalance" style="font-size:28px;font-weight:700;color:var(--text-primary);">$0.00</div>
+            </div>
+            <button id="addFundsBtn" class="btn btn-primary btn-sm">Add Funds</button>
+          </div>
+          <div id="billingHistory" style="font-size:13px;color:var(--text-muted);">No billing history.</div>
+        </div>
+      </section>
+
+      <!-- Supabase Servers Section -->
+      <section style="margin-bottom:var(--space-8);">
+        <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Supabase Servers</h2>
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Connect Supabase databases to enable SQL queries from your apps.</p>
+        <div id="supabaseServersList" style="display:flex;flex-direction:column;gap:var(--space-2);margin-bottom:var(--space-4);"></div>
+        <button id="addSupabaseBtn" class="btn btn-ghost btn-sm">+ Add Supabase Server</button>
+      </section>
     </div>
-  </main>
 
-  <!-- Right Sidebar (X/Twitter-style, leaderboard only) -->
-  <aside class="right-sidebar" id="rightSidebar">
-    <div class="right-sidebar-header" id="rightSidebarHeader"></div>
-    <div class="right-sidebar-tabs" id="rightSidebarTabs"></div>
-    <div class="right-sidebar-content" id="rightSidebarContent">
-      <div style="color:var(--text-muted);font-size:0.8125rem;padding:1rem 0;text-align:center">Loading...</div>
-    </div>
-  </aside>
+  <!-- ============================================
+       MODALS
+       ============================================ -->
 
-  <!-- Hidden BYOK container (deprecated from UI but keeping data layer) -->
-  <div style="display: none;">
-    <div id="byokMessage" class="byok-message"></div>
-    <div id="byokProviders" class="byok-providers"></div>
-  </div>
-
-  <!-- Skills Modal -->
-  <div class="modal-overlay" id="skillsModal">
-    <div class="modal wide">
+  <!-- Delete Confirmation Modal -->
+  <div id="deleteConfirmModal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:420px;">
       <div class="modal-header">
-        <h2 class="modal-title">Edit Skills</h2>
-        <button class="modal-close" onclick="closeSkillsModal()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-        </button>
+        <h2>Delete App</h2>
+        <button class="modal-close" onclick="document.getElementById('deleteConfirmModal').classList.add('hidden')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:18px;">&times;</button>
       </div>
       <div class="modal-body">
-        <div class="settings-section">
-          <div class="info-box">Skills.md describes what your app can do. Generate from code or edit manually.</div>
-          <div id="skillsModalStatus" class="skills-status info" style="margin-bottom: 0.75rem;">No documentation generated yet</div>
-          <button id="generateDocsBtn" class="generate-docs-btn" style="margin-bottom: 0.75rem;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
-            Generate Documentation
-          </button>
-          <textarea id="skillsEditor" class="skills-editor" placeholder="# App Name\n\n## Functions\n\n### functionName\nDescription of the function..."></textarea>
-          <div id="skillsValidation" class="skills-status" style="display: none;"></div>
-        </div>
+        <p style="font-size:14px;color:var(--text-secondary);line-height:1.6;">Are you sure you want to delete this app? This action cannot be undone. All data, call history, and permissions will be permanently removed.</p>
       </div>
       <div class="modal-footer">
-        <button class="modal-btn secondary" onclick="closeSkillsModal()">Cancel</button>
-        <button class="modal-btn primary" id="saveSkillsBtn" onclick="saveSkillsFromModal()">Save Skills</button>
+        <button id="deleteCancel" class="btn btn-ghost btn-sm" onclick="document.getElementById('deleteConfirmModal').classList.add('hidden')">Cancel</button>
+        <button id="deleteConfirm" class="btn btn-danger btn-sm">Delete Permanently</button>
       </div>
     </div>
   </div>
 
-  <!-- Environment Modal -->
-  <div class="modal-overlay" id="envModal">
-    <div class="modal wide">
+  <!-- Skills Editor Modal -->
+  <div id="skillsModal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:640px;">
       <div class="modal-header">
-        <h2 class="modal-title">Environment Variables</h2>
-        <button class="modal-close" onclick="closeEnvModal()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-        </button>
+        <h2>Edit Skills.md</h2>
+        <button class="modal-close" onclick="document.getElementById('skillsModal').classList.add('hidden')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:18px;">&times;</button>
       </div>
       <div class="modal-body">
-        <div class="settings-section">
-          <div class="info-box">Store secrets and configuration. Encrypted and only accessible at runtime via <code>ultralight.env</code>.</div>
-          <div id="envModalVarsContainer" class="env-vars-container">
-            <div id="envModalVarsEmpty" class="env-vars-empty">No environment variables set.</div>
-          </div>
-          <button id="envModalAddBtn" class="env-var-add-btn" style="margin-top: 0.75rem;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            Add Variable
-          </button>
-          <div class="env-vars-limits" style="margin-top: 0.5rem;">Max 50 variables · Keys: uppercase, underscores (max 64 chars) · Values: max 4KB</div>
-        </div>
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-3);">Describe your app's capabilities for agent discovery. Markdown supported.</p>
+        <textarea id="skillsEditor" style="width:100%;min-height:300px;background:var(--bg-base);border:1px solid var(--border);border-radius:var(--radius-md);padding:var(--space-4);font-family:var(--font-mono);font-size:13px;line-height:1.6;color:var(--text-primary);resize:vertical;" placeholder="# My App\n\nDescribe what this app does..."></textarea>
       </div>
       <div class="modal-footer">
-        <button class="modal-btn secondary" onclick="closeEnvModal()">Cancel</button>
-        <button class="modal-btn primary" id="saveEnvBtn" onclick="saveEnvFromModal()">Save Variables</button>
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('skillsModal').classList.add('hidden')">Cancel</button>
+        <button id="skillsSave" class="btn btn-primary btn-sm">Save Skills</button>
       </div>
     </div>
   </div>
 
   <!-- Permissions Modal -->
-  <div class="modal-overlay" id="permissionsModal">
-    <div class="modal wide">
+  <div id="permissionsModal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:600px;">
       <div class="modal-header">
-        <h2 class="modal-title">App Permissions</h2>
-        <button class="modal-close" onclick="closePermissionsModal()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-        </button>
+        <h2>Manage Permissions</h2>
+        <button class="modal-close" onclick="document.getElementById('permissionsModal').classList.add('hidden')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:18px;">&times;</button>
       </div>
       <div class="modal-body">
-        <div class="settings-section">
-          <div class="info-box" id="permsInfoBox">Grant access to specific users for this app. The app owner always has full access.</div>
-
-          <!-- Add user by email -->
-          <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-            <input type="email" id="permsEmailInput" class="settings-input" placeholder="Enter email address..." style="flex: 1;" />
-            <button class="byok-btn byok-btn-primary" onclick="addPermissionUser()" style="white-space: nowrap; padding: 0.5rem 1rem;">Add User</button>
-          </div>
-          <div id="permsAddError" style="color: var(--error-color); font-size: 0.75rem; margin-top: -0.5rem; margin-bottom: 0.75rem; display: none;"></div>
-
-          <!-- Granted users list -->
-          <div id="permsUsersList" class="tokens-list" style="margin-bottom: 0.75rem;"></div>
-          <div id="permsEmpty" style="text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.8125rem;">No users have been granted access yet.</div>
-
-          <!-- Per-user function permissions (shown when a user is selected) -->
-          <div id="permsUserDetail" style="display: none; border-top: 1px solid var(--border-color); padding-top: 1rem; margin-top: 0.75rem;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-              <span id="permsDetailTitle" style="font-size: 0.875rem; font-weight: 500; color: var(--text-primary);">User Functions</span>
-              <div id="permsGranularBtns" style="display: flex; gap: 0.5rem;">
-                <button class="byok-btn byok-btn-secondary" onclick="allowAllPermissions()" style="font-size: 0.75rem; padding: 2px 10px;">Allow All</button>
-                <button class="byok-btn byok-btn-secondary" onclick="denyAllPermissions()" style="font-size: 0.75rem; padding: 2px 10px;">Deny All</button>
-              </div>
-            </div>
-            <div id="permsMatrix" class="tokens-list"></div>
-          </div>
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Grant access to specific users and control which functions they can call.</p>
+        <div id="permissionsList" style="display:flex;flex-direction:column;gap:var(--space-3);margin-bottom:var(--space-4);"></div>
+        <div style="display:flex;gap:var(--space-2);">
+          <input id="permissionEmail" type="email" class="input" placeholder="user@example.com" style="flex:1;">
+          <button id="grantPermissionBtn" class="btn btn-primary btn-sm">Grant Access</button>
         </div>
       </div>
       <div class="modal-footer">
-        <button class="modal-btn secondary" onclick="closePermissionsModal()">Close</button>
-        <button class="modal-btn primary" id="savePermsBtn" onclick="savePermissions()">Save Permissions</button>
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('permissionsModal').classList.add('hidden')">Done</button>
       </div>
     </div>
   </div>
 
-  <!-- Logs Modal -->
-  <div class="modal-overlay" id="logsModal">
-    <div class="modal wide">
-      <div class="modal-header">
-        <h2 class="modal-title" id="logsModalTitle">MCP Call Logs</h2>
-        <button class="modal-close" onclick="closeLogsModal()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-        </button>
-      </div>
-      <div class="modal-body">
-        <div id="logsContent" style="max-height: 60vh; overflow-y: auto;">
-          <div id="logsEmpty" style="text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.8125rem;">Loading logs...</div>
-          <div id="logsList" class="tokens-list" style="display: none;"></div>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="modal-btn secondary" onclick="closeLogsModal()">Close</button>
-        <button class="modal-btn secondary" onclick="refreshLogs()">Refresh</button>
-      </div>
-    </div>
-  </div>
+  </main>
 
-  <!-- Quick Reference Modal -->
-  <div class="modal-overlay" id="quickRefModal">
-    <div class="modal" style="max-width: 650px;">
-      <div class="modal-header">
-        <h2 class="modal-title">SDK Quick Reference</h2>
-        <button class="modal-close" onclick="closeQuickRef()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </button>
-      </div>
-      <div class="modal-body quick-ref-content">
-        <div class="quick-ref-section">
-          <div class="quick-ref-section-title">Setup (for TypeScript autocomplete)</div>
-          <div class="quick-ref-code">npm install -D @ultralightpro/types
 
-// Then add to your file:
-/// &lt;reference types="@ultralightpro/types" /&gt;</div>
-        </div>
+  <script>
+  (async function() {
+    'use strict';
 
-        <div class="quick-ref-section">
-          <div class="quick-ref-section-title">Data Storage</div>
-          <div class="quick-ref-code">await ultralight.store('key', { any: 'value' });
-await ultralight.load('key');
-await ultralight.list('prefix/');
-await ultralight.remove('key');
-
-// Advanced queries
-await ultralight.query('notes/', {
-  sort: { field: 'createdAt', order: 'desc' },
-  limit: 10
-});</div>
-        </div>
-
-        <div class="quick-ref-section">
-          <div class="quick-ref-section-title">AI (uses your BYOK key from Settings)</div>
-          <div class="quick-ref-code">const response = await ultralight.ai({
-  messages: [
-    { role: 'system', content: 'You are helpful.' },
-    { role: 'user', content: 'Hello!' }
-  ],
-  temperature: 0.7,
-  max_tokens: 1000
-});
-console.log(response.content);</div>
-        </div>
-
-        <div class="quick-ref-section">
-          <div class="quick-ref-section-title">User Context</div>
-          <div class="quick-ref-code">// Check auth
-if (ultralight.isAuthenticated()) {
-  const user = ultralight.user;
-  console.log(user.email, user.tier);
-}
-
-// Require auth (throws if not logged in)
-const user = ultralight.requireAuth();</div>
-        </div>
-
-        <div class="quick-ref-section">
-          <div class="quick-ref-section-title">Global Utilities</div>
-          <div class="quick-ref-code">_.groupBy(items, 'category')
-_.sortBy(items, 'date')
-uuid.v4()
-dateFns.format(new Date(), 'yyyy-MM-dd')
-await hash.sha256('data')</div>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <a href="https://www.npmjs.com/package/@ultralightpro/types" target="_blank" class="modal-btn secondary">View on npm</a>
-        <button class="modal-btn primary" onclick="closeQuickRef()">Got it</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Delete Confirmation Modal -->
-  <div class="modal-overlay" id="deleteConfirmModal">
-    <div class="modal" style="max-width: 400px;">
-      <div class="modal-body">
-        <div class="confirm-dialog">
-          <div class="confirm-dialog-icon">🗑️</div>
-          <div class="confirm-dialog-title">Delete App?</div>
-          <div class="confirm-dialog-message">
-            Are you sure you want to delete <strong id="deleteAppName"></strong>? This action cannot be undone.
-          </div>
-          <div class="confirm-dialog-actions">
-            <button class="modal-btn secondary" onclick="closeDeleteConfirm()">Cancel</button>
-            <button class="modal-btn primary" style="background: var(--error-color);" id="confirmDeleteBtn">Delete</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Toast -->
-  <div class="toast" id="toast"></div>
-
-  <script type="module">
-    // ============================================
-    // State
-    // ============================================
+    // ===== Global State =====
     let authToken = localStorage.getItem('ultralight_token');
     let currentUser = null;
-    let userProfile = null; // Full profile from GET /api/user (tier, storage, etc.)
+    let userProfile = null;
     let apps = [];
-    let currentAppId = ${activeAppId ? `'${activeAppId}'` : 'null'};
+    let currentAppId = null;
     let currentView = '${initialView}';
+    let setupCommandStr = '';
+    let newlyCreatedTokenId = null;
+    let connectionPollInterval = null;
+    let currentEnvVars = {};
+    let pendingEnvVarChanges = {};
+    let appSupabaseChanged = false;
+    let savedSupabaseServers = null;
+    let permsGrantedUsers = [];
+    let permsSelectedUserId = null;
+    let currentTokens = [];
+    let byokData = null;
+    let draftFiles = [];
+    let skillsValidationTimeout = null;
 
-    // ============================================
-    // DOM Elements
-    // ============================================
-    const authSection = document.getElementById('authSection');
-    const appsList = document.getElementById('appsList');
-    const newAppBtn = document.getElementById('newAppBtn');
-    const dashboardView = document.getElementById('dashboardView');
-    const homeView = document.getElementById('homeView');
-    const leaderboardView = document.getElementById('leaderboardView');
-    const appView = document.getElementById('appView');
-    const deleteConfirmModal = document.getElementById('deleteConfirmModal');
-    const toast = document.getElementById('toast');
-    const sidebar = document.getElementById('sidebar');
-    const sidebarToggle = document.getElementById('sidebarToggle');
-    const mainContent = document.querySelector('.main-content');
+    // ===== Utilities =====
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+    const escHtml = escapeHtml;
 
-    // ============================================
-    // Sidebar Toggle
-    // ============================================
-    let sidebarCollapsed = localStorage.getItem('sidebar_collapsed') === 'true';
-
-    function updateSidebarState() {
-      if (sidebarCollapsed) {
-        sidebar.classList.add('collapsed');
-        mainContent.classList.add('sidebar-collapsed');
-      } else {
-        sidebar.classList.remove('collapsed');
-        mainContent.classList.remove('sidebar-collapsed');
-      }
-      renderRailApps();
+    function relTime(d) {
+      const ms = Date.now() - new Date(d).getTime();
+      const m = Math.floor(ms / 60000);
+      if (m < 1) return 'just now';
+      if (m < 60) return m + 'm ago';
+      const h = Math.floor(m / 60);
+      if (h < 24) return h + 'h ago';
+      const dy = Math.floor(h / 24);
+      if (dy < 30) return dy + 'd ago';
+      return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     }
 
-    sidebarToggle.addEventListener('click', () => {
-      sidebarCollapsed = !sidebarCollapsed;
-      localStorage.setItem('sidebar_collapsed', sidebarCollapsed);
-      updateSidebarState();
-    });
-
-    // Rail "Expand sidebar" button
-    document.getElementById('railSidebarToggle')?.addEventListener('click', () => {
-      sidebarCollapsed = !sidebarCollapsed;
-      localStorage.setItem('sidebar_collapsed', sidebarCollapsed);
-      updateSidebarState();
-    });
-
-    // Rail "Dashboard" button
-    document.getElementById('railNewApp')?.addEventListener('click', () => {
-      navigateToDashboard();
-    });
-
-    // Render collapsed rail app icons
-    function renderRailApps() {
-      const rail = document.getElementById('railAppsList');
-      if (!rail) return;
-      if (!apps || apps.length === 0) {
-        rail.innerHTML = '';
-        return;
-      }
-      rail.innerHTML = apps.map(app => {
-        const isActive = app.id === currentAppId;
-        const icon = app.icon_url
-          ? \`<img src="\${app.icon_url}" alt="">\`
-          : getAppEmoji(app.name);
-        return \`<button class="sidebar-rail-app \${isActive ? 'active' : ''}" onclick="navigateToApp(event, '\${app.id}')" title="\${escapeHtml(app.name)}">\${icon}</button>\`;
-      }).join('');
+    function formatBytes(bytes) {
+      if (!bytes || bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     }
 
-    // Initialize sidebar state
-    updateSidebarState();
-
-
-
-    // ============================================
-    // Footer visibility (hide when viewing app)
-    // ============================================
-    function updateFooterVisibility(view) {
-      const footer = document.getElementById('siteFooter');
-      if (footer) footer.style.display = (view === 'dashboard' || view === 'home') ? 'flex' : 'none';
+    function getAppEmoji(name) {
+      const emojis = ['⚡','🔧','📡','🎯','🚀','💎','🔮','🎨','🌊','🔥','✨','🛠️','📦','🎪','🌟'];
+      let hash = 0;
+      for (let i = 0; i < (name || '').length; i++) hash = ((hash << 5) - hash) + name.charCodeAt(i);
+      return emojis[Math.abs(hash) % emojis.length];
     }
 
-    // ============================================
-    // Toast Notifications
-    // ============================================
-    function showToast(message, type = 'success') {
-      toast.textContent = message;
-      toast.className = 'toast ' + type;
-      toast.classList.add('show');
-      setTimeout(() => toast.classList.remove('show'), 3000);
-    }
-
-    // ============================================
-    // Auth
-    // ============================================
     function decodeJWT(token) {
       try {
-        const base64Url = token.split('.')[1];
-        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-        return JSON.parse(atob(base64));
-      } catch {
-        return null;
-      }
+        const payload = token.split('.')[1];
+        return JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+      } catch { return null; }
     }
 
-    async function updateAuthUI() {
-      if (authToken) {
-        const payload = decodeJWT(authToken);
-        if (payload && payload.exp * 1000 > Date.now()) {
-          currentUser = payload;
-          const email = payload.email || 'User';
+    // ===== Toast Notifications =====
+    function showToast(message, type = 'success') {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      toast.className = 'toast toast-' + type;
+      toast.textContent = message;
+      container.appendChild(toast);
+      requestAnimationFrame(() => toast.classList.add('toast-visible'));
+      setTimeout(() => {
+        toast.classList.remove('toast-visible');
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
 
-          // Fetch full user profile (tier, storage) from DB
-          try {
-            const profileRes = await fetch('/api/user', {
-              headers: { 'Authorization': \`Bearer \${authToken}\` }
-            });
-            if (profileRes.ok) {
-              userProfile = await profileRes.json();
-            }
-          } catch (e) {
-            console.warn('Failed to fetch user profile:', e);
-          }
+    // ===== Authentication =====
+    function showAuthOverlay() {
+      document.getElementById('authOverlay').classList.remove('hidden');
+    }
+    function hideAuthOverlay() {
+      document.getElementById('authOverlay').classList.add('hidden');
+    }
 
-          // Extract first name from Supabase Google Auth user_metadata
-          const userMeta = payload.user_metadata || {};
-          const fullName = userMeta.full_name || userMeta.name || '';
-          const firstName = fullName.split(' ')[0] || email.split('@')[0];
-          const initial = (firstName || email).charAt(0).toUpperCase();
+    document.getElementById('googleAuthBtn').addEventListener('click', function() {
+      // Open auth in new tab (MiniMax-style)
+      const authUrl = '/auth/login?return_to=' + encodeURIComponent('/?popup=1');
+      window.open(authUrl, 'ultralight-auth', 'width=500,height=700,menubar=no,toolbar=no');
+      hideAuthOverlay();
+    });
 
-          // Sidebar: hide auth when logged in, show profile
-          authSection.innerHTML = '';
+    // Close auth overlay on backdrop click
+    document.getElementById('authOverlay').addEventListener('click', function(e) {
+      if (e.target === this) hideAuthOverlay();
+    });
+    // Close button
+    document.getElementById('authCloseBtn')?.addEventListener('click', hideAuthOverlay);
 
-          // Sidebar profile
-          const sidebarProfile = document.getElementById('sidebarProfile');
-          if (sidebarProfile) {
-            sidebarProfile.style.display = 'flex';
-            document.getElementById('sidebarAvatar').textContent = initial;
-            document.getElementById('sidebarProfileName').textContent = firstName;
-            document.getElementById('sidebarProfileEmail').textContent = email;
-            document.getElementById('sidebarDropdownEmail').textContent = email;
-          }
-          loadApps();
-          loadDashboardData();
-          return;
+    // Listen for auth message from popup
+    window.addEventListener('message', function(event) {
+      if (event.origin !== window.location.origin) return;
+      if (event.data && event.data.type === 'auth-success') {
+        authToken = event.data.token;
+        localStorage.setItem('ultralight_token', event.data.token);
+        if (event.data.refreshToken) {
+          localStorage.setItem('ultralight_refresh_token', event.data.refreshToken);
         }
+        hideAuthOverlay();
+        updateAuthUI();
+      }
+    });
 
-        // Token expired — try refresh before clearing
+    // Also handle returning from auth tab (fallback for browsers that block postMessage)
+    window.addEventListener('focus', function() {
+      const token = localStorage.getItem('ultralight_token');
+      if (token && !authToken) {
+        authToken = token;
+        updateAuthUI();
+      }
+    });
+
+    async function updateAuthUI() {
+      if (!authToken) {
+        // Not authenticated
+        document.getElementById('navPreAuth').classList.remove('hidden');
+        document.getElementById('navPostAuth').classList.add('hidden');
+        showView('home');
+        return;
+      }
+
+      // Decode JWT
+      const payload = decodeJWT(authToken);
+      if (!payload) {
+        signOut();
+        return;
+      }
+
+      // Check expiration
+      if (payload.exp && payload.exp * 1000 < Date.now()) {
+        // Try refresh
         const refreshToken = localStorage.getItem('ultralight_refresh_token');
         if (refreshToken) {
-          console.log('[layout] Token expired, attempting refresh...');
           try {
             const res = await fetch('/auth/refresh', {
               method: 'POST',
@@ -3753,2620 +2402,280 @@ await hash.sha256('data')</div>
             });
             if (res.ok) {
               const data = await res.json();
-              localStorage.setItem('ultralight_token', data.access_token);
-              if (data.refresh_token) {
-                localStorage.setItem('ultralight_refresh_token', data.refresh_token);
-              }
               authToken = data.access_token;
-              console.log('[layout] Token refreshed successfully');
-              // Re-run with the new token
-              await updateAuthUI();
-              return;
+              localStorage.setItem('ultralight_token', data.access_token);
+              if (data.refresh_token) localStorage.setItem('ultralight_refresh_token', data.refresh_token);
             } else {
-              console.warn('[layout] Token refresh failed:', res.status);
+              signOut();
+              return;
             }
-          } catch (e) {
-            console.error('[layout] Token refresh error:', e);
-          }
-        }
-      }
-      localStorage.removeItem('ultralight_token');
-      localStorage.removeItem('ultralight_refresh_token');
-      authToken = null;
-      currentUser = null;
-      appsList.innerHTML = '<div class="apps-empty">Sign in to see your apps</div>';
-    }
-
-    window.signOut = function() {
-      localStorage.removeItem('ultralight_token');
-      localStorage.removeItem('ultralight_refresh_token');
-      window.location.reload();
-    };
-
-    // ============================================
-    // Top Bar Profile Dropdown
-    // ============================================
-    window.toggleTopBarDropdown = function(e) {
-      e.stopPropagation();
-      const dropdown = document.getElementById('sidebarProfileDropdown');
-      if (!dropdown) return;
-      const isOpen = dropdown.classList.contains('open');
-      if (isOpen) {
-        closeTopBarDropdown();
-      } else {
-        dropdown.classList.add('open');
-      }
-    };
-
-    window.toggleSidebarProfileDropdown = function(e) {
-      e.stopPropagation();
-      const dropdown = document.getElementById('sidebarProfileDropdown');
-      if (!dropdown) return;
-      const isOpen = dropdown.classList.contains('open');
-      if (isOpen) {
-        closeSidebarProfileDropdown();
-      } else {
-        dropdown.classList.add('open');
-      }
-    };
-
-    function closeTopBarDropdown() {
-      const dropdown = document.getElementById('sidebarProfileDropdown');
-      if (dropdown) dropdown.classList.remove('open');
-    }
-
-    function closeSidebarProfileDropdown() {
-      const dropdown = document.getElementById('sidebarProfileDropdown');
-      if (dropdown) dropdown.classList.remove('open');
-    }
-
-    // Close dropdown when clicking outside
-    document.addEventListener('click', (e) => {
-      const dropdown = document.getElementById('sidebarProfileDropdown');
-      if (dropdown && dropdown.classList.contains('open')) {
-        if (!e.target.closest('.sidebar-profile') && !e.target.closest('.sidebar-profile-dropdown')) {
-          closeSidebarProfileDropdown();
-        }
-      }
-    });
-
-    // ============================================
-    // Quick Reference Modal
-    // ============================================
-    const quickRefModal = document.getElementById('quickRefModal');
-
-    window.showQuickRef = function() {
-      quickRefModal.classList.add('open');
-    };
-
-    window.closeQuickRef = function() {
-      quickRefModal.classList.remove('open');
-    };
-
-    quickRefModal.addEventListener('click', (e) => {
-      if (e.target === quickRefModal) {
-        closeQuickRef();
-      }
-    });
-
-    // ============================================
-    // User Settings (Individual Modals)
-    // ============================================
-    const byokProviders = document.getElementById('byokProviders');
-    const byokMessage = document.getElementById('byokMessage');
-    let byokData = null;
-
-    // Provider icons
-    const PROVIDER_ICONS = {
-      openrouter: '🌐',
-      openai: '🤖',
-      anthropic: '🧠',
-      deepseek: '🔍',
-      moonshot: '🌙'
-    };
-
-    // ============================================
-    // UTILITY: Format bytes for display
-    // ============================================
-    function formatBytesUI(bytes) {
-      if (bytes === 0) return '0 B';
-      const units = ['B', 'KB', 'MB', 'GB'];
-      const i = Math.floor(Math.log(bytes) / Math.log(1024));
-      const val = bytes / Math.pow(1024, i);
-      return val.toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
-    }
-
-    // ============================================
-    // VERSION HISTORY
-    // ============================================
-    function loadVersionHistory(appId) {
-      const list = document.getElementById('versionHistoryList');
-      const storageInfo = document.getElementById('appStorageInfo');
-
-      const appData = apps.find(a => a.id === appId);
-      if (!appData) {
-        if (list) list.innerHTML = '';
-        return;
-      }
-
-      const versions = appData.versions || [];
-      const metadata = appData.version_metadata || [];
-      const currentVersion = appData.current_version;
-
-      if (versions.length === 0) {
-        list.innerHTML = '<div style="color: var(--text-muted); font-size: 0.8125rem;">No versions yet.</div>';
-        return;
-      }
-
-      // Build lookup from version_metadata
-      const metaMap = {};
-      metadata.forEach(m => { metaMap[m.version] = m; });
-
-      // Sort versions descending (newest first)
-      const sorted = [...versions].sort((a, b) => {
-        const dateA = metaMap[a]?.created_at || '';
-        const dateB = metaMap[b]?.created_at || '';
-        return dateB.localeCompare(dateA);
-      });
-
-      list.innerHTML = sorted.map(v => {
-        const meta = metaMap[v];
-        const isCurrent = v === currentVersion;
-        const size = meta?.size_bytes ? formatBytesUI(meta.size_bytes) : '—';
-        const date = meta?.created_at ? new Date(meta.created_at).toLocaleDateString() : '—';
-
-        return \`
-          <div class="version-item">
-            <div class="version-info">
-              <span class="version-label">\${v}</span>
-              <span class="version-meta">\${size} · \${date}</span>
-              \${isCurrent ? '<span class="version-current-badge">● Current</span>' : ''}
-            </div>
-            \${!isCurrent ? \`<button class="version-delete-btn" onclick="deleteVersion('\${appId}', '\${v}')">Delete</button>\` : ''}
-          </div>
-        \`;
-      }).join('');
-
-      // Show app storage context
-      const appStorage = appData.storage_bytes || 0;
-      if (appStorage > 0) {
-        storageInfo.style.display = 'block';
-        storageInfo.textContent = \`This app uses \${formatBytesUI(appStorage)}.\`;
-      } else {
-        storageInfo.style.display = 'none';
-      }
-    }
-
-    window.deleteVersion = async function(appId, version) {
-      if (!confirm(\`Delete version \${version}? This will free up storage space.\`)) return;
-
-      try {
-        const res = await fetch(\`/api/apps/\${appId}/versions/\${version}\`, {
-          method: 'DELETE',
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed to delete version');
-
-        const reclaimed = data.bytes_reclaimed || 0;
-        showToast(\`Version \${version} deleted. Reclaimed \${formatBytesUI(reclaimed)}.\`);
-
-        // Refresh version list from server
-        const appRes = await fetch(\`/api/apps/\${appId}\`, {
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-        if (appRes.ok) {
-          const appData = await appRes.json();
-          // Update in apps list
-          const idx = apps.findIndex(a => a.id === appId);
-          if (idx !== -1) apps[idx] = appData;
-        }
-        loadVersionHistory(appId);
-
-        // Refresh user profile storage
-        try {
-          const profileRes = await fetch('/api/user', {
-            headers: { 'Authorization': \`Bearer \${authToken}\` }
-          });
-          if (profileRes.ok) userProfile = await profileRes.json();
-        } catch (e) { /* ignore */ }
-      } catch (err) {
-        showToast(err.message, 'error');
-      }
-    };
-
-    // Tokens are now managed inline on the dashboard — no modal needed.
-    // Legacy aliases in case profile dropdown or other code references these:
-    window.openApiKeysModal = async function() {
-      closeTopBarDropdown();
-      showView('dashboard');
-      await loadTokens();
-    };
-    window.closeApiKeysModal = function() {};
-    window.openUserSettings = function() { openApiKeysModal(); };
-    window.closeUserSettings = function() {};
-
-    async function loadBYOKConfig() {
-      if (!authToken) return;
-
-      byokProviders.innerHTML = '<div class="byok-loading">Loading providers...</div>';
-
-      try {
-        const res = await fetch('/api/user/byok', {
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-
-        if (!res.ok) throw new Error('Failed to load BYOK config');
-
-        byokData = await res.json();
-        renderBYOKProviders();
-      } catch (err) {
-        console.error('Failed to load BYOK config:', err);
-        byokProviders.innerHTML = '<div class="byok-loading" style="color: var(--error-color);">Failed to load providers</div>';
-      }
-    }
-
-    function renderBYOKProviders() {
-      if (!byokData) return;
-
-      const { enabled, primary_provider, configs, available_providers } = byokData;
-
-      // Create a map of configured providers
-      const configuredMap = {};
-      configs.forEach(c => { configuredMap[c.provider] = c; });
-
-      const html = available_providers.map(provider => {
-        const isConfigured = !!configuredMap[provider.id];
-        const isPrimary = primary_provider === provider.id;
-        const config = configuredMap[provider.id];
-
-        return \`
-          <div class="byok-provider-card \${isConfigured ? 'configured' : ''} \${isPrimary ? 'primary' : ''}" data-provider="\${provider.id}">
-            <div class="byok-provider-header">
-              <div class="byok-provider-info">
-                <div class="byok-provider-icon">\${PROVIDER_ICONS[provider.id] || '🔑'}</div>
-                <div>
-                  <div class="byok-provider-name">\${provider.name}</div>
-                  <div class="byok-provider-desc">\${provider.description}</div>
-                </div>
-              </div>
-              <div class="byok-provider-actions">
-                \${isPrimary ? '<span class="byok-status primary">Primary</span>' : ''}
-                \${isConfigured && !isPrimary ? '<span class="byok-status configured">Configured</span>' : ''}
-              </div>
-            </div>
-
-            \${isConfigured ? \`
-              <div class="byok-key-input">
-                <input type="password" placeholder="••••••••••••••••" disabled value="configured" />
-                \${!isPrimary ? \`<button class="byok-btn byok-btn-secondary" onclick="setPrimaryProvider('\${provider.id}')">Set Primary</button>\` : ''}
-                <button class="byok-btn byok-btn-danger" onclick="removeProvider('\${provider.id}')">Remove</button>
-              </div>
-              <div class="byok-help">
-                Added \${config.added_at ? new Date(config.added_at).toLocaleDateString() : 'recently'} ·
-                <a href="\${provider.docsUrl}" target="_blank">Docs</a>
-              </div>
-            \` : \`
-              <div class="byok-key-input">
-                <input type="password" id="key-\${provider.id}" placeholder="Paste your API key here" />
-                <button class="byok-btn byok-btn-primary" onclick="addProvider('\${provider.id}')">Add Key</button>
-              </div>
-              <div class="byok-help">
-                <a href="\${provider.apiKeyUrl}" target="_blank">Get your API key →</a>
-              </div>
-            \`}
-          </div>
-        \`;
-      }).join('');
-
-      byokProviders.innerHTML = html;
-    }
-
-    window.addProvider = async function(providerId) {
-      const input = document.getElementById(\`key-\${providerId}\`);
-      const apiKey = input?.value?.trim();
-
-      if (!apiKey) {
-        showBYOKMessage('Please enter an API key', 'error');
-        return;
-      }
-
-      const btn = input.nextElementSibling;
-      btn.disabled = true;
-      btn.textContent = 'Adding...';
-
-      try {
-        const res = await fetch('/api/user/byok', {
-          method: 'POST',
-          headers: {
-            'Authorization': \`Bearer \${authToken}\`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ provider: providerId, api_key: apiKey })
-        });
-
-        const data = await res.json();
-
-        if (!res.ok) {
-          throw new Error(data.error || 'Failed to add provider');
-        }
-
-        showBYOKMessage(data.message || 'Provider added successfully', 'success');
-        await loadBYOKConfig();
-      } catch (err) {
-        showBYOKMessage(err.message, 'error');
-        btn.disabled = false;
-        btn.textContent = 'Add Key';
-      }
-    };
-
-    window.removeProvider = async function(providerId) {
-      if (!confirm('Remove this API key? You can add it again later.')) return;
-
-      try {
-        const res = await fetch(\`/api/user/byok/\${providerId}\`, {
-          method: 'DELETE',
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-
-        const data = await res.json();
-
-        if (!res.ok) {
-          throw new Error(data.error || 'Failed to remove provider');
-        }
-
-        showBYOKMessage(data.message || 'Provider removed', 'success');
-        await loadBYOKConfig();
-      } catch (err) {
-        showBYOKMessage(err.message, 'error');
-      }
-    };
-
-    window.setPrimaryProvider = async function(providerId) {
-      try {
-        const res = await fetch('/api/user/byok/primary', {
-          method: 'POST',
-          headers: {
-            'Authorization': \`Bearer \${authToken}\`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ provider: providerId })
-        });
-
-        const data = await res.json();
-
-        if (!res.ok) {
-          throw new Error(data.error || 'Failed to set primary provider');
-        }
-
-        showBYOKMessage(data.message || 'Primary provider updated', 'success');
-        await loadBYOKConfig();
-      } catch (err) {
-        showBYOKMessage(err.message, 'error');
-      }
-    };
-
-    function showBYOKMessage(message, type) {
-      byokMessage.textContent = message;
-      byokMessage.className = \`byok-message \${type}\`;
-      byokMessage.style.display = 'block';
-      setTimeout(() => { byokMessage.style.display = 'none'; }, 5000);
-    }
-
-    // ============================================
-    // API Tokens
-    // ============================================
-    let currentTokens = [];
-    let newlyCreatedToken = null;
-
-    async function loadTokens() {
-      if (!authToken) return;
-
-      const tokensList = document.getElementById('tokensList');
-      tokensList.innerHTML = '<div class="byok-loading">Loading tokens...</div>';
-
-      try {
-        const res = await fetch('/api/user/tokens', {
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-
-        if (!res.ok) throw new Error('Failed to load tokens');
-
-        const data = await res.json();
-        currentTokens = data.tokens || [];
-        renderTokensList();
-      } catch (err) {
-        console.error('Failed to load tokens:', err);
-        tokensList.innerHTML = '<div class="byok-loading" style="color: var(--error-color);">Failed to load tokens</div>';
-      }
-    }
-
-    function renderTokensList() {
-      const tokensList = document.getElementById('tokensList');
-      const countEl = document.getElementById('tokenCount');
-
-      // Update token count header — all tiers have unlimited tokens
-      if (countEl) {
-        countEl.textContent = currentTokens.length + ' token' + (currentTokens.length !== 1 ? 's' : '');
-      }
-
-      if (currentTokens.length === 0) {
-        tokensList.innerHTML = '<div class="tokens-empty">No API tokens yet. Create one to get started.</div>';
-        return;
-      }
-
-      const html = currentTokens.map(token => {
-        const createdAt = new Date(token.created_at).toLocaleDateString();
-        const lastUsed = token.last_used_at
-          ? new Date(token.last_used_at).toLocaleDateString()
-          : 'Never';
-        const expiresAt = token.expires_at
-          ? new Date(token.expires_at).toLocaleDateString()
-          : 'Never';
-        const isExpired = token.expires_at && new Date(token.expires_at) < new Date();
-
-        return \`
-          <div class="token-item \${isExpired ? 'expired' : ''}">
-            <div class="token-info">
-              <div class="token-name">\${escapeHtml(token.name)}</div>
-              <div class="token-meta">
-                <span class="token-prefix">\${token.token_prefix}...</span>
-                <span>Created: \${createdAt}</span>
-                <span>Last used: \${lastUsed}</span>
-                <span>Expires: \${expiresAt}</span>
-                \${isExpired ? '<span class="token-expired-badge">Expired</span>' : ''}
-              </div>
-            </div>
-            <button class="byok-btn byok-btn-danger" onclick="revokeToken('\${token.id}')">Revoke</button>
-          </div>
-        \`;
-      }).join('');
-
-      tokensList.innerHTML = html;
-    }
-
-    window.createToken = async function() {
-      const nameInput = document.getElementById('newTokenName');
-      const expirySelect = document.getElementById('newTokenExpiry');
-      const name = nameInput.value.trim();
-
-      if (!name) {
-        showTokensMessage('Please enter a token name', 'error');
-        return;
-      }
-
-      const btn = event.target;
-      btn.disabled = true;
-      btn.textContent = 'Creating...';
-
-      try {
-        const body = { name };
-        if (expirySelect.value) {
-          body.expires_in_days = parseInt(expirySelect.value);
-        }
-
-        const res = await fetch('/api/user/tokens', {
-          method: 'POST',
-          headers: {
-            'Authorization': \`Bearer \${authToken}\`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(body)
-        });
-
-        const data = await res.json();
-
-        if (!res.ok) {
-          throw new Error(data.error || 'Failed to create token');
-        }
-
-        // Show the new token
-        newlyCreatedToken = data.plaintext_token;
-        document.getElementById('newTokenValue').textContent = newlyCreatedToken;
-        document.getElementById('newTokenDisplay').style.display = 'block';
-
-        // Clear form
-        nameInput.value = '';
-        expirySelect.value = '';
-
-        showTokensMessage('Token created! Copy it now.', 'success');
-        await loadTokens();
-      } catch (err) {
-        showTokensMessage(err.message, 'error');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Create Token';
-      }
-    };
-
-    window.copyToken = async function() {
-      if (!newlyCreatedToken) return;
-
-      try {
-        await navigator.clipboard.writeText(newlyCreatedToken);
-        showTokensMessage('Token copied to clipboard!', 'success');
-      } catch (err) {
-        // Fallback for older browsers
-        const textArea = document.createElement('textarea');
-        textArea.value = newlyCreatedToken;
-        document.body.appendChild(textArea);
-        textArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textArea);
-        showTokensMessage('Token copied to clipboard!', 'success');
-      }
-    };
-
-    window.revokeToken = async function(tokenId) {
-      if (!confirm('Revoke this token? Any applications using it will stop working.')) return;
-
-      try {
-        const res = await fetch(\`/api/user/tokens/\${tokenId}\`, {
-          method: 'DELETE',
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-
-        const data = await res.json();
-
-        if (!res.ok) {
-          throw new Error(data.error || 'Failed to revoke token');
-        }
-
-        showTokensMessage('Token revoked', 'success');
-        await loadTokens();
-      } catch (err) {
-        showTokensMessage(err.message, 'error');
-      }
-    };
-
-    function showTokensMessage(message, type) {
-      const tokensMessage = document.getElementById('tokensMessage');
-      tokensMessage.textContent = message;
-      tokensMessage.className = \`byok-message \${type}\`;
-      tokensMessage.style.display = 'block';
-      setTimeout(() => { tokensMessage.style.display = 'none'; }, 5000);
-    }
-
-    // ============================================
-    // Apps List
-    // ============================================
-    async function loadApps() {
-      if (!authToken) return;
-
-      appsList.innerHTML = '<div class="apps-loading">Loading...</div>';
-
-      try {
-        const res = await fetch('/api/apps/me', {
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-
-        if (!res.ok) {
-          console.error('loadApps failed with status:', res.status, 'token prefix:', authToken?.substring(0, 8) || 'none');
-          throw new Error(\`Failed to load apps (status: \${res.status})\`);
-        }
-
-        apps = await res.json();
-        renderAppsList();
-      } catch (err) {
-        console.error('Failed to load apps:', err);
-        appsList.innerHTML = '<div class="apps-empty">Failed to load apps</div>';
-      }
-    }
-
-    function renderAppsList() {
-      if (apps.length === 0) {
-        appsList.innerHTML = '<div class="apps-empty">No apps yet. Create your first app!</div>';
-        renderRailApps();
-        return;
-      }
-
-      const listHTML = apps.map(app => {
-        const isActive = app.id === currentAppId;
-        const icon = app.icon_url
-          ? \`<img src="\${app.icon_url}" alt="">\`
-          : getAppEmoji(app.name);
-        const date = new Date(app.created_at).toLocaleDateString();
-
-        return \`
-          <div class="app-item \${isActive ? 'active' : ''}" data-app-id="\${app.id}" onclick="navigateToApp(event, '\${app.id}')">
-            <div class="app-icon">\${icon}</div>
-            <div class="app-info">
-              <div class="app-name">\${escapeHtml(app.name)}</div>
-              <div class="app-meta">\${date}</div>
-            </div>
-          </div>
-        \`;
-      }).join('');
-
-      appsList.innerHTML = \`<div class="app-list">\${listHTML}</div>\`;
-      renderRailApps();
-    }
-
-    function getAppEmoji(name) {
-      const emojis = ['🚀', '⚡', '🎨', '🔧', '📊', '🎮', '📱', '💡', '🌟', '🔥'];
-      const hash = name.split('').reduce((a, b) => a + b.charCodeAt(0), 0);
-      return emojis[hash % emojis.length];
-    }
-
-    function escapeHtml(str) {
-      const div = document.createElement('div');
-      div.textContent = str;
-      return div.innerHTML;
-    }
-
-    // ============================================
-    // App Page
-    // ============================================
-    let draftFiles = [];
-
-    // Load Skills.md
-    async function loadSkillsMd(appId) {
-      const editor = document.getElementById('skillsEditor');
-      const status = document.getElementById('skillsModalStatus');
-
-      try {
-        const res = await fetch(\`/api/apps/\${appId}/skills.md\`, {
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-
-        if (res.ok) {
-          const text = await res.text();
-          editor.value = text;
-          if (status) {
-            status.className = 'skills-status success';
-            status.innerHTML = '✓ Documentation loaded';
-          }
-        } else if (res.status === 404) {
-          editor.value = '';
-          if (status) {
-            status.className = 'skills-status info';
-            status.innerHTML = 'No documentation generated yet. Click "Generate Documentation" to create.';
-          }
-        } else {
-          throw new Error('Failed to load');
-        }
-      } catch (err) {
-        if (status) {
-          status.className = 'skills-status error';
-          status.innerHTML = '✗ Failed to load documentation';
-        }
-      }
-    }
-
-    // Load Draft Info
-    async function loadDraftInfo(appId) {
-      const draftBanner = document.getElementById('draftBanner');
-      const draftBannerGeneral = document.getElementById('draftBannerGeneral');
-      const noDraftMessage = document.getElementById('noDraftMessage');
-
-      try {
-        const res = await fetch(\`/api/apps/\${appId}/draft\`, {
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-
-        if (!res.ok) throw new Error('Failed to load draft');
-
-        const data = await res.json();
-
-        if (data.has_draft) {
-          draftBanner.style.display = 'block';
-          draftBannerGeneral.style.display = 'block';
-          noDraftMessage.style.display = 'none';
-          document.getElementById('draftVersion').textContent = data.draft_version;
-          document.getElementById('draftUploadedAt').textContent = new Date(data.draft_uploaded_at).toLocaleString();
-        } else {
-          draftBanner.style.display = 'none';
-          draftBannerGeneral.style.display = 'none';
-          noDraftMessage.style.display = 'block';
-        }
-      } catch (err) {
-        console.error('Failed to load draft info:', err);
-        draftBanner.style.display = 'none';
-        draftBannerGeneral.style.display = 'none';
-        noDraftMessage.style.display = 'block';
-      }
-    }
-
-    // ============================================
-    // Environment Variables
-    // ============================================
-    let currentEnvVars = {}; // { key: { masked, length, value? } }
-    let pendingEnvVarChanges = {}; // Track changes to be saved
-
-    async function loadEnvVars(appId) {
-      const container = document.getElementById('envModalVarsContainer');
-      const emptyState = document.getElementById('envModalVarsEmpty');
-
-      try {
-        const res = await fetch(\`/api/apps/\${appId}/env\`, {
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-
-        if (!res.ok) {
-          if (res.status === 403) {
-            container.innerHTML = '<div class="env-vars-empty">You don\\'t have permission to manage environment variables for this app.</div>';
+          } catch {
+            signOut();
             return;
           }
-          throw new Error('Failed to load env vars');
-        }
-
-        const data = await res.json();
-        currentEnvVars = {};
-        pendingEnvVarChanges = {};
-
-        // Convert array to object
-        if (data.env_vars && Array.isArray(data.env_vars)) {
-          data.env_vars.forEach(v => {
-            currentEnvVars[v.key] = { masked: v.masked, length: v.length };
-          });
-        }
-
-        renderEnvVars();
-      } catch (err) {
-        console.error('Failed to load env vars:', err);
-        container.innerHTML = '<div class="env-vars-empty">Failed to load environment variables.</div>';
-      }
-    }
-
-    function renderEnvVars() {
-      const container = document.getElementById('envModalVarsContainer');
-      const emptyState = document.getElementById('envModalVarsEmpty');
-      const keys = Object.keys(currentEnvVars);
-
-      if (keys.length === 0 && Object.keys(pendingEnvVarChanges).length === 0) {
-        container.innerHTML = '<div class="env-vars-empty" id="envModalVarsEmpty">No environment variables set.</div>';
-        return;
-      }
-
-      // Merge existing vars with pending new vars
-      const allKeys = new Set([...keys, ...Object.keys(pendingEnvVarChanges).filter(k => pendingEnvVarChanges[k] !== null)]);
-
-      let html = '';
-      allKeys.forEach(key => {
-        const existing = currentEnvVars[key];
-        const pending = pendingEnvVarChanges[key];
-        const isNew = !existing;
-        const isModified = pending !== undefined && pending !== null;
-        const isDeleted = pending === null;
-
-        if (isDeleted) return; // Skip deleted vars
-
-        const displayValue = isModified ? pending : (existing?.masked || '');
-        const placeholder = isNew ? 'value' : (existing?.masked || '••••');
-
-        html += \`
-          <div class="env-var-row" data-key="\${escapeHtml(key)}">
-            <input type="text"
-              class="env-var-key"
-              value="\${escapeHtml(key)}"
-              placeholder="KEY_NAME"
-              \${!isNew ? 'readonly' : ''}
-              data-original-key="\${escapeHtml(key)}"
-              onchange="handleEnvKeyChange(this)"
-            />
-            <input type="\${isModified || isNew ? 'text' : 'password'}"
-              class="env-var-value"
-              value="\${isModified ? escapeHtml(pending) : ''}"
-              placeholder="\${escapeHtml(placeholder)}"
-              data-key="\${escapeHtml(key)}"
-              onchange="handleEnvValueChange(this)"
-            />
-            <button class="env-var-toggle-visibility" onclick="toggleEnvVarVisibility(this)" title="Toggle visibility">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                <circle cx="12" cy="12" r="3"></circle>
-              </svg>
-            </button>
-            <button class="env-var-delete" onclick="deleteEnvVar('\${escapeHtml(key)}')" title="Delete variable">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="3 6 5 6 21 6"></polyline>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-              </svg>
-            </button>
-          </div>
-        \`;
-      });
-
-      container.innerHTML = html;
-    }
-
-    window.handleEnvKeyChange = function(input) {
-      const originalKey = input.dataset.originalKey;
-      const newKey = input.value.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '');
-      input.value = newKey;
-
-      // If this is a new var being renamed
-      if (pendingEnvVarChanges[originalKey] !== undefined && !currentEnvVars[originalKey]) {
-        const value = pendingEnvVarChanges[originalKey];
-        delete pendingEnvVarChanges[originalKey];
-        pendingEnvVarChanges[newKey] = value;
-        input.dataset.originalKey = newKey;
-
-        // Update the value input's data-key
-        const row = input.closest('.env-var-row');
-        const valueInput = row.querySelector('.env-var-value');
-        if (valueInput) valueInput.dataset.key = newKey;
-      }
-    };
-
-    window.handleEnvValueChange = function(input) {
-      const key = input.dataset.key;
-      const value = input.value;
-      pendingEnvVarChanges[key] = value;
-    };
-
-    window.toggleEnvVarVisibility = function(btn) {
-      const row = btn.closest('.env-var-row');
-      const input = row.querySelector('.env-var-value');
-      if (input.type === 'password') {
-        input.type = 'text';
-      } else {
-        input.type = 'password';
-      }
-    };
-
-    window.deleteEnvVar = function(key) {
-      if (!confirm(\`Delete environment variable "\${key}"?\`)) return;
-
-      if (currentEnvVars[key]) {
-        // Mark existing var for deletion
-        pendingEnvVarChanges[key] = null;
-      } else {
-        // Remove pending new var
-        delete pendingEnvVarChanges[key];
-      }
-
-      renderEnvVars();
-    };
-
-    // Add new env var
-    document.getElementById('envModalAddBtn')?.addEventListener('click', () => {
-      // Generate a unique placeholder key
-      let counter = 1;
-      let newKey = 'NEW_VAR';
-      while (currentEnvVars[newKey] || pendingEnvVarChanges[newKey] !== undefined) {
-        newKey = \`NEW_VAR_\${counter++}\`;
-      }
-
-      pendingEnvVarChanges[newKey] = '';
-      renderEnvVars();
-
-      // Focus the new key input
-      setTimeout(() => {
-        const newRow = document.querySelector(\`.env-var-row[data-key="\${newKey}"]\`);
-        if (newRow) {
-          const keyInput = newRow.querySelector('.env-var-key');
-          if (keyInput) {
-            keyInput.focus();
-            keyInput.select();
-          }
-        }
-      }, 50);
-    });
-
-    // Save env vars (called from env modal)
-    async function saveEnvVars() {
-      if (!currentAppId || Object.keys(pendingEnvVarChanges).length === 0) {
-        return true; // Nothing to save
-      }
-
-      // Build the updates
-      const updates = {};
-      const deletions = [];
-
-      for (const [key, value] of Object.entries(pendingEnvVarChanges)) {
-        if (value === null) {
-          deletions.push(key);
-        } else if (value !== undefined) {
-          // Validate key format
-          if (!/^[A-Z][A-Z0-9_]*$/.test(key)) {
-            showToast(\`Invalid key format: \${key}\`, 'error');
-            return false;
-          }
-          if (key.startsWith('ULTRALIGHT')) {
-            showToast(\`Reserved key prefix: \${key}\`, 'error');
-            return false;
-          }
-          updates[key] = value;
-        }
-      }
-
-      try {
-        // Handle deletions first
-        for (const key of deletions) {
-          const res = await fetch(\`/api/apps/\${currentAppId}/env/\${key}\`, {
-            method: 'DELETE',
-            headers: { 'Authorization': \`Bearer \${authToken}\` }
-          });
-          if (!res.ok) throw new Error(\`Failed to delete \${key}\`);
-        }
-
-        // Update/add vars if there are any
-        if (Object.keys(updates).length > 0) {
-          const res = await fetch(\`/api/apps/\${currentAppId}/env\`, {
-            method: 'PATCH',
-            headers: {
-              'Authorization': \`Bearer \${authToken}\`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ env_vars: updates })
-          });
-
-          if (!res.ok) {
-            const data = await res.json();
-            throw new Error(data.error || 'Failed to save env vars');
-          }
-        }
-
-        // Clear pending changes
-        pendingEnvVarChanges = {};
-        return true;
-      } catch (err) {
-        console.error('Failed to save env vars:', err);
-        showToast(err.message || 'Failed to save environment variables', 'error');
-        return false;
-      }
-    }
-
-    // ============================================
-    // Supabase Servers (Dashboard CRUD)
-    // ============================================
-    let savedSupabaseServers = [];
-
-    async function loadSupabaseServers() {
-      if (!authToken) return;
-
-      const listEl = document.getElementById('supabaseServersList');
-      if (listEl) listEl.innerHTML = '<div class="byok-loading">Loading servers...</div>';
-
-      try {
-        const res = await fetch('/api/user/supabase', {
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-        if (!res.ok) throw new Error('Failed to load servers');
-        const data = await res.json();
-        savedSupabaseServers = data.configs || [];
-        renderSupabaseServers();
-      } catch (err) {
-        console.error('Failed to load Supabase servers:', err);
-        if (listEl) listEl.innerHTML = '<div class="byok-loading" style="color: var(--error-color);">Failed to load servers</div>';
-      }
-    }
-
-    function renderSupabaseServers() {
-      const listEl = document.getElementById('supabaseServersList');
-      const countEl = document.getElementById('supabaseServerCount');
-
-      if (countEl) {
-        countEl.textContent = savedSupabaseServers.length + ' server' + (savedSupabaseServers.length !== 1 ? 's' : '');
-      }
-
-      if (!listEl) return;
-
-      if (savedSupabaseServers.length === 0) {
-        listEl.innerHTML = '<div class="tokens-empty">No Supabase servers saved yet. Add one to get started.</div>';
-        return;
-      }
-
-      const html = savedSupabaseServers.map(server => {
-        const createdAt = new Date(server.created_at).toLocaleDateString();
-        // Extract project ref from URL for display
-        const urlShort = server.supabase_url.replace('https://', '').replace('.supabase.co', '');
-        return \`
-          <div class="token-item">
-            <div class="token-info">
-              <div class="token-name">\${escapeHtml(server.name)}</div>
-              <div class="token-meta">
-                <span class="token-prefix">\${urlShort}</span>
-                <span>Added: \${createdAt}</span>
-                \${server.has_service_key ? '<span style="color: var(--accent-color);">+ service key</span>' : ''}
-              </div>
-            </div>
-            <button class="byok-btn byok-btn-danger" onclick="deleteSupabaseServer('\${server.id}')">Remove</button>
-          </div>
-        \`;
-      }).join('');
-
-      listEl.innerHTML = html;
-    }
-
-    window.showAddSupabaseForm = function() {
-      document.getElementById('supabaseAddForm').style.display = 'block';
-      document.getElementById('supabaseAddBtn').style.display = 'none';
-      document.getElementById('sbNewName').focus();
-    };
-
-    window.cancelAddSupabaseServer = function() {
-      document.getElementById('supabaseAddForm').style.display = 'none';
-      document.getElementById('supabaseAddBtn').style.display = '';
-      // Clear form
-      ['sbNewName', 'sbNewUrl', 'sbNewAnonKey', 'sbNewServiceKey'].forEach(id => {
-        document.getElementById(id).value = '';
-      });
-    };
-
-    window.saveNewSupabaseServer = async function() {
-      const name = document.getElementById('sbNewName').value.trim();
-      const url = document.getElementById('sbNewUrl').value.trim();
-      const anonKey = document.getElementById('sbNewAnonKey').value.trim();
-      const serviceKey = document.getElementById('sbNewServiceKey').value.trim();
-
-      if (!name) { showSupabaseMessage('Server name is required', 'error'); return; }
-      if (!url) { showSupabaseMessage('Supabase URL is required', 'error'); return; }
-      if (!anonKey) { showSupabaseMessage('Anon key is required', 'error'); return; }
-
-      try {
-        const res = await fetch('/api/user/supabase', {
-          method: 'POST',
-          headers: {
-            'Authorization': \`Bearer \${authToken}\`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ name, url, anon_key: anonKey, service_key: serviceKey || undefined })
-        });
-
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed to save server');
-
-        showSupabaseMessage('Server saved!', 'success');
-        cancelAddSupabaseServer();
-        await loadSupabaseServers();
-      } catch (err) {
-        showSupabaseMessage(err.message, 'error');
-      }
-    };
-
-    window.deleteSupabaseServer = async function(configId) {
-      if (!confirm('Remove this Supabase server? Apps using it will lose their database connection.')) return;
-
-      try {
-        const res = await fetch(\`/api/user/supabase/\${configId}\`, {
-          method: 'DELETE',
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-        if (!res.ok) throw new Error('Failed to remove server');
-
-        showSupabaseMessage('Server removed', 'success');
-        await loadSupabaseServers();
-      } catch (err) {
-        showSupabaseMessage(err.message, 'error');
-      }
-    };
-
-    function showSupabaseMessage(message, type) {
-      const el = document.getElementById('supabaseMessage');
-      if (!el) return;
-      el.textContent = message;
-      el.className = \`byok-message \${type}\`;
-      el.style.display = 'block';
-      setTimeout(() => { el.style.display = 'none'; }, 5000);
-    }
-
-    window.toggleSupabaseKeyVisibility = function(inputId) {
-      const input = document.getElementById(inputId);
-      if (input.type === 'password') {
-        input.type = 'text';
-      } else {
-        input.type = 'password';
-      }
-    };
-
-    // ============================================
-    // App Settings: Supabase Server Dropdown
-    // ============================================
-    let appSupabaseChanged = false;
-
-    async function loadAppSupabaseDropdown(appId) {
-      const select = document.getElementById('appSupabaseSelect');
-      if (!select) return;
-
-      // Reset
-      select.innerHTML = '<option value="">None — Supabase disabled</option>';
-      appSupabaseChanged = false;
-
-      // Populate saved servers
-      if (savedSupabaseServers.length === 0) {
-        // Try loading if not yet fetched
-        try {
-          const res = await fetch('/api/user/supabase', {
-            headers: { 'Authorization': \`Bearer \${authToken}\` }
-          });
-          if (res.ok) {
-            const data = await res.json();
-            savedSupabaseServers = data.configs || [];
-          }
-        } catch (e) { /* ignore */ }
-      }
-
-      savedSupabaseServers.forEach(server => {
-        const opt = document.createElement('option');
-        opt.value = server.id;
-        const urlShort = server.supabase_url.replace('https://', '').replace('.supabase.co', '');
-        opt.textContent = server.name + ' (' + urlShort + ')';
-        select.appendChild(opt);
-      });
-
-      // Get current app's supabase_config_id
-      try {
-        const res = await fetch(\`/api/apps/\${appId}/supabase\`, {
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.config_id) {
-            select.value = data.config_id;
-          }
-          updateAppSupabaseInfo();
-        }
-      } catch (e) { /* ignore */ }
-
-      // Listen for changes
-      select.onchange = function() {
-        appSupabaseChanged = true;
-        updateAppSupabaseInfo();
-      };
-    }
-
-    function updateAppSupabaseInfo() {
-      const select = document.getElementById('appSupabaseSelect');
-      const infoEl = document.getElementById('appSupabaseInfo');
-      if (!select || !infoEl) return;
-
-      const selectedId = select.value;
-      if (!selectedId) {
-        infoEl.style.display = 'none';
-        return;
-      }
-
-      const server = savedSupabaseServers.find(s => s.id === selectedId);
-      if (server) {
-        infoEl.style.display = 'block';
-        infoEl.innerHTML = \`<strong>\${escapeHtml(server.name)}</strong> — \${escapeHtml(server.supabase_url)}\${server.has_service_key ? ' (+ service key)' : ''}\`;
-      } else {
-        infoEl.style.display = 'none';
-      }
-    }
-
-    async function saveAppSupabaseConfig() {
-      if (!currentAppId || !appSupabaseChanged) return true;
-
-      const select = document.getElementById('appSupabaseSelect');
-      const configId = select ? select.value : '';
-
-      try {
-        const res = await fetch(\`/api/apps/\${currentAppId}/supabase\`, {
-          method: 'PUT',
-          headers: {
-            'Authorization': \`Bearer \${authToken}\`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ config_id: configId || null })
-        });
-
-        if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.error || 'Failed to save Supabase config');
-        }
-
-        appSupabaseChanged = false;
-        return true;
-      } catch (err) {
-        console.error('Failed to save app Supabase config:', err);
-        showToast(err.message || 'Failed to save Supabase configuration', 'error');
-        return false;
-      }
-    }
-
-    // Generate Documentation
-    document.getElementById('generateDocsBtn')?.addEventListener('click', async () => {
-      if (!currentAppId || !authToken) return;
-
-      const btn = document.getElementById('generateDocsBtn');
-      const status = document.getElementById('skillsModalStatus');
-
-      btn.disabled = true;
-      btn.innerHTML = '<span>Generating...</span>';
-      status.className = 'skills-status info';
-      status.innerHTML = 'Generating documentation from code...';
-
-      try {
-        const res = await fetch(\`/api/apps/\${currentAppId}/generate-docs\`, {
-          method: 'POST',
-          headers: {
-            'Authorization': \`Bearer \${authToken}\`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ ai_enhance: false })
-        });
-
-        const data = await res.json();
-
-        if (data.success || data.partial) {
-          document.getElementById('skillsEditor').value = data.skills_md || '';
-          status.className = 'skills-status success';
-          let msg = '✓ Documentation generated';
-          if (data.embedding_generated) msg += ' • Embedding updated';
-          if (data.warnings?.length) msg += \` • \${data.warnings.length} warning(s)\`;
-          status.innerHTML = msg;
-          showToast('Documentation generated');
         } else {
-          status.className = 'skills-status error';
-          const errors = data.errors?.map(e => e.message).join(', ') || 'Unknown error';
-          status.innerHTML = \`✗ Generation failed: \${errors}\`;
-          showToast('Failed to generate docs', 'error');
-        }
-      } catch (err) {
-        status.className = 'skills-status error';
-        status.innerHTML = '✗ Failed to generate documentation';
-        showToast('Failed to generate docs', 'error');
-      } finally {
-        btn.disabled = false;
-        btn.innerHTML = \`
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
-          Generate Documentation
-        \`;
-      }
-    });
-
-    // Validate Skills.md on edit
-    let skillsValidationTimeout;
-    document.getElementById('skillsEditor')?.addEventListener('input', () => {
-      clearTimeout(skillsValidationTimeout);
-      skillsValidationTimeout = setTimeout(() => {
-        // Show validation is pending
-        const validation = document.getElementById('skillsValidation');
-        validation.style.display = 'block';
-        validation.className = 'skills-status info';
-        validation.innerHTML = 'Validating...';
-      }, 500);
-    });
-
-    // Publish Draft
-    document.getElementById('publishDraftBtn')?.addEventListener('click', async () => {
-      if (!currentAppId || !authToken) return;
-
-      const btn = document.getElementById('publishDraftBtn');
-      btn.disabled = true;
-      btn.textContent = 'Publishing...';
-
-      try {
-        const res = await fetch(\`/api/apps/\${currentAppId}/publish\`, {
-          method: 'POST',
-          headers: {
-            'Authorization': \`Bearer \${authToken}\`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ regenerate_docs: true })
-        });
-
-        if (!res.ok) throw new Error('Failed to publish');
-
-        const data = await res.json();
-        showToast(\`Published version \${data.new_version}\`);
-
-        // Update version display
-        document.getElementById('publishedVersion').textContent = data.new_version;
-
-        // Refresh draft info, version history, and app list
-        await loadDraftInfo(currentAppId);
-        loadVersionHistory(currentAppId);
-        await loadApps();
-
-        // Refresh user profile to update storage info
-        if (authToken) {
-          try {
-            const profileRes = await fetch('/api/user', {
-              headers: { 'Authorization': \`Bearer \${authToken}\` }
-            });
-            if (profileRes.ok) {
-              userProfile = await profileRes.json();
-              updateAuthUI();
-            }
-          } catch (e) { /* ignore */ }
-        }
-      } catch (err) {
-        showToast('Failed to publish draft', 'error');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Publish Draft';
-      }
-    });
-
-    // Discard Draft
-    document.getElementById('discardDraftBtn')?.addEventListener('click', async () => {
-      if (!currentAppId || !authToken) return;
-
-      if (!confirm('Are you sure you want to discard this draft? This cannot be undone.')) {
-        return;
-      }
-
-      const btn = document.getElementById('discardDraftBtn');
-      btn.disabled = true;
-      btn.textContent = 'Discarding...';
-
-      try {
-        const res = await fetch(\`/api/apps/\${currentAppId}/draft\`, {
-          method: 'DELETE',
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-
-        if (!res.ok) throw new Error('Failed to discard');
-
-        showToast('Draft discarded');
-        await loadDraftInfo(currentAppId);
-      } catch (err) {
-        showToast('Failed to discard draft', 'error');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Discard';
-      }
-    });
-
-    // Draft File Upload
-    const draftDropZone = document.getElementById('draftDropZone');
-    const draftFileInput = document.getElementById('draftFileInput');
-
-    draftDropZone?.addEventListener('click', () => draftFileInput?.click());
-
-    draftDropZone?.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      draftDropZone.classList.add('dragover');
-    });
-
-    draftDropZone?.addEventListener('dragleave', () => {
-      draftDropZone.classList.remove('dragover');
-    });
-
-    draftDropZone?.addEventListener('drop', (e) => {
-      e.preventDefault();
-      draftDropZone.classList.remove('dragover');
-      draftFiles = Array.from(e.dataTransfer.files);
-      updateDraftFileList();
-    });
-
-    draftFileInput?.addEventListener('change', () => {
-      draftFiles = Array.from(draftFileInput.files);
-      updateDraftFileList();
-    });
-
-    function updateDraftFileList() {
-      const list = document.getElementById('draftFileList');
-      const btn = document.getElementById('uploadDraftBtn');
-
-      if (draftFiles.length === 0) {
-        list.innerHTML = '';
-        btn.disabled = true;
-        return;
-      }
-
-      list.innerHTML = draftFiles.slice(0, 5).map(f => \`
-        <div class="file-item">
-          <span>\${f.name}</span>
-          <span>\${(f.size / 1024).toFixed(1)} KB</span>
-        </div>
-      \`).join('');
-
-      if (draftFiles.length > 5) {
-        list.innerHTML += \`<div class="file-item" style="color: var(--text-muted);">+ \${draftFiles.length - 5} more files</div>\`;
-      }
-
-      btn.disabled = false;
-    }
-
-    // Upload Draft
-    document.getElementById('uploadDraftBtn')?.addEventListener('click', async () => {
-      if (!currentAppId || !authToken || draftFiles.length === 0) return;
-
-
-
-      const btn = document.getElementById('uploadDraftBtn');
-      btn.disabled = true;
-      btn.textContent = 'Uploading...';
-
-      const formData = new FormData();
-      draftFiles.forEach(f => formData.append('files', f));
-
-      try {
-        const res = await fetch(\`/api/apps/\${currentAppId}/draft\`, {
-          method: 'POST',
-          headers: { 'Authorization': \`Bearer \${authToken}\` },
-          body: formData
-        });
-
-        if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.error || 'Upload failed');
-        }
-
-        showToast('Draft uploaded successfully');
-
-        // Reset and refresh
-        draftFiles = [];
-        document.getElementById('draftFileList').innerHTML = '';
-        await loadDraftInfo(currentAppId);
-        loadVersionHistory(currentAppId);
-
-        // Refresh user profile to update storage info
-        if (authToken) {
-          try {
-            const profileRes = await fetch('/api/user', {
-              headers: { 'Authorization': \`Bearer \${authToken}\` }
-            });
-            if (profileRes.ok) {
-              userProfile = await profileRes.json();
-              updateAuthUI();
-            }
-          } catch (e) { /* ignore */ }
-        }
-      } catch (err) {
-        showToast(err.message || 'Failed to upload draft', 'error');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Upload as Draft';
-      }
-    });
-
-    // ============================================
-    // App Page Functions
-    // ============================================
-
-    // Load App Page data
-    async function loadAppPage(appId) {
-      const app = apps.find(a => a.id === appId);
-      if (!app) return;
-
-      document.title = \`\${app.name || app.slug} - Ultralight\`;
-
-      // MCP Endpoint URL
-      const mcpUrl = \`\${window.location.origin}/mcp/\${appId}\`;
-      document.getElementById('appMcpUrl').textContent = mcpUrl;
-
-      // Populate bridge config for Claude Desktop / Cursor
-      const bridgeEl = document.getElementById('appBridgeConfig');
-      if (bridgeEl) {
-        const slug = app.slug || 'my-app';
-        const bridgeConfig = JSON.stringify({
-          mcpServers: {
-            [slug]: {
-              command: "npx",
-              args: [
-                "mcp-remote",
-                mcpUrl,
-                "--header",
-                "Authorization: Bearer YOUR_TOKEN"
-              ]
-            }
-          }
-        }, null, 2);
-        bridgeEl.textContent = bridgeConfig;
-      }
-
-      // Version dropdown
-      const versionSelect = document.getElementById('appVersionSelect');
-      versionSelect.innerHTML = '<option>Loading...</option>';
-      try {
-        const res = await fetch(\`/api/apps/\${appId}\`, {
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-        if (res.ok) {
-          const appData = await res.json();
-          const versions = appData.versions || [];
-          const activeVersion = appData.current_version || '1.0.0';
-          if (versions.length > 0) {
-            versionSelect.innerHTML = versions.map(v =>
-              \`<option value="\${v}" \${v === activeVersion ? 'selected' : ''}>\${v}\${v === activeVersion ? ' ● live' : ''}</option>\`
-            ).join('');
-          } else {
-            versionSelect.innerHTML = \`<option value="\${activeVersion}" selected>\${activeVersion} ● live</option>\`;
-          }
-        }
-      } catch (e) { console.error('Failed to load versions:', e); }
-
-      // General fields
-      document.getElementById('appPageName').value = app.name || '';
-      const visSelect = document.getElementById('appPageVisibility');
-      visSelect.value = app.visibility || 'private';
-      // All visibility options available to all users
-      const visHint = document.getElementById('appVisibilityHint');
-      if (visHint) visHint.style.display = 'none';
-      document.getElementById('appPageDownload').value = app.download_access || 'owner';
-
-      // Supabase dropdown
-      const sbSelect = document.getElementById('appPageSupabase');
-      sbSelect.innerHTML = '<option value="">None — Supabase disabled</option>';
-      savedSupabaseServers.forEach(server => {
-        const opt = document.createElement('option');
-        opt.value = server.id;
-        const urlShort = server.supabase_url.replace('https://', '').replace('.supabase.co', '');
-        opt.textContent = server.name + ' (' + urlShort + ')';
-        sbSelect.appendChild(opt);
-      });
-      // Load current app Supabase config
-      try {
-        const sbRes = await fetch(\`/api/apps/\${appId}/supabase\`, {
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-        if (sbRes.ok) {
-          const sbData = await sbRes.json();
-          if (sbData.config_id) sbSelect.value = sbData.config_id;
-        }
-      } catch (e) { /* ignore */ }
-
-      // Skills summary
-      try {
-        const skillsRes = await fetch(\`/api/apps/\${appId}/skills.md\`, {
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-        if (skillsRes.ok) {
-          const skillsData = await skillsRes.json();
-          const parsed = skillsData.skills_parsed || [];
-          const summaryEl = document.getElementById('appSkillsSummary');
-          if (summaryEl) {
-            summaryEl.textContent = parsed.length > 0
-              ? parsed.length + ' function' + (parsed.length !== 1 ? 's' : '') + ' documented'
-              : 'No skills documented';
-          }
-        }
-      } catch (e) { /* ignore */ }
-
-      // Env summary
-      try {
-        const envRes = await fetch(\`/api/apps/\${appId}/env\`, {
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-        if (envRes.ok) {
-          const envData = await envRes.json();
-          const envArr = envData.env_vars || [];
-          const keyCount = Array.isArray(envArr) ? envArr.length : Object.keys(envArr).length;
-          const envSummaryEl = document.getElementById('appEnvSummary');
-          if (envSummaryEl) {
-            envSummaryEl.textContent = keyCount > 0
-              ? keyCount + ' variable' + (keyCount !== 1 ? 's' : '') + ' configured'
-              : 'No variables configured';
-          }
-        }
-      } catch (e) { /* ignore */ }
-
-      // Permissions summary: load granted user count
-      const permsSummaryEl = document.getElementById('appPermsSummary');
-      if (permsSummaryEl) {
-        try {
-          const permsRes = await fetch(\`/api/user/permissions/\${appId}\`, {
-            headers: { 'Authorization': \`Bearer \${authToken}\` }
-          });
-          const permsData = permsRes.ok ? await permsRes.json() : { users: [] };
-          const userCount = (permsData.users || []).length;
-          permsSummaryEl.textContent = userCount > 0
-            ? userCount + ' user' + (userCount !== 1 ? 's' : '') + ' granted access'
-            : 'No users granted access';
-        } catch (e) {
-          permsSummaryEl.textContent = 'Not configured';
-        }
-      }
-
-      // Permissions context
-      const proCtx = document.getElementById('permsProContext');
-      if (proCtx) {
-        proCtx.textContent = 'Granular per-function control for each user.';
-      }
-
-      // Pricing config
-      const pricingDefaultEl = document.getElementById('appPricingDefault');
-      const pricingFnsEl = document.getElementById('appPricingFunctions');
-      const pricingProductsEl = document.getElementById('appPricingProducts');
-      if (pricingDefaultEl && pricingFnsEl) {
-        const pc = app.pricing_config;
-        pricingDefaultEl.value = pc?.default_price_cents || 0;
-        pricingFnsEl.value = pc?.functions ? JSON.stringify(pc.functions, null, 2) : '';
-        if (pricingProductsEl) {
-          pricingProductsEl.value = pc?.products && pc.products.length > 0 ? JSON.stringify(pc.products, null, 2) : '';
-        }
-      }
-
-      // Load revenue data
-      loadAppEarnings();
-
-      // Load health data
-      loadAppHealth();
-
-      // Hide floating save
-      document.getElementById('floatingSave').style.display = 'none';
-
-      // Track changes for floating save
-      ['appPageName', 'appPageVisibility', 'appPageDownload', 'appPageSupabase', 'appVersionSelect', 'appPricingDefault', 'appPricingFunctions', 'appPricingProducts'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-          el.onchange = () => { document.getElementById('floatingSave').style.display = 'block'; };
-          el.oninput = () => { document.getElementById('floatingSave').style.display = 'block'; };
-        }
-      });
-    }
-
-    // Load App Earnings / Revenue data
-    window.loadAppEarnings = async function() {
-      if (!currentAppId || !authToken) return;
-      const period = document.getElementById('revenuePeriod')?.value || '30d';
-      try {
-        const res = await fetch(\`/api/apps/\${currentAppId}/earnings?period=\${period}\`, {
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-        if (!res.ok) { return; }
-        const data = await res.json();
-
-        // Total earned (lifetime)
-        const totalEl = document.getElementById('revenueTotal');
-        if (totalEl) totalEl.textContent = '$' + (data.total_earned_cents / 100).toFixed(2);
-
-        // Period summary
-        const periodAmtEl = document.getElementById('revenuePeriodAmount');
-        if (periodAmtEl) periodAmtEl.textContent = '$' + (data.period_earned_cents / 100).toFixed(2);
-        const periodCntEl = document.getElementById('revenuePeriodCount');
-        if (periodCntEl) periodCntEl.textContent = data.period_transfers || 0;
-
-        // Daily chart (CSS bar chart)
-        const chartEl = document.getElementById('revenueChart');
-        if (chartEl && data.daily && data.daily.length > 0) {
-          const maxVal = Math.max(...data.daily.map(d => d.earned_cents), 1);
-          // Limit to last N bars that fit
-          const maxBars = Math.min(data.daily.length, 60);
-          const days = data.daily.slice(-maxBars);
-          chartEl.innerHTML = days.map(d => {
-            const pct = Math.max((d.earned_cents / maxVal) * 100, d.earned_cents > 0 ? 4 : 0);
-            const cents = d.earned_cents;
-            const label = d.date.slice(5); // MM-DD
-            return \`<div title="\${label}: \${cents}¢ (\${d.transfer_count} calls)" style="flex:1;min-width:2px;max-width:12px;height:\${pct}%;background:\${cents > 0 ? 'var(--accent-primary)' : 'var(--border-color)'};border-radius:2px 2px 0 0;transition:height 0.3s;"></div>\`;
-          }).join('');
-        } else if (chartEl) {
-          chartEl.innerHTML = '<div style="width:100%;text-align:center;font-size:0.6875rem;color:var(--text-tertiary);padding:1rem 0;">No revenue data yet</div>';
-        }
-
-        // By-function breakdown
-        const fnEl = document.getElementById('revenueByFunction');
-        if (fnEl && data.by_function && data.by_function.length > 0) {
-          const maxFnEarned = Math.max(...data.by_function.map(f => f.earned_cents), 1);
-          fnEl.innerHTML = '<div style="font-size:0.6875rem;color:var(--text-secondary);margin-bottom:0.375rem;font-weight:600;">By function</div>' +
-            data.by_function.slice(0, 8).map(f => {
-              const pct = (f.earned_cents / maxFnEarned) * 100;
-              return \`<div style="margin-bottom:0.25rem;">
-                <div style="display:flex;justify-content:space-between;font-size:0.6875rem;">
-                  <span style="color:var(--text-primary);font-family:monospace;">\${f.function_name}</span>
-                  <span style="color:var(--text-secondary);">\${f.call_count} calls &middot; \${f.earned_cents}¢</span>
-                </div>
-                <div style="height:3px;background:var(--border-color);border-radius:2px;margin-top:2px;">
-                  <div style="height:100%;width:\${pct}%;background:var(--accent-primary);border-radius:2px;"></div>
-                </div>
-              </div>\`;
-            }).join('');
-        } else if (fnEl) {
-          fnEl.innerHTML = '';
-        }
-
-        // Recent transfers
-        const recentEl = document.getElementById('revenueRecent');
-        if (recentEl && data.recent && data.recent.length > 0) {
-          recentEl.innerHTML = '<div style="display:flex;flex-direction:column;gap:0.25rem;">' +
-            data.recent.map(t => {
-              const date = new Date(t.created_at);
-              const timeStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-              return \`<div style="display:flex;justify-content:space-between;">
-                <span>\${t.function_name || t.reason} &middot; \${t.amount_cents}¢</span>
-                <span style="color:var(--text-tertiary);">\${timeStr}</span>
-              </div>\`;
-            }).join('') + '</div>';
-        } else if (recentEl) {
-          recentEl.innerHTML = '<div style="color:var(--text-tertiary);">No transfers yet. Set a price above and callers will be charged automatically.</div>';
-        }
-
-      } catch (e) {
-        console.error('Failed to load earnings:', e);
-      }
-    };
-
-    // Load App Health data
-    window.loadAppHealth = async function() {
-      if (!currentAppId || !authToken) return;
-      try {
-        const res = await fetch(\`/api/apps/\${currentAppId}/health\`, {
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-
-        // Status indicator
-        const dotEl = document.getElementById('healthStatusDot');
-        const textEl = document.getElementById('healthStatusText');
-        const status = data.health_status || 'healthy';
-        const statusColors = {
-          healthy: 'var(--success-color)',
-          unhealthy: 'var(--error-color, #ef4444)',
-        };
-        const statusLabels = {
-          healthy: 'Healthy',
-          unhealthy: 'Issues detected',
-        };
-        if (dotEl) dotEl.style.background = statusColors[status] || statusColors.healthy;
-        if (textEl) textEl.textContent = statusLabels[status] || 'Healthy';
-
-        // Monitor toggle
-        const toggleEl = document.getElementById('autoHealToggle');
-        if (toggleEl) toggleEl.checked = data.auto_heal_enabled !== false;
-
-        // Function health bars
-        const fnEl = document.getElementById('healthFunctions');
-        if (fnEl && data.function_health && data.function_health.length > 0) {
-          fnEl.innerHTML = data.function_health.slice(0, 8).map(f => {
-            const pct = (f.error_rate * 100).toFixed(0);
-            const color = f.error_rate > 0.5 ? 'var(--error-color, #ef4444)' : f.error_rate > 0.1 ? 'var(--warning-color, #f59e0b)' : 'var(--success-color)';
-            const barWidth = Math.min(f.error_rate * 100, 100);
-            return \`<div style="margin-bottom:0.375rem;">
-              <div style="display:flex;justify-content:space-between;font-size:0.6875rem;">
-                <span style="font-family:monospace;color:var(--text-primary);">\${f.function_name}</span>
-                <span style="color:var(--text-secondary);">\${f.failed_calls}/\${f.total_calls} failed (\${pct}%)</span>
-              </div>
-              <div style="height:3px;background:var(--border-color);border-radius:2px;margin-top:2px;">
-                <div style="height:100%;width:\${barWidth}%;background:\${color};border-radius:2px;transition:width 0.3s;"></div>
-              </div>
-            </div>\`;
-          }).join('');
-        } else if (fnEl) {
-          fnEl.innerHTML = '<div style="font-size:0.6875rem;color:var(--text-tertiary);">No recent calls to analyze.</div>';
-        }
-
-        // Health events
-        const eventsEl = document.getElementById('healthEvents');
-        if (eventsEl && data.events && data.events.length > 0) {
-          eventsEl.innerHTML = '<div style="font-size:0.6875rem;color:var(--text-secondary);font-weight:600;margin-bottom:0.375rem;">Detected issues</div>' +
-            data.events.slice(0, 8).map(e => {
-              const date = new Date(e.created_at);
-              const timeStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-              const isResolved = e.status === 'resolved';
-              const statusIcon = isResolved ? '&#10003;' : '&#9888;';
-              const statusColor = isResolved ? 'var(--success-color)' : 'var(--error-color, #ef4444)';
-              return \`<div style="display:flex;justify-content:space-between;align-items:center;padding:0.25rem 0;border-bottom:1px solid var(--border-color);font-size:0.6875rem;">
-                <div style="min-width:0;overflow:hidden;">
-                  <span style="color:\${statusColor};font-weight:700;">\${statusIcon}</span>
-                  <span style="font-family:monospace;color:var(--text-primary);margin:0 0.25rem;">\${e.function_name}</span>
-                  <span style="color:var(--text-tertiary);">\${e.common_error ? e.common_error.slice(0, 60) : ''}</span>
-                </div>
-                <span style="color:var(--text-tertiary);white-space:nowrap;margin-left:0.5rem;">\${timeStr}</span>
-              </div>\`;
-            }).join('') +
-            '<div style="font-size:0.625rem;color:var(--text-tertiary);margin-top:0.5rem;">Agents can fix issues via <code style="font-size:0.5625rem;">ul.health</code> &rarr; <code style="font-size:0.5625rem;">ul.download</code> &rarr; fix &rarr; <code style="font-size:0.5625rem;">ul.upload</code></div>';
-        } else if (eventsEl) {
-          eventsEl.innerHTML = '';
-        }
-
-      } catch (e) {
-        console.error('Failed to load health:', e);
-      }
-    };
-
-    // Toggle auto-heal for current app
-    window.toggleAutoHeal = async function() {
-      if (!currentAppId || !authToken) return;
-      const toggleEl = document.getElementById('autoHealToggle');
-      const enabled = toggleEl?.checked || false;
-      try {
-        const res = await fetch(\`/api/apps/\${currentAppId}/health\`, {
-          method: 'PATCH',
-          headers: { 'Authorization': \`Bearer \${authToken}\`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ auto_heal_enabled: enabled }),
-        });
-        if (res.ok) {
-          showToast(enabled ? 'Health monitoring enabled' : 'Health monitoring disabled');
-        } else {
-          showToast('Failed to update auto-heal', 'error');
-          if (toggleEl) toggleEl.checked = !enabled;
-        }
-      } catch (e) {
-        showToast('Failed to update', 'error');
-        if (toggleEl) toggleEl.checked = !enabled;
-      }
-    };
-
-    // Save App Page Changes
-    window.saveAppPageChanges = async function() {
-      if (!currentAppId || !authToken) return;
-      const btn = document.querySelector('.floating-save-btn');
-      btn.disabled = true;
-      btn.textContent = 'Saving...';
-      try {
-        // Build pricing config from UI
-        let pricingConfig = null;
-        const pricingDefault = parseInt(document.getElementById('appPricingDefault').value, 10) || 0;
-        const pricingFnsRaw = document.getElementById('appPricingFunctions').value.trim();
-        const pricingProductsRaw = document.getElementById('appPricingProducts')?.value?.trim() || '';
-        if (pricingDefault > 0 || pricingFnsRaw || pricingProductsRaw) {
-          pricingConfig = { default_price_cents: pricingDefault };
-          if (pricingFnsRaw) {
-            try {
-              pricingConfig.functions = JSON.parse(pricingFnsRaw);
-            } catch (e) {
-              showToast('Invalid pricing JSON — check per-function overrides', 'error');
-              return;
-            }
-          }
-          if (pricingProductsRaw) {
-            try {
-              pricingConfig.products = JSON.parse(pricingProductsRaw);
-            } catch (e) {
-              showToast('Invalid products JSON — check product catalog', 'error');
-              return;
-            }
-          }
-        }
-
-        // Save general settings + pricing
-        const res = await fetch(\`/api/apps/\${currentAppId}\`, {
-          method: 'PATCH',
-          headers: { 'Authorization': \`Bearer \${authToken}\`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: document.getElementById('appPageName').value.trim(),
-            visibility: document.getElementById('appPageVisibility').value,
-            download_access: document.getElementById('appPageDownload').value,
-            pricing_config: pricingConfig,
-          })
-        });
-        if (!res.ok) throw new Error('Failed to save');
-
-        // Save Supabase config
-        const sbSelect = document.getElementById('appPageSupabase');
-        await fetch(\`/api/apps/\${currentAppId}/supabase\`, {
-          method: 'PUT',
-          headers: { 'Authorization': \`Bearer \${authToken}\`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ config_id: sbSelect.value || null })
-        });
-
-        // Save active version
-        const versionSelect = document.getElementById('appVersionSelect');
-        if (versionSelect.value) {
-          await fetch(\`/api/apps/\${currentAppId}\`, {
-            method: 'PATCH',
-            headers: { 'Authorization': \`Bearer \${authToken}\`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ current_version: versionSelect.value })
-          });
-        }
-
-        showToast('Changes saved');
-        document.getElementById('floatingSave').style.display = 'none';
-        await loadApps();
-      } catch (err) {
-        showToast('Failed to save changes', 'error');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Save Changes';
-      }
-    };
-
-    // Toggle collapsible app section
-    window.toggleAppSection = function(name) {
-      const section = document.getElementById('section' + name);
-      if (section) section.classList.toggle('collapsed');
-    };
-
-    // Skills Modal
-    window.openSkillsModal = async function() {
-      document.getElementById('skillsModal').classList.add('open');
-      if (!currentAppId) return;
-      try {
-        const res = await fetch(\`/api/apps/\${currentAppId}/skills.md\`, {
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-        if (res.ok) {
-          const data = await res.json();
-          document.getElementById('skillsEditor').value = data.skills_md || '';
-          const parsed = data.skills_parsed || [];
-          const statusEl = document.getElementById('skillsModalStatus');
-          statusEl.textContent = parsed.length > 0
-            ? \`✓ \${parsed.length} function\${parsed.length !== 1 ? 's' : ''} documented\`
-            : 'No documentation generated yet';
-          statusEl.className = parsed.length > 0 ? 'skills-status success' : 'skills-status info';
-        }
-      } catch (e) { console.error('Failed to load skills:', e); }
-    };
-    window.closeSkillsModal = function() {
-      document.getElementById('skillsModal').classList.remove('open');
-    };
-    window.saveSkillsFromModal = async function() {
-      if (!currentAppId) return;
-      const btn = document.getElementById('saveSkillsBtn');
-      btn.disabled = true;
-      btn.textContent = 'Saving...';
-      try {
-        const skillsMd = document.getElementById('skillsEditor').value;
-        const res = await fetch(\`/api/apps/\${currentAppId}/skills\`, {
-          method: 'PATCH',
-          headers: { 'Authorization': \`Bearer \${authToken}\`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ skills_md: skillsMd })
-        });
-        if (!res.ok) {
-          const data = await res.json();
-          if (data.errors) {
-            const validation = document.getElementById('skillsValidation');
-            validation.style.display = 'block';
-            validation.className = 'skills-status error';
-            validation.innerHTML = '✗ ' + data.errors.map(e => e.message).join(', ');
-            throw new Error('Validation failed');
-          }
-          throw new Error('Failed to save');
-        }
-        showToast('Skills saved');
-        closeSkillsModal();
-        await loadAppPage(currentAppId);
-      } catch (err) {
-        if (!err.message.includes('Validation')) showToast(err.message, 'error');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Save Skills';
-      }
-    };
-
-    // Environment Modal
-    window.openEnvModal = async function() {
-      document.getElementById('envModal').classList.add('open');
-      if (!currentAppId) return;
-      await loadEnvVars(currentAppId);
-    };
-    window.closeEnvModal = function() {
-      document.getElementById('envModal').classList.remove('open');
-    };
-    window.saveEnvFromModal = async function() {
-      const btn = document.getElementById('saveEnvBtn');
-      btn.disabled = true;
-      btn.textContent = 'Saving...';
-      try {
-        const saved = await saveEnvVars();
-        if (saved) {
-          showToast('Environment variables saved');
-          closeEnvModal();
-          await loadAppPage(currentAppId);
-        }
-      } catch (err) {
-        showToast('Failed to save', 'error');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Save Variables';
-      }
-    };
-
-    // ============================================
-    // Permissions Modal (Per-User Model B)
-    // ============================================
-    let permsGrantedUsers = [];
-    let permsSelectedUserId = null;
-
-    window.openPermissionsModal = async function() {
-      document.getElementById('permissionsModal').classList.add('open');
-      document.getElementById('permsEmailInput').value = '';
-      document.getElementById('permsAddError').style.display = 'none';
-      document.getElementById('permsUserDetail').style.display = 'none';
-      permsSelectedUserId = null;
-
-      // Update modal info box
-      const infoBox = document.getElementById('permsInfoBox');
-      if (infoBox) {
-        infoBox.textContent = 'Grant access to specific users with per-function control.';
-      }
-
-      await loadPermissionsUsers();
-    };
-
-    window.closePermissionsModal = function() {
-      document.getElementById('permissionsModal').classList.remove('open');
-    };
-
-    async function loadPermissionsUsers() {
-      if (!currentAppId) return;
-      const usersList = document.getElementById('permsUsersList');
-      const emptyEl = document.getElementById('permsEmpty');
-
-      try {
-        const res = await fetch(\`/api/user/permissions/\${currentAppId}\`, {
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-        const data = res.ok ? await res.json() : { users: [] };
-        permsGrantedUsers = data.users || [];
-
-        if (permsGrantedUsers.length === 0) {
-          usersList.style.display = 'none';
-          emptyEl.style.display = 'block';
-          // Update summary on app page
-          const summaryEl = document.getElementById('appPermsSummary');
-          if (summaryEl) summaryEl.textContent = 'No users granted access';
+          signOut();
           return;
         }
+      }
 
-        emptyEl.style.display = 'none';
-        usersList.style.display = 'block';
-        usersList.innerHTML = permsGrantedUsers.map(u => {
-          const isPending = u.status === 'pending';
-          return \`
-          <div class="token-item" style="display: flex; align-items: center; justify-content: space-between; padding: 0.625rem 0.875rem; cursor: \${isPending ? 'default' : 'pointer'}; \${isPending ? 'opacity: 0.7;' : ''} \${permsSelectedUserId === u.user_id ? 'background: var(--bg-tertiary);' : ''}"
-               \${isPending ? '' : \`onclick="selectPermissionUser('\${u.user_id}')"\`}>
-            <div>
-              <div style="font-size: 0.8125rem; color: var(--text-primary);">
-                \${escapeHtml(u.display_name || u.email)}
-                \${isPending ? '<span style="font-size: 0.6875rem; color: var(--warning-color, #f59e0b); margin-left: 0.5rem; font-weight: 500;">Pending invite</span>' : ''}
-              </div>
-              <div style="font-size: 0.75rem; color: var(--text-muted);">\${escapeHtml(u.email)} · \${u.function_count} function\${u.function_count !== 1 ? 's' : ''} \${isPending ? 'invited' : 'allowed'}</div>
-            </div>
-            <button class="byok-btn byok-btn-secondary" onclick="event.stopPropagation(); \${isPending ? \`revokePendingUser('\${escapeHtml(u.email)}')\` : \`revokePermissionUser('\${u.user_id}', '\${escapeHtml(u.email)}')\`}" style="font-size: 0.75rem; padding: 2px 10px; color: var(--error-color);">Revoke</button>
-          </div>\`;
-        }).join('');
+      currentUser = payload;
 
-        // Update summary on app page
-        const summaryEl = document.getElementById('appPermsSummary');
-        if (summaryEl) {
-          const activeCount = permsGrantedUsers.filter(u => u.status !== 'pending').length;
-          const pendingCount = permsGrantedUsers.filter(u => u.status === 'pending').length;
-          const parts = [];
-          if (activeCount > 0) parts.push(activeCount + ' user' + (activeCount !== 1 ? 's' : '') + ' granted');
-          if (pendingCount > 0) parts.push(pendingCount + ' pending');
-          summaryEl.textContent = parts.length > 0 ? parts.join(', ') : 'No users granted access';
+      // Fetch full profile
+      try {
+        const res = await fetch('/api/user', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (res.ok) {
+          userProfile = await res.json();
         }
-      } catch (err) {
-        usersList.innerHTML = '<div style="text-align: center; padding: 1rem; color: var(--error-color);">Failed to load users</div>';
-        usersList.style.display = 'block';
-        emptyEl.style.display = 'none';
+      } catch {}
+
+      // Update nav
+      document.getElementById('navPreAuth').classList.add('hidden');
+      document.getElementById('navPostAuth').classList.remove('hidden');
+
+      // Set avatar
+      const avatarEls = document.querySelectorAll('.profile-avatar');
+      const initial = (userProfile?.first_name || userProfile?.email || currentUser.email || '?')[0].toUpperCase();
+      avatarEls.forEach(el => { el.textContent = initial; });
+
+      // Set profile info in dropdown
+      const emailEl = document.getElementById('profileEmail');
+      if (emailEl) emailEl.textContent = userProfile?.email || currentUser.email || '';
+
+      // Load apps
+      await loadApps();
+
+      // Show appropriate view
+      if (currentView === 'home') {
+        // Check if user has apps — if yes, show dashboard
+        if (apps.length > 0) {
+          showView('dashboard');
+          loadDashboardData();
+        } else {
+          // First-time user: transform hero into setup instructions
+          showSetupBlock();
+        }
+      } else if (currentView === 'dashboard') {
+        showView('dashboard');
+        loadDashboardData();
+      } else if (currentView === 'app') {
+        showView('app');
       }
     }
 
-    window.addPermissionUser = async function() {
-      const input = document.getElementById('permsEmailInput');
-      const errorEl = document.getElementById('permsAddError');
-      const email = input.value.trim();
+    function signOut() {
+      authToken = null;
+      currentUser = null;
+      userProfile = null;
+      apps = [];
+      localStorage.removeItem('ultralight_token');
+      localStorage.removeItem('ultralight_refresh_token');
+      if (connectionPollInterval) clearInterval(connectionPollInterval);
+      window.location.href = '/';
+    }
+    window.signOut = signOut;
 
-      if (!email || !email.includes('@')) {
-        errorEl.textContent = 'Please enter a valid email address';
-        errorEl.style.display = 'block';
-        return;
-      }
-
-      errorEl.style.display = 'none';
-
-      // Get app functions to grant all by default
-      const app = apps.find(a => a.id === currentAppId);
-      const fns = app?.skills_parsed?.functions || [];
-
-      if (fns.length === 0) {
-        errorEl.textContent = 'No functions documented. Add Skills.md first to configure permissions.';
-        errorEl.style.display = 'block';
-        return;
-      }
-
-      // Grant all functions by default when adding a new user
-      const perms = fns.map(fn => ({ function_name: fn.name, allowed: true }));
-
-      try {
-        const res = await fetch(\`/api/user/permissions/\${currentAppId}\`, {
-          method: 'PUT',
-          headers: { 'Authorization': \`Bearer \${authToken}\`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, permissions: perms })
-        });
-
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data.error || 'Failed to add user');
-        }
-
-        const data = await res.json().catch(() => ({}));
-        input.value = '';
-        if (data.status === 'pending') {
-          showToast('Invite created — access will activate when user signs up');
-        } else {
-          showToast('User added with full access');
-        }
-        await loadPermissionsUsers();
-      } catch (err) {
-        errorEl.textContent = err.message || 'Failed to add user';
-        errorEl.style.display = 'block';
-      }
-    };
-
-    window.selectPermissionUser = async function(targetUserId) {
-      permsSelectedUserId = targetUserId;
-
-      // Highlight selected user in list
-      document.querySelectorAll('#permsUsersList .token-item').forEach(el => {
-        el.style.background = '';
-      });
-      event?.target?.closest?.('.token-item')?.style && (event.target.closest('.token-item').style.background = 'var(--bg-tertiary)');
-
-      // Show detail panel
-      const detailEl = document.getElementById('permsUserDetail');
-      detailEl.style.display = 'block';
-
-      const matrix = document.getElementById('permsMatrix');
-      matrix.innerHTML = '<div style="text-align: center; padding: 1rem; color: var(--text-muted);">Loading...</div>';
-
-      const user = permsGrantedUsers.find(u => u.user_id === targetUserId);
-      document.getElementById('permsDetailTitle').textContent = \`Functions for \${user?.display_name || user?.email || 'user'}\`;
-
-      try {
-        // Load permissions for this user+app
-        const permsRes = await fetch(\`/api/user/permissions/\${currentAppId}?user_id=\${targetUserId}\`, {
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-        const permsData = permsRes.ok ? await permsRes.json() : { permissions: [] };
-        const permsMap = {};
-        const permsArgsMap = {};
-        (permsData.permissions || []).forEach(p => {
-          permsMap[p.function_name] = p.allowed;
-          if (p.allowed_args) permsArgsMap[p.function_name] = p.allowed_args;
-        });
-
-        // Get app functions
-        const app = apps.find(a => a.id === currentAppId);
-        const fns = app?.skills_parsed?.functions || [];
-
-        if (fns.length === 0) {
-          matrix.innerHTML = '<div style="text-align: center; padding: 1.5rem; color: var(--text-muted); font-size: 0.8125rem;">No functions documented.</div>';
-          return;
-        }
-
-        // Granular per-function controls for all users
-        const granularBtns = document.getElementById('permsGranularBtns');
-        if (granularBtns) granularBtns.style.display = 'flex';
-
-        matrix.innerHTML = fns.map((fn, fnIdx) => {
-          const allowed = permsMap[fn.name] === true;
-          const argConstraints = permsArgsMap[fn.name] || null;
-          const argJson = argConstraints ? JSON.stringify(argConstraints, null, 2) : '';
-          const hasArgs = argConstraints && Object.keys(argConstraints).length > 0;
-          return \`<div class="token-item" style="padding: 0.625rem 0.875rem;">
-            <div style="display: flex; align-items: center; justify-content: space-between;">
-              <div>
-                <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.8125rem; color: var(--text-primary);">\${fn.name}</div>
-                <div style="font-size: 0.75rem; color: var(--text-muted);">\${fn.description || 'No description'}</div>
-              </div>
-              <div style="display: flex; align-items: center; gap: 0.75rem;">
-                <button class="byok-btn byok-btn-secondary" onclick="toggleArgConstraints(\${fnIdx})" style="font-size: 0.6875rem; padding: 2px 8px; \${hasArgs ? 'color: var(--accent-color); border-color: var(--accent-color);' : ''}">\${hasArgs ? 'Args \u2713' : 'Args'}</button>
-                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                  <input type="checkbox" data-fn="\${fn.name}" \${allowed ? 'checked' : ''} style="width: 16px; height: 16px; accent-color: var(--accent-color);" />
-                  <span style="font-size: 0.75rem; color: var(--text-secondary);">\${allowed ? 'Allowed' : 'Denied'}</span>
-                </label>
-              </div>
-            </div>
-            <div id="argConstraints-\${fnIdx}" style="display: none; margin-top: 0.5rem; padding: 0.5rem; background: var(--bg-secondary, #111); border-radius: 6px;">
-              <div style="font-size: 0.6875rem; color: var(--text-muted); margin-bottom: 0.375rem;">
-                Arg whitelist (JSON). E.g. <code style="font-size: 0.65rem;">{"region": ["us-east", "eu-west"]}</code>
-              </div>
-              <textarea data-args-fn="\${fn.name}" rows="3" style="width: 100%; padding: 0.375rem 0.5rem; background: var(--bg-primary, #0a0a0a); border: 1px solid var(--border-color, #2a2a2a); border-radius: 4px; color: var(--text-primary); font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; resize: vertical;">\${escapeHtml(argJson)}</textarea>
-            </div>
-          </div>\`;
-        }).join('');
-
-        matrix.querySelectorAll('input[type="checkbox"][data-fn]').forEach(cb => {
-          cb.addEventListener('change', () => {
-            cb.nextElementSibling.textContent = cb.checked ? 'Allowed' : 'Denied';
-          });
-        });
-      } catch (err) {
-        matrix.innerHTML = '<div style="text-align: center; padding: 1rem; color: var(--error-color);">Failed to load permissions</div>';
-      }
-    };
-
-    window.revokePermissionUser = async function(targetUserId, email) {
-      if (!confirm(\`Revoke all access for \${email}?\`)) return;
-
-      try {
-        const res = await fetch(\`/api/user/permissions/\${currentAppId}?user_id=\${targetUserId}\`, {
-          method: 'DELETE',
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-        if (!res.ok) throw new Error('Failed');
-        showToast('User access revoked');
-
-        if (permsSelectedUserId === targetUserId) {
-          permsSelectedUserId = null;
-          document.getElementById('permsUserDetail').style.display = 'none';
-        }
-        await loadPermissionsUsers();
-      } catch (err) {
-        showToast('Failed to revoke access', 'error');
-      }
-    };
-
-    window.revokePendingUser = async function(email) {
-      if (!confirm(\`Revoke pending invite for \${email}?\`)) return;
-
-      try {
-        const res = await fetch(\`/api/user/permissions/\${currentAppId}?email=\${encodeURIComponent(email)}&pending=true\`, {
-          method: 'DELETE',
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-        if (!res.ok) throw new Error('Failed');
-        showToast('Pending invite revoked');
-        await loadPermissionsUsers();
-      } catch (err) {
-        showToast('Failed to revoke invite', 'error');
-      }
-    };
-
-    window.allowAllPermissions = function() {
-      document.querySelectorAll('#permsMatrix input[type="checkbox"][data-fn]').forEach(cb => {
-        cb.checked = true;
-        if (cb.nextElementSibling) cb.nextElementSibling.textContent = 'Allowed';
-      });
-    };
-
-    window.denyAllPermissions = function() {
-      document.querySelectorAll('#permsMatrix input[type="checkbox"][data-fn]').forEach(cb => {
-        cb.checked = false;
-        if (cb.nextElementSibling) cb.nextElementSibling.textContent = 'Denied';
-      });
-    };
-
-    window.toggleArgConstraints = function(fnIdx) {
-      const el = document.getElementById('argConstraints-' + fnIdx);
-      if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
-    };
-
-    window.savePermissions = async function() {
-      if (!permsSelectedUserId || !currentAppId) {
-        showToast('Select a user first', 'error');
-        return;
-      }
-
-      const perms = [];
-      document.querySelectorAll('#permsMatrix input[type="checkbox"][data-fn]').forEach(cb => {
-        const entry = { function_name: cb.dataset.fn, allowed: cb.checked };
-        // Check for arg constraints textarea
-        const argsTA = document.querySelector(\`textarea[data-args-fn="\${cb.dataset.fn}"]\`);
-        if (argsTA && argsTA.value.trim()) {
-          try {
-            const parsed = JSON.parse(argsTA.value.trim());
-            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-              entry.allowed_args = parsed;
-            }
-          } catch (e) {
-            // Invalid JSON — skip silently, will be sent without allowed_args
-          }
-        }
-        perms.push(entry);
-      });
-
-      try {
-        const res = await fetch(\`/api/user/permissions/\${currentAppId}\`, {
-          method: 'PUT',
-          headers: { 'Authorization': \`Bearer \${authToken}\`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user_id: permsSelectedUserId, permissions: perms })
-        });
-        if (!res.ok) throw new Error('Failed to save');
-        showToast('Permissions saved');
-        await loadPermissionsUsers();
-      } catch (err) {
-        showToast('Failed to save permissions', 'error');
-      }
-    };
-
-    // ============================================
-    // Logs Modal
-    // ============================================
-    window.openLogsModal = async function() {
-      document.getElementById('logsModal').classList.add('open');
-      const titleEl = document.getElementById('logsModalTitle');
-      if (currentView === 'app' && currentAppId) {
-        const app = apps.find(a => a.id === currentAppId);
-        titleEl.textContent = \`Logs: \${app?.name || 'App'}\`;
-      } else {
-        titleEl.textContent = 'MCP Call Logs';
-      }
-      await refreshLogs();
-    };
-    window.closeLogsModal = function() {
-      document.getElementById('logsModal').classList.remove('open');
-    };
-    window.refreshLogs = async function() {
-      const listEl = document.getElementById('logsList');
-      const emptyEl = document.getElementById('logsEmpty');
-      listEl.style.display = 'none';
-      emptyEl.style.display = 'block';
-      emptyEl.textContent = 'Loading logs...';
-
-      try {
-        let url = '/api/user/call-log?limit=100';
-        if (currentView === 'app' && currentAppId) {
-          url += \`&app_id=\${currentAppId}\`;
-        }
-        const res = await fetch(url, {
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-        if (!res.ok) throw new Error('Failed');
-        const { logs } = await res.json();
-
-        if (!logs || logs.length === 0) {
-          emptyEl.textContent = 'No call logs yet. Make some MCP tool calls to see them here.';
-          return;
-        }
-
-        listEl.style.display = 'block';
-        emptyEl.style.display = 'none';
-        listEl.innerHTML = logs.map(log => {
-          const time = new Date(log.created_at).toLocaleString();
-          const statusDot = log.success ? '🟢' : '🔴';
-          const duration = log.duration_ms ? \`\${log.duration_ms}ms\` : '';
-          const appLabel = log.app_name ? \`<span style="color: var(--accent-color);">\${log.app_name}</span> · \` : '';
-          return \`<div class="token-item" style="padding: 0.5rem 0.875rem;">
-            <div style="display: flex; align-items: center; justify-content: space-between;">
-              <div>
-                <span style="font-size: 0.75rem;">\${statusDot}</span>
-                <span style="font-family: 'JetBrains Mono', monospace; font-size: 0.8125rem; color: var(--text-primary);">\${log.function_name}</span>
-                <span style="font-size: 0.75rem; color: var(--text-muted);"> \${log.method}</span>
-              </div>
-              <span style="font-size: 0.75rem; color: var(--text-muted);">\${duration}</span>
-            </div>
-            <div style="font-size: 0.6875rem; color: var(--text-muted); margin-top: 2px;">\${appLabel}\${time}\${log.error_message ? ' · <span style="color: var(--error-color);">' + log.error_message + '</span>' : ''}</div>
-          </div>\`;
-        }).join('');
-      } catch (err) {
-        emptyEl.textContent = 'Failed to load logs.';
-      }
-    };
-
-    // ============================================
-    // Search
-    // ============================================
-    let searchTimeout = null;
-    window.handleSearch = function(query) {
-      clearTimeout(searchTimeout);
-      const dropdown = document.getElementById('searchDropdown');
-
-      if (!query || query.trim().length < 2) {
-        dropdown.style.display = 'none';
-        return;
-      }
-
-      searchTimeout = setTimeout(async () => {
-        const q = query.trim().toLowerCase();
-        let html = '';
-
-        // Your Apps - local filter
-        const myApps = apps.filter(a =>
-          a.name?.toLowerCase().includes(q) || a.slug?.toLowerCase().includes(q)
-        ).slice(0, 5);
-
-        if (myApps.length > 0) {
-          html += '<div style="padding: 0.5rem 0.75rem; font-size: 0.6875rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Your Apps</div>';
-          html += myApps.map(a =>
-            \`<div class="top-bar-profile-dropdown-item" onclick="document.getElementById('searchInput').value=''; document.getElementById('searchDropdown').style.display='none'; navigateToApp(event, '\${a.id}')" style="padding: 0.5rem 0.75rem; cursor: pointer;">
-              <span style="font-size: 0.8125rem;">\${a.name || a.slug}</span>
-              <span style="font-size: 0.6875rem; color: var(--text-muted); margin-left: 0.5rem;">\${a.visibility || 'private'}</span>
-            </div>\`
-          ).join('');
-        }
-
-        // App Store - discover API
-        try {
-          const discoverRes = await fetch('/api/discover', {
-            method: 'POST',
-            headers: { 'Authorization': \`Bearer \${authToken}\`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: q, limit: 5 })
-          });
-          if (discoverRes.ok) {
-            const { results } = await discoverRes.json();
-            if (results && results.length > 0) {
-              html += '<div style="padding: 0.5rem 0.75rem; font-size: 0.6875rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; border-top: 1px solid var(--border-color); margin-top: 0.25rem;">App Store</div>';
-              html += results.map(r =>
-                \`<div class="top-bar-profile-dropdown-item" onclick="window.location.href='/a/\${r.id}'" style="padding: 0.5rem 0.75rem; cursor: pointer;">
-                  <span style="font-size: 0.8125rem;">\${r.name || r.slug}</span>
-                  <span style="font-size: 0.6875rem; color: var(--text-muted); margin-left: 0.5rem;">by \${r.owner_name || 'unknown'}</span>
-                </div>\`
-              ).join('');
-            }
-          }
-        } catch (e) { /* App store search failed silently */ }
-
-        if (!html) {
-          html = '<div style="padding: 1rem; text-align: center; color: var(--text-muted); font-size: 0.8125rem;">No results found</div>';
-        }
-
-        dropdown.innerHTML = html;
-        dropdown.style.display = 'block';
-      }, 300);
-    };
-
-    // Close search on click outside
-    document.addEventListener('click', (e) => {
-      const search = document.querySelector('.sidebar-search');
-      if (search && !search.contains(e.target)) {
-        document.getElementById('searchDropdown').style.display = 'none';
-      }
-    });
-
-    // Copy App MCP URL
-    window.copyAppMcpUrl = function() {
-      const url = document.getElementById('appMcpUrl').textContent;
-      navigator.clipboard.writeText(url).then(() => showToast('MCP URL copied!'));
-    };
-
-    window.copyAppBridgeConfig = function() {
-      const el = document.getElementById('appBridgeConfig');
-      if (el) {
-        navigator.clipboard.writeText(el.textContent).then(() => {
-          showToast('Bridge config copied!');
-        });
-      }
-    };
-
-    window.openAppDashboard = function() {
-      if (!currentAppId) return;
-      window.open(\`/http/\${currentAppId}/_ui\`, '_blank');
-    };
-
-    // Download app code
-    window.downloadAppCode = async function() {
-      if (!currentAppId || !authToken) return;
-      try {
-        const res = await fetch(\`/api/apps/\${currentAppId}/download\`, {
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-        if (!res.ok) throw new Error('Failed to download');
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        const appRef = apps.find(x => x.id === currentAppId);
-        a.download = (appRef?.slug || 'app') + '.zip';
-        a.click();
-        URL.revokeObjectURL(url);
-      } catch (err) {
-        showToast('Failed to download code', 'error');
-      }
-    };
-
-    // Delete app
-    window.deleteApp = function() {
-      if (!currentAppId) return;
-      const app = apps.find(a => a.id === currentAppId);
-      document.getElementById('deleteAppName').textContent = app?.name || 'this app';
-      deleteConfirmModal.classList.add('open');
-    };
-
-    window.closeDeleteConfirm = function() {
-      deleteConfirmModal.classList.remove('open');
-    };
-
-    deleteConfirmModal.addEventListener('click', (e) => {
-      if (e.target === deleteConfirmModal) closeDeleteConfirm();
-    });
-
-    // Close modals on overlay click
-    document.getElementById('skillsModal')?.addEventListener('click', (e) => {
-      if (e.target.id === 'skillsModal') closeSkillsModal();
-    });
-    document.getElementById('envModal')?.addEventListener('click', (e) => {
-      if (e.target.id === 'envModal') closeEnvModal();
-    });
-    document.getElementById('permissionsModal')?.addEventListener('click', (e) => {
-      if (e.target.id === 'permissionsModal') closePermissionsModal();
-    });
-    document.getElementById('permsEmailInput')?.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); addPermissionUser(); }
-    });
-
-    document.getElementById('confirmDeleteBtn').addEventListener('click', async () => {
-      if (!currentAppId || !authToken) return;
-
-      const btn = document.getElementById('confirmDeleteBtn');
-      btn.disabled = true;
-      btn.textContent = 'Deleting...';
-
-      try {
-        const res = await fetch(\`/api/apps/\${currentAppId}\`, {
-          method: 'DELETE',
-          headers: { 'Authorization': \`Bearer \${authToken}\` }
-        });
-
-        if (!res.ok) throw new Error('Failed to delete app');
-
-        showToast('App deleted successfully');
-        closeDeleteConfirm();
-
-        // Go to dashboard after deleting
-        navigateToDashboard();
-
-        await loadApps();
-      } catch (err) {
-        showToast('Failed to delete app', 'error');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Delete';
-      }
-    });
-
-    // ============================================
-    // Navigation
-    // ============================================
-    window.navigateToApp = async function(event, appId) {
-      event.preventDefault();
-      event.stopPropagation();
-
-      history.pushState({ appId }, '', \`/a/\${appId}\`);
-      currentAppId = appId;
-      currentView = 'app';
-      renderAppsList();
-      showView('app');
-      await loadAppPage(appId);
-    };
-
+    // ===== Navigation =====
     function showView(view) {
-      homeView.style.display = view === 'home' ? 'flex' : 'none';
-      dashboardView.style.display = view === 'dashboard' ? 'flex' : 'none';
-      leaderboardView.style.display = view === 'leaderboard' ? 'flex' : 'none';
-      appView.style.display = view === 'app' ? 'flex' : 'none';
       currentView = view;
-      updateFooterVisibility(view);
-      updateNavActive(view);
-      updateConnectButtonVisibility(view);
-      updateRightSidebar(view);
+      ['homeView', 'dashboardView', 'appView', 'accountView'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+      });
+
+      const viewMap = {
+        home: 'homeView',
+        dashboard: 'dashboardView',
+        app: 'appView',
+        account: 'accountView',
+        leaderboard: 'dashboardView', // redirect leaderboard to dashboard
+      };
+
+      const targetId = viewMap[view];
+      if (targetId) {
+        const el = document.getElementById(targetId);
+        if (el) el.style.display = 'block';
+      }
     }
 
-    function updateConnectButtonVisibility(view) {
-      const btn = document.getElementById('topBarConnectBtn');
-      if (btn) btn.classList.toggle('visible', view !== 'home');
-    }
-
-    function updateRightSidebar(view) {
-      const rs = document.getElementById('rightSidebar');
-      const mc = document.querySelector('.main-content');
-      if (view === 'leaderboard') {
-        rs.classList.add('visible');
-        mc.classList.add('has-right-sidebar');
-        loadRightSidebarData();
+    function navigateToHome() {
+      history.pushState({}, '', '/');
+      currentAppId = null;
+      if (authToken && apps.length > 0) {
+        showView('dashboard');
+        loadDashboardData();
+      } else if (authToken) {
+        showView('home');
+        showSetupBlock();
       } else {
-        rs.classList.remove('visible');
-        mc.classList.remove('has-right-sidebar');
+        showView('home');
       }
     }
 
-    async function loadRightSidebarData() {
-      const header = document.getElementById('rightSidebarHeader');
-      const tabs = document.getElementById('rightSidebarTabs');
-      const content = document.getElementById('rightSidebarContent');
-      header.innerHTML = '<h3 style="font-size:0.9375rem;font-weight:600;margin-bottom:0.5rem">Platform Gaps</h3>';
-      tabs.innerHTML =
-        '<button class="right-sidebar-tab active" data-status="open" onclick="filterRightGaps(\\\'open\\\')">Open</button>' +
-        '<button class="right-sidebar-tab" data-status="claimed" onclick="filterRightGaps(\\\'claimed\\\')">Claimed</button>' +
-        '<button class="right-sidebar-tab" data-status="fulfilled" onclick="filterRightGaps(\\\'fulfilled\\\')">Fulfilled</button>' +
-        '<button class="right-sidebar-tab" data-status="all" onclick="filterRightGaps(\\\'all\\\')">All</button>';
-      await loadRightSidebarGaps(content, 'open');
+    function navigateToDashboard() {
+      history.pushState({}, '', '/dash');
+      currentAppId = null;
+      showView('dashboard');
+      renderAppGrid();
+      loadDashboardData();
     }
 
-    window.filterRightGaps = async function(status) {
-      const tabs = document.querySelectorAll('.right-sidebar-tab');
-      tabs.forEach(t => t.classList.toggle('active', t.dataset.status === status));
-      const content = document.getElementById('rightSidebarContent');
-      await loadRightSidebarGaps(content, status);
-    };
+    function navigateToApp(appId) {
+      history.pushState({}, '', '/a/' + appId);
+      currentAppId = appId;
+      showView('app');
+      loadAppPage(appId);
+    }
+    window.navigateToApp = navigateToApp;
 
-    async function loadRightSidebarGaps(container, status) {
-      container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:1rem 0;text-align:center">Loading...</div>';
-      try {
-        const res = await fetch('/api/homepage?type=gaps&status=' + status + '&limit=30');
-        if (res.ok) {
-          const data = await res.json();
-          renderGapCards(container, data.results || data || [], 30);
-        } else {
-          container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:1rem 0;text-align:center">Failed to load.</div>';
+    function navigateToAccount() {
+      history.pushState({}, '', '/settings');
+      showView('account');
+      loadAccountData();
+    }
+    window.navigateToAccount = navigateToAccount;
+
+    window.addEventListener('popstate', async function() {
+      const path = window.location.pathname;
+      if (path === '/' || path === '/home') {
+        navigateToHome();
+      } else if (path === '/dash' || path === '/dashboard') {
+        navigateToDashboard();
+      } else if (path === '/settings') {
+        navigateToAccount();
+      } else if (path.startsWith('/a/')) {
+        const appId = path.slice(3).split('/')[0];
+        navigateToApp(appId);
+      }
+    });
+
+    // Nav button handlers
+    document.getElementById('navAuthBtn')?.addEventListener('click', showAuthOverlay);
+    document.getElementById('navLogoLink')?.addEventListener('click', function(e) {
+      e.preventDefault();
+      navigateToHome();
+    });
+
+    // ===== Profile Dropdown =====
+    const profileTrigger = document.getElementById('profileTrigger');
+    const profileDropdown = document.getElementById('profileDropdown');
+
+    if (profileTrigger) {
+      profileTrigger.addEventListener('click', function(e) {
+        e.stopPropagation();
+        profileDropdown.classList.toggle('open');
+      });
+    }
+
+    document.addEventListener('click', function(e) {
+      if (profileDropdown && !profileDropdown.contains(e.target) && !profileTrigger.contains(e.target)) {
+        profileDropdown.classList.remove('open');
+      }
+    });
+
+    // Profile dropdown menu actions
+    document.querySelectorAll('[data-action]').forEach(function(el) {
+      el.addEventListener('click', function() {
+        const action = this.dataset.action;
+        profileDropdown.classList.remove('open');
+        if (action === 'settings') navigateToAccount();
+        else if (action === 'tokens') { navigateToAccount(); setTimeout(() => document.getElementById('tokensSection')?.scrollIntoView({ behavior: 'smooth' }), 100); }
+        else if (action === 'billing') { navigateToAccount(); setTimeout(() => document.getElementById('billingSection')?.scrollIntoView({ behavior: 'smooth' }), 100); }
+        else if (action === 'supabase') { navigateToAccount(); setTimeout(() => document.getElementById('supabaseSection')?.scrollIntoView({ behavior: 'smooth' }), 100); }
+        else if (action === 'signout') signOut();
+      });
+    });
+
+    // ===== Connection State Machine =====
+    function updateConnectionStatus(state, detail) {
+      const el = document.getElementById('connectionStatus');
+      if (!el) return;
+      el.className = 'connection-status';
+      
+      if (state === 'waiting') {
+        el.classList.add('connecting');
+        el.innerHTML = '<div class="status-dot"></div><span>Waiting for agent to connect...</span>';
+        el.classList.remove('hidden');
+      } else if (state === 'connected') {
+        el.classList.add('connected');
+        el.innerHTML = '<div class="status-dot"></div><span>Agent connected!' + (detail ? ' ' + escapeHtml(detail) : '') + '</span>';
+        el.classList.remove('hidden');
+        // After 3 seconds, transition to dashboard if they have apps
+        setTimeout(function() {
+          if (apps.length > 0) {
+            navigateToDashboard();
+          } else {
+            loadApps().then(function() {
+              if (apps.length > 0) navigateToDashboard();
+            });
+          }
+        }, 3000);
+      } else if (state === 'error') {
+        el.classList.add('error');
+        el.innerHTML = '<div class="status-dot"></div><span>Connection issue. ' + (detail || 'Try copying again.') + '</span>';
+        el.classList.remove('hidden');
+      } else {
+        el.classList.add('hidden');
+      }
+    }
+
+    function startConnectionPolling(tokenId) {
+      if (connectionPollInterval) clearInterval(connectionPollInterval);
+      newlyCreatedTokenId = tokenId;
+      let attempts = 0;
+      const maxAttempts = 40; // 2 minutes at 3s intervals
+
+      updateConnectionStatus('waiting');
+
+      connectionPollInterval = setInterval(async function() {
+        attempts++;
+        if (attempts > maxAttempts) {
+          clearInterval(connectionPollInterval);
+          connectionPollInterval = null;
+          updateConnectionStatus('error', 'Timed out after 2 minutes.');
+          return;
         }
-      } catch {
-        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:1rem 0;text-align:center">Failed to load.</div>';
-      }
+
+        try {
+          const res = await fetch('/api/user/tokens', {
+            headers: { 'Authorization': 'Bearer ' + authToken },
+          });
+          if (!res.ok) return;
+          const tokens = await res.json();
+          const token = tokens.find(function(t) { return t.id === tokenId; });
+          if (token && token.last_used_at) {
+            clearInterval(connectionPollInterval);
+            connectionPollInterval = null;
+            updateConnectionStatus('connected');
+            // Reload apps to pick up any newly created ones
+            await loadApps();
+          }
+        } catch {}
+      }, 3000);
     }
 
-    // Setup command text for the modal (stored after token generation)
-    let setupCommandStr = '';
+    // ===== Setup Instructions =====
+    function showSetupBlock() {
+      const block = document.getElementById('setupBlock');
+      if (block) block.style.display = 'block';
+      // Update hero CTA text
+      const cta = document.getElementById('heroCTA');
+      if (cta) cta.style.display = 'none'; // hide the button since we show the block instead
+    }
 
-    window.connectAgent = async function() {
-      // If not authenticated, redirect to login with return_to
+    // Hero CTA handler
+    document.getElementById('heroCTA')?.addEventListener('click', async function() {
       if (!authToken) {
-        window.location.href = '/auth/login?return_to=' + encodeURIComponent('/?setup=1');
+        showAuthOverlay();
         return;
       }
+      // Already authed — generate token and show setup
+      await generateSetupInstructions();
+    });
 
-      // Generate a token for the setup command
+    async function generateSetupInstructions() {
       try {
         const res = await fetch('/api/user/tokens', {
           method: 'POST',
@@ -6378,7 +2687,6 @@ await hash.sha256('data')</div>
         });
 
         if (!res.ok) {
-          // Fallback: copy MCP URL without token
           const mcpUrl = window.location.origin + '/mcp/platform';
           await navigator.clipboard.writeText(mcpUrl);
           showToast('MCP URL copied! Create an API token in Settings to authenticate.', 'warning');
@@ -6387,632 +2695,1308 @@ await hash.sha256('data')</div>
 
         const data = await res.json();
         const token = data.plaintext_token;
+        const tokenId = data.id;
 
-        // Build the setup command
-        setupCommandStr = 'I\\'d like you to set up Ultralight, the instant MCP app platform.\\nRun: npx ultralightpro setup --token ' + token;
+        setupCommandStr = "I'd like you to set up Ultralight, the instant MCP app platform.\\nRun: npx ultralightpro setup --token " + token;
 
-        // Show the modal
-        const commandText = document.getElementById('setupCommandText');
-        if (commandText) {
-          commandText.textContent = 'I\\'d like you to set up Ultralight, the instant MCP app platform.\\nRun: npx ultralightpro setup --token ' + token;
-        }
-        const modal = document.getElementById('setupModal');
-        if (modal) modal.style.display = 'flex';
+        const commandEl = document.getElementById('setupCode');
+        if (commandEl) commandEl.textContent = setupCommandStr;
+
+        showSetupBlock();
+
+        // Start polling for connection
+        if (tokenId) startConnectionPolling(tokenId);
 
       } catch (err) {
-        // Fallback: copy MCP URL
         const mcpUrl = window.location.origin + '/mcp/platform';
         await navigator.clipboard.writeText(mcpUrl);
         showToast('MCP URL copied!', 'success');
       }
-    };
+    }
 
-    // Legacy alias — both hero and top bar call connectAgent now
-    window.copyConnectUrl = window.connectAgent;
-
-    window.copySetupCommand = async function() {
+    // Copy setup command
+    document.getElementById('copySetupBtn')?.addEventListener('click', async function() {
       if (!setupCommandStr) return;
       try {
         await navigator.clipboard.writeText(setupCommandStr);
-        const copyText = document.getElementById('setupCopyText');
-        if (copyText) {
-          copyText.textContent = 'Copied \\u2713';
-          setTimeout(() => { copyText.textContent = 'Copy to Clipboard'; }, 1500);
-        }
+        const btn = this;
+        const orig = btn.innerHTML;
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg> Copied!';
+        btn.classList.add('btn-success-flash');
+        setTimeout(function() { btn.innerHTML = orig; btn.classList.remove('btn-success-flash'); }, 2000);
       } catch {
-        showToast('Failed to copy. Please select and copy manually.', 'error');
+        showToast('Failed to copy. Select and copy manually.', 'error');
       }
-    };
+    });
 
-    window.dismissSetupModal = function() {
-      const modal = document.getElementById('setupModal');
-      if (modal) modal.style.display = 'none';
-    };
-
-    function updateNavActive(view) {
-      document.querySelectorAll('.nav-btn').forEach(btn => {
-        btn.classList.toggle('nav-active', btn.dataset.view === view);
-      });
-    }
-
-    function navigateToHome() {
-      history.pushState({}, '', '/');
-      currentAppId = null;
-      showView('home');
-      loadHomeData();
-    }
-
-    function navigateToDashboard() {
-      history.pushState({}, '', '/dash');
-      currentAppId = null;
-      showView('dashboard');
-      renderAppsList();
-      loadDashboardData();
-    }
-
-    window.navigateToGaps = function() {
-      navigateToLeaderboard();
-    };
-
-    window.navigateToLeaderboard = function() {
-      history.pushState({}, '', '/leaderboard');
-      currentAppId = null;
-      showView('leaderboard');
-      loadLeaderboardData();
-    };
-
-    // ============================================
-    // Dashboard Functions
-    // ============================================
-    const platformMcpUrlEl = document.getElementById('platformMcpUrl');
-    if (platformMcpUrlEl) {
-      platformMcpUrlEl.textContent = window.location.origin + '/mcp/platform';
-    }
-
-    window.copyPlatformMcpUrl = function() {
-      const url = window.location.origin + '/mcp/platform';
-      navigator.clipboard.writeText(url).then(() => {
-        showToast('Platform MCP URL copied!');
-      });
-    };
-
-    window.copyPlatformBridgeConfig = function() {
-      const url = window.location.origin + '/mcp/platform';
-      const config = JSON.stringify({
-        mcpServers: {
-          "ultralight-platform": {
-            command: "npx",
-            args: [
-              "mcp-remote",
-              url,
-              "--header",
-              "Authorization: Bearer YOUR_TOKEN"
-            ]
-          }
+    // Dashboard setup instructions button (collapsed version)
+    document.getElementById('dashSetupBtn')?.addEventListener('click', async function() {
+      if (!setupCommandStr) {
+        await generateSetupInstructions();
+      }
+      // Show a mini modal or expand the setup block
+      const block = document.getElementById('dashSetupBlock');
+      if (block) {
+        block.classList.toggle('hidden');
+        if (!block.classList.contains('hidden')) {
+          const el = document.getElementById('dashSetupText');
+          if (el) el.textContent = setupCommandStr;
         }
-      }, null, 2);
-      navigator.clipboard.writeText(config).then(() => {
-        showToast('Bridge config copied!');
-      });
-    };
-
-    // Populate the platform bridge config snippet
-    (function() {
-      const el = document.getElementById('platformBridgeConfig');
-      if (el) {
-        const url = window.location.origin + '/mcp/platform';
-        const config = JSON.stringify({
-          mcpServers: {
-            "ultralight-platform": {
-              command: "npx",
-              args: [
-                "mcp-remote",
-                url,
-                "--header",
-                "Authorization: Bearer YOUR_TOKEN"
-              ]
-            }
-          }
-        }, null, 2);
-        el.textContent = config;
       }
-    })();
+    });
 
-    // ============================================
-    // Balance & Billing
-    // ============================================
+    document.getElementById('copyDashSetup')?.addEventListener('click', async function() {
+      if (!setupCommandStr) return;
+      await navigator.clipboard.writeText(setupCommandStr);
+      showToast('Setup instructions copied!');
+    });
 
-    async function loadHostingData() {
-      const loadingEl = document.getElementById('billingLoading');
-      const balanceSection = document.getElementById('billingBalanceSection');
-      const statusBadge = document.getElementById('billingStatus');
+    // ===== Apps =====
+    async function loadApps() {
+      if (!authToken) return;
+      try {
+        const res = await fetch('/api/apps/me', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (res.ok) {
+          apps = await res.json();
+          renderAppGrid();
+        }
+      } catch {}
+    }
 
-      if (!authToken) {
-        if (loadingEl) loadingEl.textContent = 'Sign in to view billing.';
+    function renderAppGrid() {
+      const grid = document.getElementById('appGrid');
+      if (!grid) return;
+
+      if (!apps || apps.length === 0) {
+        grid.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📡</div><div class="empty-state-title">No apps yet</div><div class="empty-state-desc">Copy the setup instructions and paste them into your agent to deploy your first app.</div></div>';
         return;
       }
+
+      grid.innerHTML = apps.map(function(app) {
+        const emoji = getAppEmoji(app.name || app.slug);
+        const name = escapeHtml(app.name || app.slug || 'Untitled');
+        const desc = escapeHtml((app.description || '').slice(0, 80));
+        const version = escapeHtml(app.current_version || 'v1.0.0');
+        const fnCount = (app.manifest?.functions || []).length;
+        return '<div class="app-card" onclick="navigateToApp(\\\'' + app.id + '\\\')">' +
+          '<div class="app-card-header">' +
+            '<span class="app-card-emoji">' + emoji + '</span>' +
+            '<span class="app-card-name">' + name + '</span>' +
+            '<span class="app-card-version">' + version + '</span>' +
+          '</div>' +
+          (desc ? '<div class="app-card-desc">' + desc + '</div>' : '') +
+          '<div class="app-card-meta">' + fnCount + ' function' + (fnCount !== 1 ? 's' : '') + '</div>' +
+        '</div>';
+      }).join('');
+
+      // Update stats
+      const totalAppsEl = document.getElementById('statTotalApps');
+      if (totalAppsEl) totalAppsEl.textContent = apps.length;
+    }
+
+    // ===== Dashboard =====
+    async function loadDashboardData() {
+      renderAppGrid();
+      loadRecentActivity();
+      loadDashStats();
+    }
+
+    async function loadDashStats() {
+      // Total calls from call log
+      try {
+        const res = await fetch('/api/user/call-log?limit=1', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const totalCallsEl = document.getElementById('statTotalCalls');
+          if (totalCallsEl) totalCallsEl.textContent = (data.total || data.length || 0).toLocaleString();
+        }
+      } catch {}
+    }
+
+    async function loadRecentActivity() {
+      const feed = document.getElementById('activityFeed');
+      if (!feed) return;
+
+      try {
+        const res = await fetch('/api/user/call-log?limit=20', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) {
+          feed.innerHTML = '<div class="empty-state"><div class="empty-state-desc">No recent activity</div></div>';
+          return;
+        }
+        const logs = await res.json();
+        const items = Array.isArray(logs) ? logs : (logs.logs || []);
+
+        if (items.length === 0) {
+          feed.innerHTML = '<div class="empty-state"><div class="empty-state-desc">No recent activity. Deploy an app to get started.</div></div>';
+          return;
+        }
+
+        const appNames = {};
+        apps.forEach(function(a) { appNames[a.id] = a.name || a.slug; });
+
+        feed.innerHTML = '<div class="activity-list">' + items.slice(0, 15).map(function(log) {
+          const appName = escapeHtml(appNames[log.app_id] || log.app_name || 'Unknown');
+          const fn = escapeHtml(log.function_name || log.method || '');
+          const success = log.success !== false;
+          const time = relTime(log.created_at);
+          return '<div class="activity-item">' +
+            '<div class="activity-dot' + (success ? '' : ' activity-dot-error') + '"></div>' +
+            '<div class="activity-content">' +
+              '<span class="activity-fn">' + fn + '()</span>' +
+              '<span class="activity-sep">·</span>' +
+              '<span class="activity-app">' + appName + '</span>' +
+            '</div>' +
+            '<span class="activity-time">' + time + '</span>' +
+          '</div>';
+        }).join('') + '</div>';
+      } catch {
+        feed.innerHTML = '<div class="empty-state"><div class="empty-state-desc">Could not load activity.</div></div>';
+      }
+    }
+
+    // ===== App Detail Page =====
+    async function loadAppPage(appId) {
+      if (!authToken || !appId) return;
+
+      // Reset tab to overview
+      switchAppTab('overview');
+
+      try {
+        const res = await fetch('/api/apps/' + appId, {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) {
+          showToast('Failed to load app', 'error');
+          return;
+        }
+        const app = await res.json();
+
+        // App header
+        const nameEl = document.getElementById('appDetailName');
+        if (nameEl) nameEl.textContent = app.name || app.slug || 'Untitled';
+
+        const versionEl = document.getElementById('appDetailVersion');
+        if (versionEl) versionEl.textContent = app.current_version || 'v1.0.0';
+
+        document.title = (app.name || app.slug) + ' - Ultralight';
+
+        // MCP Endpoint
+        const endpointUrl = window.location.origin + '/mcp/' + appId;
+        const endpointEl = document.getElementById('appDetailEndpoint');
+        if (endpointEl) endpointEl.textContent = endpointUrl;
+
+        // Store current app data for editing
+        window._currentApp = app;
+
+        // Load all sections
+        loadAppOverview(app);
+        loadAppSettings(app);
+        loadAppLogs(appId);
+        loadAppBusiness(appId, app);
+
+      } catch (err) {
+        showToast('Error loading app: ' + (err.message || ''), 'error');
+      }
+    }
+
+    // Tab switching
+    function switchAppTab(tab) {
+      document.querySelectorAll('.tab[data-tab]').forEach(function(btn) {
+        btn.classList.toggle('active', btn.dataset.tab === tab);
+      });
+      document.querySelectorAll('.tab-content').forEach(function(panel) {
+        panel.style.display = panel.dataset.tabContent === tab ? 'block' : 'none';
+      });
+    }
+    window.switchAppTab = switchAppTab;
+
+    // Tab click handlers
+    document.querySelectorAll('.tab[data-tab][data-tab]').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        switchAppTab(this.dataset.tab);
+      });
+    });
+
+    // ===== App Overview =====
+    function loadAppOverview(app) {
+      const container = document.getElementById('appOverview');
+      if (!container) return;
+
+      const fns = app.manifest?.functions || [];
+      const functionsHtml = fns.length > 0
+        ? '<div class="function-list">' + fns.map(function(fn) {
+            const params = fn.parameters?.map(function(p) {
+              return '<span class="fn-param">' + escapeHtml(p.name) + '<span class="fn-param-type">: ' + escapeHtml(p.type || 'any') + '</span>' + (p.required ? '' : '?') + '</span>';
+            }).join(', ') || '';
+            return '<div class="function-item">' +
+              '<div class="function-name"><code>' + escapeHtml(fn.name) + '</code>(' + params + ')</div>' +
+              (fn.description ? '<div class="function-desc">' + escapeHtml(fn.description) + '</div>' : '') +
+            '</div>';
+          }).join('') + '</div>'
+        : '<div class="empty-state"><div class="empty-state-desc">No functions found in manifest.</div></div>';
+
+      container.innerHTML =
+        '<div class="section-card">' +
+          '<h3 class="section-title">Functions</h3>' +
+          functionsHtml +
+        '</div>' +
+        '<div class="section-card" id="appHealthSummary">' +
+          '<h3 class="section-title">Health</h3>' +
+          '<div class="loading-text">Loading...</div>' +
+        '</div>' +
+        '<div class="section-card" id="appRecentCalls">' +
+          '<h3 class="section-title">Recent Calls</h3>' +
+          '<div class="loading-text">Loading...</div>' +
+        '</div>';
+
+      // Load health
+      loadAppHealth(app.id);
+      // Load recent calls for this app
+      loadAppRecentCalls(app.id);
+    }
+
+    async function loadAppHealth(appId) {
+      const container = document.getElementById('appHealthSummary');
+      if (!container) return;
+      try {
+        const res = await fetch('/api/apps/' + appId + '/health', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) {
+          container.querySelector('.loading-text').textContent = 'Could not load health data.';
+          return;
+        }
+        const data = await res.json();
+        const isHealthy = !data.is_unhealthy;
+        const autoHeal = data.auto_heal_enabled;
+
+        let html = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
+          '<div class="status-dot" style="background:' + (isHealthy ? 'var(--success)' : 'var(--error)') + ';width:8px;height:8px;border-radius:50%"></div>' +
+          '<span style="font-weight:500">' + (isHealthy ? 'All healthy' : 'Issues detected') + '</span>' +
+          '<label style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary);cursor:pointer">' +
+            '<input type="checkbox" id="autoHealToggle" ' + (autoHeal ? 'checked' : '') + ' onchange="toggleAutoHeal(\\\'' + appId + '\\\', this.checked)"> Auto-heal' +
+          '</label>' +
+        '</div>';
+
+        if (data.function_health && Object.keys(data.function_health).length > 0) {
+          html += Object.entries(data.function_health).map(function(entry) {
+            const fn = entry[0], stats = entry[1];
+            const errorRate = stats.error_rate || 0;
+            const color = errorRate > 50 ? 'var(--error)' : errorRate > 10 ? 'var(--warning)' : 'var(--success)';
+            return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px">' +
+              '<code style="flex:1;color:var(--text-primary)">' + escapeHtml(fn) + '</code>' +
+              '<div style="width:60px;height:4px;background:var(--bg-hover);border-radius:2px;overflow:hidden">' +
+                '<div style="height:100%;width:' + Math.min(errorRate, 100) + '%;background:' + color + ';border-radius:2px"></div>' +
+              '</div>' +
+              '<span style="width:40px;text-align:right;color:' + color + '">' + errorRate.toFixed(0) + '%</span>' +
+            '</div>';
+          }).join('');
+        }
+
+        container.innerHTML = '<h3 class="section-title">Health</h3>' + html;
+      } catch {
+        container.querySelector('.loading-text').textContent = 'Could not load health data.';
+      }
+    }
+
+    window.toggleAutoHeal = async function(appId, enabled) {
+      try {
+        const res = await fetch('/api/apps/' + appId + '/health', {
+          method: 'PATCH',
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ auto_heal_enabled: enabled }),
+        });
+        if (res.ok) showToast('Auto-heal ' + (enabled ? 'enabled' : 'disabled'));
+        else {
+          showToast('Failed to update auto-heal', 'error');
+          document.getElementById('autoHealToggle').checked = !enabled;
+        }
+      } catch {
+        showToast('Failed to update', 'error');
+        document.getElementById('autoHealToggle').checked = !enabled;
+      }
+    };
+
+    async function loadAppRecentCalls(appId) {
+      const container = document.getElementById('appRecentCalls');
+      if (!container) return;
+      try {
+        const res = await fetch('/api/user/call-log?limit=10&app_id=' + appId, {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) {
+          container.innerHTML = '<h3 class="section-title">Recent Calls</h3><div class="empty-state"><div class="empty-state-desc">No calls recorded yet.</div></div>';
+          return;
+        }
+        const data = await res.json();
+        const logs = Array.isArray(data) ? data : (data.logs || []);
+
+        if (logs.length === 0) {
+          container.innerHTML = '<h3 class="section-title">Recent Calls</h3><div class="empty-state"><div class="empty-state-desc">No calls recorded yet.</div></div>';
+          return;
+        }
+
+        container.innerHTML = '<h3 class="section-title">Recent Calls</h3><div class="activity-list">' +
+          logs.map(function(log) {
+            const success = log.success !== false;
+            const fn = escapeHtml(log.function_name || '');
+            const time = relTime(log.created_at);
+            const dur = log.duration_ms ? log.duration_ms + 'ms' : '';
+            return '<div class="activity-item">' +
+              '<div class="activity-dot' + (success ? '' : ' activity-dot-error') + '"></div>' +
+              '<span class="activity-fn">' + fn + '()</span>' +
+              (dur ? '<span class="activity-sep">·</span><span style="color:var(--text-muted);font-size:12px">' + dur + '</span>' : '') +
+              '<span class="activity-time">' + time + '</span>' +
+            '</div>';
+          }).join('') + '</div>';
+      } catch {
+        container.innerHTML = '<h3 class="section-title">Recent Calls</h3><div class="empty-state"><div class="empty-state-desc">Could not load calls.</div></div>';
+      }
+    }
+
+    // ===== Copy Functions =====
+    window.copyAppEndpoint = function() {
+      const url = window.location.origin + '/mcp/' + currentAppId;
+      navigator.clipboard.writeText(url).then(function() { showToast('MCP endpoint copied!'); });
+    };
+
+    window.copyPlatformMcpUrl = function() {
+      navigator.clipboard.writeText(window.location.origin + '/mcp/platform').then(function() { showToast('Platform MCP URL copied!'); });
+    };
+
+    window.downloadAppCode = async function() {
+      if (!currentAppId || !authToken) return;
+      try {
+        const res = await fetch('/api/apps/' + currentAppId + '/download', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) { showToast('Failed to download', 'error'); return; }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = (window._currentApp?.slug || currentAppId) + '.zip';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch { showToast('Download failed', 'error'); }
+    };
+
+    // ===== 14. App Settings Tab =====
+    function loadAppSettings(app) {
+      const container = document.getElementById('appSettings');
+      if (!container) return;
+
+      container.innerHTML =
+        // General section
+        '<div class="section-card">' +
+          '<h3 class="section-title" onclick="this.parentElement.classList.toggle(\\\'collapsed\\\')">General <span class="collapse-icon">▾</span></h3>' +
+          '<div class="section-body">' +
+            '<div class="form-group"><label class="form-label">App Name</label><input type="text" id="settingName" class="form-input" value="' + escapeHtml(app.name || '') + '"></div>' +
+            '<div class="form-group"><label class="form-label">Visibility</label><select id="settingVisibility" class="form-input"><option value="private"' + (app.visibility === 'private' ? ' selected' : '') + '>Private</option><option value="unlisted"' + (app.visibility === 'unlisted' ? ' selected' : '') + '>Unlisted</option><option value="published"' + (app.visibility === 'published' ? ' selected' : '') + '>Published</option></select></div>' +
+            '<div class="form-group"><label class="form-label">Download Access</label><select id="settingDownload" class="form-input"><option value="owner"' + (app.download_access === 'owner' ? ' selected' : '') + '>Owner Only</option><option value="public"' + (app.download_access === 'public' ? ' selected' : '') + '>Public</option></select></div>' +
+            '<div class="form-group"><label class="form-label">Version</label><select id="settingVersion" class="form-input">' +
+              (app.versions || []).map(function(v) {
+                return '<option value="' + escapeHtml(v.version) + '"' + (v.version === app.current_version ? ' selected' : '') + '>' + escapeHtml(v.version) + (v.version === app.current_version ? ' (current)' : '') + '</option>';
+              }).join('') +
+            '</select></div>' +
+            '<div style="display:flex;gap:8px;margin-top:12px">' +
+              '<button class="btn btn-primary btn-sm" onclick="saveAppSettings()">Save Changes</button>' +
+              '<button class="btn btn-ghost btn-sm" onclick="downloadAppCode()">Download Code</button>' +
+              '<button class="btn btn-danger btn-sm" style="margin-left:auto" onclick="showDeleteConfirm()">Delete App</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+
+        // Permissions section
+        '<div class="section-card">' +
+          '<h3 class="section-title" onclick="this.parentElement.classList.toggle(\\\'collapsed\\\')">Permissions <span class="collapse-icon">▾</span></h3>' +
+          '<div class="section-body" id="permissionsContent"><div class="loading-text">Loading...</div></div>' +
+        '</div>' +
+
+        // Database section
+        '<div class="section-card">' +
+          '<h3 class="section-title" onclick="this.parentElement.classList.toggle(\\\'collapsed\\\')">Database <span class="collapse-icon">▾</span></h3>' +
+          '<div class="section-body" id="databaseContent"><div class="loading-text">Loading...</div></div>' +
+        '</div>' +
+
+        // Environment Variables section
+        '<div class="section-card">' +
+          '<h3 class="section-title" onclick="this.parentElement.classList.toggle(\\\'collapsed\\\')">Environment Variables <span class="collapse-icon">▾</span></h3>' +
+          '<div class="section-body" id="envVarsContent"><div class="loading-text">Loading...</div></div>' +
+        '</div>' +
+
+        // Skills section
+        '<div class="section-card">' +
+          '<h3 class="section-title" onclick="this.parentElement.classList.toggle(\\\'collapsed\\\')">Skills / Documentation <span class="collapse-icon">▾</span></h3>' +
+          '<div class="section-body" id="skillsContent"><div class="loading-text">Loading...</div></div>' +
+        '</div>';
+
+      // Load sub-sections
+      loadPermissions(app.id);
+      loadDatabase(app.id);
+      loadEnvVars(app.id);
+      loadSkills(app.id);
+    }
+
+    window.saveAppSettings = async function() {
+      if (!currentAppId || !authToken) return;
+      try {
+        const body = {
+          name: document.getElementById('settingName')?.value,
+          visibility: document.getElementById('settingVisibility')?.value,
+          download_access: document.getElementById('settingDownload')?.value,
+        };
+        const versionVal = document.getElementById('settingVersion')?.value;
+        if (versionVal && window._currentApp && versionVal !== window._currentApp.current_version) {
+          body.current_version = versionVal;
+        }
+        const res = await fetch('/api/apps/' + currentAppId, {
+          method: 'PATCH',
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (res.ok) {
+          showToast('Settings saved!');
+          await loadApps();
+        } else {
+          const data = await res.json().catch(function() { return {}; });
+          showToast(data.error || 'Failed to save', 'error');
+        }
+      } catch { showToast('Failed to save settings', 'error'); }
+    };
+
+    // ===== 15. Delete App =====
+    window.showDeleteConfirm = function() {
+      const modal = document.getElementById('deleteConfirmModal');
+      if (modal) {
+        const nameEl = modal.querySelector('.delete-app-name');
+        if (nameEl) nameEl.textContent = window._currentApp?.name || currentAppId;
+        modal.classList.remove('hidden');
+      }
+    };
+
+    document.getElementById('deleteConfirm')?.addEventListener('click', async function() {
+      if (!currentAppId || !authToken) return;
+      this.disabled = true;
+      this.textContent = 'Deleting...';
+      try {
+        const res = await fetch('/api/apps/' + currentAppId, {
+          method: 'DELETE',
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (res.ok) {
+          showToast('App deleted');
+          document.getElementById('deleteConfirmModal').classList.add('hidden');
+          await loadApps();
+          navigateToDashboard();
+        } else {
+          showToast('Failed to delete app', 'error');
+        }
+      } catch { showToast('Failed to delete', 'error'); }
+      this.disabled = false;
+      this.textContent = 'Delete Permanently';
+    });
+    document.getElementById('deleteCancel')?.addEventListener('click', function() {
+      document.getElementById('deleteConfirmModal').classList.add('hidden');
+    });
+
+    // ===== 16. Permissions =====
+    async function loadPermissions(appId) {
+      const container = document.getElementById('permissionsContent');
+      if (!container) return;
+      try {
+        const res = await fetch('/api/user/permissions/' + appId, {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) { container.innerHTML = '<div class="empty-state"><div class="empty-state-desc">Could not load permissions.</div></div>'; return; }
+        const data = await res.json();
+        permsGrantedUsers = data.users || data || [];
+
+        let html = '<div style="display:flex;gap:8px;margin-bottom:12px">' +
+          '<input type="email" id="permEmailInput" class="form-input form-input-sm" placeholder="user@email.com" style="flex:1">' +
+          '<button class="btn btn-primary btn-sm" onclick="addPermissionUser()">Grant Access</button>' +
+        '</div>';
+
+        if (permsGrantedUsers.length > 0) {
+          html += permsGrantedUsers.map(function(u) {
+            const email = escapeHtml(u.email || u.granted_to_email || 'Unknown');
+            const fnCount = u.functions ? u.functions.length : 0;
+            return '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">' +
+              '<span style="flex:1;font-size:13px">' + email + '</span>' +
+              '<span style="font-size:12px;color:var(--text-muted)">' + fnCount + ' fn</span>' +
+              '<button class="btn btn-ghost btn-sm" onclick="openPermissionsDetail(\\\'' + escapeHtml(u.user_id || '') + '\\\', \\\'' + email + '\\\')">Edit</button>' +
+              '<button class="btn btn-danger btn-sm" onclick="revokePermission(\\\'' + escapeHtml(u.user_id || '') + '\\\', \\\'' + email + '\\\')">Revoke</button>' +
+            '</div>';
+          }).join('');
+        } else {
+          html += '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">No users have access to this app.</div>';
+        }
+        container.innerHTML = html;
+      } catch { container.innerHTML = '<div class="empty-state"><div class="empty-state-desc">Could not load permissions.</div></div>'; }
+    }
+
+    window.addPermissionUser = async function() {
+      const email = document.getElementById('permEmailInput')?.value?.trim();
+      if (!email || !currentAppId) return;
+      try {
+        // Get app functions
+        const fns = (window._currentApp?.manifest?.functions || []).map(function(f) { return f.name; });
+        const perms = fns.map(function(fn) { return { function_name: fn, allowed: true }; });
+
+        const res = await fetch('/api/user/permissions/' + currentAppId, {
+          method: 'PUT',
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: email, permissions: perms }),
+        });
+        if (res.ok) {
+          showToast('Access granted to ' + email);
+          document.getElementById('permEmailInput').value = '';
+          loadPermissions(currentAppId);
+        } else {
+          const data = await res.json().catch(function() { return {}; });
+          showToast(data.error || 'Failed to grant access', 'error');
+        }
+      } catch { showToast('Failed to grant access', 'error'); }
+    };
+
+    window.revokePermission = async function(userId, email) {
+      if (!confirm('Revoke access for ' + email + '?')) return;
+      try {
+        const res = await fetch('/api/user/permissions/' + currentAppId + '?user_id=' + userId, {
+          method: 'DELETE',
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (res.ok) {
+          showToast('Access revoked');
+          loadPermissions(currentAppId);
+        } else showToast('Failed to revoke', 'error');
+      } catch { showToast('Failed to revoke', 'error'); }
+    };
+
+    window.openPermissionsDetail = function(userId, email) {
+      // Open the permissions modal for detailed per-function editing
+      permsSelectedUserId = userId;
+      const modal = document.getElementById('permissionsModal');
+      modal.classList.remove('hidden');
+      const detail = document.getElementById('permsDetail');
+      if (detail) {
+        detail.innerHTML = '<div class="loading-text">Loading permissions for ' + escapeHtml(email) + '...</div>';
+        loadPermissionDetail(currentAppId, userId, email);
+      }
+    };
+
+    async function loadPermissionDetail(appId, userId, email) {
+      const detail = document.getElementById('permsDetail');
+      try {
+        const res = await fetch('/api/user/permissions/' + appId + '?user_id=' + userId, {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) { detail.innerHTML = 'Failed to load.'; return; }
+        const data = await res.json();
+        const perms = data.permissions || data || [];
+        const fns = window._currentApp?.manifest?.functions || [];
+
+        let html = '<h4 style="margin-bottom:12px;font-size:14px">' + escapeHtml(email) + '</h4>';
+        html += fns.map(function(fn, idx) {
+          const perm = perms.find(function(p) { return p.function_name === fn.name; });
+          const allowed = perm ? perm.allowed : false;
+          const constraints = perm?.constraints ? JSON.stringify(perm.constraints, null, 2) : '';
+          return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">' +
+            '<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">' +
+              '<input type="checkbox" class="perm-fn-cb" data-fn="' + escapeHtml(fn.name) + '" ' + (allowed ? 'checked' : '') + '>' +
+              '<code>' + escapeHtml(fn.name) + '</code>' +
+            '</label>' +
+            (constraints ? '<textarea class="form-input perm-constraints" data-fn="' + escapeHtml(fn.name) + '" style="margin-top:6px;font-size:12px;height:60px" placeholder="Arg constraints JSON">' + escapeHtml(constraints) + '</textarea>' : '') +
+          '</div>';
+        }).join('');
+
+        html += '<div style="display:flex;gap:8px;margin-top:12px">' +
+          '<button class="btn btn-primary btn-sm" onclick="savePermissionDetail(\\\'' + escapeHtml(userId) + '\\\')">Save</button>' +
+          '<button class="btn btn-ghost btn-sm" onclick="document.getElementById(\\\'permissionsModal\\\').classList.add(\\\'hidden\\\')">Cancel</button>' +
+        '</div>';
+
+        detail.innerHTML = html;
+      } catch { detail.innerHTML = 'Failed to load.'; }
+    }
+
+    window.savePermissionDetail = async function(userId) {
+      const checkboxes = document.querySelectorAll('.perm-fn-cb');
+      const perms = [];
+      checkboxes.forEach(function(cb) {
+        const fn = cb.dataset.fn;
+        const allowed = cb.checked;
+        const constraintsEl = document.querySelector('.perm-constraints[data-fn="' + fn + '"]');
+        let constraints = null;
+        if (constraintsEl && constraintsEl.value.trim()) {
+          try { constraints = JSON.parse(constraintsEl.value); } catch { showToast('Invalid JSON for ' + fn, 'error'); return; }
+        }
+        const perm = { function_name: fn, allowed: allowed };
+        if (constraints) perm.constraints = constraints;
+        perms.push(perm);
+      });
+
+      try {
+        const res = await fetch('/api/user/permissions/' + currentAppId, {
+          method: 'PUT',
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: userId, permissions: perms }),
+        });
+        if (res.ok) {
+          showToast('Permissions saved!');
+          document.getElementById('permissionsModal').classList.add('hidden');
+          loadPermissions(currentAppId);
+        } else showToast('Failed to save permissions', 'error');
+      } catch { showToast('Failed to save', 'error'); }
+    };
+
+    // ===== 17. Database (Supabase) =====
+    async function loadDatabase(appId) {
+      const container = document.getElementById('databaseContent');
+      if (!container) return;
+
+      try {
+        // Load saved servers if not cached
+        if (!savedSupabaseServers) {
+          const srvRes = await fetch('/api/user/supabase', {
+            headers: { 'Authorization': 'Bearer ' + authToken },
+          });
+          if (srvRes.ok) savedSupabaseServers = await srvRes.json();
+        }
+
+        // Load current app config
+        let currentConfig = null;
+        try {
+          const cfgRes = await fetch('/api/apps/' + appId + '/supabase', {
+            headers: { 'Authorization': 'Bearer ' + authToken },
+          });
+          if (cfgRes.ok) currentConfig = await cfgRes.json();
+        } catch {}
+
+        const servers = savedSupabaseServers || [];
+        let html = '<div class="form-group"><label class="form-label">Supabase Server</label>' +
+          '<select id="dbServerSelect" class="form-input" onchange="onDbServerChange()">' +
+            '<option value="">None</option>' +
+            servers.map(function(s) {
+              const selected = currentConfig && currentConfig.config_id === s.id ? ' selected' : '';
+              return '<option value="' + s.id + '"' + selected + '>' + escapeHtml(s.url || s.id) + '</option>';
+            }).join('') +
+          '</select></div>' +
+          '<button class="btn btn-primary btn-sm" onclick="saveDbConfig()">Save Database Config</button>';
+
+        container.innerHTML = html;
+        appSupabaseChanged = false;
+      } catch { container.innerHTML = '<div class="empty-state"><div class="empty-state-desc">Could not load database config.</div></div>'; }
+    }
+
+    window.onDbServerChange = function() { appSupabaseChanged = true; };
+
+    window.saveDbConfig = async function() {
+      const serverId = document.getElementById('dbServerSelect')?.value || '';
+      try {
+        const res = await fetch('/api/apps/' + currentAppId + '/supabase', {
+          method: 'PUT',
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ config_id: serverId || null }),
+        });
+        if (res.ok) showToast('Database config saved!');
+        else showToast('Failed to save', 'error');
+      } catch { showToast('Failed to save', 'error'); }
+    };
+
+    // ===== 18. Environment Variables =====
+    async function loadEnvVars(appId) {
+      const container = document.getElementById('envVarsContent');
+      if (!container) return;
+      currentEnvVars = {};
+      pendingEnvVarChanges = {};
+
+      try {
+        const res = await fetch('/api/apps/' + appId + '/env', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          // Convert array to object if needed
+          if (Array.isArray(data)) {
+            data.forEach(function(item) { currentEnvVars[item.key] = item.value; });
+          } else {
+            currentEnvVars = data || {};
+          }
+        }
+      } catch {}
+
+      renderEnvVars(document.getElementById('envVarsContent'));
+    }
+
+    function renderEnvVars(container) {
+      const keys = Object.keys(currentEnvVars);
+      let html = '';
+
+      keys.forEach(function(key) {
+        html += '<div class="env-var-row" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">' +
+          '<input type="text" class="form-input form-input-sm" value="' + escapeHtml(key) + '" readonly style="width:140px;font-family:var(--font-mono);font-size:12px">' +
+          '<input type="password" class="form-input form-input-sm env-value" data-key="' + escapeHtml(key) + '" value="\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" style="flex:1;font-family:var(--font-mono);font-size:12px">' +
+          '<button class="btn btn-ghost btn-sm" onclick="this.previousElementSibling.type = this.previousElementSibling.type === \\\'password\\\' ? \\\'text\\\' : \\\'password\\\'">&#128065;</button>' +
+          '<button class="btn btn-danger btn-sm" onclick="deleteEnvVar(\\\'' + escapeHtml(key) + '\\\')">&#215;</button>' +
+        '</div>';
+      });
+
+      html += '<div style="display:flex;gap:8px;margin-top:12px">' +
+        '<input type="text" id="newEnvKey" class="form-input form-input-sm" placeholder="KEY_NAME" style="width:140px;font-family:var(--font-mono);font-size:12px">' +
+        '<input type="text" id="newEnvValue" class="form-input form-input-sm" placeholder="value" style="flex:1;font-family:var(--font-mono);font-size:12px">' +
+        '<button class="btn btn-primary btn-sm" onclick="addEnvVar()">Add</button>' +
+      '</div>' +
+      '<button class="btn btn-primary btn-sm" style="margin-top:12px" onclick="saveEnvVars()">Save Environment Variables</button>';
+
+      container.innerHTML = html;
+    }
+
+    window.addEnvVar = function() {
+      const key = document.getElementById('newEnvKey')?.value?.trim().toUpperCase();
+      const value = document.getElementById('newEnvValue')?.value || '';
+      if (!key) { showToast('Key is required', 'error'); return; }
+      if (!/^[A-Z][A-Z0-9_]*$/.test(key)) { showToast('Key must be uppercase A-Z, 0-9, underscore', 'error'); return; }
+      if (key.startsWith('ULTRALIGHT')) { showToast('ULTRALIGHT prefix is reserved', 'error'); return; }
+      currentEnvVars[key] = value;
+      pendingEnvVarChanges[key] = value;
+      renderEnvVars(document.getElementById('envVarsContent'));
+    };
+
+    window.deleteEnvVar = function(key) {
+      delete currentEnvVars[key];
+      pendingEnvVarChanges[key] = null; // null = delete
+      renderEnvVars(document.getElementById('envVarsContent'));
+    };
+
+    window.saveEnvVars = async function() {
+      if (!currentAppId) return;
+      try {
+        // Collect all env var values (including modified password fields)
+        const envData = {};
+        document.querySelectorAll('.env-value').forEach(function(input) {
+          const key = input.dataset.key;
+          if (input.value && input.value !== '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022') {
+            envData[key] = input.value;
+          }
+        });
+        // Add pending changes
+        Object.keys(pendingEnvVarChanges).forEach(function(key) {
+          if (pendingEnvVarChanges[key] === null) {
+            // Delete
+            delete envData[key];
+          } else {
+            envData[key] = pendingEnvVarChanges[key];
+          }
+        });
+
+        // Handle deletions
+        const deleteKeys = Object.keys(pendingEnvVarChanges).filter(function(k) { return pendingEnvVarChanges[k] === null; });
+        for (const key of deleteKeys) {
+          await fetch('/api/apps/' + currentAppId + '/env/' + key, {
+            method: 'DELETE',
+            headers: { 'Authorization': 'Bearer ' + authToken },
+          });
+        }
+
+        // Patch remaining
+        const updateData = {};
+        Object.keys(envData).forEach(function(k) { updateData[k] = envData[k]; });
+        if (Object.keys(updateData).length > 0) {
+          await fetch('/api/apps/' + currentAppId + '/env', {
+            method: 'PATCH',
+            headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+            body: JSON.stringify(updateData),
+          });
+        }
+
+        showToast('Environment variables saved!');
+        pendingEnvVarChanges = {};
+        loadEnvVars(currentAppId);
+      } catch { showToast('Failed to save environment variables', 'error'); }
+    };
+
+    // ===== 19. Skills / Documentation =====
+    async function loadSkills(appId) {
+      const container = document.getElementById('skillsContent');
+      if (!container) return;
+      try {
+        const res = await fetch('/api/apps/' + appId + '/skills.md', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (res.ok) {
+          const text = await res.text();
+          container.innerHTML = '<pre style="font-size:12px;font-family:var(--font-mono);white-space:pre-wrap;color:var(--text-secondary);max-height:200px;overflow:auto;padding:12px;background:var(--bg-base);border-radius:8px;border:1px solid var(--border)">' + escapeHtml(text).slice(0, 2000) + '</pre>' +
+            '<div style="display:flex;gap:8px;margin-top:12px">' +
+              '<button class="btn btn-secondary btn-sm" onclick="openSkillsEditor()">Edit Skills.md</button>' +
+              '<button class="btn btn-ghost btn-sm" onclick="generateDocs()">Generate Docs</button>' +
+            '</div>';
+        } else {
+          container.innerHTML = '<div style="font-size:13px;color:var(--text-muted)">No Skills.md found.</div>' +
+            '<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="generateDocs()">Generate Documentation</button>';
+        }
+      } catch { container.innerHTML = '<div class="empty-state"><div class="empty-state-desc">Could not load skills.</div></div>'; }
+    }
+
+    window.openSkillsEditor = async function() {
+      const modal = document.getElementById('skillsModal');
+      modal.classList.remove('hidden');
+      const editor = document.getElementById('skillsEditor');
+      if (editor) {
+        try {
+          const res = await fetch('/api/apps/' + currentAppId + '/skills.md', {
+            headers: { 'Authorization': 'Bearer ' + authToken },
+          });
+          if (res.ok) editor.value = await res.text();
+        } catch {}
+      }
+    };
+
+    window.saveSkills = async function() {
+      const editor = document.getElementById('skillsEditor');
+      if (!editor || !currentAppId) return;
+      try {
+        const res = await fetch('/api/apps/' + currentAppId + '/skills', {
+          method: 'PATCH',
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: editor.value }),
+        });
+        if (res.ok) {
+          showToast('Skills.md saved!');
+          document.getElementById('skillsModal').classList.add('hidden');
+          loadSkills(currentAppId);
+        } else showToast('Failed to save skills', 'error');
+      } catch { showToast('Failed to save', 'error'); }
+    };
+
+    window.generateDocs = async function() {
+      if (!currentAppId) return;
+      showToast('Generating documentation...');
+      try {
+        const res = await fetch('/api/apps/' + currentAppId + '/generate-docs', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (res.ok) {
+          showToast('Documentation generated!');
+          loadSkills(currentAppId);
+        } else showToast('Failed to generate docs', 'error');
+      } catch { showToast('Generation failed', 'error'); }
+    };
+
+    // ===== App Logs Tab =====
+    async function loadAppLogs(appId) {
+      const container = document.getElementById('appLogs');
+      if (!container) return;
+      container.innerHTML = '<div class="loading-text">Loading logs...</div>';
+
+      try {
+        const res = await fetch('/api/user/call-log?limit=50&app_id=' + appId, {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) { container.innerHTML = '<div class="empty-state"><div class="empty-state-desc">Could not load logs.</div></div>'; return; }
+        const data = await res.json();
+        const logs = Array.isArray(data) ? data : (data.logs || []);
+
+        if (logs.length === 0) {
+          container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">No logs yet</div><div class="empty-state-desc">Logs will appear here when your app receives calls.</div></div>';
+          return;
+        }
+
+        container.innerHTML = '<div class="section-card"><h3 class="section-title">Call Log</h3>' +
+          '<table style="width:100%;font-size:13px;border-collapse:collapse">' +
+          '<thead><tr style="border-bottom:1px solid var(--border);text-align:left">' +
+            '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Status</th>' +
+            '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Function</th>' +
+            '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Duration</th>' +
+            '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Time</th>' +
+          '</tr></thead><tbody>' +
+          logs.map(function(log) {
+            const success = log.success !== false;
+            return '<tr style="border-bottom:1px solid var(--border)">' +
+              '<td style="padding:8px 12px"><div class="status-dot" style="width:8px;height:8px;border-radius:50%;background:' + (success ? 'var(--success)' : 'var(--error)') + '"></div></td>' +
+              '<td style="padding:8px 12px;font-family:var(--font-mono)">' + escapeHtml(log.function_name || log.method || '') + '</td>' +
+              '<td style="padding:8px 12px;color:var(--text-muted)">' + (log.duration_ms ? log.duration_ms + 'ms' : '-') + '</td>' +
+              '<td style="padding:8px 12px;color:var(--text-muted)">' + relTime(log.created_at) + '</td>' +
+            '</tr>';
+          }).join('') +
+          '</tbody></table></div>';
+      } catch { container.innerHTML = '<div class="empty-state"><div class="empty-state-desc">Could not load logs.</div></div>'; }
+    }
+
+    // ===== App Business Tab =====
+    async function loadAppBusiness(appId, app) {
+      const container = document.getElementById('appBusiness');
+      if (!container) return;
+
+      // Pricing section
+      const pricingConfig = app.pricing_config || {};
+      const defaultPrice = pricingConfig.default_price_cents || 0;
+      const fnPrices = pricingConfig.function_prices ? JSON.stringify(pricingConfig.function_prices, null, 2) : '';
+
+      let html = '<div class="section-card">' +
+        '<h3 class="section-title">Pricing</h3>' +
+        '<div class="form-group"><label class="form-label">Default price per call (cents)</label>' +
+          '<input type="number" id="pricingDefault" class="form-input form-input-sm" value="' + defaultPrice + '" min="0" style="width:120px"></div>' +
+        '<div class="form-group"><label class="form-label">Per-function price overrides (JSON)</label>' +
+          '<textarea id="pricingFnOverrides" class="form-input" style="height:80px;font-family:var(--font-mono);font-size:12px" placeholder=\'{"function_name": 5}\'>' + escapeHtml(fnPrices) + '</textarea></div>' +
+        '<button class="btn btn-primary btn-sm" onclick="savePricing()">Save Pricing</button>' +
+      '</div>';
+
+      // Revenue section
+      html += '<div class="section-card" id="revenueSection">' +
+        '<h3 class="section-title">Revenue</h3>' +
+        '<div class="loading-text">Loading...</div>' +
+      '</div>';
+
+      container.innerHTML = html;
+
+      // Load revenue data
+      loadAppRevenue(appId);
+    }
+
+    window.savePricing = async function() {
+      if (!currentAppId) return;
+      const defaultCents = parseInt(document.getElementById('pricingDefault')?.value || '0', 10);
+      let fnPrices = null;
+      const fnText = document.getElementById('pricingFnOverrides')?.value?.trim();
+      if (fnText) {
+        try { fnPrices = JSON.parse(fnText); } catch { showToast('Invalid JSON in price overrides', 'error'); return; }
+      }
+      try {
+        const pricingConfig = { default_price_cents: defaultCents };
+        if (fnPrices) pricingConfig.function_prices = fnPrices;
+        const res = await fetch('/api/apps/' + currentAppId, {
+          method: 'PATCH',
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pricing_config: pricingConfig }),
+        });
+        if (res.ok) showToast('Pricing saved!');
+        else showToast('Failed to save pricing', 'error');
+      } catch { showToast('Failed to save', 'error'); }
+    };
+
+    async function loadAppRevenue(appId) {
+      const container = document.getElementById('revenueSection');
+      if (!container) return;
+      try {
+        const res = await fetch('/api/apps/' + appId + '/earnings?period=30d', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) { container.querySelector('.loading-text').textContent = 'No revenue data.'; return; }
+        const data = await res.json();
+
+        let html = '<h3 class="section-title">Revenue</h3>';
+        html += '<div style="display:flex;gap:24px;margin-bottom:16px">' +
+          '<div><div style="font-size:12px;color:var(--text-muted)">Lifetime</div><div style="font-size:20px;font-weight:600">$' + ((data.total_earned_cents || 0) / 100).toFixed(2) + '</div></div>' +
+          '<div><div style="font-size:12px;color:var(--text-muted)">Last 30 days</div><div style="font-size:20px;font-weight:600">$' + ((data.period_earned_cents || 0) / 100).toFixed(2) + '</div></div>' +
+          '<div><div style="font-size:12px;color:var(--text-muted)">Calls</div><div style="font-size:20px;font-weight:600">' + (data.period_transfers || 0) + '</div></div>' +
+        '</div>';
+
+        if (data.by_function && data.by_function.length > 0) {
+          html += '<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">By function</div>';
+          html += data.by_function.slice(0, 8).map(function(f) {
+            return '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid var(--border)">' +
+              '<code>' + escapeHtml(f.function_name) + '</code>' +
+              '<span style="color:var(--text-muted)">' + f.call_count + ' calls · $' + ((f.earned_cents || 0) / 100).toFixed(2) + '</span>' +
+            '</div>';
+          }).join('');
+        }
+
+        container.innerHTML = html;
+      } catch { container.querySelector('.loading-text').textContent = 'Could not load revenue.'; }
+    }
+
+    // ===== Account Settings =====
+    async function loadAccountData() {
+      loadTokens();
+      loadHostingData();
+      loadSupabaseServers();
+    }
+
+    // --- API Tokens ---
+    async function loadTokens() {
+      const container = document.getElementById('tokensList');
+      if (!container) return;
+      try {
+        const res = await fetch('/api/user/tokens', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) return;
+        currentTokens = await res.json();
+
+        if (currentTokens.length === 0) {
+          container.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">No API tokens. Create one to connect agents.</div>';
+          return;
+        }
+
+        container.innerHTML = currentTokens.map(function(t) {
+          const prefix = escapeHtml(t.token_prefix || t.id?.slice(0, 8) || '');
+          const created = new Date(t.created_at).toLocaleDateString();
+          const lastUsed = t.last_used_at ? relTime(t.last_used_at) : 'Never';
+          const expired = t.expires_at && new Date(t.expires_at) < new Date();
+          return '<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px">' +
+            '<code style="color:var(--text-primary)">' + prefix + '...</code>' +
+            '<span style="color:var(--text-muted)">Created ' + created + '</span>' +
+            '<span style="color:var(--text-muted)">Last used: ' + lastUsed + '</span>' +
+            (expired ? '<span style="color:var(--error);font-size:11px">Expired</span>' : '') +
+            '<button class="btn btn-danger btn-sm" style="margin-left:auto" onclick="revokeToken(\'' + t.id + '\')">Revoke</button>' +
+          '</div>';
+        }).join('');
+      } catch {}
+    }
+
+    window.createToken = async function() {
+      const nameInput = document.getElementById('tokenName');
+      const expirySelect = document.getElementById('tokenExpiry');
+      const name = nameInput?.value?.trim() || 'API Token';
+      const expiry = expirySelect?.value || '';
+
+      try {
+        const body = { name: name };
+        if (expiry) body.expires_in_days = parseInt(expiry, 10);
+
+        const res = await fetch('/api/user/tokens', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) { showToast('Failed to create token', 'error'); return; }
+        const data = await res.json();
+
+        if (data.plaintext_token) {
+          const tokenDisplay = document.getElementById('newTokenDisplay');
+          if (tokenDisplay) {
+            tokenDisplay.classList.remove('hidden');
+            document.getElementById('newTokenValue').textContent = data.plaintext_token;
+          }
+        }
+        if (nameInput) nameInput.value = '';
+        showToast('Token created! Copy it now — it won\'t be shown again.');
+        loadTokens();
+      } catch { showToast('Failed to create token', 'error'); }
+    };
+
+    window.copyNewToken = function() {
+      const el = document.getElementById('newTokenValue');
+      if (el) navigator.clipboard.writeText(el.textContent).then(function() { showToast('Token copied!'); });
+    };
+
+    window.revokeToken = async function(tokenId) {
+      if (!confirm('Revoke this API token? This cannot be undone.')) return;
+      try {
+        const res = await fetch('/api/user/tokens/' + tokenId, {
+          method: 'DELETE',
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (res.ok) { showToast('Token revoked'); loadTokens(); }
+        else showToast('Failed to revoke', 'error');
+      } catch { showToast('Failed to revoke', 'error'); }
+    };
+
+    // --- Billing ---
+    async function loadHostingData() {
+      const balanceEl = document.getElementById('accountBalance');
+      const statusEl = document.getElementById('accountStatus');
+      if (!balanceEl) return;
 
       try {
         const res = await fetch('/api/user/hosting', {
           headers: { 'Authorization': 'Bearer ' + authToken },
         });
-
-        if (!res.ok) {
-          if (loadingEl) loadingEl.textContent = 'Could not load billing info.';
-          return;
-        }
-
-        const data = await res.json();
-        if (loadingEl) loadingEl.style.display = 'none';
-        if (balanceSection) balanceSection.style.display = 'block';
-
-        // Balance display
-        const balanceCents = data.hosting_balance_cents || 0;
-        const balanceEl = document.getElementById('billingBalance');
-        if (balanceEl) {
-          const dollars = (balanceCents / 100).toFixed(2);
-          balanceEl.textContent = '$' + dollars;
-          balanceEl.style.color = balanceCents <= 0 ? 'var(--error-color, #ef4444)' : 'var(--text-primary)';
-        }
-
-        // Status badge
-        if (statusBadge) {
-          if (balanceCents > 0) {
-            statusBadge.style.display = 'inline';
-            statusBadge.textContent = 'Active';
-            statusBadge.style.background = 'rgba(34,197,94,0.15)';
-            statusBadge.style.color = 'var(--success-color)';
-          } else {
-            statusBadge.style.display = 'inline';
-            statusBadge.textContent = 'No Balance';
-            statusBadge.style.background = 'rgba(239,68,68,0.15)';
-            statusBadge.style.color = 'var(--error-color, #ef4444)';
-          }
-        }
-
-        // Auto top-up settings
-        const autoTopup = data.auto_topup || {};
-        const hasPayment = data.has_payment_method;
-
-        const enabledEl = document.getElementById('autoTopupEnabled');
-        const fieldsEl = document.getElementById('autoTopupFields');
-        const warningEl = document.getElementById('autoTopupPaymentWarning');
-        const badgeEl = document.getElementById('autoTopupBadge');
-        const thresholdEl = document.getElementById('autoTopupThreshold');
-        const amountEl = document.getElementById('autoTopupAmount');
-        const lastFailedEl = document.getElementById('autoTopupLastFailed');
-
-        if (enabledEl) enabledEl.checked = autoTopup.enabled || false;
-        if (fieldsEl) fieldsEl.style.display = (autoTopup.enabled || false) ? 'block' : 'none';
-
-        // Show/hide payment warning
-        if (warningEl) warningEl.style.display = hasPayment ? 'none' : 'inline';
-
-        // Badge
-        if (badgeEl) {
-          if (autoTopup.enabled) {
-            badgeEl.textContent = 'On';
-            badgeEl.style.display = 'inline';
-            badgeEl.style.background = 'rgba(34,197,94,0.15)';
-            badgeEl.style.color = 'var(--success-color)';
-          } else {
-            badgeEl.textContent = 'Off';
-            badgeEl.style.display = 'inline';
-            badgeEl.style.background = 'var(--bg-tertiary)';
-            badgeEl.style.color = 'var(--text-muted)';
-          }
-        }
-
-        // Set select values
-        if (thresholdEl) thresholdEl.value = String(autoTopup.threshold_cents || 100);
-        if (amountEl) amountEl.value = String(autoTopup.amount_cents || 1000);
-
-        // Toggle fields on checkbox change
-        if (enabledEl) {
-          enabledEl.onchange = function() {
-            if (fieldsEl) fieldsEl.style.display = enabledEl.checked ? 'block' : 'none';
-          };
-        }
-
-        // Last failed
-        if (lastFailedEl && autoTopup.last_failed_at) {
-          lastFailedEl.style.display = 'block';
-          const failDate = new Date(autoTopup.last_failed_at);
-          lastFailedEl.textContent = 'Last auto top-up failed on ' + failDate.toLocaleDateString() + '. Check your payment method in Stripe.';
-        }
-      } catch (err) {
-        console.error('[BILLING] Failed to load hosting data:', err);
-        if (loadingEl) loadingEl.textContent = 'Could not load billing info.';
-      }
-    }
-
-    window.startDeposit = async function() {
-      const selectEl = document.getElementById('depositAmount');
-      const amountCents = parseInt(selectEl?.value || '2500', 10);
-
-      try {
-        const res = await fetch('/api/user/hosting/checkout', {
-          method: 'POST',
-          headers: {
-            'Authorization': 'Bearer ' + authToken,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ amount_cents: amountCents }),
-        });
-
-        const data = await res.json();
-
-        if (!res.ok) {
-          showToast(data.error || 'Failed to start checkout', 'error');
-          return;
-        }
-
-        if (data.checkout_url) {
-          window.open(data.checkout_url, '_blank');
-          showToast('Checkout opened in new tab. Balance updates automatically after payment.');
-        } else {
-          showToast('No checkout URL returned', 'error');
-        }
-      } catch (err) {
-        showToast('Failed to start deposit', 'error');
-      }
-    };
-
-    window.saveAutoTopup = async function() {
-      const enabledEl = document.getElementById('autoTopupEnabled');
-      const thresholdEl = document.getElementById('autoTopupThreshold');
-      const amountEl = document.getElementById('autoTopupAmount');
-
-      const enabled = enabledEl?.checked || false;
-      const thresholdCents = parseInt(thresholdEl?.value || '100', 10);
-      const amountCents = parseInt(amountEl?.value || '1000', 10);
-
-      try {
-        const res = await fetch('/api/user/hosting/auto-topup', {
-          method: 'PATCH',
-          headers: {
-            'Authorization': 'Bearer ' + authToken,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            enabled: enabled,
-            threshold_cents: thresholdCents,
-            amount_cents: amountCents,
-          }),
-        });
-
-        const data = await res.json();
-
-        if (!res.ok) {
-          showToast(data.error || 'Failed to save auto top-up settings', 'error');
-          return;
-        }
-
-        showToast('Auto top-up settings saved');
-        // Refresh billing display
-        await loadHostingData();
-      } catch (err) {
-        showToast('Failed to save settings', 'error');
-      }
-    };
-
-    // ============================================
-    // Dashboard Earnings
-    // ============================================
-
-    window.loadDashEarnings = async function() {
-      if (!authToken) return;
-      const period = document.getElementById('dashEarningsPeriod')?.value || '30d';
-      try {
-        const res = await fetch('/api/user/earnings?period=' + period, {
-          headers: { 'Authorization': 'Bearer ' + authToken },
-        });
         if (!res.ok) return;
         const data = await res.json();
 
-        const card = document.getElementById('earningsOverviewCard');
-        // Only show if user has ever earned anything or has apps with pricing
-        if (card && (data.total_earned_cents > 0 || data.period_transfers > 0)) {
-          card.style.display = 'block';
+        const cents = data.hosting_balance_cents || 0;
+        balanceEl.textContent = '$' + (cents / 100).toFixed(2);
+        balanceEl.style.color = cents <= 0 ? 'var(--error)' : 'var(--text-primary)';
+
+        if (statusEl) {
+          statusEl.textContent = cents > 0 ? 'Active' : 'No Balance';
+          statusEl.style.background = cents > 0 ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)';
+          statusEl.style.color = cents > 0 ? 'var(--success)' : 'var(--error)';
         }
 
-        const totalEl = document.getElementById('dashEarningsTotal');
-        if (totalEl) totalEl.textContent = '$' + (data.total_earned_cents / 100).toFixed(2);
+        // Auto top-up
+        const autoTopup = data.auto_topup || {};
+        const enabledEl = document.getElementById('autoTopupEnabled');
+        const fieldsEl = document.getElementById('autoTopupFields');
+        if (enabledEl) enabledEl.checked = autoTopup.enabled || false;
+        if (fieldsEl) fieldsEl.style.display = autoTopup.enabled ? 'block' : 'none';
+        if (enabledEl) enabledEl.onchange = function() { if (fieldsEl) fieldsEl.style.display = enabledEl.checked ? 'block' : 'none'; };
 
-        const periodAmtEl = document.getElementById('dashEarningsPeriodAmt');
-        if (periodAmtEl) periodAmtEl.textContent = '$' + (data.period_earned_cents / 100).toFixed(2);
-
-        const periodCntEl = document.getElementById('dashEarningsPeriodCnt');
-        if (periodCntEl) periodCntEl.textContent = data.period_transfers || 0;
-
-        // By-app breakdown
-        const byAppEl = document.getElementById('dashEarningsByApp');
-        if (byAppEl && data.by_app && data.by_app.length > 0) {
-          const appNames = {};
-          (apps || []).forEach(a => { appNames[a.id] = a.name || a.slug; });
-          byAppEl.innerHTML = data.by_app.slice(0, 5).map(a => {
-            const name = appNames[a.app_id] || a.app_id?.slice(0, 8) || 'unknown';
-            return '<div style="display:flex;justify-content:space-between;padding:0.25rem 0;border-bottom:1px solid var(--border-color);">' +
-              '<span style="color:var(--text-primary);">' + name + '</span>' +
-              '<span style="color:var(--text-secondary);">' + a.call_count + ' calls &middot; ' + (a.earned_cents / 100).toFixed(2) + '</span>' +
-            '</div>';
-          }).join('');
-        } else if (byAppEl) {
-          byAppEl.innerHTML = '<div style="color:var(--text-tertiary);font-size:0.75rem;">Set pricing on your apps to start earning from tool calls.</div>';
-        }
-      } catch (e) {
-        console.error('[EARNINGS] Failed to load dashboard earnings:', e);
-      }
-    };
-
-    async function loadDashboardData() {
-      // Load hosting balance & billing
-      loadHostingData();
-
-      // Load earnings overview
-      loadDashEarnings();
-
-      // Load tokens inline on dashboard
-      await loadTokens();
-
-      // Load Supabase servers inline on dashboard
-      await loadSupabaseServers();
-
+        const thresholdEl = document.getElementById('autoTopupThreshold');
+        const amountEl = document.getElementById('autoTopupAmount');
+        if (thresholdEl) thresholdEl.value = String(autoTopup.threshold_cents || 100);
+        if (amountEl) amountEl.value = String(autoTopup.amount_cents || 1000);
+      } catch {}
     }
 
-    window.refreshCallLog = function() {
-      showToast('Call log refresh coming soon.');
-    };
-
-    // ============================================
-    // Home View Data
-    // ============================================
-
-    function escHtml(s) { return s ? String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') : ''; }
-    function relTime(d) {
-      const ms = Date.now() - new Date(d).getTime();
-      const m = Math.floor(ms/60000);
-      if (m < 60) return m + 'm ago';
-      const h = Math.floor(m/60);
-      if (h < 24) return h + 'h ago';
-      const dy = Math.floor(h/24);
-      if (dy < 30) return dy + 'd ago';
-      return new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric'});
-    }
-
-    const severityColors = { critical:'#ef4444', high:'#f59e0b', medium:'var(--accent-color)', low:'var(--text-muted)' };
-
-    async function loadHomeData() {
+    window.startDeposit = async function() {
+      const amountCents = parseInt(document.getElementById('depositAmount')?.value || '2500', 10);
       try {
-        // Fetch top apps for the charts section
-        const appsRes = await fetch('/api/homepage?type=apps&limit=10');
-        const topAppsEl = document.getElementById('homeTopApps');
-        if (appsRes.ok) {
-          const data = await appsRes.json();
-          const apps = data.results || [];
-          if (apps.length > 0) {
-            topAppsEl.innerHTML = apps.slice(0, 10).map((a, i) =>
-              '<a href="/app/' + escHtml(a.id) + '" class="home-card" style="text-decoration:none;color:inherit">' +
-              '<div style="width:1.25rem;font-size:0.75rem;font-weight:700;color:var(--text-muted);padding-top:0.1rem">' + (i+1) + '</div>' +
-              '<div style="flex:1;min-width:0">' +
-              '<div style="font-size:0.8125rem;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(a.name || a.slug) + '</div>' +
-              (a.description ? '<div style="font-size:0.75rem;color:var(--text-secondary);margin-top:0.1rem;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden">' + escHtml(a.description).slice(0,100) + '</div>' : '') +
-              '</div></a>'
-            ).join('');
-          } else {
-            topAppsEl.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:1rem 0;text-align:center">No MCP servers published yet.</div>';
-          }
+        const res = await fetch('/api/user/hosting/checkout', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ amount_cents: amountCents }),
+        });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.error || 'Failed to start checkout', 'error'); return; }
+        if (data.checkout_url) {
+          window.open(data.checkout_url, '_blank');
+          showToast('Checkout opened. Balance updates after payment.');
+        }
+      } catch { showToast('Failed to start deposit', 'error'); }
+    };
+
+    window.saveAutoTopup = async function() {
+      const enabled = document.getElementById('autoTopupEnabled')?.checked || false;
+      const thresholdCents = parseInt(document.getElementById('autoTopupThreshold')?.value || '100', 10);
+      const amountCents = parseInt(document.getElementById('autoTopupAmount')?.value || '1000', 10);
+      try {
+        const res = await fetch('/api/user/hosting/auto-topup', {
+          method: 'PATCH',
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: enabled, threshold_cents: thresholdCents, amount_cents: amountCents }),
+        });
+        if (res.ok) { showToast('Auto top-up saved'); loadHostingData(); }
+        else showToast('Failed to save', 'error');
+      } catch { showToast('Failed to save', 'error'); }
+    };
+
+    // --- Supabase Servers ---
+    async function loadSupabaseServers() {
+      const container = document.getElementById('supabaseServersList');
+      if (!container) return;
+      try {
+        const res = await fetch('/api/user/supabase', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) return;
+        savedSupabaseServers = await res.json();
+
+        if (!savedSupabaseServers || savedSupabaseServers.length === 0) {
+          container.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">No Supabase servers configured.</div>';
+          return;
         }
 
-        // Content placeholder
-        const homeContentEl = document.getElementById('homeTopContent');
-        if (homeContentEl) homeContentEl.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:1rem 0;text-align:center">Coming soon</div>';
-
-      } catch (err) {
-        console.error('[HOME] Failed to load data:', err);
-      }
+        container.innerHTML = savedSupabaseServers.map(function(s) {
+          return '<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px">' +
+            '<span style="flex:1;font-family:var(--font-mono);font-size:12px">' + escapeHtml(s.url || s.id) + '</span>' +
+            '<button class="btn btn-danger btn-sm" onclick="deleteSupabaseServer(\'' + s.id + '\')">Remove</button>' +
+          '</div>';
+        }).join('');
+      } catch {}
     }
 
-    function renderGapCards(container, gaps, limit) {
-      if (!gaps || gaps.length === 0) {
-        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:1.5rem 0;text-align:center">No open gaps right now.</div>';
-        return;
-      }
-      container.innerHTML = gaps.slice(0, limit).map(g =>
-        '<div class="home-card" style="flex-direction:column;gap:0.35rem">' +
-        '<div style="display:flex;align-items:center;gap:0.5rem">' +
-        '<span style="font-size:0.6rem;padding:0.1rem 0.4rem;border-radius:9999px;color:#fff;font-weight:600;text-transform:uppercase;background:' + (severityColors[g.severity]||'var(--text-muted)') + '">' + escHtml(g.severity) + '</span>' +
-        '<span style="font-size:0.75rem;font-weight:600;color:var(--warning-color,#f59e0b);margin-left:auto">' + (g.points_value||0) + ' pts</span>' +
-        '</div>' +
-        '<div style="font-size:0.8125rem;font-weight:600;color:var(--text-primary)">' + escHtml(g.title) + '</div>' +
-        '<div style="font-size:0.75rem;color:var(--text-secondary);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">' + escHtml(g.description).slice(0,160) + '</div>' +
-        '</div>'
-      ).join('');
-    }
+    window.addSupabaseServer = async function() {
+      const url = document.getElementById('supabaseUrl')?.value?.trim();
+      const anonKey = document.getElementById('supabaseAnonKey')?.value?.trim();
+      const serviceKey = document.getElementById('supabaseServiceKey')?.value?.trim();
+      if (!url || !anonKey) { showToast('URL and Anon Key are required', 'error'); return; }
+      try {
+        const body = { url: url, anon_key: anonKey };
+        if (serviceKey) body.service_role_key = serviceKey;
+        const res = await fetch('/api/user/supabase', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (res.ok) {
+          showToast('Supabase server added!');
+          document.getElementById('supabaseUrl').value = '';
+          document.getElementById('supabaseAnonKey').value = '';
+          document.getElementById('supabaseServiceKey').value = '';
+          loadSupabaseServers();
+        } else showToast('Failed to add server', 'error');
+      } catch { showToast('Failed to add', 'error'); }
+    };
 
-    function renderLeaderboardRows(container, entries, limit) {
-      if (!entries || entries.length === 0) {
-        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:1.5rem 0;text-align:center">No points earned yet.</div>';
-        return;
-      }
-      const medals = ['🥇','🥈','🥉'];
-      container.innerHTML = entries.slice(0, limit).map((u, i) =>
-        '<div style="display:flex;align-items:center;gap:0.75rem;padding:0.5rem 0;border-bottom:1px solid var(--border-color)">' +
-        '<span style="width:1.5rem;text-align:center;font-size:' + (i < 3 ? '1.1rem' : '0.8rem') + ';font-weight:700;color:var(--text-muted)">' + (medals[i] || (i+1)) + '</span>' +
-        '<a href="/u/' + escHtml(u.user_id) + '" style="flex:1;font-size:0.8125rem;font-weight:500;color:var(--accent-color);text-decoration:none">' + escHtml(u.display_name) + '</a>' +
-        '<span style="font-size:0.8rem;font-weight:700;color:var(--warning-color,#f59e0b)">' + (u.total_points||0).toLocaleString() + ' pts</span>' +
-        '</div>'
-      ).join('');
-    }
+    window.deleteSupabaseServer = async function(configId) {
+      if (!confirm('Remove this Supabase server?')) return;
+      try {
+        const res = await fetch('/api/user/supabase/' + configId, {
+          method: 'DELETE',
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (res.ok) { showToast('Server removed'); loadSupabaseServers(); }
+        else showToast('Failed to remove', 'error');
+      } catch { showToast('Failed to remove', 'error'); }
+    };
 
-    // ============================================
-    // Gaps View Data
-    // ============================================
-
-    let currentGapFilter = 'open';
-
-    window.filterGaps = function(status) {
-      currentGapFilter = status;
-      document.querySelectorAll('.gaps-filter-btn').forEach(btn => {
-        btn.classList.toggle('gaps-filter-active', btn.dataset.status === status);
+    // ===== FAQ Accordion =====
+    document.querySelectorAll('.faq-trigger').forEach(function(trigger) {
+      trigger.addEventListener('click', function() {
+        const item = this.closest('.faq-item');
+        const wasOpen = item.classList.contains('open');
+        // Close all
+        document.querySelectorAll('.faq-item').forEach(function(i) { i.classList.remove('open'); });
+        // Toggle clicked
+        if (!wasOpen) item.classList.add('open');
       });
-      loadGapsData(status);
-    };
-
-    async function loadGapsData(status) {
-      const container = document.getElementById('gapsList');
-      container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:2rem 0;text-align:center">Loading...</div>';
-
-      try {
-        const url = '/api/homepage?type=gaps&status=' + status + '&limit=50';
-        const res = await fetch(url);
-        if (res.ok) {
-          const data = await res.json();
-          const gaps = data.results || data || [];
-          renderGapCards(container, gaps, 50);
-        } else {
-          container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:2rem 0;text-align:center">Failed to load gaps.</div>';
-        }
-      } catch {
-        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:2rem 0;text-align:center">Failed to load gaps.</div>';
-      }
-    }
-
-    // ============================================
-    // Leaderboard View Data
-    // ============================================
-
-    async function loadLeaderboardData() {
-      const container = document.getElementById('leaderboardList');
-      const seasonEl = document.getElementById('leaderboardSeason');
-      container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:2rem 0;text-align:center">Loading...</div>';
-
-      try {
-        const res = await fetch('/api/homepage?type=leaderboard&limit=50');
-        if (res.ok) {
-          const data = await res.json();
-          const entries = data.results || data || [];
-          if (data.season) {
-            seasonEl.innerHTML = '<span style="display:inline-block;background:var(--bg-tertiary);padding:0.2rem 0.75rem;border-radius:9999px;font-size:0.8rem;color:var(--accent-color);font-weight:500">' + escHtml(data.season.name) + '</span>';
-          }
-          renderLeaderboardRows(container, entries, 50);
-        } else {
-          container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:2rem 0;text-align:center">Failed to load leaderboard.</div>';
-        }
-      } catch {
-        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem;padding:2rem 0;text-align:center">Failed to load leaderboard.</div>';
-      }
-    }
-
-    window.addEventListener('popstate', async (event) => {
-      const path = window.location.pathname;
-
-      if (path === '/') {
-        currentAppId = null;
-        showView('home');
-        loadHomeData();
-      } else if (path === '/dash' || path === '/dashboard') {
-        currentAppId = null;
-        showView('dashboard');
-        renderAppsList();
-        loadDashboardData();
-      } else if (path === '/gaps' || path === '/leaderboard') {
-        currentAppId = null;
-        showView('leaderboard');
-        loadLeaderboardData();
-      } else if (path.startsWith('/a/')) {
-        const appId = path.slice(3).split('/')[0];
-        currentAppId = appId;
-        showView('app');
-        renderAppsList();
-        await loadAppPage(appId);
-      }
     });
 
-    // (loadAndRunApp and createRuntime removed — replaced by loadAppPage)
+    // ===== Error Handling =====
+    window.onerror = function(msg, src, line) {
+      console.error('Runtime Error:', msg, 'at line', line);
+    };
+    window.onunhandledrejection = function(e) {
+      console.error('Unhandled rejection:', e.reason);
+    };
 
-    // ============================================
-    // Dashboard
-    // ============================================
-    newAppBtn.addEventListener('click', navigateToDashboard);
-    document.getElementById('navHomeBtn').addEventListener('click', navigateToHome);
-    document.getElementById('navLeaderboardBtn').addEventListener('click', navigateToLeaderboard);
-
-
-    // ============================================
-    // Error Handling
-    // ============================================
-    function showError(title, message) {
-      const existing = document.querySelector('.ultralight-error');
-      if (existing) existing.remove();
-
-      const errorDiv = document.createElement('div');
-      errorDiv.className = 'ultralight-error';
-      errorDiv.innerHTML = \`
-        <button class="ultralight-error-close" onclick="this.parentElement.remove()">×</button>
-        <div class="ultralight-error-title">\${title}</div>
-        <div>\${message}</div>
-      \`;
-      document.body.appendChild(errorDiv);
-    }
-
-    window.onerror = (msg, src, line) => showError('Runtime Error', \`\${msg} (line \${line})\`);
-    window.onunhandledrejection = (e) => showError('Unhandled Promise Rejection', e.reason?.message || String(e.reason));
-
-    // ============================================
-    // Initial Load
-    // ============================================
+    // ===== Initialization =====
     await updateAuthUI();
 
-    // If we're in app view and have an appId, load the app page
+    // Handle initial view
     ${initialView === 'app' && activeAppId ? `
-    (async () => {
-      console.log('📱 Initial app page load for appId: ${activeAppId}');
+    (async function() {
       await loadAppPage('${activeAppId}');
     })();
     ` : ''}
 
-    // Load data for the initial view
-    ${initialView === 'home' ? 'loadHomeData();' : ''}
-    ${initialView === 'leaderboard' ? 'loadLeaderboardData();' : ''}
-    // Initialize connect button and right sidebar visibility
-    updateConnectButtonVisibility('${initialView}');
-    updateRightSidebar('${initialView}');
-
-    // Handle ?setup=1 redirect (from OAuth login via hero Connect button)
+    // Handle ?setup=1 redirect (from OAuth popup fallback)
     (function() {
-      const params = new URLSearchParams(window.location.search);
+      var params = new URLSearchParams(window.location.search);
       if (params.get('setup') === '1' && authToken) {
-        // Clean up URL param first
         params.delete('setup');
-        const cleanUrl = params.toString()
-          ? window.location.pathname + '?' + params.toString()
-          : window.location.pathname;
+        var cleanUrl = params.toString() ? window.location.pathname + '?' + params.toString() : window.location.pathname;
         history.replaceState({}, '', cleanUrl);
-        // Auto-trigger the connect agent flow (user just authed, generate token + show modal)
-        setTimeout(() => { if (window.connectAgent) window.connectAgent(); }, 300);
+        setTimeout(function() { generateSetupInstructions(); }, 300);
+      }
+      if (params.get('popup') === '1') {
+        // Clean up popup param
+        params.delete('popup');
+        var cleanUrl2 = params.toString() ? window.location.pathname + '?' + params.toString() : window.location.pathname;
+        history.replaceState({}, '', cleanUrl2);
       }
     })();
 
-    // Handle Stripe checkout redirect (success/cancel)
+    // Handle Stripe checkout redirect
     (function() {
-      const params = new URLSearchParams(window.location.search);
-      const topup = params.get('topup');
+      var params = new URLSearchParams(window.location.search);
+      var topup = params.get('topup');
       if (topup === 'success') {
-        const amountCents = parseInt(params.get('amount') || '0', 10);
-        const dollars = amountCents > 0 ? ' ($' + (amountCents / 100).toFixed(2) + ')' : '';
+        var amountCents = parseInt(params.get('amount') || '0', 10);
+        var dollars = amountCents > 0 ? ' ($' + (amountCents / 100).toFixed(2) + ')' : '';
         showToast('Deposit successful' + dollars + '! Balance will update shortly.');
-        // Clean up the URL params
         history.replaceState({}, '', window.location.pathname);
-        // Refresh balance after a short delay (webhook may still be processing)
-        setTimeout(() => { loadHostingData(); }, 2000);
-        setTimeout(() => { loadHostingData(); }, 5000);
+        setTimeout(function() { loadHostingData(); }, 2000);
+        setTimeout(function() { loadHostingData(); }, 5000);
       } else if (topup === 'cancelled') {
         showToast('Deposit cancelled.', 'error');
         history.replaceState({}, '', window.location.pathname);
       }
     })();
+
+  })();
   </script>
-</body>
-</html>`;
+  </body>
+</html>\`;
 }

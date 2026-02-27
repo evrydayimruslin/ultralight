@@ -102,18 +102,18 @@ export function createApp() {
         });
       }
 
-      // Gaps board → redirect to leaderboard
-      if (path === '/gaps' && method === 'GET') {
-        return new Response(null, {
-          status: 302,
-          headers: { 'Location': '/leaderboard' },
+      // Settings page (account settings)
+      if (path === '/settings' && method === 'GET') {
+        return new Response(getLayoutHTML({ initialView: 'dashboard' }), {
+          headers: { 'Content-Type': 'text/html' },
         });
       }
 
-      // Leaderboard
-      if (path === '/leaderboard' && method === 'GET') {
-        return new Response(getLayoutHTML({ initialView: 'leaderboard' }), {
-          headers: { 'Content-Type': 'text/html' },
+      // Gaps board & Leaderboard → redirect to dashboard
+      if ((path === '/gaps' || path === '/leaderboard') && method === 'GET') {
+        return new Response(null, {
+          status: 302,
+          headers: { 'Location': '/dash' },
         });
       }
 
@@ -128,12 +128,11 @@ export function createApp() {
         });
       }
 
-      // Upload page (HTML UI with sidebar)
-      // Legacy /upload redirects to dashboard
+      // Legacy /upload redirects to home
       if (path === '/upload' && method === 'GET') {
         return new Response(null, {
           status: 302,
-          headers: { 'Location': '/dash' },
+          headers: { 'Location': '/' },
         });
       }
 
