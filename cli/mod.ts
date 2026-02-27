@@ -12,6 +12,7 @@
  *   ultralight <command> [options]
  *
  * Commands:
+ *   setup           Set up Ultralight: authenticate + configure MCP connection
  *   login           Authenticate with Ultralight
  *   logout          Clear stored credentials
  *   whoami          Show current user
@@ -42,6 +43,7 @@ const VERSION = '1.2.0';
 // Command handlers
 const commands: Record<string, (args: string[], client: ApiClient, config: Config) => Promise<void>> = {
   init,
+  setup,
   login,
   logout,
   whoami,
@@ -112,8 +114,9 @@ ${colors.bold('Ultralight CLI')} v${VERSION}
 ${colors.dim('USAGE')}
   ultralight <command> [options]
 
-${colors.dim('AUTH')}
-  ${colors.cyan('login')}              Authenticate with Ultralight
+${colors.dim('SETUP')}
+  ${colors.cyan('setup')}              Set up Ultralight: authenticate + configure MCP connection
+  ${colors.cyan('login')}              Authenticate with Ultralight (token only)
   ${colors.cyan('logout')}             Clear stored credentials
   ${colors.cyan('whoami')}             Show current user
 
@@ -648,6 +651,166 @@ ${colors.bold('How to get an API token:')}
 
 ${colors.dim('API tokens start with ul_ and can be used for CLI and API access.')}
 `);
+}
+
+async function setup(args: string[], _client: ApiClient, config: Config) {
+  const parsed = parseArgs(args, {
+    string: ['token'],
+    alias: { t: 'token' },
+  });
+
+  if (parsed.help) {
+    console.log(`
+${colors.bold('ultralight setup')}
+
+Set up Ultralight: authenticate and configure your agent's MCP connection.
+
+${colors.dim('OPTIONS')}
+  --token, -t <token>   Your API token (starts with ul_)
+
+${colors.dim('WHAT IT DOES')}
+  1. Saves your token to ~/.ultralight/config.json
+  2. Verifies the token against the Ultralight API
+  3. Detects MCP client config files (Claude Code, Claude Desktop, Cursor)
+  4. Writes the Ultralight MCP server entry to each detected config
+  5. Your agent can use Ultralight immediately after restarting
+
+${colors.dim('EXAMPLES')}
+  ultralight setup --token ul_abc123...
+  ultralight setup -t ul_abc123...
+`);
+    return;
+  }
+
+  if (!parsed.token) {
+    console.log(`
+${colors.bold('Ultralight Setup')}
+
+To set up, you need an API token.
+
+${colors.dim('Get a token:')}
+  1. Go to ${colors.cyan(config.api_url)}
+  2. Sign in with Google
+  3. Go to Settings → API Tokens
+  4. Create a new token
+
+${colors.dim('Then run:')}
+  ${colors.cyan('ultralight setup --token <your-token>')}
+
+Or get the full setup command from ${colors.cyan(config.api_url)} — click "Connect" on the homepage.
+`);
+    return;
+  }
+
+  const token = parsed.token as string;
+
+  // Validate token format
+  if (!token.startsWith('ul_')) {
+    console.log(colors.red('✗ Invalid token format. Ultralight API tokens start with ul_'));
+    return;
+  }
+
+  // Step 1: Save token to config
+  config.auth = {
+    token,
+    is_api_token: true,
+  };
+  await saveConfig(config);
+  console.log(colors.green('✓ Token saved to ~/.ultralight/config.json'));
+
+  // Step 2: Verify token
+  let userInfo: Record<string, unknown> | null = null;
+  try {
+    const verifyClient = new ApiClient(config);
+    userInfo = await verifyClient.restGet('/api/user');
+    console.log(colors.green(`✓ Authenticated as ${colors.cyan(String(userInfo.email || userInfo.display_name || 'user'))}`));
+  } catch (err) {
+    console.log(colors.red(`✗ Token validation failed: ${err instanceof Error ? err.message : 'Unknown error'}`));
+    console.log(colors.dim('  Check that your token is correct and try again.'));
+    // Clear the bad token
+    delete config.auth;
+    await saveConfig(config);
+    return;
+  }
+
+  // Step 3: Detect MCP client config files
+  const home = Deno.env.get('HOME') || Deno.env.get('USERPROFILE') || '';
+  const appData = Deno.env.get('APPDATA') || '';
+  const mcpUrl = `${config.api_url}/mcp/platform`;
+
+  const mcpEntry = {
+    url: mcpUrl,
+    transport: 'http-post' as const,
+    headers: {
+      'Authorization': `Bearer ${token}`,
+    },
+  };
+
+  const configPaths = [
+    { path: `${home}/.claude.json`, name: 'Claude Code', key: 'mcpServers' },
+    { path: `${home}/.claude/mcp.json`, name: 'Claude Code (mcp.json)', key: 'mcpServers' },
+    { path: `${home}/.config/Claude/claude_desktop_config.json`, name: 'Claude Desktop', key: 'mcpServers' },
+    ...(appData ? [{ path: `${appData}/Claude/claude_desktop_config.json`, name: 'Claude Desktop (Windows)', key: 'mcpServers' }] : []),
+    { path: '.cursor/mcp.json', name: 'Cursor (project)', key: 'mcpServers' },
+  ];
+
+  let configsWritten = 0;
+  const writtenPaths: string[] = [];
+
+  for (const configTarget of configPaths) {
+    try {
+      // Check if config file exists
+      await Deno.stat(configTarget.path);
+
+      // Read existing config
+      let existingConfig: Record<string, unknown> = {};
+      try {
+        const content = await Deno.readTextFile(configTarget.path);
+        existingConfig = JSON.parse(content);
+      } catch {
+        existingConfig = {};
+      }
+
+      // Merge in Ultralight server entry
+      const servers = (existingConfig[configTarget.key] || {}) as Record<string, unknown>;
+      servers['ultralight'] = mcpEntry;
+      existingConfig[configTarget.key] = servers;
+
+      // Write back
+      await Deno.writeTextFile(configTarget.path, JSON.stringify(existingConfig, null, 2));
+      console.log(colors.green(`✓ MCP config written to ${colors.dim(configTarget.path)} (${configTarget.name})`));
+      configsWritten++;
+      writtenPaths.push(configTarget.path);
+    } catch {
+      // File doesn't exist, skip
+    }
+  }
+
+  // Step 4: Output results
+  if (configsWritten === 0) {
+    console.log('');
+    console.log(colors.yellow('⚠ No MCP client config files detected.'));
+    console.log(colors.dim('  Add this to your MCP client config manually:'));
+    console.log('');
+    const manualConfig = JSON.stringify({ mcpServers: { ultralight: mcpEntry } }, null, 2);
+    console.log(colors.dim(manualConfig));
+    console.log('');
+    console.log(colors.dim('  Common config file locations:'));
+    console.log(colors.dim('    Claude Code:    ~/.claude.json'));
+    console.log(colors.dim('    Claude Desktop: ~/.config/Claude/claude_desktop_config.json'));
+    console.log(colors.dim('    Cursor:         .cursor/mcp.json'));
+  } else {
+    console.log('');
+    console.log(colors.green(colors.bold('✓ Ultralight is ready!')));
+    console.log('');
+    console.log(`  ${colors.dim('Platform tools:')} 10 tools (discover, build, test, deploy, call, and more)`);
+    if (userInfo) {
+      console.log(`  ${colors.dim('Account:')}        ${userInfo.email || 'authenticated'}`);
+      console.log(`  ${colors.dim('Tier:')}           ${userInfo.tier || 'free'}`);
+    }
+    console.log('');
+    console.log(colors.dim('  Restart your agent or reconnect MCP to activate.'));
+  }
 }
 
 async function logout(_args: string[], _client: ApiClient, _config: Config) {

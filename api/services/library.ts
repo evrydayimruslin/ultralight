@@ -241,7 +241,8 @@ export async function generateSkillsForVersion(
     const embeddingService = createEmbeddingService();
     if (embeddingService) {
       const skills = toSkillsParsed(parseResult);
-      const embeddingText = generateEmbeddingText(app.name, app.description, skills);
+      const searchHints = Array.isArray(app.tags) ? app.tags as string[] : undefined;
+      const embeddingText = generateEmbeddingText(app.name, app.description, skills, searchHints);
       const result = await embeddingService.embed(embeddingText);
       embeddingJson = result.embedding;
     }

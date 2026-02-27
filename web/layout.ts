@@ -2407,6 +2407,50 @@ export function getLayoutHTML(options: {
       transition: background 0.15s, border-color 0.15s;
     }
     .home-cta-secondary:hover { background: var(--bg-tertiary); border-color: var(--text-muted); }
+
+    /* Setup Modal */
+    .setup-modal-overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.7); backdrop-filter: blur(4px);
+      z-index: 1000; display: flex; align-items: center; justify-content: center;
+      animation: fadeIn 0.2s ease;
+    }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .setup-modal-card {
+      background: var(--bg-secondary); border: 1px solid var(--border-color);
+      border-radius: 16px; padding: 2rem; max-width: 520px; width: 90%;
+      position: relative; box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+    }
+    .setup-modal-close {
+      position: absolute; top: 12px; right: 16px; background: none; border: none;
+      color: var(--text-muted); font-size: 1.5rem; cursor: pointer; padding: 4px;
+      line-height: 1; transition: color 0.15s;
+    }
+    .setup-modal-close:hover { color: var(--text-primary); }
+    .setup-modal-icon { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    .setup-modal-title {
+      font-size: 1.125rem; font-weight: 600; color: var(--text-primary);
+      margin-bottom: 1rem;
+    }
+    .setup-modal-code {
+      background: var(--bg-tertiary); border: 1px solid var(--border-color);
+      border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+      font-family: 'JetBrains Mono', monospace; font-size: 0.8125rem;
+      line-height: 1.6; color: var(--text-primary); white-space: pre-wrap; word-break: break-all;
+    }
+    .setup-modal-copy-btn {
+      display: inline-flex; align-items: center; gap: 0.5rem; width: 100%;
+      justify-content: center; padding: 0.75rem 1.5rem;
+      background: var(--accent-color); color: white; border: none;
+      border-radius: 10px; font-size: 0.875rem; font-weight: 600;
+      cursor: pointer; transition: filter 0.15s;
+    }
+    .setup-modal-copy-btn:hover { filter: brightness(1.1); }
+    .setup-modal-hint {
+      font-size: 0.75rem; color: var(--text-muted); text-align: center;
+      margin-top: 0.75rem; line-height: 1.5;
+    }
+
     .home-features {
       max-width: 960px;
       margin: 0 auto;
@@ -2616,7 +2660,7 @@ export function getLayoutHTML(options: {
     <div class="top-bar-center">
     </div>
     <div class="top-bar-right">
-      <button class="top-bar-connect-btn" id="topBarConnectBtn" onclick="copyConnectUrl()">
+      <button class="top-bar-connect-btn" id="topBarConnectBtn" onclick="connectAgent()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
         <span id="connectBtnText">Connect</span>
       </button>
@@ -2978,10 +3022,27 @@ export function getLayoutHTML(options: {
         <h1 class="home-hero-title">Make agents limitless</h1>
         <div class="home-cta-row">
           <a href="#home-features" class="home-cta-secondary" onclick="event.preventDefault(); document.getElementById('home-features').scrollIntoView({behavior:'smooth'});">Learn more</a>
-          <button class="home-cta-primary" id="heroConnectBtn" onclick="copyConnectUrl()">
+          <button class="home-cta-primary" id="heroConnectBtn" onclick="connectAgent()">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
             <span id="heroConnectText">Connect</span>
           </button>
+        </div>
+      </div>
+
+      <!-- Setup Modal (shown after auth + token generation) -->
+      <div id="setupModal" class="setup-modal-overlay" style="display: none;" onclick="if(event.target===this)dismissSetupModal()">
+        <div class="setup-modal-card">
+          <button class="setup-modal-close" onclick="dismissSetupModal()" title="Close">&times;</button>
+          <div class="setup-modal-icon">⚡</div>
+          <h3 class="setup-modal-title">Paste this into your agent</h3>
+          <div class="setup-modal-code" id="setupCommandBlock">
+            <code id="setupCommandText"></code>
+          </div>
+          <button class="setup-modal-copy-btn" id="setupCopyBtn" onclick="copySetupCommand()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <span id="setupCopyText">Copy to Clipboard</span>
+          </button>
+          <p class="setup-modal-hint">Works with Claude Code, Cursor, Windsurf, and any agent that can run terminal commands.</p>
         </div>
       </div>
 
@@ -6295,22 +6356,77 @@ await hash.sha256('data')</div>
       }
     }
 
-    window.copyConnectUrl = function() {
-      const url = window.location.origin + '/mcp/platform';
-      navigator.clipboard.writeText(url).then(() => {
-        // Update hero button text
-        const heroText = document.getElementById('heroConnectText');
-        if (heroText) {
-          heroText.textContent = 'Copied \\u2713';
-          setTimeout(() => { heroText.textContent = 'Connect'; }, 1500);
+    // Setup command text for the modal (stored after token generation)
+    let setupCommandStr = '';
+
+    window.connectAgent = async function() {
+      // If not authenticated, redirect to login with return_to
+      if (!authToken) {
+        window.location.href = '/auth/login?return_to=' + encodeURIComponent('/?setup=1');
+        return;
+      }
+
+      // Generate a token for the setup command
+      try {
+        const res = await fetch('/api/user/tokens', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + authToken,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ name: 'Agent Setup — ' + new Date().toLocaleDateString() }),
+        });
+
+        if (!res.ok) {
+          // Fallback: copy MCP URL without token
+          const mcpUrl = window.location.origin + '/mcp/platform';
+          await navigator.clipboard.writeText(mcpUrl);
+          showToast('MCP URL copied! Create an API token in Settings to authenticate.', 'warning');
+          return;
         }
-        // Update top bar button text
-        const topText = document.getElementById('connectBtnText');
-        if (topText) {
-          topText.textContent = 'Copied \\u2713';
-          setTimeout(() => { topText.textContent = 'Connect'; }, 1500);
+
+        const data = await res.json();
+        const token = data.plaintext_token;
+
+        // Build the setup command
+        setupCommandStr = 'I\\'d like you to set up Ultralight, the instant MCP app platform.\\nRun: npx ultralightpro setup --token ' + token;
+
+        // Show the modal
+        const commandText = document.getElementById('setupCommandText');
+        if (commandText) {
+          commandText.textContent = 'I\\'d like you to set up Ultralight, the instant MCP app platform.\\nRun: npx ultralightpro setup --token ' + token;
         }
-      }).catch(() => {});
+        const modal = document.getElementById('setupModal');
+        if (modal) modal.style.display = 'flex';
+
+      } catch (err) {
+        // Fallback: copy MCP URL
+        const mcpUrl = window.location.origin + '/mcp/platform';
+        await navigator.clipboard.writeText(mcpUrl);
+        showToast('MCP URL copied!', 'success');
+      }
+    };
+
+    // Legacy alias — both hero and top bar call connectAgent now
+    window.copyConnectUrl = window.connectAgent;
+
+    window.copySetupCommand = async function() {
+      if (!setupCommandStr) return;
+      try {
+        await navigator.clipboard.writeText(setupCommandStr);
+        const copyText = document.getElementById('setupCopyText');
+        if (copyText) {
+          copyText.textContent = 'Copied \\u2713';
+          setTimeout(() => { copyText.textContent = 'Copy to Clipboard'; }, 1500);
+        }
+      } catch {
+        showToast('Failed to copy. Please select and copy manually.', 'error');
+      }
+    };
+
+    window.dismissSetupModal = function() {
+      const modal = document.getElementById('setupModal');
+      if (modal) modal.style.display = 'none';
     };
 
     function updateNavActive(view) {
@@ -6862,6 +6978,21 @@ await hash.sha256('data')</div>
     // Initialize connect button and right sidebar visibility
     updateConnectButtonVisibility('${initialView}');
     updateRightSidebar('${initialView}');
+
+    // Handle ?setup=1 redirect (from OAuth login via hero Connect button)
+    (function() {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('setup') === '1' && authToken) {
+        // Clean up URL param first
+        params.delete('setup');
+        const cleanUrl = params.toString()
+          ? window.location.pathname + '?' + params.toString()
+          : window.location.pathname;
+        history.replaceState({}, '', cleanUrl);
+        // Auto-trigger the connect agent flow (user just authed, generate token + show modal)
+        setTimeout(() => { if (window.connectAgent) window.connectAgent(); }, 300);
+      }
+    })();
 
     // Handle Stripe checkout redirect (success/cancel)
     (function() {

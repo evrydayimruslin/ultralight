@@ -29,8 +29,12 @@ export async function handleAuth(request: Request): Promise<Response> {
 
   // Initiate Google OAuth - redirects to Supabase Auth
   if (path === '/auth/login') {
-    const redirectTo = `${url.origin}/auth/callback`;
-    const authUrl = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(redirectTo)}`;
+    // Support return_to parameter for post-auth redirect (e.g., /?setup=1 from hero CTA)
+    const returnTo = url.searchParams.get('return_to');
+    const callbackUrl = returnTo
+      ? `${url.origin}/auth/callback?return_to=${encodeURIComponent(returnTo)}`
+      : `${url.origin}/auth/callback`;
+    const authUrl = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(callbackUrl)}`;
 
     return new Response(null, {
       status: 302,
@@ -66,7 +70,8 @@ export async function handleAuth(request: Request): Promise<Response> {
 
       if (tokenResponse.ok) {
         const tokens = await tokenResponse.json();
-        return new Response(getCallbackSuccessHTML(tokens.access_token, tokens.refresh_token), {
+        const returnTo = url.searchParams.get('return_to') || undefined;
+        return new Response(getCallbackSuccessHTML(tokens.access_token, tokens.refresh_token, returnTo), {
           headers: {
             'Content-Type': 'text/html',
             'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'",
@@ -372,16 +377,21 @@ function getCallbackHTML(): string {
     const accessToken = params.get('access_token');
     const refreshToken = params.get('refresh_token');
 
+    // Check for return_to parameter (e.g., from hero setup flow)
+    const queryParams = new URLSearchParams(window.location.search);
+    const returnTo = queryParams.get('return_to');
+    // Validate return_to is a relative path (prevent open redirect)
+    const redirectTarget = (returnTo && returnTo.startsWith('/')) ? returnTo : '/upload';
+
     if (accessToken) {
       localStorage.setItem('ultralight_token', accessToken);
       if (refreshToken) {
         localStorage.setItem('ultralight_refresh_token', refreshToken);
       }
-      window.location.href = '/upload';
+      window.location.href = redirectTarget;
     } else {
       // Check query params as fallback
-      const urlParams = new URLSearchParams(window.location.search);
-      const error = urlParams.get('error_description');
+      const error = queryParams.get('error_description');
       if (error) {
         // Sanitize error to prevent XSS via crafted error_description
         const safe = error.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#x27;');
@@ -396,10 +406,13 @@ function getCallbackHTML(): string {
 </html>`;
 }
 
-function getCallbackSuccessHTML(token: string, refreshToken?: string): string {
+function getCallbackSuccessHTML(token: string, refreshToken?: string, returnTo?: string): string {
   // Sanitize tokens to prevent injection via template interpolation
   const safeToken = token.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/</g, '\\x3c');
   const safeRefresh = refreshToken ? refreshToken.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/</g, '\\x3c') : '';
+  // Validate return_to is a relative path (prevent open redirect)
+  const redirectTarget = (returnTo && returnTo.startsWith('/')) ? returnTo : '/upload';
+  const safeRedirect = redirectTarget.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/</g, '\\x3c');
   return `<!DOCTYPE html>
 <html>
 <head><title>Signed in!</title></head>
@@ -407,7 +420,7 @@ function getCallbackSuccessHTML(token: string, refreshToken?: string): string {
   <script>
     localStorage.setItem('ultralight_token', '${safeToken}');
     ${safeRefresh ? `localStorage.setItem('ultralight_refresh_token', '${safeRefresh}');` : ''}
-    window.location.href = '/upload';
+    window.location.href = '${safeRedirect}';
   </script>
 </body>
 </html>`;

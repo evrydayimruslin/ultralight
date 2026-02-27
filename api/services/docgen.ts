@@ -602,9 +602,16 @@ function finalizeParsedFunction(
 export function generateEmbeddingText(
   appName: string,
   appDescription: string | null,
-  skills: ParsedSkills
+  skills: ParsedSkills,
+  searchHints?: string[]
 ): string {
   const parts: string[] = [];
+
+  // Search hints first — high weight for matching domain-specific queries
+  if (searchHints && searchHints.length > 0) {
+    parts.push('Keywords: ' + searchHints.join(', '));
+    parts.push('');
+  }
 
   // App identity
   parts.push(appName);
@@ -618,10 +625,15 @@ export function generateEmbeddingText(
   parts.push('');
   parts.push('Functions:');
 
-  // Function summaries
+  // Function summaries — enriched with param types and descriptions
   for (const fn of skills.functions) {
-    const paramNames = Object.keys(fn.parameters as Record<string, unknown>);
-    const paramStr = paramNames.length > 0 ? `(${paramNames.join(', ')})` : '()';
+    const params = fn.parameters as Record<string, Record<string, unknown>>;
+    const paramParts = Object.entries(params).map(([name, schema]) => {
+      const type = (schema?.type as string) || 'any';
+      const desc = schema?.description as string | undefined;
+      return desc ? `${name}: ${type} (${desc})` : `${name}: ${type}`;
+    });
+    const paramStr = paramParts.length > 0 ? `(${paramParts.join(', ')})` : '()';
     parts.push(`- ${fn.name}${paramStr}: ${fn.description}`);
   }
 
