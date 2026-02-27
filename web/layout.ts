@@ -3998,5 +3998,5 @@ export function getLayoutHTML(options: {
   })();
   </script>
   </body>
-</html>\`;
+</html>`;
 }
