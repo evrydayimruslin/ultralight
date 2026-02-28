@@ -294,7 +294,7 @@ export function getLayoutHTML(options: {
       max-width: var(--content-max);
       margin: 0 auto;
       padding: var(--space-8) var(--space-6);
-      padding-top: calc(var(--nav-height) + var(--space-8));
+      padding-top: calc(var(--nav-height) + var(--space-12));
     }
 
     .main-content.narrow {
@@ -1068,14 +1068,6 @@ export function getLayoutHTML(options: {
       flex-direction: column;
     }
 
-    .app-list-search {
-      margin-bottom: var(--space-4);
-    }
-
-    .app-list-search .input {
-      border-radius: 0;
-    }
-
     .app-row {
       display: flex;
       align-items: center;
@@ -1087,7 +1079,7 @@ export function getLayoutHTML(options: {
     }
 
     .app-row:first-child {
-      border-top: 1px solid var(--border);
+      border-top: none;
     }
 
     .app-row:hover {
@@ -1237,6 +1229,21 @@ export function getLayoutHTML(options: {
       font-weight: 700;
       letter-spacing: -0.02em;
       margin-bottom: var(--space-2);
+    }
+
+    .app-panel-name {
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+    }
+
+    .app-section-title {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-muted);
+      margin-top: var(--space-1);
+      margin-bottom: var(--space-5);
     }
 
     .app-overview-meta {
@@ -1771,7 +1778,7 @@ export function getLayoutHTML(options: {
 
       .main-content {
         padding: var(--space-5) var(--space-4);
-        padding-top: calc(var(--nav-height) + var(--space-5));
+        padding-top: calc(var(--nav-height) + var(--space-8));
       }
 
       .hero {
@@ -2198,9 +2205,6 @@ export function getLayoutHTML(options: {
         <div class="settings-content">
           <!-- Library Panel -->
           <section id="dashLibraryPanel" class="settings-panel">
-            <div class="app-list-search">
-              <input id="appSearchInput" class="input" type="text" placeholder="Search apps...">
-            </div>
             <div id="appList" class="app-list"></div>
           </section>
 
@@ -2281,6 +2285,7 @@ export function getLayoutHTML(options: {
           <!-- Overview Panel -->
           <section id="appOverviewPanel" class="settings-panel">
             <div id="appOverviewHeader" class="app-overview-header"></div>
+            <h2 class="app-section-title">Overview</h2>
             <div id="appGeneralSettings"></div>
             <div id="appFunctionsSection"></div>
             <div id="skillsContent"></div>
@@ -2288,28 +2293,32 @@ export function getLayoutHTML(options: {
 
           <!-- Permissions Panel -->
           <section id="appPermissionsPanel" class="settings-panel" style="display:none;">
-            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Permissions</h2>
+            <div class="app-panel-name"></div>
+            <h2 class="app-section-title">Permissions</h2>
             <div id="appVisibilitySection"></div>
             <div id="permissionsContent"></div>
           </section>
 
           <!-- Environment Panel -->
           <section id="appEnvironmentPanel" class="settings-panel" style="display:none;">
-            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Environment</h2>
+            <div class="app-panel-name"></div>
+            <h2 class="app-section-title">Environment</h2>
             <div id="databaseContent"></div>
             <div id="envVarsContent" style="margin-top:var(--space-6);"></div>
           </section>
 
           <!-- Payments Panel -->
           <section id="appPaymentsPanel" class="settings-panel" style="display:none;">
-            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Payments</h2>
+            <div class="app-panel-name"></div>
+            <h2 class="app-section-title">Payments</h2>
             <div id="appPricingSection"></div>
             <div id="revenueSection" style="margin-top:var(--space-6);"></div>
           </section>
 
           <!-- Logs Panel -->
           <section id="appLogsPanel" class="settings-panel" style="display:none;">
-            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Logs</h2>
+            <div class="app-panel-name"></div>
+            <h2 class="app-section-title">Logs</h2>
             <div id="appLogsContent"></div>
             <div id="appHealthSection" style="margin-top:var(--space-6);"></div>
           </section>
@@ -3192,6 +3201,12 @@ export function getLayoutHTML(options: {
         // Store current app data for editing
         window._currentApp = app;
 
+        // Set app name on all panels
+        var appName = escapeHtml(app.name || app.slug || 'Untitled');
+        document.querySelectorAll('.app-panel-name').forEach(function(el) {
+          el.textContent = app.name || app.slug || 'Untitled';
+        });
+
         // Load all sections
         loadAppOverview(app);
         loadAppPermissions(app);
@@ -3206,13 +3221,13 @@ export function getLayoutHTML(options: {
 
     // ===== App Overview =====
     function loadAppOverview(app) {
-      // -- App header --
+      // -- App header (meta only — app name is set by loadAppPage) --
       const headerEl = document.getElementById('appOverviewHeader');
       if (headerEl) {
         const endpointUrl = window.location.origin + '/mcp/' + app.id;
         headerEl.innerHTML =
-          '<h1>' + escapeHtml(app.name || app.slug || 'Untitled') + '</h1>' +
-          '<div class="app-overview-meta">' +
+          '<div class="app-panel-name">' + escapeHtml(app.name || app.slug || 'Untitled') + '</div>' +
+          '<div class="app-overview-meta" style="margin-bottom:var(--space-4);">' +
             '<div class="meta-row">' +
               '<span style="font-size:12px;padding:2px 8px;background:var(--accent-soft);color:var(--accent);font-weight:500;">' + escapeHtml(app.current_version || 'v1.0.0') + '</span>' +
               '<span style="font-size:12px;padding:2px 8px;background:rgba(52,211,153,0.1);color:var(--success);font-weight:500;">Active</span>' +
