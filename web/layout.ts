@@ -1265,7 +1265,6 @@ export function getLayoutHTML(options: {
       width: 100%;
       padding: var(--space-2) var(--space-3);
       font-size: 13px;
-      font-family: var(--font-mono);
       border: 1px solid var(--border);
       border-radius: 0;
       background: var(--bg-base);
@@ -1291,7 +1290,6 @@ export function getLayoutHTML(options: {
     .marketplace-filter {
       padding: var(--space-1) var(--space-3);
       font-size: 12px;
-      font-family: var(--font-mono);
       border: 1px solid var(--border);
       border-radius: 0;
       background: var(--bg-base);
@@ -1345,7 +1343,6 @@ export function getLayoutHTML(options: {
 
     .marketplace-badge {
       font-size: 10px;
-      font-family: var(--font-mono);
       text-transform: uppercase;
       letter-spacing: 0.5px;
       padding: 1px 6px;
@@ -1368,7 +1365,6 @@ export function getLayoutHTML(options: {
       gap: var(--space-3);
       margin-top: var(--space-2);
       font-size: 11px;
-      font-family: var(--font-mono);
       color: var(--text-tertiary);
     }
 
@@ -2205,11 +2201,13 @@ export function getLayoutHTML(options: {
         <div class="settings-content">
           <!-- Library Panel -->
           <section id="dashLibraryPanel" class="settings-panel">
+            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Library</h2>
             <div id="appList" class="app-list"></div>
           </section>
 
           <!-- Marketplace Panel -->
           <section id="dashMarketplacePanel" class="settings-panel" style="display:none;">
+            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Marketplace</h2>
             <input id="marketplaceSearch" class="marketplace-search" type="text" placeholder="Search apps and skills...">
             <div class="marketplace-filters">
               <button class="marketplace-filter active" data-mp-type="all">All</button>
