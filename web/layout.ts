@@ -1417,25 +1417,15 @@ export function getLayoutHTML(options: {
        CAPABILITIES SECTION
        ============================================ */
     .cap-section {
-      max-width: 640px;
+      max-width: 820px;
       margin: 0 auto;
       padding: var(--space-20) var(--space-6) 0;
-    }
-
-    .cap-heading {
-      font-size: 32px;
-      font-weight: 700;
-      letter-spacing: -0.035em;
-      line-height: 1.15;
-      color: var(--text-primary);
-      margin-bottom: var(--space-10);
-      text-align: center;
     }
 
     .cap-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 0;
+      gap: var(--space-5);
     }
 
     .cap-card {
@@ -1443,8 +1433,8 @@ export function getLayoutHTML(options: {
       padding: var(--space-8);
       display: flex;
       flex-direction: column;
-      margin-top: -1px;
-      margin-left: -1px;
+      min-width: 0;
+      overflow: hidden;
     }
 
     .cap-card-icon {
@@ -1639,10 +1629,6 @@ export function getLayoutHTML(options: {
 
       .hero-actions .btn {
         width: 100%;
-      }
-
-      .cap-heading {
-        font-size: 26px;
       }
 
       .cap-grid {
@@ -1871,8 +1857,6 @@ export function getLayoutHTML(options: {
 
       <!-- Capabilities Section -->
       <section class="cap-section">
-        <h2 class="cap-heading">Infrastructure for your agent</h2>
-
         <div class="cap-grid">
           <!-- Free instant deployments -->
           <div class="cap-card">
