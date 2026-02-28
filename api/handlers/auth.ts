@@ -4,6 +4,8 @@
 import { error, json } from './app.ts';
 import { isApiToken, getUserFromToken } from '../services/tokens.ts';
 import { getUserTier } from '../services/tier-enforcement.ts';
+// @ts-ignore - base64url encode for PKCE
+import { encodeBase64Url } from 'https://deno.land/std@0.210.0/encoding/base64url.ts';
 
 // @ts-ignore - Deno is available
 const Deno = globalThis.Deno;
@@ -11,6 +13,20 @@ const Deno = globalThis.Deno;
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || SUPABASE_SERVICE_ROLE_KEY; // Fallback to service key
+
+// PKCE helpers
+function generateCodeVerifier(): string {
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  return encodeBase64Url(array);
+}
+
+async function generateCodeChallenge(verifier: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(verifier);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return encodeBase64Url(new Uint8Array(digest));
+}
 
 // Supabase client for database operations (service role bypasses RLS)
 async function getSupabaseClient() {
@@ -27,18 +43,28 @@ export async function handleAuth(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
 
-  // Initiate Google OAuth - redirects to Supabase Auth
+  // Initiate Google OAuth - redirects to Supabase Auth with PKCE
   if (path === '/auth/login') {
-    // Support return_to parameter for post-auth redirect (e.g., /?setup=1 from hero CTA)
+    // Force HTTPS — DigitalOcean terminates TLS at load balancer so request.url is HTTP internally
+    const origin = url.origin.replace('http://', 'https://');
     const returnTo = url.searchParams.get('return_to');
     const callbackUrl = returnTo
-      ? `${url.origin}/auth/callback?return_to=${encodeURIComponent(returnTo)}`
-      : `${url.origin}/auth/callback`;
-    const authUrl = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(callbackUrl)}`;
+      ? `${origin}/auth/callback?return_to=${encodeURIComponent(returnTo)}`
+      : `${origin}/auth/callback`;
 
+    // Generate PKCE code verifier and challenge
+    const codeVerifier = generateCodeVerifier();
+    const codeChallenge = await generateCodeChallenge(codeVerifier);
+
+    const authUrl = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(callbackUrl)}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=s256`;
+
+    // Store code_verifier in a secure httpOnly cookie for the callback to use
     return new Response(null, {
       status: 302,
-      headers: { 'Location': authUrl },
+      headers: {
+        'Location': authUrl,
+        'Set-Cookie': `pkce_verifier=${codeVerifier}; Path=/auth; HttpOnly; SameSite=Lax; Max-Age=600`,
+      },
     });
   }
 
@@ -55,9 +81,13 @@ export async function handleAuth(request: Request): Promise<Response> {
     const code = url.searchParams.get('code');
 
     if (code) {
-      // Try code exchange flow with Supabase
-      // Attempt 1: with empty code_verifier (non-PKCE)
-      let tokenResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=authorization_code`, {
+      // Read PKCE code_verifier from cookie
+      const cookies = request.headers.get('cookie') || '';
+      const verifierMatch = cookies.match(/pkce_verifier=([^;]+)/);
+      const codeVerifier = verifierMatch ? verifierMatch[1] : '';
+
+      // Exchange code + verifier for tokens
+      const tokenResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=authorization_code`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -65,33 +95,23 @@ export async function handleAuth(request: Request): Promise<Response> {
         },
         body: JSON.stringify({
           code: code,
-          code_verifier: '',
+          code_verifier: codeVerifier,
         }),
       });
-
-      // Attempt 2: without code_verifier field at all
-      if (!tokenResponse.ok) {
-        tokenResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=authorization_code`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': SUPABASE_ANON_KEY,
-          },
-          body: JSON.stringify({ code: code }),
-        });
-      }
 
       if (tokenResponse.ok) {
         const tokens = await tokenResponse.json();
         const returnTo = url.searchParams.get('return_to') || undefined;
+        // Clear the PKCE cookie
         return new Response(getCallbackSuccessHTML(tokens.access_token, tokens.refresh_token, returnTo), {
           headers: {
             'Content-Type': 'text/html',
+            'Set-Cookie': 'pkce_verifier=; Path=/auth; HttpOnly; SameSite=Lax; Max-Age=0',
           },
         });
       }
 
-      // Code exchange failed — show error with details for debugging
+      // Code exchange failed — show error
       let errBody = '';
       try { errBody = await tokenResponse.text(); } catch {}
       console.error('[auth] Code exchange failed:', tokenResponse.status, errBody);
@@ -100,7 +120,7 @@ export async function handleAuth(request: Request): Promise<Response> {
       });
     }
 
-    // No code param — return HTML that handles hash-based implicit tokens
+    // No code param — return HTML that handles hash-based implicit tokens (fallback)
     return new Response(getCallbackHTML(), {
       headers: {
         'Content-Type': 'text/html',
