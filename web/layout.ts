@@ -3742,7 +3742,7 @@ export function getLayoutHTML(options: {
         '<div class="form-group"><label class="form-label">Default price per call (cents)</label>' +
           '<input type="number" id="pricingDefault" class="form-input form-input-sm" value="' + defaultPrice + '" min="0" style="width:120px"></div>' +
         '<div class="form-group"><label class="form-label">Per-function price overrides (JSON)</label>' +
-          '<textarea id="pricingFnOverrides" class="form-input" style="height:80px;font-family:var(--font-mono);font-size:12px" placeholder=\'{"function_name": 5}\'>' + escapeHtml(fnPrices) + '</textarea></div>' +
+          '<textarea id="pricingFnOverrides" class="form-input" style="height:80px;font-family:var(--font-mono);font-size:12px" placeholder="e.g. {&quot;fn_name&quot;: 5}">' + escapeHtml(fnPrices) + '</textarea></div>' +
         '<button class="btn btn-primary btn-sm" onclick="savePricing()">Save Pricing</button>' +
       '</div>';
 
