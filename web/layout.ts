@@ -3843,7 +3843,7 @@ export function getLayoutHTML(options: {
             '<span style="color:var(--text-muted)">Created ' + created + '</span>' +
             '<span style="color:var(--text-muted)">Last used: ' + lastUsed + '</span>' +
             (expired ? '<span style="color:var(--error);font-size:11px">Expired</span>' : '') +
-            '<button class="btn btn-danger btn-sm" style="margin-left:auto" onclick="revokeToken(\'' + t.id + '\')">Revoke</button>' +
+            '<button class="btn btn-danger btn-sm" style="margin-left:auto" onclick="revokeToken(\\\'' + t.id + '\\\')">Revoke</button>' +
           '</div>';
         }).join('');
       } catch {}
@@ -3875,7 +3875,7 @@ export function getLayoutHTML(options: {
           }
         }
         if (nameInput) nameInput.value = '';
-        showToast('Token created! Copy it now — it won\'t be shown again.');
+        showToast('Token created! Copy it now — it will not be shown again.');
         loadTokens();
       } catch { showToast('Failed to create token', 'error'); }
     };
@@ -3986,7 +3986,7 @@ export function getLayoutHTML(options: {
         container.innerHTML = savedSupabaseServers.map(function(s) {
           return '<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px">' +
             '<span style="flex:1;font-family:var(--font-mono);font-size:12px">' + escapeHtml(s.url || s.id) + '</span>' +
-            '<button class="btn btn-danger btn-sm" onclick="deleteSupabaseServer(\'' + s.id + '\')">Remove</button>' +
+            '<button class="btn btn-danger btn-sm" onclick="deleteSupabaseServer(\\\'' + s.id + '\\\')">Remove</button>' +
           '</div>';
         }).join('');
       } catch {}
