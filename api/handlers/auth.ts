@@ -48,23 +48,23 @@ export async function handleAuth(request: Request): Promise<Response> {
     // Force HTTPS — DigitalOcean terminates TLS at load balancer so request.url is HTTP internally
     const origin = url.origin.replace('http://', 'https://');
     const returnTo = url.searchParams.get('return_to');
-    const callbackUrl = returnTo
-      ? `${origin}/auth/callback?return_to=${encodeURIComponent(returnTo)}`
-      : `${origin}/auth/callback`;
 
     // Generate PKCE code verifier and challenge
     const codeVerifier = generateCodeVerifier();
     const codeChallenge = await generateCodeChallenge(codeVerifier);
 
+    // Embed verifier in callback URL so it survives the redirect chain
+    // (cookies may not survive cross-domain redirect chain: us → Supabase → Google → Supabase → us)
+    const callbackParams = new URLSearchParams();
+    callbackParams.set('v', codeVerifier);
+    if (returnTo) callbackParams.set('return_to', returnTo);
+    const callbackUrl = `${origin}/auth/callback?${callbackParams.toString()}`;
+
     const authUrl = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(callbackUrl)}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=s256`;
 
-    // Store code_verifier in a secure httpOnly cookie for the callback to use
     return new Response(null, {
       status: 302,
-      headers: {
-        'Location': authUrl,
-        'Set-Cookie': `pkce_verifier=${codeVerifier}; Path=/auth; HttpOnly; SameSite=Lax; Max-Age=600`,
-      },
+      headers: { 'Location': authUrl },
     });
   }
 
@@ -81,10 +81,8 @@ export async function handleAuth(request: Request): Promise<Response> {
     const code = url.searchParams.get('code');
 
     if (code) {
-      // Read PKCE code_verifier from cookie
-      const cookies = request.headers.get('cookie') || '';
-      const verifierMatch = cookies.match(/pkce_verifier=([^;]+)/);
-      const codeVerifier = verifierMatch ? verifierMatch[1] : '';
+      // Read PKCE code_verifier from query param (embedded in redirect_to URL)
+      const codeVerifier = url.searchParams.get('v') || '';
 
       // Exchange code + verifier for tokens
       const tokenResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=authorization_code`, {
@@ -102,20 +100,17 @@ export async function handleAuth(request: Request): Promise<Response> {
       if (tokenResponse.ok) {
         const tokens = await tokenResponse.json();
         const returnTo = url.searchParams.get('return_to') || undefined;
-        // Clear the PKCE cookie
         return new Response(getCallbackSuccessHTML(tokens.access_token, tokens.refresh_token, returnTo), {
-          headers: {
-            'Content-Type': 'text/html',
-            'Set-Cookie': 'pkce_verifier=; Path=/auth; HttpOnly; SameSite=Lax; Max-Age=0',
-          },
+          headers: { 'Content-Type': 'text/html' },
         });
       }
 
-      // Code exchange failed — show error
+      // Code exchange failed — show error with details
       let errBody = '';
       try { errBody = await tokenResponse.text(); } catch {}
       console.error('[auth] Code exchange failed:', tokenResponse.status, errBody);
-      return new Response(getCallbackErrorHTML('Code exchange failed (status ' + tokenResponse.status + '). Please try again.'), {
+      const hasVerifier = codeVerifier ? 'yes (' + codeVerifier.length + ' chars)' : 'MISSING';
+      return new Response(getCallbackErrorHTML('Code exchange failed (status ' + tokenResponse.status + ', verifier: ' + hasVerifier + '). Please try again.'), {
         headers: { 'Content-Type': 'text/html' },
       });
     }

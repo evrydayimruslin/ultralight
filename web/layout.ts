@@ -1869,9 +1869,9 @@ export function getLayoutHTML(options: {
         <div id="connectionStatus" style="margin-top:var(--space-3);font-size:12px;color:var(--text-muted);"></div>
       </div>
 
-      <!-- Section 1: Your personal super app -->
+      <!-- Section 1: Agent native infrastructure -->
       <section class="cap-section">
-        <div class="cap-section-heading">Your personal super app</div>
+        <div class="cap-section-heading">Agent native infrastructure</div>
         <div class="cap-grid">
           <!-- Works with any agent -->
           <div class="cap-card">
@@ -1993,9 +1993,8 @@ export function getLayoutHTML(options: {
       </section>
 
       <!-- Closing CTA -->
-      <section style="max-width:820px;margin:0 auto;padding:120px var(--space-6) var(--space-20);text-align:left;">
-        <h2 style="font-size:32px;font-weight:600;letter-spacing:-0.035em;line-height:1.15;color:var(--text-primary);margin-bottom:var(--space-4);">Give your agent superpowers.</h2>
-        <p style="font-size:11px;font-weight:600;color:var(--text-secondary);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:var(--space-4);">Ready to start building?</p>
+      <section style="max-width:820px;margin:0 auto;padding:var(--space-20) var(--space-6);text-align:left;">
+        <h2 style="font-size:32px;font-weight:600;letter-spacing:-0.035em;line-height:1.15;color:var(--text-primary);margin-bottom:var(--space-5);">Ready to start building?</h2>
         <div style="display:flex;justify-content:flex-start;">
           <button class="btn btn-primary btn-lg" style="gap:var(--space-2);border-radius:0;" onclick="document.getElementById('authOverlay').classList.remove('hidden')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
