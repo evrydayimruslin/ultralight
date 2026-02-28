@@ -3068,7 +3068,7 @@ export function getLayoutHTML(options: {
             'Authorization': 'Bearer ' + authToken,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ name: 'Agent Setup — ' + new Date().toLocaleDateString() }),
+          body: JSON.stringify({ name: 'Agent Setup — ' + new Date().toLocaleString() }),
         });
 
         if (!res.ok) {
