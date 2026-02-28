@@ -1680,9 +1680,7 @@ export function getLayoutHTML(options: {
   <!-- ============================================
        TOAST CONTAINER
        ============================================ -->
-  <div id="toast-container" class="toast-container">
-    <div id="toast" class="toast"></div>
-  </div>
+  <div id="toast-container" class="toast-container"></div>
 
   <!-- ============================================
        AUTH POPUP OVERLAY
@@ -1741,12 +1739,10 @@ export function getLayoutHTML(options: {
     <div class="nav-right">
       <!-- Pre-auth nav items -->
       <div id="navPreAuth" style="display:flex;align-items:center;gap:var(--space-2);">
-        <a id="docsLink" href="https://www.npmjs.com/package/ultralightpro" target="_blank" class="btn btn-ghost btn-sm">Docs</a>
-        <button id="navAuthBtn" class="btn btn-primary btn-sm" onclick="document.getElementById('authOverlay').classList.remove('hidden')">Log in</button>
+        <button id="navAuthBtn" class="btn btn-primary btn-sm" style="border-radius:0;" onclick="document.getElementById('authOverlay').classList.remove('hidden')">Dashboard</button>
       </div>
       <!-- Post-auth nav items (hidden by default) -->
       <div id="navPostAuth" class="hidden flex items-center gap-3">
-        <a id="docsLinkAuth" href="https://www.npmjs.com/package/ultralightpro" target="_blank" class="btn btn-ghost btn-sm">Docs</a>
         <div class="relative">
           <div id="profileTrigger" class="profile-trigger">
             <div id="profileAvatar" class="profile-avatar">U</div>
@@ -1792,14 +1788,7 @@ export function getLayoutHTML(options: {
     <div id="homeView">
       <section class="hero">
         <h1>Give any agent<br>superpowers</h1>
-        <p style="font-size:16px;color:var(--text-secondary);margin-top:var(--space-4);margin-bottom:0;">Just paste this</p>
-        <div class="hero-actions" style="margin-top:var(--space-5);">
-          <button id="heroCTA" class="btn btn-primary btn-lg" style="gap:var(--space-2);border-radius:0;" onclick="document.getElementById('authOverlay').classList.remove('hidden')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-            <span id="heroCTAText">Copy agent instructions</span>
-          </button>
-        </div>
-        <p style="font-size:13px;color:var(--text-muted);margin-top:var(--space-10);margin-bottom:var(--space-3);">Works with every agent</p>
+        <p style="font-size:13px;color:var(--text-muted);margin-top:var(--space-8);margin-bottom:var(--space-3);">Works with every agent</p>
         <div style="display:flex;align-items:center;gap:var(--space-6);color:var(--text-muted);font-size:13px;">
           <span style="color:var(--text-secondary);font-weight:500;">OpenClaw</span>
           <span style="color:var(--text-secondary);font-weight:500;">Claude Code</span>
@@ -1807,6 +1796,13 @@ export function getLayoutHTML(options: {
           <span style="color:var(--text-secondary);font-weight:500;">Cursor</span>
           <span style="color:var(--text-secondary);font-weight:500;">Kimi Code</span>
           <span style="color:var(--text-secondary);font-weight:500;">Perplexity Computer</span>
+        </div>
+        <p style="font-size:16px;font-weight:600;color:var(--text-primary);margin-top:var(--space-10);margin-bottom:0;letter-spacing:0.05em;">JUST PASTE AND GO</p>
+        <div class="hero-actions" style="margin-top:var(--space-5);">
+          <button id="heroCTA" class="btn btn-primary btn-lg" style="gap:var(--space-2);border-radius:0;" onclick="document.getElementById('authOverlay').classList.remove('hidden')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            <span id="heroCTAText">Copy agent instructions</span>
+          </button>
         </div>
       </section>
 
