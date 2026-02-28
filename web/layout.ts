@@ -1994,7 +1994,7 @@ export function getLayoutHTML(options: {
 
       <!-- Closing CTA -->
       <section style="max-width:820px;margin:0 auto;padding:var(--space-20) var(--space-6);text-align:left;">
-        <h2 style="font-size:32px;font-weight:600;letter-spacing:-0.035em;line-height:1.15;color:var(--text-primary);margin-bottom:var(--space-5);">Start instantly.</h2>
+        <h2 style="font-size:32px;font-weight:600;letter-spacing:-0.035em;line-height:1.15;color:var(--text-primary);margin-bottom:var(--space-12);">Start instantly.</h2>
         <div style="display:flex;justify-content:flex-start;">
           <button class="btn btn-primary btn-lg" style="gap:var(--space-2);border-radius:0;" onclick="document.getElementById('authOverlay').classList.remove('hidden')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>

@@ -83,15 +83,15 @@ export async function handleAuth(request: Request): Promise<Response> {
       // Read PKCE code_verifier from query param (embedded in redirect_to URL)
       const codeVerifier = url.searchParams.get('v') || '';
 
-      // Exchange code + verifier for tokens
-      const tokenResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=authorization_code`, {
+      // Exchange code + verifier for tokens (Supabase PKCE grant)
+      const tokenResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=pkce`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'apikey': SUPABASE_ANON_KEY,
         },
         body: JSON.stringify({
-          code: code,
+          auth_code: code,
           code_verifier: codeVerifier,
         }),
       });
