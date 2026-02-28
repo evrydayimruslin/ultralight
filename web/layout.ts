@@ -2972,7 +2972,7 @@ export function getLayoutHTML(options: {
           await navigator.clipboard.writeText(setupCommandStr);
           var btn = document.getElementById('navCopyInstructionsBtn');
           var origText = btn.innerHTML;
-          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Paste to your agent';
+          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Copied. Paste to agent';
           btn.style.background = 'var(--success)';
           btn.style.color = 'white';
           setTimeout(function() {
@@ -3072,9 +3072,7 @@ export function getLayoutHTML(options: {
         });
 
         if (!res.ok) {
-          const mcpUrl = window.location.origin + '/mcp/platform';
-          await navigator.clipboard.writeText(mcpUrl);
-          showToast('MCP URL copied! Create an API token in Settings to authenticate.', 'warning');
+          setupCommandStr = window.location.origin + '/mcp/platform';
           return;
         }
 
@@ -3093,9 +3091,7 @@ export function getLayoutHTML(options: {
         if (tokenId) startConnectionPolling(tokenId);
 
       } catch (err) {
-        const mcpUrl = window.location.origin + '/mcp/platform';
-        await navigator.clipboard.writeText(mcpUrl);
-        showToast('MCP URL copied!', 'success');
+        setupCommandStr = window.location.origin + '/mcp/platform';
       }
     }
 
