@@ -1792,13 +1792,15 @@ export function getLayoutHTML(options: {
     <div id="homeView">
       <section class="hero">
         <h1>Give your agent<br>superpowers</h1>
-        <div class="hero-actions" style="margin-top:var(--space-8);">
-          <button id="heroCTA" class="btn btn-primary btn-lg" style="gap:var(--space-2);" onclick="handleHeroCTA()">
+        <p style="font-size:16px;color:var(--text-secondary);margin-top:var(--space-4);margin-bottom:0;">Paste this for your agent</p>
+        <div class="hero-actions" style="margin-top:var(--space-5);">
+          <button id="heroCTA" class="btn btn-primary btn-lg" style="gap:var(--space-2);" onclick="document.getElementById('authOverlay').classList.remove('hidden')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
             <span id="heroCTAText">Copy agent instructions</span>
           </button>
         </div>
-        <div style="margin-top:var(--space-10);display:flex;align-items:center;gap:var(--space-6);color:var(--text-muted);font-size:13px;">
+        <p style="font-size:13px;color:var(--text-muted);margin-top:var(--space-10);margin-bottom:var(--space-3);">Works with every agent</p>
+        <div style="display:flex;align-items:center;gap:var(--space-6);color:var(--text-muted);font-size:13px;">
           <span style="color:var(--text-secondary);font-weight:500;">Claude Code</span>
           <span style="color:var(--text-secondary);font-weight:500;">Cursor</span>
           <span style="color:var(--text-secondary);font-weight:500;">Windsurf</span>
@@ -2314,32 +2316,34 @@ export function getLayoutHTML(options: {
     window.showAuthOverlay = showAuthOverlay;
     window.hideAuthOverlay = hideAuthOverlay;
 
-    // Hero CTA handler — opens auth if not logged in, copies instructions if logged in
-    window.handleHeroCTA = async function() {
-      if (!authToken) {
-        showAuthOverlay();
-        return;
-      }
-      // Already authed — generate token and copy instructions
-      await generateSetupInstructions();
-      if (setupCommandStr) {
-        try {
-          await navigator.clipboard.writeText(setupCommandStr);
-          var btn = document.getElementById('heroCTA');
-          var textEl = document.getElementById('heroCTAText');
-          if (btn && textEl) {
-            textEl.textContent = 'Copied! Now paste into your agent';
-            btn.style.background = 'var(--success)';
-            setTimeout(function() {
-              textEl.textContent = 'Copy agent instructions';
-              btn.style.background = '';
-            }, 3000);
+    // Hero CTA — override onclick when authed to copy instructions instead of showing auth
+    function setupHeroCTA() {
+      var btn = document.getElementById('heroCTA');
+      if (!btn) return;
+      if (authToken) {
+        btn.onclick = async function(e) {
+          e.preventDefault();
+          await generateSetupInstructions();
+          if (setupCommandStr) {
+            try {
+              await navigator.clipboard.writeText(setupCommandStr);
+              var textEl = document.getElementById('heroCTAText');
+              if (textEl) {
+                textEl.textContent = 'Copied! Now paste into your agent';
+                btn.style.background = 'var(--success)';
+                setTimeout(function() {
+                  textEl.textContent = 'Copy agent instructions';
+                  btn.style.background = '';
+                }, 3000);
+              }
+            } catch(e2) {
+              showToast('Failed to copy', 'error');
+            }
           }
-        } catch(e) {
-          showToast('Failed to copy', 'error');
-        }
+        };
       }
-    };
+      // If not authed, the inline onclick already opens auth overlay
+    }
 
     document.getElementById('googleAuthBtn')?.addEventListener('click', function() {
       // Open auth in new tab (MiniMax-style)
@@ -2370,9 +2374,11 @@ export function getLayoutHTML(options: {
     });
 
     // Fallback: poll localStorage for token changes (handles popup auth when postMessage fails)
+    // This runs continuously until a token is found — covers all auth flows
     var authPollInterval = null;
     function startAuthPoll() {
       if (authPollInterval) return;
+      if (authToken) return; // Already logged in
       authPollInterval = setInterval(function() {
         var token = localStorage.getItem('ultralight_token');
         if (token && token !== authToken) {
@@ -2392,14 +2398,25 @@ export function getLayoutHTML(options: {
       }, 300000);
     }
 
-    // Start polling whenever we show auth overlay or focus returns
-    var origShowAuth = showAuthOverlay;
-    showAuthOverlay = function() {
-      origShowAuth();
+    // Start polling immediately if not logged in
+    if (!authToken) {
       startAuthPoll();
-    };
-    window.showAuthOverlay = showAuthOverlay;
+    }
 
+    // Cross-tab storage event: fires when another tab/popup writes to localStorage
+    window.addEventListener('storage', function(e) {
+      if (e.key === 'ultralight_token' && e.newValue && e.newValue !== authToken) {
+        authToken = e.newValue;
+        if (authPollInterval) {
+          clearInterval(authPollInterval);
+          authPollInterval = null;
+        }
+        hideAuthOverlay();
+        updateAuthUI();
+      }
+    });
+
+    // Also re-check on focus (e.g., user switches back from auth tab)
     window.addEventListener('focus', function() {
       var token = localStorage.getItem('ultralight_token');
       if (token && token !== authToken) {
@@ -2411,6 +2428,8 @@ export function getLayoutHTML(options: {
         hideAuthOverlay();
         updateAuthUI();
       }
+      // Restart polling if still not logged in
+      if (!authToken) startAuthPoll();
     });
 
     async function updateAuthUI() {
@@ -2474,6 +2493,9 @@ export function getLayoutHTML(options: {
       // Update nav
       document.getElementById('navPreAuth').classList.add('hidden');
       document.getElementById('navPostAuth').classList.remove('hidden');
+
+      // Update hero CTA to copy mode
+      setupHeroCTA();
 
       // Set avatar
       const avatarEls = document.querySelectorAll('.profile-avatar');
