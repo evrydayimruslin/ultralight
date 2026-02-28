@@ -102,8 +102,8 @@ export function createApp() {
         });
       }
 
-      // Settings page (account settings)
-      if (path === '/settings' && method === 'GET') {
+      // Settings page (account settings) — supports /settings, /settings/tokens, /settings/billing, /settings/supabase
+      if ((path === '/settings' || path.startsWith('/settings/')) && method === 'GET') {
         return new Response(getLayoutHTML({ initialView: 'dashboard' }), {
           headers: { 'Content-Type': 'text/html' },
         });

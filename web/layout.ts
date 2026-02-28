@@ -490,12 +490,6 @@ export function getLayoutHTML(options: {
       color: var(--text-muted);
     }
 
-    .app-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-      gap: var(--space-4);
-    }
-
     /* ============================================
        INPUT / FORM STYLES
        ============================================ */
@@ -1102,44 +1096,6 @@ export function getLayoutHTML(options: {
       gap: var(--space-3);
     }
 
-    .stats-row {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: var(--space-4);
-      margin-bottom: var(--space-8);
-    }
-
-    .stat-card {
-      background: var(--bg-raised);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      padding: var(--space-5);
-    }
-
-    .stat-card .stat-label {
-      font-size: 12px;
-      font-weight: 500;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin-bottom: var(--space-2);
-    }
-
-    .stat-card .stat-value {
-      font-size: 28px;
-      font-weight: 700;
-      color: var(--text-primary);
-      letter-spacing: -0.02em;
-    }
-
-    .stat-card .stat-change {
-      font-size: 12px;
-      margin-top: var(--space-1);
-    }
-
-    .stat-card .stat-change.positive { color: var(--success); }
-    .stat-card .stat-change.negative { color: var(--error); }
-
     .empty-state {
       display: flex;
       flex-direction: column;
@@ -1168,6 +1124,137 @@ export function getLayoutHTML(options: {
       font-size: 14px;
       max-width: 360px;
       margin-bottom: var(--space-6);
+    }
+
+    /* ============================================
+       APP LIST STYLES (replaces app-grid)
+       ============================================ */
+    .app-list {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .app-list-search {
+      margin-bottom: var(--space-4);
+    }
+
+    .app-list-search .input {
+      border-radius: 0;
+    }
+
+    .app-row {
+      display: flex;
+      align-items: center;
+      gap: var(--space-4);
+      padding: var(--space-4) var(--space-3);
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background var(--transition-fast);
+    }
+
+    .app-row:first-child {
+      border-top: 1px solid var(--border);
+    }
+
+    .app-row:hover {
+      background: var(--bg-hover);
+    }
+
+    .app-row-emoji {
+      font-size: 20px;
+      width: 32px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    .app-row-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .app-row-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+    }
+
+    .app-row-version {
+      font-size: 11px;
+      padding: 1px 6px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    .app-row-fn-count {
+      font-size: 11px;
+      padding: 1px 6px;
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    .app-row-desc {
+      font-size: 13px;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 2px;
+    }
+
+    /* ============================================
+       SETTINGS SIDEBAR LAYOUT
+       ============================================ */
+    .settings-layout {
+      display: flex;
+      gap: var(--space-8);
+      min-height: 60vh;
+    }
+
+    .settings-sidebar {
+      width: 200px;
+      flex-shrink: 0;
+      position: sticky;
+      top: calc(var(--nav-height) + var(--space-8));
+      align-self: flex-start;
+    }
+
+    .settings-sidebar-item {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      padding: var(--space-2) var(--space-3);
+      font-size: 13px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      border-left: 2px solid transparent;
+    }
+
+    .settings-sidebar-item:hover {
+      color: var(--text-primary);
+      background: var(--bg-hover);
+    }
+
+    .settings-sidebar-item.active {
+      color: var(--text-primary);
+      font-weight: 600;
+      border-left-color: var(--accent);
+      background: var(--bg-subtle);
+    }
+
+    .settings-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .settings-panel {
+      animation: fade-in 0.15s ease;
     }
 
     /* ============================================
@@ -1588,10 +1675,6 @@ export function getLayoutHTML(options: {
        RESPONSIVE BREAKPOINTS
        ============================================ */
     @media (max-width: 1024px) {
-      .app-grid {
-        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-      }
-
       .hero h1 {
         font-size: 44px;
       }
@@ -1653,10 +1736,6 @@ export function getLayoutHTML(options: {
         margin-left: 0;
       }
 
-      .app-grid {
-        grid-template-columns: 1fr;
-      }
-
       .app-header {
         flex-direction: column;
       }
@@ -1664,10 +1743,6 @@ export function getLayoutHTML(options: {
       .app-header-right {
         width: 100%;
         flex-wrap: wrap;
-      }
-
-      .stats-row {
-        grid-template-columns: 1fr 1fr;
       }
 
       .dashboard-header {
@@ -1691,15 +1766,38 @@ export function getLayoutHTML(options: {
         min-width: unset;
         max-width: 100%;
       }
+
+      .settings-layout {
+        flex-direction: column;
+      }
+
+      .settings-sidebar {
+        width: 100%;
+        position: static;
+        display: flex;
+        gap: var(--space-1);
+        overflow-x: auto;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: var(--space-2);
+        margin-bottom: var(--space-4);
+      }
+
+      .settings-sidebar-item {
+        border-left: none;
+        border-bottom: 2px solid transparent;
+        white-space: nowrap;
+        padding: var(--space-2) var(--space-3);
+      }
+
+      .settings-sidebar-item.active {
+        border-left-color: transparent;
+        border-bottom-color: var(--accent);
+      }
     }
 
     @media (max-width: 480px) {
       .hero h1 {
         font-size: 28px;
-      }
-
-      .stats-row {
-        grid-template-columns: 1fr;
       }
 
       .text-display {
@@ -1812,10 +1910,6 @@ export function getLayoutHTML(options: {
           </div>
           <div id="profileDropdown" class="profile-dropdown">
             <div id="profileDropdownHeader" class="profile-dropdown-header"><span id="profileEmail" style="font-size:12px;color:var(--text-muted);display:block;margin-top:2px;"></span></div>
-            <div class="profile-dropdown-item" data-action="settings">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-              Settings
-            </div>
             <div class="profile-dropdown-item" data-action="tokens">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
               API Tokens
@@ -2019,49 +2113,22 @@ export function getLayoutHTML(options: {
          ========================================== -->
     <div id="dashboardView" style="display:none;">
       <div class="dashboard-header">
-        <h1>Your Apps</h1>
-        <div class="dashboard-actions" style="display:flex;align-items:center;gap:var(--space-3);">
-          <button id="dashSetupBtn" class="btn btn-ghost btn-sm" title="Setup instructions">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-            Setup
+        <h1>Library</h1>
+        <div class="dashboard-actions">
+          <button id="copyAgentInstructionsBtn" class="btn btn-primary btn-sm" style="border-radius:0;gap:var(--space-2);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            Copy agent instructions
           </button>
-          <button id="newAppBtn" class="btn btn-primary btn-sm" onclick="generateSetupInstructions()">+ New App</button>
         </div>
       </div>
 
-      <!-- Dashboard Setup Block (expandable) -->
-      <div id="dashSetupBlock" class="hidden" style="background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-4);margin-bottom:var(--space-6);">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-3);">
-          <span style="font-size:13px;font-weight:500;color:var(--text-secondary);">Setup Instructions</span>
-          <button id="copyDashSetup" class="btn btn-ghost btn-sm" style="font-size:12px;">Copy</button>
-        </div>
-        <pre id="dashSetupText" style="background:var(--bg-base);border:1px solid var(--border);border-radius:var(--radius-md);padding:var(--space-3);font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);white-space:pre-wrap;word-break:break-all;"></pre>
+      <!-- Search -->
+      <div class="app-list-search">
+        <input id="appSearchInput" class="input" type="text" placeholder="Search apps...">
       </div>
 
-      <!-- Dashboard Stats -->
-      <div id="dashStats" class="stats-row">
-        <div class="stat-card">
-          <div class="stat-label">Total Apps</div>
-          <div class="stat-value" id="statTotalApps">-</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Total Calls</div>
-          <div class="stat-value" id="statTotalCalls">-</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Status</div>
-          <div class="stat-value" id="statStatus" style="color:var(--success);">Operational</div>
-        </div>
-      </div>
-
-      <!-- App Grid -->
-      <div id="appGrid" class="app-grid"></div>
-
-      <!-- Activity Feed -->
-      <section id="activityFeed" style="margin-top:var(--space-8);">
-        <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Recent Activity</h2>
-        <div id="activityList" style="display:flex;flex-direction:column;gap:var(--space-2);"></div>
-      </section>
+      <!-- App List -->
+      <div id="appList" class="app-list"></div>
     </div>
 
     <!-- ==========================================
@@ -2219,42 +2286,62 @@ export function getLayoutHTML(options: {
          ACCOUNT SETTINGS VIEW
          ========================================== -->
     <div id="accountView" style="display:none;">
-      <button id="accountBackBtn" class="btn btn-ghost btn-sm" style="margin-bottom:var(--space-4);gap:var(--space-2);display:inline-flex;align-items:center;">
+      <button id="accountBackBtn" class="btn btn-ghost btn-sm" style="margin-bottom:var(--space-4);gap:var(--space-2);display:inline-flex;align-items:center;border-radius:0;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         Back
       </button>
-      <h1 style="font-size:22px;font-weight:700;margin-bottom:var(--space-8);letter-spacing:-0.02em;">Account Settings</h1>
 
-      <!-- API Tokens Section -->
-      <section style="margin-bottom:var(--space-8);">
-        <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">API Tokens</h2>
-        <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Manage your API tokens for CLI authentication and programmatic access.</p>
-        <div id="tokensList" style="display:flex;flex-direction:column;gap:var(--space-2);margin-bottom:var(--space-4);"></div>
-        <button id="createTokenBtn" class="btn btn-primary btn-sm">Create New Token</button>
-      </section>
-
-      <!-- Billing Section -->
-      <section style="margin-bottom:var(--space-8);">
-        <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Billing &amp; Balance</h2>
-        <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-5);">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-4);">
-            <div>
-              <div style="font-size:12px;color:var(--text-muted);margin-bottom:var(--space-1);">Current Balance</div>
-              <div id="accountBalance" style="font-size:28px;font-weight:700;color:var(--text-primary);">$0.00</div>
-            </div>
-            <button id="addFundsBtn" class="btn btn-primary btn-sm">Add Funds</button>
+      <div class="settings-layout">
+        <!-- Sidebar -->
+        <nav class="settings-sidebar">
+          <div class="settings-sidebar-item active" data-settings-section="tokens">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+            API Tokens
           </div>
-          <div id="billingHistory" style="font-size:13px;color:var(--text-muted);">No billing history.</div>
-        </div>
-      </section>
+          <div class="settings-sidebar-item" data-settings-section="billing">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+            Billing
+          </div>
+          <div class="settings-sidebar-item" data-settings-section="supabase">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+            Supabase
+          </div>
+        </nav>
 
-      <!-- Supabase Servers Section -->
-      <section style="margin-bottom:var(--space-8);">
-        <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Supabase Servers</h2>
-        <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Connect Supabase databases to enable SQL queries from your apps.</p>
-        <div id="supabaseServersList" style="display:flex;flex-direction:column;gap:var(--space-2);margin-bottom:var(--space-4);"></div>
-        <button id="addSupabaseBtn" class="btn btn-ghost btn-sm">+ Add Supabase Server</button>
-      </section>
+        <!-- Content Panels -->
+        <div class="settings-content">
+          <!-- Tokens Panel -->
+          <section id="settingsTokensPanel" class="settings-panel">
+            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">API Tokens</h2>
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Manage your API tokens for CLI authentication and programmatic access.</p>
+            <div id="tokensList" style="display:flex;flex-direction:column;gap:var(--space-2);margin-bottom:var(--space-4);"></div>
+            <button id="createTokenBtn" class="btn btn-primary btn-sm" style="border-radius:0;">Create New Token</button>
+          </section>
+
+          <!-- Billing Panel -->
+          <section id="settingsBillingPanel" class="settings-panel" style="display:none;">
+            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Billing</h2>
+            <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-4);">
+                <div>
+                  <div style="font-size:12px;color:var(--text-muted);margin-bottom:var(--space-1);">Current Balance</div>
+                  <div id="accountBalance" style="font-size:28px;font-weight:700;color:var(--text-primary);">$0.00</div>
+                </div>
+                <button id="addFundsBtn" class="btn btn-primary btn-sm" style="border-radius:0;">Add Funds</button>
+              </div>
+              <div id="billingHistory" style="font-size:13px;color:var(--text-muted);">No billing history.</div>
+            </div>
+          </section>
+
+          <!-- Supabase Panel -->
+          <section id="settingsSupabasePanel" class="settings-panel" style="display:none;">
+            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Supabase Servers</h2>
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Connect Supabase databases to enable SQL queries from your apps.</p>
+            <div id="supabaseServersList" style="display:flex;flex-direction:column;gap:var(--space-2);margin-bottom:var(--space-4);"></div>
+            <button id="addSupabaseBtn" class="btn btn-ghost btn-sm" style="border-radius:0;">+ Add Supabase Server</button>
+          </section>
+        </div>
+      </div>
     </div>
 
   <!-- ============================================
@@ -2554,8 +2641,17 @@ export function getLayoutHTML(options: {
           showSetupBlock();
         }
       } else if (currentView === 'dashboard') {
-        showView('dashboard');
-        loadDashboardData();
+        // Check if URL is actually a settings sub-route
+        var pathname = window.location.pathname;
+        if (pathname === '/settings' || pathname.startsWith('/settings/')) {
+          var settingsSection = pathname.split('/settings/')[1] || 'tokens';
+          showView('account');
+          switchSettingsSection(settingsSection);
+          loadAccountData();
+        } else {
+          showView('dashboard');
+          loadDashboardData();
+        }
       } else if (currentView === 'app') {
         showView('app');
       }
@@ -2614,7 +2710,7 @@ export function getLayoutHTML(options: {
       history.pushState({}, '', '/dash');
       currentAppId = null;
       showView('dashboard');
-      renderAppGrid();
+      renderAppList();
       loadDashboardData();
     }
 
@@ -2626,9 +2722,11 @@ export function getLayoutHTML(options: {
     }
     window.navigateToApp = navigateToApp;
 
-    function navigateToAccount() {
-      history.pushState({}, '', '/settings');
+    function navigateToAccount(section) {
+      var sec = section || 'tokens';
+      history.pushState({}, '', '/settings/' + sec);
       showView('account');
+      switchSettingsSection(sec);
       loadAccountData();
     }
     window.navigateToAccount = navigateToAccount;
@@ -2639,8 +2737,9 @@ export function getLayoutHTML(options: {
         navigateToHome();
       } else if (path === '/dash' || path === '/dashboard') {
         navigateToDashboard();
-      } else if (path === '/settings') {
-        navigateToAccount();
+      } else if (path === '/settings' || path.startsWith('/settings/')) {
+        const section = path.split('/settings/')[1] || 'tokens';
+        navigateToAccount(section);
       } else if (path.startsWith('/a/')) {
         const appId = path.slice(3).split('/')[0];
         navigateToApp(appId);
@@ -2676,12 +2775,58 @@ export function getLayoutHTML(options: {
       el.addEventListener('click', function() {
         const action = this.dataset.action;
         profileDropdown.classList.remove('open');
-        if (action === 'settings') navigateToAccount();
-        else if (action === 'tokens') { navigateToAccount(); setTimeout(() => document.getElementById('tokensSection')?.scrollIntoView({ behavior: 'smooth' }), 100); }
-        else if (action === 'billing') { navigateToAccount(); setTimeout(() => document.getElementById('billingSection')?.scrollIntoView({ behavior: 'smooth' }), 100); }
-        else if (action === 'supabase') { navigateToAccount(); setTimeout(() => document.getElementById('supabaseSection')?.scrollIntoView({ behavior: 'smooth' }), 100); }
+        if (action === 'tokens') navigateToAccount('tokens');
+        else if (action === 'billing') navigateToAccount('billing');
+        else if (action === 'supabase') navigateToAccount('supabase');
         else if (action === 'signout') signOut();
       });
+    });
+
+    // ===== Settings Sidebar =====
+    let activeSettingsSection = 'tokens';
+
+    function switchSettingsSection(section) {
+      activeSettingsSection = section;
+
+      // Update sidebar active state
+      document.querySelectorAll('[data-settings-section]').forEach(function(el) {
+        el.classList.toggle('active', el.dataset.settingsSection === section);
+      });
+
+      // Show/hide panels
+      var panelMap = {
+        tokens: 'settingsTokensPanel',
+        billing: 'settingsBillingPanel',
+        supabase: 'settingsSupabasePanel'
+      };
+
+      Object.values(panelMap).forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+      });
+
+      var panel = document.getElementById(panelMap[section]);
+      if (panel) panel.style.display = 'block';
+
+      // Update URL
+      history.replaceState({}, '', '/settings/' + section);
+    }
+
+    // Sidebar click handlers
+    document.querySelectorAll('.settings-sidebar-item[data-settings-section]').forEach(function(el) {
+      el.addEventListener('click', function() {
+        switchSettingsSection(this.dataset.settingsSection);
+      });
+    });
+
+    // Back button handlers
+    document.getElementById('accountBackBtn')?.addEventListener('click', function() {
+      navigateToDashboard();
+    });
+
+    document.getElementById('appBackBtn')?.addEventListener('click', function(e) {
+      e.preventDefault();
+      navigateToDashboard();
     });
 
     // ===== Connection State Machine =====
@@ -2812,28 +2957,6 @@ export function getLayoutHTML(options: {
       }
     });
 
-    // Dashboard setup instructions button (collapsed version)
-    document.getElementById('dashSetupBtn')?.addEventListener('click', async function() {
-      if (!setupCommandStr) {
-        await generateSetupInstructions();
-      }
-      // Show a mini modal or expand the setup block
-      const block = document.getElementById('dashSetupBlock');
-      if (block) {
-        block.classList.toggle('hidden');
-        if (!block.classList.contains('hidden')) {
-          const el = document.getElementById('dashSetupText');
-          if (el) el.textContent = setupCommandStr;
-        }
-      }
-    });
-
-    document.getElementById('copyDashSetup')?.addEventListener('click', async function() {
-      if (!setupCommandStr) return;
-      await navigator.clipboard.writeText(setupCommandStr);
-      showToast('Setup instructions copied!');
-    });
-
     // ===== Apps =====
     async function loadApps() {
       if (!authToken) return;
@@ -2843,105 +2966,82 @@ export function getLayoutHTML(options: {
         });
         if (res.ok) {
           apps = await res.json();
-          renderAppGrid();
+          renderAppList();
         }
       } catch {}
     }
 
-    function renderAppGrid() {
-      const grid = document.getElementById('appGrid');
-      if (!grid) return;
+    function renderAppList(filterText) {
+      const list = document.getElementById('appList');
+      if (!list) return;
 
-      if (!apps || apps.length === 0) {
-        grid.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📡</div><div class="empty-state-title">No apps yet</div><div class="empty-state-desc">Copy the setup instructions and paste them into your agent to deploy your first app.</div></div>';
+      const filtered = filterText
+        ? apps.filter(function(a) {
+            const searchStr = ((a.name || '') + ' ' + (a.description || '') + ' ' + (a.slug || '')).toLowerCase();
+            return searchStr.indexOf(filterText.toLowerCase()) !== -1;
+          })
+        : apps;
+
+      if (!filtered || filtered.length === 0) {
+        list.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📡</div><div class="empty-state-title">' +
+          (filterText ? 'No matching apps' : 'No apps yet') +
+          '</div><div class="empty-state-desc">' +
+          (filterText ? 'Try a different search term.' : 'Copy the agent instructions and paste them into your agent to deploy your first app.') +
+          '</div></div>';
         return;
       }
 
-      grid.innerHTML = apps.map(function(app) {
+      list.innerHTML = filtered.map(function(app) {
         const emoji = getAppEmoji(app.name || app.slug);
         const name = escapeHtml(app.name || app.slug || 'Untitled');
-        const desc = escapeHtml((app.description || '').slice(0, 80));
+        const desc = escapeHtml((app.description || '').slice(0, 120));
         const version = escapeHtml(app.current_version || 'v1.0.0');
         const fnCount = (app.manifest?.functions || []).length;
-        return '<div class="app-card" onclick="navigateToApp(\\\'' + app.id + '\\\')">' +
-          '<div class="app-card-header">' +
-            '<span class="app-card-emoji">' + emoji + '</span>' +
-            '<span class="app-card-name">' + name + '</span>' +
-            '<span class="app-card-version">' + version + '</span>' +
+        return '<div class="app-row" onclick="navigateToApp(\\\'' + app.id + '\\\')">' +
+          '<div class="app-row-emoji">' + emoji + '</div>' +
+          '<div class="app-row-info">' +
+            '<div class="app-row-name">' + name +
+              ' <span class="app-row-version">' + version + '</span>' +
+              ' <span class="app-row-fn-count">' + fnCount + ' fn' + (fnCount !== 1 ? 's' : '') + '</span>' +
+            '</div>' +
+            (desc ? '<div class="app-row-desc">' + desc + '</div>' : '') +
           '</div>' +
-          (desc ? '<div class="app-card-desc">' + desc + '</div>' : '') +
-          '<div class="app-card-meta">' + fnCount + ' function' + (fnCount !== 1 ? 's' : '') + '</div>' +
         '</div>';
       }).join('');
-
-      // Update stats
-      const totalAppsEl = document.getElementById('statTotalApps');
-      if (totalAppsEl) totalAppsEl.textContent = apps.length;
     }
+
+    // Search input listener
+    document.getElementById('appSearchInput')?.addEventListener('input', function() {
+      renderAppList(this.value);
+    });
+
+    // Copy agent instructions button on dashboard
+    document.getElementById('copyAgentInstructionsBtn')?.addEventListener('click', async function() {
+      if (!setupCommandStr) {
+        await generateSetupInstructions();
+      }
+      if (setupCommandStr) {
+        try {
+          await navigator.clipboard.writeText(setupCommandStr);
+          var btn = document.getElementById('copyAgentInstructionsBtn');
+          var origText = btn.innerHTML;
+          btn.textContent = 'Copied!';
+          btn.style.background = 'var(--success)';
+          setTimeout(function() {
+            btn.innerHTML = origText;
+            btn.style.background = '';
+          }, 2000);
+        } catch(e) {
+          showToast('Failed to copy', 'error');
+        }
+      }
+    });
 
     // ===== Dashboard =====
     async function loadDashboardData() {
-      renderAppGrid();
-      loadRecentActivity();
-      loadDashStats();
+      renderAppList();
     }
 
-    async function loadDashStats() {
-      // Total calls from call log
-      try {
-        const res = await fetch('/api/user/call-log?limit=1', {
-          headers: { 'Authorization': 'Bearer ' + authToken },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          const totalCallsEl = document.getElementById('statTotalCalls');
-          if (totalCallsEl) totalCallsEl.textContent = (data.total || data.length || 0).toLocaleString();
-        }
-      } catch {}
-    }
-
-    async function loadRecentActivity() {
-      const feed = document.getElementById('activityFeed');
-      if (!feed) return;
-
-      try {
-        const res = await fetch('/api/user/call-log?limit=20', {
-          headers: { 'Authorization': 'Bearer ' + authToken },
-        });
-        if (!res.ok) {
-          feed.innerHTML = '<div class="empty-state"><div class="empty-state-desc">No recent activity</div></div>';
-          return;
-        }
-        const logs = await res.json();
-        const items = Array.isArray(logs) ? logs : (logs.logs || []);
-
-        if (items.length === 0) {
-          feed.innerHTML = '<div class="empty-state"><div class="empty-state-desc">No recent activity. Deploy an app to get started.</div></div>';
-          return;
-        }
-
-        const appNames = {};
-        apps.forEach(function(a) { appNames[a.id] = a.name || a.slug; });
-
-        feed.innerHTML = '<div class="activity-list">' + items.slice(0, 15).map(function(log) {
-          const appName = escapeHtml(appNames[log.app_id] || log.app_name || 'Unknown');
-          const fn = escapeHtml(log.function_name || log.method || '');
-          const success = log.success !== false;
-          const time = relTime(log.created_at);
-          return '<div class="activity-item">' +
-            '<div class="activity-dot' + (success ? '' : ' activity-dot-error') + '"></div>' +
-            '<div class="activity-content">' +
-              '<span class="activity-fn">' + fn + '()</span>' +
-              '<span class="activity-sep">·</span>' +
-              '<span class="activity-app">' + appName + '</span>' +
-            '</div>' +
-            '<span class="activity-time">' + time + '</span>' +
-          '</div>';
-        }).join('') + '</div>';
-      } catch {
-        feed.innerHTML = '<div class="empty-state"><div class="empty-state-desc">Could not load activity.</div></div>';
-      }
-    }
 
     // ===== App Detail Page =====
     async function loadAppPage(appId) {
