@@ -49,18 +49,17 @@ export async function handleAuth(request: Request): Promise<Response> {
     const origin = url.origin.replace('http://', 'https://');
     const returnTo = url.searchParams.get('return_to');
 
-    // Generate PKCE code verifier and challenge
+    // Generate PKCE code verifier and challenge (S256)
     const codeVerifier = generateCodeVerifier();
     const codeChallenge = await generateCodeChallenge(codeVerifier);
 
     // Embed verifier in callback URL so it survives the redirect chain
-    // (cookies may not survive cross-domain redirect chain: us → Supabase → Google → Supabase → us)
     const callbackParams = new URLSearchParams();
     callbackParams.set('v', codeVerifier);
     if (returnTo) callbackParams.set('return_to', returnTo);
     const callbackUrl = `${origin}/auth/callback?${callbackParams.toString()}`;
 
-    const authUrl = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(callbackUrl)}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=s256`;
+    const authUrl = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(callbackUrl)}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=S256`;
 
     return new Response(null, {
       status: 302,
@@ -105,12 +104,15 @@ export async function handleAuth(request: Request): Promise<Response> {
         });
       }
 
-      // Code exchange failed — show error with details
+      // Code exchange failed — show error with full details for debugging
       let errBody = '';
       try { errBody = await tokenResponse.text(); } catch {}
       console.error('[auth] Code exchange failed:', tokenResponse.status, errBody);
       const hasVerifier = codeVerifier ? 'yes (' + codeVerifier.length + ' chars)' : 'MISSING';
-      return new Response(getCallbackErrorHTML('Code exchange failed (status ' + tokenResponse.status + ', verifier: ' + hasVerifier + '). Please try again.'), {
+      // Show Supabase's actual error message
+      let supabaseError = '';
+      try { const parsed = JSON.parse(errBody); supabaseError = parsed.error_description || parsed.msg || parsed.error || ''; } catch { supabaseError = errBody.substring(0, 200); }
+      return new Response(getCallbackErrorHTML('Code exchange failed (status ' + tokenResponse.status + ', verifier: ' + hasVerifier + '). Supabase says: ' + supabaseError), {
         headers: { 'Content-Type': 'text/html' },
       });
     }
