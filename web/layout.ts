@@ -2450,10 +2450,8 @@ export function getLayoutHTML(options: {
     // On page load, authToken is already read from localStorage above
 
     async function updateAuthUI() {
-      console.log('[updateAuthUI] start. authToken:', !!authToken);
       if (!authToken) {
         // Not authenticated
-        console.log('[updateAuthUI] no token, showing pre-auth');
         document.getElementById('navPreAuth').classList.remove('hidden');
         document.getElementById('navPostAuth').classList.add('hidden');
         showView('home');
@@ -2462,16 +2460,13 @@ export function getLayoutHTML(options: {
 
       // Decode JWT
       const payload = decodeJWT(authToken);
-      console.log('[updateAuthUI] decoded JWT:', !!payload, payload?.email);
       if (!payload) {
-        console.log('[updateAuthUI] JWT decode failed, signing out');
         signOut();
         return;
       }
 
       // Check expiration
       if (payload.exp && payload.exp * 1000 < Date.now()) {
-        console.log('[updateAuthUI] token expired, trying refresh');
         // Try refresh
         const refreshToken = localStorage.getItem('ultralight_refresh_token');
         if (refreshToken) {
@@ -2486,26 +2481,21 @@ export function getLayoutHTML(options: {
               authToken = data.access_token;
               localStorage.setItem('ultralight_token', data.access_token);
               if (data.refresh_token) localStorage.setItem('ultralight_refresh_token', data.refresh_token);
-              console.log('[updateAuthUI] refresh succeeded');
             } else {
-              console.log('[updateAuthUI] refresh failed, signing out');
               signOut();
               return;
             }
           } catch {
-            console.log('[updateAuthUI] refresh error, signing out');
             signOut();
             return;
           }
         } else {
-          console.log('[updateAuthUI] no refresh token, signing out');
           signOut();
           return;
         }
       }
 
       currentUser = payload;
-      console.log('[updateAuthUI] user set, fetching profile');
 
       // Fetch full profile
       try {
@@ -2515,10 +2505,7 @@ export function getLayoutHTML(options: {
         if (res.ok) {
           userProfile = await res.json();
         }
-        console.log('[updateAuthUI] profile fetch done, status:', res.status);
-      } catch (profileErr) {
-        console.error('[updateAuthUI] profile fetch error:', profileErr);
-      }
+      } catch {}
 
       // Update nav
       console.log('[updateAuthUI] switching to post-auth nav');
@@ -4037,14 +4024,7 @@ export function getLayoutHTML(options: {
     };
 
     // ===== Initialization =====
-    try {
-      console.log('[init] authToken present:', !!authToken, 'length:', authToken?.length);
-      await updateAuthUI();
-      console.log('[init] updateAuthUI completed. currentUser:', !!currentUser);
-    } catch (initErr) {
-      console.error('[init] updateAuthUI CRASHED:', initErr);
-      document.title = 'AUTH ERROR: ' + initErr.message;
-    }
+    await updateAuthUI();
 
     // Handle initial view
     ${initialView === 'app' && activeAppId ? `
