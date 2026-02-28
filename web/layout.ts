@@ -1207,15 +1207,16 @@ export function getLayoutHTML(options: {
       padding: var(--space-2) var(--space-4);
       font-size: 13px;
       font-weight: 500;
-      color: var(--text-inverse);
-      background: var(--accent);
-      border: none;
+      color: var(--text-primary);
+      background: transparent;
+      border: 1px solid var(--text-primary);
       cursor: pointer;
-      transition: background var(--transition-fast);
+      transition: all var(--transition-fast);
     }
 
     .nav-copy-btn:hover {
-      background: var(--accent-hover);
+      background: var(--text-primary);
+      color: var(--bg-base);
     }
 
     .app-overview-header {
