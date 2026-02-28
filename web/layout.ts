@@ -1970,11 +1970,11 @@ export function getLayoutHTML(options: {
       </a>
     </div>
     <div class="nav-right">
-      <!-- Pre-auth nav items -->
-      <div id="navPreAuth" style="display:flex;align-items:center;gap:var(--space-2);">
+      <!-- Pre-auth nav items (hidden until JS checks auth state) -->
+      <div id="navPreAuth" style="display:none;align-items:center;gap:var(--space-2);">
         <button id="navAuthBtn" class="btn btn-primary" style="border-radius:0;height:36px;padding:0 var(--space-5);font-size:14px;" onclick="document.getElementById('authOverlay').classList.remove('hidden')">Dashboard</button>
       </div>
-      <!-- Post-auth nav items (hidden by default) -->
+      <!-- Post-auth nav items (hidden until JS checks auth state) -->
       <div id="navPostAuth" class="hidden" style="display:none;align-items:center;gap:var(--space-3);">
         <button id="navCopyInstructionsBtn" class="nav-copy-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
@@ -2399,7 +2399,15 @@ export function getLayoutHTML(options: {
     let apps = [];
     let currentAppId = null;
     let currentView = '${initialView}';
-    let setupCommandStr = '';
+    let setupCommandStr = localStorage.getItem('ultralight_setup_cmd') || '';
+
+    // Instant auth nav switch — prevents flash of wrong nav state
+    if (authToken) {
+      document.getElementById('navPostAuth').style.display = 'flex';
+      document.getElementById('navPostAuth').classList.remove('hidden');
+    } else {
+      document.getElementById('navPreAuth').style.display = 'flex';
+    }
     let newlyCreatedTokenId = null;
     let connectionPollInterval = null;
     let currentEnvVars = {};
@@ -2654,6 +2662,7 @@ export function getLayoutHTML(options: {
       apps = [];
       localStorage.removeItem('ultralight_token');
       localStorage.removeItem('ultralight_refresh_token');
+      localStorage.removeItem('ultralight_setup_cmd');
       if (connectionPollInterval) clearInterval(connectionPollInterval);
       window.location.href = '/';
     }
@@ -2815,12 +2824,15 @@ export function getLayoutHTML(options: {
       var panel = document.getElementById(panelMap[section]);
       if (panel) panel.style.display = 'block';
 
-      // Update URL
+      // Update URL and load section data
       if (section === 'library') {
         history.replaceState({}, '', '/dash');
       } else if (section === 'marketplace') {
         history.replaceState({}, '', '/marketplace');
         loadMarketplace('', 'all');
+      } else if (section === 'keys') {
+        history.replaceState({}, '', '/settings/' + section);
+        loadTokens();
       } else {
         history.replaceState({}, '', '/settings/' + section);
       }
@@ -2964,14 +2976,17 @@ export function getLayoutHTML(options: {
 
     // Nav copy instructions button
     document.getElementById('navCopyInstructionsBtn')?.addEventListener('click', async function() {
+      var btn = document.getElementById('navCopyInstructionsBtn');
+      var origText = btn.innerHTML;
       if (!setupCommandStr) {
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation:spin 1s linear infinite"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> Generating...';
+        btn.disabled = true;
         await generateSetupInstructions();
+        btn.disabled = false;
       }
       if (setupCommandStr) {
         try {
           await navigator.clipboard.writeText(setupCommandStr);
-          var btn = document.getElementById('navCopyInstructionsBtn');
-          var origText = btn.innerHTML;
           btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Copied. Paste to agent';
           btn.style.background = 'var(--text-primary)';
           btn.style.color = 'var(--bg-base)';
@@ -2981,8 +2996,12 @@ export function getLayoutHTML(options: {
             btn.style.color = '';
           }, 5000);
         } catch(e) {
+          btn.innerHTML = origText;
           showToast('Failed to copy', 'error');
         }
+      } else {
+        btn.innerHTML = origText;
+        showToast('Could not generate setup instructions', 'error');
       }
     });
 
@@ -3081,6 +3100,7 @@ export function getLayoutHTML(options: {
         const tokenId = data.id;
 
         setupCommandStr = "I'd like you to set up Ultralight, the instant MCP app platform.\\nRun: npx ultralightpro setup --token " + token;
+        localStorage.setItem('ultralight_setup_cmd', setupCommandStr);
 
         const commandEl = document.getElementById('setupCode');
         if (commandEl) commandEl.textContent = setupCommandStr;
@@ -4047,7 +4067,8 @@ export function getLayoutHTML(options: {
           headers: { 'Authorization': 'Bearer ' + authToken },
         });
         if (!res.ok) return;
-        currentTokens = await res.json();
+        var tokenData = await res.json();
+        currentTokens = tokenData.tokens || tokenData;
 
         if (currentTokens.length === 0) {
           container.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">No API tokens. Create one to connect agents.</div>';
@@ -4071,35 +4092,43 @@ export function getLayoutHTML(options: {
     }
 
     window.createToken = async function() {
-      const nameInput = document.getElementById('tokenName');
-      const expirySelect = document.getElementById('tokenExpiry');
-      const name = nameInput?.value?.trim() || 'API Token';
-      const expiry = expirySelect?.value || '';
+      var name = prompt('Token name:');
+      if (!name || !name.trim()) return;
 
       try {
-        const body = { name: name };
-        if (expiry) body.expires_in_days = parseInt(expiry, 10);
+        var createBtn = document.getElementById('createTokenBtn');
+        if (createBtn) { createBtn.disabled = true; createBtn.textContent = 'Creating...'; }
 
         const res = await fetch('/api/user/tokens', {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
+          body: JSON.stringify({ name: name.trim() }),
         });
-        if (!res.ok) { showToast('Failed to create token', 'error'); return; }
+
+        if (createBtn) { createBtn.disabled = false; createBtn.textContent = 'Create New Token'; }
+
+        if (!res.ok) {
+          var errData = await res.json().catch(function() { return {}; });
+          showToast(errData.error || 'Failed to create token', 'error');
+          return;
+        }
         const data = await res.json();
 
         if (data.plaintext_token) {
-          const tokenDisplay = document.getElementById('newTokenDisplay');
-          if (tokenDisplay) {
-            tokenDisplay.classList.remove('hidden');
-            document.getElementById('newTokenValue').textContent = data.plaintext_token;
+          try {
+            await navigator.clipboard.writeText(data.plaintext_token);
+            showToast('Token created and copied to clipboard!');
+          } catch {
+            prompt('Token created! Copy it now — it will not be shown again:', data.plaintext_token);
           }
         }
-        if (nameInput) nameInput.value = '';
-        showToast('Token created! Copy it now — it will not be shown again.');
         loadTokens();
       } catch { showToast('Failed to create token', 'error'); }
     };
+
+    document.getElementById('createTokenBtn')?.addEventListener('click', function() {
+      window.createToken();
+    });
 
     window.copyNewToken = function() {
       const el = document.getElementById('newTokenValue');
