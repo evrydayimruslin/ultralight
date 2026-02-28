@@ -276,6 +276,13 @@ export function createApp() {
           return handleMcpDiscovery(request, appId);
         }
 
+        // SPA routes for app detail sidebar sections
+        if (['/permissions', '/environment', '/payments', '/logs'].includes(subPath) && method === 'GET') {
+          return new Response(getLayoutHTML({ initialView: 'app', activeAppId: appId }), {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }
+
         try {
           const appsService = createAppsService();
           const r2Service = createR2Service();

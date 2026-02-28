@@ -796,53 +796,6 @@ export function getLayoutHTML(options: {
     /* ============================================
        TAB SYSTEM
        ============================================ */
-    .tabs {
-      display: flex;
-      align-items: center;
-      gap: var(--space-1);
-      border-bottom: 1px solid var(--border);
-      margin-bottom: var(--space-6);
-    }
-
-    .tab {
-      position: relative;
-      padding: var(--space-3) var(--space-4);
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--text-muted);
-      cursor: pointer;
-      transition: color var(--transition-fast);
-      border-bottom: 2px solid transparent;
-      margin-bottom: -1px;
-    }
-
-    .tab:hover {
-      color: var(--text-secondary);
-    }
-
-    .tab.active {
-      color: var(--text-primary);
-      border-bottom-color: var(--accent);
-    }
-
-    .tab-badge {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 18px;
-      height: 18px;
-      padding: 0 5px;
-      font-size: 11px;
-      font-weight: 600;
-      background: var(--bg-active);
-      color: var(--text-secondary);
-      border-radius: var(--radius-full);
-      margin-left: var(--space-2);
-    }
-
-    .tab-content { display: none; }
-    .tab-content.active { display: block; }
-
     /* Pill tabs variant */
     .tabs-pill {
       display: flex;
@@ -1077,25 +1030,6 @@ export function getLayoutHTML(options: {
     /* ============================================
        DASHBOARD STYLES
        ============================================ */
-    .dashboard-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: var(--space-6);
-    }
-
-    .dashboard-header h1 {
-      font-size: 22px;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-    }
-
-    .dashboard-actions {
-      display: flex;
-      align-items: center;
-      gap: var(--space-3);
-    }
-
     .empty-state {
       display: flex;
       flex-direction: column;
@@ -1257,45 +1191,69 @@ export function getLayoutHTML(options: {
       animation: fade-in 0.15s ease;
     }
 
-    /* ============================================
-       APP DETAIL VIEW STYLES
-       ============================================ */
-    .app-header {
+    .settings-sidebar-back {
       display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      margin-bottom: var(--space-6);
-      gap: var(--space-4);
-    }
-
-    .app-header-left {
-      display: flex;
-      flex-direction: column;
+      align-items: center;
       gap: var(--space-2);
+      padding: var(--space-2) var(--space-3);
+      font-size: 13px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      margin-bottom: var(--space-3);
+      border-left: 2px solid transparent;
     }
 
-    .app-header h1 {
+    .settings-sidebar-back:hover {
+      color: var(--text-primary);
+    }
+
+    .nav-copy-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-2);
+      padding: var(--space-2) var(--space-4);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-inverse);
+      background: var(--accent);
+      border: none;
+      cursor: pointer;
+      transition: background var(--transition-fast);
+    }
+
+    .nav-copy-btn:hover {
+      background: var(--accent-hover);
+    }
+
+    .app-overview-header {
+      margin-bottom: var(--space-6);
+      padding-bottom: var(--space-6);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .app-overview-header h1 {
       font-size: 22px;
       font-weight: 700;
       letter-spacing: -0.02em;
+      margin-bottom: var(--space-2);
+    }
+
+    .app-overview-meta {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-3);
+    }
+
+    .app-overview-meta .meta-row {
       display: flex;
       align-items: center;
       gap: var(--space-3);
     }
 
-    .app-header .app-slug {
-      font-family: var(--font-mono);
-      font-size: 13px;
-      color: var(--text-muted);
-    }
-
-    .app-header-right {
-      display: flex;
-      align-items: center;
-      gap: var(--space-3);
-      flex-shrink: 0;
-    }
-
+    /* ============================================
+       APP DETAIL VIEW STYLES
+       ============================================ */
     .endpoint-display {
       display: flex;
       align-items: center;
@@ -1736,21 +1694,6 @@ export function getLayoutHTML(options: {
         margin-left: 0;
       }
 
-      .app-header {
-        flex-direction: column;
-      }
-
-      .app-header-right {
-        width: 100%;
-        flex-wrap: wrap;
-      }
-
-      .dashboard-header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: var(--space-3);
-      }
-
       .modal {
         max-width: 100%;
         border-radius: var(--radius-lg);
@@ -1792,6 +1735,18 @@ export function getLayoutHTML(options: {
       .settings-sidebar-item.active {
         border-left-color: transparent;
         border-bottom-color: var(--accent);
+      }
+
+      .nav-copy-btn {
+        display: none;
+      }
+
+      .settings-sidebar-back {
+        display: none;
+      }
+
+      .app-overview-header {
+        padding-bottom: var(--space-4);
       }
     }
 
@@ -1902,7 +1857,11 @@ export function getLayoutHTML(options: {
         <button id="navAuthBtn" class="btn btn-primary" style="border-radius:0;height:36px;padding:0 var(--space-5);font-size:14px;" onclick="document.getElementById('authOverlay').classList.remove('hidden')">Dashboard</button>
       </div>
       <!-- Post-auth nav items (hidden by default) -->
-      <div id="navPostAuth" class="hidden flex items-center gap-3">
+      <div id="navPostAuth" class="hidden" style="display:none;align-items:center;gap:var(--space-3);">
+        <button id="navCopyInstructionsBtn" class="nav-copy-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          Copy agent instructions
+        </button>
         <div class="relative">
           <div id="profileTrigger" class="profile-trigger">
             <div id="profileAvatar" class="profile-avatar">U</div>
@@ -1910,18 +1869,6 @@ export function getLayoutHTML(options: {
           </div>
           <div id="profileDropdown" class="profile-dropdown">
             <div id="profileDropdownHeader" class="profile-dropdown-header"><span id="profileEmail" style="font-size:12px;color:var(--text-muted);display:block;margin-top:2px;"></span></div>
-            <div class="profile-dropdown-item" data-action="tokens">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-              API Tokens
-            </div>
-            <div class="profile-dropdown-item" data-action="billing">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
-              Billing
-            </div>
-            <div class="profile-dropdown-item" data-action="supabase">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
-              Supabase
-            </div>
             <div class="profile-dropdown-divider"></div>
             <div class="profile-dropdown-item danger" data-action="signout">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -2112,214 +2059,43 @@ export function getLayoutHTML(options: {
          DASHBOARD VIEW
          ========================================== -->
     <div id="dashboardView" style="display:none;">
-      <div class="dashboard-header">
-        <h1>Library</h1>
-        <div class="dashboard-actions">
-          <button id="copyAgentInstructionsBtn" class="btn btn-primary btn-sm" style="border-radius:0;gap:var(--space-2);">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-            Copy agent instructions
-          </button>
-        </div>
-      </div>
-
-      <!-- Search -->
-      <div class="app-list-search">
-        <input id="appSearchInput" class="input" type="text" placeholder="Search apps...">
-      </div>
-
-      <!-- App List -->
-      <div id="appList" class="app-list"></div>
-    </div>
-
-    <!-- ==========================================
-         APP DETAIL VIEW
-         ========================================== -->
-    <div id="appView" style="display:none;">
-      <!-- Back to Dashboard -->
-      <button id="appBackBtn" class="btn btn-ghost btn-sm" style="margin-bottom:var(--space-4);gap:var(--space-2);display:inline-flex;align-items:center;">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-        Back to Dashboard
-      </button>
-
-      <!-- App Header -->
-      <div class="app-header">
-        <div class="app-header-left">
-          <h1 id="appDetailName">App Name</h1>
-          <div style="display:flex;align-items:center;gap:var(--space-3);margin-top:var(--space-2);">
-            <span id="appDetailVersion" style="font-size:12px;padding:2px 8px;background:var(--accent-soft);color:var(--accent);border-radius:var(--radius-full);font-weight:500;">v1.0.0</span>
-            <span id="appDetailStatus" style="font-size:12px;padding:2px 8px;background:rgba(52,211,153,0.1);color:var(--success);border-radius:var(--radius-full);font-weight:500;">Active</span>
-          </div>
-          <div style="display:flex;align-items:center;gap:var(--space-2);margin-top:var(--space-3);">
-            <span style="font-size:12px;color:var(--text-muted);">MCP Endpoint:</span>
-            <code id="appDetailEndpoint" style="font-size:12px;font-family:var(--font-mono);color:var(--text-secondary);background:var(--bg-active);padding:2px 8px;border-radius:var(--radius-sm);"></code>
-            <button id="appEndpointCopy" class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:11px;" onclick="copyAppEndpoint()">Copy</button>
-          </div>
-        </div>
-        <div class="app-header-right">
-          <button id="appEditBtn" class="btn btn-ghost btn-sm">Edit Code</button>
-          <button id="appDeleteBtn" class="btn btn-danger btn-sm">Delete</button>
-        </div>
-      </div>
-
-      <!-- Tab Bar -->
-      <div class="tabs" style="margin-top:var(--space-6);">
-        <button class="tab active" data-tab="overview">Overview</button>
-        <button class="tab" data-tab="settings">Settings</button>
-        <button class="tab" data-tab="logs">Logs</button>
-        <button class="tab" data-tab="business">Business</button>
-      </div>
-
-      <!-- Tab Content: Overview -->
-      <div id="appOverview" class="tab-content active" data-tab-content="overview">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-6);">
-          <!-- Functions List -->
-          <div>
-            <h3 style="font-size:14px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Functions</h3>
-            <div id="appFunctionsList" style="display:flex;flex-direction:column;gap:var(--space-2);"></div>
-          </div>
-          <!-- Health / Recent Calls -->
-          <div>
-            <h3 style="font-size:14px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Health</h3>
-            <div id="appHealthSummary" style="background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-4);font-size:13px;color:var(--text-secondary);line-height:1.6;">Loading...</div>
-            <h3 style="font-size:14px;font-weight:600;margin-top:var(--space-6);margin-bottom:var(--space-4);color:var(--text-primary);">Recent Calls</h3>
-            <div id="appRecentCalls" style="display:flex;flex-direction:column;gap:var(--space-2);"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Tab Content: Settings -->
-      <div id="appSettings" class="tab-content" data-tab-content="settings">
-        <!-- General Settings -->
-        <details open style="margin-bottom:var(--space-4);">
-          <summary style="font-size:14px;font-weight:600;color:var(--text-primary);cursor:pointer;padding:var(--space-3) 0;border-bottom:1px solid var(--border);">General</summary>
-          <div id="appSettingsGeneral" style="padding:var(--space-4) 0;">
-            <div style="display:flex;flex-direction:column;gap:var(--space-4);">
-              <div>
-                <label style="font-size:12px;font-weight:500;color:var(--text-secondary);display:block;margin-bottom:var(--space-2);">App Name</label>
-                <input id="settingAppName" type="text" class="input" placeholder="My App">
-              </div>
-              <div>
-                <label style="font-size:12px;font-weight:500;color:var(--text-secondary);display:block;margin-bottom:var(--space-2);">Description</label>
-                <textarea id="settingAppDesc" class="input" rows="3" placeholder="What does this app do?" style="resize:vertical;"></textarea>
-              </div>
-              <button id="settingSaveGeneral" class="btn btn-primary btn-sm" style="align-self:flex-start;">Save Changes</button>
-            </div>
-          </div>
-        </details>
-
-        <!-- Permissions -->
-        <details style="margin-bottom:var(--space-4);">
-          <summary style="font-size:14px;font-weight:600;color:var(--text-primary);cursor:pointer;padding:var(--space-3) 0;border-bottom:1px solid var(--border);">Permissions</summary>
-          <div id="appSettingsPermissions" style="padding:var(--space-4) 0;">
-            <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Control who can call your functions. Apps are private by default.</p>
-            <button id="managePermissionsBtn" class="btn btn-ghost btn-sm">Manage Permissions</button>
-          </div>
-        </details>
-
-        <!-- Database -->
-        <details style="margin-bottom:var(--space-4);">
-          <summary style="font-size:14px;font-weight:600;color:var(--text-primary);cursor:pointer;padding:var(--space-3) 0;border-bottom:1px solid var(--border);">Database</summary>
-          <div id="appSettingsDatabase" style="padding:var(--space-4) 0;">
-            <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Built-in KV store is available to all apps. Pro users can connect a Supabase database.</p>
-            <div id="dbConnectionStatus" style="font-size:12px;color:var(--text-muted);">Not connected</div>
-          </div>
-        </details>
-
-        <!-- Environment Variables -->
-        <details style="margin-bottom:var(--space-4);">
-          <summary style="font-size:14px;font-weight:600;color:var(--text-primary);cursor:pointer;padding:var(--space-3) 0;border-bottom:1px solid var(--border);">Environment Variables</summary>
-          <div id="appSettingsEnv" style="padding:var(--space-4) 0;">
-            <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Set environment variables accessible via the Ultralight SDK.</p>
-            <div id="envVarsList" style="display:flex;flex-direction:column;gap:var(--space-2);"></div>
-          </div>
-        </details>
-      </div>
-
-      <!-- Tab Content: Logs -->
-      <div id="appLogs" class="tab-content" data-tab-content="logs">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-4);">
-          <h3 style="font-size:14px;font-weight:600;color:var(--text-primary);">Call Log</h3>
-          <button id="refreshLogsBtn" class="btn btn-ghost btn-sm">Refresh</button>
-        </div>
-        <div style="overflow-x:auto;">
-          <table style="width:100%;border-collapse:collapse;font-size:13px;">
-            <thead>
-              <tr style="border-bottom:1px solid var(--border);">
-                <th style="text-align:left;padding:var(--space-3) var(--space-4);color:var(--text-muted);font-weight:500;font-size:12px;">Time</th>
-                <th style="text-align:left;padding:var(--space-3) var(--space-4);color:var(--text-muted);font-weight:500;font-size:12px;">Function</th>
-                <th style="text-align:left;padding:var(--space-3) var(--space-4);color:var(--text-muted);font-weight:500;font-size:12px;">Status</th>
-                <th style="text-align:left;padding:var(--space-3) var(--space-4);color:var(--text-muted);font-weight:500;font-size:12px;">Duration</th>
-                <th style="text-align:left;padding:var(--space-3) var(--space-4);color:var(--text-muted);font-weight:500;font-size:12px;">Caller</th>
-              </tr>
-            </thead>
-            <tbody id="logsTableBody"></tbody>
-          </table>
-        </div>
-        <div id="logsEmpty" style="text-align:center;padding:var(--space-8);color:var(--text-muted);font-size:13px;">No calls recorded yet.</div>
-      </div>
-
-      <!-- Tab Content: Business -->
-      <div id="appBusiness" class="tab-content" data-tab-content="business">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-6);">
-          <div>
-            <h3 style="font-size:14px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Pricing Configuration</h3>
-            <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-5);">
-              <div style="margin-bottom:var(--space-4);">
-                <label style="font-size:12px;font-weight:500;color:var(--text-secondary);display:block;margin-bottom:var(--space-2);">Price per call (USD)</label>
-                <input id="appPriceInput" type="number" class="input" placeholder="0.00" step="0.001" min="0">
-              </div>
-              <button id="savePricingBtn" class="btn btn-primary btn-sm">Save Pricing</button>
-            </div>
-          </div>
-          <div>
-            <h3 style="font-size:14px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Revenue</h3>
-            <div id="appRevenueSummary" style="background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-5);">
-              <div style="font-size:24px;font-weight:700;color:var(--text-primary);margin-bottom:var(--space-2);" id="revenueTotal">$0.00</div>
-              <div style="font-size:12px;color:var(--text-muted);">Total earned from paid calls</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ==========================================
-         ACCOUNT SETTINGS VIEW
-         ========================================== -->
-    <div id="accountView" style="display:none;">
-      <button id="accountBackBtn" class="btn btn-ghost btn-sm" style="margin-bottom:var(--space-4);gap:var(--space-2);display:inline-flex;align-items:center;border-radius:0;">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-        Back
-      </button>
-
       <div class="settings-layout">
         <!-- Sidebar -->
         <nav class="settings-sidebar">
-          <div class="settings-sidebar-item active" data-settings-section="tokens">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-            API Tokens
+          <div class="settings-sidebar-item active" data-dash-section="library">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+            Library
           </div>
-          <div class="settings-sidebar-item" data-settings-section="billing">
+          <div class="settings-sidebar-item" data-dash-section="keys">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+            API Keys
+          </div>
+          <div class="settings-sidebar-item" data-dash-section="billing">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
             Billing
-          </div>
-          <div class="settings-sidebar-item" data-settings-section="supabase">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
-            Supabase
           </div>
         </nav>
 
         <!-- Content Panels -->
         <div class="settings-content">
-          <!-- Tokens Panel -->
-          <section id="settingsTokensPanel" class="settings-panel">
-            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">API Tokens</h2>
+          <!-- Library Panel -->
+          <section id="dashLibraryPanel" class="settings-panel">
+            <div class="app-list-search">
+              <input id="appSearchInput" class="input" type="text" placeholder="Search apps...">
+            </div>
+            <div id="appList" class="app-list"></div>
+          </section>
+
+          <!-- API Keys Panel -->
+          <section id="dashKeysPanel" class="settings-panel" style="display:none;">
+            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">API Keys</h2>
             <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Manage your API tokens for CLI authentication and programmatic access.</p>
             <div id="tokensList" style="display:flex;flex-direction:column;gap:var(--space-2);margin-bottom:var(--space-4);"></div>
             <button id="createTokenBtn" class="btn btn-primary btn-sm" style="border-radius:0;">Create New Token</button>
           </section>
 
           <!-- Billing Panel -->
-          <section id="settingsBillingPanel" class="settings-panel" style="display:none;">
+          <section id="dashBillingPanel" class="settings-panel" style="display:none;">
             <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Billing</h2>
             <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-4);">
@@ -2332,13 +2108,79 @@ export function getLayoutHTML(options: {
               <div id="billingHistory" style="font-size:13px;color:var(--text-muted);">No billing history.</div>
             </div>
           </section>
+        </div>
+      </div>
+    </div>
 
-          <!-- Supabase Panel -->
-          <section id="settingsSupabasePanel" class="settings-panel" style="display:none;">
-            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Supabase Servers</h2>
-            <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Connect Supabase databases to enable SQL queries from your apps.</p>
-            <div id="supabaseServersList" style="display:flex;flex-direction:column;gap:var(--space-2);margin-bottom:var(--space-4);"></div>
-            <button id="addSupabaseBtn" class="btn btn-ghost btn-sm" style="border-radius:0;">+ Add Supabase Server</button>
+    <!-- ==========================================
+         APP DETAIL VIEW
+         ========================================== -->
+    <div id="appView" style="display:none;">
+      <div class="settings-layout">
+        <!-- App Sidebar -->
+        <nav class="settings-sidebar">
+          <div class="settings-sidebar-back" id="appBackBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            Back
+          </div>
+          <div class="settings-sidebar-item active" data-app-section="overview">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            Overview
+          </div>
+          <div class="settings-sidebar-item" data-app-section="permissions">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+            Permissions
+          </div>
+          <div class="settings-sidebar-item" data-app-section="environment">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            Environment
+          </div>
+          <div class="settings-sidebar-item" data-app-section="payments">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+            Payments
+          </div>
+          <div class="settings-sidebar-item" data-app-section="logs">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            Logs
+          </div>
+        </nav>
+
+        <!-- Content Panels -->
+        <div class="settings-content">
+          <!-- Overview Panel -->
+          <section id="appOverviewPanel" class="settings-panel">
+            <div id="appOverviewHeader" class="app-overview-header"></div>
+            <div id="appGeneralSettings"></div>
+            <div id="appFunctionsSection"></div>
+            <div id="skillsContent"></div>
+          </section>
+
+          <!-- Permissions Panel -->
+          <section id="appPermissionsPanel" class="settings-panel" style="display:none;">
+            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Permissions</h2>
+            <div id="appVisibilitySection"></div>
+            <div id="permissionsContent"></div>
+          </section>
+
+          <!-- Environment Panel -->
+          <section id="appEnvironmentPanel" class="settings-panel" style="display:none;">
+            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Environment</h2>
+            <div id="databaseContent"></div>
+            <div id="envVarsContent" style="margin-top:var(--space-6);"></div>
+          </section>
+
+          <!-- Payments Panel -->
+          <section id="appPaymentsPanel" class="settings-panel" style="display:none;">
+            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Payments</h2>
+            <div id="appPricingSection"></div>
+            <div id="revenueSection" style="margin-top:var(--space-6);"></div>
+          </section>
+
+          <!-- Logs Panel -->
+          <section id="appLogsPanel" class="settings-panel" style="display:none;">
+            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Logs</h2>
+            <div id="appLogsContent"></div>
+            <div id="appHealthSection" style="margin-top:var(--space-6);"></div>
           </section>
         </div>
       </div>
@@ -2540,7 +2382,9 @@ export function getLayoutHTML(options: {
       if (!authToken) {
         // Not authenticated
         document.getElementById('navPreAuth').classList.remove('hidden');
-        document.getElementById('navPostAuth').classList.add('hidden');
+        var navPostEl = document.getElementById('navPostAuth');
+        navPostEl.classList.add('hidden');
+        navPostEl.style.display = 'none';
         showView('home');
         return;
       }
@@ -2597,7 +2441,9 @@ export function getLayoutHTML(options: {
       // Update nav
       console.log('[updateAuthUI] switching to post-auth nav');
       document.getElementById('navPreAuth').classList.add('hidden');
-      document.getElementById('navPostAuth').classList.remove('hidden');
+      var navPost = document.getElementById('navPostAuth');
+      navPost.classList.remove('hidden');
+      navPost.style.display = 'flex';
 
       // Update hero CTA to copy mode
       setupHeroCTA();
@@ -2644,12 +2490,14 @@ export function getLayoutHTML(options: {
         // Check if URL is actually a settings sub-route
         var pathname = window.location.pathname;
         if (pathname === '/settings' || pathname.startsWith('/settings/')) {
-          var settingsSection = pathname.split('/settings/')[1] || 'tokens';
-          showView('account');
-          switchSettingsSection(settingsSection);
+          var settingsSection = pathname.split('/settings/')[1] || 'keys';
+          if (settingsSection === 'tokens') settingsSection = 'keys';
+          showView('dashboard');
+          switchDashSection(settingsSection);
           loadAccountData();
         } else {
           showView('dashboard');
+          switchDashSection('library');
           loadDashboardData();
         }
       } else if (currentView === 'app') {
@@ -2672,7 +2520,7 @@ export function getLayoutHTML(options: {
     // ===== Navigation =====
     function showView(view) {
       currentView = view;
-      ['homeView', 'dashboardView', 'appView', 'accountView'].forEach(id => {
+      ['homeView', 'dashboardView', 'appView'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
       });
@@ -2681,8 +2529,7 @@ export function getLayoutHTML(options: {
         home: 'homeView',
         dashboard: 'dashboardView',
         app: 'appView',
-        account: 'accountView',
-        leaderboard: 'dashboardView', // redirect leaderboard to dashboard
+        leaderboard: 'dashboardView',
       };
 
       const targetId = viewMap[view];
@@ -2710,23 +2557,31 @@ export function getLayoutHTML(options: {
       history.pushState({}, '', '/dash');
       currentAppId = null;
       showView('dashboard');
+      switchDashSection('library');
       renderAppList();
       loadDashboardData();
     }
 
-    function navigateToApp(appId) {
-      history.pushState({}, '', '/a/' + appId);
+    function navigateToApp(appId, section) {
+      var sec = section || 'overview';
+      if (sec === 'overview') {
+        history.pushState({}, '', '/a/' + appId);
+      } else {
+        history.pushState({}, '', '/a/' + appId + '/' + sec);
+      }
       currentAppId = appId;
       showView('app');
-      loadAppPage(appId);
+      loadAppPage(appId, sec);
     }
     window.navigateToApp = navigateToApp;
 
     function navigateToAccount(section) {
-      var sec = section || 'tokens';
+      var sec = section || 'keys';
+      // Map old names to new
+      if (sec === 'tokens') sec = 'keys';
       history.pushState({}, '', '/settings/' + sec);
-      showView('account');
-      switchSettingsSection(sec);
+      showView('dashboard');
+      switchDashSection(sec);
       loadAccountData();
     }
     window.navigateToAccount = navigateToAccount;
@@ -2736,13 +2591,22 @@ export function getLayoutHTML(options: {
       if (path === '/' || path === '/home') {
         navigateToHome();
       } else if (path === '/dash' || path === '/dashboard') {
-        navigateToDashboard();
+        showView('dashboard');
+        switchDashSection('library');
+        renderAppList();
+        loadDashboardData();
       } else if (path === '/settings' || path.startsWith('/settings/')) {
-        const section = path.split('/settings/')[1] || 'tokens';
-        navigateToAccount(section);
+        const section = path.split('/settings/')[1] || 'keys';
+        showView('dashboard');
+        switchDashSection(section);
+        loadAccountData();
       } else if (path.startsWith('/a/')) {
-        const appId = path.slice(3).split('/')[0];
-        navigateToApp(appId);
+        const parts = path.slice(3).split('/');
+        const appId = parts[0];
+        const section = parts[1] || 'overview';
+        currentAppId = appId;
+        showView('app');
+        loadAppPage(appId, section);
       }
     });
 
@@ -2775,29 +2639,26 @@ export function getLayoutHTML(options: {
       el.addEventListener('click', function() {
         const action = this.dataset.action;
         profileDropdown.classList.remove('open');
-        if (action === 'tokens') navigateToAccount('tokens');
-        else if (action === 'billing') navigateToAccount('billing');
-        else if (action === 'supabase') navigateToAccount('supabase');
-        else if (action === 'signout') signOut();
+        if (action === 'signout') signOut();
       });
     });
 
-    // ===== Settings Sidebar =====
-    let activeSettingsSection = 'tokens';
+    // ===== Dashboard Sidebar =====
+    let activeDashSection = 'library';
 
-    function switchSettingsSection(section) {
-      activeSettingsSection = section;
+    function switchDashSection(section) {
+      activeDashSection = section;
 
       // Update sidebar active state
-      document.querySelectorAll('[data-settings-section]').forEach(function(el) {
-        el.classList.toggle('active', el.dataset.settingsSection === section);
+      document.querySelectorAll('[data-dash-section]').forEach(function(el) {
+        el.classList.toggle('active', el.dataset.dashSection === section);
       });
 
       // Show/hide panels
       var panelMap = {
-        tokens: 'settingsTokensPanel',
-        billing: 'settingsBillingPanel',
-        supabase: 'settingsSupabasePanel'
+        library: 'dashLibraryPanel',
+        keys: 'dashKeysPanel',
+        billing: 'dashBillingPanel'
       };
 
       Object.values(panelMap).forEach(function(id) {
@@ -2809,24 +2670,89 @@ export function getLayoutHTML(options: {
       if (panel) panel.style.display = 'block';
 
       // Update URL
-      history.replaceState({}, '', '/settings/' + section);
+      if (section === 'library') {
+        history.replaceState({}, '', '/dash');
+      } else {
+        history.replaceState({}, '', '/settings/' + section);
+      }
     }
 
-    // Sidebar click handlers
-    document.querySelectorAll('.settings-sidebar-item[data-settings-section]').forEach(function(el) {
+    // Dashboard sidebar click handlers
+    document.querySelectorAll('[data-dash-section]').forEach(function(el) {
       el.addEventListener('click', function() {
-        switchSettingsSection(this.dataset.settingsSection);
+        switchDashSection(this.dataset.dashSection);
       });
     });
 
-    // Back button handlers
-    document.getElementById('accountBackBtn')?.addEventListener('click', function() {
-      navigateToDashboard();
+    // ===== App Sidebar =====
+    let activeAppSection = 'overview';
+
+    function switchAppSection(section) {
+      activeAppSection = section;
+
+      // Update sidebar active state
+      document.querySelectorAll('[data-app-section]').forEach(function(el) {
+        el.classList.toggle('active', el.dataset.appSection === section);
+      });
+
+      // Show/hide panels
+      var panelMap = {
+        overview: 'appOverviewPanel',
+        permissions: 'appPermissionsPanel',
+        environment: 'appEnvironmentPanel',
+        payments: 'appPaymentsPanel',
+        logs: 'appLogsPanel'
+      };
+
+      Object.values(panelMap).forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+      });
+
+      var panel = document.getElementById(panelMap[section]);
+      if (panel) panel.style.display = 'block';
+
+      // Update URL
+      if (section === 'overview') {
+        history.replaceState({}, '', '/a/' + currentAppId);
+      } else {
+        history.replaceState({}, '', '/a/' + currentAppId + '/' + section);
+      }
+    }
+
+    // App sidebar click handlers
+    document.querySelectorAll('[data-app-section]').forEach(function(el) {
+      el.addEventListener('click', function() {
+        switchAppSection(this.dataset.appSection);
+      });
     });
 
+    // Back button handler
     document.getElementById('appBackBtn')?.addEventListener('click', function(e) {
       e.preventDefault();
       navigateToDashboard();
+    });
+
+    // Nav copy instructions button
+    document.getElementById('navCopyInstructionsBtn')?.addEventListener('click', async function() {
+      if (!setupCommandStr) {
+        await generateSetupInstructions();
+      }
+      if (setupCommandStr) {
+        try {
+          await navigator.clipboard.writeText(setupCommandStr);
+          var btn = document.getElementById('navCopyInstructionsBtn');
+          var origText = btn.innerHTML;
+          btn.textContent = 'Copied!';
+          btn.style.background = 'var(--success)';
+          setTimeout(function() {
+            btn.innerHTML = origText;
+            btn.style.background = '';
+          }, 2000);
+        } catch(e) {
+          showToast('Failed to copy', 'error');
+        }
+      }
     });
 
     // ===== Connection State Machine =====
@@ -3015,27 +2941,7 @@ export function getLayoutHTML(options: {
       renderAppList(this.value);
     });
 
-    // Copy agent instructions button on dashboard
-    document.getElementById('copyAgentInstructionsBtn')?.addEventListener('click', async function() {
-      if (!setupCommandStr) {
-        await generateSetupInstructions();
-      }
-      if (setupCommandStr) {
-        try {
-          await navigator.clipboard.writeText(setupCommandStr);
-          var btn = document.getElementById('copyAgentInstructionsBtn');
-          var origText = btn.innerHTML;
-          btn.textContent = 'Copied!';
-          btn.style.background = 'var(--success)';
-          setTimeout(function() {
-            btn.innerHTML = origText;
-            btn.style.background = '';
-          }, 2000);
-        } catch(e) {
-          showToast('Failed to copy', 'error');
-        }
-      }
-    });
+    // (Copy agent instructions moved to nav bar — see navCopyInstructionsBtn handler above)
 
     // ===== Dashboard =====
     async function loadDashboardData() {
@@ -3044,11 +2950,11 @@ export function getLayoutHTML(options: {
 
 
     // ===== App Detail Page =====
-    async function loadAppPage(appId) {
+    async function loadAppPage(appId, section) {
       if (!authToken || !appId) return;
 
-      // Reset tab to overview
-      switchAppTab('overview');
+      var sec = section || 'overview';
+      switchAppSection(sec);
 
       try {
         const res = await fetch('/api/apps/' + appId, {
@@ -3060,88 +2966,97 @@ export function getLayoutHTML(options: {
         }
         const app = await res.json();
 
-        // App header
-        const nameEl = document.getElementById('appDetailName');
-        if (nameEl) nameEl.textContent = app.name || app.slug || 'Untitled';
-
-        const versionEl = document.getElementById('appDetailVersion');
-        if (versionEl) versionEl.textContent = app.current_version || 'v1.0.0';
-
         document.title = (app.name || app.slug) + ' - Ultralight';
-
-        // MCP Endpoint
-        const endpointUrl = window.location.origin + '/mcp/' + appId;
-        const endpointEl = document.getElementById('appDetailEndpoint');
-        if (endpointEl) endpointEl.textContent = endpointUrl;
 
         // Store current app data for editing
         window._currentApp = app;
 
         // Load all sections
         loadAppOverview(app);
-        loadAppSettings(app);
-        loadAppLogs(appId);
-        loadAppBusiness(appId, app);
+        loadAppPermissions(app);
+        loadAppEnvironment(app);
+        loadAppPayments(appId, app);
+        loadAppLogsSection(appId);
 
       } catch (err) {
         showToast('Error loading app: ' + (err.message || ''), 'error');
       }
     }
 
-    // Tab switching
-    function switchAppTab(tab) {
-      document.querySelectorAll('.tab[data-tab]').forEach(function(btn) {
-        btn.classList.toggle('active', btn.dataset.tab === tab);
-      });
-      document.querySelectorAll('.tab-content').forEach(function(panel) {
-        panel.style.display = panel.dataset.tabContent === tab ? 'block' : 'none';
-      });
-    }
-    window.switchAppTab = switchAppTab;
-
-    // Tab click handlers
-    document.querySelectorAll('.tab[data-tab][data-tab]').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        switchAppTab(this.dataset.tab);
-      });
-    });
-
     // ===== App Overview =====
     function loadAppOverview(app) {
-      const container = document.getElementById('appOverview');
-      if (!container) return;
+      // -- App header --
+      const headerEl = document.getElementById('appOverviewHeader');
+      if (headerEl) {
+        const endpointUrl = window.location.origin + '/mcp/' + app.id;
+        headerEl.innerHTML =
+          '<h1>' + escapeHtml(app.name || app.slug || 'Untitled') + '</h1>' +
+          '<div class="app-overview-meta">' +
+            '<div class="meta-row">' +
+              '<span style="font-size:12px;padding:2px 8px;background:var(--accent-soft);color:var(--accent);font-weight:500;">' + escapeHtml(app.current_version || 'v1.0.0') + '</span>' +
+              '<span style="font-size:12px;padding:2px 8px;background:rgba(52,211,153,0.1);color:var(--success);font-weight:500;">Active</span>' +
+            '</div>' +
+            '<div class="meta-row">' +
+              '<span style="font-size:12px;color:var(--text-muted);">MCP Endpoint:</span>' +
+              '<code style="font-size:12px;font-family:var(--font-mono);color:var(--text-secondary);background:var(--bg-active);padding:2px 8px;">' + escapeHtml(endpointUrl) + '</code>' +
+              '<button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:11px;" onclick="copyAppEndpoint()">Copy</button>' +
+            '</div>' +
+          '</div>';
+      }
 
-      const fns = app.manifest?.functions || [];
-      const functionsHtml = fns.length > 0
-        ? '<div class="function-list">' + fns.map(function(fn) {
-            const params = fn.parameters?.map(function(p) {
-              return '<span class="fn-param">' + escapeHtml(p.name) + '<span class="fn-param-type">: ' + escapeHtml(p.type || 'any') + '</span>' + (p.required ? '' : '?') + '</span>';
-            }).join(', ') || '';
-            return '<div class="function-item">' +
-              '<div class="function-name"><code>' + escapeHtml(fn.name) + '</code>(' + params + ')</div>' +
-              (fn.description ? '<div class="function-desc">' + escapeHtml(fn.description) + '</div>' : '') +
-            '</div>';
-          }).join('') + '</div>'
-        : '<div class="empty-state"><div class="empty-state-desc">No functions found in manifest.</div></div>';
+      // -- General settings --
+      const generalEl = document.getElementById('appGeneralSettings');
+      if (generalEl) {
+        generalEl.innerHTML =
+          '<div class="section-card">' +
+            '<h3 class="section-title">General</h3>' +
+            '<div style="display:flex;flex-direction:column;gap:var(--space-4);">' +
+              '<div><label class="form-label">App Name</label><input type="text" id="settingName" class="form-input" value="' + escapeHtml(app.name || '') + '"></div>' +
+              '<div><label class="form-label">Visibility</label><select id="settingVisibility" class="form-input"><option value="private"' + (app.visibility === 'private' ? ' selected' : '') + '>Private</option><option value="unlisted"' + (app.visibility === 'unlisted' ? ' selected' : '') + '>Unlisted</option><option value="published"' + (app.visibility === 'published' ? ' selected' : '') + '>Published</option></select></div>' +
+              '<div><label class="form-label">Download Access</label><select id="settingDownload" class="form-input"><option value="owner"' + (app.download_access === 'owner' ? ' selected' : '') + '>Owner Only</option><option value="public"' + (app.download_access === 'public' ? ' selected' : '') + '>Public</option></select></div>' +
+              '<div><label class="form-label">Version</label><select id="settingVersion" class="form-input">' +
+                (app.versions || []).map(function(v) {
+                  return '<option value="' + escapeHtml(v.version) + '"' + (v.version === app.current_version ? ' selected' : '') + '>' + escapeHtml(v.version) + (v.version === app.current_version ? ' (current)' : '') + '</option>';
+                }).join('') +
+              '</select></div>' +
+              '<div style="display:flex;gap:8px;margin-top:12px">' +
+                '<button class="btn btn-primary btn-sm" onclick="saveAppSettings()">Save Changes</button>' +
+                '<button class="btn btn-ghost btn-sm" onclick="downloadAppCode()">Download Code</button>' +
+                '<button class="btn btn-danger btn-sm" style="margin-left:auto" onclick="showDeleteConfirm()">Delete App</button>' +
+              '</div>' +
+            '</div>' +
+          '</div>';
+      }
 
-      container.innerHTML =
-        '<div class="section-card">' +
-          '<h3 class="section-title">Functions</h3>' +
-          functionsHtml +
-        '</div>' +
-        '<div class="section-card" id="appHealthSummary">' +
-          '<h3 class="section-title">Health</h3>' +
-          '<div class="loading-text">Loading...</div>' +
-        '</div>' +
-        '<div class="section-card" id="appRecentCalls">' +
-          '<h3 class="section-title">Recent Calls</h3>' +
-          '<div class="loading-text">Loading...</div>' +
-        '</div>';
+      // -- Functions list --
+      const fnsEl = document.getElementById('appFunctionsSection');
+      if (fnsEl) {
+        const fns = app.manifest?.functions || [];
+        const functionsHtml = fns.length > 0
+          ? '<div class="function-list">' + fns.map(function(fn) {
+              const params = fn.parameters?.map(function(p) {
+                return '<span class="fn-param">' + escapeHtml(p.name) + '<span class="fn-param-type">: ' + escapeHtml(p.type || 'any') + '</span>' + (p.required ? '' : '?') + '</span>';
+              }).join(', ') || '';
+              return '<div class="function-item">' +
+                '<div class="function-name"><code>' + escapeHtml(fn.name) + '</code>(' + params + ')</div>' +
+                (fn.description ? '<div class="function-desc">' + escapeHtml(fn.description) + '</div>' : '') +
+              '</div>';
+            }).join('') + '</div>'
+          : '<div style="font-size:13px;color:var(--text-muted);">No functions found in manifest.</div>';
 
-      // Load health
-      loadAppHealth(app.id);
-      // Load recent calls for this app
-      loadAppRecentCalls(app.id);
+        fnsEl.innerHTML =
+          '<div class="section-card">' +
+            '<h3 class="section-title">Functions</h3>' +
+            functionsHtml +
+          '</div>';
+      }
+
+      // -- Skills --
+      const skillsEl = document.getElementById('skillsContent');
+      if (skillsEl) {
+        skillsEl.innerHTML = '<div class="section-card"><h3 class="section-title">Skills / Documentation</h3><div class="loading-text">Loading...</div></div>';
+        loadSkills(app.id);
+      }
     }
 
     async function loadAppHealth(appId) {
@@ -3243,6 +3158,116 @@ export function getLayoutHTML(options: {
       }
     }
 
+    // ===== App Section Loaders =====
+    function loadAppPermissions(app) {
+      // Visibility + download access selectors
+      const visEl = document.getElementById('appVisibilitySection');
+      if (visEl) {
+        visEl.innerHTML =
+          '<div class="section-card" style="margin-bottom:var(--space-4);">' +
+            '<h3 class="section-title">Access Control</h3>' +
+            '<div style="display:flex;flex-direction:column;gap:var(--space-4);">' +
+              '<div><label class="form-label">Visibility</label><select id="permVisibility" class="form-input"><option value="private"' + (app.visibility === 'private' ? ' selected' : '') + '>Private</option><option value="unlisted"' + (app.visibility === 'unlisted' ? ' selected' : '') + '>Unlisted</option><option value="published"' + (app.visibility === 'published' ? ' selected' : '') + '>Published</option></select></div>' +
+              '<div><label class="form-label">Download Access</label><select id="permDownload" class="form-input"><option value="owner"' + (app.download_access === 'owner' ? ' selected' : '') + '>Owner Only</option><option value="public"' + (app.download_access === 'public' ? ' selected' : '') + '>Public</option></select></div>' +
+            '</div>' +
+          '</div>';
+      }
+      // Load granted users
+      const permsEl = document.getElementById('permissionsContent');
+      if (permsEl) {
+        permsEl.innerHTML = '<div class="loading-text">Loading...</div>';
+        loadPermissions(app.id);
+      }
+    }
+
+    function loadAppEnvironment(app) {
+      const dbEl = document.getElementById('databaseContent');
+      if (dbEl) {
+        dbEl.innerHTML = '<div class="section-card"><h3 class="section-title">Database</h3><div class="loading-text">Loading...</div></div>';
+        loadDatabase(app.id);
+      }
+      const envEl = document.getElementById('envVarsContent');
+      if (envEl) {
+        envEl.innerHTML = '<div class="section-card"><h3 class="section-title">Environment Variables</h3><div class="loading-text">Loading...</div></div>';
+        loadEnvVars(app.id);
+      }
+    }
+
+    function loadAppPayments(appId, app) {
+      const pricingEl = document.getElementById('appPricingSection');
+      if (pricingEl) {
+        const pricingConfig = app.pricing_config || {};
+        const defaultPrice = pricingConfig.default_price_cents || 0;
+        const fnPrices = pricingConfig.function_prices ? JSON.stringify(pricingConfig.function_prices, null, 2) : '';
+
+        pricingEl.innerHTML =
+          '<div class="section-card">' +
+            '<h3 class="section-title">Pricing</h3>' +
+            '<div class="form-group"><label class="form-label">Default price per call (cents)</label>' +
+              '<input type="number" id="pricingDefault" class="form-input form-input-sm" value="' + defaultPrice + '" min="0" style="width:120px"></div>' +
+            '<div class="form-group"><label class="form-label">Per-function price overrides (JSON)</label>' +
+              '<textarea id="pricingFnOverrides" class="form-input" style="height:80px;font-family:var(--font-mono);font-size:12px" placeholder="e.g. {&quot;fn_name&quot;: 5}">' + escapeHtml(fnPrices) + '</textarea></div>' +
+            '<button class="btn btn-primary btn-sm" onclick="savePricing()">Save Pricing</button>' +
+          '</div>';
+      }
+
+      const revEl = document.getElementById('revenueSection');
+      if (revEl) {
+        revEl.innerHTML = '<div class="section-card"><h3 class="section-title">Revenue</h3><div class="loading-text">Loading...</div></div>';
+        loadAppRevenue(appId);
+      }
+    }
+
+    function loadAppLogsSection(appId) {
+      const logsEl = document.getElementById('appLogsContent');
+      if (logsEl) {
+        logsEl.innerHTML = '<div class="loading-text">Loading logs...</div>';
+
+        fetch('/api/user/call-log?limit=50&app_id=' + appId, {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        }).then(function(res) {
+          if (!res.ok) { logsEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px">Could not load logs.</div>'; return; }
+          return res.json();
+        }).then(function(data) {
+          if (!data) return;
+          const logs = Array.isArray(data) ? data : (data.logs || []);
+
+          if (logs.length === 0) {
+            logsEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:var(--space-4) 0;">No calls recorded yet.</div>';
+            return;
+          }
+
+          logsEl.innerHTML =
+            '<table style="width:100%;font-size:13px;border-collapse:collapse">' +
+            '<thead><tr style="border-bottom:1px solid var(--border);text-align:left">' +
+              '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Status</th>' +
+              '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Function</th>' +
+              '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Duration</th>' +
+              '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Time</th>' +
+            '</tr></thead><tbody>' +
+            logs.map(function(log) {
+              const success = log.success !== false;
+              return '<tr style="border-bottom:1px solid var(--border)">' +
+                '<td style="padding:8px 12px"><div style="width:8px;height:8px;border-radius:50%;background:' + (success ? 'var(--success)' : 'var(--error)') + '"></div></td>' +
+                '<td style="padding:8px 12px;font-family:var(--font-mono)">' + escapeHtml(log.function_name || log.method || '') + '</td>' +
+                '<td style="padding:8px 12px;color:var(--text-muted)">' + (log.duration_ms ? log.duration_ms + 'ms' : '-') + '</td>' +
+                '<td style="padding:8px 12px;color:var(--text-muted)">' + relTime(log.created_at) + '</td>' +
+              '</tr>';
+            }).join('') +
+            '</tbody></table>';
+        }).catch(function() {
+          logsEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px">Could not load logs.</div>';
+        });
+      }
+
+      // Health section
+      const healthEl = document.getElementById('appHealthSection');
+      if (healthEl) {
+        healthEl.innerHTML = '<div class="section-card" id="appHealthSummary"><h3 class="section-title">Health</h3><div class="loading-text">Loading...</div></div>';
+        loadAppHealth(appId);
+      }
+    }
+
     // ===== Copy Functions =====
     window.copyAppEndpoint = function() {
       const url = window.location.origin + '/mcp/' + currentAppId;
@@ -3272,62 +3297,7 @@ export function getLayoutHTML(options: {
       } catch { showToast('Download failed', 'error'); }
     };
 
-    // ===== 14. App Settings Tab =====
-    function loadAppSettings(app) {
-      const container = document.getElementById('appSettings');
-      if (!container) return;
-
-      container.innerHTML =
-        // General section
-        '<div class="section-card">' +
-          '<h3 class="section-title" onclick="this.parentElement.classList.toggle(\\\'collapsed\\\')">General <span class="collapse-icon">▾</span></h3>' +
-          '<div class="section-body">' +
-            '<div class="form-group"><label class="form-label">App Name</label><input type="text" id="settingName" class="form-input" value="' + escapeHtml(app.name || '') + '"></div>' +
-            '<div class="form-group"><label class="form-label">Visibility</label><select id="settingVisibility" class="form-input"><option value="private"' + (app.visibility === 'private' ? ' selected' : '') + '>Private</option><option value="unlisted"' + (app.visibility === 'unlisted' ? ' selected' : '') + '>Unlisted</option><option value="published"' + (app.visibility === 'published' ? ' selected' : '') + '>Published</option></select></div>' +
-            '<div class="form-group"><label class="form-label">Download Access</label><select id="settingDownload" class="form-input"><option value="owner"' + (app.download_access === 'owner' ? ' selected' : '') + '>Owner Only</option><option value="public"' + (app.download_access === 'public' ? ' selected' : '') + '>Public</option></select></div>' +
-            '<div class="form-group"><label class="form-label">Version</label><select id="settingVersion" class="form-input">' +
-              (app.versions || []).map(function(v) {
-                return '<option value="' + escapeHtml(v.version) + '"' + (v.version === app.current_version ? ' selected' : '') + '>' + escapeHtml(v.version) + (v.version === app.current_version ? ' (current)' : '') + '</option>';
-              }).join('') +
-            '</select></div>' +
-            '<div style="display:flex;gap:8px;margin-top:12px">' +
-              '<button class="btn btn-primary btn-sm" onclick="saveAppSettings()">Save Changes</button>' +
-              '<button class="btn btn-ghost btn-sm" onclick="downloadAppCode()">Download Code</button>' +
-              '<button class="btn btn-danger btn-sm" style="margin-left:auto" onclick="showDeleteConfirm()">Delete App</button>' +
-            '</div>' +
-          '</div>' +
-        '</div>' +
-
-        // Permissions section
-        '<div class="section-card">' +
-          '<h3 class="section-title" onclick="this.parentElement.classList.toggle(\\\'collapsed\\\')">Permissions <span class="collapse-icon">▾</span></h3>' +
-          '<div class="section-body" id="permissionsContent"><div class="loading-text">Loading...</div></div>' +
-        '</div>' +
-
-        // Database section
-        '<div class="section-card">' +
-          '<h3 class="section-title" onclick="this.parentElement.classList.toggle(\\\'collapsed\\\')">Database <span class="collapse-icon">▾</span></h3>' +
-          '<div class="section-body" id="databaseContent"><div class="loading-text">Loading...</div></div>' +
-        '</div>' +
-
-        // Environment Variables section
-        '<div class="section-card">' +
-          '<h3 class="section-title" onclick="this.parentElement.classList.toggle(\\\'collapsed\\\')">Environment Variables <span class="collapse-icon">▾</span></h3>' +
-          '<div class="section-body" id="envVarsContent"><div class="loading-text">Loading...</div></div>' +
-        '</div>' +
-
-        // Skills section
-        '<div class="section-card">' +
-          '<h3 class="section-title" onclick="this.parentElement.classList.toggle(\\\'collapsed\\\')">Skills / Documentation <span class="collapse-icon">▾</span></h3>' +
-          '<div class="section-body" id="skillsContent"><div class="loading-text">Loading...</div></div>' +
-        '</div>';
-
-      // Load sub-sections
-      loadPermissions(app.id);
-      loadDatabase(app.id);
-      loadEnvVars(app.id);
-      loadSkills(app.id);
-    }
+    // (Old loadAppSettings removed — content split across loadAppOverview, loadAppPermissions, loadAppEnvironment)
 
     window.saveAppSettings = async function() {
       if (!currentAppId || !authToken) return;
@@ -3775,75 +3745,7 @@ export function getLayoutHTML(options: {
     };
 
     // ===== App Logs Tab =====
-    async function loadAppLogs(appId) {
-      const container = document.getElementById('appLogs');
-      if (!container) return;
-      container.innerHTML = '<div class="loading-text">Loading logs...</div>';
-
-      try {
-        const res = await fetch('/api/user/call-log?limit=50&app_id=' + appId, {
-          headers: { 'Authorization': 'Bearer ' + authToken },
-        });
-        if (!res.ok) { container.innerHTML = '<div class="empty-state"><div class="empty-state-desc">Could not load logs.</div></div>'; return; }
-        const data = await res.json();
-        const logs = Array.isArray(data) ? data : (data.logs || []);
-
-        if (logs.length === 0) {
-          container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">No logs yet</div><div class="empty-state-desc">Logs will appear here when your app receives calls.</div></div>';
-          return;
-        }
-
-        container.innerHTML = '<div class="section-card"><h3 class="section-title">Call Log</h3>' +
-          '<table style="width:100%;font-size:13px;border-collapse:collapse">' +
-          '<thead><tr style="border-bottom:1px solid var(--border);text-align:left">' +
-            '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Status</th>' +
-            '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Function</th>' +
-            '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Duration</th>' +
-            '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Time</th>' +
-          '</tr></thead><tbody>' +
-          logs.map(function(log) {
-            const success = log.success !== false;
-            return '<tr style="border-bottom:1px solid var(--border)">' +
-              '<td style="padding:8px 12px"><div class="status-dot" style="width:8px;height:8px;border-radius:50%;background:' + (success ? 'var(--success)' : 'var(--error)') + '"></div></td>' +
-              '<td style="padding:8px 12px;font-family:var(--font-mono)">' + escapeHtml(log.function_name || log.method || '') + '</td>' +
-              '<td style="padding:8px 12px;color:var(--text-muted)">' + (log.duration_ms ? log.duration_ms + 'ms' : '-') + '</td>' +
-              '<td style="padding:8px 12px;color:var(--text-muted)">' + relTime(log.created_at) + '</td>' +
-            '</tr>';
-          }).join('') +
-          '</tbody></table></div>';
-      } catch { container.innerHTML = '<div class="empty-state"><div class="empty-state-desc">Could not load logs.</div></div>'; }
-    }
-
-    // ===== App Business Tab =====
-    async function loadAppBusiness(appId, app) {
-      const container = document.getElementById('appBusiness');
-      if (!container) return;
-
-      // Pricing section
-      const pricingConfig = app.pricing_config || {};
-      const defaultPrice = pricingConfig.default_price_cents || 0;
-      const fnPrices = pricingConfig.function_prices ? JSON.stringify(pricingConfig.function_prices, null, 2) : '';
-
-      let html = '<div class="section-card">' +
-        '<h3 class="section-title">Pricing</h3>' +
-        '<div class="form-group"><label class="form-label">Default price per call (cents)</label>' +
-          '<input type="number" id="pricingDefault" class="form-input form-input-sm" value="' + defaultPrice + '" min="0" style="width:120px"></div>' +
-        '<div class="form-group"><label class="form-label">Per-function price overrides (JSON)</label>' +
-          '<textarea id="pricingFnOverrides" class="form-input" style="height:80px;font-family:var(--font-mono);font-size:12px" placeholder="e.g. {&quot;fn_name&quot;: 5}">' + escapeHtml(fnPrices) + '</textarea></div>' +
-        '<button class="btn btn-primary btn-sm" onclick="savePricing()">Save Pricing</button>' +
-      '</div>';
-
-      // Revenue section
-      html += '<div class="section-card" id="revenueSection">' +
-        '<h3 class="section-title">Revenue</h3>' +
-        '<div class="loading-text">Loading...</div>' +
-      '</div>';
-
-      container.innerHTML = html;
-
-      // Load revenue data
-      loadAppRevenue(appId);
-    }
+    // (Old loadAppLogs and loadAppBusiness removed — replaced by loadAppLogsSection and loadAppPayments)
 
     window.savePricing = async function() {
       if (!currentAppId) return;
@@ -3901,7 +3803,6 @@ export function getLayoutHTML(options: {
     async function loadAccountData() {
       loadTokens();
       loadHostingData();
-      loadSupabaseServers();
     }
 
     // --- API Tokens ---
@@ -4129,7 +4030,11 @@ export function getLayoutHTML(options: {
     // Handle initial view
     ${initialView === 'app' && activeAppId ? `
     (async function() {
-      await loadAppPage('${activeAppId}');
+      var pathParts = window.location.pathname.slice(3).split('/');
+      var section = pathParts[1] || 'overview';
+      currentAppId = '${activeAppId}';
+      showView('app');
+      await loadAppPage('${activeAppId}', section);
     })();
     ` : ''}
 
