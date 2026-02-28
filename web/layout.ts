@@ -40,6 +40,7 @@ export function getLayoutHTML(options: {
       -moz-osx-font-smoothing: auto;
       text-rendering: optimizeLegibility;
       scroll-behavior: smooth;
+      overscroll-behavior: none;
     }
 
     body {
@@ -221,8 +222,10 @@ export function getLayoutHTML(options: {
 
     /* Top Navigation */
     .top-nav {
-      position: sticky;
+      position: fixed;
       top: 0;
+      left: 0;
+      right: 0;
       z-index: var(--z-sticky);
       height: var(--nav-height);
       display: flex;
@@ -291,6 +294,7 @@ export function getLayoutHTML(options: {
       max-width: var(--content-max);
       margin: 0 auto;
       padding: var(--space-8) var(--space-6);
+      padding-top: calc(var(--nav-height) + var(--space-8));
     }
 
     .main-content.narrow {
@@ -992,16 +996,16 @@ export function getLayoutHTML(options: {
     .hero {
       display: flex;
       flex-direction: column;
-      align-items: center;
-      text-align: center;
-      padding: var(--space-20) 0 var(--space-16);
-      max-width: 680px;
+      align-items: flex-start;
+      text-align: left;
+      padding: var(--space-20) var(--space-6) var(--space-16);
+      max-width: 820px;
       margin: 0 auto;
     }
 
     .hero h1 {
       font-size: 56px;
-      font-weight: 700;
+      font-weight: 600;
       line-height: 1.05;
       letter-spacing: -0.035em;
       margin-bottom: var(--space-5);
@@ -1612,10 +1616,11 @@ export function getLayoutHTML(options: {
 
       .main-content {
         padding: var(--space-5) var(--space-4);
+        padding-top: calc(var(--nav-height) + var(--space-5));
       }
 
       .hero {
-        padding: var(--space-12) 0 var(--space-8);
+        padding: var(--space-12) var(--space-4) var(--space-8);
       }
 
       .hero h1 {
@@ -1767,7 +1772,7 @@ export function getLayoutHTML(options: {
       </div>
       <h2 style="text-align:center;color:var(--text-primary);font-size:20px;">Log in to give your agent superpowers</h2>
       <div style="margin-bottom:var(--space-6);"></div>
-      <button id="googleAuthBtn" class="auth-provider-btn" onclick="window.open('/auth/login?return_to=' + encodeURIComponent('/?popup=1'), 'ultralight-auth', 'width=500,height=700,menubar=no,toolbar=no'); document.getElementById('authOverlay').classList.add('hidden');">
+      <button id="googleAuthBtn" class="auth-provider-btn" onclick="window.location.href='/auth/login';">
         <svg width="18" height="18" viewBox="0 0 24 24">
           <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
           <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
@@ -1988,10 +1993,10 @@ export function getLayoutHTML(options: {
       </section>
 
       <!-- Closing CTA -->
-      <section style="max-width:820px;margin:0 auto;padding:var(--space-20) var(--space-6);text-align:center;">
-        <h2 style="font-size:32px;font-weight:700;letter-spacing:-0.035em;line-height:1.15;color:var(--text-primary);margin-bottom:var(--space-4);">Give your agent superpowers.</h2>
+      <section style="max-width:820px;margin:0 auto;padding:var(--space-20) var(--space-6);text-align:left;">
+        <h2 style="font-size:32px;font-weight:600;letter-spacing:-0.035em;line-height:1.15;color:var(--text-primary);margin-bottom:var(--space-4);">Give your agent superpowers.</h2>
         <p style="font-size:11px;font-weight:600;color:var(--text-secondary);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:var(--space-4);">Ready to start building?</p>
-        <div style="display:flex;justify-content:center;">
+        <div style="display:flex;justify-content:flex-start;">
           <button class="btn btn-primary btn-lg" style="gap:var(--space-2);border-radius:0;" onclick="document.getElementById('authOverlay').classList.remove('hidden')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
             <span>Copy agent instructions</span>
@@ -2435,13 +2440,6 @@ export function getLayoutHTML(options: {
       // If not authed, the inline onclick already opens auth overlay
     }
 
-    document.getElementById('googleAuthBtn')?.addEventListener('click', function() {
-      // Open auth in new tab (MiniMax-style)
-      var authUrl = '/auth/login?return_to=' + encodeURIComponent('/?popup=1');
-      window.open(authUrl, 'ultralight-auth', 'width=500,height=700,menubar=no,toolbar=no');
-      hideAuthOverlay();
-    });
-
     // Close auth overlay on backdrop click
     document.getElementById('authOverlay')?.addEventListener('click', function(e) {
       if (e.target === this) hideAuthOverlay();
@@ -2449,78 +2447,8 @@ export function getLayoutHTML(options: {
     // Close button
     document.getElementById('authCloseBtn')?.addEventListener('click', hideAuthOverlay);
 
-    // Listen for auth message from popup
-    window.addEventListener('message', function(event) {
-      if (event.origin !== window.location.origin) return;
-      if (event.data && event.data.type === 'auth-success') {
-        authToken = event.data.token;
-        localStorage.setItem('ultralight_token', event.data.token);
-        if (event.data.refreshToken) {
-          localStorage.setItem('ultralight_refresh_token', event.data.refreshToken);
-        }
-        hideAuthOverlay();
-        updateAuthUI();
-      }
-    });
-
-    // Fallback: poll localStorage for token changes (handles popup auth when postMessage fails)
-    // This runs continuously until a token is found — covers all auth flows
-    var authPollInterval = null;
-    function startAuthPoll() {
-      if (authPollInterval) return;
-      if (authToken) return; // Already logged in
-      authPollInterval = setInterval(function() {
-        var token = localStorage.getItem('ultralight_token');
-        if (token && token !== authToken) {
-          authToken = token;
-          clearInterval(authPollInterval);
-          authPollInterval = null;
-          hideAuthOverlay();
-          updateAuthUI();
-        }
-      }, 500);
-      // Stop polling after 5 minutes
-      setTimeout(function() {
-        if (authPollInterval) {
-          clearInterval(authPollInterval);
-          authPollInterval = null;
-        }
-      }, 300000);
-    }
-
-    // Start polling immediately if not logged in
-    if (!authToken) {
-      startAuthPoll();
-    }
-
-    // Cross-tab storage event: fires when another tab/popup writes to localStorage
-    window.addEventListener('storage', function(e) {
-      if (e.key === 'ultralight_token' && e.newValue && e.newValue !== authToken) {
-        authToken = e.newValue;
-        if (authPollInterval) {
-          clearInterval(authPollInterval);
-          authPollInterval = null;
-        }
-        hideAuthOverlay();
-        updateAuthUI();
-      }
-    });
-
-    // Also re-check on focus (e.g., user switches back from auth tab)
-    window.addEventListener('focus', function() {
-      var token = localStorage.getItem('ultralight_token');
-      if (token && token !== authToken) {
-        authToken = token;
-        if (authPollInterval) {
-          clearInterval(authPollInterval);
-          authPollInterval = null;
-        }
-        hideAuthOverlay();
-        updateAuthUI();
-      }
-      // Restart polling if still not logged in
-      if (!authToken) startAuthPoll();
-    });
+    // Auth is same-window redirect — token is stored in localStorage by callback page
+    // On page load, authToken is already read from localStorage above
 
     async function updateAuthUI() {
       if (!authToken) {

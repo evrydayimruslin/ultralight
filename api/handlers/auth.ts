@@ -34,7 +34,7 @@ export async function handleAuth(request: Request): Promise<Response> {
     const callbackUrl = returnTo
       ? `${url.origin}/auth/callback?return_to=${encodeURIComponent(returnTo)}`
       : `${url.origin}/auth/callback`;
-    const authUrl = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(callbackUrl)}`;
+    const authUrl = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(callbackUrl)}&flow_type=implicit`;
 
     return new Response(null, {
       status: 302,
@@ -401,21 +401,7 @@ function getCallbackHTML(): string {
       if (refreshToken) {
         localStorage.setItem('ultralight_refresh_token', refreshToken);
       }
-      // Check if this is a popup auth flow
-      if (returnTo && returnTo.indexOf('popup=1') !== -1) {
-        // Try postMessage first, then close
-        if (window.opener) {
-          try {
-            window.opener.postMessage({ type: 'auth-success', token: accessToken, refreshToken: refreshToken }, window.location.origin);
-          } catch(e) {}
-        }
-        // Always try to close — the parent polls localStorage as fallback
-        setTimeout(function() { window.close(); }, 300);
-        // If window.close() doesn't work (some browsers), redirect
-        setTimeout(function() { window.location.href = '/'; }, 1500);
-      } else {
-        window.location.href = redirectTarget;
-      }
+      window.location.href = redirectTarget;
     } else {
       // Check query params as fallback
       var error = queryParams.get('error_description');
@@ -439,7 +425,6 @@ function getCallbackSuccessHTML(token: string, refreshToken?: string, returnTo?:
   // Validate return_to is a relative path (prevent open redirect)
   const redirectTarget = (returnTo && returnTo.startsWith('/')) ? returnTo : '/';
   const safeRedirect = redirectTarget.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/</g, '\\x3c');
-  const isPopup = redirectTarget.indexOf('popup=1') !== -1;
   return `<!DOCTYPE html>
 <html>
 <head><title>Signed in!</title></head>
@@ -447,16 +432,7 @@ function getCallbackSuccessHTML(token: string, refreshToken?: string, returnTo?:
   <script>
     localStorage.setItem('ultralight_token', '${safeToken}');
     ${safeRefresh ? `localStorage.setItem('ultralight_refresh_token', '${safeRefresh}');` : ''}
-    ${isPopup ? `
-    // Try postMessage, then close — parent polls localStorage as fallback
-    if (window.opener) {
-      try {
-        window.opener.postMessage({ type: 'auth-success', token: '${safeToken}', refreshToken: '${safeRefresh}' }, window.location.origin);
-      } catch(e) {}
-    }
-    setTimeout(function() { window.close(); }, 300);
-    setTimeout(function() { window.location.href = '/'; }, 1500);
-    ` : `window.location.href = '${safeRedirect}';`}
+    window.location.href = '${safeRedirect}';
   </script>
 </body>
 </html>`;
