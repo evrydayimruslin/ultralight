@@ -139,7 +139,7 @@ export function getLayoutHTML(options: {
       --transition-slow: 300ms ease;
 
       /* Layout */
-      --nav-height: 56px;
+      --nav-height: 64px;
       --content-max: 1200px;
       --content-narrow: 720px;
     }
@@ -1416,78 +1416,6 @@ export function getLayoutHTML(options: {
     /* ============================================
        FAQ ACCORDION STYLES
        ============================================ */
-    .faq-section {
-      max-width: 640px;
-      margin: var(--space-16) auto 0;
-    }
-
-    .faq-section h2 {
-      font-size: 24px;
-      font-weight: 700;
-      text-align: center;
-      margin-bottom: var(--space-8);
-      letter-spacing: -0.02em;
-    }
-
-    .faq-list {
-      display: flex;
-      flex-direction: column;
-      gap: var(--space-1);
-    }
-
-    .faq-item {
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-      transition: border-color var(--transition-fast);
-    }
-
-    .faq-item:hover {
-      border-color: var(--border-strong);
-    }
-
-    .faq-trigger {
-      width: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: var(--space-4) var(--space-5);
-      font-size: 14px;
-      font-weight: 500;
-      color: var(--text-primary);
-      background: none;
-      cursor: pointer;
-      text-align: left;
-    }
-
-    .faq-trigger svg {
-      width: 16px;
-      height: 16px;
-      color: var(--text-muted);
-      transition: transform var(--transition-base);
-      flex-shrink: 0;
-    }
-
-    .faq-item.open .faq-trigger svg {
-      transform: rotate(180deg);
-    }
-
-    .faq-content {
-      max-height: 0;
-      overflow: hidden;
-      transition: max-height var(--transition-slow);
-    }
-
-    .faq-item.open .faq-content {
-      max-height: 500px;
-    }
-
-    .faq-content-inner {
-      padding: 0 var(--space-5) var(--space-5);
-      font-size: 14px;
-      color: var(--text-secondary);
-      line-height: 1.7;
-    }
 
     /* ============================================
        SCROLLBAR STYLES
@@ -1574,6 +1502,10 @@ export function getLayoutHTML(options: {
 
       .hero-actions .btn {
         width: 100%;
+      }
+
+      .cap-grid-2col {
+        grid-template-columns: 1fr !important;
       }
 
       .app-grid {
@@ -1773,6 +1705,13 @@ export function getLayoutHTML(options: {
     <div id="homeView">
       <section class="hero">
         <h1>Give your agent<br>superpowers</h1>
+        <p style="font-size:11px;font-weight:500;color:var(--text-primary);margin-top:var(--space-8);margin-bottom:0;letter-spacing:0.08em;text-transform:uppercase;">Just paste and go</p>
+        <div class="hero-actions" style="margin-top:var(--space-5);">
+          <button id="heroCTA" class="btn btn-primary btn-lg" style="gap:var(--space-2);border-radius:0;" onclick="document.getElementById('authOverlay').classList.remove('hidden')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            <span id="heroCTAText">Copy agent instructions</span>
+          </button>
+        </div>
       </section>
 
       <!-- Setup Instructions Block (hidden until authenticated) -->
@@ -1786,79 +1725,50 @@ export function getLayoutHTML(options: {
       </div>
 
       <!-- Capabilities Section -->
-      <section style="max-width:720px;margin:var(--space-16) auto 0;">
-        <div style="display:flex;flex-direction:column;gap:var(--space-10);">
-          <div>
-            <h3 style="font-size:15px;font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Works with any agent, take your apps, skills and memories with you</h3>
-            <p style="font-size:14px;color:var(--text-muted);line-height:1.6;">OpenClaw, Claude Code, Codex, Cursor & more</p>
+      <section style="max-width:960px;margin:var(--space-20) auto 0;padding:0 var(--space-6);">
+        <!-- Top feature — full width -->
+        <div style="border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-8);margin-bottom:var(--space-5);">
+          <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-4);">
+            <div style="width:36px;height:36px;border-radius:10px;background:var(--text-primary);display:flex;align-items:center;justify-content:center;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v-2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg>
+            </div>
+            <p style="font-size:11px;font-weight:500;color:var(--text-muted);letter-spacing:0.08em;text-transform:uppercase;margin:0;">Universal</p>
           </div>
-          <div>
-            <h3 style="font-size:15px;font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Deploy instantly</h3>
-            <p style="font-size:14px;color:var(--text-muted);line-height:1.6;">.md files → live url<br>typescript functions → live mcp server</p>
-          </div>
-          <div>
-            <h3 style="font-size:15px;font-weight:600;color:var(--text-primary);">Agents use all your apps and markdowns with a single connection</h3>
-          </div>
+          <h3 style="font-size:22px;font-weight:700;letter-spacing:-0.02em;color:var(--text-primary);margin-bottom:var(--space-2);line-height:1.3;">Works with any agent, take your apps, skills and memories with you</h3>
+          <p style="font-size:14px;color:var(--text-muted);line-height:1.6;margin:0;">OpenClaw, Claude Code, Codex, Cursor & more</p>
         </div>
-      </section>
 
-      <!-- FAQ Section -->
-      <section class="faq-section">
-        <h2>Frequently asked questions</h2>
-        <div class="faq-list">
-          <div class="faq-item">
-            <button class="faq-trigger" onclick="this.parentElement.classList.toggle('open')">
-              What is an MCP server?
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
-            <div class="faq-content">
-              <div class="faq-content-inner">MCP (Model Context Protocol) is an open standard that lets AI agents call external tools. An MCP server exposes functions that agents like Claude Code, Cursor, Windsurf, Codex, and OpenClaw can discover and invoke. Ultralight turns your TypeScript functions into fully hosted MCP servers with zero configuration.</div>
+        <!-- Two-column row -->
+        <div class="cap-grid-2col" style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-5);margin-bottom:var(--space-5);">
+          <div style="border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-8);">
+            <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-4);">
+              <div style="width:36px;height:36px;border-radius:10px;background:var(--text-primary);display:flex;align-items:center;justify-content:center;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              </div>
+              <p style="font-size:11px;font-weight:500;color:var(--text-muted);letter-spacing:0.08em;text-transform:uppercase;margin:0;">Deploy</p>
+            </div>
+            <h3 style="font-size:18px;font-weight:700;letter-spacing:-0.02em;color:var(--text-primary);margin-bottom:var(--space-3);line-height:1.3;">Deploy instantly</h3>
+            <div style="display:flex;flex-direction:column;gap:var(--space-2);">
+              <div style="display:flex;align-items:center;gap:var(--space-3);">
+                <code style="font-size:13px;font-family:var(--font-mono);color:var(--text-secondary);background:var(--bg-active);padding:2px 8px;border-radius:4px;">.md</code>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                <span style="font-size:13px;color:var(--text-muted);">live url</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:var(--space-3);">
+                <code style="font-size:13px;font-family:var(--font-mono);color:var(--text-secondary);background:var(--bg-active);padding:2px 8px;border-radius:4px;">.ts</code>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                <span style="font-size:13px;color:var(--text-muted);">live mcp server</span>
+              </div>
             </div>
           </div>
-          <div class="faq-item">
-            <button class="faq-trigger" onclick="this.parentElement.classList.toggle('open')">
-              How do I deploy my first app?
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
-            <div class="faq-content">
-              <div class="faq-content-inner">Install the CLI with <code style="background:var(--bg-active);padding:2px 6px;border-radius:4px;font-family:var(--font-mono);font-size:12px;">npm i -g ultralightpro</code>, write an index.ts file that exports functions, then run <code style="background:var(--bg-active);padding:2px 6px;border-radius:4px;font-family:var(--font-mono);font-size:12px;">ultralight deploy</code>. Your MCP server is live in seconds.</div>
+          <div style="border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-8);display:flex;flex-direction:column;justify-content:center;">
+            <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-4);">
+              <div style="width:36px;height:36px;border-radius:10px;background:var(--text-primary);display:flex;align-items:center;justify-content:center;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+              </div>
+              <p style="font-size:11px;font-weight:500;color:var(--text-muted);letter-spacing:0.08em;text-transform:uppercase;margin:0;">Connect</p>
             </div>
-          </div>
-          <div class="faq-item">
-            <button class="faq-trigger" onclick="this.parentElement.classList.toggle('open')">
-              What languages and runtimes are supported?
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
-            <div class="faq-content">
-              <div class="faq-content-inner">Ultralight currently supports TypeScript and JavaScript. Your code runs on Deno v2.2 in a secure sandbox with access to fetch, crypto, lodash, date-fns, and a built-in key-value store. No node_modules needed.</div>
-            </div>
-          </div>
-          <div class="faq-item">
-            <button class="faq-trigger" onclick="this.parentElement.classList.toggle('open')">
-              Is there a free tier?
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
-            <div class="faq-content">
-              <div class="faq-content-inner">Yes. The free tier includes up to 3 apps, 1,000 calls per month, and 10MB of storage. Upgrade to Pro for unlimited apps, higher call limits, custom domains, and Supabase database integration.</div>
-            </div>
-          </div>
-          <div class="faq-item">
-            <button class="faq-trigger" onclick="this.parentElement.classList.toggle('open')">
-              Can I control who accesses my functions?
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
-            <div class="faq-content">
-              <div class="faq-content-inner">Absolutely. Apps are private by default. You can grant granular per-function permissions, restrict argument values, set IP allowlists, time windows, and budget constraints. Share a permission link and revoke access anytime.</div>
-            </div>
-          </div>
-          <div class="faq-item">
-            <button class="faq-trigger" onclick="this.parentElement.classList.toggle('open')">
-              How does billing work?
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
-            <div class="faq-content">
-              <div class="faq-content-inner">Ultralight uses a prepaid balance model. Add funds to your account and each API call deducts a small amount. You can also monetize your apps by setting a per-call price that callers pay. No surprise bills, no subscriptions.</div>
-            </div>
+            <h3 style="font-size:18px;font-weight:700;letter-spacing:-0.02em;color:var(--text-primary);line-height:1.3;">Agents use all your apps and markdowns with a single connection</h3>
           </div>
         </div>
       </section>
@@ -3950,17 +3860,6 @@ export function getLayoutHTML(options: {
       } catch { showToast('Failed to remove', 'error'); }
     };
 
-    // ===== FAQ Accordion =====
-    document.querySelectorAll('.faq-trigger').forEach(function(trigger) {
-      trigger.addEventListener('click', function() {
-        const item = this.closest('.faq-item');
-        const wasOpen = item.classList.contains('open');
-        // Close all
-        document.querySelectorAll('.faq-item').forEach(function(i) { i.classList.remove('open'); });
-        // Toggle clicked
-        if (!wasOpen) item.classList.add('open');
-      });
-    });
 
     // ===== Error Handling =====
     window.onerror = function(msg, src, line) {
