@@ -1417,78 +1417,120 @@ export function getLayoutHTML(options: {
        CAPABILITIES SECTION
        ============================================ */
     .cap-section {
-      max-width: 1080px;
+      max-width: 640px;
       margin: 0 auto;
       padding: var(--space-20) var(--space-6) 0;
     }
 
     .cap-heading {
-      font-size: 40px;
+      font-size: 32px;
       font-weight: 700;
       letter-spacing: -0.035em;
-      line-height: 1.1;
+      line-height: 1.15;
       color: var(--text-primary);
-      margin-bottom: var(--space-16);
+      margin-bottom: var(--space-10);
+      text-align: center;
     }
 
     .cap-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: var(--space-12);
+      gap: 0;
     }
 
-    .cap-item {
-      padding: var(--space-8) 0;
-      border-top: 1px solid var(--border);
+    .cap-card {
+      border: 1px solid var(--border);
+      padding: var(--space-8);
+      display: flex;
+      flex-direction: column;
+      margin-top: -1px;
+      margin-left: -1px;
     }
 
-    .cap-item-label {
-      font-size: 11px;
-      font-weight: 500;
-      color: var(--text-muted);
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      margin-bottom: var(--space-4);
+    .cap-card-icon {
+      width: 40px;
+      height: 40px;
+      background: var(--text-primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: var(--space-5);
     }
 
-    .cap-item-title {
-      font-size: 20px;
+    .cap-card-title {
+      font-size: 16px;
       font-weight: 600;
-      letter-spacing: -0.02em;
+      letter-spacing: -0.01em;
       color: var(--text-primary);
-      line-height: 1.3;
-      margin-bottom: var(--space-3);
+      line-height: 1.35;
+      margin-bottom: var(--space-2);
     }
 
-    .cap-item-desc {
-      font-size: 15px;
+    .cap-card-desc {
+      font-size: 14px;
       color: var(--text-muted);
       line-height: 1.6;
+      flex: 1;
+    }
+
+    .cap-card-visual {
+      margin-top: var(--space-5);
+    }
+
+    /* Deploy flow */
+    .cap-flow {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+    }
+
+    .cap-flow-row {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      font-size: 13px;
+    }
+
+    .cap-flow-row code {
+      font-family: var(--font-mono);
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--text-primary);
+      background: var(--bg-active);
+      padding: 2px 8px;
+      border: 1px solid var(--border);
+    }
+
+    .cap-flow-row .arrow {
+      color: var(--text-muted);
+    }
+
+    .cap-flow-row .result {
+      color: var(--text-muted);
     }
 
     /* Agent carousel */
-    .cap-carousel-track {
-      display: flex;
-      gap: var(--space-5);
+    .cap-carousel {
       overflow: hidden;
-      mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
-      -webkit-mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+      mask-image: linear-gradient(to right, transparent, black 5%, black 95%, transparent);
+      -webkit-mask-image: linear-gradient(to right, transparent, black 5%, black 95%, transparent);
     }
 
     .cap-carousel-inner {
       display: flex;
-      gap: var(--space-5);
-      animation: cap-scroll 20s linear infinite;
+      gap: var(--space-3);
+      animation: cap-scroll 18s linear infinite;
+      width: max-content;
     }
 
     .cap-carousel-inner span {
-      font-size: 14px;
+      font-size: 12px;
       font-weight: 500;
       color: var(--text-secondary);
       white-space: nowrap;
-      padding: var(--space-2) var(--space-4);
+      padding: 6px 14px;
       border: 1px solid var(--border);
-      border-radius: var(--radius-full);
+      background: var(--bg-raised);
     }
 
     @keyframes cap-scroll {
@@ -1496,55 +1538,19 @@ export function getLayoutHTML(options: {
       100% { transform: translateX(-50%); }
     }
 
-    /* Deploy flow arrows */
-    .cap-flow {
+    /* Portable pills */
+    .cap-pills {
       display: flex;
-      flex-direction: column;
-      gap: var(--space-3);
-      margin-top: var(--space-4);
+      flex-wrap: wrap;
+      gap: var(--space-2);
     }
 
-    .cap-flow-row {
-      display: flex;
-      align-items: center;
-      gap: var(--space-3);
-    }
-
-    .cap-flow-row code {
-      font-size: 14px;
-      font-family: var(--font-mono);
-      font-weight: 500;
-      color: var(--text-primary);
-      background: var(--bg-active);
-      padding: var(--space-1) var(--space-3);
-      border-radius: 6px;
-      border: 1px solid var(--border);
-    }
-
-    .cap-flow-arrow {
-      color: var(--text-muted);
-      font-size: 14px;
-    }
-
-    .cap-flow-result {
-      font-size: 14px;
-      color: var(--text-muted);
-    }
-
-    /* Portable items */
-    .cap-portable {
-      display: flex;
-      gap: var(--space-3);
-      margin-top: var(--space-4);
-    }
-
-    .cap-portable span {
-      font-size: 13px;
+    .cap-pills span {
+      font-size: 12px;
       font-weight: 500;
       color: var(--text-secondary);
-      padding: var(--space-2) var(--space-4);
+      padding: 6px 14px;
       background: var(--bg-active);
-      border-radius: var(--radius-full);
       border: 1px solid var(--border);
     }
 
@@ -1589,10 +1595,6 @@ export function getLayoutHTML(options: {
 
       .hero-grid {
         grid-template-columns: repeat(2, 1fr);
-      }
-
-      .cap-heading {
-        font-size: 32px;
       }
     }
 
@@ -1639,26 +1641,16 @@ export function getLayoutHTML(options: {
         width: 100%;
       }
 
-      .cap-grid-2col {
-        grid-template-columns: 1fr !important;
-      }
-
       .cap-heading {
-        font-size: 28px;
-        margin-bottom: var(--space-10);
+        font-size: 26px;
       }
 
       .cap-grid {
         grid-template-columns: 1fr;
-        gap: 0;
       }
 
-      .cap-item-title {
-        font-size: 18px;
-      }
-
-      .cap-portable {
-        flex-wrap: wrap;
+      .cap-card {
+        margin-left: 0;
       }
 
       .app-grid {
@@ -1879,65 +1871,82 @@ export function getLayoutHTML(options: {
 
       <!-- Capabilities Section -->
       <section class="cap-section">
-        <h2 class="cap-heading">Infrastructure for<br>your agent</h2>
+        <h2 class="cap-heading">Infrastructure for your agent</h2>
 
         <div class="cap-grid">
           <!-- Free instant deployments -->
-          <div class="cap-item">
-            <div class="cap-item-label">Deploy</div>
-            <div class="cap-item-title">Free instant deployments</div>
-            <div class="cap-flow">
-              <div class="cap-flow-row">
-                <code>.md</code>
-                <span class="cap-flow-arrow">→</span>
-                <span class="cap-flow-result">live url</span>
-              </div>
-              <div class="cap-flow-row">
-                <code>.ts</code>
-                <span class="cap-flow-arrow">→</span>
-                <span class="cap-flow-result">live mcp server</span>
+          <div class="cap-card">
+            <div class="cap-card-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            </div>
+            <div class="cap-card-title">Free instant deployments</div>
+            <div class="cap-card-desc">Ship to production in one command. No config, no Docker, no waiting.</div>
+            <div class="cap-card-visual">
+              <div class="cap-flow">
+                <div class="cap-flow-row">
+                  <code>.md</code>
+                  <span class="arrow">→</span>
+                  <span class="result">live url</span>
+                </div>
+                <div class="cap-flow-row">
+                  <code>.ts</code>
+                  <span class="arrow">→</span>
+                  <span class="result">live mcp server</span>
+                </div>
               </div>
             </div>
           </div>
 
           <!-- Works with any agent -->
-          <div class="cap-item">
-            <div class="cap-item-label">Universal</div>
-            <div class="cap-item-title">Works with any agent</div>
-            <div class="cap-carousel-track" style="margin-top:var(--space-4);">
-              <div class="cap-carousel-inner">
-                <span>OpenClaw</span>
-                <span>Claude Code</span>
-                <span>Codex</span>
-                <span>Cursor</span>
-                <span>Perplexity Computer</span>
-                <span>Kimi Code</span>
-                <span>OpenClaw</span>
-                <span>Claude Code</span>
-                <span>Codex</span>
-                <span>Cursor</span>
-                <span>Perplexity Computer</span>
-                <span>Kimi Code</span>
+          <div class="cap-card">
+            <div class="cap-card-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+            </div>
+            <div class="cap-card-title">Works with any agent</div>
+            <div class="cap-card-desc">One standard, every agent. No vendor lock-in.</div>
+            <div class="cap-card-visual">
+              <div class="cap-carousel">
+                <div class="cap-carousel-inner">
+                  <span>OpenClaw</span>
+                  <span>Claude Code</span>
+                  <span>Codex</span>
+                  <span>Cursor</span>
+                  <span>Perplexity Computer</span>
+                  <span>Kimi Code</span>
+                  <span>OpenClaw</span>
+                  <span>Claude Code</span>
+                  <span>Codex</span>
+                  <span>Cursor</span>
+                  <span>Perplexity Computer</span>
+                  <span>Kimi Code</span>
+                </div>
               </div>
             </div>
           </div>
 
           <!-- Take everything with you -->
-          <div class="cap-item">
-            <div class="cap-item-label">Portable</div>
-            <div class="cap-item-title">Take everything with you</div>
-            <div class="cap-portable">
-              <span>Custom apps</span>
-              <span>Skills</span>
-              <span>Memories</span>
+          <div class="cap-card">
+            <div class="cap-card-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            </div>
+            <div class="cap-card-title">Take everything with you</div>
+            <div class="cap-card-desc">Switch agents without starting over.</div>
+            <div class="cap-card-visual">
+              <div class="cap-pills">
+                <span>Custom apps</span>
+                <span>Skills</span>
+                <span>Memories</span>
+              </div>
             </div>
           </div>
 
           <!-- One connection -->
-          <div class="cap-item">
-            <div class="cap-item-label">Connect</div>
-            <div class="cap-item-title">One connection, infinite possibilities</div>
-            <p class="cap-item-desc">Add Ultralight once and extend its capabilities forever. Every app, markdown, and memory is instantly available to your agent.</p>
+          <div class="cap-card">
+            <div class="cap-card-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+            </div>
+            <div class="cap-card-title">One connection, infinite possibilities</div>
+            <div class="cap-card-desc">Add Ultralight once and extend its capabilities forever. Every app, markdown, and memory is instantly available to your agent.</div>
           </div>
         </div>
       </section>
