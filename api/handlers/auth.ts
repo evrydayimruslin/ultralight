@@ -359,9 +359,9 @@ function getCallbackHTML(): string {
 <head>
   <title>Signing in...</title>
   <style>
-    body { font-family: system-ui; background: #0a0a0a; color: #fff; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+    body { font-family: system-ui; background: #fff; color: #0a0a0a; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
     .container { text-align: center; }
-    .spinner { width: 40px; height: 40px; border: 3px solid #333; border-top-color: #667eea; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 1rem; }
+    .spinner { width: 40px; height: 40px; border: 3px solid #e5e5e5; border-top-color: #0a0a0a; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 1rem; }
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
@@ -372,16 +372,16 @@ function getCallbackHTML(): string {
   </div>
   <script>
     // Supabase returns tokens in URL hash
-    const hash = window.location.hash.substring(1);
-    const params = new URLSearchParams(hash);
-    const accessToken = params.get('access_token');
-    const refreshToken = params.get('refresh_token');
+    var hash = window.location.hash.substring(1);
+    var params = new URLSearchParams(hash);
+    var accessToken = params.get('access_token');
+    var refreshToken = params.get('refresh_token');
 
     // Check for return_to parameter (e.g., from hero setup flow)
-    const queryParams = new URLSearchParams(window.location.search);
-    const returnTo = queryParams.get('return_to');
+    var queryParams = new URLSearchParams(window.location.search);
+    var returnTo = queryParams.get('return_to');
     // Validate return_to is a relative path (prevent open redirect)
-    const redirectTarget = (returnTo && returnTo.startsWith('/')) ? returnTo : '/';
+    var redirectTarget = (returnTo && returnTo.startsWith('/')) ? returnTo : '/';
 
     if (accessToken) {
       localStorage.setItem('ultralight_token', accessToken);
@@ -389,19 +389,26 @@ function getCallbackHTML(): string {
         localStorage.setItem('ultralight_refresh_token', refreshToken);
       }
       // Check if this is a popup auth flow
-      if (returnTo && returnTo.indexOf('popup=1') !== -1 && window.opener) {
-        window.opener.postMessage({ type: 'auth-success', token: accessToken, refreshToken: refreshToken }, window.location.origin);
-        window.close();
+      if (returnTo && returnTo.indexOf('popup=1') !== -1) {
+        // Try postMessage first, then close
+        if (window.opener) {
+          try {
+            window.opener.postMessage({ type: 'auth-success', token: accessToken, refreshToken: refreshToken }, window.location.origin);
+          } catch(e) {}
+        }
+        // Always try to close — the parent polls localStorage as fallback
+        setTimeout(function() { window.close(); }, 300);
+        // If window.close() doesn't work (some browsers), redirect
+        setTimeout(function() { window.location.href = '/'; }, 1500);
       } else {
         window.location.href = redirectTarget;
       }
     } else {
       // Check query params as fallback
-      const error = queryParams.get('error_description');
+      var error = queryParams.get('error_description');
       if (error) {
-        // Sanitize error to prevent XSS via crafted error_description
-        const safe = error.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#x27;');
-        document.body.innerHTML = '<div class="container"><p style="color: #f87171;">Error: ' + safe + '</p><a href="/" style="color: #667eea;">Go back</a></div>';
+        var safe = error.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#x27;');
+        document.body.innerHTML = '<div class="container"><p style="color: #ef4444;">Error: ' + safe + '</p><a href="/" style="color: #0a0a0a;">Go back</a></div>';
       } else {
         // No token found, redirect to login
         window.location.href = '/auth/login';
@@ -428,12 +435,15 @@ function getCallbackSuccessHTML(token: string, refreshToken?: string, returnTo?:
     localStorage.setItem('ultralight_token', '${safeToken}');
     ${safeRefresh ? `localStorage.setItem('ultralight_refresh_token', '${safeRefresh}');` : ''}
     ${isPopup ? `
+    // Try postMessage, then close — parent polls localStorage as fallback
     if (window.opener) {
-      window.opener.postMessage({ type: 'auth-success', token: '${safeToken}', refreshToken: '${safeRefresh}' }, window.location.origin);
-      window.close();
-    } else {
-      window.location.href = '/';
-    }` : `window.location.href = '${safeRedirect}';`}
+      try {
+        window.opener.postMessage({ type: 'auth-success', token: '${safeToken}', refreshToken: '${safeRefresh}' }, window.location.origin);
+      } catch(e) {}
+    }
+    setTimeout(function() { window.close(); }, 300);
+    setTimeout(function() { window.location.href = '/'; }, 1500);
+    ` : `window.location.href = '${safeRedirect}';`}
   </script>
 </body>
 </html>`;
@@ -445,14 +455,14 @@ function getCallbackErrorHTML(message: string): string {
 <head>
   <title>Sign in failed</title>
   <style>
-    body { font-family: system-ui; background: #0a0a0a; color: #fff; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+    body { font-family: system-ui; background: #fff; color: #0a0a0a; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
     .container { text-align: center; }
-    a { color: #667eea; }
+    a { color: #0a0a0a; text-decoration: underline; }
   </style>
 </head>
 <body>
   <div class="container">
-    <p style="color: #f87171;">Error: ${message}</p>
+    <p style="color: #ef4444;">Error: ${message}</p>
     <a href="/">Go back</a>
   </div>
 </body>

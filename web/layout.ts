@@ -1005,20 +1005,6 @@ export function getLayoutHTML(options: {
       margin: 0 auto;
     }
 
-    .hero-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: var(--space-2);
-      padding: var(--space-1) var(--space-3);
-      font-size: 12px;
-      font-weight: 500;
-      color: var(--text-secondary);
-      background: var(--bg-subtle);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-full);
-      margin-bottom: var(--space-6);
-    }
-
     .hero h1 {
       font-size: 56px;
       font-weight: 700;
@@ -1026,14 +1012,6 @@ export function getLayoutHTML(options: {
       letter-spacing: -0.035em;
       margin-bottom: var(--space-5);
       color: var(--text-primary);
-    }
-
-    .hero p {
-      font-size: 18px;
-      color: var(--text-secondary);
-      line-height: 1.6;
-      margin-bottom: var(--space-8);
-      max-width: 520px;
     }
 
     .hero-actions {
@@ -1723,9 +1701,8 @@ export function getLayoutHTML(options: {
           <path d="M6 4 L6 22 Q6 28 12 28 L12 28 L12 4 L17 4 L17 28 Q17 28 20 28 Q26 28 26 22 L26 4 L21 4 L21 22 Q21 24 20 24 L12 24 Q10.5 24 10.5 22 L10.5 4 Z" fill="url(#authLogoGrad)"/>
         </svg>
       </div>
-      <h2 style="text-align:center;color:var(--text-primary);">Sign in to Ultralight</h2>
-      <p style="text-align:center;margin-bottom:var(--space-6);color:var(--text-secondary);">Deploy MCP servers from TypeScript functions</p>
-      <div class="auth-divider">or continue with</div>
+      <h2 style="text-align:center;color:var(--text-primary);font-size:20px;">Log in to give your agent superpowers</h2>
+      <div style="margin-bottom:var(--space-6);"></div>
       <button id="googleAuthBtn" class="auth-provider-btn" onclick="window.open('/auth/login?return_to=' + encodeURIComponent('/?popup=1'), 'ultralight-auth', 'width=500,height=700,menubar=no,toolbar=no'); document.getElementById('authOverlay').classList.add('hidden');">
         <svg width="18" height="18" viewBox="0 0 24 24">
           <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
@@ -1814,14 +1791,12 @@ export function getLayoutHTML(options: {
          ========================================== -->
     <div id="homeView">
       <section class="hero">
-        <div class="hero-badge">
-          MCP App Platform
-        </div>
         <h1>Give your agent<br>superpowers</h1>
-        <p>Deploy TypeScript functions as MCP servers. One command. Any agent.</p>
-        <div class="hero-actions">
-          <button id="heroCTA" class="btn btn-primary btn-lg" onclick="if(!localStorage.getItem('ultralight_token')){document.getElementById('authOverlay').classList.remove('hidden')}">Get Started</button>
-          <a href="https://www.npmjs.com/package/ultralightpro" target="_blank" class="btn btn-ghost btn-lg" style="color:var(--text-secondary);">Docs &rarr;</a>
+        <div class="hero-actions" style="margin-top:var(--space-8);">
+          <button id="heroCTA" class="btn btn-primary btn-lg" style="gap:var(--space-2);" onclick="handleHeroCTA()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            <span id="heroCTAText">Copy agent instructions</span>
+          </button>
         </div>
         <div style="margin-top:var(--space-10);display:flex;align-items:center;gap:var(--space-6);color:var(--text-muted);font-size:13px;">
           <span style="color:var(--text-secondary);font-weight:500;">Claude Code</span>
@@ -2336,16 +2311,45 @@ export function getLayoutHTML(options: {
     function hideAuthOverlay() {
       document.getElementById('authOverlay').classList.add('hidden');
     }
+    window.showAuthOverlay = showAuthOverlay;
+    window.hideAuthOverlay = hideAuthOverlay;
 
-    document.getElementById('googleAuthBtn').addEventListener('click', function() {
+    // Hero CTA handler — opens auth if not logged in, copies instructions if logged in
+    window.handleHeroCTA = async function() {
+      if (!authToken) {
+        showAuthOverlay();
+        return;
+      }
+      // Already authed — generate token and copy instructions
+      await generateSetupInstructions();
+      if (setupCommandStr) {
+        try {
+          await navigator.clipboard.writeText(setupCommandStr);
+          var btn = document.getElementById('heroCTA');
+          var textEl = document.getElementById('heroCTAText');
+          if (btn && textEl) {
+            textEl.textContent = 'Copied! Now paste into your agent';
+            btn.style.background = 'var(--success)';
+            setTimeout(function() {
+              textEl.textContent = 'Copy agent instructions';
+              btn.style.background = '';
+            }, 3000);
+          }
+        } catch(e) {
+          showToast('Failed to copy', 'error');
+        }
+      }
+    };
+
+    document.getElementById('googleAuthBtn')?.addEventListener('click', function() {
       // Open auth in new tab (MiniMax-style)
-      const authUrl = '/auth/login?return_to=' + encodeURIComponent('/?popup=1');
+      var authUrl = '/auth/login?return_to=' + encodeURIComponent('/?popup=1');
       window.open(authUrl, 'ultralight-auth', 'width=500,height=700,menubar=no,toolbar=no');
       hideAuthOverlay();
     });
 
     // Close auth overlay on backdrop click
-    document.getElementById('authOverlay').addEventListener('click', function(e) {
+    document.getElementById('authOverlay')?.addEventListener('click', function(e) {
       if (e.target === this) hideAuthOverlay();
     });
     // Close button
@@ -2365,11 +2369,46 @@ export function getLayoutHTML(options: {
       }
     });
 
-    // Also handle returning from auth tab (fallback for browsers that block postMessage)
+    // Fallback: poll localStorage for token changes (handles popup auth when postMessage fails)
+    var authPollInterval = null;
+    function startAuthPoll() {
+      if (authPollInterval) return;
+      authPollInterval = setInterval(function() {
+        var token = localStorage.getItem('ultralight_token');
+        if (token && token !== authToken) {
+          authToken = token;
+          clearInterval(authPollInterval);
+          authPollInterval = null;
+          hideAuthOverlay();
+          updateAuthUI();
+        }
+      }, 500);
+      // Stop polling after 5 minutes
+      setTimeout(function() {
+        if (authPollInterval) {
+          clearInterval(authPollInterval);
+          authPollInterval = null;
+        }
+      }, 300000);
+    }
+
+    // Start polling whenever we show auth overlay or focus returns
+    var origShowAuth = showAuthOverlay;
+    showAuthOverlay = function() {
+      origShowAuth();
+      startAuthPoll();
+    };
+    window.showAuthOverlay = showAuthOverlay;
+
     window.addEventListener('focus', function() {
-      const token = localStorage.getItem('ultralight_token');
-      if (token && !authToken) {
+      var token = localStorage.getItem('ultralight_token');
+      if (token && token !== authToken) {
         authToken = token;
+        if (authPollInterval) {
+          clearInterval(authPollInterval);
+          authPollInterval = null;
+        }
+        hideAuthOverlay();
         updateAuthUI();
       }
     });
@@ -2455,7 +2494,23 @@ export function getLayoutHTML(options: {
           showView('dashboard');
           loadDashboardData();
         } else {
-          // First-time user: transform hero into setup instructions
+          // First-time user: auto-generate + auto-copy instructions
+          await generateSetupInstructions();
+          if (setupCommandStr) {
+            try {
+              await navigator.clipboard.writeText(setupCommandStr);
+              var ctaBtn = document.getElementById('heroCTA');
+              var ctaTxt = document.getElementById('heroCTAText');
+              if (ctaBtn && ctaTxt) {
+                ctaTxt.textContent = 'Copied! Now paste into your agent';
+                ctaBtn.style.background = 'var(--success)';
+                setTimeout(function() {
+                  ctaTxt.textContent = 'Copy agent instructions';
+                  ctaBtn.style.background = '';
+                }, 4000);
+              }
+            } catch(e) {}
+          }
           showSetupBlock();
         }
       } else if (currentView === 'dashboard') {
@@ -2661,20 +2716,7 @@ export function getLayoutHTML(options: {
     function showSetupBlock() {
       const block = document.getElementById('setupBlock');
       if (block) block.style.display = 'block';
-      // Update hero CTA text
-      const cta = document.getElementById('heroCTA');
-      if (cta) cta.style.display = 'none'; // hide the button since we show the block instead
     }
-
-    // Hero CTA handler
-    document.getElementById('heroCTA')?.addEventListener('click', async function() {
-      if (!authToken) {
-        showAuthOverlay();
-        return;
-      }
-      // Already authed — generate token and show setup
-      await generateSetupInstructions();
-    });
 
     async function generateSetupInstructions() {
       try {
