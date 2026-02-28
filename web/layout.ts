@@ -2972,12 +2972,16 @@ export function getLayoutHTML(options: {
           await navigator.clipboard.writeText(setupCommandStr);
           var btn = document.getElementById('navCopyInstructionsBtn');
           var origText = btn.innerHTML;
-          btn.textContent = 'Copied!';
+          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Paste to your agent';
           btn.style.background = 'var(--success)';
+          btn.style.borderColor = 'var(--success)';
+          btn.style.color = 'white';
           setTimeout(function() {
             btn.innerHTML = origText;
             btn.style.background = '';
-          }, 2000);
+            btn.style.borderColor = '';
+            btn.style.color = '';
+          }, 3000);
         } catch(e) {
           showToast('Failed to copy', 'error');
         }
