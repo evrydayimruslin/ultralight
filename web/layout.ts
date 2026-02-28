@@ -1422,6 +1422,15 @@ export function getLayoutHTML(options: {
       padding: var(--space-20) var(--space-6) 0;
     }
 
+    .cap-section-heading {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: var(--space-5);
+    }
+
     .cap-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -1430,7 +1439,7 @@ export function getLayoutHTML(options: {
 
     .cap-card {
       border: 1px solid var(--border);
-      padding: var(--space-8);
+      padding: var(--space-10);
       display: flex;
       flex-direction: column;
       min-width: 0;
@@ -1444,16 +1453,16 @@ export function getLayoutHTML(options: {
       display: flex;
       align-items: center;
       justify-content: center;
-      margin-bottom: var(--space-5);
+      margin-bottom: var(--space-6);
     }
 
     .cap-card-title {
-      font-size: 16px;
+      font-size: 20px;
       font-weight: 600;
-      letter-spacing: -0.01em;
+      letter-spacing: -0.02em;
       color: var(--text-primary);
-      line-height: 1.35;
-      margin-bottom: var(--space-2);
+      line-height: 1.3;
+      margin-bottom: var(--space-3);
     }
 
     .cap-card-desc {
@@ -1464,7 +1473,7 @@ export function getLayoutHTML(options: {
     }
 
     .cap-card-visual {
-      margin-top: var(--space-5);
+      margin-top: var(--space-6);
     }
 
     /* Deploy flow */
@@ -1855,8 +1864,9 @@ export function getLayoutHTML(options: {
         <div id="connectionStatus" style="margin-top:var(--space-3);font-size:12px;color:var(--text-muted);"></div>
       </div>
 
-      <!-- Capabilities Section -->
+      <!-- Section 1: Your personal super app -->
       <section class="cap-section">
+        <div class="cap-section-heading">Your personal super app</div>
         <div class="cap-grid">
           <!-- Free instant deployments -->
           <div class="cap-card">
@@ -1914,7 +1924,7 @@ export function getLayoutHTML(options: {
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             </div>
             <div class="cap-card-title">Take everything with you</div>
-            <div class="cap-card-desc">Switch agents without starting over.</div>
+            <div class="cap-card-desc">Switch agents without starting over. Your apps, skills, and memories follow you everywhere.</div>
             <div class="cap-card-visual">
               <div class="cap-pills">
                 <span>Custom apps</span>
@@ -1924,14 +1934,50 @@ export function getLayoutHTML(options: {
             </div>
           </div>
 
+          <!-- Granular permissions -->
+          <div class="cap-card">
+            <div class="cap-card-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+            </div>
+            <div class="cap-card-title">Granular permissions</div>
+            <div class="cap-card-desc">Per-function access control with IP allowlists, time windows, budget constraints, and argument whitelisting.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 2: Agent app store -->
+      <section class="cap-section" style="padding-top:var(--space-16);">
+        <div class="cap-section-heading">Agent app store</div>
+        <div class="cap-grid">
           <!-- One connection -->
           <div class="cap-card">
             <div class="cap-card-icon">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
             </div>
             <div class="cap-card-title">One connection, infinite possibilities</div>
-            <div class="cap-card-desc">Add Ultralight once and extend its capabilities forever. Every app, markdown, and memory is instantly available to your agent.</div>
+            <div class="cap-card-desc">All Ultralight agents inherit every published app and skill. Add Ultralight once and extend its capabilities forever.</div>
           </div>
+
+          <!-- Publish and monetize -->
+          <div class="cap-card">
+            <div class="cap-card-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+            </div>
+            <div class="cap-card-title">Publish and charge per call</div>
+            <div class="cap-card-desc">Extend the capabilities of all Ultralight-connected agents and set per-function pricing with micropayments.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Closing CTA -->
+      <section style="max-width:820px;margin:0 auto;padding:var(--space-20) var(--space-6);text-align:center;">
+        <h2 style="font-size:32px;font-weight:700;letter-spacing:-0.035em;line-height:1.15;color:var(--text-primary);margin-bottom:var(--space-4);">Give your agent superpowers</h2>
+        <p style="font-size:11px;font-weight:500;color:var(--text-primary);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:var(--space-5);">Just paste and go</p>
+        <div style="display:flex;justify-content:center;">
+          <button class="btn btn-primary btn-lg" style="gap:var(--space-2);border-radius:0;" onclick="document.getElementById('authOverlay').classList.remove('hidden')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            <span>Copy agent instructions</span>
+          </button>
         </div>
       </section>
 
