@@ -1,5 +1,5 @@
 // Ultralight Layout — Complete Rewrite
-// World-class dark-mode UI with Linear/Vercel-inspired design language
+// World-class light-mode UI with white/black monochrome design language
 
 export function getLayoutHTML(options: {
   title?: string;
@@ -21,7 +21,7 @@ export function getLayoutHTML(options: {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${title} - Ultralight</title>
   <meta name="description" content="TypeScript functions become MCP servers. Instantly.">
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%233b82f6'/%3E%3Cstop offset='100%25' stop-color='%232563eb'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M6 4 L6 22 Q6 28 12 28 L12 28 L12 4 L17 4 L17 28 Q17 28 20 28 Q26 28 26 22 L26 4 L21 4 L21 22 Q21 24 20 24 L12 24 Q10.5 24 10.5 22 L10.5 4 Z' fill='url(%23g)'/%3E%3C/svg%3E">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%230a0a0a'/%3E%3Cstop offset='100%25' stop-color='%23333333'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M6 4 L6 22 Q6 28 12 28 L12 28 L12 4 L17 4 L17 28 Q17 28 20 28 Q26 28 26 22 L26 4 L21 4 L21 22 Q21 24 20 24 L12 24 Q10.5 24 10.5 22 L10.5 4 Z' fill='url(%23g)'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -36,8 +36,8 @@ export function getLayoutHTML(options: {
     }
 
     html {
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
+      -webkit-font-smoothing: auto;
+      -moz-osx-font-smoothing: auto;
       text-rendering: optimizeLegibility;
       scroll-behavior: smooth;
     }
@@ -61,38 +61,38 @@ export function getLayoutHTML(options: {
        CSS VARIABLES — DESIGN TOKENS
        ============================================ */
     :root {
-      /* Background */
-      --bg-base: #0a0a0a;
-      --bg-raised: #141414;
-      --bg-overlay: #1a1a1a;
-      --bg-hover: rgba(255,255,255,0.06);
-      --bg-active: rgba(255,255,255,0.09);
-      --bg-subtle: rgba(255,255,255,0.03);
+      /* Background — white/light monochrome */
+      --bg-base: #ffffff;
+      --bg-raised: #fafafa;
+      --bg-overlay: #ffffff;
+      --bg-hover: rgba(0,0,0,0.04);
+      --bg-active: rgba(0,0,0,0.06);
+      --bg-subtle: rgba(0,0,0,0.02);
 
-      /* Borders */
-      --border: rgba(255,255,255,0.08);
-      --border-strong: rgba(255,255,255,0.14);
-      --border-focus: rgba(59,130,246,0.5);
+      /* Borders — subtle grays */
+      --border: rgba(0,0,0,0.08);
+      --border-strong: rgba(0,0,0,0.15);
+      --border-focus: rgba(0,0,0,0.4);
 
-      /* Text */
-      --text-primary: #ededed;
-      --text-secondary: #a1a1a1;
-      --text-muted: #666;
-      --text-inverse: #0a0a0a;
+      /* Text — black monochrome */
+      --text-primary: #0a0a0a;
+      --text-secondary: #555;
+      --text-muted: #999;
+      --text-inverse: #ffffff;
 
-      /* Accent */
-      --accent: #3b82f6;
-      --accent-hover: #2563eb;
-      --accent-soft: rgba(59,130,246,0.12);
-      --accent-text: #60a5fa;
+      /* Accent — black monochrome (no blue) */
+      --accent: #0a0a0a;
+      --accent-hover: #333;
+      --accent-soft: rgba(0,0,0,0.06);
+      --accent-text: #0a0a0a;
 
       /* Semantic */
       --success: #22c55e;
-      --success-soft: rgba(34,197,94,0.12);
+      --success-soft: rgba(34,197,94,0.1);
       --error: #ef4444;
-      --error-soft: rgba(239,68,68,0.12);
+      --error-soft: rgba(239,68,68,0.08);
       --warning: #f59e0b;
-      --warning-soft: rgba(245,158,11,0.12);
+      --warning-soft: rgba(245,158,11,0.08);
 
       /* Spacing scale */
       --space-1: 4px;
@@ -114,12 +114,12 @@ export function getLayoutHTML(options: {
       --radius-xl: 16px;
       --radius-full: 9999px;
 
-      /* Shadows */
-      --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
-      --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
-      --shadow-lg: 0 8px 30px rgba(0,0,0,0.5);
-      --shadow-xl: 0 16px 50px rgba(0,0,0,0.6);
-      --shadow-glow: 0 0 20px rgba(59,130,246,0.15);
+      /* Shadows — subtle light-mode shadows */
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+      --shadow-lg: 0 8px 30px rgba(0,0,0,0.1);
+      --shadow-xl: 0 16px 50px rgba(0,0,0,0.12);
+      --shadow-glow: 0 0 0 3px rgba(0,0,0,0.06);
 
       /* Typography */
       --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -229,7 +229,7 @@ export function getLayoutHTML(options: {
       align-items: center;
       justify-content: space-between;
       padding: 0 var(--space-6);
-      background: rgba(10,10,10,0.8);
+      background: rgba(255,255,255,0.85);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       border-bottom: 1px solid var(--border);
@@ -384,7 +384,7 @@ export function getLayoutHTML(options: {
 
     .btn-secondary:hover {
       background: var(--bg-hover);
-      border-color: rgba(255,255,255,0.2);
+      border-color: rgba(0,0,0,0.2);
     }
 
     .btn-secondary:active {
@@ -515,7 +515,7 @@ export function getLayoutHTML(options: {
     }
 
     .input:hover {
-      border-color: rgba(255,255,255,0.2);
+      border-color: rgba(0,0,0,0.2);
     }
 
     .input:focus {
@@ -651,7 +651,7 @@ export function getLayoutHTML(options: {
       position: fixed;
       inset: 0;
       z-index: var(--z-modal);
-      background: rgba(0,0,0,0.6);
+      background: rgba(0,0,0,0.3);
       backdrop-filter: blur(4px);
       -webkit-backdrop-filter: blur(4px);
       display: flex;
@@ -722,7 +722,7 @@ export function getLayoutHTML(options: {
       position: fixed;
       inset: 0;
       z-index: var(--z-modal);
-      background: rgba(0,0,0,0.7);
+      background: rgba(0,0,0,0.4);
       backdrop-filter: blur(8px);
       -webkit-backdrop-filter: blur(8px);
       display: flex;
@@ -735,9 +735,10 @@ export function getLayoutHTML(options: {
     .auth-overlay.hidden { display: none; }
 
     .auth-card {
+      position: relative;
       width: 100%;
       max-width: 400px;
-      background: var(--bg-raised);
+      background: var(--bg-base);
       border: 1px solid var(--border-strong);
       border-radius: var(--radius-xl);
       box-shadow: var(--shadow-xl);
@@ -787,7 +788,7 @@ export function getLayoutHTML(options: {
       font-size: 14px;
       font-weight: 500;
       color: var(--text-primary);
-      background: var(--bg-base);
+      background: var(--bg-raised);
       border: 1px solid var(--border-strong);
       border-radius: var(--radius-md);
       transition: all var(--transition-fast);
@@ -797,7 +798,7 @@ export function getLayoutHTML(options: {
 
     .auth-provider-btn:hover {
       background: var(--bg-hover);
-      border-color: rgba(255,255,255,0.2);
+      border-color: rgba(0,0,0,0.2);
     }
 
     /* ============================================
@@ -918,7 +919,7 @@ export function getLayoutHTML(options: {
     .animate-pulse { animation: pulse 2s ease-in-out infinite; }
 
     .skeleton {
-      background: linear-gradient(90deg, var(--bg-raised) 25%, var(--bg-hover) 50%, var(--bg-raised) 75%);
+      background: linear-gradient(90deg, var(--bg-subtle) 25%, var(--bg-hover) 50%, var(--bg-subtle) 75%);
       background-size: 200% 100%;
       animation: shimmer 1.5s ease-in-out infinite;
       border-radius: var(--radius-md);
@@ -1011,9 +1012,9 @@ export function getLayoutHTML(options: {
       padding: var(--space-1) var(--space-3);
       font-size: 12px;
       font-weight: 500;
-      color: var(--accent-text);
-      background: var(--accent-soft);
-      border: 1px solid rgba(59,130,246,0.2);
+      color: var(--text-secondary);
+      background: var(--bg-subtle);
+      border: 1px solid var(--border);
       border-radius: var(--radius-full);
       margin-bottom: var(--space-6);
     }
@@ -1024,10 +1025,7 @@ export function getLayoutHTML(options: {
       line-height: 1.05;
       letter-spacing: -0.035em;
       margin-bottom: var(--space-5);
-      background: linear-gradient(180deg, #fff 0%, rgba(255,255,255,0.7) 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+      color: var(--text-primary);
     }
 
     .hero p {
@@ -1532,18 +1530,18 @@ export function getLayoutHTML(options: {
     }
 
     ::-webkit-scrollbar-thumb {
-      background: rgba(255,255,255,0.1);
+      background: rgba(0,0,0,0.15);
       border-radius: 3px;
     }
 
     ::-webkit-scrollbar-thumb:hover {
-      background: rgba(255,255,255,0.18);
+      background: rgba(0,0,0,0.25);
     }
 
     /* Firefox */
     * {
       scrollbar-width: thin;
-      scrollbar-color: rgba(255,255,255,0.1) transparent;
+      scrollbar-color: rgba(0,0,0,0.15) transparent;
     }
 
     /* ============================================
@@ -1713,22 +1711,22 @@ export function getLayoutHTML(options: {
        ============================================ -->
   <div id="authOverlay" class="auth-overlay hidden">
     <div class="auth-card">
-      <button id="authCloseBtn" style="position:absolute;top:16px;right:16px;background:none;border:none;color:var(--text-muted);cursor:pointer;padding:4px;font-size:18px;line-height:1;" aria-label="Close">&times;</button>
+      <button id="authCloseBtn" onclick="document.getElementById('authOverlay').classList.add('hidden')" style="position:absolute;top:16px;right:16px;background:none;border:none;color:var(--text-muted);cursor:pointer;padding:8px;font-size:20px;line-height:1;border-radius:var(--radius-sm);transition:background var(--transition-fast);" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='none'" aria-label="Close">&times;</button>
       <div style="display:flex;justify-content:center;margin-bottom:var(--space-6);">
         <svg width="48" height="48" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
           <defs>
             <linearGradient id="authLogoGrad" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stop-color="#3b82f6"/>
-              <stop offset="100%" stop-color="#2563eb"/>
+              <stop offset="0%" stop-color="#0a0a0a"/>
+              <stop offset="100%" stop-color="#333333"/>
             </linearGradient>
           </defs>
           <path d="M6 4 L6 22 Q6 28 12 28 L12 28 L12 4 L17 4 L17 28 Q17 28 20 28 Q26 28 26 22 L26 4 L21 4 L21 22 Q21 24 20 24 L12 24 Q10.5 24 10.5 22 L10.5 4 Z" fill="url(#authLogoGrad)"/>
         </svg>
       </div>
-      <h2 style="text-align:center;">Sign in to Ultralight</h2>
-      <p style="text-align:center;margin-bottom:var(--space-6);">Deploy MCP servers from TypeScript functions</p>
+      <h2 style="text-align:center;color:var(--text-primary);">Sign in to Ultralight</h2>
+      <p style="text-align:center;margin-bottom:var(--space-6);color:var(--text-secondary);">Deploy MCP servers from TypeScript functions</p>
       <div class="auth-divider">or continue with</div>
-      <button id="googleAuthBtn" class="auth-provider-btn">
+      <button id="googleAuthBtn" class="auth-provider-btn" onclick="window.open('/auth/login?return_to=' + encodeURIComponent('/?popup=1'), 'ultralight-auth', 'width=500,height=700,menubar=no,toolbar=no'); document.getElementById('authOverlay').classList.add('hidden');">
         <svg width="18" height="18" viewBox="0 0 24 24">
           <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
           <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
@@ -1754,8 +1752,8 @@ export function getLayoutHTML(options: {
         <svg width="24" height="24" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
           <defs>
             <linearGradient id="navLogoGrad" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stop-color="#3b82f6"/>
-              <stop offset="100%" stop-color="#2563eb"/>
+              <stop offset="0%" stop-color="#0a0a0a"/>
+              <stop offset="100%" stop-color="#333333"/>
             </linearGradient>
           </defs>
           <path d="M6 4 L6 22 Q6 28 12 28 L12 28 L12 4 L17 4 L17 28 Q17 28 20 28 Q26 28 26 22 L26 4 L21 4 L21 22 Q21 24 20 24 L12 24 Q10.5 24 10.5 22 L10.5 4 Z" fill="url(#navLogoGrad)"/>
@@ -1765,9 +1763,9 @@ export function getLayoutHTML(options: {
     </div>
     <div class="nav-right">
       <!-- Pre-auth nav items -->
-      <div id="navPreAuth">
+      <div id="navPreAuth" style="display:flex;align-items:center;gap:var(--space-2);">
         <a id="docsLink" href="https://www.npmjs.com/package/ultralightpro" target="_blank" class="btn btn-ghost btn-sm">Docs</a>
-        <button id="navAuthBtn" class="btn btn-ghost btn-sm">Log in</button>
+        <button id="navAuthBtn" class="btn btn-primary btn-sm" onclick="document.getElementById('authOverlay').classList.remove('hidden')">Log in</button>
       </div>
       <!-- Post-auth nav items (hidden by default) -->
       <div id="navPostAuth" class="hidden flex items-center gap-3">
@@ -1816,30 +1814,27 @@ export function getLayoutHTML(options: {
          ========================================== -->
     <div id="homeView">
       <section class="hero">
-        <div class="hero-badge" style="display:inline-flex;align-items:center;gap:var(--space-2);padding:var(--space-2) var(--space-4);background:var(--accent-soft);color:var(--accent);font-size:12px;font-weight:600;border-radius:var(--radius-full);margin-bottom:var(--space-6);border:1px solid rgba(59,130,246,0.2);">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        <div class="hero-badge">
           MCP App Platform
         </div>
-        <h1>TypeScript functions become<br>MCP servers. Instantly.</h1>
-        <p>Write a function. Run one command. Every AI agent can use it.</p>
+        <h1>Give your agent<br>superpowers</h1>
+        <p>Deploy TypeScript functions as MCP servers. One command. Any agent.</p>
         <div class="hero-actions">
-          <button id="heroCTA" class="btn btn-primary">Copy Setup Instructions</button>
-          <a href="https://www.npmjs.com/package/ultralightpro" target="_blank" class="btn btn-ghost" style="color:var(--text-secondary);">Read the docs &rarr;</a>
+          <button id="heroCTA" class="btn btn-primary btn-lg" onclick="if(!localStorage.getItem('ultralight_token')){document.getElementById('authOverlay').classList.remove('hidden')}">Get Started</button>
+          <a href="https://www.npmjs.com/package/ultralightpro" target="_blank" class="btn btn-ghost btn-lg" style="color:var(--text-secondary);">Docs &rarr;</a>
         </div>
-        <div style="margin-top:var(--space-8);display:flex;align-items:center;gap:var(--space-4);color:var(--text-muted);font-size:12px;">
-          <span>Works with</span>
+        <div style="margin-top:var(--space-10);display:flex;align-items:center;gap:var(--space-6);color:var(--text-muted);font-size:13px;">
           <span style="color:var(--text-secondary);font-weight:500;">Claude Code</span>
-          <span style="opacity:0.3;">|</span>
           <span style="color:var(--text-secondary);font-weight:500;">Cursor</span>
-          <span style="opacity:0.3;">|</span>
           <span style="color:var(--text-secondary);font-weight:500;">Windsurf</span>
-          <span style="opacity:0.3;">|</span>
-          <span style="color:var(--text-secondary);font-weight:500;">Cline</span>
+          <span style="color:var(--text-secondary);font-weight:500;">Codex</span>
+          <span style="color:var(--text-secondary);font-weight:500;">OpenClaw</span>
+          <span style="color:var(--text-secondary);font-weight:500;">Perplexity Computer</span>
         </div>
       </section>
 
       <!-- Setup Instructions Block (hidden until authenticated) -->
-      <div id="setupBlock" class="setup-block" style="display:none;max-width:640px;margin:var(--space-8) auto 0;background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-5);overflow:hidden;">
+      <div id="setupBlock" class="setup-block" style="display:none;max-width:640px;margin:var(--space-8) auto 0;background:var(--bg-raised);border:1px solid var(--border-strong);border-radius:var(--radius-lg);padding:var(--space-5);overflow:hidden;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-3);">
           <span style="font-size:13px;font-weight:500;color:var(--text-secondary);">Paste this into your agent:</span>
           <button id="setupCopyBtn" class="btn btn-ghost btn-sm" style="font-size:12px;">Copy</button>
@@ -1849,23 +1844,29 @@ export function getLayoutHTML(options: {
       </div>
 
       <!-- How It Works Section -->
-      <section style="max-width:900px;margin:var(--space-16) auto 0;text-align:center;">
-        <h2 style="font-size:24px;font-weight:700;letter-spacing:-0.02em;margin-bottom:var(--space-8);">How it works</h2>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-6);">
-          <div style="text-align:left;padding:var(--space-6);background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-lg);">
-            <div style="width:32px;height:32px;border-radius:var(--radius-full);background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;margin-bottom:var(--space-4);">1</div>
-            <h3 style="font-size:15px;font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Write TypeScript</h3>
-            <p style="font-size:13px;color:var(--text-muted);line-height:1.6;">Export functions with typed parameters. That's your entire API.</p>
+      <section style="max-width:720px;margin:var(--space-16) auto 0;">
+        <h2 style="font-size:20px;font-weight:600;letter-spacing:-0.02em;margin-bottom:var(--space-8);text-align:center;color:var(--text-primary);">How it works</h2>
+        <div style="display:flex;flex-direction:column;gap:var(--space-5);">
+          <div style="display:flex;align-items:flex-start;gap:var(--space-5);">
+            <div style="width:28px;height:28px;border-radius:50%;border:1.5px solid var(--border-strong);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:var(--text-secondary);flex-shrink:0;">1</div>
+            <div>
+              <h3 style="font-size:15px;font-weight:600;margin-bottom:var(--space-1);color:var(--text-primary);">Write TypeScript</h3>
+              <p style="font-size:14px;color:var(--text-muted);line-height:1.6;">Export functions with typed parameters. That's your entire API.</p>
+            </div>
           </div>
-          <div style="text-align:left;padding:var(--space-6);background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-lg);">
-            <div style="width:32px;height:32px;border-radius:var(--radius-full);background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;margin-bottom:var(--space-4);">2</div>
-            <h3 style="font-size:15px;font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Deploy instantly</h3>
-            <p style="font-size:13px;color:var(--text-muted);line-height:1.6;">One terminal command. No config, no Docker, no infra.</p>
+          <div style="display:flex;align-items:flex-start;gap:var(--space-5);">
+            <div style="width:28px;height:28px;border-radius:50%;border:1.5px solid var(--border-strong);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:var(--text-secondary);flex-shrink:0;">2</div>
+            <div>
+              <h3 style="font-size:15px;font-weight:600;margin-bottom:var(--space-1);color:var(--text-primary);">Deploy instantly</h3>
+              <p style="font-size:14px;color:var(--text-muted);line-height:1.6;">One command. No config, no Docker, no infrastructure.</p>
+            </div>
           </div>
-          <div style="text-align:left;padding:var(--space-6);background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-lg);">
-            <div style="width:32px;height:32px;border-radius:var(--radius-full);background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;margin-bottom:var(--space-4);">3</div>
-            <h3 style="font-size:15px;font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Agents use it</h3>
-            <p style="font-size:13px;color:var(--text-muted);line-height:1.6;">Any MCP-compatible agent can discover and call your functions.</p>
+          <div style="display:flex;align-items:flex-start;gap:var(--space-5);">
+            <div style="width:28px;height:28px;border-radius:50%;border:1.5px solid var(--border-strong);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:var(--text-secondary);flex-shrink:0;">3</div>
+            <div>
+              <h3 style="font-size:15px;font-weight:600;margin-bottom:var(--space-1);color:var(--text-primary);">Agents connect</h3>
+              <p style="font-size:14px;color:var(--text-muted);line-height:1.6;">Any MCP-compatible agent can discover and call your functions.</p>
+            </div>
           </div>
         </div>
       </section>
@@ -1880,7 +1881,7 @@ export function getLayoutHTML(options: {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
             <div class="faq-content">
-              <div class="faq-content-inner">MCP (Model Context Protocol) is an open standard that lets AI agents call external tools. An MCP server exposes functions that agents like Claude, Cursor, and Windsurf can discover and invoke. Ultralight turns your TypeScript functions into fully hosted MCP servers with zero configuration.</div>
+              <div class="faq-content-inner">MCP (Model Context Protocol) is an open standard that lets AI agents call external tools. An MCP server exposes functions that agents like Claude Code, Cursor, Windsurf, Codex, and OpenClaw can discover and invoke. Ultralight turns your TypeScript functions into fully hosted MCP servers with zero configuration.</div>
             </div>
           </div>
           <div class="faq-item">
