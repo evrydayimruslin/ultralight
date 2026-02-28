@@ -1423,11 +1423,10 @@ export function getLayoutHTML(options: {
     }
 
     .cap-section-heading {
-      font-size: 11px;
-      font-weight: 500;
-      color: var(--text-muted);
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      letter-spacing: -0.01em;
       margin-bottom: var(--space-5);
     }
 
@@ -1966,13 +1965,31 @@ export function getLayoutHTML(options: {
             <div class="cap-card-title">Publish and charge per call</div>
             <div class="cap-card-desc">Extend the capabilities of all Ultralight-connected agents and set per-function pricing with micropayments.</div>
           </div>
+
+          <!-- One auth for everything -->
+          <div class="cap-card">
+            <div class="cap-card-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+            </div>
+            <div class="cap-card-title">One auth for everything</div>
+            <div class="cap-card-desc">A single token connects your agent to every app in the ecosystem. No per-app API keys, no OAuth flows per service.</div>
+          </div>
+
+          <!-- One payment for everything -->
+          <div class="cap-card">
+            <div class="cap-card-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+            </div>
+            <div class="cap-card-title">One payment for everything</div>
+            <div class="cap-card-desc">A single prepaid balance covers every app your agent uses. No separate subscriptions, no surprise bills.</div>
+          </div>
         </div>
       </section>
 
       <!-- Closing CTA -->
       <section style="max-width:820px;margin:0 auto;padding:var(--space-20) var(--space-6);text-align:center;">
         <h2 style="font-size:32px;font-weight:700;letter-spacing:-0.035em;line-height:1.15;color:var(--text-primary);margin-bottom:var(--space-4);">Give your agent superpowers</h2>
-        <p style="font-size:11px;font-weight:500;color:var(--text-primary);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:var(--space-5);">Just paste and go</p>
+        <p style="font-size:11px;font-weight:500;color:var(--text-primary);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:var(--space-5);">Ready to start building?</p>
         <div style="display:flex;justify-content:center;">
           <button class="btn btn-primary btn-lg" style="gap:var(--space-2);border-radius:0;" onclick="document.getElementById('authOverlay').classList.remove('hidden')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
