@@ -1414,8 +1414,139 @@ export function getLayoutHTML(options: {
     }
 
     /* ============================================
-       FAQ ACCORDION STYLES
+       CAPABILITIES SECTION
        ============================================ */
+    .cap-section {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: var(--space-20) var(--space-6) 0;
+    }
+
+    .cap-heading {
+      font-size: 40px;
+      font-weight: 700;
+      letter-spacing: -0.035em;
+      line-height: 1.1;
+      color: var(--text-primary);
+      margin-bottom: var(--space-16);
+    }
+
+    .cap-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--space-12);
+    }
+
+    .cap-item {
+      padding: var(--space-8) 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .cap-item-label {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: var(--space-4);
+    }
+
+    .cap-item-title {
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+      line-height: 1.3;
+      margin-bottom: var(--space-3);
+    }
+
+    .cap-item-desc {
+      font-size: 15px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* Agent carousel */
+    .cap-carousel-track {
+      display: flex;
+      gap: var(--space-5);
+      overflow: hidden;
+      mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+      -webkit-mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+    }
+
+    .cap-carousel-inner {
+      display: flex;
+      gap: var(--space-5);
+      animation: cap-scroll 20s linear infinite;
+    }
+
+    .cap-carousel-inner span {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      padding: var(--space-2) var(--space-4);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-full);
+    }
+
+    @keyframes cap-scroll {
+      0% { transform: translateX(0); }
+      100% { transform: translateX(-50%); }
+    }
+
+    /* Deploy flow arrows */
+    .cap-flow {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-3);
+      margin-top: var(--space-4);
+    }
+
+    .cap-flow-row {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+    }
+
+    .cap-flow-row code {
+      font-size: 14px;
+      font-family: var(--font-mono);
+      font-weight: 500;
+      color: var(--text-primary);
+      background: var(--bg-active);
+      padding: var(--space-1) var(--space-3);
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+
+    .cap-flow-arrow {
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    .cap-flow-result {
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    /* Portable items */
+    .cap-portable {
+      display: flex;
+      gap: var(--space-3);
+      margin-top: var(--space-4);
+    }
+
+    .cap-portable span {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      padding: var(--space-2) var(--space-4);
+      background: var(--bg-active);
+      border-radius: var(--radius-full);
+      border: 1px solid var(--border);
+    }
 
     /* ============================================
        SCROLLBAR STYLES
@@ -1458,6 +1589,10 @@ export function getLayoutHTML(options: {
 
       .hero-grid {
         grid-template-columns: repeat(2, 1fr);
+      }
+
+      .cap-heading {
+        font-size: 32px;
       }
     }
 
@@ -1506,6 +1641,24 @@ export function getLayoutHTML(options: {
 
       .cap-grid-2col {
         grid-template-columns: 1fr !important;
+      }
+
+      .cap-heading {
+        font-size: 28px;
+        margin-bottom: var(--space-10);
+      }
+
+      .cap-grid {
+        grid-template-columns: 1fr;
+        gap: 0;
+      }
+
+      .cap-item-title {
+        font-size: 18px;
+      }
+
+      .cap-portable {
+        flex-wrap: wrap;
       }
 
       .app-grid {
@@ -1725,50 +1878,66 @@ export function getLayoutHTML(options: {
       </div>
 
       <!-- Capabilities Section -->
-      <section style="max-width:960px;margin:var(--space-20) auto 0;padding:0 var(--space-6);">
-        <!-- Top feature — full width -->
-        <div style="border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-8);margin-bottom:var(--space-5);">
-          <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-4);">
-            <div style="width:36px;height:36px;border-radius:10px;background:var(--text-primary);display:flex;align-items:center;justify-content:center;">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v-2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg>
-            </div>
-            <p style="font-size:11px;font-weight:500;color:var(--text-muted);letter-spacing:0.08em;text-transform:uppercase;margin:0;">Universal</p>
-          </div>
-          <h3 style="font-size:22px;font-weight:700;letter-spacing:-0.02em;color:var(--text-primary);margin-bottom:var(--space-2);line-height:1.3;">Works with any agent, take your apps, skills and memories with you</h3>
-          <p style="font-size:14px;color:var(--text-muted);line-height:1.6;margin:0;">OpenClaw, Claude Code, Codex, Cursor & more</p>
-        </div>
+      <section class="cap-section">
+        <h2 class="cap-heading">Infrastructure for<br>your agent</h2>
 
-        <!-- Two-column row -->
-        <div class="cap-grid-2col" style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-5);margin-bottom:var(--space-5);">
-          <div style="border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-8);">
-            <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-4);">
-              <div style="width:36px;height:36px;border-radius:10px;background:var(--text-primary);display:flex;align-items:center;justify-content:center;">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        <div class="cap-grid">
+          <!-- Free instant deployments -->
+          <div class="cap-item">
+            <div class="cap-item-label">Deploy</div>
+            <div class="cap-item-title">Free instant deployments</div>
+            <div class="cap-flow">
+              <div class="cap-flow-row">
+                <code>.md</code>
+                <span class="cap-flow-arrow">→</span>
+                <span class="cap-flow-result">live url</span>
               </div>
-              <p style="font-size:11px;font-weight:500;color:var(--text-muted);letter-spacing:0.08em;text-transform:uppercase;margin:0;">Deploy</p>
-            </div>
-            <h3 style="font-size:18px;font-weight:700;letter-spacing:-0.02em;color:var(--text-primary);margin-bottom:var(--space-3);line-height:1.3;">Deploy instantly</h3>
-            <div style="display:flex;flex-direction:column;gap:var(--space-2);">
-              <div style="display:flex;align-items:center;gap:var(--space-3);">
-                <code style="font-size:13px;font-family:var(--font-mono);color:var(--text-secondary);background:var(--bg-active);padding:2px 8px;border-radius:4px;">.md</code>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-                <span style="font-size:13px;color:var(--text-muted);">live url</span>
-              </div>
-              <div style="display:flex;align-items:center;gap:var(--space-3);">
-                <code style="font-size:13px;font-family:var(--font-mono);color:var(--text-secondary);background:var(--bg-active);padding:2px 8px;border-radius:4px;">.ts</code>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-                <span style="font-size:13px;color:var(--text-muted);">live mcp server</span>
+              <div class="cap-flow-row">
+                <code>.ts</code>
+                <span class="cap-flow-arrow">→</span>
+                <span class="cap-flow-result">live mcp server</span>
               </div>
             </div>
           </div>
-          <div style="border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-8);display:flex;flex-direction:column;justify-content:center;">
-            <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-4);">
-              <div style="width:36px;height:36px;border-radius:10px;background:var(--text-primary);display:flex;align-items:center;justify-content:center;">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+
+          <!-- Works with any agent -->
+          <div class="cap-item">
+            <div class="cap-item-label">Universal</div>
+            <div class="cap-item-title">Works with any agent</div>
+            <div class="cap-carousel-track" style="margin-top:var(--space-4);">
+              <div class="cap-carousel-inner">
+                <span>OpenClaw</span>
+                <span>Claude Code</span>
+                <span>Codex</span>
+                <span>Cursor</span>
+                <span>Perplexity Computer</span>
+                <span>Kimi Code</span>
+                <span>OpenClaw</span>
+                <span>Claude Code</span>
+                <span>Codex</span>
+                <span>Cursor</span>
+                <span>Perplexity Computer</span>
+                <span>Kimi Code</span>
               </div>
-              <p style="font-size:11px;font-weight:500;color:var(--text-muted);letter-spacing:0.08em;text-transform:uppercase;margin:0;">Connect</p>
             </div>
-            <h3 style="font-size:18px;font-weight:700;letter-spacing:-0.02em;color:var(--text-primary);line-height:1.3;">Agents use all your apps and markdowns with a single connection</h3>
+          </div>
+
+          <!-- Take everything with you -->
+          <div class="cap-item">
+            <div class="cap-item-label">Portable</div>
+            <div class="cap-item-title">Take everything with you</div>
+            <div class="cap-portable">
+              <span>Custom apps</span>
+              <span>Skills</span>
+              <span>Memories</span>
+            </div>
+          </div>
+
+          <!-- One connection -->
+          <div class="cap-item">
+            <div class="cap-item-label">Connect</div>
+            <div class="cap-item-title">One connection, infinite possibilities</div>
+            <p class="cap-item-desc">Add Ultralight once and extend its capabilities forever. Every app, markdown, and memory is instantly available to your agent.</p>
           </div>
         </div>
       </section>
