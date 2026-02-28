@@ -34,7 +34,7 @@ export async function handleAuth(request: Request): Promise<Response> {
     const callbackUrl = returnTo
       ? `${url.origin}/auth/callback?return_to=${encodeURIComponent(returnTo)}`
       : `${url.origin}/auth/callback`;
-    const authUrl = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(callbackUrl)}&flow_type=implicit`;
+    const authUrl = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(callbackUrl)}`;
 
     return new Response(null, {
       status: 302,
@@ -55,8 +55,8 @@ export async function handleAuth(request: Request): Promise<Response> {
     const code = url.searchParams.get('code');
 
     if (code) {
-      // Try code exchange flow — Supabase expects 'code' field (not 'auth_code')
-      // Try with empty code_verifier first (non-PKCE), then without it
+      // Try code exchange flow with Supabase
+      // Attempt 1: with empty code_verifier (non-PKCE)
       let tokenResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=authorization_code`, {
         method: 'POST',
         headers: {
@@ -69,7 +69,7 @@ export async function handleAuth(request: Request): Promise<Response> {
         }),
       });
 
-      // If empty code_verifier fails, try without it
+      // Attempt 2: without code_verifier field at all
       if (!tokenResponse.ok) {
         tokenResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=authorization_code`, {
           method: 'POST',
@@ -87,19 +87,23 @@ export async function handleAuth(request: Request): Promise<Response> {
         return new Response(getCallbackSuccessHTML(tokens.access_token, tokens.refresh_token, returnTo), {
           headers: {
             'Content-Type': 'text/html',
-            'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'",
           },
         });
       }
+
+      // Code exchange failed — show error with details for debugging
+      let errBody = '';
+      try { errBody = await tokenResponse.text(); } catch {}
+      console.error('[auth] Code exchange failed:', tokenResponse.status, errBody);
+      return new Response(getCallbackErrorHTML('Code exchange failed (status ' + tokenResponse.status + '). Please try again.'), {
+        headers: { 'Content-Type': 'text/html' },
+      });
     }
 
-    // No code or code exchange failed - return HTML that handles hash-based tokens
-    // Supabase implicit flow returns tokens in URL hash (e.g., #access_token=...)
-    // The hash is only accessible client-side via JavaScript
+    // No code param — return HTML that handles hash-based implicit tokens
     return new Response(getCallbackHTML(), {
       headers: {
         'Content-Type': 'text/html',
-        'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'",
       },
     });
   }
@@ -373,44 +377,66 @@ function getCallbackHTML(): string {
   <title>Signing in...</title>
   <style>
     body { font-family: system-ui; background: #fff; color: #0a0a0a; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
-    .container { text-align: center; }
+    .container { text-align: center; max-width: 500px; padding: 20px; }
     .spinner { width: 40px; height: 40px; border: 3px solid #e5e5e5; border-top-color: #0a0a0a; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 1rem; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    .debug { font-size: 11px; color: #999; margin-top: 20px; word-break: break-all; text-align: left; }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="spinner"></div>
-    <p>Signing you in...</p>
+    <p id="status">Signing you in...</p>
+    <div id="debug" class="debug"></div>
   </div>
   <script>
-    // Supabase returns tokens in URL hash
+    var debugEl = document.getElementById('debug');
+    var statusEl = document.getElementById('status');
+
+    // Supabase implicit flow returns tokens in URL hash
     var hash = window.location.hash.substring(1);
     var params = new URLSearchParams(hash);
     var accessToken = params.get('access_token');
     var refreshToken = params.get('refresh_token');
 
-    // Check for return_to parameter (e.g., from hero setup flow)
     var queryParams = new URLSearchParams(window.location.search);
     var returnTo = queryParams.get('return_to');
-    // Validate return_to is a relative path (prevent open redirect)
     var redirectTarget = (returnTo && returnTo.startsWith('/')) ? returnTo : '/';
 
+    // Debug info
+    debugEl.textContent = 'hash: ' + (hash ? hash.substring(0, 80) + '...' : '(empty)') + ' | query: ' + window.location.search;
+
     if (accessToken) {
+      statusEl.textContent = 'Success! Redirecting...';
       localStorage.setItem('ultralight_token', accessToken);
       if (refreshToken) {
         localStorage.setItem('ultralight_refresh_token', refreshToken);
       }
       window.location.href = redirectTarget;
     } else {
-      // Check query params as fallback
       var error = queryParams.get('error_description');
       if (error) {
         var safe = error.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#x27;');
         document.body.innerHTML = '<div class="container"><p style="color: #ef4444;">Error: ' + safe + '</p><a href="/" style="color: #0a0a0a;">Go back</a></div>';
       } else {
-        // No token found, redirect to login
-        window.location.href = '/auth/login';
+        statusEl.textContent = 'No token received. Waiting 3s then retrying...';
+        debugEl.textContent += ' | full URL: ' + window.location.href;
+        // Wait a moment — sometimes the hash is set after page load
+        setTimeout(function() {
+          var retryHash = window.location.hash.substring(1);
+          var retryParams = new URLSearchParams(retryHash);
+          var retryToken = retryParams.get('access_token');
+          if (retryToken) {
+            localStorage.setItem('ultralight_token', retryToken);
+            var retryRefresh = retryParams.get('refresh_token');
+            if (retryRefresh) localStorage.setItem('ultralight_refresh_token', retryRefresh);
+            window.location.href = redirectTarget;
+          } else {
+            statusEl.textContent = 'Authentication failed. No tokens found.';
+            debugEl.textContent += ' | retry hash: ' + (retryHash ? retryHash.substring(0, 80) : '(empty)');
+            document.body.innerHTML += '<div style="text-align:center;margin-top:20px;"><a href="/" style="color:#0a0a0a;">Go back</a> &nbsp; <a href="/auth/login" style="color:#0a0a0a;">Try again</a></div>';
+          }
+        }, 3000);
       }
     }
   </script>

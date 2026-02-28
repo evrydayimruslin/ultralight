@@ -998,7 +998,7 @@ export function getLayoutHTML(options: {
       flex-direction: column;
       align-items: flex-start;
       text-align: left;
-      padding: var(--space-20) var(--space-6) var(--space-16);
+      padding: var(--space-20) var(--space-6) var(--space-10);
       max-width: 820px;
       margin: 0 auto;
     }
@@ -1423,7 +1423,7 @@ export function getLayoutHTML(options: {
     .cap-section {
       max-width: 820px;
       margin: 0 auto;
-      padding: var(--space-20) var(--space-6) 0;
+      padding: var(--space-12) var(--space-6) 0;
     }
 
     .cap-section-heading {
@@ -1993,7 +1993,7 @@ export function getLayoutHTML(options: {
       </section>
 
       <!-- Closing CTA -->
-      <section style="max-width:820px;margin:0 auto;padding:var(--space-20) var(--space-6);text-align:left;">
+      <section style="max-width:820px;margin:0 auto;padding:120px var(--space-6) var(--space-20);text-align:left;">
         <h2 style="font-size:32px;font-weight:600;letter-spacing:-0.035em;line-height:1.15;color:var(--text-primary);margin-bottom:var(--space-4);">Give your agent superpowers.</h2>
         <p style="font-size:11px;font-weight:600;color:var(--text-secondary);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:var(--space-4);">Ready to start building?</p>
         <div style="display:flex;justify-content:flex-start;">
