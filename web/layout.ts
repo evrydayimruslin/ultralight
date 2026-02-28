@@ -1215,8 +1215,8 @@ export function getLayoutHTML(options: {
     }
 
     .nav-copy-btn:hover {
-      background: var(--border);
-      color: var(--text-primary);
+      background: var(--text-primary);
+      color: var(--bg-base);
     }
 
     .app-overview-header {
@@ -2972,14 +2972,14 @@ export function getLayoutHTML(options: {
           await navigator.clipboard.writeText(setupCommandStr);
           var btn = document.getElementById('navCopyInstructionsBtn');
           var origText = btn.innerHTML;
-          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Copied. Paste to agent';
-          btn.style.background = 'var(--success)';
-          btn.style.color = 'white';
+          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Copied. Paste to agent';
+          btn.style.background = 'var(--text-primary)';
+          btn.style.color = 'var(--bg-base)';
           setTimeout(function() {
             btn.innerHTML = origText;
             btn.style.background = '';
             btn.style.color = '';
-          }, 3000);
+          }, 5000);
         } catch(e) {
           showToast('Failed to copy', 'error');
         }
