@@ -1873,33 +1873,6 @@ export function getLayoutHTML(options: {
       <section class="cap-section">
         <div class="cap-section-heading">Agent native infrastructure</div>
         <div class="cap-grid">
-          <!-- Works with any agent -->
-          <div class="cap-card">
-            <div class="cap-card-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
-            </div>
-            <div class="cap-card-title">Works with any agent</div>
-            <div class="cap-card-desc">One standard, every agent. No vendor lock-in.</div>
-            <div class="cap-card-visual">
-              <div class="cap-carousel">
-                <div class="cap-carousel-inner">
-                  <span>OpenClaw</span>
-                  <span>Claude Code</span>
-                  <span>Codex</span>
-                  <span>Cursor</span>
-                  <span>Perplexity Computer</span>
-                  <span>Kimi Code</span>
-                  <span>OpenClaw</span>
-                  <span>Claude Code</span>
-                  <span>Codex</span>
-                  <span>Cursor</span>
-                  <span>Perplexity Computer</span>
-                  <span>Kimi Code</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
           <!-- Free instant deployments -->
           <div class="cap-card">
             <div class="cap-card-icon">
@@ -1935,6 +1908,33 @@ export function getLayoutHTML(options: {
                 <span>Custom apps</span>
                 <span>Skills</span>
                 <span>Memories</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Works with any agent -->
+          <div class="cap-card">
+            <div class="cap-card-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+            </div>
+            <div class="cap-card-title">Works with any agent</div>
+            <div class="cap-card-desc">One standard, every agent. No vendor lock-in.</div>
+            <div class="cap-card-visual">
+              <div class="cap-carousel">
+                <div class="cap-carousel-inner">
+                  <span>OpenClaw</span>
+                  <span>Claude Code</span>
+                  <span>Codex</span>
+                  <span>Cursor</span>
+                  <span>Perplexity Computer</span>
+                  <span>Kimi Code</span>
+                  <span>OpenClaw</span>
+                  <span>Claude Code</span>
+                  <span>Codex</span>
+                  <span>Cursor</span>
+                  <span>Perplexity Computer</span>
+                  <span>Kimi Code</span>
+                </div>
               </div>
             </div>
           </div>
