@@ -1772,23 +1772,7 @@ export function getLayoutHTML(options: {
          ========================================== -->
     <div id="homeView">
       <section class="hero">
-        <h1>Give any agent<br>superpowers</h1>
-        <p style="font-size:11px;font-weight:500;color:var(--text-primary);margin-top:var(--space-8);margin-bottom:var(--space-3);letter-spacing:0.08em;text-transform:uppercase;">Works with every agent</p>
-        <div style="display:flex;align-items:center;gap:var(--space-6);color:var(--text-muted);font-size:13px;">
-          <span style="color:var(--text-secondary);font-weight:500;">OpenClaw</span>
-          <span style="color:var(--text-secondary);font-weight:500;">Claude Code</span>
-          <span style="color:var(--text-secondary);font-weight:500;">Codex</span>
-          <span style="color:var(--text-secondary);font-weight:500;">Cursor</span>
-          <span style="color:var(--text-secondary);font-weight:500;">Kimi Code</span>
-          <span style="color:var(--text-secondary);font-weight:500;">Perplexity Computer</span>
-        </div>
-        <p style="font-size:11px;font-weight:500;color:var(--text-primary);margin-top:var(--space-10);margin-bottom:0;letter-spacing:0.08em;text-transform:uppercase;">Just paste and go</p>
-        <div class="hero-actions" style="margin-top:var(--space-5);">
-          <button id="heroCTA" class="btn btn-primary btn-lg" style="gap:var(--space-2);border-radius:0;" onclick="document.getElementById('authOverlay').classList.remove('hidden')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-            <span id="heroCTAText">Copy agent instructions</span>
-          </button>
-        </div>
+        <h1>Give your agent<br>superpowers</h1>
       </section>
 
       <!-- Setup Instructions Block (hidden until authenticated) -->
@@ -1803,38 +1787,17 @@ export function getLayoutHTML(options: {
 
       <!-- Capabilities Section -->
       <section style="max-width:720px;margin:var(--space-16) auto 0;">
-        <div style="display:flex;flex-direction:column;gap:var(--space-6);">
-          <div style="display:flex;align-items:flex-start;gap:var(--space-4);">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:2px;"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-            <div>
-              <h3 style="font-size:15px;font-weight:600;margin-bottom:var(--space-1);color:var(--text-primary);">Deploy instantly</h3>
-              <p style="font-size:14px;color:var(--text-muted);line-height:1.6;">.md files, MCP servers your agents can access</p>
-            </div>
+        <div style="display:flex;flex-direction:column;gap:var(--space-10);">
+          <div>
+            <h3 style="font-size:15px;font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Works with any agent, take your apps, skills and memories with you</h3>
+            <p style="font-size:14px;color:var(--text-muted);line-height:1.6;">OpenClaw, Claude Code, Codex, Cursor & more</p>
           </div>
-          <div style="display:flex;align-items:flex-start;gap:var(--space-4);">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:2px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <div>
-              <h3 style="font-size:15px;font-weight:600;margin-bottom:var(--space-1);color:var(--text-primary);">Semantic tool-call search</h3>
-              <p style="font-size:14px;color:var(--text-muted);line-height:1.6;">Across your library</p>
-            </div>
+          <div>
+            <h3 style="font-size:15px;font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Deploy instantly</h3>
+            <p style="font-size:14px;color:var(--text-muted);line-height:1.6;">.md files → live url<br>typescript functions → live mcp server</p>
           </div>
-          <div style="display:flex;align-items:flex-start;gap:var(--space-4);">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:2px;"><path d="M12 2a10 10 0 0 1 10 10c0 5.52-4.48 10-10 10S2 17.52 2 12"/><path d="M12 6v6l4 2"/></svg>
-            <div>
-              <h3 style="font-size:15px;font-weight:600;margin-bottom:var(--space-1);color:var(--text-primary);">Take your memories with you</h3>
-            </div>
-          </div>
-          <div style="display:flex;align-items:flex-start;gap:var(--space-4);">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:2px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-            <div>
-              <h3 style="font-size:15px;font-weight:600;margin-bottom:var(--space-1);color:var(--text-primary);">Granular permissions</h3>
-            </div>
-          </div>
-          <div style="display:flex;align-items:flex-start;gap:var(--space-4);">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:2px;"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
-            <div>
-              <h3 style="font-size:15px;font-weight:600;margin-bottom:var(--space-1);color:var(--text-primary);">Micropayments per call</h3>
-            </div>
+          <div>
+            <h3 style="font-size:15px;font-weight:600;color:var(--text-primary);">Agents use all your apps and markdowns with a single connection</h3>
           </div>
         </div>
       </section>
