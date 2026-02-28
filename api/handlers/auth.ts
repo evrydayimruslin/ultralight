@@ -69,9 +69,12 @@ export async function handleAuth(request: Request): Promise<Response> {
 
   // Google OAuth callback - handle token from hash or code exchange
   if (path === '/auth/callback') {
+    console.log('[auth] Callback hit. URL params:', url.search);
+
     // Check for explicit error first
     const errorDesc = url.searchParams.get('error_description');
     if (errorDesc) {
+      console.error('[auth] Callback error_description:', errorDesc);
       return new Response(getCallbackErrorHTML(errorDesc), {
         headers: { 'Content-Type': 'text/html' },
       });
@@ -82,6 +85,7 @@ export async function handleAuth(request: Request): Promise<Response> {
     if (code) {
       // Read PKCE code_verifier from query param (embedded in redirect_to URL)
       const codeVerifier = url.searchParams.get('v') || '';
+      console.log('[auth] Code exchange attempt. code:', code.substring(0, 8) + '...', 'verifier length:', codeVerifier.length);
 
       // Exchange code + verifier for tokens (Supabase PKCE grant)
       const tokenResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=pkce`, {
@@ -98,6 +102,7 @@ export async function handleAuth(request: Request): Promise<Response> {
 
       if (tokenResponse.ok) {
         const tokens = await tokenResponse.json();
+        console.log('[auth] PKCE exchange SUCCESS. Token type:', typeof tokens.access_token, 'starts with:', tokens.access_token?.substring(0, 10));
         const returnTo = url.searchParams.get('return_to') || undefined;
         return new Response(getCallbackSuccessHTML(tokens.access_token, tokens.refresh_token, returnTo), {
           headers: { 'Content-Type': 'text/html' },
@@ -118,11 +123,53 @@ export async function handleAuth(request: Request): Promise<Response> {
     }
 
     // No code param — return HTML that handles hash-based implicit tokens (fallback)
+    console.log('[auth] No code param, falling back to implicit flow handler');
     return new Response(getCallbackHTML(), {
       headers: {
         'Content-Type': 'text/html',
       },
     });
+  }
+
+  // Temporary debug page to check auth state in browser
+  if (path === '/auth/debug') {
+    return new Response(`<!DOCTYPE html>
+<html>
+<head><title>Auth Debug</title></head>
+<body style="font-family:monospace;padding:40px;background:#111;color:#0f0;">
+  <h2>Auth Debug</h2>
+  <pre id="out"></pre>
+  <script>
+    var out = document.getElementById('out');
+    var token = localStorage.getItem('ultralight_token');
+    var refresh = localStorage.getItem('ultralight_refresh_token');
+    var info = {
+      has_token: !!token,
+      token_length: token ? token.length : 0,
+      token_prefix: token ? token.substring(0, 20) + '...' : 'null',
+      has_refresh: !!refresh,
+      refresh_length: refresh ? refresh.length : 0,
+    };
+    if (token) {
+      try {
+        var parts = token.split('.');
+        info.jwt_parts = parts.length;
+        var payload = JSON.parse(atob(parts[1].replace(/-/g,'+').replace(/_/g,'/')));
+        info.sub = payload.sub;
+        info.email = payload.email;
+        info.exp = payload.exp;
+        info.exp_date = new Date(payload.exp * 1000).toISOString();
+        info.expired = payload.exp * 1000 < Date.now();
+        info.iss = payload.iss;
+        info.role = payload.role;
+      } catch(e) {
+        info.decode_error = e.message;
+      }
+    }
+    out.textContent = JSON.stringify(info, null, 2);
+  </script>
+</body>
+</html>`, { headers: { 'Content-Type': 'text/html' } });
   }
 
   // Get current user from JWT
