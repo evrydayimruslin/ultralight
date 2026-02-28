@@ -232,7 +232,6 @@ export function getLayoutHTML(options: {
       background: rgba(255,255,255,0.85);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      border-bottom: 1px solid var(--border);
     }
 
     .nav-left {
@@ -253,11 +252,6 @@ export function getLayoutHTML(options: {
     }
 
     .nav-logo:hover { opacity: 0.8; }
-
-    .nav-logo svg {
-      width: 24px;
-      height: 24px;
-    }
 
     .nav-links {
       display: flex;
@@ -1723,23 +1717,14 @@ export function getLayoutHTML(options: {
        ============================================ -->
   <nav class="top-nav">
     <div class="nav-left">
-      <a href="/" id="navLogoLink" class="nav-logo" style="text-decoration:none;">
-        <svg width="24" height="24" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <linearGradient id="navLogoGrad" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stop-color="#0a0a0a"/>
-              <stop offset="100%" stop-color="#333333"/>
-            </linearGradient>
-          </defs>
-          <path d="M6 4 L6 22 Q6 28 12 28 L12 28 L12 4 L17 4 L17 28 Q17 28 20 28 Q26 28 26 22 L26 4 L21 4 L21 22 Q21 24 20 24 L12 24 Q10.5 24 10.5 22 L10.5 4 Z" fill="url(#navLogoGrad)"/>
-        </svg>
+      <a href="/" id="navLogoLink" class="nav-logo" style="text-decoration:none;font-size:20px;">
         Ultralight
       </a>
     </div>
     <div class="nav-right">
       <!-- Pre-auth nav items -->
       <div id="navPreAuth" style="display:flex;align-items:center;gap:var(--space-2);">
-        <button id="navAuthBtn" class="btn btn-primary btn-sm" style="border-radius:0;" onclick="document.getElementById('authOverlay').classList.remove('hidden')">Dashboard</button>
+        <button id="navAuthBtn" class="btn btn-primary" style="border-radius:0;height:36px;padding:0 var(--space-5);font-size:14px;" onclick="document.getElementById('authOverlay').classList.remove('hidden')">Dashboard</button>
       </div>
       <!-- Post-auth nav items (hidden by default) -->
       <div id="navPostAuth" class="hidden flex items-center gap-3">
@@ -1788,7 +1773,7 @@ export function getLayoutHTML(options: {
     <div id="homeView">
       <section class="hero">
         <h1>Give any agent<br>superpowers</h1>
-        <p style="font-size:13px;color:var(--text-muted);margin-top:var(--space-8);margin-bottom:var(--space-3);">Works with every agent</p>
+        <p style="font-size:11px;font-weight:500;color:var(--text-primary);margin-top:var(--space-8);margin-bottom:var(--space-3);letter-spacing:0.08em;text-transform:uppercase;">Works with every agent</p>
         <div style="display:flex;align-items:center;gap:var(--space-6);color:var(--text-muted);font-size:13px;">
           <span style="color:var(--text-secondary);font-weight:500;">OpenClaw</span>
           <span style="color:var(--text-secondary);font-weight:500;">Claude Code</span>
@@ -1797,7 +1782,7 @@ export function getLayoutHTML(options: {
           <span style="color:var(--text-secondary);font-weight:500;">Kimi Code</span>
           <span style="color:var(--text-secondary);font-weight:500;">Perplexity Computer</span>
         </div>
-        <p style="font-size:16px;font-weight:600;color:var(--text-primary);margin-top:var(--space-10);margin-bottom:0;letter-spacing:0.05em;">JUST PASTE AND GO</p>
+        <p style="font-size:11px;font-weight:500;color:var(--text-primary);margin-top:var(--space-10);margin-bottom:0;letter-spacing:0.08em;text-transform:uppercase;">Just paste and go</p>
         <div class="hero-actions" style="margin-top:var(--space-5);">
           <button id="heroCTA" class="btn btn-primary btn-lg" style="gap:var(--space-2);border-radius:0;" onclick="document.getElementById('authOverlay').classList.remove('hidden')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
