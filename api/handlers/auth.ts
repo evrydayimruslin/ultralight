@@ -55,18 +55,31 @@ export async function handleAuth(request: Request): Promise<Response> {
     const code = url.searchParams.get('code');
 
     if (code) {
-      // Try code exchange flow
-      const tokenResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=authorization_code`, {
+      // Try code exchange flow — Supabase expects 'code' field (not 'auth_code')
+      // Try with empty code_verifier first (non-PKCE), then without it
+      let tokenResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=authorization_code`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'apikey': SUPABASE_SERVICE_ROLE_KEY,
+          'apikey': SUPABASE_ANON_KEY,
         },
         body: JSON.stringify({
-          auth_code: code,
+          code: code,
           code_verifier: '',
         }),
       });
+
+      // If empty code_verifier fails, try without it
+      if (!tokenResponse.ok) {
+        tokenResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=authorization_code`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify({ code: code }),
+        });
+      }
 
       if (tokenResponse.ok) {
         const tokens = await tokenResponse.json();
