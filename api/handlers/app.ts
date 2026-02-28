@@ -109,6 +109,13 @@ export function createApp() {
         });
       }
 
+      // Marketplace
+      if (path === '/marketplace' && method === 'GET') {
+        return new Response(getLayoutHTML({ initialView: 'dashboard' }), {
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+
       // Gaps board & Leaderboard → redirect to dashboard
       if ((path === '/gaps' || path === '/leaderboard') && method === 'GET') {
         return new Response(null, {

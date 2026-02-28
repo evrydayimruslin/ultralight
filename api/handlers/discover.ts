@@ -6,6 +6,7 @@
 //   GET  /api/discover?q=<query>&limit=<n>     — Semantic search (no auth = public only)
 //   POST /api/discover                          — Semantic search (body: { query, limit, threshold })
 //   GET  /api/discover/featured?limit=<n>       — Top apps by community signal
+//   GET  /api/discover/marketplace?q=&type=&limit= — Unified apps+skills browse/search
 //   GET  /api/discover/status                   — Service health check
 //   GET  /api/discover/openapi.json             — OpenAPI 3.1 spec for self-describing API
 
@@ -110,6 +111,11 @@ export async function handleDiscover(request: Request): Promise<Response> {
   // GET /api/discover/featured — Top apps by community signal (no embedding needed)
   if (path === '/api/discover/featured' && method === 'GET') {
     return handleFeatured(request, url);
+  }
+
+  // GET /api/discover/marketplace — Unified apps + skills browse/search
+  if (path === '/api/discover/marketplace' && method === 'GET') {
+    return handleMarketplace(request, url);
   }
 
   // GET /api/discover/status — Service health check
@@ -310,6 +316,321 @@ async function handleFeatured(request: Request, url: URL): Promise<Response> {
       auth: '/.well-known/oauth-authorization-server',
     },
   });
+}
+
+// ============================================
+// GET /api/discover/marketplace
+// ============================================
+// Unified endpoint for browsing/searching both apps (MCP tools) and skills (published pages).
+// No query → browse mode (featured apps + recent pages).
+// With query → semantic search across both types.
+
+async function handleMarketplace(request: Request, url: URL): Promise<Response> {
+  const query = url.searchParams.get('q') || '';
+  const typeFilter = url.searchParams.get('type') || 'all'; // all | apps | skills
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '20', 10), 50);
+
+  if (query && query.length < 2) {
+    return discoverError('QUERY_TOO_SHORT', 'Query must be at least 2 characters', 400);
+  }
+  if (query.length > 500) {
+    return discoverError('QUERY_TOO_LONG', 'Query must be at most 500 characters', 400);
+  }
+
+  const supabaseUrl = Deno?.env?.get('SUPABASE_URL');
+  const supabaseKey = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!supabaseUrl || !supabaseKey) {
+    return error('Service unavailable', 503);
+  }
+
+  const dbHeaders = {
+    'apikey': supabaseKey,
+    'Authorization': `Bearer ${supabaseKey}`,
+  };
+
+  // Optional auth
+  let user: AuthUser | null = null;
+  try {
+    user = await authenticate(request);
+  } catch { /* public access is fine */ }
+
+  // Rate limit
+  const rateLimitKey = user?.id || getClientIp(request) || 'anonymous';
+  const rateLimitResult = await checkRateLimit(rateLimitKey, 'discover');
+  if (!rateLimitResult.allowed) {
+    return json({
+      code: 'RATE_LIMITED',
+      error: 'Rate limit exceeded',
+      resetAt: rateLimitResult.resetAt.toISOString(),
+    }, 429);
+  }
+
+  // Fetch blocked apps if authenticated
+  let blockedAppIds = new Set<string>();
+  if (user) {
+    try {
+      const blocksRes = await fetch(
+        `${supabaseUrl}/rest/v1/user_app_blocks?user_id=eq.${user.id}&select=app_id`,
+        { headers: dbHeaders }
+      );
+      if (blocksRes.ok) {
+        const rows = await blocksRes.json() as Array<{ app_id: string }>;
+        blockedAppIds = new Set(rows.map(r => r.app_id));
+      }
+    } catch { /* best effort */ }
+  }
+
+  const includeApps = typeFilter === 'all' || typeFilter === 'apps';
+  const includeSkills = typeFilter === 'all' || typeFilter === 'skills';
+
+  // ── BROWSE MODE (no query) ──
+  if (!query) {
+    const results: Array<Record<string, unknown>> = [];
+
+    // Featured apps
+    if (includeApps) {
+      try {
+        const overFetchLimit = limit + blockedAppIds.size + 5;
+        const topRes = await fetch(
+          `${supabaseUrl}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&hosting_suspended=eq.false` +
+          `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,runs_30d` +
+          `&order=weighted_likes.desc,likes.desc,runs_30d.desc` +
+          `&limit=${overFetchLimit}`,
+          { headers: dbHeaders }
+        );
+        if (topRes.ok) {
+          const topApps = await topRes.json() as AppRow[];
+          const filtered = topApps.filter(a => !blockedAppIds.has(a.id)).slice(0, limit);
+          for (const a of filtered) {
+            const schema = a.env_schema || {};
+            const perUserEntries = Object.entries(schema).filter(([, v]) => v.scope === 'per_user');
+            results.push({
+              id: a.id,
+              name: a.name,
+              slug: a.slug,
+              description: a.description,
+              type: 'app',
+              mcp_endpoint: `/mcp/${a.id}`,
+              likes: a.likes ?? 0,
+              runs_30d: a.runs_30d ?? 0,
+              fully_native: perUserEntries.length === 0,
+            });
+          }
+        }
+      } catch { /* best effort */ }
+    }
+
+    // Recent published pages (skills)
+    if (includeSkills) {
+      try {
+        const pagesRes = await fetch(
+          `${supabaseUrl}/rest/v1/content?type=eq.page&published=eq.true&visibility=eq.public` +
+          `&select=id,slug,title,description,tags,updated_at` +
+          `&order=updated_at.desc` +
+          `&limit=${limit}`,
+          { headers: dbHeaders }
+        );
+        if (pagesRes.ok) {
+          const pages = await pagesRes.json() as Array<{
+            id: string; slug: string; title: string | null;
+            description: string | null; tags: string[] | null; updated_at: string;
+          }>;
+          for (const p of pages) {
+            results.push({
+              id: p.id,
+              name: p.title || p.slug,
+              slug: p.slug,
+              description: p.description,
+              type: 'page',
+              url: `/p/${p.slug}`,
+              tags: p.tags || [],
+            });
+          }
+        }
+      } catch { /* best effort */ }
+    }
+
+    return json({
+      mode: 'browse',
+      results: results.slice(0, limit),
+      total: results.length,
+    });
+  }
+
+  // ── SEARCH MODE (has query) ──
+  try {
+    const embeddingService = createEmbeddingService(user?.openrouter_api_key);
+    if (!embeddingService) {
+      return json({
+        error: 'Embedding service not available',
+        message: 'Semantic search requires the embedding service.',
+        results: [],
+        total: 0,
+      }, 503);
+    }
+
+    const embeddingResult = await embeddingService.embed(query);
+    const overFetchLimit = limit * 3;
+
+    interface MarketplaceResult {
+      id: string;
+      name: string;
+      slug: string;
+      description: string | null;
+      type: 'app' | 'page';
+      final_score: number;
+      similarity: number;
+      mcp_endpoint?: string;
+      url?: string;
+      likes?: number;
+      runs_30d?: number;
+      fully_native?: boolean;
+      tags?: string[];
+    }
+
+    const scored: MarketplaceResult[] = [];
+
+    // Search apps
+    if (includeApps) {
+      try {
+        const appsService = createAppsService();
+        const appResults = await appsService.searchByEmbedding(
+          embeddingResult.embedding,
+          user?.id || '00000000-0000-0000-0000-000000000000',
+          false,
+          overFetchLimit,
+          0.4,
+        );
+
+        const filteredApps = appResults.filter(r =>
+          !blockedAppIds.has(r.id) && !(r as Record<string, unknown>).hosting_suspended
+        );
+
+        // Fetch env schemas + metadata
+        const appIds = filteredApps.map(r => r.id);
+        let envSchemas = new Map<string, Record<string, EnvSchemaEntry>>();
+        let appMeta = new Map<string, { weighted_likes: number; weighted_dislikes: number; runs_30d: number }>();
+
+        if (appIds.length > 0) {
+          try {
+            const metaRes = await fetch(
+              `${supabaseUrl}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,env_schema,weighted_likes,weighted_dislikes,runs_30d,likes,dislikes`,
+              { headers: dbHeaders }
+            );
+            if (metaRes.ok) {
+              const rows = await metaRes.json() as AppRow[];
+              for (const row of rows) {
+                if (row.env_schema) envSchemas.set(row.id, row.env_schema);
+                appMeta.set(row.id, {
+                  weighted_likes: row.weighted_likes ?? 0,
+                  weighted_dislikes: row.weighted_dislikes ?? 0,
+                  runs_30d: row.runs_30d ?? 0,
+                });
+              }
+            }
+          } catch { /* best effort */ }
+        }
+
+        for (const r of filteredApps) {
+          const rr = r as AppRow & { similarity: number };
+          const schema = envSchemas.get(rr.id) || {};
+          const perUserEntries = Object.entries(schema).filter(([, v]) => v.scope === 'per_user');
+          const requiredPerUser = perUserEntries.filter(([, v]) => v.required);
+
+          let nativeBoost: number;
+          if (perUserEntries.length === 0) {
+            nativeBoost = 1.0;
+          } else if (requiredPerUser.length === 0) {
+            nativeBoost = 0.3;
+          } else {
+            nativeBoost = 0.0;
+          }
+
+          const meta = appMeta.get(rr.id);
+          const wLikes = meta?.weighted_likes ?? 0;
+          const wDislikes = meta?.weighted_dislikes ?? 0;
+          const likeSignal = wLikes / (wLikes + wDislikes + 1);
+          const finalScore = (rr.similarity * 0.7) + (nativeBoost * 0.15) + (likeSignal * 0.15);
+
+          scored.push({
+            id: rr.id,
+            name: rr.name,
+            slug: rr.slug,
+            description: rr.description,
+            type: 'app',
+            similarity: Math.round(rr.similarity * 10000) / 10000,
+            final_score: Math.round(finalScore * 10000) / 10000,
+            mcp_endpoint: `/mcp/${rr.id}`,
+            likes: rr.likes ?? 0,
+            runs_30d: meta?.runs_30d ?? 0,
+            fully_native: perUserEntries.length === 0,
+          });
+        }
+      } catch { /* best effort */ }
+    }
+
+    // Search skills (published pages)
+    if (includeSkills) {
+      try {
+        const rpcRes = await fetch(`${supabaseUrl}/rest/v1/rpc/search_content`, {
+          method: 'POST',
+          headers: { ...dbHeaders, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            p_query_embedding: JSON.stringify(embeddingResult.embedding),
+            p_user_id: user?.id || '00000000-0000-0000-0000-000000000000',
+            p_types: ['page'],
+            p_visibility: 'public',
+            p_limit: overFetchLimit,
+          }),
+        });
+
+        if (rpcRes.ok) {
+          const pageRows = await rpcRes.json() as Array<{
+            id: string; slug: string; title: string | null;
+            description: string | null; similarity: number;
+            tags: string[] | null; published: boolean;
+          }>;
+
+          const publishedPages = pageRows.filter(r => r.published);
+          for (const r of publishedPages) {
+            const finalScore = (r.similarity * 0.7) + (0.5 * 0.15) + (0 * 0.15);
+            scored.push({
+              id: r.id,
+              name: r.title || r.slug,
+              slug: r.slug,
+              description: r.description,
+              type: 'page',
+              similarity: Math.round(r.similarity * 10000) / 10000,
+              final_score: Math.round(finalScore * 10000) / 10000,
+              url: `/p/${r.slug}`,
+              tags: r.tags || [],
+            });
+          }
+        }
+      } catch { /* best effort — page search failure shouldn't break app search */ }
+    }
+
+    // Sort by final_score DESC
+    scored.sort((a, b) => b.final_score - a.final_score);
+
+    const finalResults = scored.slice(0, limit);
+
+    return json({
+      mode: 'search',
+      query: query,
+      results: finalResults,
+      total: finalResults.length,
+    });
+
+  } catch (err) {
+    console.error('Marketplace search error:', err);
+    return json({
+      error: 'Search failed',
+      message: err instanceof Error ? err.message : String(err),
+      results: [],
+      total: 0,
+    }, 500);
+  }
 }
 
 // ============================================

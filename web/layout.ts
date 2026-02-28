@@ -1252,6 +1252,120 @@ export function getLayoutHTML(options: {
     }
 
     /* ============================================
+       MARKETPLACE STYLES
+       ============================================ */
+    .marketplace-search {
+      width: 100%;
+      padding: var(--space-2) var(--space-3);
+      font-size: 13px;
+      font-family: var(--font-mono);
+      border: 1px solid var(--border);
+      border-radius: 0;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      outline: none;
+      transition: border-color var(--transition-fast);
+    }
+
+    .marketplace-search:focus {
+      border-color: var(--text-primary);
+    }
+
+    .marketplace-search::placeholder {
+      color: var(--text-tertiary);
+    }
+
+    .marketplace-filters {
+      display: flex;
+      gap: var(--space-2);
+      margin-top: var(--space-3);
+    }
+
+    .marketplace-filter {
+      padding: var(--space-1) var(--space-3);
+      font-size: 12px;
+      font-family: var(--font-mono);
+      border: 1px solid var(--border);
+      border-radius: 0;
+      background: var(--bg-base);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+
+    .marketplace-filter:hover {
+      border-color: var(--text-primary);
+      color: var(--text-primary);
+    }
+
+    .marketplace-filter.active {
+      background: var(--text-primary);
+      color: var(--bg-base);
+      border-color: var(--text-primary);
+    }
+
+    .marketplace-results {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-3);
+      margin-top: var(--space-4);
+    }
+
+    .marketplace-card {
+      padding: var(--space-3) var(--space-4);
+      border: 1px solid var(--border);
+      background: var(--bg-base);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+
+    .marketplace-card:hover {
+      border-color: var(--text-primary);
+    }
+
+    .marketplace-card-header {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      margin-bottom: var(--space-2);
+    }
+
+    .marketplace-card-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .marketplace-badge {
+      font-size: 10px;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 1px 6px;
+      border: 1px solid var(--border);
+      color: var(--text-tertiary);
+    }
+
+    .marketplace-card-desc {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .marketplace-stats {
+      display: flex;
+      gap: var(--space-3);
+      margin-top: var(--space-2);
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--text-tertiary);
+    }
+
+    /* ============================================
        APP DETAIL VIEW STYLES
        ============================================ */
     .endpoint-display {
@@ -2066,6 +2180,10 @@ export function getLayoutHTML(options: {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
             Library
           </div>
+          <div class="settings-sidebar-item" data-dash-section="marketplace">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+            Marketplace
+          </div>
           <div class="settings-sidebar-item" data-dash-section="keys">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
             API Keys
@@ -2084,6 +2202,19 @@ export function getLayoutHTML(options: {
               <input id="appSearchInput" class="input" type="text" placeholder="Search apps...">
             </div>
             <div id="appList" class="app-list"></div>
+          </section>
+
+          <!-- Marketplace Panel -->
+          <section id="dashMarketplacePanel" class="settings-panel" style="display:none;">
+            <input id="marketplaceSearch" class="marketplace-search" type="text" placeholder="Search apps and skills...">
+            <div class="marketplace-filters">
+              <button class="marketplace-filter active" data-mp-type="all">All</button>
+              <button class="marketplace-filter" data-mp-type="apps">Apps</button>
+              <button class="marketplace-filter" data-mp-type="skills">Skills</button>
+            </div>
+            <div id="marketplaceResults" class="marketplace-results">
+              <div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Loading...</div>
+            </div>
           </section>
 
           <!-- API Keys Panel -->
@@ -2495,6 +2626,9 @@ export function getLayoutHTML(options: {
           showView('dashboard');
           switchDashSection(settingsSection);
           loadAccountData();
+        } else if (pathname === '/marketplace') {
+          showView('dashboard');
+          switchDashSection('marketplace');
         } else {
           showView('dashboard');
           switchDashSection('library');
@@ -2595,6 +2729,9 @@ export function getLayoutHTML(options: {
         switchDashSection('library');
         renderAppList();
         loadDashboardData();
+      } else if (path === '/marketplace') {
+        showView('dashboard');
+        switchDashSection('marketplace');
       } else if (path === '/settings' || path.startsWith('/settings/')) {
         const section = path.split('/settings/')[1] || 'keys';
         showView('dashboard');
@@ -2657,6 +2794,7 @@ export function getLayoutHTML(options: {
       // Show/hide panels
       var panelMap = {
         library: 'dashLibraryPanel',
+        marketplace: 'dashMarketplacePanel',
         keys: 'dashKeysPanel',
         billing: 'dashBillingPanel'
       };
@@ -2672,6 +2810,9 @@ export function getLayoutHTML(options: {
       // Update URL
       if (section === 'library') {
         history.replaceState({}, '', '/dash');
+      } else if (section === 'marketplace') {
+        history.replaceState({}, '', '/marketplace');
+        loadMarketplace('', 'all');
       } else {
         history.replaceState({}, '', '/settings/' + section);
       }
@@ -2681,6 +2822,86 @@ export function getLayoutHTML(options: {
     document.querySelectorAll('[data-dash-section]').forEach(function(el) {
       el.addEventListener('click', function() {
         switchDashSection(this.dataset.dashSection);
+      });
+    });
+
+    // ===== Marketplace =====
+    var marketplaceType = 'all';
+    var marketplaceDebounce = null;
+    var marketplaceLoaded = false;
+
+    function loadMarketplace(query, type) {
+      var resultsEl = document.getElementById('marketplaceResults');
+      if (!resultsEl) return;
+      resultsEl.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Loading...</div>';
+
+      var params = new URLSearchParams();
+      if (query) params.set('q', query);
+      if (type && type !== 'all') params.set('type', type);
+      params.set('limit', '30');
+
+      fetch('/api/discover/marketplace?' + params.toString())
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (!data.results || data.results.length === 0) {
+            resultsEl.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">No results found.</div>';
+            return;
+          }
+          resultsEl.innerHTML = data.results.map(function(item) {
+            var badge = item.type === 'app' ? 'App' : 'Skill';
+            var desc = item.description || '';
+            if (desc.length > 120) desc = desc.slice(0, 120) + '...';
+            var stats = '';
+            if (item.type === 'app') {
+              var parts = [];
+              if (item.likes > 0) parts.push(item.likes + ' likes');
+              if (item.runs_30d > 0) parts.push(item.runs_30d + ' runs');
+              if (item.fully_native) parts.push('native');
+              if (parts.length > 0) stats = '<div class="marketplace-stats">' + parts.join(' &middot; ') + '</div>';
+            } else {
+              var tagStr = (item.tags || []).slice(0, 3).join(', ');
+              if (tagStr) stats = '<div class="marketplace-stats">' + tagStr + '</div>';
+            }
+            var clickAction = item.type === 'app'
+              ? 'navigateToApp(\\\'' + item.id + '\\\')'
+              : 'window.open(\\\'' + (item.url || '/p/' + item.slug) + '\\\', \\\'_blank\\\')';
+            return '<div class="marketplace-card" onclick="' + clickAction + '">'
+              + '<div class="marketplace-card-header">'
+              + '<span class="marketplace-card-name">' + (item.name || item.slug) + '</span>'
+              + '<span class="marketplace-badge">' + badge + '</span>'
+              + '</div>'
+              + (desc ? '<div class="marketplace-card-desc">' + desc + '</div>' : '')
+              + stats
+              + '</div>';
+          }).join('');
+          marketplaceLoaded = true;
+        })
+        .catch(function() {
+          resultsEl.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Failed to load marketplace.</div>';
+        });
+    }
+
+    // Marketplace search input
+    var mpSearchInput = document.getElementById('marketplaceSearch');
+    if (mpSearchInput) {
+      mpSearchInput.addEventListener('input', function() {
+        var q = this.value.trim();
+        if (marketplaceDebounce) clearTimeout(marketplaceDebounce);
+        marketplaceDebounce = setTimeout(function() {
+          loadMarketplace(q, marketplaceType);
+        }, 300);
+      });
+    }
+
+    // Marketplace filter pills
+    document.querySelectorAll('[data-mp-type]').forEach(function(el) {
+      el.addEventListener('click', function() {
+        marketplaceType = this.dataset.mpType;
+        document.querySelectorAll('[data-mp-type]').forEach(function(btn) {
+          btn.classList.toggle('active', btn.dataset.mpType === marketplaceType);
+        });
+        var q = (document.getElementById('marketplaceSearch') || {}).value || '';
+        loadMarketplace(q.trim(), marketplaceType);
       });
     });
 
