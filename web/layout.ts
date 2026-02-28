@@ -1423,9 +1423,9 @@ export function getLayoutHTML(options: {
     }
 
     .cap-section-heading {
-      font-size: 16px;
-      font-weight: 600;
-      color: var(--text-secondary);
+      font-size: 20px;
+      font-weight: 400;
+      color: #999;
       letter-spacing: -0.01em;
       margin-bottom: var(--space-5);
     }
@@ -1844,8 +1844,8 @@ export function getLayoutHTML(options: {
     <div id="homeView">
       <section class="hero">
         <h1>Give your agent<br>superpowers</h1>
-        <p style="font-size:11px;font-weight:500;color:var(--text-primary);margin-top:var(--space-8);margin-bottom:0;letter-spacing:0.08em;text-transform:uppercase;">Just paste and go</p>
-        <div class="hero-actions" style="margin-top:var(--space-5);">
+        <p style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-top:var(--space-8);margin-bottom:0;letter-spacing:0.08em;text-transform:uppercase;">Just paste and go</p>
+        <div class="hero-actions" style="margin-top:var(--space-4);">
           <button id="heroCTA" class="btn btn-primary btn-lg" style="gap:var(--space-2);border-radius:0;" onclick="document.getElementById('authOverlay').classList.remove('hidden')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
             <span id="heroCTAText">Copy agent instructions</span>
@@ -1867,29 +1867,6 @@ export function getLayoutHTML(options: {
       <section class="cap-section">
         <div class="cap-section-heading">Your personal super app</div>
         <div class="cap-grid">
-          <!-- Free instant deployments -->
-          <div class="cap-card">
-            <div class="cap-card-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-            </div>
-            <div class="cap-card-title">Free instant deployments</div>
-            <div class="cap-card-desc">Ship to production in one command. No config, no Docker, no waiting.</div>
-            <div class="cap-card-visual">
-              <div class="cap-flow">
-                <div class="cap-flow-row">
-                  <code>.md</code>
-                  <span class="arrow">→</span>
-                  <span class="result">live url</span>
-                </div>
-                <div class="cap-flow-row">
-                  <code>.ts</code>
-                  <span class="arrow">→</span>
-                  <span class="result">live mcp server</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
           <!-- Works with any agent -->
           <div class="cap-card">
             <div class="cap-card-icon">
@@ -1912,6 +1889,29 @@ export function getLayoutHTML(options: {
                   <span>Cursor</span>
                   <span>Perplexity Computer</span>
                   <span>Kimi Code</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Free instant deployments -->
+          <div class="cap-card">
+            <div class="cap-card-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            </div>
+            <div class="cap-card-title">Free instant deployments</div>
+            <div class="cap-card-desc">Ship to production in one command. No config, no Docker, no waiting.</div>
+            <div class="cap-card-visual">
+              <div class="cap-flow">
+                <div class="cap-flow-row">
+                  <code>.md</code>
+                  <span class="arrow">→</span>
+                  <span class="result">live url</span>
+                </div>
+                <div class="cap-flow-row">
+                  <code>.ts</code>
+                  <span class="arrow">→</span>
+                  <span class="result">live mcp server</span>
                 </div>
               </div>
             </div>
@@ -1988,8 +1988,8 @@ export function getLayoutHTML(options: {
 
       <!-- Closing CTA -->
       <section style="max-width:820px;margin:0 auto;padding:var(--space-20) var(--space-6);text-align:center;">
-        <h2 style="font-size:32px;font-weight:700;letter-spacing:-0.035em;line-height:1.15;color:var(--text-primary);margin-bottom:var(--space-4);">Give your agent superpowers</h2>
-        <p style="font-size:11px;font-weight:500;color:var(--text-primary);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:var(--space-5);">Ready to start building?</p>
+        <h2 style="font-size:32px;font-weight:700;letter-spacing:-0.035em;line-height:1.15;color:var(--text-primary);margin-bottom:var(--space-4);">Give your agent superpowers.</h2>
+        <p style="font-size:11px;font-weight:600;color:var(--text-secondary);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:var(--space-4);">Ready to start building?</p>
         <div style="display:flex;justify-content:center;">
           <button class="btn btn-primary btn-lg" style="gap:var(--space-2);border-radius:0;" onclick="document.getElementById('authOverlay').classList.remove('hidden')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
@@ -1999,7 +1999,7 @@ export function getLayoutHTML(options: {
       </section>
 
       <!-- Footer -->
-      <footer style="max-width:640px;margin:var(--space-16) auto 0;padding:var(--space-8) 0;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--text-muted);">
+      <footer style="max-width:820px;margin:0 auto;padding:var(--space-8) var(--space-6);border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--text-muted);">
         <span>&copy; 2026 Ultralight</span>
         <div style="display:flex;gap:var(--space-4);">
           <a href="https://www.npmjs.com/package/ultralightpro" target="_blank" style="color:var(--text-muted);transition:color 0.15s;" onmouseover="this.style.color='var(--text-secondary)'" onmouseout="this.style.color='var(--text-muted)'">SDK Reference</a>
