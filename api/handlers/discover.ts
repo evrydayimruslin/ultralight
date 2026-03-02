@@ -9,6 +9,7 @@
 //   GET  /api/discover/marketplace?q=&type=&limit= — Unified apps+skills browse/search
 //   GET  /api/discover/status                   — Service health check
 //   GET  /api/discover/openapi.json             — OpenAPI 3.1 spec for self-describing API
+//   GET  /api/onboarding/instructions           — Dynamic onboarding copy template
 
 import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
@@ -1065,6 +1066,74 @@ function handleOpenApiSpec(): Response {
   };
 
   return new Response(JSON.stringify(spec, null, 2), {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'public, max-age=3600',
+    },
+  });
+}
+
+// ============================================
+// ONBOARDING INSTRUCTIONS TEMPLATE
+// ============================================
+
+function getOnboardingTemplate(): { template: string; version: string; updated_at: string } {
+  const TEMPLATE_VERSION = '1.0.0';
+  const TEMPLATE_UPDATED = '2026-03-02T00:00:00Z';
+
+  const template = `I'd like you to set up Ultralight, a platform that gives you access to instant MCP apps — tools you can use right now, or build and deploy yourself.
+
+Run this command to connect:
+npx ultralightpro setup --token {TOKEN}
+
+After setup, you'll have access to the Ultralight platform and marketplace. You can connect to any app below by its ID using the Ultralight tools.
+
+## Recommended Apps
+
+These are curated apps from the Ultralight marketplace. Each works instantly — just ask to connect one:
+
+1. **Smart Budget** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Track spending, manage budgets, and get financial insights by telling your agent about transactions.
+2. **Fitness Tracker** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Log meals, workouts, and body metrics. AI-powered calorie estimation from food descriptions.
+3. **Travel Planner** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Search flights and hotels, build itineraries, save and compare trip options.
+4. **Study Coach** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Personalized learning paths with spaced repetition for any subject.
+5. **Story Builder** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Create fictional worlds, characters, and plotlines that persist across sessions.
+6. **Real Estate Hub** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Track property listings, compare neighborhoods, and manage real estate research.
+7. **Cell Service** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Monitor mobile usage, compare carrier plans, and manage your service.
+8. **Recipe Box** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Save recipes, plan meals, and generate grocery lists from your meal plan.
+9. **Reading List** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Track books, articles, and papers. Save highlights and reading notes.
+10. **Home Inventory** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Catalog belongings for insurance, moving, or organization.
+11. **Goal Tracker** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Set goals, break them into milestones, and track progress over time.
+12. **Journal** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Daily journal entries stored in the cloud. Searchable, portable, and private.
+
+## What to do next
+
+After running the setup command:
+1. Look at what I'm currently working on or interested in.
+2. Suggest 2-3 apps from the list above that seem most relevant to me and briefly explain why.
+3. Offer to connect them so I can start using them.
+4. Ask what else I'd want my agent to help with — there are more apps in the full marketplace, or I can build and deploy my own custom tools.`;
+
+  return {
+    template,
+    version: TEMPLATE_VERSION,
+    updated_at: TEMPLATE_UPDATED,
+  };
+}
+
+export async function handleOnboarding(request: Request): Promise<Response> {
+  // Rate limit by IP (no auth required)
+  const rateLimitKey = getClientIp(request) || 'anonymous';
+  const rateLimitResult = await checkRateLimit(rateLimitKey, 'discover');
+  if (!rateLimitResult.allowed) {
+    return json({
+      error: 'Rate limit exceeded',
+      resetAt: rateLimitResult.resetAt?.toISOString(),
+    }, 429);
+  }
+
+  const data = getOnboardingTemplate();
+  return new Response(JSON.stringify(data), {
     status: 200,
     headers: {
       'Content-Type': 'application/json',

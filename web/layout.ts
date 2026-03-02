@@ -3081,28 +3081,41 @@ export function getLayoutHTML(options: {
 
     async function generateSetupInstructions() {
       try {
-        const res = await fetch('/api/user/tokens', {
-          method: 'POST',
-          headers: {
-            'Authorization': 'Bearer ' + authToken,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ name: 'Agent Setup — ' + new Date().toLocaleString() }),
-        });
+        // Fetch onboarding template and create token in parallel
+        var [templateRes, tokenRes] = await Promise.all([
+          fetch('/api/onboarding/instructions'),
+          fetch('/api/user/tokens', {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer ' + authToken,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ name: 'Agent Setup — ' + new Date().toLocaleString() }),
+          })
+        ]);
 
-        if (!res.ok) {
+        // Use dynamic template, fall back to minimal hardcoded string
+        var template = "I'd like you to set up Ultralight, the instant MCP app platform.\\nRun: npx ultralightpro setup --token {TOKEN}";
+        if (templateRes.ok) {
+          try {
+            var templateData = await templateRes.json();
+            if (templateData.template) template = templateData.template;
+          } catch (e) { /* use fallback template */ }
+        }
+
+        if (!tokenRes.ok) {
           setupCommandStr = window.location.origin + '/mcp/platform';
           return;
         }
 
-        const data = await res.json();
-        const token = data.plaintext_token;
-        const tokenId = data.id;
+        var data = await tokenRes.json();
+        var token = data.plaintext_token;
+        var tokenId = data.id;
 
-        setupCommandStr = "I'd like you to set up Ultralight, the instant MCP app platform.\\nRun: npx ultralightpro setup --token " + token;
+        setupCommandStr = template.replace(/\\{TOKEN\\}/g, token);
         localStorage.setItem('ultralight_setup_cmd', setupCommandStr);
 
-        const commandEl = document.getElementById('setupCode');
+        var commandEl = document.getElementById('setupCode');
         if (commandEl) commandEl.textContent = setupCommandStr;
 
         showSetupBlock();
@@ -3116,7 +3129,7 @@ export function getLayoutHTML(options: {
     }
 
     // Copy setup command
-    document.getElementById('copySetupBtn')?.addEventListener('click', async function() {
+    document.getElementById('setupCopyBtn')?.addEventListener('click', async function() {
       if (!setupCommandStr) return;
       try {
         await navigator.clipboard.writeText(setupCommandStr);
