@@ -1208,7 +1208,7 @@ export function getLayoutHTML(options: {
       font-size: 13px;
       font-weight: 500;
       color: var(--text-primary);
-      background: var(--bg-subtle);
+      background: var(--bg-hover);
       border: none;
       cursor: pointer;
       transition: all var(--transition-fast);
