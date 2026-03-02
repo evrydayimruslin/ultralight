@@ -2399,7 +2399,7 @@ export function getLayoutHTML(options: {
     let apps = [];
     let currentAppId = null;
     let currentView = '${initialView}';
-    let setupCommandStr = localStorage.getItem('ultralight_setup_cmd') || '';
+    let setupCommandStr = localStorage.getItem('ultralight_setup_v2') || '';
 
     // Instant auth nav switch — prevents flash of wrong nav state
     if (authToken) {
@@ -2662,7 +2662,7 @@ export function getLayoutHTML(options: {
       apps = [];
       localStorage.removeItem('ultralight_token');
       localStorage.removeItem('ultralight_refresh_token');
-      localStorage.removeItem('ultralight_setup_cmd');
+      localStorage.removeItem('ultralight_setup_v2');
       if (connectionPollInterval) clearInterval(connectionPollInterval);
       window.location.href = '/';
     }
@@ -3113,7 +3113,7 @@ export function getLayoutHTML(options: {
         var tokenId = data.id;
 
         setupCommandStr = template.replace(/\\{TOKEN\\}/g, token);
-        localStorage.setItem('ultralight_setup_cmd', setupCommandStr);
+        localStorage.setItem('ultralight_setup_v2', setupCommandStr);
 
         var commandEl = document.getElementById('setupCode');
         if (commandEl) commandEl.textContent = setupCommandStr;
