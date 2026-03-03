@@ -13,6 +13,7 @@
 
 import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
+import { logOnboardingRequest } from '../services/provisional.ts';
 import {
   createEmbeddingService,
   isEmbeddingAvailable,
@@ -1121,10 +1122,17 @@ After running the setup command:
   };
 }
 
-export async function handleOnboarding(_request: Request): Promise<Response> {
+export async function handleOnboarding(request: Request): Promise<Response> {
   // No rate limiting — this is a static, public, cacheable template.
   // The rate limit RPC expects UUID user IDs, not IP strings.
   const data = getOnboardingTemplate();
+
+  // Log the request for analytics (fire-and-forget)
+  const clientIp = getClientIp(request);
+  const userAgent = request.headers.get('user-agent');
+  const referrer = request.headers.get('referer') || request.headers.get('referrer');
+  logOnboardingRequest(clientIp, userAgent, referrer);
+
   return new Response(JSON.stringify(data), {
     status: 200,
     headers: {

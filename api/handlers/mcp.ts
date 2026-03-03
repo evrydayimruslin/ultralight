@@ -1526,6 +1526,9 @@ async function executeAppFunction(
     const executionCostEstimateCents = (requestCost + cpuCost) * 100;
 
     // Log the call (fire-and-forget)
+    // Provisional users always come from the onboarding template CTA
+    const callSource = user?.provisional ? 'onboarding_template' : undefined;
+
     const { logMcpCall } = await import('../services/call-logger.ts');
     logMcpCall({
       userId,
@@ -1536,6 +1539,7 @@ async function executeAppFunction(
       success: result.success,
       durationMs: execDuration,
       errorMessage: result.success ? undefined : String(result.error),
+      source: callSource,
       inputArgs: args,
       outputResult: result.success ? result.result : result.error,
       userTier: user?.tier,

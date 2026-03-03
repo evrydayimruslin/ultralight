@@ -1402,7 +1402,7 @@ async function handleToolsCall(
         }
 
         // Execute merge: current provisional → target real user
-        const mergeResult = await mergeProvisionalUser(userId, validated.user_id);
+        const mergeResult = await mergeProvisionalUser(userId, validated.user_id, 'mcp_auth_link');
         result = {
           success: true,
           message: 'Account linked successfully! Your apps and data have been transferred to your real account.',

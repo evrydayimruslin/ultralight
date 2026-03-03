@@ -36,6 +36,24 @@ export interface MergeResult {
   storage_transferred_bytes: number;
 }
 
+export type MergeMethod = 'oauth_callback' | 'mcp_auth_link' | 'api_merge';
+
+export interface ConversionEventData {
+  provisional_user_id: string;
+  real_user_id: string;
+  merge_method: MergeMethod;
+  provisional_created_at: string | null;
+  provisional_ip: string | null;
+  calls_as_provisional: number;
+  apps_used_as_provisional: number;
+  first_app_id: string | null;
+  first_app_name: string | null;
+  apps_moved: number;
+  tokens_moved: number;
+  storage_transferred_bytes: number;
+  time_to_convert_minutes: number | null;
+}
+
 // ============================================
 // PUBLIC API
 // ============================================
@@ -187,8 +205,13 @@ export function isProvisionalExpired(lastActiveAt: string | null): boolean {
 /**
  * Merge a provisional user into a real (authenticated) user.
  * Transfers all apps, tokens, and storage. Deletes the provisional user.
+ * Logs a conversion event for analytics.
  */
-export async function mergeProvisionalUser(provisionalUserId: string, realUserId: string): Promise<MergeResult> {
+export async function mergeProvisionalUser(
+  provisionalUserId: string,
+  realUserId: string,
+  mergeMethod: MergeMethod = 'api_merge'
+): Promise<MergeResult> {
   // Verify provisional user exists
   if (!await isProvisionalUser(provisionalUserId)) {
     throw new Error('Source user is not provisional');
@@ -198,6 +221,12 @@ export async function mergeProvisionalUser(provisionalUserId: string, realUserId
   if (provisionalUserId === realUserId) {
     throw new Error('Cannot merge user into themselves');
   }
+
+  // Gather provisional user metadata BEFORE merge (record gets deleted)
+  const provMeta = await getProvisionalMetadata(provisionalUserId);
+
+  // Gather call stats for the provisional user BEFORE merge
+  const callStats = await getProvisionalCallStats(provisionalUserId);
 
   // Call the merge RPC (atomic transfer)
   const rpcResponse = await fetch(`${SUPABASE_URL}/rest/v1/rpc/merge_provisional_user`, {
@@ -229,13 +258,36 @@ export async function mergeProvisionalUser(provisionalUserId: string, realUserId
   // Delete the provisional auth.users entry (cleanup)
   await deleteAuthUser(provisionalUserId);
 
-  console.log(`[PROVISIONAL] Merged provisional ${provisionalUserId} → real ${realUserId}:`, result);
-
-  return {
+  const mergeResult: MergeResult = {
     apps_moved: result.apps_moved || 0,
     tokens_moved: result.tokens_moved || 0,
     storage_transferred_bytes: result.storage_transferred_bytes || 0,
   };
+
+  // Log conversion event (fire-and-forget)
+  const timeToConvert = provMeta?.provisional_created_at
+    ? Math.round((Date.now() - new Date(provMeta.provisional_created_at).getTime()) / 60000)
+    : null;
+
+  logConversionEvent({
+    provisional_user_id: provisionalUserId,
+    real_user_id: realUserId,
+    merge_method: mergeMethod,
+    provisional_created_at: provMeta?.provisional_created_at || null,
+    provisional_ip: provMeta?.provisional_created_ip || null,
+    calls_as_provisional: callStats.total_calls,
+    apps_used_as_provisional: callStats.distinct_apps,
+    first_app_id: callStats.first_app_id,
+    first_app_name: callStats.first_app_name,
+    apps_moved: mergeResult.apps_moved,
+    tokens_moved: mergeResult.tokens_moved,
+    storage_transferred_bytes: mergeResult.storage_transferred_bytes,
+    time_to_convert_minutes: timeToConvert,
+  });
+
+  console.log(`[PROVISIONAL] Merged provisional ${provisionalUserId} → real ${realUserId} (${mergeMethod}):`, mergeResult);
+
+  return mergeResult;
 }
 
 /**
@@ -295,4 +347,148 @@ async function deleteAuthUser(userId: string): Promise<void> {
   } catch (err) {
     console.warn(`[PROVISIONAL] Failed to delete auth.users entry for ${userId}:`, err);
   }
+}
+
+/**
+ * Get provisional user metadata before merge (the record gets deleted).
+ */
+async function getProvisionalMetadata(userId: string): Promise<{
+  provisional_created_at: string | null;
+  provisional_created_ip: string | null;
+} | null> {
+  try {
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=provisional_created_at,provisional_created_ip`,
+      {
+        headers: {
+          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        },
+      }
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data?.[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get MCP call stats for a provisional user (before merge deletes context).
+ */
+async function getProvisionalCallStats(userId: string): Promise<{
+  total_calls: number;
+  distinct_apps: number;
+  first_app_id: string | null;
+  first_app_name: string | null;
+}> {
+  try {
+    // Get total calls and distinct apps
+    const statsResponse = await fetch(
+      `${SUPABASE_URL}/rest/v1/mcp_call_logs?user_id=eq.${userId}&select=app_id,app_name,created_at&order=created_at.asc`,
+      {
+        headers: {
+          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        },
+      }
+    );
+
+    if (!statsResponse.ok) {
+      return { total_calls: 0, distinct_apps: 0, first_app_id: null, first_app_name: null };
+    }
+
+    const calls = await statsResponse.json() as Array<{ app_id: string | null; app_name: string | null; created_at: string }>;
+    const appCalls = calls.filter((c: { app_id: string | null }) => c.app_id !== null);
+    const distinctApps = new Set(appCalls.map((c: { app_id: string | null }) => c.app_id));
+    const firstAppCall = appCalls[0] || null;
+
+    return {
+      total_calls: calls.length,
+      distinct_apps: distinctApps.size,
+      first_app_id: firstAppCall?.app_id || null,
+      first_app_name: firstAppCall?.app_name || null,
+    };
+  } catch {
+    return { total_calls: 0, distinct_apps: 0, first_app_id: null, first_app_name: null };
+  }
+}
+
+/**
+ * Log a conversion event. Fire-and-forget — does not block merge.
+ */
+function logConversionEvent(event: ConversionEventData): void {
+  fetch(`${SUPABASE_URL}/rest/v1/conversion_events`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=minimal',
+    },
+    body: JSON.stringify({
+      provisional_user_id: event.provisional_user_id,
+      real_user_id: event.real_user_id,
+      merge_method: event.merge_method,
+      provisional_created_at: event.provisional_created_at,
+      provisional_ip: event.provisional_ip,
+      calls_as_provisional: event.calls_as_provisional,
+      apps_used_as_provisional: event.apps_used_as_provisional,
+      first_app_id: event.first_app_id,
+      first_app_name: event.first_app_name,
+      apps_moved: event.apps_moved,
+      tokens_moved: event.tokens_moved,
+      storage_transferred_bytes: event.storage_transferred_bytes,
+      time_to_convert_minutes: event.time_to_convert_minutes,
+    }),
+  }).catch(err => {
+    console.warn('[PROVISIONAL] Failed to log conversion event:', err.message);
+  });
+}
+
+/**
+ * Log an onboarding template request. Fire-and-forget.
+ */
+export function logOnboardingRequest(clientIp: string | null, userAgent: string | null, referrer: string | null): void {
+  fetch(`${SUPABASE_URL}/rest/v1/onboarding_requests`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=minimal',
+    },
+    body: JSON.stringify({
+      client_ip: clientIp,
+      user_agent: userAgent,
+      referrer: referrer,
+      provisional_created: false,
+    }),
+  }).catch(err => {
+    console.warn('[PROVISIONAL] Failed to log onboarding request:', err.message);
+  });
+}
+
+/**
+ * Mark that a provisional user was created for an IP (correlates with onboarding request).
+ * Updates the most recent onboarding_request from this IP to set provisional_created=true.
+ */
+export function markOnboardingProvisionalCreated(clientIp: string): void {
+  // Find the most recent onboarding request from this IP and mark it
+  fetch(
+    `${SUPABASE_URL}/rest/v1/onboarding_requests?client_ip=eq.${encodeURIComponent(clientIp)}&order=created_at.desc&limit=1`,
+    {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal',
+      },
+      body: JSON.stringify({ provisional_created: true }),
+    }
+  ).catch(err => {
+    console.warn('[PROVISIONAL] Failed to mark onboarding provisional:', err.message);
+  });
 }

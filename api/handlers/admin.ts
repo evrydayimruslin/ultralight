@@ -3,12 +3,14 @@
 // Auth: Bearer token must match SUPABASE_SERVICE_ROLE_KEY (service-to-service).
 //
 // Endpoints:
-//   POST /api/admin/gaps           — Create a gap
-//   PATCH /api/admin/gaps/:id      — Update a gap
-//   POST /api/admin/assess/:id     — Trigger/record assessment for a gap submission
-//   POST /api/admin/approve/:id    — Approve an assessment (writes points)
-//   POST /api/admin/reject/:id     — Reject an assessment
-//   POST /api/admin/balance/:userId — Top up a user's hosting balance
+//   POST  /api/admin/gaps               — Create a gap
+//   PATCH /api/admin/gaps/:id           — Update a gap
+//   POST  /api/admin/assess/:id         — Trigger/record assessment for a gap submission
+//   POST  /api/admin/approve/:id        — Approve an assessment (writes points)
+//   POST  /api/admin/reject/:id         — Reject an assessment
+//   POST  /api/admin/balance/:userId    — Top up a user's hosting balance
+//   POST  /api/admin/cleanup-provisionals — Delete expired provisional users
+//   GET   /api/admin/analytics?days=30  — Distribution pipeline analytics dashboard
 
 import { json, error } from './app.ts';
 import { unsuspendContent } from '../services/hosting-billing.ts';
@@ -91,6 +93,12 @@ export async function handleAdmin(request: Request): Promise<Response> {
   // POST /api/admin/cleanup-provisionals — Delete expired provisional users
   if (path === '/api/admin/cleanup-provisionals' && method === 'POST') {
     return cleanupProvisionals();
+  }
+
+  // GET /api/admin/analytics — Distribution pipeline analytics dashboard
+  if (path === '/api/admin/analytics' && method === 'GET') {
+    const days = parseInt(url.searchParams.get('days') || '30', 10);
+    return getAnalytics(days);
   }
 
   return error('Admin endpoint not found', 404);
@@ -465,4 +473,256 @@ async function topUpBalance(request: Request, userId: string): Promise<Response>
     unsuspended_apps: unsuspended.apps,
     unsuspended_pages: unsuspended.pages,
   });
+}
+
+// ============================================
+// ANALYTICS DASHBOARD
+// ============================================
+
+async function getAnalytics(days: number): Promise<Response> {
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getEnv();
+
+  // Clamp days to reasonable range
+  const periodDays = Math.max(1, Math.min(days, 365));
+  const since = new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000).toISOString();
+
+  try {
+    // Try the RPC first (requires migration-analytics.sql to be run)
+    const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_analytics_summary`, {
+      method: 'POST',
+      headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
+      body: JSON.stringify({ p_days: periodDays }),
+    });
+
+    if (rpcRes.ok) {
+      const rpcData = await rpcRes.json();
+      return json({ success: true, analytics: rpcData });
+    }
+
+    // RPC not available (migration not run yet) — fall back to direct queries
+    console.warn('[ADMIN] Analytics RPC not available, falling back to direct queries');
+
+    // Run all analytics queries in parallel
+    const [
+      provisionalsRes,
+      conversionsRes,
+      templateFetchesRes,
+      topAppsRes,
+      topSearchesRes,
+      unmetDemandRes,
+      totalCallsRes,
+      onboardingCallsRes,
+    ] = await Promise.all([
+      // Active provisional users
+      fetch(
+        `${SUPABASE_URL}/rest/v1/users?provisional=eq.true&select=id,provisional_created_at,last_active_at&provisional_created_at=gte.${since}`,
+        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
+      ),
+      // Conversion events
+      fetch(
+        `${SUPABASE_URL}/rest/v1/conversion_events?created_at=gte.${since}&select=*&order=created_at.desc&limit=100`,
+        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
+      ),
+      // Template fetches
+      fetch(
+        `${SUPABASE_URL}/rest/v1/onboarding_requests?created_at=gte.${since}&select=id,provisional_created,created_at&order=created_at.desc&limit=1000`,
+        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
+      ),
+      // Top apps by usage
+      fetch(
+        `${SUPABASE_URL}/rest/v1/mcp_call_logs?created_at=gte.${since}&app_id=not.is.null&select=app_id,app_name,success&order=created_at.desc&limit=10000`,
+        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
+      ),
+      // Top search queries
+      fetch(
+        `${SUPABASE_URL}/rest/v1/appstore_queries?created_at=gte.${since}&select=query,top_similarity,result_count&order=created_at.desc&limit=500`,
+        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
+      ),
+      // Unmet demand (low similarity searches)
+      fetch(
+        `${SUPABASE_URL}/rest/v1/appstore_queries?created_at=gte.${since}&or=(top_similarity.lt.0.5,result_count.eq.0)&select=query,top_similarity,result_count&order=created_at.desc&limit=200`,
+        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
+      ),
+      // Total call volume
+      fetch(
+        `${SUPABASE_URL}/rest/v1/mcp_call_logs?created_at=gte.${since}&select=user_id,success,source&order=created_at.desc&limit=50000`,
+        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
+      ),
+      // Onboarding template attributed calls
+      fetch(
+        `${SUPABASE_URL}/rest/v1/mcp_call_logs?created_at=gte.${since}&source=eq.onboarding_template&select=app_id,app_name,user_id,success&order=created_at.desc&limit=5000`,
+        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
+      ),
+    ]);
+
+    // Parse all responses
+    const provisionals = provisionalsRes.ok ? await provisionalsRes.json() : [];
+    const conversions = conversionsRes.ok ? await conversionsRes.json() : [];
+    const templateFetches = templateFetchesRes.ok ? await templateFetchesRes.json() : [];
+    const appCalls = topAppsRes.ok ? await topAppsRes.json() : [];
+    const searches = topSearchesRes.ok ? await topSearchesRes.json() : [];
+    const unmetSearches = unmetDemandRes.ok ? await unmetDemandRes.json() : [];
+    const allCalls = totalCallsRes.ok ? await totalCallsRes.json() : [];
+    const onboardingCalls = onboardingCallsRes.ok ? await onboardingCallsRes.json() : [];
+
+    // Aggregate top apps
+    const appUsage: Record<string, { app_name: string; calls: number; unique_users: Set<string>; successful: number }> = {};
+    for (const call of appCalls) {
+      if (!call.app_id) continue;
+      if (!appUsage[call.app_id]) {
+        appUsage[call.app_id] = { app_name: call.app_name || 'unknown', calls: 0, unique_users: new Set(), successful: 0 };
+      }
+      appUsage[call.app_id].calls++;
+      appUsage[call.app_id].unique_users.add(call.user_id);
+      if (call.success) appUsage[call.app_id].successful++;
+    }
+
+    const topApps = Object.entries(appUsage)
+      .map(([app_id, data]) => ({
+        app_id,
+        app_name: data.app_name,
+        calls: data.calls,
+        unique_users: data.unique_users.size,
+        successful_calls: data.successful,
+        success_rate: data.calls > 0 ? Math.round((data.successful / data.calls) * 100) : 0,
+      }))
+      .sort((a, b) => b.calls - a.calls)
+      .slice(0, 20);
+
+    // Aggregate top searches
+    const searchCounts: Record<string, { count: number; totalSim: number; totalResults: number }> = {};
+    for (const s of searches) {
+      if (!searchCounts[s.query]) searchCounts[s.query] = { count: 0, totalSim: 0, totalResults: 0 };
+      searchCounts[s.query].count++;
+      searchCounts[s.query].totalSim += s.top_similarity || 0;
+      searchCounts[s.query].totalResults += s.result_count || 0;
+    }
+    const topSearches = Object.entries(searchCounts)
+      .map(([query, data]) => ({
+        query,
+        count: data.count,
+        avg_similarity: Math.round((data.totalSim / data.count) * 1000) / 1000,
+        avg_results: Math.round(data.totalResults / data.count),
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 20);
+
+    // Aggregate unmet demand
+    const unmetCounts: Record<string, { count: number; avgSim: number }> = {};
+    for (const s of unmetSearches) {
+      if (!unmetCounts[s.query]) unmetCounts[s.query] = { count: 0, avgSim: 0 };
+      unmetCounts[s.query].count++;
+      unmetCounts[s.query].avgSim += s.top_similarity || 0;
+    }
+    const unmetDemand = Object.entries(unmetCounts)
+      .map(([query, data]) => ({
+        query,
+        count: data.count,
+        avg_similarity: Math.round((data.avgSim / data.count) * 1000) / 1000,
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 15);
+
+    // Conversion stats
+    const conversionsByMethod: Record<string, number> = {};
+    let totalTimeToConvert = 0;
+    let timeToConvertCount = 0;
+    let totalCallsBeforeConvert = 0;
+    for (const c of conversions) {
+      conversionsByMethod[c.merge_method] = (conversionsByMethod[c.merge_method] || 0) + 1;
+      if (c.time_to_convert_minutes != null) {
+        totalTimeToConvert += c.time_to_convert_minutes;
+        timeToConvertCount++;
+      }
+      totalCallsBeforeConvert += c.calls_as_provisional || 0;
+    }
+
+    // First app distribution from conversions
+    const firstAppCounts: Record<string, { name: string; count: number }> = {};
+    for (const c of conversions) {
+      if (c.first_app_id) {
+        if (!firstAppCounts[c.first_app_id]) firstAppCounts[c.first_app_id] = { name: c.first_app_name || 'unknown', count: 0 };
+        firstAppCounts[c.first_app_id].count++;
+      }
+    }
+    const firstAppDistribution = Object.entries(firstAppCounts)
+      .map(([app_id, data]) => ({ app_id, app_name: data.name, count: data.count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
+    // Template fetch → provisional creation rate
+    const templateTotal = templateFetches.length;
+    const templateToProvisional = templateFetches.filter((f: { provisional_created: boolean }) => f.provisional_created).length;
+
+    // Onboarding template attribution
+    const onboardingAppUsage: Record<string, { app_name: string; calls: number; unique_users: Set<string> }> = {};
+    for (const call of onboardingCalls) {
+      if (!call.app_id) continue;
+      if (!onboardingAppUsage[call.app_id]) {
+        onboardingAppUsage[call.app_id] = { app_name: call.app_name || 'unknown', calls: 0, unique_users: new Set() };
+      }
+      onboardingAppUsage[call.app_id].calls++;
+      onboardingAppUsage[call.app_id].unique_users.add(call.user_id);
+    }
+    const onboardingTemplateApps = Object.entries(onboardingAppUsage)
+      .map(([app_id, data]) => ({
+        app_id,
+        app_name: data.app_name,
+        calls: data.calls,
+        unique_provisional_users: data.unique_users.size,
+      }))
+      .sort((a, b) => b.calls - a.calls);
+
+    // Overall stats
+    const totalCallCount = allCalls.length;
+    const uniqueUsers = new Set(allCalls.map((c: { user_id: string }) => c.user_id)).size;
+    const failedCalls = allCalls.filter((c: { success: boolean }) => !c.success).length;
+
+    const analytics = {
+      period_days: periodDays,
+      generated_at: new Date().toISOString(),
+
+      // Onboarding funnel
+      template_fetches: templateTotal,
+      template_to_provisional_rate: templateTotal > 0 ? Math.round((templateToProvisional / templateTotal) * 1000) / 10 : 0,
+
+      // Provisionals
+      provisionals_created: provisionals.length,
+      provisionals_active: provisionals.filter((p: { last_active_at: string }) =>
+        p.last_active_at && (Date.now() - new Date(p.last_active_at).getTime()) < 24 * 60 * 60 * 1000
+      ).length,
+
+      // Conversions
+      conversions_total: conversions.length,
+      conversions_by_method: conversionsByMethod,
+      avg_time_to_convert_minutes: timeToConvertCount > 0 ? Math.round(totalTimeToConvert / timeToConvertCount) : 0,
+      avg_calls_before_convert: conversions.length > 0 ? Math.round(totalCallsBeforeConvert / conversions.length) : 0,
+      conversion_rate: provisionals.length > 0
+        ? Math.round((conversions.length / (provisionals.length + conversions.length)) * 1000) / 10
+        : 0,
+
+      // First app attribution
+      first_app_distribution: firstAppDistribution,
+
+      // Onboarding template attribution
+      onboarding_template_app_usage: onboardingTemplateApps,
+
+      // App usage
+      top_apps: topApps,
+
+      // Discovery demand
+      top_searches: topSearches,
+      unmet_demand: unmetDemand,
+
+      // Overall platform
+      total_calls: totalCallCount,
+      unique_users: uniqueUsers,
+      error_rate_percent: totalCallCount > 0 ? Math.round((failedCalls / totalCallCount) * 1000) / 10 : 0,
+    };
+
+    return json({ success: true, analytics });
+  } catch (err) {
+    console.error('[ADMIN] Analytics failed:', err);
+    return error('Analytics query failed', 500);
+  }
 }

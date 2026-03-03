@@ -4,7 +4,7 @@
 import { error, json } from './app.ts';
 import { isApiToken, getUserFromToken } from '../services/tokens.ts';
 import { getUserTier } from '../services/tier-enforcement.ts';
-import { createProvisionalUser, isProvisionalUser, mergeProvisionalUser } from '../services/provisional.ts';
+import { createProvisionalUser, isProvisionalUser, mergeProvisionalUser, markOnboardingProvisionalCreated } from '../services/provisional.ts';
 // @ts-ignore - base64url encode for PKCE
 import { encodeBase64Url } from 'https://deno.land/std@0.210.0/encoding/base64url.ts';
 
@@ -189,6 +189,9 @@ export async function handleAuth(request: Request): Promise<Response> {
       const result = await createProvisionalUser(clientIp);
       console.log(`[AUTH] Provisional user created: ${result.id}, token_id: ${result.tokenId}`);
 
+      // Correlate with onboarding template request (fire-and-forget)
+      markOnboardingProvisionalCreated(clientIp);
+
       return json({
         user_id: result.id,
         token: result.token,
@@ -220,6 +223,7 @@ export async function handleAuth(request: Request): Promise<Response> {
       const user = await authenticate(request);
       const body = await request.json();
       const provisionalUserId = body.provisional_user_id;
+      const mergeMethod = body.merge_method || 'api_merge';
 
       if (!provisionalUserId) {
         return error('Missing provisional_user_id', 400);
@@ -235,7 +239,7 @@ export async function handleAuth(request: Request): Promise<Response> {
         return error('Cannot merge into self', 400);
       }
 
-      const result = await mergeProvisionalUser(provisionalUserId, user.id);
+      const result = await mergeProvisionalUser(provisionalUserId, user.id, mergeMethod);
       return json({ success: true, merged: result });
     } catch (err: any) {
       console.error('[AUTH] Merge failed:', err);
@@ -550,7 +554,7 @@ function getCallbackSuccessHTML(token: string, refreshToken?: string, returnTo?:
           'Authorization': 'Bearer ' + '${safeToken}',
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ provisional_user_id: provUserId })
+        body: JSON.stringify({ provisional_user_id: provUserId, merge_method: 'oauth_callback' })
       }).then(function() {
         localStorage.removeItem('ultralight_provisional_token_id');
         localStorage.removeItem('ultralight_provisional_user_id');

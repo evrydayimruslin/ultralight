@@ -20,7 +20,7 @@ export interface McpCallLogEntry {
   success: boolean;
   durationMs?: number;
   errorMessage?: string;
-  source?: 'direct' | 'appstore' | 'library' | 'desk';
+  source?: 'direct' | 'appstore' | 'library' | 'desk' | 'onboarding_template';
   // Rich telemetry fields
   inputArgs?: Record<string, unknown>;
   outputResult?: unknown;
