@@ -1,7 +1,7 @@
 // Platform MCP Handler — v4
 // Implements JSON-RPC 2.0 for the ul.* tool namespace
 // Endpoint: POST /mcp/platform
-// 10 tools: discover, download, test, upload, set, memory, permissions, logs, rate, call
+// 12 tools: discover, download, test, upload, set, memory, permissions, logs, rate, call, auth.link, marketplace
 // + 27 backward-compat aliases for pre-consolidation tool names
 
 import { json, error } from './app.ts';
@@ -442,6 +442,38 @@ const PLATFORM_TOOLS: MCPTool[] = [
         token: { type: 'string', description: 'An API token (ul_xxx) from your authenticated Ultralight account.' },
       },
       required: ['token'],
+    },
+  },
+
+  // ── 12. ul.marketplace ──────────────────────────
+  {
+    name: 'ul.marketplace',
+    description:
+      'Buy and sell Ultralight apps. Place bids, set ask prices, accept offers, view history. ' +
+      'All bids are escrowed from your hosting balance. Platform takes 10% on sale. ' +
+      'action="bid": place a bid. action="ask": set/update ask price. action="accept": accept a bid. ' +
+      'action="reject": reject a bid. action="cancel": cancel your own bid. action="buy_now": instant purchase. ' +
+      'action="offers": view incoming/outgoing offers. action="history": sale history. action="listing": view listing details.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['bid', 'ask', 'accept', 'reject', 'cancel', 'buy_now', 'offers', 'history', 'listing'],
+          description: 'Marketplace action to perform.',
+        },
+        app_id: { type: 'string', description: 'App ID or slug. Required for: bid, ask, buy_now, listing. Optional for: offers, history.' },
+        bid_id: { type: 'string', description: 'Bid ID. Required for: accept, reject, cancel.' },
+        amount_cents: { type: 'number', description: 'Bid amount in cents. Required for: bid.' },
+        price_cents: { type: 'number', description: 'Ask price in cents. For: ask. Use null to remove ask price.' },
+        floor_cents: { type: 'number', description: 'Minimum acceptable bid in cents. For: ask.' },
+        instant_buy: { type: 'boolean', description: 'Allow instant purchase at ask price. For: ask.' },
+        message: { type: 'string', description: 'Message to seller. For: bid.' },
+        expires_in_hours: { type: 'number', description: 'Bid expiry in hours. For: bid.' },
+        note: { type: 'string', description: 'Listing note / pitch. For: ask.' },
+      },
+      required: ['action'],
     },
   },
 ];
@@ -1413,6 +1445,99 @@ async function handleToolsCall(
         break;
       }
 
+      // ── 12. ul.marketplace ──────────────
+      case 'ul.marketplace': {
+        // Provisional users cannot participate in marketplace
+        if (user?.provisional) {
+          throw new ToolError(FORBIDDEN, 'Marketplace requires an authenticated account. Use ul.auth.link to connect your account first.');
+        }
+        const mktAction = toolArgs.action as string;
+        if (!mktAction) throw new ToolError(INVALID_PARAMS, 'Missing required parameter: action');
+        const { placeBid, setAskPrice, acceptBid, rejectBid, cancelBid, buyNow, getOffers, getHistory, getListing } = await import('../services/marketplace.ts');
+
+        switch (mktAction) {
+          case 'bid': {
+            const appIdOrSlug = toolArgs.app_id as string;
+            if (!appIdOrSlug) throw new ToolError(INVALID_PARAMS, 'Missing required parameter: app_id');
+            const amountCents = toolArgs.amount_cents as number;
+            if (!amountCents || amountCents <= 0) throw new ToolError(INVALID_PARAMS, 'Missing or invalid amount_cents (must be > 0)');
+            // Resolve app ID from slug if needed
+            const resolvedAppId = await resolveAppIdForMarketplace(appIdOrSlug);
+            result = await placeBid(userId, resolvedAppId, amountCents, toolArgs.message as string | undefined, toolArgs.expires_in_hours as number | undefined);
+            break;
+          }
+          case 'ask': {
+            const appIdOrSlug = toolArgs.app_id as string;
+            if (!appIdOrSlug) throw new ToolError(INVALID_PARAMS, 'Missing required parameter: app_id');
+            const resolvedAppId = await resolveAppIdForMarketplace(appIdOrSlug);
+            result = await setAskPrice(
+              userId,
+              resolvedAppId,
+              toolArgs.price_cents as number | null ?? null,
+              toolArgs.floor_cents as number | null ?? null,
+              toolArgs.instant_buy as boolean | undefined,
+              toolArgs.note as string | undefined
+            );
+            break;
+          }
+          case 'accept': {
+            const bidId = toolArgs.bid_id as string;
+            if (!bidId) throw new ToolError(INVALID_PARAMS, 'Missing required parameter: bid_id');
+            result = await acceptBid(userId, bidId);
+            break;
+          }
+          case 'reject': {
+            const bidId = toolArgs.bid_id as string;
+            if (!bidId) throw new ToolError(INVALID_PARAMS, 'Missing required parameter: bid_id');
+            await rejectBid(userId, bidId);
+            result = { success: true, message: 'Bid rejected. Escrow refunded to bidder.' };
+            break;
+          }
+          case 'cancel': {
+            const bidId = toolArgs.bid_id as string;
+            if (!bidId) throw new ToolError(INVALID_PARAMS, 'Missing required parameter: bid_id');
+            await cancelBid(userId, bidId);
+            result = { success: true, message: 'Bid cancelled. Escrow refunded to your balance.' };
+            break;
+          }
+          case 'buy_now': {
+            const appIdOrSlug = toolArgs.app_id as string;
+            if (!appIdOrSlug) throw new ToolError(INVALID_PARAMS, 'Missing required parameter: app_id');
+            const resolvedAppId = await resolveAppIdForMarketplace(appIdOrSlug);
+            result = await buyNow(userId, resolvedAppId);
+            break;
+          }
+          case 'offers': {
+            const appIdOrSlug = toolArgs.app_id as string | undefined;
+            let resolvedAppId: string | undefined;
+            if (appIdOrSlug) {
+              resolvedAppId = await resolveAppIdForMarketplace(appIdOrSlug);
+            }
+            result = await getOffers(userId, resolvedAppId);
+            break;
+          }
+          case 'history': {
+            const appIdOrSlug = toolArgs.app_id as string | undefined;
+            let resolvedAppId: string | undefined;
+            if (appIdOrSlug) {
+              resolvedAppId = await resolveAppIdForMarketplace(appIdOrSlug);
+            }
+            result = await getHistory(resolvedAppId, userId);
+            break;
+          }
+          case 'listing': {
+            const appIdOrSlug = toolArgs.app_id as string;
+            if (!appIdOrSlug) throw new ToolError(INVALID_PARAMS, 'Missing required parameter: app_id');
+            const resolvedAppId = await resolveAppIdForMarketplace(appIdOrSlug);
+            result = await getListing(resolvedAppId);
+            break;
+          }
+          default:
+            throw new ToolError(INVALID_PARAMS, `Invalid action: ${mktAction}. Use bid|ask|accept|reject|cancel|buy_now|offers|history|listing`);
+        }
+        break;
+      }
+
       default:
         return jsonRpcErrorResponse(id, INVALID_PARAMS, `Unknown tool: ${name}`);
     }
@@ -1489,6 +1614,30 @@ async function resolveApp(userId: string, appIdOrSlug: string): Promise<App> {
   if (!app) throw new ToolError(NOT_FOUND, `App not found: ${appIdOrSlug}`);
   if (app.owner_id !== userId) throw new ToolError(FORBIDDEN, 'You do not own this app');
   return app;
+}
+
+/**
+ * Resolve app ID from ID or slug — no ownership check (marketplace is open).
+ */
+async function resolveAppIdForMarketplace(appIdOrSlug: string): Promise<string> {
+  const appsService = createAppsService();
+  // Try as UUID first
+  const app = await appsService.findById(appIdOrSlug);
+  if (app) return app.id;
+  // Try as slug — search all owners
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/apps?slug=eq.${encodeURIComponent(appIdOrSlug)}&select=id&limit=1`,
+    {
+      headers: {
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+    }
+  );
+  const rows = res.ok ? await res.json() : [];
+  if (rows[0]?.id) return rows[0].id;
+  throw new ToolError(NOT_FOUND, `App not found: ${appIdOrSlug}`);
 }
 
 function getSupabaseEnv() {

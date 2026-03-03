@@ -177,6 +177,11 @@ export function createApp() {
         return handleUser(request);
       }
 
+      // Marketplace API routes — authenticated bid/ask/accept endpoints
+      if (path.startsWith('/api/marketplace')) {
+        return handleUser(request);
+      }
+
       // User API routes - handle all /api/user/* paths (must be before /api/apps)
       if (path.startsWith('/api/user')) {
         return handleUser(request);

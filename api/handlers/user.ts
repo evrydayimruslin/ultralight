@@ -1234,6 +1234,140 @@ export async function handleUser(request: Request): Promise<Response> {
     }
   }
 
+  // ============================================
+  // MARKETPLACE ENDPOINTS
+  // ============================================
+
+  // GET /api/marketplace/listing/:appId — listing + active bids for an app
+  if (path.startsWith('/api/marketplace/listing/') && method === 'GET') {
+    try {
+      const appId = path.replace('/api/marketplace/listing/', '');
+      if (!appId) return error('Missing app ID', 400);
+      const { getListing } = await import('../services/marketplace.ts');
+      const listing = await getListing(appId);
+      return json(listing);
+    } catch (err) {
+      const status = (err as Error & { status?: number }).status || 500;
+      return error(err instanceof Error ? err.message : 'Failed to get listing', status);
+    }
+  }
+
+  // POST /api/marketplace/bid — place a bid
+  if (path === '/api/marketplace/bid' && method === 'POST') {
+    try {
+      const body = await request.json();
+      const { app_id, amount_cents, message, expires_in_hours } = body;
+      if (!app_id || !amount_cents) return error('Missing app_id or amount_cents', 400);
+      const { placeBid } = await import('../services/marketplace.ts');
+      const result = await placeBid(userId, app_id, amount_cents, message, expires_in_hours);
+      return json(result);
+    } catch (err) {
+      const status = (err as Error & { status?: number }).status || 500;
+      return error(err instanceof Error ? err.message : 'Failed to place bid', status);
+    }
+  }
+
+  // POST /api/marketplace/ask — set ask price
+  if (path === '/api/marketplace/ask' && method === 'POST') {
+    try {
+      const body = await request.json();
+      const { app_id, price_cents, floor_cents, instant_buy, note } = body;
+      if (!app_id) return error('Missing app_id', 400);
+      const { setAskPrice } = await import('../services/marketplace.ts');
+      const result = await setAskPrice(userId, app_id, price_cents ?? null, floor_cents, instant_buy, note);
+      return json(result);
+    } catch (err) {
+      const status = (err as Error & { status?: number }).status || 500;
+      return error(err instanceof Error ? err.message : 'Failed to set ask price', status);
+    }
+  }
+
+  // POST /api/marketplace/accept — accept a bid
+  if (path === '/api/marketplace/accept' && method === 'POST') {
+    try {
+      const body = await request.json();
+      const { bid_id } = body;
+      if (!bid_id) return error('Missing bid_id', 400);
+      const { acceptBid } = await import('../services/marketplace.ts');
+      const result = await acceptBid(userId, bid_id);
+      return json(result);
+    } catch (err) {
+      const status = (err as Error & { status?: number }).status || 500;
+      return error(err instanceof Error ? err.message : 'Failed to accept bid', status);
+    }
+  }
+
+  // POST /api/marketplace/reject — reject a bid
+  if (path === '/api/marketplace/reject' && method === 'POST') {
+    try {
+      const body = await request.json();
+      const { bid_id } = body;
+      if (!bid_id) return error('Missing bid_id', 400);
+      const { rejectBid } = await import('../services/marketplace.ts');
+      await rejectBid(userId, bid_id);
+      return json({ success: true, message: 'Bid rejected. Escrow refunded to bidder.' });
+    } catch (err) {
+      const status = (err as Error & { status?: number }).status || 500;
+      return error(err instanceof Error ? err.message : 'Failed to reject bid', status);
+    }
+  }
+
+  // POST /api/marketplace/cancel — cancel own bid
+  if (path === '/api/marketplace/cancel' && method === 'POST') {
+    try {
+      const body = await request.json();
+      const { bid_id } = body;
+      if (!bid_id) return error('Missing bid_id', 400);
+      const { cancelBid } = await import('../services/marketplace.ts');
+      await cancelBid(userId, bid_id);
+      return json({ success: true, message: 'Bid cancelled. Escrow refunded.' });
+    } catch (err) {
+      const status = (err as Error & { status?: number }).status || 500;
+      return error(err instanceof Error ? err.message : 'Failed to cancel bid', status);
+    }
+  }
+
+  // POST /api/marketplace/buy — instant buy
+  if (path === '/api/marketplace/buy' && method === 'POST') {
+    try {
+      const body = await request.json();
+      const { app_id } = body;
+      if (!app_id) return error('Missing app_id', 400);
+      const { buyNow } = await import('../services/marketplace.ts');
+      const result = await buyNow(userId, app_id);
+      return json(result);
+    } catch (err) {
+      const status = (err as Error & { status?: number }).status || 500;
+      return error(err instanceof Error ? err.message : 'Failed to buy app', status);
+    }
+  }
+
+  // GET /api/marketplace/offers — incoming + outgoing offers
+  if (path === '/api/marketplace/offers' && method === 'GET') {
+    try {
+      const appId = url.searchParams.get('app_id') || undefined;
+      const { getOffers } = await import('../services/marketplace.ts');
+      const offers = await getOffers(userId, appId);
+      return json(offers);
+    } catch (err) {
+      const status = (err as Error & { status?: number }).status || 500;
+      return error(err instanceof Error ? err.message : 'Failed to get offers', status);
+    }
+  }
+
+  // GET /api/marketplace/history — sale history
+  if (path === '/api/marketplace/history' && method === 'GET') {
+    try {
+      const appId = url.searchParams.get('app_id') || undefined;
+      const { getHistory } = await import('../services/marketplace.ts');
+      const history = await getHistory(appId, userId);
+      return json(history);
+    } catch (err) {
+      const status = (err as Error & { status?: number }).status || 500;
+      return error(err instanceof Error ? err.message : 'Failed to get history', status);
+    }
+  }
+
   return error('User endpoint not found', 404);
 }
 
