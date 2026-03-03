@@ -1086,7 +1086,7 @@ function getOnboardingTemplate(): { template: string; version: string; updated_a
 
 Run this command to connect:
 npx ultralightpro setup --token {TOKEN}
-
+{SESSION_NOTE}
 After setup, you'll have access to the Ultralight platform and marketplace. You can connect to any app below by its ID using the Ultralight tools.
 
 ## Recommended Apps

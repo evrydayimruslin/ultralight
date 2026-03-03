@@ -88,7 +88,59 @@ export async function handleAdmin(request: Request): Promise<Response> {
     return topUpBalance(request, balanceMatch[1]);
   }
 
+  // POST /api/admin/cleanup-provisionals — Delete expired provisional users
+  if (path === '/api/admin/cleanup-provisionals' && method === 'POST') {
+    return cleanupProvisionals();
+  }
+
   return error('Admin endpoint not found', 404);
+}
+
+async function cleanupProvisionals(): Promise<Response> {
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getEnv();
+
+  try {
+    // Get IDs of provisionals about to be deleted (for auth.users cleanup)
+    const listRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/users?provisional=eq.true&last_active_at=lt.${new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()}&select=id`,
+      { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
+    );
+
+    const toDelete = listRes.ok ? await listRes.json() : [];
+
+    // Run the cleanup RPC (deletes from public.users, cascades to tokens)
+    const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/cleanup_expired_provisionals`, {
+      method: 'POST',
+      headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
+      body: '{}',
+    });
+
+    const deletedCount = rpcRes.ok ? await rpcRes.json() : 0;
+
+    // Delete from auth.users (best-effort, non-blocking)
+    let authDeleted = 0;
+    for (const user of (toDelete || [])) {
+      try {
+        await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${user.id}`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            'apikey': SUPABASE_SERVICE_ROLE_KEY,
+          },
+        });
+        authDeleted++;
+      } catch {}
+    }
+
+    return json({
+      deleted_users: deletedCount,
+      auth_entries_cleaned: authDeleted,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[ADMIN] Cleanup provisionals failed:', err);
+    return error('Cleanup failed', 500);
+  }
 }
 
 // ============================================

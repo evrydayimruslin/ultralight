@@ -2011,7 +2011,7 @@ export function getLayoutHTML(options: {
         <h1>Give your agent<br>superpowers</h1>
         <p style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-top:var(--space-8);margin-bottom:0;letter-spacing:0.08em;text-transform:uppercase;">Just paste and go</p>
         <div class="hero-actions" style="margin-top:var(--space-4);">
-          <button id="heroCTA" class="btn btn-primary btn-lg" style="gap:var(--space-2);border-radius:0;" onclick="document.getElementById('authOverlay').classList.remove('hidden')">
+          <button id="heroCTA" class="btn btn-primary btn-lg" style="gap:var(--space-2);border-radius:0;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
             <span id="heroCTAText">Copy agent instructions</span>
           </button>
@@ -2486,11 +2486,12 @@ export function getLayoutHTML(options: {
     window.showAuthOverlay = showAuthOverlay;
     window.hideAuthOverlay = hideAuthOverlay;
 
-    // Hero CTA — override onclick when authed to copy instructions instead of showing auth
+    // Hero CTA — handles both authenticated (copy with token) and pre-auth (provisional token) flows
     function setupHeroCTA() {
       var btn = document.getElementById('heroCTA');
       if (!btn) return;
       if (authToken) {
+        // Authenticated: generate instructions with real API token
         btn.onclick = async function(e) {
           e.preventDefault();
           await generateSetupInstructions();
@@ -2511,8 +2512,33 @@ export function getLayoutHTML(options: {
             }
           }
         };
+      } else {
+        // Not authenticated: create provisional token (zero-friction onboarding)
+        btn.onclick = async function(e) {
+          e.preventDefault();
+          var textEl = document.getElementById('heroCTAText');
+          if (!textEl) return;
+          textEl.textContent = 'Setting up...';
+          btn.disabled = true;
+          try {
+            await generateProvisionalInstructions();
+            if (setupCommandStr) {
+              await navigator.clipboard.writeText(setupCommandStr);
+              textEl.textContent = 'Copied! Paste into your agent';
+              btn.style.background = 'var(--success)';
+              setTimeout(function() {
+                textEl.textContent = 'Copy agent instructions';
+                btn.style.background = '';
+              }, 3000);
+            }
+          } catch(err) {
+            textEl.textContent = 'Copy agent instructions';
+            // Fallback: show auth overlay if provisional creation fails
+            document.getElementById('authOverlay').classList.remove('hidden');
+          }
+          btn.disabled = false;
+        };
       }
-      // If not authed, the inline onclick already opens auth overlay
     }
 
     // Close auth overlay on backdrop click
@@ -2535,6 +2561,10 @@ export function getLayoutHTML(options: {
         showView('home');
         return;
       }
+
+      // Clean up provisional state now that user is authenticated
+      localStorage.removeItem('ultralight_provisional_token_id');
+      localStorage.removeItem('ultralight_provisional_user_id');
 
       // Decode JWT
       const payload = decodeJWT(authToken);
@@ -3112,7 +3142,7 @@ export function getLayoutHTML(options: {
         var token = data.plaintext_token;
         var tokenId = data.id;
 
-        setupCommandStr = template.replace(/\\{TOKEN\\}/g, token);
+        setupCommandStr = template.replace(/\\{TOKEN\\}/g, token).replace(/\\{SESSION_NOTE\\}/g, '');
         localStorage.setItem('ultralight_setup_v2', setupCommandStr);
 
         var commandEl = document.getElementById('setupCode');
@@ -3126,6 +3156,51 @@ export function getLayoutHTML(options: {
       } catch (err) {
         setupCommandStr = window.location.origin + '/mcp/platform';
       }
+    }
+
+    // Generate setup instructions for unauthenticated visitors (provisional token)
+    async function generateProvisionalInstructions() {
+      // Fetch template and create provisional token in parallel
+      var [templateRes, provRes] = await Promise.all([
+        fetch('/api/onboarding/instructions'),
+        fetch('/auth/provisional', { method: 'POST' })
+      ]);
+
+      // Use dynamic template, fall back to minimal hardcoded string
+      var template = "I'd like you to set up Ultralight, the instant MCP app platform.\\nRun: npx ultralightpro setup --token {TOKEN}";
+      if (templateRes.ok) {
+        try {
+          var templateData = await templateRes.json();
+          if (templateData.template) template = templateData.template;
+        } catch (e) { /* use fallback template */ }
+      }
+
+      if (!provRes.ok) {
+        if (provRes.status === 429) {
+          showToast('Rate limit reached. Please sign in instead.', 'error');
+        }
+        throw new Error('Failed to create provisional token');
+      }
+
+      var data = await provRes.json();
+      var token = data.token;
+      var tokenId = data.token_id;
+
+      // Store provisional IDs for merge on OAuth sign-in
+      localStorage.setItem('ultralight_provisional_token_id', tokenId);
+      localStorage.setItem('ultralight_provisional_user_id', data.user_id);
+
+      // Replace placeholders — provisional users get a session note about limits
+      var sessionNote = '\\n> Note: This is a provisional session (50 calls/day, 5MB storage, no memory). Sign in at ultralight.dev to unlock full access and keep your data permanently.\\n';
+      setupCommandStr = template.replace(/\\{TOKEN\\}/g, token).replace(/\\{SESSION_NOTE\\}/g, sessionNote);
+      localStorage.setItem('ultralight_setup_v2', setupCommandStr);
+
+      var commandEl = document.getElementById('setupCode');
+      if (commandEl) commandEl.textContent = setupCommandStr;
+
+      // Note: don't call startConnectionPolling() for provisional users —
+      // it requires JWT auth which provisional users don't have.
+      // Connection polling happens after they sign in and merge.
     }
 
     // Copy setup command

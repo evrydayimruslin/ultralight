@@ -394,6 +394,7 @@ export async function getUserFromToken(token: string, clientIp?: string): Promis
   id: string;
   email: string;
   tier: string;
+  provisional?: boolean;
   tokenId: string;
   tokenAppIds?: string[] | null;
   tokenFunctionNames?: string[] | null;
@@ -403,10 +404,10 @@ export async function getUserFromToken(token: string, clientIp?: string): Promis
     return null;
   }
 
-  // Get user from database
+  // Get user from database (include provisional + last_active_at for expiry check)
   const { data: user, error } = await supabase
     .from('users')
-    .select('id, email, tier')
+    .select('id, email, tier, provisional, last_active_at')
     .eq('id', validated.user_id)
     .single();
 
@@ -414,10 +415,20 @@ export async function getUserFromToken(token: string, clientIp?: string): Promis
     return null;
   }
 
+  // Reject expired provisional users (no MCP call in 24 hours)
+  if (user.provisional && user.last_active_at) {
+    const lastActive = new Date(user.last_active_at).getTime();
+    const twentyFourHoursAgo = Date.now() - (24 * 60 * 60 * 1000);
+    if (lastActive < twentyFourHoursAgo) {
+      return null; // Expired provisional — treat as invalid token
+    }
+  }
+
   return {
     id: user.id,
     email: user.email,
     tier: user.tier || 'free',
+    provisional: user.provisional || false,
     tokenId: validated.token_id,
     tokenAppIds: validated.app_ids,
     tokenFunctionNames: validated.function_names,

@@ -4,6 +4,7 @@
 import { error, json } from './app.ts';
 import { isApiToken, getUserFromToken } from '../services/tokens.ts';
 import { getUserTier } from '../services/tier-enforcement.ts';
+import { createProvisionalUser, isProvisionalUser, mergeProvisionalUser } from '../services/provisional.ts';
 // @ts-ignore - base64url encode for PKCE
 import { encodeBase64Url } from 'https://deno.land/std@0.210.0/encoding/base64url.ts';
 
@@ -177,6 +178,68 @@ export async function handleAuth(request: Request): Promise<Response> {
     }
   }
 
+  // Create provisional user (no auth required) — pre-auth onboarding
+  if (path === '/auth/provisional' && request.method === 'POST') {
+    try {
+      const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+        || request.headers.get('x-real-ip')
+        || '0.0.0.0';
+
+      const result = await createProvisionalUser(clientIp);
+
+      return json({
+        user_id: result.id,
+        token: result.token,
+        token_id: result.tokenId,
+        provisional: true,
+        limits: {
+          daily_calls: 50,
+          storage_mb: 5,
+          memory: false,
+          inactivity_expiry_hours: 24,
+        },
+      });
+    } catch (err: any) {
+      if (err.status === 429) {
+        return new Response(JSON.stringify({ error: err.message }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      console.error('[AUTH] Provisional creation failed:', err);
+      return error('Failed to create provisional account', 500);
+    }
+  }
+
+  // Merge provisional user into authenticated account (JWT auth required)
+  if (path === '/auth/merge' && request.method === 'POST') {
+    try {
+      const user = await authenticate(request);
+      const body = await request.json();
+      const provisionalUserId = body.provisional_user_id;
+
+      if (!provisionalUserId) {
+        return error('Missing provisional_user_id', 400);
+      }
+
+      // Verify provisional user exists and is actually provisional
+      if (!await isProvisionalUser(provisionalUserId)) {
+        return error('Not a provisional user', 400);
+      }
+
+      // Prevent self-merge
+      if (provisionalUserId === user.id) {
+        return error('Cannot merge into self', 400);
+      }
+
+      const result = await mergeProvisionalUser(provisionalUserId, user.id);
+      return json({ success: true, merged: result });
+    } catch (err: any) {
+      console.error('[AUTH] Merge failed:', err);
+      return error(err.message || 'Merge failed', 500);
+    }
+  }
+
   return error('Auth endpoint not found', 404);
 }
 
@@ -184,7 +247,7 @@ export async function handleAuth(request: Request): Promise<Response> {
  * Extract and verify JWT or API token from request
  * Also ensures user exists in public.users table
  */
-export async function authenticate(request: Request): Promise<{ id: string; email: string; tier: string; tokenId?: string; tokenAppIds?: string[] | null; tokenFunctionNames?: string[] | null }> {
+export async function authenticate(request: Request): Promise<{ id: string; email: string; tier: string; provisional?: boolean; tokenId?: string; tokenAppIds?: string[] | null; tokenFunctionNames?: string[] | null }> {
   const authHeader = request.headers.get('Authorization');
 
   if (!authHeader?.startsWith('Bearer ')) {
@@ -474,7 +537,31 @@ function getCallbackSuccessHTML(token: string, refreshToken?: string, returnTo?:
   <script>
     localStorage.setItem('ultralight_token', '${safeToken}');
     ${safeRefresh ? `localStorage.setItem('ultralight_refresh_token', '${safeRefresh}');` : ''}
-    window.location.href = '${safeRedirect}';
+
+    // Check for provisional user to merge (same-device path)
+    var provUserId = localStorage.getItem('ultralight_provisional_user_id');
+    if (provUserId) {
+      fetch('/auth/merge', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + '${safeToken}',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ provisional_user_id: provUserId })
+      }).then(function() {
+        localStorage.removeItem('ultralight_provisional_token_id');
+        localStorage.removeItem('ultralight_provisional_user_id');
+        localStorage.removeItem('ultralight_setup_v2');
+        window.location.href = '${safeRedirect}';
+      }).catch(function() {
+        // Merge failed — proceed anyway (user still gets authenticated)
+        localStorage.removeItem('ultralight_provisional_token_id');
+        localStorage.removeItem('ultralight_provisional_user_id');
+        window.location.href = '${safeRedirect}';
+      });
+    } else {
+      window.location.href = '${safeRedirect}';
+    }
   </script>
 </body>
 </html>`;

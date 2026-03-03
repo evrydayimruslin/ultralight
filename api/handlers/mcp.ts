@@ -9,6 +9,7 @@ import { createAppsService } from '../services/apps.ts';
 import { createAppDataService, createWorkerAppDataService } from '../services/appdata.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
 import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
+import { checkProvisionalDailyLimit, updateLastActive } from '../services/provisional.ts';
 import { getPermissionsForUser } from './user.ts';
 import { type Tier, type AppPricingConfig, getCallPriceCents } from '../../shared/types/index.ts';
 import { executeInSandbox, type UserContext } from '../runtime/sandbox.ts';
@@ -515,7 +516,13 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
     displayName,
     avatarUrl,
     tier: authUser.tier as Tier,
+    provisional: authUser.provisional || false,
   };
+
+  // Update last_active_at for provisional users (fire-and-forget)
+  if (authUser.provisional) {
+    updateLastActive(userId);
+  }
 
   // Validate app result
   if (!app) {
@@ -564,10 +571,13 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
       // [4] Visibility/permissions (private apps, non-owner)
       app.visibility === 'private' && isNonOwner
         ? getPermissionsForUser(userId, app.id, app.owner_id, app.visibility) : undefined,
+      // [5] Provisional daily call limit (tools/call, provisional users only)
+      isToolsCall && user?.provisional
+        ? checkProvisionalDailyLimit(userId) : null,
     ]);
 
     // Check results — return first error found
-    const [endpointRL, weeklyRL, appMinuteRL, appDayRL, perms] = gateChecks;
+    const [endpointRL, weeklyRL, appMinuteRL, appDayRL, perms, provisionalRL] = gateChecks;
 
     if (!endpointRL.allowed) {
       return jsonRpcErrorResponse(
@@ -595,6 +605,12 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
     }
     if (perms !== undefined && perms !== null && perms.allowed.size === 0) {
       return jsonRpcErrorResponse(rpcRequest.id, -32002, 'App not found');
+    }
+    if (provisionalRL && !provisionalRL.allowed) {
+      return jsonRpcErrorResponse(
+        rpcRequest.id, RATE_LIMITED,
+        `Provisional account daily limit reached (50 calls/day). Sign in at ultralight.dev to unlock full access.`
+      );
     }
   }
 

@@ -15,6 +15,7 @@ export interface UserContext {
   displayName: string | null;
   avatarUrl: string | null;
   tier: string;
+  provisional?: boolean;
 }
 
 export interface RuntimeConfig {

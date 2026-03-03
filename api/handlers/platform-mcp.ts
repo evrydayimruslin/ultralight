@@ -6,11 +6,12 @@
 
 import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
-import { isApiToken } from '../services/tokens.ts';
+import { isApiToken, validateToken } from '../services/tokens.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
 import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
+import { isProvisionalUser, mergeProvisionalUser } from '../services/provisional.ts';
 import { getPermissionsForUser } from './user.ts';
 import { getPermissionCache } from '../services/permission-cache.ts';
 import { type Tier, MIN_PUBLISH_DEPOSIT_CENTS } from '../../shared/types/index.ts';
@@ -427,6 +428,22 @@ const PLATFORM_TOOLS: MCPTool[] = [
       required: ['app_id', 'function_name'],
     },
   },
+
+  // ── 11. ul.auth.link ──────────────────────────
+  {
+    name: 'ul.auth.link',
+    description:
+      'Link this provisional session to your real Ultralight account by providing an API token from your authenticated account. ' +
+      'This merges all your provisional apps and data into your real account.',
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        token: { type: 'string', description: 'An API token (ul_xxx) from your authenticated Ultralight account.' },
+      },
+      required: ['token'],
+    },
+  },
 ];
 
 // ============================================
@@ -504,6 +521,7 @@ export async function handlePlatformMcp(request: Request): Promise<Response> {
       displayName,
       avatarUrl,
       tier: authUser.tier as Tier,
+      provisional: authUser.provisional || false,
     };
   } catch (authErr) {
     const message = authErr instanceof Error ? authErr.message : 'Authentication required';
@@ -1151,6 +1169,11 @@ async function handleToolsCall(
 
       // ── 6. ul.memory ──────────────
       case 'ul.memory': {
+        // Block memory for provisional (pre-auth) users
+        if (user?.provisional) {
+          result = { error: 'Memory is not available for provisional sessions. Sign in at ultralight.dev to unlock cross-session memory.' };
+          break;
+        }
         const memAction = toolArgs.action;
         if (!memAction) throw new ToolError(INVALID_PARAMS, 'Missing required parameter: action');
         switch (memAction) {
@@ -1314,13 +1337,30 @@ async function handleToolsCall(
       case 'ul.permissions.export': result = await executePermissionsExport(userId, toolArgs); break;
       case 'ul.connect': result = await executeConnect(userId, toolArgs); break;
       case 'ul.connections': result = await executeConnections(userId, toolArgs); break;
-      case 'ul.memory.read': result = await executeMemoryRead(userId, toolArgs); break;
-      case 'ul.memory.write': result = await executeMemoryWrite(userId, toolArgs); break;
-      case 'ul.memory.append': result = await executeMemoryWrite(userId, { ...toolArgs, append: true }); break;
-      case 'ul.memory.recall': result = await executeMemoryRecall(userId, toolArgs); break;
-      case 'ul.memory.remember': result = await executeMemoryRecall(userId, toolArgs); break;
-      case 'ul.memory.query': result = await executeMemoryQuery(userId, toolArgs); break;
-      case 'ul.memory.forget': result = await executeMemoryQuery(userId, { ...toolArgs, delete_key: toolArgs.key }); break;
+      case 'ul.memory.read':
+      case 'ul.memory.write':
+      case 'ul.memory.append':
+      case 'ul.memory.recall':
+      case 'ul.memory.remember':
+      case 'ul.memory.query':
+      case 'ul.memory.forget': {
+        // Block memory aliases for provisional users (same as main ul.memory handler)
+        if (user?.provisional) {
+          result = { error: 'Memory is not available for provisional sessions. Sign in at ultralight.dev to unlock cross-session memory.' };
+          break;
+        }
+        // Dispatch to original handlers
+        switch (name) {
+          case 'ul.memory.read': result = await executeMemoryRead(userId, toolArgs); break;
+          case 'ul.memory.write': result = await executeMemoryWrite(userId, toolArgs); break;
+          case 'ul.memory.append': result = await executeMemoryWrite(userId, { ...toolArgs, append: true }); break;
+          case 'ul.memory.recall': result = await executeMemoryRecall(userId, toolArgs); break;
+          case 'ul.memory.remember': result = await executeMemoryRecall(userId, toolArgs); break;
+          case 'ul.memory.query': result = await executeMemoryQuery(userId, toolArgs); break;
+          case 'ul.memory.forget': result = await executeMemoryQuery(userId, { ...toolArgs, delete_key: toolArgs.key }); break;
+        }
+        break;
+      }
       case 'ul.markdown.publish': result = await executeMarkdown(userId, toolArgs); break;
       case 'ul.markdown.list': result = await executePages(userId); break;
       case 'ul.markdown.share': result = await executeMarkdownShare(userId, toolArgs); break;
@@ -1331,6 +1371,47 @@ async function handleToolsCall(
       case 'ul.health': result = await executeHealth(userId, toolArgs); break;
       case 'ul.gaps': result = await executeGaps(toolArgs); break;
       case 'ul.shortcomings': result = executeShortcomings(userId, toolArgs, sessionId); break;
+
+      // ── 11. ul.auth.link (cross-device merge) ──────────────
+      case 'ul.auth.link': {
+        // Only provisional users can use this tool
+        if (!user?.provisional) {
+          result = { message: 'Already linked to an authenticated account. No action needed.' };
+          break;
+        }
+
+        const linkToken = toolArgs.token as string;
+        if (!linkToken || !linkToken.startsWith('ul_')) {
+          throw new ToolError(INVALID_PARAMS, 'Provide a valid API token (starts with ul_). Generate one at ultralight.dev → API Keys.');
+        }
+
+        // Validate the target token to get the real user
+        const validated = await validateToken(linkToken);
+        if (!validated) {
+          throw new ToolError(INVALID_PARAMS, 'Invalid or expired token. Generate a new one at ultralight.dev → API Keys.');
+        }
+
+        // Prevent self-link
+        if (validated.user_id === userId) {
+          throw new ToolError(INVALID_PARAMS, 'This token belongs to the current provisional account.');
+        }
+
+        // Target must not be another provisional user
+        if (await isProvisionalUser(validated.user_id)) {
+          throw new ToolError(INVALID_PARAMS, 'Target token belongs to another provisional account. Use a token from a signed-in account.');
+        }
+
+        // Execute merge: current provisional → target real user
+        const mergeResult = await mergeProvisionalUser(userId, validated.user_id);
+        result = {
+          success: true,
+          message: 'Account linked successfully! Your apps and data have been transferred to your real account.',
+          apps_moved: mergeResult.apps_moved,
+          tokens_moved: mergeResult.tokens_moved,
+          storage_transferred_bytes: mergeResult.storage_transferred_bytes,
+        };
+        break;
+      }
 
       default:
         return jsonRpcErrorResponse(id, INVALID_PARAMS, `Unknown tool: ${name}`);
