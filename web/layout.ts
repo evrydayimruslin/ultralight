@@ -2155,9 +2155,9 @@ export function getLayoutHTML(options: {
       <section style="max-width:820px;margin:0 auto;padding:var(--space-20) var(--space-6);text-align:left;">
         <h2 style="font-size:32px;font-weight:600;letter-spacing:-0.035em;line-height:1.15;color:var(--text-primary);margin-bottom:var(--space-8);">Start now.</h2>
         <div style="display:flex;justify-content:flex-start;">
-          <button class="btn btn-primary btn-lg" style="gap:var(--space-2);border-radius:0;" onclick="document.getElementById('authOverlay').classList.remove('hidden')">
+          <button id="bottomCTA" class="btn btn-primary btn-lg" style="gap:var(--space-2);border-radius:0;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-            <span>Copy agent instructions</span>
+            <span id="bottomCTAText">Copy agent instructions</span>
           </button>
         </div>
       </section>
@@ -2487,56 +2487,101 @@ export function getLayoutHTML(options: {
     window.hideAuthOverlay = hideAuthOverlay;
 
     // Hero CTA — handles both authenticated (copy with token) and pre-auth (provisional token) flows
+    // Shared copy + animation helper for CTA buttons
+    // Shows green checkmark SVG + "Copied! Paste to agent" for 5 seconds, then reverts
+    async function copyAndAnimateCTA(btn, textEl, origBtnHTML) {
+      if (!setupCommandStr) return;
+      try {
+        await navigator.clipboard.writeText(setupCommandStr);
+        var checkSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+        btn.innerHTML = checkSvg + ' <span>' + 'Copied! Paste to agent' + '</span>';
+        btn.style.background = 'var(--text-primary)';
+        btn.style.color = 'var(--bg-base)';
+        setTimeout(function() {
+          btn.innerHTML = origBtnHTML;
+          btn.style.background = '';
+          btn.style.color = '';
+        }, 5000);
+      } catch(e2) {
+        showToast('Failed to copy', 'error');
+      }
+    }
+
     function setupHeroCTA() {
       var btn = document.getElementById('heroCTA');
       if (!btn) return;
+      var origHTML = btn.innerHTML;
       if (authToken) {
         // Authenticated: generate instructions with real API token
         btn.onclick = async function(e) {
           e.preventDefault();
-          await generateSetupInstructions();
-          if (setupCommandStr) {
-            try {
-              await navigator.clipboard.writeText(setupCommandStr);
-              var textEl = document.getElementById('heroCTAText');
-              if (textEl) {
-                textEl.textContent = 'Copied! Now paste into your agent';
-                btn.style.background = 'var(--success)';
-                setTimeout(function() {
-                  textEl.textContent = 'Copy agent instructions';
-                  btn.style.background = '';
-                }, 3000);
-              }
-            } catch(e2) {
-              showToast('Failed to copy', 'error');
-            }
+          if (!setupCommandStr) {
+            var textEl = document.getElementById('heroCTAText');
+            if (textEl) textEl.textContent = 'Generating...';
+            btn.disabled = true;
+            await generateSetupInstructions();
+            btn.disabled = false;
           }
+          await copyAndAnimateCTA(btn, null, origHTML);
         };
       } else {
         // Not authenticated: create provisional token (zero-friction onboarding)
         btn.onclick = async function(e) {
           e.preventDefault();
-          var textEl = document.getElementById('heroCTAText');
-          if (!textEl) return;
-          textEl.textContent = 'Setting up...';
-          btn.disabled = true;
-          try {
-            await generateProvisionalInstructions();
-            if (setupCommandStr) {
-              await navigator.clipboard.writeText(setupCommandStr);
-              textEl.textContent = 'Copied! Paste into your agent';
-              btn.style.background = 'var(--success)';
-              setTimeout(function() {
-                textEl.textContent = 'Copy agent instructions';
-                btn.style.background = '';
-              }, 3000);
+          if (!setupCommandStr) {
+            var textEl = document.getElementById('heroCTAText');
+            if (textEl) textEl.textContent = 'Setting up...';
+            btn.disabled = true;
+            try {
+              await generateProvisionalInstructions();
+            } catch(err) {
+              if (textEl) textEl.textContent = 'Copy agent instructions';
+              btn.disabled = false;
+              // Fallback: show auth overlay if provisional creation fails
+              document.getElementById('authOverlay').classList.remove('hidden');
+              return;
             }
-          } catch(err) {
-            textEl.textContent = 'Copy agent instructions';
-            // Fallback: show auth overlay if provisional creation fails
-            document.getElementById('authOverlay').classList.remove('hidden');
+            btn.disabled = false;
           }
-          btn.disabled = false;
+          await copyAndAnimateCTA(btn, null, origHTML);
+        };
+      }
+    }
+
+    function setupBottomCTA() {
+      var btn = document.getElementById('bottomCTA');
+      if (!btn) return;
+      var origHTML = btn.innerHTML;
+      if (authToken) {
+        btn.onclick = async function(e) {
+          e.preventDefault();
+          if (!setupCommandStr) {
+            var textEl = document.getElementById('bottomCTAText');
+            if (textEl) textEl.textContent = 'Generating...';
+            btn.disabled = true;
+            await generateSetupInstructions();
+            btn.disabled = false;
+          }
+          await copyAndAnimateCTA(btn, null, origHTML);
+        };
+      } else {
+        btn.onclick = async function(e) {
+          e.preventDefault();
+          if (!setupCommandStr) {
+            var textEl = document.getElementById('bottomCTAText');
+            if (textEl) textEl.textContent = 'Setting up...';
+            btn.disabled = true;
+            try {
+              await generateProvisionalInstructions();
+            } catch(err) {
+              if (textEl) textEl.textContent = 'Copy agent instructions';
+              btn.disabled = false;
+              document.getElementById('authOverlay').classList.remove('hidden');
+              return;
+            }
+            btn.disabled = false;
+          }
+          await copyAndAnimateCTA(btn, null, origHTML);
         };
       }
     }
@@ -2552,6 +2597,10 @@ export function getLayoutHTML(options: {
     // On page load, authToken is already read from localStorage above
 
     async function updateAuthUI() {
+      // Always set up hero CTA (handles both pre-auth and post-auth paths)
+      setupHeroCTA();
+      setupBottomCTA();
+
       if (!authToken) {
         // Not authenticated
         document.getElementById('navPreAuth').classList.remove('hidden');
@@ -2622,9 +2671,6 @@ export function getLayoutHTML(options: {
       navPost.classList.remove('hidden');
       navPost.style.display = 'flex';
 
-      // Update hero CTA to copy mode
-      setupHeroCTA();
-
       // Set avatar
       const avatarEls = document.querySelectorAll('.profile-avatar');
       const initial = (userProfile?.first_name || userProfile?.email || currentUser.email || '?')[0].toUpperCase();
@@ -2647,19 +2693,10 @@ export function getLayoutHTML(options: {
           // First-time user: auto-generate + auto-copy instructions
           await generateSetupInstructions();
           if (setupCommandStr) {
-            try {
-              await navigator.clipboard.writeText(setupCommandStr);
-              var ctaBtn = document.getElementById('heroCTA');
-              var ctaTxt = document.getElementById('heroCTAText');
-              if (ctaBtn && ctaTxt) {
-                ctaTxt.textContent = 'Copied! Now paste into your agent';
-                ctaBtn.style.background = 'var(--success)';
-                setTimeout(function() {
-                  ctaTxt.textContent = 'Copy agent instructions';
-                  ctaBtn.style.background = '';
-                }, 4000);
-              }
-            } catch(e) {}
+            var ctaBtn = document.getElementById('heroCTA');
+            if (ctaBtn) {
+              await copyAndAnimateCTA(ctaBtn, null, ctaBtn.innerHTML);
+            }
           }
           showSetupBlock();
         }
