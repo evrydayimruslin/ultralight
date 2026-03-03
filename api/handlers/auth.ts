@@ -185,7 +185,9 @@ export async function handleAuth(request: Request): Promise<Response> {
         || request.headers.get('x-real-ip')
         || '0.0.0.0';
 
+      console.log(`[AUTH] Provisional request from IP: ${clientIp}`);
       const result = await createProvisionalUser(clientIp);
+      console.log(`[AUTH] Provisional user created: ${result.id}, token_id: ${result.tokenId}`);
 
       return json({
         user_id: result.id,
@@ -200,6 +202,7 @@ export async function handleAuth(request: Request): Promise<Response> {
         },
       });
     } catch (err: any) {
+      console.error(`[AUTH] Provisional creation failed:`, err.message, err.status);
       if (err.status === 429) {
         return new Response(JSON.stringify({ error: err.message }), {
           status: 429,

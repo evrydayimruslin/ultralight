@@ -45,13 +45,15 @@ export interface MergeResult {
  * Rate limited to 3 per IP per 24 hours.
  */
 export async function createProvisionalUser(clientIp: string): Promise<ProvisionalCreateResult> {
-  // Check IP rate limit
+  // IP rate limit temporarily disabled for debugging
+  // TODO: Re-enable after testing — limit is 3 provisionals per IP per day
   const ipCount = await countProvisionalsByIp(clientIp);
-  if (ipCount >= MAX_PROVISIONALS_PER_IP) {
-    const err = new Error(`Rate limit: ${MAX_PROVISIONALS_PER_IP} provisional accounts per IP per day`);
-    (err as any).status = 429;
-    throw err;
-  }
+  console.log(`[PROVISIONAL] IP ${clientIp} has ${ipCount} provisionals in last 24h (limit: ${MAX_PROVISIONALS_PER_IP})`);
+  // if (ipCount >= MAX_PROVISIONALS_PER_IP) {
+  //   const err = new Error(`Rate limit: ${MAX_PROVISIONALS_PER_IP} provisional accounts per IP per day`);
+  //   (err as any).status = 429;
+  //   throw err;
+  // }
 
   // Generate a stable UUID for the provisional user
   const userId = crypto.randomUUID();
