@@ -2399,7 +2399,7 @@ export function getLayoutHTML(options: {
     let apps = [];
     let currentAppId = null;
     let currentView = '${initialView}';
-    let setupCommandStr = localStorage.getItem('ultralight_setup_v2') || '';
+    let setupCommandStr = localStorage.getItem('ultralight_setup_v3') || '';
 
     // Instant auth nav switch — prevents flash of wrong nav state
     if (authToken) {
@@ -2602,7 +2602,9 @@ export function getLayoutHTML(options: {
       setupBottomCTA();
 
       if (!authToken) {
-        // Not authenticated
+        // Not authenticated — clear any stale cached instructions from a previous session
+        setupCommandStr = '';
+        localStorage.removeItem('ultralight_setup_v3');
         document.getElementById('navPreAuth').classList.remove('hidden');
         var navPostEl = document.getElementById('navPostAuth');
         navPostEl.classList.add('hidden');
@@ -2729,7 +2731,7 @@ export function getLayoutHTML(options: {
       apps = [];
       localStorage.removeItem('ultralight_token');
       localStorage.removeItem('ultralight_refresh_token');
-      localStorage.removeItem('ultralight_setup_v2');
+      localStorage.removeItem('ultralight_setup_v3');
       if (connectionPollInterval) clearInterval(connectionPollInterval);
       window.location.href = '/';
     }
@@ -3180,7 +3182,7 @@ export function getLayoutHTML(options: {
         var tokenId = data.id;
 
         setupCommandStr = template.replace(/\\{TOKEN\\}/g, token).replace(/\\{SESSION_NOTE\\}/g, '');
-        localStorage.setItem('ultralight_setup_v2', setupCommandStr);
+        localStorage.setItem('ultralight_setup_v3', setupCommandStr);
 
         var commandEl = document.getElementById('setupCode');
         if (commandEl) commandEl.textContent = setupCommandStr;
@@ -3230,7 +3232,7 @@ export function getLayoutHTML(options: {
       // Replace placeholders — provisional users get a session note about limits
       var sessionNote = '\\n> Note: This is a provisional session (50 calls/day, 5MB storage, no memory). Sign in at ultralight.dev to unlock full access and keep your data permanently.\\n';
       setupCommandStr = template.replace(/\\{TOKEN\\}/g, token).replace(/\\{SESSION_NOTE\\}/g, sessionNote);
-      localStorage.setItem('ultralight_setup_v2', setupCommandStr);
+      localStorage.setItem('ultralight_setup_v3', setupCommandStr);
 
       var commandEl = document.getElementById('setupCode');
       if (commandEl) commandEl.textContent = setupCommandStr;

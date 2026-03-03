@@ -551,7 +551,7 @@ function getCallbackSuccessHTML(token: string, refreshToken?: string, returnTo?:
       }).then(function() {
         localStorage.removeItem('ultralight_provisional_token_id');
         localStorage.removeItem('ultralight_provisional_user_id');
-        localStorage.removeItem('ultralight_setup_v2');
+        localStorage.removeItem('ultralight_setup_v3');
         window.location.href = '${safeRedirect}';
       }).catch(function() {
         // Merge failed — proceed anyway (user still gets authenticated)
