@@ -1481,7 +1481,7 @@ async function executeAppFunction(
                 isError: true,
                 content: [{
                   type: 'text',
-                  text: `Insufficient balance. This tool costs ${callChargeCents}¢ per call. Top up your hosting balance to continue.`,
+                  text: `Insufficient balance. This tool costs ${callChargeCents < 1 ? callChargeCents.toFixed(3) : callChargeCents}¢ per call. Top up your hosting balance to continue.`,
                 }],
               });
             }
