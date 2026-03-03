@@ -1121,17 +1121,9 @@ After running the setup command:
   };
 }
 
-export async function handleOnboarding(request: Request): Promise<Response> {
-  // Rate limit by IP (no auth required)
-  const rateLimitKey = getClientIp(request) || 'anonymous';
-  const rateLimitResult = await checkRateLimit(rateLimitKey, 'discover');
-  if (!rateLimitResult.allowed) {
-    return json({
-      error: 'Rate limit exceeded',
-      resetAt: rateLimitResult.resetAt?.toISOString(),
-    }, 429);
-  }
-
+export async function handleOnboarding(_request: Request): Promise<Response> {
+  // No rate limiting — this is a static, public, cacheable template.
+  // The rate limit RPC expects UUID user IDs, not IP strings.
   const data = getOnboardingTemplate();
   return new Response(JSON.stringify(data), {
     status: 200,
