@@ -124,6 +124,13 @@ BEGIN
     RAISE EXCEPTION 'Insufficient balance. Available: % cents', v_available;
   END IF;
 
+  -- Check if listing is sold
+  PERFORM 1 FROM app_listings
+  WHERE app_id = p_app_id AND status = 'sold';
+  IF FOUND THEN
+    RAISE EXCEPTION 'This app has already been sold';
+  END IF;
+
   -- Check floor price if listing exists
   PERFORM 1 FROM app_listings
   WHERE app_id = p_app_id AND floor_price_cents IS NOT NULL AND p_amount_cents < floor_price_cents;
@@ -267,6 +274,7 @@ BEGIN
 
   UPDATE app_listings
   SET owner_id = v_bid.bidder_id,
+      status = 'sold',
       provenance = v_provenance,
       updated_at = now()
   WHERE app_id = v_app.id;

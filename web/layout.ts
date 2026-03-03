@@ -2192,6 +2192,10 @@ export function getLayoutHTML(options: {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
             API Keys
           </div>
+          <div class="settings-sidebar-item" data-dash-section="offers">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            Offers
+          </div>
           <div class="settings-sidebar-item" data-dash-section="billing">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
             Billing
@@ -2218,6 +2222,13 @@ export function getLayoutHTML(options: {
             <div id="marketplaceResults" class="marketplace-results">
               <div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Loading...</div>
             </div>
+          </section>
+
+          <!-- Offers Panel -->
+          <section id="dashOffersPanel" class="settings-panel" style="display:none;">
+            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">My Offers</h2>
+            <div id="offersIncoming" style="margin-bottom:var(--space-6);"></div>
+            <div id="offersOutgoing"></div>
           </section>
 
           <!-- API Keys Panel -->
@@ -2898,6 +2909,7 @@ export function getLayoutHTML(options: {
       var panelMap = {
         library: 'dashLibraryPanel',
         marketplace: 'dashMarketplacePanel',
+        offers: 'dashOffersPanel',
         keys: 'dashKeysPanel',
         billing: 'dashBillingPanel'
       };
@@ -2916,6 +2928,9 @@ export function getLayoutHTML(options: {
       } else if (section === 'marketplace') {
         history.replaceState({}, '', '/marketplace');
         loadMarketplace('', 'all');
+      } else if (section === 'offers') {
+        history.replaceState({}, '', '/settings/offers');
+        loadMyOffers();
       } else if (section === 'keys') {
         history.replaceState({}, '', '/settings/' + section);
         loadTokens();
@@ -2996,6 +3011,96 @@ export function getLayoutHTML(options: {
         marketplaceDebounce = setTimeout(function() {
           loadMarketplace(q, marketplaceType);
         }, 300);
+      });
+    }
+
+    // ===== My Offers =====
+    function loadMyOffers() {
+      var inEl = document.getElementById('offersIncoming');
+      var outEl = document.getElementById('offersOutgoing');
+      if (!inEl || !outEl) return;
+
+      inEl.innerHTML = '<div class="loading-text">Loading incoming offers...</div>';
+      outEl.innerHTML = '<div class="loading-text">Loading outgoing bids...</div>';
+
+      fetch('/api/marketplace/offers', {
+        headers: { 'Authorization': 'Bearer ' + authToken },
+      }).then(function(res) {
+        if (!res.ok) throw new Error('Failed to load');
+        return res.json();
+      }).then(function(data) {
+        var incoming = data.incoming || [];
+        var outgoing = data.outgoing || [];
+
+        // Incoming bids (as seller)
+        if (incoming.length === 0) {
+          inEl.innerHTML =
+            '<h3 style="font-size:14px;font-weight:600;margin-bottom:var(--space-3);color:var(--text-primary)">Incoming Bids</h3>' +
+            '<p style="font-size:13px;color:var(--text-muted)">No active bids on your apps.</p>';
+        } else {
+          inEl.innerHTML =
+            '<h3 style="font-size:14px;font-weight:600;margin-bottom:var(--space-3);color:var(--text-primary)">Incoming Bids (' + incoming.length + ')</h3>' +
+            '<table style="width:100%;font-size:13px;border-collapse:collapse">' +
+              '<thead><tr style="border-bottom:1px solid var(--border);text-align:left">' +
+                '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">App</th>' +
+                '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Bidder</th>' +
+                '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Amount</th>' +
+                '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Message</th>' +
+                '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Time</th>' +
+                '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Actions</th>' +
+              '</tr></thead><tbody>' +
+              incoming.map(function(bid) {
+                return '<tr style="border-bottom:1px solid var(--border)">' +
+                  '<td style="padding:8px 12px"><a href="/a/' + bid.app_id + '/market" style="color:var(--accent)">' + escapeHtml(bid.app_name || 'Unknown') + '</a></td>' +
+                  '<td style="padding:8px 12px">' + escapeHtml(bid.bidder_email || 'Unknown') + '</td>' +
+                  '<td style="padding:8px 12px;font-weight:600;color:var(--success)">$' + (bid.amount_cents / 100).toFixed(2) + '</td>' +
+                  '<td style="padding:8px 12px;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(bid.message || '-') + '</td>' +
+                  '<td style="padding:8px 12px;color:var(--text-muted)">' + relTime(bid.created_at) + '</td>' +
+                  '<td style="padding:8px 12px">' +
+                    '<button class="btn btn-primary btn-sm" style="margin-right:4px" onclick="acceptBid(\'' + bid.bid_id + '\',\'' + bid.app_id + '\')">Accept</button>' +
+                    '<button class="btn btn-secondary btn-sm" onclick="rejectBid(\'' + bid.bid_id + '\',\'' + bid.app_id + '\')">Reject</button>' +
+                  '</td>' +
+                '</tr>';
+              }).join('') +
+            '</tbody></table>';
+        }
+
+        // Outgoing bids (as buyer)
+        if (outgoing.length === 0) {
+          outEl.innerHTML =
+            '<h3 style="font-size:14px;font-weight:600;margin-bottom:var(--space-3);color:var(--text-primary)">Your Bids</h3>' +
+            '<p style="font-size:13px;color:var(--text-muted)">You haven\'t placed any bids.</p>';
+        } else {
+          outEl.innerHTML =
+            '<h3 style="font-size:14px;font-weight:600;margin-bottom:var(--space-3);color:var(--text-primary)">Your Bids (' + outgoing.length + ')</h3>' +
+            '<table style="width:100%;font-size:13px;border-collapse:collapse">' +
+              '<thead><tr style="border-bottom:1px solid var(--border);text-align:left">' +
+                '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">App</th>' +
+                '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Amount</th>' +
+                '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Status</th>' +
+                '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Escrow</th>' +
+                '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Time</th>' +
+                '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Actions</th>' +
+              '</tr></thead><tbody>' +
+              outgoing.map(function(bid) {
+                var statusColor = bid.status === 'active' ? 'var(--accent)' : bid.status === 'accepted' ? 'var(--success)' : 'var(--text-muted)';
+                var cancelBtn = bid.status === 'active'
+                  ? '<button class="btn btn-secondary btn-sm" onclick="cancelBidFromUI(\'' + bid.bid_id + '\',\'' + bid.app_id + '\')">Cancel</button>'
+                  : '';
+                return '<tr style="border-bottom:1px solid var(--border)">' +
+                  '<td style="padding:8px 12px"><a href="/a/' + bid.app_id + '/market" style="color:var(--accent)">' + escapeHtml(bid.app_name || 'Unknown') + '</a></td>' +
+                  '<td style="padding:8px 12px;font-weight:600">$' + (bid.amount_cents / 100).toFixed(2) + '</td>' +
+                  '<td style="padding:8px 12px"><span style="color:' + statusColor + '">' + bid.status + '</span></td>' +
+                  '<td style="padding:8px 12px;color:var(--text-muted)">' + bid.escrow_status + '</td>' +
+                  '<td style="padding:8px 12px;color:var(--text-muted)">' + relTime(bid.created_at) + '</td>' +
+                  '<td style="padding:8px 12px">' + cancelBtn + '</td>' +
+                '</tr>';
+              }).join('') +
+            '</tbody></table>';
+        }
+      }).catch(function() {
+        inEl.innerHTML = '<p style="font-size:13px;color:var(--text-muted)">Could not load offers.</p>';
+        outEl.innerHTML = '';
       });
     }
 
@@ -3912,6 +4017,7 @@ export function getLayoutHTML(options: {
         if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
         showToast('Bid rejected');
         loadAppMarket(appId, window._currentApp);
+        loadMyOffers(); // Refresh offers dashboard if visible
       }).catch(function(err) {
         showToast(err.message || 'Failed to reject bid', 'error');
       });
@@ -3948,6 +4054,7 @@ export function getLayoutHTML(options: {
         if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
         showToast('Bid cancelled. Escrow refunded.');
         loadAppMarket(appId, window._currentApp);
+        loadMyOffers(); // Refresh offers dashboard if visible
       }).catch(function(err) {
         showToast(err.message || 'Failed to cancel bid', 'error');
       });

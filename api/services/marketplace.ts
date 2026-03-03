@@ -146,6 +146,16 @@ export async function placeBid(
 ): Promise<BidResult> {
   if (amountCents <= 0) throw createError('Bid amount must be positive', 400);
 
+  // Check if listing is sold (prevent bidding on transferred apps)
+  const soldCheck = await fetch(
+    `${SUPABASE_URL}/rest/v1/app_listings?app_id=eq.${appId}&status=eq.sold&select=id`,
+    { headers: dbHeaders() }
+  );
+  const soldRows = soldCheck.ok ? await soldCheck.json() : [];
+  if (soldRows.length > 0) {
+    throw createError('This app has already been sold', 400);
+  }
+
   const expiresAt = expiresInHours
     ? new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString()
     : null;
@@ -357,8 +367,19 @@ export async function buyNow(buyerId: string, appId: string): Promise<SaleResult
   // Place bid at ask price
   const bidResult = await placeBid(buyerId, appId, listing.ask_price_cents);
 
-  // Immediately accept (as the owner)
-  return acceptBid(listing.owner_id, bidResult.bid_id);
+  // Immediately accept (as the owner) — if this fails, auto-cancel to refund escrow
+  try {
+    return await acceptBid(listing.owner_id, bidResult.bid_id);
+  } catch (err) {
+    // Accept failed — clean up by cancelling the bid to refund escrow
+    console.error('[MARKETPLACE] buyNow accept failed, auto-cancelling bid:', err);
+    try {
+      await cancelBid(buyerId, bidResult.bid_id);
+    } catch (cancelErr) {
+      console.error('[MARKETPLACE] CRITICAL: buyNow cleanup cancel also failed:', cancelErr);
+    }
+    throw createError('Purchase failed. Your funds have been refunded.', 500);
+  }
 }
 
 /**
