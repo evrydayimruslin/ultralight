@@ -1313,6 +1313,34 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
       if (depositErr) {
         return error(depositErr, 402); // 402 Payment Required
       }
+
+      // Layer 2: Originality gate (publish only)
+      const draftKey = appWithDraft.draft_storage_key as string;
+      let draftSource = '';
+      for (const name of ['_source_index.ts', '_source_index.tsx', 'index.ts', 'index.tsx', 'index.js']) {
+        try { draftSource = await r2Service.fetchTextFile(`${draftKey}${name}`); break; } catch {}
+      }
+      if (draftSource) {
+        const { runOriginalityCheck, computeFingerprint, storeIntegrityResults } = await import('../services/originality.ts');
+        const mdContent = await r2Service.fetchTextFile(`${draftKey}README.md`).catch(() => '');
+        const originalityResult = await runOriginalityCheck(
+          user.id, appId,
+          [{ name: 'index.ts', content: draftSource }, ...(mdContent ? [{ name: 'README.md', content: mdContent }] : [])],
+        );
+        if (!originalityResult.passed) {
+          return error(
+            `Publish blocked: ${originalityResult.reason} ` +
+            `(originality score: ${(originalityResult.score * 100).toFixed(1)}%)`,
+            422
+          );
+        }
+        // Store fingerprint + originality score (fire-and-forget)
+        storeIntegrityResults(appId, {
+          source_fingerprint: originalityResult.fingerprint,
+          originality_score: originalityResult.score,
+          integrity_checked_at: new Date().toISOString(),
+        }).catch(err => console.error('[INTEGRITY] Publish gate storage failed:', err));
+      }
     }
 
     // Parse request options

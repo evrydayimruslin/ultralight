@@ -288,6 +288,12 @@ export async function acceptBid(ownerId: string, bidId: string): Promise<SaleRes
 
   console.log(`[MARKETPLACE] Sale completed: ${result.sale_id} — ${result.seller_id} → ${result.buyer_id} for ${result.sale_price_cents}c`);
 
+  // Record source fingerprint for seller-relist detection (fire-and-forget)
+  import('./originality.ts').then(({ recordSaleFingerprint }) => {
+    recordSaleFingerprint(result.sale_id, result.app_id, result.seller_id, result.buyer_id)
+      .catch(err => console.error('[MARKETPLACE] Failed to record sale fingerprint:', err));
+  }).catch(err => console.error('[MARKETPLACE] Failed to import originality service:', err));
+
   return {
     sale_id: result.sale_id,
     app_id: result.app_id,

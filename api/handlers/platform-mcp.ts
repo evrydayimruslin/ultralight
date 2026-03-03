@@ -2914,6 +2914,53 @@ async function executeSetVisibility(
   const previousVisibility = app.visibility;
   const appsService = createAppsService();
 
+  // Layer 2: Originality gate when transitioning from private to non-private
+  if (dbVisibility !== 'private' && previousVisibility === 'private') {
+    try {
+      const r2Service = createR2Service();
+      let sourceContent = '';
+      for (const name of ['_source_index.ts', '_source_index.tsx', 'index.ts', 'index.tsx', 'index.js']) {
+        try { sourceContent = await r2Service.fetchTextFile(`${app.storage_key}${name}`); break; } catch {}
+      }
+      if (sourceContent) {
+        const { runOriginalityCheck, storeIntegrityResults } = await import('../services/originality.ts');
+
+        // Try to get existing embedding from R2
+        let embedding: number[] | undefined;
+        try {
+          const embStr = await r2Service.fetchTextFile(`${app.storage_key}embedding.json`);
+          embedding = JSON.parse(embStr);
+        } catch {}
+
+        const mdContent = await r2Service.fetchTextFile(`${app.storage_key}README.md`).catch(() => '');
+        const originalityResult = await runOriginalityCheck(
+          userId, app.id,
+          [{ name: 'index.ts', content: sourceContent }, ...(mdContent ? [{ name: 'README.md', content: mdContent }] : [])],
+          embedding
+        );
+
+        if (!originalityResult.passed) {
+          throw new ToolError(
+            INVALID_PARAMS,
+            `Publish blocked: ${originalityResult.reason} ` +
+            `(originality score: ${(originalityResult.score * 100).toFixed(1)}%)`
+          );
+        }
+
+        // Store fingerprint + originality score (fire-and-forget)
+        storeIntegrityResults(app.id, {
+          source_fingerprint: originalityResult.fingerprint,
+          originality_score: originalityResult.score,
+          integrity_checked_at: new Date().toISOString(),
+        }).catch(err => console.error('[INTEGRITY] Set-visibility gate storage failed:', err));
+      }
+    } catch (err) {
+      // Re-throw ToolErrors, swallow others (fail-open for unexpected errors)
+      if (err instanceof ToolError) throw err;
+      console.error('[INTEGRITY] Originality check error (fail-open):', err);
+    }
+  }
+
   await appsService.update(app.id, { visibility: dbVisibility as 'private' | 'unlisted' | 'public' });
 
   // If going TO published: ensure embedding is in global index

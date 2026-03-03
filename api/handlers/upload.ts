@@ -265,6 +265,25 @@ export async function handleUpload(request: Request): Promise<Response> {
       bundledCode = entryFile.content;
     }
 
+    // Layer 1: Safety scan (before R2 upload)
+    log('info', 'Running safety scan...');
+    const { runSafetyScan } = await import('../services/integrity.ts');
+    const safetyResult = runSafetyScan(validatedFiles);
+    if (!safetyResult.passed) {
+      const errorSummary = safetyResult.issues
+        .filter(i => i.severity === 'error')
+        .map(i => `[${i.rule}] ${i.message}`)
+        .join('; ');
+      log('error', `Safety scan blocked upload: ${errorSummary}`);
+      return error(`Upload blocked by safety scan: ${errorSummary}`, 422);
+    }
+    if (safetyResult.summary.warnings > 0) {
+      for (const warn of safetyResult.issues.filter(i => i.severity === 'warning')) {
+        log('warn', `[${warn.rule}] ${warn.message}`);
+      }
+    }
+    log('success', `Safety scan passed (${safetyResult.summary.warnings} warnings)`);
+
     // Generate app ID and version
     const appId = crypto.randomUUID();
     const version = manifest?.version || '1.0.0';
@@ -383,6 +402,18 @@ export async function handleUpload(request: Request): Promise<Response> {
     recordUploadStorage(userId, appId, version, totalSizeBytes).catch(err =>
       console.error('[STORAGE] recordUploadStorage failed:', err)
     );
+
+    // Compute + store source fingerprint and safety status (fire-and-forget)
+    import('../services/originality.ts').then(async ({ computeFingerprint, storeIntegrityResults }) => {
+      const mdFiles = validatedFiles.filter(f => f.name.endsWith('.md'));
+      const mdContent = mdFiles.map(f => f.content).join('\n');
+      const fingerprint = await computeFingerprint(entryFile.content, mdContent);
+      await storeIntegrityResults(appId, {
+        source_fingerprint: fingerprint,
+        safety_status: safetyResult.summary.warnings > 0 ? 'warned' : 'clean',
+        integrity_checked_at: new Date().toISOString(),
+      });
+    }).catch(err => console.error('[INTEGRITY] Fingerprint storage failed:', err));
 
     // Auto-generate Skills.md + library entry + embedding (fire-and-forget for speed)
     log('info', 'Generating Skills.md...');
@@ -614,6 +645,25 @@ export async function handleDraftUpload(request: Request, appId: string): Promis
       log('warn', `Bundling skipped: ${bundleErr instanceof Error ? bundleErr.message : String(bundleErr)}`);
       bundledCode = entryFile.content;
     }
+
+    // Layer 1: Safety scan (before R2 upload)
+    log('info', 'Running safety scan...');
+    const { runSafetyScan: runDraftSafetyScan } = await import('../services/integrity.ts');
+    const draftSafetyResult = runDraftSafetyScan(validatedFiles);
+    if (!draftSafetyResult.passed) {
+      const errorSummary = draftSafetyResult.issues
+        .filter(i => i.severity === 'error')
+        .map(i => `[${i.rule}] ${i.message}`)
+        .join('; ');
+      log('error', `Safety scan blocked draft upload: ${errorSummary}`);
+      return error(`Upload blocked by safety scan: ${errorSummary}`, 422);
+    }
+    if (draftSafetyResult.summary.warnings > 0) {
+      for (const warn of draftSafetyResult.issues.filter(i => i.severity === 'warning')) {
+        log('warn', `[${warn.rule}] ${warn.message}`);
+      }
+    }
+    log('success', `Safety scan passed (${draftSafetyResult.summary.warnings} warnings)`);
 
     // Generate draft version
     const draftVersion = `draft-${Date.now()}`;
@@ -883,6 +933,24 @@ export async function handleUploadFiles(
     bundledCode = entryFile.content;
   }
 
+  // Layer 1: Safety scan (before R2 upload)
+  log('info', 'Running safety scan...');
+  const { runSafetyScan } = await import('../services/integrity.ts');
+  const safetyResult = runSafetyScan(validatedFiles);
+  if (!safetyResult.passed) {
+    const errorSummary = safetyResult.issues
+      .filter(i => i.severity === 'error')
+      .map(i => `[${i.rule}] ${i.message}`)
+      .join('; ');
+    throw new Error(`Upload blocked by safety scan: ${errorSummary}`);
+  }
+  if (safetyResult.summary.warnings > 0) {
+    for (const warn of safetyResult.issues.filter(i => i.severity === 'warning')) {
+      log('warn', `[${warn.rule}] ${warn.message}`);
+    }
+  }
+  log('success', `Safety scan passed (${safetyResult.summary.warnings} warnings)`);
+
   // Generate app ID and version
   const appId = crypto.randomUUID();
   const version = manifest?.version || '1.0.0';
@@ -967,6 +1035,12 @@ export async function handleUploadFiles(
   await r2Service.uploadFiles(storageKey, filesToUpload);
   log('success', 'Upload complete');
 
+  // Compute source fingerprint (needed for both publish gate and storage)
+  const { computeFingerprint, runOriginalityCheck, storeIntegrityResults } = await import('../services/originality.ts');
+  const mdUploadFiles = validatedFiles.filter(f => f.name.endsWith('.md'));
+  const mdUploadContent = mdUploadFiles.map(f => f.content).join('\n');
+  const sourceFingerprint = await computeFingerprint(entryFile.content, mdUploadContent);
+
   // Gate visibility by deposit before creating app
   const requestedVisibility = options.visibility || 'private';
   if (requestedVisibility !== 'private') {
@@ -980,6 +1054,22 @@ export async function handleUploadFiles(
     if (depositErr) {
       throw new Error(depositErr);
     }
+
+    // Layer 2: Originality gate (publish only)
+    log('info', 'Running originality check...');
+    const originalityResult = await runOriginalityCheck(
+      userId, appId, validatedFiles
+    );
+    if (!originalityResult.passed) {
+      throw new Error(
+        `Publish blocked: ${originalityResult.reason} ` +
+        `(originality score: ${(originalityResult.score * 100).toFixed(1)}%)`
+      );
+    }
+    if (originalityResult.reason) {
+      log('warn', originalityResult.reason);
+    }
+    log('success', `Originality check passed (score: ${(originalityResult.score * 100).toFixed(1)}%)`);
   }
 
   // Create app record in database
@@ -1000,6 +1090,13 @@ export async function handleUploadFiles(
   if (options.gap_id) createPayload.gap_id = options.gap_id;
   await appsService.create(createPayload as Parameters<typeof appsService.create>[0]);
   log('success', 'App record created');
+
+  // Store source fingerprint and safety status (fire-and-forget)
+  storeIntegrityResults(appId, {
+    source_fingerprint: sourceFingerprint,
+    safety_status: safetyResult.summary.warnings > 0 ? 'warned' : 'clean',
+    integrity_checked_at: new Date().toISOString(),
+  }).catch(err => console.error('[INTEGRITY] Fingerprint storage failed:', err));
 
   // Record storage usage for billing (fire-and-forget)
   const totalSizeBytes = filesToUpload.reduce((sum, f) => sum + f.content.byteLength, 0);
@@ -1150,6 +1247,24 @@ export async function handleDraftUploadFiles(
     log('warn', `Bundling skipped: ${bundleErr instanceof Error ? bundleErr.message : String(bundleErr)}`);
     bundledCode = entryFile.content;
   }
+
+  // Layer 1: Safety scan (before R2 upload)
+  log('info', 'Running safety scan...');
+  const { runSafetyScan: runProgrammaticDraftSafetyScan } = await import('../services/integrity.ts');
+  const programmaticDraftSafetyResult = runProgrammaticDraftSafetyScan(validatedFiles);
+  if (!programmaticDraftSafetyResult.passed) {
+    const errorSummary = programmaticDraftSafetyResult.issues
+      .filter(i => i.severity === 'error')
+      .map(i => `[${i.rule}] ${i.message}`)
+      .join('; ');
+    throw new Error(`Upload blocked by safety scan: ${errorSummary}`);
+  }
+  if (programmaticDraftSafetyResult.summary.warnings > 0) {
+    for (const warn of programmaticDraftSafetyResult.issues.filter(i => i.severity === 'warning')) {
+      log('warn', `[${warn.rule}] ${warn.message}`);
+    }
+  }
+  log('success', `Safety scan passed (${programmaticDraftSafetyResult.summary.warnings} warnings)`);
 
   // Generate draft version
   const draftVersion = `draft-${Date.now()}`;
