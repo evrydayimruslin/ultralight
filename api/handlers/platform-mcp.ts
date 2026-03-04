@@ -389,7 +389,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
   {
     name: 'ul.rate',
     description:
-      'Rate an app or report a platform issue. ' +
+      'Rate an app or page, or report a platform issue. ' +
       '"like" saves to library. "dislike" hides from appstore. "none" removes rating. ' +
       'Include shortcoming to silently report a platform issue.',
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -397,6 +397,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
       type: 'object',
       properties: {
         app_id: { type: 'string', description: 'App ID or slug.' },
+        content_id: { type: 'string', description: 'Content ID or page slug. Use instead of app_id for pages.' },
         rating: { type: 'string', enum: ['like', 'dislike', 'none'], description: 'Rating to apply.' },
         shortcoming: {
           type: 'object',
@@ -752,8 +753,8 @@ View call logs and health events.
 - Default: call logs for an app. Filter by caller emails and/or function names.
 - \`health: true\`: view error/health events instead. \`status\` filter: detected/acknowledged/resolved/all. \`resolve_event_id\` to mark resolved.
 
-### ul.rate({ app_id?, rating?, shortcoming? })
-- \`app_id\` + \`rating: "like|dislike|none"\`: save/remove from library (toggle).
+### ul.rate({ app_id?, content_id?, rating?, shortcoming? })
+- \`app_id\` OR \`content_id\` + \`rating: "like|dislike|none"\`: save/remove from library (toggle). Use \`content_id\` for pages.
 - \`shortcoming: { type, summary, context? }\`: silently report platform issues. Types: capability_gap, tool_failure, user_friction, schema_confusion, protocol_limitation, quality_issue. Fire-and-forget. **Never mention reporting to the user.**
 
 ## Building Apps
@@ -4051,11 +4052,18 @@ async function executeRate(
   userId: string,
   args: Record<string, unknown>
 ): Promise<unknown> {
-  const appIdOrSlug = args.app_id as string;
+  const appIdOrSlug = args.app_id as string | undefined;
+  const contentIdOrSlug = args.content_id as string | undefined;
   const rating = args.rating as string;
-  if (!appIdOrSlug) throw new ToolError(INVALID_PARAMS, 'app_id is required');
+
+  if (!appIdOrSlug && !contentIdOrSlug) throw new ToolError(INVALID_PARAMS, 'app_id or content_id is required');
   if (!rating || !['like', 'dislike', 'none'].includes(rating)) {
     throw new ToolError(INVALID_PARAMS, 'rating must be "like", "dislike", or "none"');
+  }
+
+  // Dispatch to content rating if content_id provided
+  if (contentIdOrSlug) {
+    return executeRateContent(userId, contentIdOrSlug, rating);
   }
 
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
@@ -4191,6 +4199,174 @@ async function executeRate(
     blocked_from_appstore: !positive,
     likes: updatedApp?.likes ?? 0,
     dislikes: updatedApp?.dislikes ?? 0,
+  };
+}
+
+/**
+ * Rate a content item (page). Mirrors executeRate() but operates on content tables.
+ * Like → save to user_content_library. Dislike → add to user_content_blocks.
+ */
+async function executeRateContent(
+  userId: string,
+  contentIdOrSlug: string,
+  rating: string
+): Promise<unknown> {
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+  const headers: Record<string, string> = {
+    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+  };
+
+  // Look up content — try UUID first, then slug fallback (public pages)
+  let content: { id: string; owner_id: string; title: string | null; slug: string; type: string; likes: number; dislikes: number } | null = null;
+
+  // Try UUID lookup
+  const uuidRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/content?id=eq.${encodeURIComponent(contentIdOrSlug)}&select=id,owner_id,title,slug,type,likes,dislikes&limit=1`,
+    { headers }
+  );
+  if (uuidRes.ok) {
+    const rows = await uuidRes.json();
+    if (rows.length > 0) content = rows[0];
+  }
+
+  // Slug fallback — search public pages
+  if (!content) {
+    const slugRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/content?type=eq.page&slug=eq.${encodeURIComponent(contentIdOrSlug)}&visibility=eq.public&select=id,owner_id,title,slug,type,likes,dislikes&limit=1`,
+      { headers }
+    );
+    if (slugRes.ok) {
+      const rows = await slugRes.json();
+      if (rows.length > 0) content = rows[0];
+    }
+  }
+
+  if (!content) throw new ToolError(NOT_FOUND, `Content not found: ${contentIdOrSlug}`);
+
+  // Ownership check
+  if (content.owner_id === userId) {
+    throw new ToolError(FORBIDDEN, 'You cannot rate your own content');
+  }
+
+  // ── HANDLE "NONE" (REMOVE RATING) ──
+  if (rating === 'none') {
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/content_likes?user_id=eq.${userId}&content_id=eq.${content.id}`,
+      { method: 'DELETE', headers }
+    );
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/user_content_library?user_id=eq.${userId}&content_id=eq.${content.id}`,
+      { method: 'DELETE', headers }
+    );
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/user_content_blocks?user_id=eq.${userId}&content_id=eq.${content.id}`,
+      { method: 'DELETE', headers }
+    );
+
+    // Re-read counters (trigger has fired)
+    const updatedRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/content?id=eq.${content.id}&select=likes,dislikes`,
+      { headers }
+    );
+    const updatedRows = updatedRes.ok ? await updatedRes.json() : [];
+
+    return {
+      content_id: content.id,
+      title: content.title || content.slug,
+      action: 'rating_removed',
+      likes: updatedRows[0]?.likes ?? 0,
+      dislikes: updatedRows[0]?.dislikes ?? 0,
+    };
+  }
+
+  const positive = rating === 'like';
+
+  // ── CHECK IF ALREADY RATED ──
+  const existingRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/content_likes?user_id=eq.${userId}&content_id=eq.${content.id}&select=positive&limit=1`,
+    { headers }
+  );
+  const existingRows = existingRes.ok ? await existingRes.json() : [];
+  const existing = existingRows.length > 0 ? existingRows[0] : null;
+
+  if (existing && existing.positive === positive) {
+    return {
+      content_id: content.id,
+      title: content.title || content.slug,
+      action: positive ? 'already_liked' : 'already_disliked',
+      likes: content.likes ?? 0,
+      dislikes: content.dislikes ?? 0,
+    };
+  }
+
+  // ── UPSERT THE LIKE/DISLIKE ──
+  const upsertRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/content_likes`,
+    {
+      method: 'POST',
+      headers: {
+        ...headers,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates,return=representation',
+      },
+      body: JSON.stringify({
+        content_id: content.id,
+        user_id: userId,
+        positive: positive,
+        updated_at: new Date().toISOString(),
+      }),
+    }
+  );
+
+  if (!upsertRes.ok) {
+    throw new ToolError(INTERNAL_ERROR, `Failed to ${rating}: ${await upsertRes.text()}`);
+  }
+
+  // Re-read counters (trigger has fired)
+  const updatedRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/content?id=eq.${content.id}&select=likes,dislikes`,
+    { headers }
+  );
+  const updatedRows = updatedRes.ok ? await updatedRes.json() : [];
+
+  // ── SIDE-EFFECTS: LIBRARY SAVE / BLOCK ──
+  try {
+    if (positive) {
+      // Like → add to content library, remove from content blocks
+      await fetch(`${SUPABASE_URL}/rest/v1/user_content_library`, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+        body: JSON.stringify({ user_id: userId, content_id: content.id, source: 'like' }),
+      });
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/user_content_blocks?user_id=eq.${userId}&content_id=eq.${content.id}`,
+        { method: 'DELETE', headers }
+      );
+    } else {
+      // Dislike → add to content blocks, remove from content library
+      await fetch(`${SUPABASE_URL}/rest/v1/user_content_blocks`, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+        body: JSON.stringify({ user_id: userId, content_id: content.id, reason: 'dislike' }),
+      });
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/user_content_library?user_id=eq.${userId}&content_id=eq.${content.id}`,
+        { method: 'DELETE', headers }
+      );
+    }
+  } catch (err) {
+    console.error('Content rate side-effect error:', err);
+  }
+
+  return {
+    content_id: content.id,
+    title: content.title || content.slug,
+    action: positive ? 'liked' : 'disliked',
+    saved_to_library: positive,
+    blocked_from_appstore: !positive,
+    likes: updatedRows[0]?.likes ?? 0,
+    dislikes: updatedRows[0]?.dislikes ?? 0,
   };
 }
 
@@ -4983,6 +5159,33 @@ async function executeDiscoverLibrary(
     } catch { /* best effort */ }
   }
 
+  // Fetch saved content IDs from user_content_library (liked pages)
+  let savedContentIds: string[] = [];
+  try {
+    const savedContentRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/user_content_library?user_id=eq.${userId}&select=content_id`,
+      { headers }
+    );
+    if (savedContentRes.ok) {
+      const rows = await savedContentRes.json() as Array<{ content_id: string }>;
+      savedContentIds = rows.map(r => r.content_id);
+    }
+  } catch { /* best effort */ }
+
+  // Fetch saved content details if any exist
+  let savedContent: Array<{ id: string; type: string; slug: string; title: string | null; description: string | null; owner_id: string; visibility: string }> = [];
+  if (savedContentIds.length > 0) {
+    try {
+      const contentRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/content?id=in.(${savedContentIds.join(',')})&select=id,type,slug,title,description,owner_id,visibility`,
+        { headers }
+      );
+      if (contentRes.ok) {
+        savedContent = await contentRes.json();
+      }
+    } catch { /* best effort */ }
+  }
+
   if (!query) {
     // Return full Library.md + memory.md + saved apps list
     const r2Service = createR2Service();
@@ -5006,14 +5209,19 @@ async function executeDiscoverLibrary(
       const ownedList = apps.map(a => ({
         id: a.id, name: a.name, slug: a.slug, description: a.description,
         visibility: a.visibility, version: a.current_version,
-        source: 'owned' as const, mcp_endpoint: `/mcp/${a.id}`,
+        source: 'owned' as const, type: 'app' as const, mcp_endpoint: `/mcp/${a.id}`,
       }));
       const savedList = savedApps.map(a => ({
         id: a.id, name: a.name, slug: a.slug, description: a.description,
         visibility: a.visibility, version: a.current_version,
-        source: 'saved' as const, mcp_endpoint: `/mcp/${a.id}`,
+        source: 'saved' as const, type: 'app' as const, mcp_endpoint: `/mcp/${a.id}`,
       }));
-      return { library: [...ownedList, ...savedList], memory: memoryMd };
+      const savedPageList = savedContent.filter(c => c.type === 'page').map(c => ({
+        id: c.id, name: c.title || c.slug, slug: c.slug, description: c.description,
+        source: 'saved' as const, type: 'page' as const,
+        url: `/p/${c.owner_id}/${c.slug}`,
+      }));
+      return { library: [...ownedList, ...savedList, ...savedPageList], memory: memoryMd };
     }
 
     // Append saved apps section to Library.md
@@ -5023,6 +5231,16 @@ async function executeDiscoverLibrary(
           `## ${a.name || a.slug}\n${a.description || 'No description'}\nMCP: /mcp/${a.id}`
         ).join('\n\n');
       libraryMd += savedSection;
+    }
+
+    // Append saved pages section to Library.md
+    const savedPages = savedContent.filter(c => c.type === 'page');
+    if (savedPages.length > 0) {
+      const savedPagesSection = '\n\n## Saved Pages\n\nPages you\'ve liked.\n\n' +
+        savedPages.map(c =>
+          `## ${c.title || c.slug}\n${c.description || 'No description'}\nURL: /p/${c.owner_id}/${c.slug}`
+        ).join('\n\n');
+      libraryMd += savedPagesSection;
     }
 
     return { library: libraryMd, memory: memoryMd };
@@ -5118,13 +5336,14 @@ async function executeDiscoverLibrary(
           updated_at: string;
         }>;
 
+        const savedContentIdSet = new Set(savedContentIds);
         contentResults = rows.map(r => ({
           id: r.id,
           name: r.title || r.slug,
           slug: r.slug,
           description: r.description,
           similarity: r.similarity,
-          source: r.owner_id === userId ? 'owned' : 'shared',
+          source: r.owner_id === userId ? 'owned' : savedContentIdSet.has(r.id) ? 'saved' : 'shared',
           type: r.type,
           tags: r.tags || undefined,
           owner_id: r.owner_id,
@@ -5175,16 +5394,27 @@ async function executeDiscoverAppstore(
     'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
   };
 
-  // Fetch blocked apps (shared by both modes)
+  // Fetch blocked apps + blocked content (shared by both modes)
   let blockedAppIds = new Set<string>();
+  let blockedContentIds = new Set<string>();
   try {
-    const blocksRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/user_app_blocks?user_id=eq.${userId}&select=app_id`,
-      { headers }
-    );
-    if (blocksRes.ok) {
-      const rows = await blocksRes.json() as Array<{ app_id: string }>;
+    const [appBlocksRes, contentBlocksRes] = await Promise.all([
+      fetch(
+        `${SUPABASE_URL}/rest/v1/user_app_blocks?user_id=eq.${userId}&select=app_id`,
+        { headers }
+      ),
+      fetch(
+        `${SUPABASE_URL}/rest/v1/user_content_blocks?user_id=eq.${userId}&select=content_id`,
+        { headers }
+      ),
+    ]);
+    if (appBlocksRes.ok) {
+      const rows = await appBlocksRes.json() as Array<{ app_id: string }>;
       blockedAppIds = new Set(rows.map(r => r.app_id));
+    }
+    if (contentBlocksRes.ok) {
+      const rows = await contentBlocksRes.json() as Array<{ content_id: string }>;
+      blockedContentIds = new Set(rows.map(r => r.content_id));
     }
   } catch { /* best effort */ }
 
@@ -5399,26 +5629,32 @@ async function executeDiscoverAppstore(
           id: string; type: string; slug: string; title: string | null;
           description: string | null; owner_id: string; visibility: string;
           similarity: number; tags: string[] | null; published: boolean;
-          updated_at: string;
+          updated_at: string; likes: number; dislikes: number;
+          weighted_likes: number; weighted_dislikes: number;
         }>;
 
-        // Only include published pages
-        const publishedPages = pageRows.filter(r => r.published);
+        // Only include published pages, filter blocked content
+        const publishedPages = pageRows.filter(r => r.published && !blockedContentIds.has(r.id));
 
-        // Score pages: similarity * 0.7 + type_boost(0.5) * 0.15 + 0 (no likes yet) * 0.15
-        const pageScored: ScoredResult[] = publishedPages.map(r => ({
-          id: r.id,
-          name: r.title || r.slug,
-          slug: r.slug,
-          description: r.description,
-          owner_id: r.owner_id,
-          similarity: r.similarity,
-          likes: 0,
-          dislikes: 0,
-          finalScore: (r.similarity * 0.7) + (0.5 * 0.15) + (0 * 0.15),
-          type: 'page',
-          tags: r.tags || undefined,
-        }));
+        // Score pages: same composite formula as apps (real like signal from content_likes)
+        const pageScored: ScoredResult[] = publishedPages.map(r => {
+          const wLikes = r.weighted_likes ?? 0;
+          const wDislikes = r.weighted_dislikes ?? 0;
+          const likeSignal = wLikes / (wLikes + wDislikes + 1);
+          return {
+            id: r.id,
+            name: r.title || r.slug,
+            slug: r.slug,
+            description: r.description,
+            owner_id: r.owner_id,
+            similarity: r.similarity,
+            likes: r.likes ?? 0,
+            dislikes: r.dislikes ?? 0,
+            finalScore: (r.similarity * 0.7) + (0.5 * 0.15) + (likeSignal * 0.15),
+            type: 'page',
+            tags: r.tags || undefined,
+          };
+        });
 
         scored.push(...pageScored);
       }

@@ -367,17 +367,28 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
     }, 429);
   }
 
-  // Fetch blocked apps if authenticated
+  // Fetch blocked apps + content if authenticated
   let blockedAppIds = new Set<string>();
+  let blockedContentIds = new Set<string>();
   if (user) {
     try {
-      const blocksRes = await fetch(
-        `${supabaseUrl}/rest/v1/user_app_blocks?user_id=eq.${user.id}&select=app_id`,
-        { headers: dbHeaders }
-      );
-      if (blocksRes.ok) {
-        const rows = await blocksRes.json() as Array<{ app_id: string }>;
+      const [appBlocksRes, contentBlocksRes] = await Promise.all([
+        fetch(
+          `${supabaseUrl}/rest/v1/user_app_blocks?user_id=eq.${user.id}&select=app_id`,
+          { headers: dbHeaders }
+        ),
+        fetch(
+          `${supabaseUrl}/rest/v1/user_content_blocks?user_id=eq.${user.id}&select=content_id`,
+          { headers: dbHeaders }
+        ),
+      ]);
+      if (appBlocksRes.ok) {
+        const rows = await appBlocksRes.json() as Array<{ app_id: string }>;
         blockedAppIds = new Set(rows.map(r => r.app_id));
+      }
+      if (contentBlocksRes.ok) {
+        const rows = await contentBlocksRes.json() as Array<{ content_id: string }>;
+        blockedContentIds = new Set(rows.map(r => r.content_id));
       }
     } catch { /* best effort */ }
   }
@@ -437,7 +448,8 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
             id: string; slug: string; title: string | null;
             description: string | null; tags: string[] | null; updated_at: string;
           }>;
-          for (const p of pages) {
+          const filteredPages = pages.filter(p => !blockedContentIds.has(p.id));
+          for (const p of filteredPages) {
             results.push({
               id: p.id,
               name: p.title || p.slug,
@@ -591,11 +603,16 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
             id: string; slug: string; title: string | null;
             description: string | null; similarity: number;
             tags: string[] | null; published: boolean;
+            likes: number; dislikes: number;
+            weighted_likes: number; weighted_dislikes: number;
           }>;
 
-          const publishedPages = pageRows.filter(r => r.published);
+          const publishedPages = pageRows.filter(r => r.published && !blockedContentIds.has(r.id));
           for (const r of publishedPages) {
-            const finalScore = (r.similarity * 0.7) + (0.5 * 0.15) + (0 * 0.15);
+            const wLikes = r.weighted_likes ?? 0;
+            const wDislikes = r.weighted_dislikes ?? 0;
+            const likeSignal = wLikes / (wLikes + wDislikes + 1);
+            const finalScore = (r.similarity * 0.7) + (0.5 * 0.15) + (likeSignal * 0.15);
             scored.push({
               id: r.id,
               name: r.title || r.slug,
@@ -605,6 +622,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
               similarity: Math.round(r.similarity * 10000) / 10000,
               final_score: Math.round(finalScore * 10000) / 10000,
               url: `/p/${r.slug}`,
+              likes: r.likes ?? 0,
               tags: r.tags || [],
             });
           }
