@@ -529,14 +529,10 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
     return jsonRpcErrorResponse(rpcRequest.id, -32002, 'App not found');
   }
 
-  // Hosting suspension check: apps with depleted hosting balance are offline
-  if ((app as Record<string, unknown>).hosting_suspended === true) {
-    return jsonRpcErrorResponse(
-      rpcRequest.id,
-      -32002,
-      'This app is suspended due to insufficient hosting balance. The owner must top up their hosting balance to restore service.'
-    );
-  }
+  // Hosting suspension flag: suspended apps still serve calls, but revenue
+  // goes to the owner's (negative) balance to recover hosting debt.
+  // When enough per-call revenue pushes balance positive, auto-unsuspend.
+  const isSuspended = (app as Record<string, unknown>).hosting_suspended === true;
 
   // Token scoping: if the API token is scoped to specific apps, enforce it
   if (tokenAppIds && tokenAppIds.length > 0 && !tokenAppIds.includes('*')) {
@@ -1486,6 +1482,8 @@ async function executeAppFunction(
               });
             }
             // Log the transfer (fire-and-forget)
+            // Use 'tool_call_suspended' reason when app is suspended for audit trail
+            const transferReason = isSuspended ? 'tool_call_suspended' : 'tool_call';
             fetch(`${SUPABASE_URL}/rest/v1/transfers`, {
               method: 'POST',
               headers: {
@@ -1498,11 +1496,28 @@ async function executeAppFunction(
                 from_user_id: userId,
                 to_user_id: app.owner_id,
                 amount_cents: callChargeCents,
-                reason: 'tool_call',
+                reason: transferReason,
                 app_id: app.id,
                 function_name: functionName,
               }),
             }).catch(() => {});
+
+            // Auto-unsuspend: if app was suspended and revenue pushed owner balance positive,
+            // unsuspend immediately (fire-and-forget). The hourly billing loop would also catch
+            // this, but instant recovery is better UX.
+            if (isSuspended && rows[0] && rows[0].to_new_balance > 0) {
+              fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${app.owner_id}`, {
+                method: 'PATCH',
+                headers: {
+                  'apikey': SUPABASE_SERVICE_ROLE_KEY,
+                  'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                  'Content-Type': 'application/json',
+                  'Prefer': 'return=minimal',
+                },
+                body: JSON.stringify({ hosting_suspended: false }),
+              }).catch(() => {});
+              console.log(`[SUSPEND] Auto-unsuspended app ${app.id} — owner balance recovered to ${rows[0].to_new_balance}¢`);
+            }
           } else {
             // Transfer RPC failed — don't block the call, just log it
             console.error(`[PRICING] Transfer failed for ${userId} → ${app.owner_id}:`, await transferRes.text());

@@ -283,6 +283,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
         default_price_cents: { description: 'Price in cents per call. Supports fractions (e.g. 0.5 = $0.005). null = free.' },
         function_prices: { description: 'Per-function prices: { "fn": cents }. Supports fractions. null = remove.' },
         search_hints: { type: 'array', items: { type: 'string' }, description: 'Search keywords for app discovery. Improves semantic search accuracy. Include data domain terms, entity names, use cases.' },
+        show_metrics: { type: 'boolean', description: 'Show usage metrics (calls, revenue, unique callers) on marketplace listing to potential bidders.' },
       },
       required: ['app_id'],
     },
@@ -721,7 +722,7 @@ Test code in sandbox without deploying.
 - Returns: \`{ success, result?, error?, duration_ms, exports, logs?, lint? }\`.
 - Always test before \`ul.upload\`.
 
-### ul.set({ app_id, version?, visibility?, download_access?, supabase_server?, calls_per_minute?, calls_per_day?, default_price_cents?, function_prices?, search_hints? })
+### ul.set({ app_id, version?, visibility?, download_access?, supabase_server?, calls_per_minute?, calls_per_day?, default_price_cents?, function_prices?, search_hints?, show_metrics? })
 Batch configure app settings. Each field is optional — only provided fields are updated.
 - \`version\`: set which version is live
 - \`visibility\`: "private" | "unlisted" | "published" (published = app store)
@@ -729,6 +730,7 @@ Batch configure app settings. Each field is optional — only provided fields ar
 - Rate limits: \`calls_per_minute\`, \`calls_per_day\` (null = platform defaults)
 - Pricing: \`default_price_cents\`, \`function_prices: { "fn_name": cents }\`
 - \`search_hints\`: array of keywords for better semantic search discovery. Regenerates embedding.
+- \`show_metrics\`: true/false — show usage metrics (calls, revenue, unique callers) on marketplace listing to bidders.
 
 ### ul.memory({ action, content?, key?, value?, scope?, prefix?, append?, delete_key?, limit?, owner_email? })
 Persistent cross-session storage. Two layers:
@@ -1219,6 +1221,7 @@ async function handleToolsCall(
         if (toolArgs.calls_per_minute !== undefined || toolArgs.calls_per_day !== undefined) { setResults.ratelimit = await executeSetRateLimit(userId, { app_id: toolArgs.app_id, calls_per_minute: toolArgs.calls_per_minute, calls_per_day: toolArgs.calls_per_day }); setCount++; }
         if (toolArgs.default_price_cents !== undefined || toolArgs.function_prices !== undefined) { setResults.pricing = await executeSetPricing(userId, { app_id: toolArgs.app_id, default_price_cents: toolArgs.default_price_cents, functions: toolArgs.function_prices }); setCount++; }
         if (toolArgs.search_hints !== undefined) { setResults.search_hints = await executeSetSearchHints(userId, { app_id: toolArgs.app_id, search_hints: toolArgs.search_hints }); setCount++; }
+        if (toolArgs.show_metrics !== undefined) { setResults.show_metrics = await executeSetShowMetrics(userId, { app_id: toolArgs.app_id, show_metrics: toolArgs.show_metrics }); setCount++; }
         if (setCount === 0) throw new ToolError(INVALID_PARAMS, 'No settings provided.');
         result = setCount === 1 ? Object.values(setResults)[0] : setResults;
         break;
@@ -3959,6 +3962,58 @@ async function executeSetSearchHints(
     count: cleanHints.length,
     embedding_regenerated: embeddingRegenerated,
     message: `Search hints set (${cleanHints.length} keywords). ${embeddingRegenerated ? 'Embedding regenerated.' : 'Embedding regeneration pending.'}`,
+  };
+}
+
+// ── ul.set.show_metrics ────────────────────────
+async function executeSetShowMetrics(
+  userId: string,
+  args: Record<string, unknown>
+): Promise<unknown> {
+  const appIdOrSlug = args.app_id as string;
+  if (!appIdOrSlug) throw new ToolError(INVALID_PARAMS, 'app_id is required');
+
+  const showMetrics = args.show_metrics;
+  if (typeof showMetrics !== 'boolean') throw new ToolError(INVALID_PARAMS, 'show_metrics must be a boolean');
+
+  const app = await resolveApp(userId, appIdOrSlug);
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+
+  // Update or create listing with show_metrics
+  const patchRes = await fetch(`${SUPABASE_URL}/rest/v1/app_listings?app_id=eq.${app.id}`, {
+    method: 'PATCH',
+    headers: {
+      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation',
+    },
+    body: JSON.stringify({ show_metrics: showMetrics }),
+  });
+
+  if (!patchRes.ok) {
+    // Listing may not exist — create it
+    const createRes = await fetch(`${SUPABASE_URL}/rest/v1/app_listings`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation',
+      },
+      body: JSON.stringify({ app_id: app.id, owner_id: userId, show_metrics: showMetrics }),
+    });
+    if (!createRes.ok) {
+      throw new ToolError(INTERNAL_ERROR, `Failed to update metrics visibility: ${await createRes.text()}`);
+    }
+  }
+
+  return {
+    app_id: app.id,
+    show_metrics: showMetrics,
+    message: showMetrics
+      ? 'Metrics now visible to potential bidders on the marketplace listing.'
+      : 'Metrics hidden from marketplace listing.',
   };
 }
 

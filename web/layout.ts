@@ -3872,10 +3872,14 @@ export function getLayoutHTML(options: {
                 '<label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">Listing Note</label>' +
                 '<input id="mktNote" type="text" placeholder="Optional pitch to buyers" value="' + escapeHtml(noteVal) + '" class="input-field" style="width:100%">' +
               '</div>' +
-              '<div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-4)">' +
+              '<div style="display:flex;flex-direction:column;gap:var(--space-2);margin-bottom:var(--space-4)">' +
                 '<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">' +
                   '<input id="mktInstantBuy" type="checkbox"' + (instantBuy ? ' checked' : '') + '>' +
                   ' Allow instant buy at ask price' +
+                '</label>' +
+                '<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">' +
+                  '<input id="mktShowMetrics" type="checkbox"' + (listing && listing.show_metrics ? ' checked' : '') + ' onchange="toggleMetricsVisibility(\'' + appId + '\', this.checked)">' +
+                  ' Show usage metrics to potential bidders' +
                 '</label>' +
               '</div>' +
               '<div style="display:flex;gap:var(--space-2)">' +
@@ -3938,6 +3942,47 @@ export function getLayoutHTML(options: {
             ? '<p style="font-size:13px;color:var(--text-secondary);margin-top:var(--space-2);font-style:italic">' + escapeHtml(listing.listing_note) + '</p>'
             : '';
 
+          // Fetch and display metrics if enabled
+          var metricsHtml = '';
+          if (listing && listing.show_metrics) {
+            metricsHtml = '<div id="mktMetrics" style="margin-top:var(--space-3);padding:var(--space-3);background:var(--bg-secondary);border-radius:var(--radius);border:1px solid var(--border)">' +
+              '<p style="font-size:12px;color:var(--text-muted)">Loading metrics...</p>' +
+            '</div>';
+            // Fire-and-forget metrics load
+            (function(aid) {
+              fetch('/api/marketplace/metrics/' + aid, {
+                headers: { 'Authorization': 'Bearer ' + localStorage.getItem('auth_token') }
+              })
+              .then(function(r) { return r.ok ? r.json() : null; })
+              .then(function(m) {
+                if (!m) return;
+                var el = document.getElementById('mktMetrics');
+                if (!el) return;
+                el.innerHTML =
+                  '<h4 style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:var(--space-2);text-transform:uppercase;letter-spacing:0.5px">Usage Metrics</h4>' +
+                  '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:var(--space-2)">' +
+                    '<div style="text-align:center;padding:var(--space-2)">' +
+                      '<div style="font-size:20px;font-weight:700;color:var(--text-primary)">' + (m.total_calls || 0).toLocaleString() + '</div>' +
+                      '<div style="font-size:11px;color:var(--text-muted)">Total Calls</div>' +
+                    '</div>' +
+                    '<div style="text-align:center;padding:var(--space-2)">' +
+                      '<div style="font-size:20px;font-weight:700;color:var(--text-primary)">' + (m.calls_30d || 0).toLocaleString() + '</div>' +
+                      '<div style="font-size:11px;color:var(--text-muted)">Calls (30d)</div>' +
+                    '</div>' +
+                    '<div style="text-align:center;padding:var(--space-2)">' +
+                      '<div style="font-size:20px;font-weight:700;color:var(--text-primary)">' + (m.unique_callers_30d || 0).toLocaleString() + '</div>' +
+                      '<div style="font-size:11px;color:var(--text-muted)">Unique Callers (30d)</div>' +
+                    '</div>' +
+                    '<div style="text-align:center;padding:var(--space-2)">' +
+                      '<div style="font-size:20px;font-weight:700;color:var(--success)">$' + ((m.revenue_30d_cents || 0) / 100).toFixed(2) + '</div>' +
+                      '<div style="font-size:11px;color:var(--text-muted)">Revenue (30d)</div>' +
+                    '</div>' +
+                  '</div>';
+              })
+              .catch(function() {});
+            })(appId);
+          }
+
           // Check if user already has active bid
           var myBid = bids.find(function(b) { return b.bidder_id === window._currentUserId; });
 
@@ -3950,6 +3995,7 @@ export function getLayoutHTML(options: {
                 '</div>' +
                 noteDisplay +
                 instantBuyBtn +
+                metricsHtml +
               '</div>' +
               (myBid
                 ? '<div style="padding:var(--space-3);background:var(--bg-secondary);border-radius:var(--radius);margin-bottom:var(--space-3)">' +
@@ -4038,6 +4084,19 @@ export function getLayoutHTML(options: {
         loadAppMarket(appId, window._currentApp);
       }).catch(function(err) {
         showToast(err.message || 'Failed to remove ask price', 'error');
+      });
+    };
+
+    window.toggleMetricsVisibility = function(appId, showMetrics) {
+      fetch('/api/marketplace/metrics-visibility', {
+        method: 'PATCH',
+        headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ app_id: appId, show_metrics: showMetrics }),
+      }).then(function(res) {
+        if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
+        showToast(showMetrics ? 'Metrics visible to bidders' : 'Metrics hidden from bidders');
+      }).catch(function(err) {
+        showToast(err.message || 'Failed to update metrics visibility', 'error');
       });
     };
 

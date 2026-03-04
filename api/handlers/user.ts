@@ -1815,6 +1815,100 @@ export async function handleUser(request: Request): Promise<Response> {
     }
   }
 
+  // PATCH /api/marketplace/metrics-visibility — toggle show_metrics on a listing (owner only)
+  if (path === '/api/marketplace/metrics-visibility' && method === 'PATCH') {
+    try {
+      const body = await request.json();
+      const appId = body.app_id;
+      const showMetrics = body.show_metrics;
+
+      if (!appId) return error('app_id required', 400);
+      if (typeof showMetrics !== 'boolean') return error('show_metrics must be a boolean', 400);
+
+      const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+      const headers: Record<string, string> = {
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      };
+
+      // Verify ownership
+      const appCheck = await fetch(
+        `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}&owner_id=eq.${userId}&select=id`,
+        { headers }
+      );
+      const appRows = appCheck.ok ? await appCheck.json() : [];
+      if (appRows.length === 0) return error('App not found or not owned by you', 403);
+
+      // Update listing
+      const updateRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/app_listings?app_id=eq.${appId}`,
+        {
+          method: 'PATCH',
+          headers: { ...headers, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+          body: JSON.stringify({ show_metrics: showMetrics }),
+        }
+      );
+
+      if (!updateRes.ok) {
+        // Listing may not exist yet — create it
+        const createRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/app_listings`,
+          {
+            method: 'POST',
+            headers: { ...headers, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+            body: JSON.stringify({ app_id: appId, owner_id: userId, show_metrics: showMetrics }),
+          }
+        );
+        if (!createRes.ok) return error('Failed to update metrics visibility', 500);
+      }
+
+      return json({ app_id: appId, show_metrics: showMetrics });
+    } catch (err) {
+      return error(err instanceof Error ? err.message : 'Failed to update metrics visibility', 500);
+    }
+  }
+
+  // GET /api/marketplace/metrics/:appId — get app metrics (if show_metrics enabled or owner)
+  if (path.startsWith('/api/marketplace/metrics/') && method === 'GET') {
+    try {
+      const appId = path.replace('/api/marketplace/metrics/', '');
+      if (!appId) return error('Missing app ID', 400);
+
+      const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+      const headers: Record<string, string> = {
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      };
+
+      // Check if metrics are enabled or caller is owner
+      const [listingRes, appRes] = await Promise.all([
+        fetch(
+          `${SUPABASE_URL}/rest/v1/app_listings?app_id=eq.${appId}&select=show_metrics`,
+          { headers }
+        ),
+        fetch(
+          `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}&select=owner_id`,
+          { headers }
+        ),
+      ]);
+
+      const listings = listingRes.ok ? await listingRes.json() : [];
+      const apps = appRes.ok ? await appRes.json() : [];
+      const isOwner = apps[0]?.owner_id === userId;
+      const metricsEnabled = listings[0]?.show_metrics === true;
+
+      if (!isOwner && !metricsEnabled) {
+        return error('Metrics are not enabled for this app', 403);
+      }
+
+      const { getAppMetrics } = await import('../services/marketplace.ts');
+      const metrics = await getAppMetrics(appId);
+      return json(metrics);
+    } catch (err) {
+      return error(err instanceof Error ? err.message : 'Failed to get metrics', 500);
+    }
+  }
+
   return error('User endpoint not found', 404);
 }
 

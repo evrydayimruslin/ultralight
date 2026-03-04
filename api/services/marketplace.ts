@@ -92,6 +92,13 @@ export interface OffersSummary {
   }>;
 }
 
+export interface AppMetrics {
+  total_calls: number;
+  calls_30d: number;
+  unique_callers_30d: number;
+  revenue_30d_cents: number;
+}
+
 export interface SaleHistory {
   id: string;
   app_id: string;
@@ -145,16 +152,6 @@ export async function placeBid(
   expiresInHours?: number
 ): Promise<BidResult> {
   if (amountCents <= 0) throw createError('Bid amount must be positive', 400);
-
-  // Check if listing is sold (prevent bidding on transferred apps)
-  const soldCheck = await fetch(
-    `${SUPABASE_URL}/rest/v1/app_listings?app_id=eq.${appId}&status=eq.sold&select=id`,
-    { headers: dbHeaders() }
-  );
-  const soldRows = soldCheck.ok ? await soldCheck.json() : [];
-  if (soldRows.length > 0) {
-    throw createError('This app has already been sold', 400);
-  }
 
   const expiresAt = expiresInHours
     ? new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString()
@@ -535,6 +532,54 @@ export async function getListing(appId: string): Promise<ListingDetails> {
     listing: listings[0] || null,
     bids: enrichedBids,
     app: apps[0] || null,
+  };
+}
+
+/**
+ * Get aggregate usage metrics for an app from mcp_call_logs.
+ * Used for optional metrics exposure on marketplace listings.
+ */
+export async function getAppMetrics(appId: string): Promise<AppMetrics> {
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  // Parallel queries: total calls, 30d calls with revenue, 30d unique callers
+  const [totalRes, recentRes, callersRes] = await Promise.all([
+    // Total lifetime calls
+    fetch(
+      `${SUPABASE_URL}/rest/v1/mcp_call_logs?app_id=eq.${appId}&select=id`,
+      { headers: { ...dbHeaders(), 'Prefer': 'count=exact', 'Range-Unit': 'items', 'Range': '0-0' } }
+    ),
+    // 30d calls + sum revenue
+    fetch(
+      `${SUPABASE_URL}/rest/v1/mcp_call_logs?app_id=eq.${appId}&created_at=gte.${thirtyDaysAgo}&select=call_charge_cents`,
+      { headers: dbHeaders() }
+    ),
+    // 30d unique callers
+    fetch(
+      `${SUPABASE_URL}/rest/v1/mcp_call_logs?app_id=eq.${appId}&created_at=gte.${thirtyDaysAgo}&select=user_id`,
+      { headers: dbHeaders() }
+    ),
+  ]);
+
+  // Parse total from content-range header (format: "0-0/1234")
+  const contentRange = totalRes.headers.get('content-range') || '';
+  const totalMatch = contentRange.match(/\/(\d+)/);
+  const totalCalls = totalMatch ? parseInt(totalMatch[1], 10) : 0;
+
+  // Parse 30d calls + revenue
+  const recentRows = recentRes.ok ? await recentRes.json() as Array<{ call_charge_cents: number | null }> : [];
+  const calls30d = recentRows.length;
+  const revenue30dCents = recentRows.reduce((sum, r) => sum + (r.call_charge_cents || 0), 0);
+
+  // Parse unique callers
+  const callerRows = callersRes.ok ? await callersRes.json() as Array<{ user_id: string }> : [];
+  const uniqueCallers30d = new Set(callerRows.map(r => r.user_id)).size;
+
+  return {
+    total_calls: totalCalls,
+    calls_30d: calls30d,
+    unique_callers_30d: uniqueCallers30d,
+    revenue_30d_cents: Math.round(revenue30dCents * 100) / 100,
   };
 }
 
