@@ -103,6 +103,116 @@ export async function handleUser(request: Request): Promise<Response> {
         }
       }
 
+      // Handle account.updated (Connect onboarding status changes)
+      if (event.type === 'account.updated') {
+        const account = event.data.object as {
+          id: string;
+          details_submitted?: boolean;
+          payouts_enabled?: boolean;
+        };
+
+        if (account.id) {
+          const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+          await fetch(
+            `${SUPABASE_URL}/rest/v1/users?stripe_connect_account_id=eq.${account.id}`,
+            {
+              method: 'PATCH',
+              headers: {
+                'apikey': SUPABASE_SERVICE_ROLE_KEY,
+                'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal',
+              },
+              body: JSON.stringify({
+                stripe_connect_onboarded: account.details_submitted || false,
+                stripe_connect_payouts_enabled: account.payouts_enabled || false,
+              }),
+            }
+          );
+          console.log(`[STRIPE] Connect account updated: ${account.id} (payouts: ${account.payouts_enabled})`);
+        }
+      }
+
+      // Handle payout.paid (money arrived in developer's bank)
+      if (event.type === 'payout.paid') {
+        const payout = event.data.object as { id: string };
+        const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/payouts?stripe_payout_id=eq.${payout.id}`,
+          {
+            method: 'PATCH',
+            headers: {
+              'apikey': SUPABASE_SERVICE_ROLE_KEY,
+              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+              'Content-Type': 'application/json',
+              'Prefer': 'return=minimal',
+            },
+            body: JSON.stringify({ status: 'paid', completed_at: new Date().toISOString() }),
+          }
+        );
+        console.log(`[STRIPE] Payout paid: ${payout.id}`);
+      }
+
+      // Handle payout.failed (payout to bank failed — refund balance)
+      if (event.type === 'payout.failed') {
+        const payout = event.data.object as { id: string; failure_message?: string };
+        const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+        const sbHeaders = {
+          'apikey': SUPABASE_SERVICE_ROLE_KEY,
+          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        };
+
+        // Find the payout record by stripe_payout_id
+        const payoutRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/payouts?stripe_payout_id=eq.${payout.id}&status=eq.processing&select=id`,
+          { headers: sbHeaders }
+        );
+        if (payoutRes.ok) {
+          const payoutRows = await payoutRes.json() as Array<{ id: string }>;
+          for (const p of payoutRows) {
+            await fetch(`${SUPABASE_URL}/rest/v1/rpc/fail_payout_refund`, {
+              method: 'POST',
+              headers: { ...sbHeaders, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                p_payout_id: p.id,
+                p_failure_reason: payout.failure_message || 'payout_failed',
+              }),
+            });
+          }
+        }
+        console.log(`[STRIPE] Payout failed: ${payout.id} — ${payout.failure_message || 'unknown reason'}`);
+      }
+
+      // Handle transfer.reversed (transfer from platform to connected account reversed)
+      if (event.type === 'transfer.reversed') {
+        const transfer = event.data.object as { id: string };
+        const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+        const sbHeaders = {
+          'apikey': SUPABASE_SERVICE_ROLE_KEY,
+          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        };
+
+        // Find payout record by transfer ID and refund
+        const payoutRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/payouts?stripe_transfer_id=eq.${transfer.id}&status=in.(pending,processing)&select=id`,
+          { headers: sbHeaders }
+        );
+        if (payoutRes.ok) {
+          const payoutRows = await payoutRes.json() as Array<{ id: string }>;
+          for (const p of payoutRows) {
+            await fetch(`${SUPABASE_URL}/rest/v1/rpc/fail_payout_refund`, {
+              method: 'POST',
+              headers: { ...sbHeaders, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                p_payout_id: p.id,
+                p_failure_reason: 'transfer_reversed',
+              }),
+            });
+          }
+        }
+        console.log(`[STRIPE] Transfer reversed: ${transfer.id}`);
+      }
+
       return json({ received: true });
     } catch (err) {
       console.error('[STRIPE] Webhook error:', err);
@@ -1231,6 +1341,343 @@ export async function handleUser(request: Request): Promise<Response> {
       });
     } catch (err) {
       return error(err instanceof Error ? err.message : 'Unauthorized', 401);
+    }
+  }
+
+  // ============================================
+  // STRIPE CONNECT ENDPOINTS
+  // ============================================
+
+  // POST /api/user/connect/onboard — create or resume Stripe Connect onboarding
+  // Returns: { onboarding_url: string, account_id: string }
+  if (path === '/api/user/connect/onboard' && method === 'POST') {
+    try {
+      const user = await authenticate(request);
+      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
+
+      // Get user's current connect state + email
+      const userRes = await fetch(
+        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_connect_account_id,email`,
+        { headers: { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` } }
+      );
+      if (!userRes.ok) throw new Error('Failed to read user');
+      const userData = (await userRes.json())[0] as {
+        stripe_connect_account_id: string | null;
+        email: string;
+      };
+
+      const {
+        createConnectedAccount, createOnboardingLink
+      } = await import('../services/stripe-connect.ts');
+
+      let accountId = userData?.stripe_connect_account_id;
+
+      // Create a new connected account if none exists
+      if (!accountId) {
+        const result = await createConnectedAccount(userData.email, user.id);
+        accountId = result.account_id;
+
+        // Save the account ID to DB
+        await fetch(`${sbUrl}/rest/v1/users?id=eq.${user.id}`, {
+          method: 'PATCH',
+          headers: {
+            'apikey': sbKey,
+            'Authorization': `Bearer ${sbKey}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal',
+          },
+          body: JSON.stringify({ stripe_connect_account_id: accountId }),
+        });
+      }
+
+      // @ts-ignore
+      const Deno = globalThis.Deno;
+      const BASE_URL = Deno.env.get('BASE_URL') || '';
+
+      const link = await createOnboardingLink(
+        accountId,
+        `${BASE_URL}/settings/billing?connect=complete`,
+        `${BASE_URL}/settings/billing?connect=refresh`
+      );
+
+      return json({
+        onboarding_url: link.url,
+        account_id: accountId,
+      });
+    } catch (err) {
+      const status = (err as Error & { status?: number }).status || 500;
+      return error(err instanceof Error ? err.message : 'Failed to start onboarding', status);
+    }
+  }
+
+  // GET /api/user/connect/status — check Stripe Connect onboarding status
+  // Returns: { connected, onboarded, payouts_enabled, account_id }
+  if (path === '/api/user/connect/status' && method === 'GET') {
+    try {
+      const user = await authenticate(request);
+      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
+
+      const userRes = await fetch(
+        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled`,
+        { headers: { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` } }
+      );
+      if (!userRes.ok) throw new Error('Failed to read user');
+      const userData = (await userRes.json())[0] as {
+        stripe_connect_account_id: string | null;
+        stripe_connect_onboarded: boolean;
+        stripe_connect_payouts_enabled: boolean;
+      };
+
+      if (!userData?.stripe_connect_account_id) {
+        return json({
+          connected: false,
+          onboarded: false,
+          payouts_enabled: false,
+          account_id: null,
+        });
+      }
+
+      // If already fully set up, return cached values
+      if (userData.stripe_connect_onboarded && userData.stripe_connect_payouts_enabled) {
+        return json({
+          connected: true,
+          onboarded: true,
+          payouts_enabled: true,
+          account_id: userData.stripe_connect_account_id,
+        });
+      }
+
+      // Otherwise refresh from Stripe API
+      try {
+        const { getAccountStatus } = await import('../services/stripe-connect.ts');
+        const connectStatus = await getAccountStatus(userData.stripe_connect_account_id);
+
+        // Update cached status in DB if changed
+        if (
+          connectStatus.onboarded !== userData.stripe_connect_onboarded ||
+          connectStatus.payouts_enabled !== userData.stripe_connect_payouts_enabled
+        ) {
+          await fetch(`${sbUrl}/rest/v1/users?id=eq.${user.id}`, {
+            method: 'PATCH',
+            headers: {
+              'apikey': sbKey,
+              'Authorization': `Bearer ${sbKey}`,
+              'Content-Type': 'application/json',
+              'Prefer': 'return=minimal',
+            },
+            body: JSON.stringify({
+              stripe_connect_onboarded: connectStatus.onboarded,
+              stripe_connect_payouts_enabled: connectStatus.payouts_enabled,
+            }),
+          });
+        }
+
+        return json({
+          connected: true,
+          onboarded: connectStatus.onboarded,
+          payouts_enabled: connectStatus.payouts_enabled,
+          details_submitted: connectStatus.details_submitted,
+          account_id: userData.stripe_connect_account_id,
+        });
+      } catch (stripeErr) {
+        // Stripe unavailable — return cached values
+        return json({
+          connected: true,
+          onboarded: userData.stripe_connect_onboarded,
+          payouts_enabled: userData.stripe_connect_payouts_enabled,
+          account_id: userData.stripe_connect_account_id,
+        });
+      }
+    } catch (err) {
+      const status = (err as Error & { status?: number }).status || 500;
+      return error(err instanceof Error ? err.message : 'Failed to check connect status', status);
+    }
+  }
+
+  // POST /api/user/connect/withdraw — request a withdrawal to connected bank
+  // Body: { amount_cents: number } (minimum 1000 = $10.00)
+  if (path === '/api/user/connect/withdraw' && method === 'POST') {
+    try {
+      const user = await authenticate(request);
+      const body = await request.json() as { amount_cents?: number };
+      const amountCents = body.amount_cents;
+
+      const {
+        MIN_WITHDRAWAL_CENTS, estimatePayoutFee,
+        createTransfer, createPayout
+      } = await import('../services/stripe-connect.ts');
+
+      if (!amountCents || typeof amountCents !== 'number' || amountCents < MIN_WITHDRAWAL_CENTS) {
+        return error(
+          `amount_cents must be at least ${MIN_WITHDRAWAL_CENTS} ($${(MIN_WITHDRAWAL_CENTS / 100).toFixed(2)} minimum withdrawal)`,
+          400
+        );
+      }
+
+      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
+
+      // Verify user has a connected, onboarded account with payouts enabled
+      const userRes = await fetch(
+        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled,hosting_balance_cents,escrow_held_cents`,
+        { headers: { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` } }
+      );
+      if (!userRes.ok) throw new Error('Failed to read user');
+      const userData = (await userRes.json())[0] as {
+        stripe_connect_account_id: string | null;
+        stripe_connect_onboarded: boolean;
+        stripe_connect_payouts_enabled: boolean;
+        hosting_balance_cents: number;
+        escrow_held_cents: number;
+      };
+
+      if (!userData?.stripe_connect_account_id || !userData?.stripe_connect_payouts_enabled) {
+        return error(
+          'Connect your bank account first. Use the Wallet page to complete Stripe onboarding.',
+          400
+        );
+      }
+
+      // Check available balance (balance minus escrowed)
+      const available = (userData.hosting_balance_cents || 0) - (userData.escrow_held_cents || 0);
+      if (available < amountCents) {
+        return error(
+          `Insufficient available balance. You have $${(available / 100).toFixed(2)} available (after escrow holds).`,
+          400
+        );
+      }
+
+      // Calculate fee estimate
+      const estimate = estimatePayoutFee(amountCents);
+
+      // Step 1: Atomic debit + payout record creation
+      const rpcRes = await fetch(`${sbUrl}/rest/v1/rpc/create_payout_record`, {
+        method: 'POST',
+        headers: {
+          'apikey': sbKey,
+          'Authorization': `Bearer ${sbKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          p_user_id: user.id,
+          p_amount_cents: amountCents,
+          p_stripe_fee_cents: estimate.stripe_fee_cents,
+          p_net_cents: estimate.net_cents,
+        }),
+      });
+
+      if (!rpcRes.ok) {
+        const rpcErr = await rpcRes.text();
+        console.error('[CONNECT] create_payout_record RPC failed:', rpcErr);
+        if (rpcErr.includes('Insufficient')) return error('Insufficient balance for withdrawal', 400);
+        return error('Failed to create payout record', 500);
+      }
+
+      const payoutId = await rpcRes.json();
+
+      // Step 2: Create Stripe Transfer (platform → connected account)
+      let transferResult;
+      try {
+        transferResult = await createTransfer(amountCents, userData.stripe_connect_account_id, {
+          payout_id: String(payoutId),
+          user_id: user.id,
+        });
+      } catch (transferErr) {
+        // Transfer failed — refund the balance
+        console.error('[CONNECT] Transfer failed, refunding:', transferErr);
+        await fetch(`${sbUrl}/rest/v1/rpc/fail_payout_refund`, {
+          method: 'POST',
+          headers: {
+            'apikey': sbKey,
+            'Authorization': `Bearer ${sbKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            p_payout_id: payoutId,
+            p_failure_reason: 'stripe_transfer_failed',
+          }),
+        });
+        return error('Withdrawal failed. Your balance has been restored.', 500);
+      }
+
+      // Update payout record with transfer ID, mark as processing
+      await fetch(`${sbUrl}/rest/v1/payouts?id=eq.${payoutId}`, {
+        method: 'PATCH',
+        headers: {
+          'apikey': sbKey,
+          'Authorization': `Bearer ${sbKey}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal',
+        },
+        body: JSON.stringify({
+          stripe_transfer_id: transferResult.transfer_id,
+          status: 'processing',
+        }),
+      });
+
+      // Step 3: Create Stripe Payout (connected account → bank)
+      // Fire-and-forget; the webhook confirms success/failure.
+      try {
+        const payoutResult = await createPayout(
+          amountCents,
+          userData.stripe_connect_account_id
+        );
+
+        // Update payout record with payout ID
+        await fetch(`${sbUrl}/rest/v1/payouts?id=eq.${payoutId}`, {
+          method: 'PATCH',
+          headers: {
+            'apikey': sbKey,
+            'Authorization': `Bearer ${sbKey}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal',
+          },
+          body: JSON.stringify({
+            stripe_payout_id: payoutResult.payout_id,
+          }),
+        });
+      } catch (payoutErr) {
+        // Transfer succeeded but payout creation failed.
+        // Money is in the connected account — developer can trigger from Stripe Express Dashboard.
+        console.error('[CONNECT] Payout creation failed (transfer succeeded):', payoutErr);
+      }
+
+      return json({
+        success: true,
+        payout_id: payoutId,
+        amount_cents: amountCents,
+        estimated_fee_cents: estimate.stripe_fee_cents,
+        estimated_net_cents: estimate.net_cents,
+        status: 'processing',
+        message: `Withdrawal of $${(amountCents / 100).toFixed(2)} initiated. ` +
+          `Estimated bank deposit: $${(estimate.net_cents / 100).toFixed(2)} ` +
+          `(after $${(estimate.stripe_fee_cents / 100).toFixed(2)} Stripe fee). ` +
+          `Typically arrives in 2-3 business days.`,
+      });
+    } catch (err) {
+      if (err instanceof SyntaxError) return error('Invalid JSON body', 400);
+      const status = (err as Error & { status?: number }).status || 500;
+      return error(err instanceof Error ? err.message : 'Withdrawal failed', status);
+    }
+  }
+
+  // GET /api/user/connect/payouts — payout history
+  if (path === '/api/user/connect/payouts' && method === 'GET') {
+    try {
+      const user = await authenticate(request);
+      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
+      const limit = parseInt(url.searchParams.get('limit') || '20', 10);
+
+      const payoutsRes = await fetch(
+        `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&select=*&order=created_at.desc&limit=${Math.min(limit, 100)}`,
+        { headers: { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` } }
+      );
+
+      if (!payoutsRes.ok) throw new Error('Failed to query payouts');
+      const payouts = await payoutsRes.json();
+
+      return json({ payouts });
+    } catch (err) {
+      return error(err instanceof Error ? err.message : 'Failed to get payouts', 500);
     }
   }
 

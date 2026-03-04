@@ -2198,7 +2198,7 @@ export function getLayoutHTML(options: {
           </div>
           <div class="settings-sidebar-item" data-dash-section="billing">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
-            Billing
+            Wallet
           </div>
         </nav>
 
@@ -2239,18 +2239,63 @@ export function getLayoutHTML(options: {
             <button id="createTokenBtn" class="btn btn-primary btn-sm" style="border-radius:0;">Create New Token</button>
           </section>
 
-          <!-- Billing Panel -->
+          <!-- Wallet Panel -->
           <section id="dashBillingPanel" class="settings-panel" style="display:none;">
-            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Billing</h2>
-            <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);">
+            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Wallet</h2>
+
+            <!-- Balance Section -->
+            <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);margin-bottom:var(--space-4);">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-4);">
                 <div>
-                  <div style="font-size:12px;color:var(--text-muted);margin-bottom:var(--space-1);">Current Balance</div>
+                  <div style="font-size:12px;color:var(--text-muted);margin-bottom:var(--space-1);">Available Balance</div>
                   <div id="accountBalance" style="font-size:28px;font-weight:700;color:var(--text-primary);">$0.00</div>
                 </div>
-                <button id="addFundsBtn" class="btn btn-primary btn-sm" style="border-radius:0;">Add Funds</button>
+                <div style="display:flex;gap:var(--space-2);">
+                  <button id="addFundsBtn" class="btn btn-primary btn-sm" style="border-radius:0;">Add Funds</button>
+                  <button id="withdrawBtn" class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);display:none;" onclick="showWithdrawModal()">Withdraw</button>
+                </div>
               </div>
-              <div id="billingHistory" style="font-size:13px;color:var(--text-muted);">No billing history.</div>
+            </div>
+
+            <!-- Earnings Section -->
+            <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);margin-bottom:var(--space-4);">
+              <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:var(--space-3);">Earnings</div>
+              <div id="earningsSummary" style="font-size:13px;color:var(--text-muted);">Loading...</div>
+            </div>
+
+            <!-- Bank Payouts Section -->
+            <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);margin-bottom:var(--space-4);">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-3);">
+                <div style="font-size:13px;font-weight:600;color:var(--text-primary);">Bank Payouts</div>
+                <span id="connectStatusBadge" style="font-size:11px;padding:2px 8px;border-radius:2px;background:rgba(239,68,68,0.15);color:var(--error);">Not Connected</span>
+              </div>
+              <div id="connectSection">
+                <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-3);">Connect your bank account to withdraw earnings.</p>
+                <button id="connectBankBtn" class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);" onclick="startConnectOnboarding()">Connect Bank Account</button>
+              </div>
+              <div id="payoutsHistory" style="margin-top:var(--space-3);font-size:13px;color:var(--text-muted);"></div>
+            </div>
+
+            <!-- Auto Top-up Section -->
+            <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);">
+              <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:var(--space-3);">Auto Top-up</div>
+              <label style="display:flex;align-items:center;gap:var(--space-2);font-size:13px;color:var(--text-secondary);cursor:pointer;margin-bottom:var(--space-3);">
+                <input type="checkbox" id="autoTopupEnabled" style="accent-color:var(--accent);">
+                Enable automatic top-up when balance is low
+              </label>
+              <div id="autoTopupFields" style="display:none;">
+                <div style="display:flex;gap:var(--space-3);margin-bottom:var(--space-3);">
+                  <div style="flex:1;">
+                    <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Threshold (cents)</label>
+                    <input type="number" id="autoTopupThreshold" value="100" style="width:100%;padding:6px 8px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">
+                  </div>
+                  <div style="flex:1;">
+                    <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Amount (cents)</label>
+                    <input type="number" id="autoTopupAmount" value="1000" style="width:100%;padding:6px 8px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">
+                  </div>
+                </div>
+                <button class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);" onclick="saveAutoTopup()">Save</button>
+              </div>
             </div>
           </section>
         </div>
@@ -2934,6 +2979,12 @@ export function getLayoutHTML(options: {
       } else if (section === 'keys') {
         history.replaceState({}, '', '/settings/' + section);
         loadTokens();
+      } else if (section === 'billing') {
+        history.replaceState({}, '', '/settings/billing');
+        loadHostingData();
+        loadEarnings();
+        loadConnectStatus();
+        loadPayouts();
       } else {
         history.replaceState({}, '', '/settings/' + section);
       }
@@ -4773,6 +4824,121 @@ export function getLayoutHTML(options: {
       } catch { showToast('Failed to save', 'error'); }
     };
 
+    // --- Earnings ---
+    async function loadEarnings() {
+      var el = document.getElementById('earningsSummary');
+      if (!el) return;
+      try {
+        var res = await fetch('/api/user/earnings?period=30d', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) { el.textContent = 'Failed to load earnings'; return; }
+        var data = await res.json();
+        var total = (data.total_earned_cents / 100).toFixed(2);
+        var period = (data.period_earned_cents / 100).toFixed(2);
+        el.innerHTML =
+          '<div style="display:flex;gap:var(--space-6);margin-bottom:var(--space-2);">' +
+            '<div><div style="font-size:11px;color:var(--text-muted);">Lifetime</div><div style="font-size:18px;font-weight:600;">$' + total + '</div></div>' +
+            '<div><div style="font-size:11px;color:var(--text-muted);">Last 30 days</div><div style="font-size:18px;font-weight:600;">$' + period + '</div></div>' +
+            '<div><div style="font-size:11px;color:var(--text-muted);">Transfers</div><div style="font-size:18px;font-weight:600;">' + (data.period_transfers || 0) + '</div></div>' +
+          '</div>';
+      } catch { el.textContent = 'Failed to load earnings'; }
+    }
+
+    // --- Connect Status ---
+    async function loadConnectStatus() {
+      var badge = document.getElementById('connectStatusBadge');
+      var section = document.getElementById('connectSection');
+      var withdrawBtn = document.getElementById('withdrawBtn');
+      try {
+        var res = await fetch('/api/user/connect/status', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) return;
+        var data = await res.json();
+        if (data.payouts_enabled) {
+          if (badge) { badge.textContent = 'Connected'; badge.style.background = 'rgba(34,197,94,0.15)'; badge.style.color = 'var(--success)'; }
+          if (section) section.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Your bank account is connected and ready for withdrawals.</p>';
+          if (withdrawBtn) withdrawBtn.style.display = '';
+        } else if (data.connected && data.onboarded) {
+          if (badge) { badge.textContent = 'Pending'; badge.style.background = 'rgba(234,179,8,0.15)'; badge.style.color = '#ca8a04'; }
+          if (section) section.innerHTML = '<p style="font-size:13px;color:var(--text-muted);">Onboarding complete. Stripe is reviewing your account.</p>';
+          if (withdrawBtn) withdrawBtn.style.display = 'none';
+        } else if (data.connected) {
+          if (badge) { badge.textContent = 'Incomplete'; badge.style.background = 'rgba(234,179,8,0.15)'; badge.style.color = '#ca8a04'; }
+          if (withdrawBtn) withdrawBtn.style.display = 'none';
+        } else {
+          if (withdrawBtn) withdrawBtn.style.display = 'none';
+        }
+      } catch {}
+    }
+
+    // --- Connect Onboarding ---
+    window.startConnectOnboarding = async function() {
+      try {
+        var res = await fetch('/api/user/connect/onboard', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        var data = await res.json();
+        if (!res.ok) { showToast(data.error || 'Failed to start onboarding', 'error'); return; }
+        if (data.onboarding_url) {
+          window.open(data.onboarding_url, '_blank');
+          showToast('Stripe onboarding opened. Complete the setup to enable withdrawals.');
+        }
+      } catch { showToast('Failed to start onboarding', 'error'); }
+    };
+
+    // --- Withdraw ---
+    window.showWithdrawModal = async function() {
+      var input = prompt('Enter withdrawal amount in dollars (minimum $10.00):');
+      if (!input) return;
+      var dollars = parseFloat(input);
+      if (isNaN(dollars) || dollars < 10) { showToast('Minimum withdrawal is $10.00', 'error'); return; }
+      var cents = Math.round(dollars * 100);
+      var fee = Math.ceil(cents * 0.0025 + 25);
+      var net = cents - fee;
+      if (!confirm('Withdraw $' + (cents / 100).toFixed(2) + '?\\n\\nStripe fee: $' + (fee / 100).toFixed(2) + '\\nYou will receive: ~$' + (net / 100).toFixed(2) + '\\n\\nProceed?')) return;
+
+      try {
+        var res = await fetch('/api/user/connect/withdraw', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ amount_cents: cents }),
+        });
+        var data = await res.json();
+        if (!res.ok) { showToast(data.error || 'Withdrawal failed', 'error'); return; }
+        showToast('Withdrawal of $' + (cents / 100).toFixed(2) + ' initiated! Check your bank in 2-3 business days.');
+        loadHostingData();
+        loadPayouts();
+      } catch { showToast('Withdrawal failed', 'error'); }
+    };
+
+    // --- Payout History ---
+    async function loadPayouts() {
+      var el = document.getElementById('payoutsHistory');
+      if (!el) return;
+      try {
+        var res = await fetch('/api/user/connect/payouts', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) return;
+        var data = await res.json();
+        if (!data.payouts || data.payouts.length === 0) {
+          el.textContent = 'No withdrawal history.';
+          return;
+        }
+        el.innerHTML = data.payouts.map(function(p) {
+          var statusColor = p.status === 'paid' ? 'var(--success)' : p.status === 'failed' ? 'var(--error)' : 'var(--text-muted)';
+          return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;">' +
+            '<span>$' + (p.amount_cents / 100).toFixed(2) + '</span>' +
+            '<span style="color:' + statusColor + ';">' + p.status + '</span>' +
+            '<span style="color:var(--text-muted);">' + new Date(p.created_at).toLocaleDateString() + '</span>' +
+          '</div>';
+        }).join('');
+      } catch {}
+    }
+
     // --- Supabase Servers ---
     async function loadSupabaseServers() {
       const container = document.getElementById('supabaseServersList');
@@ -4887,6 +5053,22 @@ export function getLayoutHTML(options: {
       } else if (topup === 'cancelled') {
         showToast('Deposit cancelled.', 'error');
         history.replaceState({}, '', window.location.pathname);
+      }
+    })();
+
+    // Handle Stripe Connect redirect
+    (function() {
+      var params = new URLSearchParams(window.location.search);
+      var connect = params.get('connect');
+      if (connect === 'complete') {
+        showToast('Bank account setup complete! Checking status...');
+        history.replaceState({}, '', '/settings/billing');
+        switchDashSection('billing');
+        setTimeout(function() { loadConnectStatus(); }, 1500);
+      } else if (connect === 'refresh') {
+        showToast('Onboarding session expired. Click "Connect Bank Account" to continue.', 'error');
+        history.replaceState({}, '', '/settings/billing');
+        switchDashSection('billing');
       }
     })();
 

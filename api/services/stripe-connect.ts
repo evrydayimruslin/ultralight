@@ -1,0 +1,315 @@
+// Stripe Connect Service
+// Handles Express account lifecycle, transfers, and payouts.
+// All Stripe API calls use raw fetch — no SDK dependency.
+// Gracefully handles missing API keys (throws 503 with descriptive message).
+
+// @ts-ignore - Deno is available in production
+const Deno = globalThis.Deno;
+
+// ============================================
+// TYPES
+// ============================================
+
+export interface ConnectAccountStatus {
+  account_id: string | null;
+  onboarded: boolean;
+  payouts_enabled: boolean;
+  details_submitted: boolean;
+  charges_enabled?: boolean;
+  country?: string;
+  default_currency?: string;
+}
+
+export interface PayoutEstimate {
+  gross_cents: number;        // what gets deducted from balance
+  stripe_fee_cents: number;   // estimated Stripe payout fee
+  net_cents: number;          // estimated bank deposit
+}
+
+export interface TransferResult {
+  transfer_id: string;
+  amount_cents: number;
+}
+
+export interface PayoutResult {
+  payout_id: string;
+  amount_cents: number;
+}
+
+// ============================================
+// CONSTANTS
+// ============================================
+
+// Stripe Express Standard payout fee: 0.25% + $0.25
+export const PAYOUT_FEE_PERCENT = 0.0025;
+export const PAYOUT_FEE_FIXED_CENTS = 25;
+
+// Minimum withdrawal: must exceed the fixed fee meaningfully
+export const MIN_WITHDRAWAL_CENTS = 1000; // $10.00
+
+// ============================================
+// HELPERS
+// ============================================
+
+function getStripeKey(): string {
+  return Deno?.env?.get('STRIPE_SECRET_KEY') || '';
+}
+
+function ensureStripeKey(): string {
+  const key = getStripeKey();
+  if (!key) {
+    throw Object.assign(
+      new Error('Stripe is not configured. Withdrawals will be available soon.'),
+      { status: 503 }
+    );
+  }
+  return key;
+}
+
+/**
+ * Estimate the Stripe payout fee for a given withdrawal amount.
+ * Developer pays all fees — platform absorbs nothing.
+ */
+export function estimatePayoutFee(amountCents: number): PayoutEstimate {
+  const feeCents = Math.ceil(amountCents * PAYOUT_FEE_PERCENT + PAYOUT_FEE_FIXED_CENTS);
+  return {
+    gross_cents: amountCents,
+    stripe_fee_cents: feeCents,
+    net_cents: amountCents - feeCents,
+  };
+}
+
+// ============================================
+// 1. CREATE CONNECTED ACCOUNT
+// Creates a Stripe Express account with manual payout schedule.
+// ============================================
+
+export async function createConnectedAccount(
+  email: string,
+  userId: string
+): Promise<{ account_id: string }> {
+  const STRIPE_KEY = ensureStripeKey();
+
+  const res = await fetch('https://api.stripe.com/v1/accounts', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${STRIPE_KEY}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      'type': 'express',
+      'country': 'US',
+      'email': email,
+      'capabilities[transfers][requested]': 'true',
+      'metadata[user_id]': userId,
+      'metadata[platform]': 'ultralight',
+      'settings[payouts][schedule][interval]': 'manual',
+    }).toString(),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    console.error('[CONNECT] Account creation failed:', err);
+    throw new Error('Failed to create connected account');
+  }
+
+  const account = await res.json() as { id: string };
+  return { account_id: account.id };
+}
+
+// ============================================
+// 2. CREATE ONBOARDING LINK
+// Generates a Stripe-hosted onboarding URL for the Express account.
+// Developer completes KYC, links bank account, etc. on Stripe's UI.
+// ============================================
+
+export async function createOnboardingLink(
+  accountId: string,
+  returnUrl: string,
+  refreshUrl: string
+): Promise<{ url: string; expires_at: number }> {
+  const STRIPE_KEY = ensureStripeKey();
+
+  const res = await fetch('https://api.stripe.com/v1/account_links', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${STRIPE_KEY}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      'account': accountId,
+      'type': 'account_onboarding',
+      'return_url': returnUrl,
+      'refresh_url': refreshUrl,
+    }).toString(),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    console.error('[CONNECT] Onboarding link creation failed:', err);
+    throw new Error('Failed to create onboarding link');
+  }
+
+  const link = await res.json() as { url: string; expires_at: number };
+  return { url: link.url, expires_at: link.expires_at };
+}
+
+// ============================================
+// 3. GET ACCOUNT STATUS
+// Checks whether onboarding is complete and payouts are enabled.
+// ============================================
+
+export async function getAccountStatus(
+  accountId: string
+): Promise<ConnectAccountStatus> {
+  const STRIPE_KEY = ensureStripeKey();
+
+  const res = await fetch(`https://api.stripe.com/v1/accounts/${encodeURIComponent(accountId)}`, {
+    headers: { 'Authorization': `Bearer ${STRIPE_KEY}` },
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    console.error('[CONNECT] Account status check failed:', err);
+    throw new Error('Failed to check account status');
+  }
+
+  const account = await res.json() as {
+    id: string;
+    details_submitted: boolean;
+    charges_enabled: boolean;
+    payouts_enabled: boolean;
+    country: string;
+    default_currency: string;
+  };
+
+  return {
+    account_id: account.id,
+    onboarded: account.details_submitted,
+    payouts_enabled: account.payouts_enabled,
+    details_submitted: account.details_submitted,
+    charges_enabled: account.charges_enabled,
+    country: account.country,
+    default_currency: account.default_currency,
+  };
+}
+
+// ============================================
+// 4. CREATE TRANSFER
+// Moves money from the platform Stripe balance to a connected account.
+// Transfers are free — no Stripe fee.
+// ============================================
+
+export async function createTransfer(
+  amountCents: number,
+  accountId: string,
+  metadata: Record<string, string> = {}
+): Promise<TransferResult> {
+  const STRIPE_KEY = ensureStripeKey();
+
+  // Stripe transfers deal in integers (whole cents)
+  const transferAmount = Math.round(amountCents);
+
+  const params = new URLSearchParams({
+    'amount': String(transferAmount),
+    'currency': 'usd',
+    'destination': accountId,
+  });
+
+  for (const [k, v] of Object.entries(metadata)) {
+    params.set(`metadata[${k}]`, v);
+  }
+
+  const res = await fetch('https://api.stripe.com/v1/transfers', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${STRIPE_KEY}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: params.toString(),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    console.error('[CONNECT] Transfer creation failed:', err);
+    throw new Error('Failed to create transfer to connected account');
+  }
+
+  const transfer = await res.json() as { id: string; amount: number };
+  return { transfer_id: transfer.id, amount_cents: transfer.amount };
+}
+
+// ============================================
+// 5. CREATE PAYOUT
+// Triggers a payout from the connected account to their linked bank.
+// Uses Stripe-Account header to act on behalf of the connected account.
+// Stripe deducts its payout fee (0.25% + $0.25) from the amount.
+// ============================================
+
+export async function createPayout(
+  amountCents: number,
+  accountId: string
+): Promise<PayoutResult> {
+  const STRIPE_KEY = ensureStripeKey();
+
+  const payoutAmount = Math.round(amountCents);
+
+  const res = await fetch('https://api.stripe.com/v1/payouts', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${STRIPE_KEY}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Stripe-Account': accountId,
+    },
+    body: new URLSearchParams({
+      'amount': String(payoutAmount),
+      'currency': 'usd',
+    }).toString(),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    console.error('[CONNECT] Payout creation failed:', err);
+    throw new Error('Failed to create payout to bank account');
+  }
+
+  const payout = await res.json() as { id: string; amount: number };
+  return { payout_id: payout.id, amount_cents: payout.amount };
+}
+
+// ============================================
+// 6. GET CONNECTED BALANCE
+// Checks the available and pending balance in a connected account.
+// ============================================
+
+export async function getConnectedBalance(
+  accountId: string
+): Promise<{ available_cents: number; pending_cents: number }> {
+  const STRIPE_KEY = ensureStripeKey();
+
+  const res = await fetch('https://api.stripe.com/v1/balance', {
+    headers: {
+      'Authorization': `Bearer ${STRIPE_KEY}`,
+      'Stripe-Account': accountId,
+    },
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    console.error('[CONNECT] Balance check failed:', err);
+    throw new Error('Failed to check connected account balance');
+  }
+
+  const balance = await res.json() as {
+    available: Array<{ amount: number; currency: string }>;
+    pending: Array<{ amount: number; currency: string }>;
+  };
+
+  const usdAvailable = balance.available.find(b => b.currency === 'usd');
+  const usdPending = balance.pending.find(b => b.currency === 'usd');
+
+  return {
+    available_cents: usdAvailable?.amount || 0,
+    pending_cents: usdPending?.amount || 0,
+  };
+}

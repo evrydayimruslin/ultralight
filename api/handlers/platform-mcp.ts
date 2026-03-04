@@ -476,6 +476,31 @@ const PLATFORM_TOOLS: MCPTool[] = [
       required: ['action'],
     },
   },
+  // ── 13. ul.wallet ──────────────────────────
+  {
+    name: 'ul.wallet',
+    description:
+      'Manage your wallet: check balance, view earnings, withdraw to bank, view payout history. ' +
+      'action="status": balance + earnings summary + connect status. ' +
+      'action="earnings": detailed earnings breakdown by app (period: 7d/30d/90d/all). ' +
+      'action="withdraw": request withdrawal to connected bank (amount_cents required, min 1000). ' +
+      'action="payouts": payout history. ' +
+      'action="estimate_fee": preview withdrawal fee before committing (amount_cents required).',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['status', 'earnings', 'withdraw', 'payouts', 'estimate_fee'],
+          description: 'Wallet action to perform.',
+        },
+        amount_cents: { type: 'number', description: 'Withdrawal amount in cents. Required for: withdraw, estimate_fee. Minimum: 1000 ($10).' },
+        period: { type: 'string', enum: ['7d', '30d', '90d', 'all'], description: 'Earnings period. For: earnings. Default: 30d.' },
+      },
+      required: ['action'],
+    },
+  },
 ];
 
 // ============================================
@@ -1534,6 +1559,231 @@ async function handleToolsCall(
           }
           default:
             throw new ToolError(INVALID_PARAMS, `Invalid action: ${mktAction}. Use bid|ask|accept|reject|cancel|buy_now|offers|history|listing`);
+        }
+        break;
+      }
+
+      // ── 13. ul.wallet ──────────────
+      case 'ul.wallet': {
+        if (user?.provisional) {
+          throw new ToolError(FORBIDDEN, 'Wallet requires an authenticated account. Use ul.auth.link to connect your account first.');
+        }
+        const walletAction = toolArgs.action as string;
+        if (!walletAction) throw new ToolError(INVALID_PARAMS, 'Missing required parameter: action');
+
+        const { SUPABASE_URL: wSbUrl, SUPABASE_SERVICE_ROLE_KEY: wSbKey } = getSupabaseEnv();
+        const wHeaders = { 'apikey': wSbKey, 'Authorization': `Bearer ${wSbKey}` };
+
+        switch (walletAction) {
+          case 'status': {
+            const [userRes, earningsRes] = await Promise.all([
+              fetch(
+                `${wSbUrl}/rest/v1/users?id=eq.${userId}&select=hosting_balance_cents,escrow_held_cents,stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled`,
+                { headers: wHeaders }
+              ),
+              fetch(
+                `${wSbUrl}/rest/v1/transfers?to_user_id=eq.${userId}&select=amount_cents`,
+                { headers: wHeaders }
+              ),
+            ]);
+
+            const wUserData = userRes.ok ? ((await userRes.json()) as Array<Record<string, unknown>>)[0] : null;
+            const wTransfers = earningsRes.ok ? (await earningsRes.json()) as Array<{ amount_cents: number }> : [];
+            const totalEarned = wTransfers.reduce((s: number, t: { amount_cents: number }) => s + t.amount_cents, 0);
+            const balance = (wUserData?.hosting_balance_cents as number) || 0;
+            const escrow = (wUserData?.escrow_held_cents as number) || 0;
+
+            result = {
+              balance_cents: balance,
+              balance_dollars: '$' + (balance / 100).toFixed(2),
+              escrow_held_cents: escrow,
+              available_cents: balance - escrow,
+              available_dollars: '$' + ((balance - escrow) / 100).toFixed(2),
+              total_earned_cents: totalEarned,
+              total_earned_dollars: '$' + (totalEarned / 100).toFixed(2),
+              connect: {
+                connected: !!wUserData?.stripe_connect_account_id,
+                onboarded: (wUserData?.stripe_connect_onboarded as boolean) || false,
+                payouts_enabled: (wUserData?.stripe_connect_payouts_enabled as boolean) || false,
+              },
+              can_withdraw: ((wUserData?.stripe_connect_payouts_enabled as boolean) || false) && (balance - escrow) >= 1000,
+            };
+            break;
+          }
+
+          case 'earnings': {
+            const ePeriod = (toolArgs.period as string) || '30d';
+            let ePeriodDays = 30;
+            if (ePeriod === '7d') ePeriodDays = 7;
+            else if (ePeriod === '90d') ePeriodDays = 90;
+            else if (ePeriod === 'all') ePeriodDays = 3650;
+            const eCutoff = new Date(Date.now() - ePeriodDays * 24 * 60 * 60 * 1000).toISOString();
+
+            const [ePeriodRes, eRecentRes] = await Promise.all([
+              fetch(
+                `${wSbUrl}/rest/v1/transfers?to_user_id=eq.${userId}&created_at=gte.${eCutoff}&select=amount_cents,app_id,function_name,reason,created_at&order=created_at.asc&limit=10000`,
+                { headers: wHeaders }
+              ),
+              fetch(
+                `${wSbUrl}/rest/v1/transfers?to_user_id=eq.${userId}&select=amount_cents,app_id,function_name,reason,created_at&order=created_at.desc&limit=10`,
+                { headers: wHeaders }
+              ),
+            ]);
+
+            const ePeriodTransfers = ePeriodRes.ok ? (await ePeriodRes.json()) as Array<{ amount_cents: number; app_id: string | null; function_name: string | null; reason: string; created_at: string }> : [];
+            const eRecentTransfers = eRecentRes.ok ? (await eRecentRes.json()) as Array<{ amount_cents: number; app_id: string | null; function_name: string | null; reason: string; created_at: string }> : [];
+            const ePeriodEarned = ePeriodTransfers.reduce((s: number, t: { amount_cents: number }) => s + t.amount_cents, 0);
+
+            const eAppMap = new Map<string, { earned_cents: number; call_count: number }>();
+            for (const t of ePeriodTransfers) {
+              const key = t.app_id || 'unknown';
+              const entry = eAppMap.get(key) || { earned_cents: 0, call_count: 0 };
+              entry.earned_cents += t.amount_cents;
+              entry.call_count += 1;
+              eAppMap.set(key, entry);
+            }
+
+            result = {
+              period: ePeriod,
+              period_earned_cents: ePeriodEarned,
+              period_earned_dollars: '$' + (ePeriodEarned / 100).toFixed(2),
+              by_app: Array.from(eAppMap.entries())
+                .map(([app_id, data]) => ({ app_id, earned_cents: data.earned_cents, call_count: data.call_count }))
+                .sort((a, b) => b.earned_cents - a.earned_cents),
+              recent: eRecentTransfers.slice(0, 5),
+            };
+            break;
+          }
+
+          case 'estimate_fee': {
+            const estAmount = toolArgs.amount_cents as number;
+            if (!estAmount || estAmount < 1000) throw new ToolError(INVALID_PARAMS, 'amount_cents must be at least 1000 ($10 minimum)');
+            const { estimatePayoutFee } = await import('../services/stripe-connect.ts');
+            const estimate = estimatePayoutFee(estAmount);
+            result = {
+              gross_cents: estimate.gross_cents,
+              gross_dollars: '$' + (estimate.gross_cents / 100).toFixed(2),
+              stripe_fee_cents: estimate.stripe_fee_cents,
+              fee_dollars: '$' + (estimate.stripe_fee_cents / 100).toFixed(2),
+              net_cents: estimate.net_cents,
+              net_dollars: '$' + (estimate.net_cents / 100).toFixed(2),
+              note: 'Stripe charges 0.25% + $0.25 per payout. Fee is deducted from the transfer amount.',
+            };
+            break;
+          }
+
+          case 'withdraw': {
+            const wdAmount = toolArgs.amount_cents as number;
+            if (!wdAmount || wdAmount < 1000) throw new ToolError(INVALID_PARAMS, 'amount_cents must be at least 1000 ($10 minimum)');
+
+            // Validate connect status and balance
+            const wdUserRes = await fetch(
+              `${wSbUrl}/rest/v1/users?id=eq.${userId}&select=stripe_connect_account_id,stripe_connect_payouts_enabled,hosting_balance_cents,escrow_held_cents`,
+              { headers: wHeaders }
+            );
+            const wdUserData = wdUserRes.ok ? ((await wdUserRes.json()) as Array<Record<string, unknown>>)[0] : null;
+
+            if (!wdUserData?.stripe_connect_account_id || !(wdUserData?.stripe_connect_payouts_enabled as boolean)) {
+              throw new ToolError(INVALID_PARAMS, 'Bank account not connected. Visit the Wallet page in your dashboard to complete Stripe onboarding first.');
+            }
+
+            const wdAvailable = ((wdUserData.hosting_balance_cents as number) || 0) - ((wdUserData.escrow_held_cents as number) || 0);
+            if (wdAvailable < wdAmount) {
+              throw new ToolError(INVALID_PARAMS, `Insufficient available balance: $${(wdAvailable / 100).toFixed(2)} available, $${(wdAmount / 100).toFixed(2)} requested.`);
+            }
+
+            const { estimatePayoutFee: estFee, createTransfer: xfer, createPayout: pout } = await import('../services/stripe-connect.ts');
+            const wdEstimate = estFee(wdAmount);
+
+            // Atomic debit + record
+            const wdRpcRes = await fetch(`${wSbUrl}/rest/v1/rpc/create_payout_record`, {
+              method: 'POST',
+              headers: { ...wHeaders, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                p_user_id: userId,
+                p_amount_cents: wdAmount,
+                p_stripe_fee_cents: wdEstimate.stripe_fee_cents,
+                p_net_cents: wdEstimate.net_cents,
+              }),
+            });
+
+            if (!wdRpcRes.ok) {
+              const wdRpcErr = await wdRpcRes.text();
+              throw new ToolError(INTERNAL_ERROR, wdRpcErr.includes('Insufficient') ? 'Insufficient balance' : 'Failed to create payout');
+            }
+
+            const wdPayoutId = await wdRpcRes.json();
+
+            // Transfer platform → connected account
+            let wdTransferResult;
+            try {
+              wdTransferResult = await xfer(wdAmount, wdUserData.stripe_connect_account_id as string, {
+                payout_id: String(wdPayoutId),
+                user_id: userId,
+              });
+            } catch {
+              await fetch(`${wSbUrl}/rest/v1/rpc/fail_payout_refund`, {
+                method: 'POST',
+                headers: { ...wHeaders, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ p_payout_id: wdPayoutId, p_failure_reason: 'stripe_transfer_failed' }),
+              });
+              throw new ToolError(INTERNAL_ERROR, 'Stripe transfer failed. Your balance has been restored.');
+            }
+
+            // Update record
+            await fetch(`${wSbUrl}/rest/v1/payouts?id=eq.${wdPayoutId}`, {
+              method: 'PATCH',
+              headers: { ...wHeaders, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+              body: JSON.stringify({ stripe_transfer_id: wdTransferResult.transfer_id, status: 'processing' }),
+            });
+
+            // Payout connected account → bank
+            try {
+              const wdPayoutResult = await pout(wdAmount, wdUserData.stripe_connect_account_id as string);
+              await fetch(`${wSbUrl}/rest/v1/payouts?id=eq.${wdPayoutId}`, {
+                method: 'PATCH',
+                headers: { ...wHeaders, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+                body: JSON.stringify({ stripe_payout_id: wdPayoutResult.payout_id }),
+              });
+            } catch (payoutErr) {
+              console.error('[WALLET] Payout trigger failed (transfer succeeded):', payoutErr);
+            }
+
+            result = {
+              success: true,
+              payout_id: wdPayoutId,
+              amount_dollars: '$' + (wdAmount / 100).toFixed(2),
+              estimated_fee_dollars: '$' + (wdEstimate.stripe_fee_cents / 100).toFixed(2),
+              estimated_net_dollars: '$' + (wdEstimate.net_cents / 100).toFixed(2),
+              status: 'processing',
+              message: `Withdrawal of $${(wdAmount / 100).toFixed(2)} initiated. Estimated bank deposit: $${(wdEstimate.net_cents / 100).toFixed(2)}. Arrives in 2-3 business days.`,
+            };
+            break;
+          }
+
+          case 'payouts': {
+            const pRes = await fetch(
+              `${wSbUrl}/rest/v1/payouts?user_id=eq.${userId}&select=*&order=created_at.desc&limit=20`,
+              { headers: wHeaders }
+            );
+            const pRows = pRes.ok ? (await pRes.json()) as Array<Record<string, unknown>> : [];
+            result = {
+              payouts: pRows.map((p: Record<string, unknown>) => ({
+                id: p.id,
+                amount_dollars: '$' + ((p.amount_cents as number) / 100).toFixed(2),
+                fee_dollars: '$' + ((p.stripe_fee_cents as number) / 100).toFixed(2),
+                net_dollars: '$' + ((p.net_cents as number) / 100).toFixed(2),
+                status: p.status,
+                created_at: p.created_at,
+                completed_at: p.completed_at,
+              })),
+              count: pRows.length,
+            };
+            break;
+          }
+
+          default:
+            throw new ToolError(INVALID_PARAMS, `Invalid action: ${walletAction}. Use status|earnings|withdraw|payouts|estimate_fee`);
         }
         break;
       }
