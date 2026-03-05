@@ -4436,6 +4436,8 @@ export function getLayoutHTML(options: {
     };
 
     // ===== 17. Database (Supabase) =====
+    let supabaseOAuthConnected = null; // null = unchecked, true/false
+
     async function loadDatabase(appId) {
       const container = document.getElementById('databaseContent');
       if (!container) return;
@@ -4449,6 +4451,21 @@ export function getLayoutHTML(options: {
           if (srvRes.ok) savedSupabaseServers = await srvRes.json();
         }
 
+        // Check OAuth status if not already checked
+        if (supabaseOAuthConnected === null) {
+          try {
+            const oauthRes = await fetch('/api/user/supabase/oauth/status', {
+              headers: { 'Authorization': 'Bearer ' + authToken },
+            });
+            if (oauthRes.ok) {
+              const oauthData = await oauthRes.json();
+              supabaseOAuthConnected = oauthData.connected;
+            } else {
+              supabaseOAuthConnected = false;
+            }
+          } catch { supabaseOAuthConnected = false; }
+        }
+
         // Load current app config
         let currentConfig = null;
         try {
@@ -4458,21 +4475,217 @@ export function getLayoutHTML(options: {
           if (cfgRes.ok) currentConfig = await cfgRes.json();
         } catch {}
 
-        const servers = savedSupabaseServers || [];
-        let html = '<div class="form-group"><label class="form-label">Supabase Server</label>' +
+        const servers = (savedSupabaseServers && savedSupabaseServers.configs) ? savedSupabaseServers.configs : (savedSupabaseServers || []);
+        let html = '';
+
+        // --- OAuth "Connect Supabase" section ---
+        if (supabaseOAuthConnected) {
+          html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">' +
+            '<div style="width:8px;height:8px;border-radius:50%;background:var(--success);"></div>' +
+            '<span style="font-size:13px;color:var(--text-muted);">Supabase account connected</span>' +
+            '<button class="btn btn-sm" style="margin-left:auto;font-size:11px;padding:2px 8px;color:var(--text-muted);border-color:var(--border);" onclick="disconnectSupabase()">Disconnect</button>' +
+          '</div>';
+
+          // Project picker
+          html += '<div class="form-group"><label class="form-label">Supabase Project</label>' +
+            '<div style="display:flex;gap:8px;align-items:center;">' +
+              '<select id="oauthProjectSelect" class="form-input" style="flex:1;"></select>' +
+              '<button class="btn btn-primary btn-sm" onclick="wireSupabaseProject()" id="wireProjectBtn">Wire to App</button>' +
+            '</div>' +
+            '<div id="oauthProjectStatus" style="font-size:12px;color:var(--text-muted);margin-top:6px;"></div>' +
+          '</div>';
+        } else {
+          html += '<div style="margin-bottom:20px;">' +
+            '<button class="btn btn-primary" onclick="connectSupabaseOAuth()" style="display:flex;align-items:center;gap:8px;">' +
+              '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>' +
+              'Connect Supabase Account' +
+            '</button>' +
+            '<p style="font-size:12px;color:var(--text-muted);margin:8px 0 0;">Authorize Ultralight to auto-wire your Supabase projects. No more copy-pasting keys.</p>' +
+          '</div>';
+        }
+
+        // --- Manual server dropdown (always available as fallback) ---
+        html += '<div style="border-top:1px solid var(--border);padding-top:16px;margin-top:8px;">' +
+          '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:10px;">' +
+            (supabaseOAuthConnected ? 'Or use saved server' : 'Manual Configuration') +
+          '</div>' +
+          '<div class="form-group"><label class="form-label">Supabase Server</label>' +
           '<select id="dbServerSelect" class="form-input" onchange="onDbServerChange()">' +
             '<option value="">None</option>' +
             servers.map(function(s) {
               const selected = currentConfig && currentConfig.config_id === s.id ? ' selected' : '';
-              return '<option value="' + s.id + '"' + selected + '>' + escapeHtml(s.url || s.id) + '</option>';
+              return '<option value="' + s.id + '"' + selected + '>' + escapeHtml(s.supabase_url || s.url || s.name || s.id) + '</option>';
             }).join('') +
           '</select></div>' +
-          '<button class="btn btn-primary btn-sm" onclick="saveDbConfig()">Save Database Config</button>';
+          '<button class="btn btn-sm" style="border-color:var(--border);color:var(--text-secondary);" onclick="saveDbConfig()">Save Database Config</button>' +
+        '</div>';
 
         container.innerHTML = html;
         appSupabaseChanged = false;
-      } catch { container.innerHTML = '<div class="empty-state"><div class="empty-state-desc">Could not load database config.</div></div>'; }
+
+        // If OAuth connected, load projects into the dropdown
+        if (supabaseOAuthConnected) {
+          loadOAuthProjects(currentConfig);
+        }
+      } catch {
+        container.innerHTML = '<div class="empty-state"><div class="empty-state-desc">Could not load database config.</div></div>';
+      }
     }
+
+    async function loadOAuthProjects(currentConfig) {
+      const select = document.getElementById('oauthProjectSelect');
+      const status = document.getElementById('oauthProjectStatus');
+      if (!select) return;
+
+      select.innerHTML = '<option value="">Loading projects...</option>';
+      select.disabled = true;
+
+      try {
+        const res = await fetch('/api/user/supabase/oauth/projects', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+
+        if (!res.ok) {
+          if (res.status === 401) {
+            // Token revoked or expired beyond refresh
+            supabaseOAuthConnected = false;
+            loadDatabase(currentAppId);
+            return;
+          }
+          throw new Error('Failed to load projects');
+        }
+
+        const data = await res.json();
+        const projects = data.projects || [];
+
+        if (projects.length === 0) {
+          select.innerHTML = '<option value="">No projects found</option>';
+          select.disabled = true;
+          return;
+        }
+
+        // Check if current config matches an OAuth project
+        let matchedRef = '';
+        if (currentConfig && currentConfig.url) {
+          const match = currentConfig.url.match(/https:\/\/([^.]+)\.supabase\.co/);
+          if (match) matchedRef = match[1];
+        }
+
+        select.innerHTML = '<option value="">Select a project...</option>' +
+          projects.map(function(p) {
+            const selected = p.ref === matchedRef ? ' selected' : '';
+            return '<option value="' + p.ref + '"' + selected + '>' +
+              escapeHtml(p.name) + ' (' + p.region + ')' +
+            '</option>';
+          }).join('');
+        select.disabled = false;
+
+        if (matchedRef && currentConfig && currentConfig.enabled) {
+          if (status) status.innerHTML = '<span style="color:var(--success);">&#10003; Wired to ' + escapeHtml(currentConfig.url || '') + '</span>';
+        }
+      } catch {
+        select.innerHTML = '<option value="">Failed to load projects</option>';
+        if (status) status.textContent = 'Could not fetch projects from Supabase.';
+      }
+    }
+
+    window.connectSupabaseOAuth = async function() {
+      try {
+        const res = await fetch('/api/user/supabase/oauth/authorize', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) {
+          showToast('Failed to start Supabase connection', 'error');
+          return;
+        }
+        const data = await res.json();
+        if (!data.url) {
+          showToast('Supabase OAuth not configured on this server', 'error');
+          return;
+        }
+
+        // Open popup
+        var popup = window.open(data.url, 'supabase-oauth', 'width=600,height=700,scrollbars=yes');
+
+        // Listen for success message from popup
+        function onMessage(event) {
+          if (event.data && event.data.type === 'supabase-oauth-success') {
+            window.removeEventListener('message', onMessage);
+            supabaseOAuthConnected = true;
+            savedSupabaseServers = null; // invalidate cache
+            showToast('Supabase account connected!');
+            loadDatabase(currentAppId);
+          }
+        }
+        window.addEventListener('message', onMessage);
+
+        // Fallback: poll for popup close
+        var pollTimer = setInterval(function() {
+          if (popup && popup.closed) {
+            clearInterval(pollTimer);
+            // Re-check status in case message was missed
+            setTimeout(function() {
+              supabaseOAuthConnected = null;
+              loadDatabase(currentAppId);
+            }, 500);
+          }
+        }, 1000);
+      } catch {
+        showToast('Failed to connect Supabase', 'error');
+      }
+    };
+
+    window.wireSupabaseProject = async function() {
+      const select = document.getElementById('oauthProjectSelect');
+      const projectRef = select ? select.value : '';
+      if (!projectRef) {
+        showToast('Please select a project first', 'error');
+        return;
+      }
+
+      const btn = document.getElementById('wireProjectBtn');
+      if (btn) { btn.disabled = true; btn.textContent = 'Wiring...'; }
+
+      try {
+        const res = await fetch('/api/user/supabase/oauth/connect', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_ref: projectRef, app_id: currentAppId }),
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(function() { return {}; });
+          showToast(errData.error || 'Failed to wire project', 'error');
+          return;
+        }
+
+        const data = await res.json();
+        showToast('Supabase project wired!');
+        savedSupabaseServers = null; // invalidate cache
+        loadDatabase(currentAppId);
+      } catch {
+        showToast('Failed to wire project', 'error');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Wire to App'; }
+      }
+    };
+
+    window.disconnectSupabase = async function() {
+      if (!confirm('Disconnect your Supabase account? Already-wired apps will keep working.')) return;
+      try {
+        const res = await fetch('/api/user/supabase/oauth/disconnect', {
+          method: 'DELETE',
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (res.ok) {
+          supabaseOAuthConnected = false;
+          showToast('Supabase account disconnected');
+          loadDatabase(currentAppId);
+        } else {
+          showToast('Failed to disconnect', 'error');
+        }
+      } catch { showToast('Failed to disconnect', 'error'); }
+    };
 
     window.onDbServerChange = function() { appSupabaseChanged = true; };
 

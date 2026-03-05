@@ -221,6 +221,121 @@ export async function handleUser(request: Request): Promise<Response> {
   }
 
   // ============================================
+  // SUPABASE OAUTH CALLBACK (unauthenticated — redirect from Supabase)
+  // Auth is validated via stored state → user_id mapping
+  // ============================================
+  if (path === '/api/user/supabase/oauth/callback' && method === 'GET') {
+    try {
+      const code = url.searchParams.get('code');
+      const state = url.searchParams.get('state');
+      const errorParam = url.searchParams.get('error');
+
+      if (errorParam) {
+        const desc = url.searchParams.get('error_description') || errorParam;
+        return new Response(getOAuthCallbackHtml(false, desc), {
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+
+      if (!code || !state) {
+        return new Response(getOAuthCallbackHtml(false, 'Missing code or state'), {
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+
+      // Look up stored state
+      const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } = getSupabaseEnv();
+      const stateRes = await fetch(
+        `${SB_URL}/rest/v1/supabase_oauth_state?state=eq.${state}&select=user_id,code_verifier`,
+        { headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` } }
+      );
+      const stateRows = await stateRes.json();
+      if (!Array.isArray(stateRows) || stateRows.length === 0) {
+        return new Response(getOAuthCallbackHtml(false, 'Invalid or expired state'), {
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+
+      const { user_id: oauthUserId, code_verifier: codeVerifier } = stateRows[0];
+
+      // Clean up state row
+      await fetch(`${SB_URL}/rest/v1/supabase_oauth_state?state=eq.${state}`, {
+        method: 'DELETE',
+        headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` },
+      });
+
+      // Exchange code for tokens
+      // @ts-ignore
+      const Deno = globalThis.Deno;
+      const clientId = Deno.env.get('SUPABASE_MGMT_OAUTH_CLIENT_ID') || '';
+      const clientSecret = Deno.env.get('SUPABASE_MGMT_OAUTH_CLIENT_SECRET') || '';
+      const baseUrl = `${url.protocol}//${url.host}`;
+      const redirectUri = `${baseUrl}/api/user/supabase/oauth/callback`;
+
+      const tokenRes = await fetch('https://api.supabase.com/v1/oauth/token', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Basic ' + btoa(`${clientId}:${clientSecret}`),
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code: code,
+          redirect_uri: redirectUri,
+          code_verifier: codeVerifier,
+        }).toString(),
+      });
+
+      if (!tokenRes.ok) {
+        const errText = await tokenRes.text();
+        console.error('Supabase token exchange failed:', errText);
+        return new Response(getOAuthCallbackHtml(false, 'Token exchange failed'), {
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+
+      const tokens = await tokenRes.json() as {
+        access_token: string;
+        refresh_token: string;
+        expires_in: number;
+        token_type: string;
+      };
+
+      // Encrypt and store tokens
+      const encAccessToken = await encryptEnvVar(tokens.access_token);
+      const encRefreshToken = await encryptEnvVar(tokens.refresh_token);
+      const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
+
+      // Upsert (unique on user_id)
+      await fetch(`${SB_URL}/rest/v1/user_supabase_oauth`, {
+        method: 'POST',
+        headers: {
+          'apikey': SB_KEY,
+          'Authorization': `Bearer ${SB_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates',
+        },
+        body: JSON.stringify({
+          user_id: oauthUserId,
+          access_token_encrypted: encAccessToken,
+          refresh_token_encrypted: encRefreshToken,
+          token_expires_at: expiresAt,
+          updated_at: new Date().toISOString(),
+        }),
+      });
+
+      return new Response(getOAuthCallbackHtml(true, ''), {
+        headers: { 'Content-Type': 'text/html' },
+      });
+    } catch (err) {
+      console.error('Supabase OAuth callback error:', err);
+      return new Response(getOAuthCallbackHtml(false, 'Internal error'), {
+        headers: { 'Content-Type': 'text/html' },
+      });
+    }
+  }
+
+  // ============================================
   // AUTHENTICATED ROUTES
   // ============================================
 
@@ -675,6 +790,280 @@ export async function handleUser(request: Request): Promise<Response> {
     } catch (err) {
       console.error('Delete Supabase config error:', err);
       return error('Failed to delete Supabase configuration', 500);
+    }
+  }
+
+  // ============================================
+  // SUPABASE MANAGEMENT API OAUTH
+  // "Connect Supabase" flow — lets users authorize Ultralight
+  // to read their Supabase projects and auto-wire credentials
+  // ============================================
+
+  // GET /api/user/supabase/oauth/authorize — Initiate OAuth flow
+  if (path === '/api/user/supabase/oauth/authorize' && method === 'GET') {
+    try {
+      // @ts-ignore
+      const Deno = globalThis.Deno;
+      const clientId = Deno.env.get('SUPABASE_MGMT_OAUTH_CLIENT_ID');
+      if (!clientId) {
+        return error('Supabase OAuth not configured', 501);
+      }
+
+      const baseUrl = `${url.protocol}//${url.host}`;
+      const redirectUri = `${baseUrl}/api/user/supabase/oauth/callback`;
+
+      // Generate PKCE code_verifier (43-128 chars, URL-safe)
+      const verifierBytes = new Uint8Array(32);
+      crypto.getRandomValues(verifierBytes);
+      const codeVerifier = btoa(String.fromCharCode(...verifierBytes))
+        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+      // Generate code_challenge = BASE64URL(SHA256(code_verifier))
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(codeVerifier));
+      const codeChallenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+      // Generate random state
+      const stateBytes = new Uint8Array(16);
+      crypto.getRandomValues(stateBytes);
+      const state = Array.from(stateBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+
+      // Store state + verifier for callback validation
+      const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } = getSupabaseEnv();
+      await fetch(`${SB_URL}/rest/v1/supabase_oauth_state`, {
+        method: 'POST',
+        headers: {
+          'apikey': SB_KEY,
+          'Authorization': `Bearer ${SB_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal',
+        },
+        body: JSON.stringify({
+          state: state,
+          user_id: userId,
+          code_verifier: codeVerifier,
+        }),
+      });
+
+      const authUrl = `https://api.supabase.com/v1/oauth/authorize?` +
+        `client_id=${encodeURIComponent(clientId)}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&response_type=code` +
+        `&state=${state}` +
+        `&code_challenge=${codeChallenge}` +
+        `&code_challenge_method=S256`;
+
+      return json({ url: authUrl });
+    } catch (err) {
+      console.error('Supabase OAuth authorize error:', err);
+      return error('Failed to initiate Supabase OAuth', 500);
+    }
+  }
+
+  // GET /api/user/supabase/oauth/status — Check if user has OAuth connected
+  if (path === '/api/user/supabase/oauth/status' && method === 'GET') {
+    try {
+      const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } = getSupabaseEnv();
+      const res = await fetch(
+        `${SB_URL}/rest/v1/user_supabase_oauth?user_id=eq.${userId}&select=id,token_expires_at`,
+        { headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` } }
+      );
+      const rows = await res.json();
+      const connected = Array.isArray(rows) && rows.length > 0;
+      return json({ connected: connected });
+    } catch {
+      return json({ connected: false });
+    }
+  }
+
+  // GET /api/user/supabase/oauth/projects — List user's Supabase projects via Management API
+  if (path === '/api/user/supabase/oauth/projects' && method === 'GET') {
+    try {
+      const accessToken = await getSupabaseMgmtToken(userId);
+      if (!accessToken) {
+        return error('Supabase account not connected. Please connect first.', 401);
+      }
+
+      const projRes = await fetch('https://api.supabase.com/v1/projects', {
+        headers: { 'Authorization': `Bearer ${accessToken}` },
+      });
+
+      if (!projRes.ok) {
+        console.error('Supabase Management API error:', await projRes.text());
+        return error('Failed to fetch Supabase projects', 502);
+      }
+
+      const projects = await projRes.json() as Array<{
+        id: string;
+        name: string;
+        region: string;
+        organization_id: string;
+        created_at: string;
+        status: string;
+      }>;
+
+      return json({
+        projects: projects
+          .filter((p: { status: string }) => p.status === 'ACTIVE_HEALTHY' || p.status === 'ACTIVE_UNHEALTHY' || !p.status)
+          .map((p: { id: string; name: string; region: string; organization_id: string }) => ({
+            ref: p.id,
+            name: p.name,
+            region: p.region,
+            organization_id: p.organization_id,
+            url: `https://${p.id}.supabase.co`,
+          })),
+      });
+    } catch (err) {
+      console.error('List Supabase projects error:', err);
+      return error('Failed to list Supabase projects', 500);
+    }
+  }
+
+  // POST /api/user/supabase/oauth/connect — Wire a Supabase project to an app
+  if (path === '/api/user/supabase/oauth/connect' && method === 'POST') {
+    try {
+      const body = await request.json();
+      const { project_ref, app_id } = body;
+
+      if (!project_ref || typeof project_ref !== 'string') {
+        return error('project_ref is required', 400);
+      }
+
+      const accessToken = await getSupabaseMgmtToken(userId);
+      if (!accessToken) {
+        return error('Supabase account not connected', 401);
+      }
+
+      // Fetch API keys from Management API
+      const keysRes = await fetch(`https://api.supabase.com/v1/projects/${project_ref}/api-keys`, {
+        headers: { 'Authorization': `Bearer ${accessToken}` },
+      });
+
+      if (!keysRes.ok) {
+        console.error('Fetch API keys error:', await keysRes.text());
+        return error('Failed to fetch project API keys', 502);
+      }
+
+      const apiKeys = await keysRes.json() as Array<{
+        name: string;
+        api_key: string;
+      }>;
+
+      // Find anon and service_role keys
+      const anonKeyObj = apiKeys.find((k: { name: string }) => k.name === 'anon');
+      const serviceKeyObj = apiKeys.find((k: { name: string }) => k.name === 'service_role');
+
+      if (!anonKeyObj) {
+        return error('Could not find anon key for this project', 404);
+      }
+
+      const supabaseUrl = `https://${project_ref}.supabase.co`;
+      const anonKey = anonKeyObj.api_key;
+      const serviceKey = serviceKeyObj?.api_key;
+
+      // Encrypt keys
+      const encryptedAnonKey = await encryptEnvVar(anonKey);
+      const encryptedServiceKey = serviceKey ? await encryptEnvVar(serviceKey) : null;
+
+      // Fetch project name for the config name
+      const projRes = await fetch('https://api.supabase.com/v1/projects', {
+        headers: { 'Authorization': `Bearer ${accessToken}` },
+      });
+      const projects = await projRes.json() as Array<{ id: string; name: string }>;
+      const project = projects.find((p: { id: string }) => p.id === project_ref);
+      const configName = project ? project.name : project_ref;
+
+      // Create or update user_supabase_configs entry
+      const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } = getSupabaseEnv();
+
+      // Check if config already exists for this URL
+      const existingRes = await fetch(
+        `${SB_URL}/rest/v1/user_supabase_configs?user_id=eq.${userId}&supabase_url=eq.${encodeURIComponent(supabaseUrl)}&select=id`,
+        { headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` } }
+      );
+      const existing = await existingRes.json();
+      let configId: string;
+
+      if (Array.isArray(existing) && existing.length > 0) {
+        // Update existing config with fresh keys
+        configId = existing[0].id;
+        await fetch(`${SB_URL}/rest/v1/user_supabase_configs?id=eq.${configId}`, {
+          method: 'PATCH',
+          headers: {
+            'apikey': SB_KEY,
+            'Authorization': `Bearer ${SB_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            anon_key_encrypted: encryptedAnonKey,
+            service_key_encrypted: encryptedServiceKey,
+            updated_at: new Date().toISOString(),
+          }),
+        });
+      } else {
+        // Create new config
+        const createRes = await fetch(`${SB_URL}/rest/v1/user_supabase_configs`, {
+          method: 'POST',
+          headers: {
+            'apikey': SB_KEY,
+            'Authorization': `Bearer ${SB_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=representation',
+          },
+          body: JSON.stringify({
+            user_id: userId,
+            name: configName,
+            supabase_url: supabaseUrl,
+            anon_key_encrypted: encryptedAnonKey,
+            service_key_encrypted: encryptedServiceKey,
+          }),
+        });
+
+        if (!createRes.ok) {
+          throw new Error(`Failed to create config: ${await createRes.text()}`);
+        }
+
+        const created = await createRes.json();
+        configId = Array.isArray(created) ? created[0].id : created.id;
+      }
+
+      // Optionally assign to app
+      if (app_id && typeof app_id === 'string') {
+        const appsService = createAppsService();
+        await appsService.update(app_id, {
+          supabase_config_id: configId,
+          supabase_enabled: true,
+        });
+      }
+
+      // Invalidate cached servers list
+      return json({
+        success: true,
+        config: {
+          id: configId,
+          name: configName,
+          supabase_url: supabaseUrl,
+          has_service_key: !!serviceKey,
+        },
+      });
+    } catch (err) {
+      console.error('Supabase OAuth connect error:', err);
+      return error('Failed to wire Supabase project', 500);
+    }
+  }
+
+  // DELETE /api/user/supabase/oauth/disconnect — Remove OAuth tokens
+  if (path === '/api/user/supabase/oauth/disconnect' && method === 'DELETE') {
+    try {
+      const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } = getSupabaseEnv();
+      await fetch(`${SB_URL}/rest/v1/user_supabase_oauth?user_id=eq.${userId}`, {
+        method: 'DELETE',
+        headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` },
+      });
+      return json({ success: true, message: 'Supabase account disconnected' });
+    } catch (err) {
+      console.error('Supabase OAuth disconnect error:', err);
+      return error('Failed to disconnect Supabase account', 500);
     }
   }
 
@@ -2294,6 +2683,132 @@ export async function getDecryptedPlatformSupabase(userId: string) {
   const configs = await listSupabaseConfigs(userId);
   if (configs.length === 0) return null;
   return getDecryptedSupabaseConfig(configs[0].id);
+}
+
+// ============================================
+// Supabase Management API OAuth helpers
+// ============================================
+
+/**
+ * Get a valid Supabase Management API access token for the user.
+ * Automatically refreshes if expired.
+ * Returns null if user hasn't connected their Supabase account.
+ */
+async function getSupabaseMgmtToken(userId: string): Promise<string | null> {
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/user_supabase_oauth?user_id=eq.${userId}&select=*`,
+    {
+      headers: {
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+    }
+  );
+
+  const rows = await res.json();
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+
+  const row = rows[0];
+  const accessToken = await decryptEnvVar(row.access_token_encrypted);
+  const refreshToken = await decryptEnvVar(row.refresh_token_encrypted);
+  const expiresAt = new Date(row.token_expires_at);
+
+  // If token is still valid (with 5 min buffer), use it
+  if (expiresAt.getTime() > Date.now() + 5 * 60 * 1000) {
+    return accessToken;
+  }
+
+  // Token expired — refresh it
+  // @ts-ignore
+  const Deno = globalThis.Deno;
+  const clientId = Deno.env.get('SUPABASE_MGMT_OAUTH_CLIENT_ID') || '';
+  const clientSecret = Deno.env.get('SUPABASE_MGMT_OAUTH_CLIENT_SECRET') || '';
+
+  const tokenRes = await fetch('https://api.supabase.com/v1/oauth/token', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Basic ' + btoa(`${clientId}:${clientSecret}`),
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+    }).toString(),
+  });
+
+  if (!tokenRes.ok) {
+    console.error('Supabase token refresh failed:', await tokenRes.text());
+    // Token revoked or invalid — clean up
+    await fetch(`${SUPABASE_URL}/rest/v1/user_supabase_oauth?user_id=eq.${userId}`, {
+      method: 'DELETE',
+      headers: {
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+    });
+    return null;
+  }
+
+  const tokens = await tokenRes.json() as {
+    access_token: string;
+    refresh_token: string;
+    expires_in: number;
+  };
+
+  // Update stored tokens
+  const encAccess = await encryptEnvVar(tokens.access_token);
+  const encRefresh = await encryptEnvVar(tokens.refresh_token);
+  const newExpiry = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
+
+  await fetch(`${SUPABASE_URL}/rest/v1/user_supabase_oauth?user_id=eq.${userId}`, {
+    method: 'PATCH',
+    headers: {
+      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      access_token_encrypted: encAccess,
+      refresh_token_encrypted: encRefresh,
+      token_expires_at: newExpiry,
+      updated_at: new Date().toISOString(),
+    }),
+  });
+
+  return tokens.access_token;
+}
+
+/**
+ * Generate the HTML page returned in the OAuth callback popup.
+ * On success: sends postMessage to parent window and closes.
+ * On failure: shows error message with close button.
+ */
+function getOAuthCallbackHtml(success: boolean, errorMessage: string): string {
+  if (success) {
+    return `<!DOCTYPE html><html><head><title>Connected</title>
+<style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a0a;color:#e5e5e5;}
+.card{text-align:center;padding:40px;border-radius:12px;background:#171717;border:1px solid #262626;}
+.check{font-size:48px;margin-bottom:16px;}
+h2{margin:0 0 8px;font-size:20px;}
+p{color:#a3a3a3;margin:0;font-size:14px;}</style></head>
+<body><div class="card"><div class="check">&#10003;</div><h2>Supabase Connected</h2><p>This window will close automatically...</p></div>
+<script>
+if(window.opener){window.opener.postMessage({type:'supabase-oauth-success'},'*');}
+setTimeout(function(){window.close();},1500);
+</script></body></html>`;
+  }
+
+  return `<!DOCTYPE html><html><head><title>Error</title>
+<style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a0a;color:#e5e5e5;}
+.card{text-align:center;padding:40px;border-radius:12px;background:#171717;border:1px solid #262626;}
+.x{font-size:48px;margin-bottom:16px;color:#ef4444;}
+h2{margin:0 0 8px;font-size:20px;}
+p{color:#a3a3a3;margin:0 0 20px;font-size:14px;}
+button{background:#262626;color:#e5e5e5;border:1px solid #404040;padding:8px 20px;border-radius:6px;cursor:pointer;font-size:14px;}</style></head>
+<body><div class="card"><div class="x">&#10007;</div><h2>Connection Failed</h2><p>${errorMessage}</p><button onclick="window.close()">Close</button></div>
+</body></html>`;
 }
 
 // ============================================
