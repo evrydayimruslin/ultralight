@@ -1988,6 +1988,11 @@ export function getLayoutHTML(options: {
           <div id="profileDropdown" class="profile-dropdown">
             <div id="profileDropdownHeader" class="profile-dropdown-header"><span id="profileEmail" style="font-size:12px;color:var(--text-muted);display:block;margin-top:2px;"></span></div>
             <div class="profile-dropdown-divider"></div>
+            <div class="profile-dropdown-item" data-action="dashboard">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+              Dashboard
+            </div>
+            <div class="profile-dropdown-divider"></div>
             <div class="profile-dropdown-item danger" data-action="signout">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
               Sign Out
@@ -2935,7 +2940,8 @@ export function getLayoutHTML(options: {
       el.addEventListener('click', function() {
         const action = this.dataset.action;
         profileDropdown.classList.remove('open');
-        if (action === 'signout') signOut();
+        if (action === 'dashboard') navigateToDashboard();
+        else if (action === 'signout') signOut();
       });
     });
 
@@ -3108,8 +3114,8 @@ export function getLayoutHTML(options: {
                   '<td style="padding:8px 12px;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(bid.message || '-') + '</td>' +
                   '<td style="padding:8px 12px;color:var(--text-muted)">' + relTime(bid.created_at) + '</td>' +
                   '<td style="padding:8px 12px">' +
-                    '<button class="btn btn-primary btn-sm" style="margin-right:4px" onclick="acceptBid(\'' + bid.bid_id + '\',\'' + bid.app_id + '\')">Accept</button>' +
-                    '<button class="btn btn-secondary btn-sm" onclick="rejectBid(\'' + bid.bid_id + '\',\'' + bid.app_id + '\')">Reject</button>' +
+                    '<button class="btn btn-primary btn-sm" style="margin-right:4px" onclick="acceptBid(\\\'' + bid.bid_id + '\\\',\\\'' + bid.app_id + '\\\')">Accept</button>' +
+                    '<button class="btn btn-secondary btn-sm" onclick="rejectBid(\\\'' + bid.bid_id + '\\\',\\\'' + bid.app_id + '\\\')">Reject</button>' +
                   '</td>' +
                 '</tr>';
               }).join('') +
@@ -3136,7 +3142,7 @@ export function getLayoutHTML(options: {
               outgoing.map(function(bid) {
                 var statusColor = bid.status === 'active' ? 'var(--accent)' : bid.status === 'accepted' ? 'var(--success)' : 'var(--text-muted)';
                 var cancelBtn = bid.status === 'active'
-                  ? '<button class="btn btn-secondary btn-sm" onclick="cancelBidFromUI(\'' + bid.bid_id + '\',\'' + bid.app_id + '\')">Cancel</button>'
+                  ? '<button class="btn btn-secondary btn-sm" onclick="cancelBidFromUI(\\\'' + bid.bid_id + '\\\',\\\'' + bid.app_id + '\\\')">Cancel</button>'
                   : '';
                 return '<tr style="border-bottom:1px solid var(--border)">' +
                   '<td style="padding:8px 12px"><a href="/a/' + bid.app_id + '/market" style="color:var(--accent)">' + escapeHtml(bid.app_name || 'Unknown') + '</a></td>' +
@@ -3883,8 +3889,8 @@ export function getLayoutHTML(options: {
                 '</label>' +
               '</div>' +
               '<div style="display:flex;gap:var(--space-2)">' +
-                '<button class="btn btn-primary btn-sm" onclick="saveAskPrice(\'' + appId + '\')">Save Listing</button>' +
-                (askVal ? '<button class="btn btn-secondary btn-sm" onclick="removeAskPrice(\'' + appId + '\')">Remove Ask Price</button>' : '') +
+                '<button class="btn btn-primary btn-sm" onclick="saveAskPrice(\\\'' + appId + '\\\')">Save Listing</button>' +
+                (askVal ? '<button class="btn btn-secondary btn-sm" onclick="removeAskPrice(\\\'' + appId + '\\\')">Remove Ask Price</button>' : '') +
               '</div>' +
             '</div>';
 
@@ -3915,8 +3921,8 @@ export function getLayoutHTML(options: {
                         '<td style="padding:8px 12px;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(bid.message || '-') + '</td>' +
                         '<td style="padding:8px 12px;color:var(--text-muted)">' + relTime(bid.created_at) + '</td>' +
                         '<td style="padding:8px 12px">' +
-                          '<button class="btn btn-primary btn-sm" style="margin-right:4px" onclick="acceptBid(\'' + bid.id + '\',\'' + appId + '\')">Accept</button>' +
-                          '<button class="btn btn-secondary btn-sm" onclick="rejectBid(\'' + bid.id + '\',\'' + appId + '\')">Reject</button>' +
+                          '<button class="btn btn-primary btn-sm" style="margin-right:4px" onclick="acceptBid(\\\'' + bid.id + '\\\',\\\'' + appId + '\\\')">Accept</button>' +
+                          '<button class="btn btn-secondary btn-sm" onclick="rejectBid(\\\'' + bid.id + '\\\',\\\'' + appId + '\\\')">Reject</button>' +
                         '</td>' +
                       '</tr>';
                     }).join('') +
@@ -3935,7 +3941,7 @@ export function getLayoutHTML(options: {
             : '';
 
           var instantBuyBtn = listing && listing.instant_buy && listing.ask_price_cents
-            ? '<button class="btn btn-primary" style="margin-top:var(--space-3)" onclick="buyNow(\'' + appId + '\')">Buy Now — $' + (listing.ask_price_cents / 100).toFixed(2) + '</button>'
+            ? '<button class="btn btn-primary" style="margin-top:var(--space-3)" onclick="buyNow(\\\'' + appId + '\\\')">Buy Now — $' + (listing.ask_price_cents / 100).toFixed(2) + '</button>'
             : '';
 
           var noteDisplay = listing && listing.listing_note
@@ -4000,7 +4006,7 @@ export function getLayoutHTML(options: {
               (myBid
                 ? '<div style="padding:var(--space-3);background:var(--bg-secondary);border-radius:var(--radius);margin-bottom:var(--space-3)">' +
                     '<p style="font-size:13px;font-weight:500">Your active bid: <span style="color:var(--success)">$' + (myBid.amount_cents / 100).toFixed(2) + '</span></p>' +
-                    '<button class="btn btn-secondary btn-sm" style="margin-top:var(--space-2)" onclick="cancelBidFromUI(\'' + myBid.id + '\',\'' + appId + '\')">Cancel Bid</button>' +
+                    '<button class="btn btn-secondary btn-sm" style="margin-top:var(--space-2)" onclick="cancelBidFromUI(\\\'' + myBid.id + '\\\',\\\'' + appId + '\\\')">Cancel Bid</button>' +
                   '</div>'
                 : '<div style="border-top:1px solid var(--border);padding-top:var(--space-4)">' +
                     '<h4 style="font-size:14px;font-weight:500;margin-bottom:var(--space-3)">Place a Bid</h4>' +
@@ -4014,7 +4020,7 @@ export function getLayoutHTML(options: {
                         '<input id="mktBidMessage" type="text" placeholder="Message to owner" class="input-field" style="width:100%">' +
                       '</div>' +
                     '</div>' +
-                    '<button class="btn btn-primary btn-sm" onclick="placeBidFromUI(\'' + appId + '\')">Place Bid</button>' +
+                    '<button class="btn btn-primary btn-sm" onclick="placeBidFromUI(\\\'' + appId + '\\\')">Place Bid</button>' +
                   '</div>'
               ) +
             '</div>';
