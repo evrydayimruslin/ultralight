@@ -4976,7 +4976,7 @@ export function getLayoutHTML(options: {
 
       var promptMsg = 'Enter withdrawal amount in dollars (minimum $10.00):' +
         '\\n\\nWithdrawable earnings: $' + withdrawableDollars +
-        '\\n\\nFees: 5% platform fee + Stripe payout fee (0.25% + $0.25)';
+        '\\n\\nFees: 10% platform fee + Stripe payout fee (0.25% + $0.25)';
       if (isCrossBorder) promptMsg += ' + 2% FX conversion';
       promptMsg += '\\nHold period: 14 days before payout is released to your bank.' +
         '\\n\\nOnly earned funds can be withdrawn (deposits cannot be cashed out).';
@@ -4992,8 +4992,8 @@ export function getLayoutHTML(options: {
         return;
       }
 
-      // Calculate platform fee (5%)
-      var platformFee = Math.ceil(cents * 0.05);
+      // Calculate platform fee (10%)
+      var platformFee = Math.ceil(cents * 0.10);
       var afterPlatform = cents - platformFee;
       // Calculate Stripe fee on amount after platform fee
       var stripeFee = Math.ceil(afterPlatform * 0.0025 + 25);
@@ -5004,7 +5004,7 @@ export function getLayoutHTML(options: {
       var releaseDateStr = releaseDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
       var confirmMsg = 'Withdraw $' + (cents / 100).toFixed(2) + '?' +
-        '\\n\\nPlatform fee (5%): $' + (platformFee / 100).toFixed(2) +
+        '\\n\\nPlatform fee (10%): $' + (platformFee / 100).toFixed(2) +
         '\\nStripe fee: $' + (stripeFee / 100).toFixed(2);
       if (isCrossBorder) confirmMsg += ' (incl. 2% FX)';
       confirmMsg += '\\nEstimated bank deposit: ~$' + (net / 100).toFixed(2) +

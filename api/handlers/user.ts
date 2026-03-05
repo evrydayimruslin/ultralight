@@ -5,7 +5,7 @@ import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
 import { createUserService } from '../services/user.ts';
 import { validateAPIKey } from '../services/ai.ts';
-import { BYOK_PROVIDERS, type BYOKProvider, calcGrossWithStripeFee } from '../../shared/types/index.ts';
+import { BYOK_PROVIDERS, type BYOKProvider } from '../../shared/types/index.ts';
 import {
   createToken,
   listTokens,
@@ -1199,16 +1199,17 @@ export async function handleUser(request: Request): Promise<Response> {
         );
       }
 
-      // Calculate gross charge: deposit + Stripe fee pass-through
-      const grossCents = calcGrossWithStripeFee(amountCents);
-      const feeCents = grossCents - amountCents;
+      // Charge exactly what the user deposits — platform absorbs Stripe fees.
+      // $10 deposit = $10 balance. No fee pass-through.
+      // Platform recovers via 10% withdrawal fee on earnings cashout.
+      const chargeCents = amountCents;
 
       // Create Stripe Checkout Session with card + ACH + Link
       // - Cards: setup_future_usage saves for off-session auto top-ups
       // - ACH (us_bank_account): lower fees (0.8% capped $5), Plaid bank-linking handled by Stripe
       // - Link: one-click checkout, remembers payment methods across Stripe merchants
       // - No tax at deposit — tax applies at service consumption (hosting/calls)
-      // - metadata.amount_cents is the NET deposit credited to the user's balance
+      // - metadata.amount_cents is the deposit credited to the user's balance
       const checkoutParams: Record<string, string> = {
         'mode': 'payment',
         'customer': stripeCustomerId,
@@ -1220,10 +1221,10 @@ export async function handleUser(request: Request): Promise<Response> {
         // ACH: verification handled by Stripe/Plaid, mandate auto-created
         'payment_method_options[us_bank_account][financial_connections][permissions][0]': 'payment_method',
         'line_items[0][price_data][currency]': 'usd',
-        'line_items[0][price_data][product_data][name]': 'Ultralight Hosting Deposit',
+        'line_items[0][price_data][product_data][name]': 'Ultralight Balance',
         'line_items[0][price_data][product_data][description]':
-          `$${(amountCents / 100).toFixed(2)} hosting credit + $${(feeCents / 100).toFixed(2)} processing fee`,
-        'line_items[0][price_data][unit_amount]': String(grossCents),
+          `$${(amountCents / 100).toFixed(2)} platform credit`,
+        'line_items[0][price_data][unit_amount]': String(chargeCents),
         'line_items[0][quantity]': '1',
         'metadata[user_id]': user.id,
         'metadata[amount_cents]': String(amountCents),
@@ -1559,7 +1560,7 @@ export async function handleUser(request: Request): Promise<Response> {
   // Body: { amount_cents: number } (minimum 1000 = $10.00)
   // Only earned funds (tool_call, page_view, marketplace_sale) can be withdrawn — deposits cannot.
   // Withdrawals are held for 14 days before Stripe transfer is executed.
-  // A 5% platform fee is deducted from the withdrawal amount.
+  // A 10% platform fee is deducted from the withdrawal amount.
   if (path === '/api/user/connect/withdraw' && method === 'POST') {
     try {
       const user = await authenticate(request);
@@ -1632,7 +1633,7 @@ export async function handleUser(request: Request): Promise<Response> {
         );
       }
 
-      // Calculate platform fee (5% of withdrawal)
+      // Calculate platform fee (10% of withdrawal)
       const platformFeeCents = Math.ceil(amountCents * PLATFORM_FEE_PERCENT);
       const amountAfterPlatformFee = amountCents - platformFeeCents;
 
@@ -1678,8 +1679,8 @@ export async function handleUser(request: Request): Promise<Response> {
       const releaseDateStr = releaseDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
       const feeBreakdown = isCrossBorder
-        ? `Platform fee: $${(platformFeeCents / 100).toFixed(2)} (5%) + Stripe fee: $${(estimate.stripe_fee_cents / 100).toFixed(2)} (incl. 2% FX)`
-        : `Platform fee: $${(platformFeeCents / 100).toFixed(2)} (5%) + Stripe fee: $${(estimate.stripe_fee_cents / 100).toFixed(2)}`;
+        ? `Platform fee: $${(platformFeeCents / 100).toFixed(2)} (10%) + Stripe fee: $${(estimate.stripe_fee_cents / 100).toFixed(2)} (incl. 2% FX)`
+        : `Platform fee: $${(platformFeeCents / 100).toFixed(2)} (10%) + Stripe fee: $${(estimate.stripe_fee_cents / 100).toFixed(2)}`;
 
       return json({
         success: true,

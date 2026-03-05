@@ -485,7 +485,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
       'Manage your wallet: check balance, view earnings, withdraw to bank, view payout history. ' +
       'action="status": balance + earnings summary + connect status. ' +
       'action="earnings": detailed earnings breakdown by app (period: 7d/30d/90d/all). ' +
-      'action="withdraw": request withdrawal to connected bank (amount_cents required, min 1000). 5% platform fee applies. 14-day hold before payout. ' +
+      'action="withdraw": request withdrawal to connected bank (amount_cents required, min 1000). 10% platform fee applies. 14-day hold before payout. ' +
       'action="payouts": payout history with hold/release dates. ' +
       'action="estimate_fee": preview withdrawal fee before committing (amount_cents required).',
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -1670,14 +1670,14 @@ async function handleToolsCall(
               gross_cents: estAmount,
               gross_dollars: '$' + (estAmount / 100).toFixed(2),
               platform_fee_cents: estPlatformFee,
-              platform_fee_dollars: '$' + (estPlatformFee / 100).toFixed(2) + ' (5%)',
+              platform_fee_dollars: '$' + (estPlatformFee / 100).toFixed(2) + ' (10%)',
               amount_after_platform_fee_cents: estAfterPlatform,
               stripe_fee_cents: estimate.stripe_fee_cents,
               stripe_fee_dollars: '$' + (estimate.stripe_fee_cents / 100).toFixed(2),
               net_cents: estimate.net_cents,
               net_dollars: '$' + (estimate.net_cents / 100).toFixed(2),
               hold_days: estHoldDays,
-              note: '5% platform fee + Stripe payout fee (0.25% + $0.25). Payouts held ' + estHoldDays + ' days before release.',
+              note: '10% platform fee + Stripe payout fee (0.25% + $0.25). Payouts held ' + estHoldDays + ' days before release.',
             };
             break;
           }
@@ -1729,7 +1729,7 @@ async function handleToolsCall(
               wdIsCrossBorder = wdConnectStatus.country !== undefined && wdConnectStatus.country !== 'US';
             } catch { /* Stripe unavailable — assume domestic */ }
 
-            // Calculate platform fee (5%)
+            // Calculate platform fee (10%)
             const wdPlatformFee = Math.ceil(wdAmount * wdPlatformRate);
             const wdAmountAfterPlatformFee = wdAmount - wdPlatformFee;
             const wdEstimate = estFee(wdAmountAfterPlatformFee, wdIsCrossBorder);
@@ -1760,14 +1760,14 @@ async function handleToolsCall(
               success: true,
               payout_id: wdPayoutId,
               amount_dollars: '$' + (wdAmount / 100).toFixed(2),
-              platform_fee_dollars: '$' + (wdPlatformFee / 100).toFixed(2) + ' (5%)',
+              platform_fee_dollars: '$' + (wdPlatformFee / 100).toFixed(2) + ' (10%)',
               estimated_stripe_fee_dollars: '$' + (wdEstimate.stripe_fee_cents / 100).toFixed(2),
               estimated_net_dollars: '$' + (wdEstimate.net_cents / 100).toFixed(2),
               status: 'held',
               release_at: wdReleaseDate.toISOString(),
               hold_days: wdHoldDays,
               message: `Withdrawal of $${(wdAmount / 100).toFixed(2)} submitted. ` +
-                `Platform fee: $${(wdPlatformFee / 100).toFixed(2)} (5%). ` +
+                `Platform fee: $${(wdPlatformFee / 100).toFixed(2)} (10%). ` +
                 `Estimated bank deposit: ~$${(wdEstimate.net_cents / 100).toFixed(2)}. ` +
                 `Payout releases on ${wdReleaseDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}.`,
             };
