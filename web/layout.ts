@@ -4567,8 +4567,10 @@ export function getLayoutHTML(options: {
         // Check if current config matches an OAuth project
         let matchedRef = '';
         if (currentConfig && currentConfig.url) {
-          const match = currentConfig.url.match(/https:\/\/([^.]+)\.supabase\.co/);
-          if (match) matchedRef = match[1];
+          var urlStr = currentConfig.url || '';
+          if (urlStr.indexOf('.supabase.co') > -1) {
+            matchedRef = urlStr.replace('https://', '').split('.')[0];
+          }
         }
 
         select.innerHTML = '<option value="">Select a project...</option>' +
