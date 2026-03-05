@@ -3126,7 +3126,7 @@ export function getLayoutHTML(options: {
         if (outgoing.length === 0) {
           outEl.innerHTML =
             '<h3 style="font-size:14px;font-weight:600;margin-bottom:var(--space-3);color:var(--text-primary)">Your Bids</h3>' +
-            '<p style="font-size:13px;color:var(--text-muted)">You haven\'t placed any bids.</p>';
+            '<p style="font-size:13px;color:var(--text-muted)">You haven\\'t placed any bids.</p>';
         } else {
           outEl.innerHTML =
             '<h3 style="font-size:14px;font-weight:600;margin-bottom:var(--space-3);color:var(--text-primary)">Your Bids (' + outgoing.length + ')</h3>' +
@@ -3884,7 +3884,7 @@ export function getLayoutHTML(options: {
                   ' Allow instant buy at ask price' +
                 '</label>' +
                 '<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">' +
-                  '<input id="mktShowMetrics" type="checkbox"' + (listing && listing.show_metrics ? ' checked' : '') + ' onchange="toggleMetricsVisibility(\'' + appId + '\', this.checked)">' +
+                  '<input id="mktShowMetrics" type="checkbox"' + (listing && listing.show_metrics ? ' checked' : '') + ' onchange="toggleMetricsVisibility(\\\'' + appId + '\\\', this.checked)">' +
                   ' Show usage metrics to potential bidders' +
                 '</label>' +
               '</div>' +
@@ -4932,7 +4932,7 @@ export function getLayoutHTML(options: {
           var countryInfo = '';
           if (data.country && data.country !== 'US') {
             var currency = (data.default_currency || '').toUpperCase();
-            countryInfo = '<div style="font-size:11px;color:var(--text-muted);margin-top:var(--space-2);">Payout country: ' + data.country + (currency ? ' (' + currency + ')' : '') + '. Withdrawals will be converted from USD at Stripe\'s exchange rate (+ 2% FX fee).</div>';
+            countryInfo = '<div style="font-size:11px;color:var(--text-muted);margin-top:var(--space-2);">Payout country: ' + data.country + (currency ? ' (' + currency + ')' : '') + '. Withdrawals will be converted from USD at Stripe\\'s exchange rate (+ 2% FX fee).</div>';
           }
           if (badge) { badge.textContent = 'Connected'; badge.style.background = 'rgba(34,197,94,0.15)'; badge.style.color = 'var(--success)'; }
           if (section) section.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Your bank account is connected and ready for withdrawals.</p>' + countryInfo;
