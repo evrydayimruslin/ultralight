@@ -50,6 +50,12 @@ export const CROSS_BORDER_FX_PERCENT = 0.02;
 // Minimum withdrawal: must exceed the fixed fee meaningfully
 export const MIN_WITHDRAWAL_CENTS = 1000; // $10.00
 
+// Platform withdrawal fee: 5% deducted from every withdrawal
+export const PLATFORM_FEE_PERCENT = 0.05;
+
+// Payout hold period: 14 days before Stripe transfer is executed
+export const PAYOUT_HOLD_DAYS = 14;
+
 // ============================================
 // HELPERS
 // ============================================

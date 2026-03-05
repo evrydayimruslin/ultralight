@@ -485,8 +485,8 @@ const PLATFORM_TOOLS: MCPTool[] = [
       'Manage your wallet: check balance, view earnings, withdraw to bank, view payout history. ' +
       'action="status": balance + earnings summary + connect status. ' +
       'action="earnings": detailed earnings breakdown by app (period: 7d/30d/90d/all). ' +
-      'action="withdraw": request withdrawal to connected bank (amount_cents required, min 1000). ' +
-      'action="payouts": payout history. ' +
+      'action="withdraw": request withdrawal to connected bank (amount_cents required, min 1000). 5% platform fee applies. 14-day hold before payout. ' +
+      'action="payouts": payout history with hold/release dates. ' +
       'action="estimate_fee": preview withdrawal fee before committing (amount_cents required).',
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     inputSchema: {
@@ -1662,16 +1662,22 @@ async function handleToolsCall(
           case 'estimate_fee': {
             const estAmount = toolArgs.amount_cents as number;
             if (!estAmount || estAmount < 1000) throw new ToolError(INVALID_PARAMS, 'amount_cents must be at least 1000 ($10 minimum)');
-            const { estimatePayoutFee } = await import('../services/stripe-connect.ts');
-            const estimate = estimatePayoutFee(estAmount);
+            const { estimatePayoutFee, PLATFORM_FEE_PERCENT: estPlatformRate, PAYOUT_HOLD_DAYS: estHoldDays } = await import('../services/stripe-connect.ts');
+            const estPlatformFee = Math.ceil(estAmount * estPlatformRate);
+            const estAfterPlatform = estAmount - estPlatformFee;
+            const estimate = estimatePayoutFee(estAfterPlatform);
             result = {
-              gross_cents: estimate.gross_cents,
-              gross_dollars: '$' + (estimate.gross_cents / 100).toFixed(2),
+              gross_cents: estAmount,
+              gross_dollars: '$' + (estAmount / 100).toFixed(2),
+              platform_fee_cents: estPlatformFee,
+              platform_fee_dollars: '$' + (estPlatformFee / 100).toFixed(2) + ' (5%)',
+              amount_after_platform_fee_cents: estAfterPlatform,
               stripe_fee_cents: estimate.stripe_fee_cents,
-              fee_dollars: '$' + (estimate.stripe_fee_cents / 100).toFixed(2),
+              stripe_fee_dollars: '$' + (estimate.stripe_fee_cents / 100).toFixed(2),
               net_cents: estimate.net_cents,
               net_dollars: '$' + (estimate.net_cents / 100).toFixed(2),
-              note: 'Stripe charges 0.25% + $0.25 per payout. Fee is deducted from the transfer amount.',
+              hold_days: estHoldDays,
+              note: '5% platform fee + Stripe payout fee (0.25% + $0.25). Payouts held ' + estHoldDays + ' days before release.',
             };
             break;
           }
@@ -1682,7 +1688,7 @@ async function handleToolsCall(
 
             // Validate connect status and balance
             const wdUserRes = await fetch(
-              `${wSbUrl}/rest/v1/users?id=eq.${userId}&select=stripe_connect_account_id,stripe_connect_payouts_enabled,hosting_balance_cents,escrow_held_cents`,
+              `${wSbUrl}/rest/v1/users?id=eq.${userId}&select=stripe_connect_account_id,stripe_connect_payouts_enabled,hosting_balance_cents,escrow_held_cents,total_earned_cents`,
               { headers: wHeaders }
             );
             const wdUserData = wdUserRes.ok ? ((await wdUserRes.json()) as Array<Record<string, unknown>>)[0] : null;
@@ -1696,10 +1702,39 @@ async function handleToolsCall(
               throw new ToolError(INVALID_PARAMS, `Insufficient available balance: $${(wdAvailable / 100).toFixed(2)} available, $${(wdAmount / 100).toFixed(2)} requested.`);
             }
 
-            const { estimatePayoutFee: estFee, createTransfer: xfer, createPayout: pout } = await import('../services/stripe-connect.ts');
-            const wdEstimate = estFee(wdAmount);
+            // Earnings-only check
+            const wdPayoutsRes = await fetch(
+              `${wSbUrl}/rest/v1/payouts?user_id=eq.${userId}&status=in.(held,pending,processing,paid)&select=amount_cents`,
+              { headers: wHeaders }
+            );
+            let wdTotalWithdrawn = 0;
+            if (wdPayoutsRes.ok) {
+              const wdPayoutsArr = (await wdPayoutsRes.json()) as Array<{ amount_cents: number }>;
+              wdTotalWithdrawn = wdPayoutsArr.reduce((s: number, p: { amount_cents: number }) => s + p.amount_cents, 0);
+            }
+            const wdWithdrawable = Math.max(0, ((wdUserData.total_earned_cents as number) || 0) - wdTotalWithdrawn);
+            if (wdWithdrawable < wdAmount) {
+              throw new ToolError(INVALID_PARAMS, `Only earned funds can be withdrawn. Withdrawable: $${(wdWithdrawable / 100).toFixed(2)}, requested: $${(wdAmount / 100).toFixed(2)}.`);
+            }
 
-            // Atomic debit + record
+            const {
+              estimatePayoutFee: estFee, getAccountStatus: wdGetStatus,
+              PLATFORM_FEE_PERCENT: wdPlatformRate, PAYOUT_HOLD_DAYS: wdHoldDays,
+            } = await import('../services/stripe-connect.ts');
+
+            // Detect cross-border for accurate Stripe fee estimation
+            let wdIsCrossBorder = false;
+            try {
+              const wdConnectStatus = await wdGetStatus(wdUserData.stripe_connect_account_id as string);
+              wdIsCrossBorder = wdConnectStatus.country !== undefined && wdConnectStatus.country !== 'US';
+            } catch { /* Stripe unavailable — assume domestic */ }
+
+            // Calculate platform fee (5%)
+            const wdPlatformFee = Math.ceil(wdAmount * wdPlatformRate);
+            const wdAmountAfterPlatformFee = wdAmount - wdPlatformFee;
+            const wdEstimate = estFee(wdAmountAfterPlatformFee, wdIsCrossBorder);
+
+            // Atomic debit + held record (no immediate Stripe transfer)
             const wdRpcRes = await fetch(`${wSbUrl}/rest/v1/rpc/create_payout_record`, {
               method: 'POST',
               headers: { ...wHeaders, 'Content-Type': 'application/json' },
@@ -1708,59 +1743,33 @@ async function handleToolsCall(
                 p_amount_cents: wdAmount,
                 p_stripe_fee_cents: wdEstimate.stripe_fee_cents,
                 p_net_cents: wdEstimate.net_cents,
+                p_platform_fee_cents: wdPlatformFee,
               }),
             });
 
             if (!wdRpcRes.ok) {
               const wdRpcErr = await wdRpcRes.text();
+              if (wdRpcErr.includes('exceeds earnings')) throw new ToolError(INVALID_PARAMS, 'Withdrawal exceeds earned funds. Only earnings can be withdrawn.');
               throw new ToolError(INTERNAL_ERROR, wdRpcErr.includes('Insufficient') ? 'Insufficient balance' : 'Failed to create payout');
             }
 
             const wdPayoutId = await wdRpcRes.json();
-
-            // Transfer platform → connected account
-            let wdTransferResult;
-            try {
-              wdTransferResult = await xfer(wdAmount, wdUserData.stripe_connect_account_id as string, {
-                payout_id: String(wdPayoutId),
-                user_id: userId,
-              });
-            } catch {
-              await fetch(`${wSbUrl}/rest/v1/rpc/fail_payout_refund`, {
-                method: 'POST',
-                headers: { ...wHeaders, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ p_payout_id: wdPayoutId, p_failure_reason: 'stripe_transfer_failed' }),
-              });
-              throw new ToolError(INTERNAL_ERROR, 'Stripe transfer failed. Your balance has been restored.');
-            }
-
-            // Update record
-            await fetch(`${wSbUrl}/rest/v1/payouts?id=eq.${wdPayoutId}`, {
-              method: 'PATCH',
-              headers: { ...wHeaders, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-              body: JSON.stringify({ stripe_transfer_id: wdTransferResult.transfer_id, status: 'processing' }),
-            });
-
-            // Payout connected account → bank
-            try {
-              const wdPayoutResult = await pout(wdAmount, wdUserData.stripe_connect_account_id as string);
-              await fetch(`${wSbUrl}/rest/v1/payouts?id=eq.${wdPayoutId}`, {
-                method: 'PATCH',
-                headers: { ...wHeaders, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-                body: JSON.stringify({ stripe_payout_id: wdPayoutResult.payout_id }),
-              });
-            } catch (payoutErr) {
-              console.error('[WALLET] Payout trigger failed (transfer succeeded):', payoutErr);
-            }
+            const wdReleaseDate = new Date(Date.now() + wdHoldDays * 24 * 60 * 60 * 1000);
 
             result = {
               success: true,
               payout_id: wdPayoutId,
               amount_dollars: '$' + (wdAmount / 100).toFixed(2),
-              estimated_fee_dollars: '$' + (wdEstimate.stripe_fee_cents / 100).toFixed(2),
+              platform_fee_dollars: '$' + (wdPlatformFee / 100).toFixed(2) + ' (5%)',
+              estimated_stripe_fee_dollars: '$' + (wdEstimate.stripe_fee_cents / 100).toFixed(2),
               estimated_net_dollars: '$' + (wdEstimate.net_cents / 100).toFixed(2),
-              status: 'processing',
-              message: `Withdrawal of $${(wdAmount / 100).toFixed(2)} initiated. Estimated bank deposit: $${(wdEstimate.net_cents / 100).toFixed(2)}. Arrives in 2-3 business days.`,
+              status: 'held',
+              release_at: wdReleaseDate.toISOString(),
+              hold_days: wdHoldDays,
+              message: `Withdrawal of $${(wdAmount / 100).toFixed(2)} submitted. ` +
+                `Platform fee: $${(wdPlatformFee / 100).toFixed(2)} (5%). ` +
+                `Estimated bank deposit: ~$${(wdEstimate.net_cents / 100).toFixed(2)}. ` +
+                `Payout releases on ${wdReleaseDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}.`,
             };
             break;
           }
@@ -1775,9 +1784,11 @@ async function handleToolsCall(
               payouts: pRows.map((p: Record<string, unknown>) => ({
                 id: p.id,
                 amount_dollars: '$' + ((p.amount_cents as number) / 100).toFixed(2),
-                fee_dollars: '$' + ((p.stripe_fee_cents as number) / 100).toFixed(2),
+                platform_fee_dollars: '$' + (((p.platform_fee_cents as number) || 0) / 100).toFixed(2),
+                stripe_fee_dollars: '$' + ((p.stripe_fee_cents as number) / 100).toFixed(2),
                 net_dollars: '$' + ((p.net_cents as number) / 100).toFixed(2),
                 status: p.status,
+                release_at: p.release_at,
                 created_at: p.created_at,
                 completed_at: p.completed_at,
               })),

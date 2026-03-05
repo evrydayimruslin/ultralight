@@ -1295,9 +1295,9 @@ export async function handleUser(request: Request): Promise<Response> {
           `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&select=amount_cents,app_id,function_name,reason,created_at&order=created_at.desc&limit=10`,
           { headers }
         ),
-        // Total successful withdrawals (for withdrawable calculation)
+        // Total withdrawals including held (for withdrawable calculation)
         fetch(
-          `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(pending,processing,paid)&select=amount_cents`,
+          `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(held,pending,processing,paid)&select=amount_cents`,
           { headers }
         ),
       ]);
@@ -1466,9 +1466,9 @@ export async function handleUser(request: Request): Promise<Response> {
         });
       }
 
-      // Calculate withdrawable earnings = total earned - total withdrawn (non-failed)
+      // Calculate withdrawable earnings = total earned - total withdrawn (incl. held)
       const payoutsRes = await fetch(
-        `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(pending,processing,paid)&select=amount_cents`,
+        `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(held,pending,processing,paid)&select=amount_cents`,
         { headers: sbHeaders }
       );
       let totalWithdrawn = 0;
@@ -1558,6 +1558,8 @@ export async function handleUser(request: Request): Promise<Response> {
   // POST /api/user/connect/withdraw — request a withdrawal to connected bank
   // Body: { amount_cents: number } (minimum 1000 = $10.00)
   // Only earned funds (tool_call, page_view, marketplace_sale) can be withdrawn — deposits cannot.
+  // Withdrawals are held for 14 days before Stripe transfer is executed.
+  // A 5% platform fee is deducted from the withdrawal amount.
   if (path === '/api/user/connect/withdraw' && method === 'POST') {
     try {
       const user = await authenticate(request);
@@ -1565,8 +1567,8 @@ export async function handleUser(request: Request): Promise<Response> {
       const amountCents = body.amount_cents;
 
       const {
-        MIN_WITHDRAWAL_CENTS, estimatePayoutFee,
-        createTransfer, createPayout, getAccountStatus
+        MIN_WITHDRAWAL_CENTS, estimatePayoutFee, getAccountStatus,
+        PLATFORM_FEE_PERCENT, PAYOUT_HOLD_DAYS,
       } = await import('../services/stripe-connect.ts');
 
       if (!amountCents || typeof amountCents !== 'number' || amountCents < MIN_WITHDRAWAL_CENTS) {
@@ -1612,7 +1614,7 @@ export async function handleUser(request: Request): Promise<Response> {
 
       // Earnings-only withdrawal check (defense-in-depth — RPC also validates)
       const payoutsRes = await fetch(
-        `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(pending,processing,paid)&select=amount_cents`,
+        `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(held,pending,processing,paid)&select=amount_cents`,
         { headers: sbHeaders }
       );
       let totalWithdrawn = 0;
@@ -1630,17 +1632,22 @@ export async function handleUser(request: Request): Promise<Response> {
         );
       }
 
-      // Detect cross-border for fee estimation
+      // Calculate platform fee (5% of withdrawal)
+      const platformFeeCents = Math.ceil(amountCents * PLATFORM_FEE_PERCENT);
+      const amountAfterPlatformFee = amountCents - platformFeeCents;
+
+      // Detect cross-border for Stripe fee estimation
       let isCrossBorder = false;
       try {
         const connectStatus = await getAccountStatus(userData.stripe_connect_account_id);
         isCrossBorder = connectStatus.country !== undefined && connectStatus.country !== 'US';
       } catch { /* Stripe unavailable — assume domestic */ }
 
-      // Calculate fee estimate (includes FX fee for cross-border)
-      const estimate = estimatePayoutFee(amountCents, isCrossBorder);
+      // Calculate Stripe fee estimate on the amount after platform fee
+      const estimate = estimatePayoutFee(amountAfterPlatformFee, isCrossBorder);
 
-      // Step 1: Atomic debit + payout record creation + earnings validation
+      // Atomic debit + held payout record creation + earnings validation
+      // Balance is debited immediately; Stripe transfer happens after 14-day hold
       const rpcRes = await fetch(`${sbUrl}/rest/v1/rpc/create_payout_record`, {
         method: 'POST',
         headers: {
@@ -1652,6 +1659,7 @@ export async function handleUser(request: Request): Promise<Response> {
           p_amount_cents: amountCents,
           p_stripe_fee_cents: estimate.stripe_fee_cents,
           p_net_cents: estimate.net_cents,
+          p_platform_fee_cents: platformFeeCents,
         }),
       });
 
@@ -1665,91 +1673,130 @@ export async function handleUser(request: Request): Promise<Response> {
 
       const payoutId = await rpcRes.json();
 
-      // Step 2: Create Stripe Transfer (platform → connected account)
-      let transferResult;
-      try {
-        transferResult = await createTransfer(amountCents, userData.stripe_connect_account_id, {
-          payout_id: String(payoutId),
-          user_id: user.id,
-        });
-      } catch (transferErr) {
-        // Transfer failed — refund the balance
-        console.error('[CONNECT] Transfer failed, refunding:', transferErr);
-        await fetch(`${sbUrl}/rest/v1/rpc/fail_payout_refund`, {
-          method: 'POST',
-          headers: {
-            ...sbHeaders,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            p_payout_id: payoutId,
-            p_failure_reason: 'stripe_transfer_failed',
-          }),
-        });
-        return error('Withdrawal failed. Your balance has been restored.', 500);
-      }
-
-      // Update payout record with transfer ID, mark as processing
-      await fetch(`${sbUrl}/rest/v1/payouts?id=eq.${payoutId}`, {
-        method: 'PATCH',
-        headers: {
-          ...sbHeaders,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=minimal',
-        },
-        body: JSON.stringify({
-          stripe_transfer_id: transferResult.transfer_id,
-          status: 'processing',
-        }),
-      });
-
-      // Step 3: Create Stripe Payout (connected account → bank)
-      // Fire-and-forget; the webhook confirms success/failure.
-      try {
-        const payoutResult = await createPayout(
-          amountCents,
-          userData.stripe_connect_account_id
-        );
-
-        // Update payout record with payout ID
-        await fetch(`${sbUrl}/rest/v1/payouts?id=eq.${payoutId}`, {
-          method: 'PATCH',
-          headers: {
-            ...sbHeaders,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=minimal',
-          },
-          body: JSON.stringify({
-            stripe_payout_id: payoutResult.payout_id,
-          }),
-        });
-      } catch (payoutErr) {
-        // Transfer succeeded but payout creation failed.
-        // Money is in the connected account — developer can trigger from Stripe Express Dashboard.
-        console.error('[CONNECT] Payout creation failed (transfer succeeded):', payoutErr);
-      }
+      // Calculate release date for user messaging
+      const releaseDate = new Date(Date.now() + PAYOUT_HOLD_DAYS * 24 * 60 * 60 * 1000);
+      const releaseDateStr = releaseDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
       const feeBreakdown = isCrossBorder
-        ? `(after $${(estimate.stripe_fee_cents / 100).toFixed(2)} Stripe fee incl. 2% FX conversion)`
-        : `(after $${(estimate.stripe_fee_cents / 100).toFixed(2)} Stripe fee)`;
+        ? `Platform fee: $${(platformFeeCents / 100).toFixed(2)} (5%) + Stripe fee: $${(estimate.stripe_fee_cents / 100).toFixed(2)} (incl. 2% FX)`
+        : `Platform fee: $${(platformFeeCents / 100).toFixed(2)} (5%) + Stripe fee: $${(estimate.stripe_fee_cents / 100).toFixed(2)}`;
 
       return json({
         success: true,
         payout_id: payoutId,
         amount_cents: amountCents,
-        estimated_fee_cents: estimate.stripe_fee_cents,
+        platform_fee_cents: platformFeeCents,
+        amount_after_platform_fee_cents: amountAfterPlatformFee,
+        estimated_stripe_fee_cents: estimate.stripe_fee_cents,
         estimated_net_cents: estimate.net_cents,
         is_cross_border: isCrossBorder,
-        status: 'processing',
-        message: `Withdrawal of $${(amountCents / 100).toFixed(2)} initiated. ` +
-          `Estimated bank deposit: $${(estimate.net_cents / 100).toFixed(2)} ` +
+        status: 'held',
+        release_at: releaseDate.toISOString(),
+        hold_days: PAYOUT_HOLD_DAYS,
+        message: `Withdrawal of $${(amountCents / 100).toFixed(2)} submitted. ` +
           `${feeBreakdown}. ` +
-          `Typically arrives in 2-3 business days.`,
+          `Estimated bank deposit: ~$${(estimate.net_cents / 100).toFixed(2)}. ` +
+          `Payout will be released on ${releaseDateStr}.`,
       });
     } catch (err) {
       if (err instanceof SyntaxError) return error('Invalid JSON body', 400);
       const status = (err as Error & { status?: number }).status || 500;
       return error(err instanceof Error ? err.message : 'Withdrawal failed', status);
+    }
+  }
+
+  // GET /api/user/connect/liability — platform liability summary (admin use)
+  // Returns: total unpaid earnings, held payouts, processing payouts, sweepable amount
+  if (path === '/api/user/connect/liability' && method === 'GET') {
+    try {
+      const user = await authenticate(request);
+      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
+      const sbHeaders = { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` };
+
+      // Parallel queries for liability calculation
+      const [earningsRes, paidRes, heldRes, processingRes, pendingRes] = await Promise.all([
+        // Total earned across ALL users
+        fetch(
+          `${sbUrl}/rest/v1/users?total_earned_cents=gt.0&select=total_earned_cents`,
+          { headers: sbHeaders }
+        ),
+        // Total successfully paid out
+        fetch(
+          `${sbUrl}/rest/v1/payouts?status=eq.paid&select=amount_cents`,
+          { headers: sbHeaders }
+        ),
+        // Currently held (14-day wait)
+        fetch(
+          `${sbUrl}/rest/v1/payouts?status=eq.held&select=amount_cents,platform_fee_cents,release_at`,
+          { headers: sbHeaders }
+        ),
+        // Currently processing (Stripe transfer in flight)
+        fetch(
+          `${sbUrl}/rest/v1/payouts?status=eq.processing&select=amount_cents,platform_fee_cents`,
+          { headers: sbHeaders }
+        ),
+        // Pending (marked for release, not yet transferred)
+        fetch(
+          `${sbUrl}/rest/v1/payouts?status=eq.pending&select=amount_cents,platform_fee_cents`,
+          { headers: sbHeaders }
+        ),
+      ]);
+
+      const totalEarned = earningsRes.ok
+        ? (await earningsRes.json() as Array<{ total_earned_cents: number }>)
+            .reduce((sum, u) => sum + (u.total_earned_cents || 0), 0)
+        : 0;
+
+      const totalPaid = paidRes.ok
+        ? (await paidRes.json() as Array<{ amount_cents: number }>)
+            .reduce((sum, p) => sum + p.amount_cents, 0)
+        : 0;
+
+      const heldPayouts = heldRes.ok
+        ? (await heldRes.json() as Array<{ amount_cents: number; platform_fee_cents: number; release_at: string }>)
+        : [];
+      const heldTotal = heldPayouts.reduce((sum, p) => sum + p.amount_cents, 0);
+      const heldPlatformFees = heldPayouts.reduce((sum, p) => sum + (p.platform_fee_cents || 0), 0);
+
+      // Next payout release date
+      const nextRelease = heldPayouts.length > 0
+        ? heldPayouts.reduce((earliest, p) => p.release_at < earliest ? p.release_at : earliest, heldPayouts[0].release_at)
+        : null;
+
+      const processingTotal = processingRes.ok
+        ? (await processingRes.json() as Array<{ amount_cents: number }>)
+            .reduce((sum, p) => sum + p.amount_cents, 0)
+        : 0;
+
+      const pendingTotal = pendingRes.ok
+        ? (await pendingRes.json() as Array<{ amount_cents: number }>)
+            .reduce((sum, p) => sum + p.amount_cents, 0)
+        : 0;
+
+      // Liability = total earned - total paid out = unpaid developer earnings
+      const totalLiability = totalEarned - totalPaid;
+      // Sweepable = everything NOT currently in-flight to Stripe
+      // (held payouts are still in our accounts, not yet transferred)
+      const inFlight = processingTotal + pendingTotal;
+      const sweepable = totalLiability - inFlight;
+
+      return json({
+        total_earned_cents: totalEarned,
+        total_paid_cents: totalPaid,
+        total_liability_cents: totalLiability,
+        held_payouts_cents: heldTotal,
+        held_payouts_count: heldPayouts.length,
+        held_platform_fees_cents: heldPlatformFees,
+        next_release_at: nextRelease,
+        processing_cents: processingTotal,
+        pending_cents: pendingTotal,
+        in_flight_cents: inFlight,
+        sweepable_cents: sweepable,
+        liability_dollars: '$' + (totalLiability / 100).toFixed(2),
+        sweepable_dollars: '$' + (sweepable / 100).toFixed(2),
+      });
+    } catch (err) {
+      return error(err instanceof Error ? err.message : 'Failed to calculate liability', 500);
     }
   }
 

@@ -4974,9 +4974,12 @@ export function getLayoutHTML(options: {
       var withdrawableDollars = (withdrawable / 100).toFixed(2);
       var isCrossBorder = _connectData && _connectData.is_cross_border;
 
-      var promptMsg = 'Enter withdrawal amount in dollars (minimum $10.00):\n\nWithdrawable earnings: $' + withdrawableDollars;
-      if (isCrossBorder) promptMsg += '\nNote: 2% FX conversion fee applies for non-US accounts.';
-      promptMsg += '\n\nOnly earned funds can be withdrawn (deposits cannot be cashed out).';
+      var promptMsg = 'Enter withdrawal amount in dollars (minimum $10.00):' +
+        '\\n\\nWithdrawable earnings: $' + withdrawableDollars +
+        '\\n\\nFees: 5% platform fee + Stripe payout fee (0.25% + $0.25)';
+      if (isCrossBorder) promptMsg += ' + 2% FX conversion';
+      promptMsg += '\\nHold period: 14 days before payout is released to your bank.' +
+        '\\n\\nOnly earned funds can be withdrawn (deposits cannot be cashed out).';
 
       var input = prompt(promptMsg);
       if (!input) return;
@@ -4989,13 +4992,24 @@ export function getLayoutHTML(options: {
         return;
       }
 
-      var fee = Math.ceil(cents * 0.0025 + 25);
-      if (isCrossBorder) fee += Math.ceil(cents * 0.02);
-      var net = cents - fee;
+      // Calculate platform fee (5%)
+      var platformFee = Math.ceil(cents * 0.05);
+      var afterPlatform = cents - platformFee;
+      // Calculate Stripe fee on amount after platform fee
+      var stripeFee = Math.ceil(afterPlatform * 0.0025 + 25);
+      if (isCrossBorder) stripeFee += Math.ceil(afterPlatform * 0.02);
+      var net = afterPlatform - stripeFee;
 
-      var confirmMsg = 'Withdraw $' + (cents / 100).toFixed(2) + '?\\n\\nStripe fee: $' + (fee / 100).toFixed(2);
-      if (isCrossBorder) confirmMsg += ' (incl. 2% FX conversion)';
-      confirmMsg += '\\nEstimated bank deposit: ~$' + (net / 100).toFixed(2) + '\\n\\nProceed?';
+      var releaseDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+      var releaseDateStr = releaseDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+      var confirmMsg = 'Withdraw $' + (cents / 100).toFixed(2) + '?' +
+        '\\n\\nPlatform fee (5%): $' + (platformFee / 100).toFixed(2) +
+        '\\nStripe fee: $' + (stripeFee / 100).toFixed(2);
+      if (isCrossBorder) confirmMsg += ' (incl. 2% FX)';
+      confirmMsg += '\\nEstimated bank deposit: ~$' + (net / 100).toFixed(2) +
+        '\\n\\nPayout releases on ' + releaseDateStr + ' (14-day hold).' +
+        '\\n\\nProceed?';
 
       if (!confirm(confirmMsg)) return;
 
@@ -5007,7 +5021,7 @@ export function getLayoutHTML(options: {
         });
         var data = await res.json();
         if (!res.ok) { showToast(data.error || 'Withdrawal failed', 'error'); return; }
-        showToast(data.message || 'Withdrawal of $' + (cents / 100).toFixed(2) + ' initiated! Check your bank in 2-3 business days.');
+        showToast(data.message || 'Withdrawal submitted! Payout releases on ' + releaseDateStr + '.');
         loadHostingData();
         loadEarnings();
         loadConnectStatus();
@@ -5030,10 +5044,17 @@ export function getLayoutHTML(options: {
           return;
         }
         el.innerHTML = data.payouts.map(function(p) {
-          var statusColor = p.status === 'paid' ? 'var(--success)' : p.status === 'failed' ? 'var(--error)' : 'var(--text-muted)';
-          return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;">' +
-            '<span>$' + (p.amount_cents / 100).toFixed(2) + '</span>' +
-            '<span style="color:' + statusColor + ';">' + p.status + '</span>' +
+          var statusColor = p.status === 'paid' ? 'var(--success)' : p.status === 'failed' ? 'var(--error)' : p.status === 'held' ? '#ca8a04' : 'var(--text-muted)';
+          var statusText = p.status;
+          if (p.status === 'held' && p.release_at) {
+            var releaseDate = new Date(p.release_at);
+            var daysLeft = Math.max(0, Math.ceil((releaseDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+            statusText = 'held (' + daysLeft + 'd)';
+          }
+          var platformFee = p.platform_fee_cents ? ' (fee: $' + (p.platform_fee_cents / 100).toFixed(2) + ')' : '';
+          return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;">' +
+            '<span style="font-weight:500;">$' + (p.amount_cents / 100).toFixed(2) + '<span style="font-weight:400;color:var(--text-muted);">' + platformFee + '</span></span>' +
+            '<span style="color:' + statusColor + ';font-weight:500;">' + statusText + '</span>' +
             '<span style="color:var(--text-muted);">' + new Date(p.created_at).toLocaleDateString() + '</span>' +
           '</div>';
         }).join('');
