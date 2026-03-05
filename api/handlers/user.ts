@@ -1263,7 +1263,7 @@ export async function handleUser(request: Request): Promise<Response> {
   }
 
   // GET /api/user/earnings — aggregate earnings across all owned apps
-  // Returns: { total_earned_cents, period_earned_cents, by_app: [...], recent: [...] }
+  // Returns: { total_earned_cents, period_earned_cents, total_withdrawn_cents, withdrawable_cents, by_app: [...], recent: [...] }
   if (path === '/api/user/earnings' && method === 'GET') {
     try {
       const user = await authenticate(request);
@@ -1282,7 +1282,7 @@ export async function handleUser(request: Request): Promise<Response> {
 
       const cutoff = new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000).toISOString();
 
-      const [periodRes, lifetimeRes, recentRes] = await Promise.all([
+      const [periodRes, lifetimeRes, recentRes, payoutsRes] = await Promise.all([
         fetch(
           `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&created_at=gte.${cutoff}&select=amount_cents,app_id,function_name,reason,created_at&order=created_at.asc&limit=10000`,
           { headers }
@@ -1293,6 +1293,11 @@ export async function handleUser(request: Request): Promise<Response> {
         ),
         fetch(
           `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&select=amount_cents,app_id,function_name,reason,created_at&order=created_at.desc&limit=10`,
+          { headers }
+        ),
+        // Total successful withdrawals (for withdrawable calculation)
+        fetch(
+          `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(pending,processing,paid)&select=amount_cents`,
           { headers }
         ),
       ]);
@@ -1312,6 +1317,14 @@ export async function handleUser(request: Request): Promise<Response> {
       const totalEarnedCents = lifetimeTransfers.reduce((sum, t) => sum + t.amount_cents, 0);
       const periodEarnedCents = periodTransfers.reduce((sum, t) => sum + t.amount_cents, 0);
 
+      // Calculate total withdrawn and withdrawable
+      let totalWithdrawnCents = 0;
+      if (payoutsRes.ok) {
+        const payouts = await payoutsRes.json() as Array<{ amount_cents: number }>;
+        totalWithdrawnCents = payouts.reduce((sum, p) => sum + p.amount_cents, 0);
+      }
+      const withdrawableCents = Math.max(0, totalEarnedCents - totalWithdrawnCents);
+
       // By-app breakdown
       const appMap = new Map<string, { earned_cents: number; call_count: number }>();
       for (const t of periodTransfers) {
@@ -1327,6 +1340,8 @@ export async function handleUser(request: Request): Promise<Response> {
 
       return json({
         total_earned_cents: totalEarnedCents,
+        total_withdrawn_cents: totalWithdrawnCents,
+        withdrawable_cents: withdrawableCents,
         period,
         period_earned_cents: periodEarnedCents,
         period_transfers: periodTransfers.length,
@@ -1374,7 +1389,16 @@ export async function handleUser(request: Request): Promise<Response> {
 
       // Create a new connected account if none exists
       if (!accountId) {
-        const result = await createConnectedAccount(userData.email, user.id);
+        // Accept optional country for international developers (defaults to US)
+        let country = 'US';
+        try {
+          const body = await request.json() as { country?: string };
+          if (body.country && /^[A-Z]{2}$/.test(body.country)) {
+            country = body.country;
+          }
+        } catch { /* no body or invalid JSON — use default */ }
+
+        const result = await createConnectedAccount(userData.email, user.id, country);
         accountId = result.account_id;
 
         // Save the account ID to DB
@@ -1411,21 +1435,23 @@ export async function handleUser(request: Request): Promise<Response> {
   }
 
   // GET /api/user/connect/status — check Stripe Connect onboarding status
-  // Returns: { connected, onboarded, payouts_enabled, account_id }
+  // Returns: { connected, onboarded, payouts_enabled, account_id, country, default_currency, withdrawable_earnings_cents }
   if (path === '/api/user/connect/status' && method === 'GET') {
     try {
       const user = await authenticate(request);
       const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
+      const sbHeaders = { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` };
 
       const userRes = await fetch(
-        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled`,
-        { headers: { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` } }
+        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled,total_earned_cents`,
+        { headers: sbHeaders }
       );
       if (!userRes.ok) throw new Error('Failed to read user');
       const userData = (await userRes.json())[0] as {
         stripe_connect_account_id: string | null;
         stripe_connect_onboarded: boolean;
         stripe_connect_payouts_enabled: boolean;
+        total_earned_cents: number;
       };
 
       if (!userData?.stripe_connect_account_id) {
@@ -1434,16 +1460,45 @@ export async function handleUser(request: Request): Promise<Response> {
           onboarded: false,
           payouts_enabled: false,
           account_id: null,
+          country: null,
+          default_currency: null,
+          withdrawable_earnings_cents: 0,
         });
       }
 
-      // If already fully set up, return cached values
+      // Calculate withdrawable earnings = total earned - total withdrawn (non-failed)
+      const payoutsRes = await fetch(
+        `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(pending,processing,paid)&select=amount_cents`,
+        { headers: sbHeaders }
+      );
+      let totalWithdrawn = 0;
+      if (payoutsRes.ok) {
+        const payouts = await payoutsRes.json() as Array<{ amount_cents: number }>;
+        totalWithdrawn = payouts.reduce((sum, p) => sum + p.amount_cents, 0);
+      }
+      const withdrawableEarnings = Math.max(0, (userData.total_earned_cents || 0) - totalWithdrawn);
+
+      // If already fully set up, return cached values + earnings
       if (userData.stripe_connect_onboarded && userData.stripe_connect_payouts_enabled) {
+        // Still fetch account status for country/currency info
+        let country: string | null = null;
+        let defaultCurrency: string | null = null;
+        try {
+          const { getAccountStatus } = await import('../services/stripe-connect.ts');
+          const connectStatus = await getAccountStatus(userData.stripe_connect_account_id);
+          country = connectStatus.country || null;
+          defaultCurrency = connectStatus.default_currency || null;
+        } catch { /* Stripe unavailable */ }
+
         return json({
           connected: true,
           onboarded: true,
           payouts_enabled: true,
           account_id: userData.stripe_connect_account_id,
+          country: country,
+          default_currency: defaultCurrency,
+          is_cross_border: country !== null && country !== 'US',
+          withdrawable_earnings_cents: withdrawableEarnings,
         });
       }
 
@@ -1460,8 +1515,7 @@ export async function handleUser(request: Request): Promise<Response> {
           await fetch(`${sbUrl}/rest/v1/users?id=eq.${user.id}`, {
             method: 'PATCH',
             headers: {
-              'apikey': sbKey,
-              'Authorization': `Bearer ${sbKey}`,
+              ...sbHeaders,
               'Content-Type': 'application/json',
               'Prefer': 'return=minimal',
             },
@@ -1478,6 +1532,10 @@ export async function handleUser(request: Request): Promise<Response> {
           payouts_enabled: connectStatus.payouts_enabled,
           details_submitted: connectStatus.details_submitted,
           account_id: userData.stripe_connect_account_id,
+          country: connectStatus.country || null,
+          default_currency: connectStatus.default_currency || null,
+          is_cross_border: connectStatus.country !== undefined && connectStatus.country !== 'US',
+          withdrawable_earnings_cents: withdrawableEarnings,
         });
       } catch (stripeErr) {
         // Stripe unavailable — return cached values
@@ -1486,6 +1544,9 @@ export async function handleUser(request: Request): Promise<Response> {
           onboarded: userData.stripe_connect_onboarded,
           payouts_enabled: userData.stripe_connect_payouts_enabled,
           account_id: userData.stripe_connect_account_id,
+          country: null,
+          default_currency: null,
+          withdrawable_earnings_cents: withdrawableEarnings,
         });
       }
     } catch (err) {
@@ -1496,6 +1557,7 @@ export async function handleUser(request: Request): Promise<Response> {
 
   // POST /api/user/connect/withdraw — request a withdrawal to connected bank
   // Body: { amount_cents: number } (minimum 1000 = $10.00)
+  // Only earned funds (tool_call, page_view, marketplace_sale) can be withdrawn — deposits cannot.
   if (path === '/api/user/connect/withdraw' && method === 'POST') {
     try {
       const user = await authenticate(request);
@@ -1504,7 +1566,7 @@ export async function handleUser(request: Request): Promise<Response> {
 
       const {
         MIN_WITHDRAWAL_CENTS, estimatePayoutFee,
-        createTransfer, createPayout
+        createTransfer, createPayout, getAccountStatus
       } = await import('../services/stripe-connect.ts');
 
       if (!amountCents || typeof amountCents !== 'number' || amountCents < MIN_WITHDRAWAL_CENTS) {
@@ -1515,11 +1577,12 @@ export async function handleUser(request: Request): Promise<Response> {
       }
 
       const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
+      const sbHeaders = { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` };
 
       // Verify user has a connected, onboarded account with payouts enabled
       const userRes = await fetch(
-        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled,hosting_balance_cents,escrow_held_cents`,
-        { headers: { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` } }
+        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled,hosting_balance_cents,escrow_held_cents,total_earned_cents`,
+        { headers: sbHeaders }
       );
       if (!userRes.ok) throw new Error('Failed to read user');
       const userData = (await userRes.json())[0] as {
@@ -1528,6 +1591,7 @@ export async function handleUser(request: Request): Promise<Response> {
         stripe_connect_payouts_enabled: boolean;
         hosting_balance_cents: number;
         escrow_held_cents: number;
+        total_earned_cents: number;
       };
 
       if (!userData?.stripe_connect_account_id || !userData?.stripe_connect_payouts_enabled) {
@@ -1546,15 +1610,41 @@ export async function handleUser(request: Request): Promise<Response> {
         );
       }
 
-      // Calculate fee estimate
-      const estimate = estimatePayoutFee(amountCents);
+      // Earnings-only withdrawal check (defense-in-depth — RPC also validates)
+      const payoutsRes = await fetch(
+        `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(pending,processing,paid)&select=amount_cents`,
+        { headers: sbHeaders }
+      );
+      let totalWithdrawn = 0;
+      if (payoutsRes.ok) {
+        const payouts = await payoutsRes.json() as Array<{ amount_cents: number }>;
+        totalWithdrawn = payouts.reduce((sum, p) => sum + p.amount_cents, 0);
+      }
+      const withdrawableEarnings = Math.max(0, (userData.total_earned_cents || 0) - totalWithdrawn);
 
-      // Step 1: Atomic debit + payout record creation
+      if (withdrawableEarnings < amountCents) {
+        return error(
+          `Only earned funds can be withdrawn (deposits cannot be cashed out). ` +
+          `You have $${(withdrawableEarnings / 100).toFixed(2)} in withdrawable earnings.`,
+          400
+        );
+      }
+
+      // Detect cross-border for fee estimation
+      let isCrossBorder = false;
+      try {
+        const connectStatus = await getAccountStatus(userData.stripe_connect_account_id);
+        isCrossBorder = connectStatus.country !== undefined && connectStatus.country !== 'US';
+      } catch { /* Stripe unavailable — assume domestic */ }
+
+      // Calculate fee estimate (includes FX fee for cross-border)
+      const estimate = estimatePayoutFee(amountCents, isCrossBorder);
+
+      // Step 1: Atomic debit + payout record creation + earnings validation
       const rpcRes = await fetch(`${sbUrl}/rest/v1/rpc/create_payout_record`, {
         method: 'POST',
         headers: {
-          'apikey': sbKey,
-          'Authorization': `Bearer ${sbKey}`,
+          ...sbHeaders,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -1569,6 +1659,7 @@ export async function handleUser(request: Request): Promise<Response> {
         const rpcErr = await rpcRes.text();
         console.error('[CONNECT] create_payout_record RPC failed:', rpcErr);
         if (rpcErr.includes('Insufficient')) return error('Insufficient balance for withdrawal', 400);
+        if (rpcErr.includes('exceeds earnings')) return error('Withdrawal exceeds earned funds. Only earnings can be withdrawn — deposits cannot be cashed out.', 400);
         return error('Failed to create payout record', 500);
       }
 
@@ -1587,8 +1678,7 @@ export async function handleUser(request: Request): Promise<Response> {
         await fetch(`${sbUrl}/rest/v1/rpc/fail_payout_refund`, {
           method: 'POST',
           headers: {
-            'apikey': sbKey,
-            'Authorization': `Bearer ${sbKey}`,
+            ...sbHeaders,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
@@ -1603,8 +1693,7 @@ export async function handleUser(request: Request): Promise<Response> {
       await fetch(`${sbUrl}/rest/v1/payouts?id=eq.${payoutId}`, {
         method: 'PATCH',
         headers: {
-          'apikey': sbKey,
-          'Authorization': `Bearer ${sbKey}`,
+          ...sbHeaders,
           'Content-Type': 'application/json',
           'Prefer': 'return=minimal',
         },
@@ -1626,8 +1715,7 @@ export async function handleUser(request: Request): Promise<Response> {
         await fetch(`${sbUrl}/rest/v1/payouts?id=eq.${payoutId}`, {
           method: 'PATCH',
           headers: {
-            'apikey': sbKey,
-            'Authorization': `Bearer ${sbKey}`,
+            ...sbHeaders,
             'Content-Type': 'application/json',
             'Prefer': 'return=minimal',
           },
@@ -1641,16 +1729,21 @@ export async function handleUser(request: Request): Promise<Response> {
         console.error('[CONNECT] Payout creation failed (transfer succeeded):', payoutErr);
       }
 
+      const feeBreakdown = isCrossBorder
+        ? `(after $${(estimate.stripe_fee_cents / 100).toFixed(2)} Stripe fee incl. 2% FX conversion)`
+        : `(after $${(estimate.stripe_fee_cents / 100).toFixed(2)} Stripe fee)`;
+
       return json({
         success: true,
         payout_id: payoutId,
         amount_cents: amountCents,
         estimated_fee_cents: estimate.stripe_fee_cents,
         estimated_net_cents: estimate.net_cents,
+        is_cross_border: isCrossBorder,
         status: 'processing',
         message: `Withdrawal of $${(amountCents / 100).toFixed(2)} initiated. ` +
           `Estimated bank deposit: $${(estimate.net_cents / 100).toFixed(2)} ` +
-          `(after $${(estimate.stripe_fee_cents / 100).toFixed(2)} Stripe fee). ` +
+          `${feeBreakdown}. ` +
           `Typically arrives in 2-3 business days.`,
       });
     } catch (err) {

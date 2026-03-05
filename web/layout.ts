@@ -4895,16 +4895,22 @@ export function getLayoutHTML(options: {
         var data = await res.json();
         var total = (data.total_earned_cents / 100).toFixed(2);
         var period = (data.period_earned_cents / 100).toFixed(2);
+        var withdrawn = (data.total_withdrawn_cents / 100).toFixed(2);
+        var withdrawable = (data.withdrawable_cents / 100).toFixed(2);
         el.innerHTML =
-          '<div style="display:flex;gap:var(--space-6);margin-bottom:var(--space-2);">' +
-            '<div><div style="font-size:11px;color:var(--text-muted);">Lifetime</div><div style="font-size:18px;font-weight:600;">$' + total + '</div></div>' +
+          '<div style="display:flex;gap:var(--space-6);margin-bottom:var(--space-2);flex-wrap:wrap;">' +
+            '<div><div style="font-size:11px;color:var(--text-muted);">Lifetime Earned</div><div style="font-size:18px;font-weight:600;">$' + total + '</div></div>' +
             '<div><div style="font-size:11px;color:var(--text-muted);">Last 30 days</div><div style="font-size:18px;font-weight:600;">$' + period + '</div></div>' +
-            '<div><div style="font-size:11px;color:var(--text-muted);">Transfers</div><div style="font-size:18px;font-weight:600;">' + (data.period_transfers || 0) + '</div></div>' +
-          '</div>';
+            '<div><div style="font-size:11px;color:var(--text-muted);">Withdrawn</div><div style="font-size:18px;font-weight:600;">$' + withdrawn + '</div></div>' +
+            '<div><div style="font-size:11px;color:var(--success);">Withdrawable</div><div style="font-size:18px;font-weight:600;color:var(--success);">$' + withdrawable + '</div></div>' +
+          '</div>' +
+          '<div style="font-size:11px;color:var(--text-muted);margin-top:var(--space-2);">Only earned funds can be withdrawn. Deposits are for hosting costs only.</div>';
       } catch { el.textContent = 'Failed to load earnings'; }
     }
 
     // --- Connect Status ---
+    // Stores connect status data for use by withdraw modal
+    var _connectData = null;
     async function loadConnectStatus() {
       var badge = document.getElementById('connectStatusBadge');
       var section = document.getElementById('connectSection');
@@ -4915,9 +4921,15 @@ export function getLayoutHTML(options: {
         });
         if (!res.ok) return;
         var data = await res.json();
+        _connectData = data;
         if (data.payouts_enabled) {
+          var countryInfo = '';
+          if (data.country && data.country !== 'US') {
+            var currency = (data.default_currency || '').toUpperCase();
+            countryInfo = '<div style="font-size:11px;color:var(--text-muted);margin-top:var(--space-2);">Payout country: ' + data.country + (currency ? ' (' + currency + ')' : '') + '. Withdrawals will be converted from USD at Stripe\'s exchange rate (+ 2% FX fee).</div>';
+          }
           if (badge) { badge.textContent = 'Connected'; badge.style.background = 'rgba(34,197,94,0.15)'; badge.style.color = 'var(--success)'; }
-          if (section) section.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Your bank account is connected and ready for withdrawals.</p>';
+          if (section) section.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Your bank account is connected and ready for withdrawals.</p>' + countryInfo;
           if (withdrawBtn) withdrawBtn.style.display = '';
         } else if (data.connected && data.onboarded) {
           if (badge) { badge.textContent = 'Pending'; badge.style.background = 'rgba(234,179,8,0.15)'; badge.style.color = '#ca8a04'; }
@@ -4934,10 +4946,17 @@ export function getLayoutHTML(options: {
 
     // --- Connect Onboarding ---
     window.startConnectOnboarding = async function() {
+      // Ask for country (supports international developers)
+      var country = prompt('Enter your 2-letter country code (e.g., US, GB, DE, CA, AU):');
+      if (!country) return;
+      country = country.trim().toUpperCase();
+      if (!/^[A-Z]{2}$/.test(country)) { showToast('Please enter a valid 2-letter country code', 'error'); return; }
+
       try {
         var res = await fetch('/api/user/connect/onboard', {
           method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + authToken },
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ country: country }),
         });
         var data = await res.json();
         if (!res.ok) { showToast(data.error || 'Failed to start onboarding', 'error'); return; }
@@ -4950,14 +4969,35 @@ export function getLayoutHTML(options: {
 
     // --- Withdraw ---
     window.showWithdrawModal = async function() {
-      var input = prompt('Enter withdrawal amount in dollars (minimum $10.00):');
+      // Show withdrawable earnings context
+      var withdrawable = _connectData && _connectData.withdrawable_earnings_cents ? _connectData.withdrawable_earnings_cents : 0;
+      var withdrawableDollars = (withdrawable / 100).toFixed(2);
+      var isCrossBorder = _connectData && _connectData.is_cross_border;
+
+      var promptMsg = 'Enter withdrawal amount in dollars (minimum $10.00):\n\nWithdrawable earnings: $' + withdrawableDollars;
+      if (isCrossBorder) promptMsg += '\nNote: 2% FX conversion fee applies for non-US accounts.';
+      promptMsg += '\n\nOnly earned funds can be withdrawn (deposits cannot be cashed out).';
+
+      var input = prompt(promptMsg);
       if (!input) return;
       var dollars = parseFloat(input);
       if (isNaN(dollars) || dollars < 10) { showToast('Minimum withdrawal is $10.00', 'error'); return; }
       var cents = Math.round(dollars * 100);
+
+      if (cents > withdrawable) {
+        showToast('Amount exceeds withdrawable earnings ($' + withdrawableDollars + '). Only earned funds can be withdrawn.', 'error');
+        return;
+      }
+
       var fee = Math.ceil(cents * 0.0025 + 25);
+      if (isCrossBorder) fee += Math.ceil(cents * 0.02);
       var net = cents - fee;
-      if (!confirm('Withdraw $' + (cents / 100).toFixed(2) + '?\\n\\nStripe fee: $' + (fee / 100).toFixed(2) + '\\nYou will receive: ~$' + (net / 100).toFixed(2) + '\\n\\nProceed?')) return;
+
+      var confirmMsg = 'Withdraw $' + (cents / 100).toFixed(2) + '?\\n\\nStripe fee: $' + (fee / 100).toFixed(2);
+      if (isCrossBorder) confirmMsg += ' (incl. 2% FX conversion)';
+      confirmMsg += '\\nEstimated bank deposit: ~$' + (net / 100).toFixed(2) + '\\n\\nProceed?';
+
+      if (!confirm(confirmMsg)) return;
 
       try {
         var res = await fetch('/api/user/connect/withdraw', {
@@ -4967,8 +5007,10 @@ export function getLayoutHTML(options: {
         });
         var data = await res.json();
         if (!res.ok) { showToast(data.error || 'Withdrawal failed', 'error'); return; }
-        showToast('Withdrawal of $' + (cents / 100).toFixed(2) + ' initiated! Check your bank in 2-3 business days.');
+        showToast(data.message || 'Withdrawal of $' + (cents / 100).toFixed(2) + ' initiated! Check your bank in 2-3 business days.');
         loadHostingData();
+        loadEarnings();
+        loadConnectStatus();
         loadPayouts();
       } catch { showToast('Withdrawal failed', 'error'); }
     };

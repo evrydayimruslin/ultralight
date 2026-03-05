@@ -44,6 +44,9 @@ export interface PayoutResult {
 export const PAYOUT_FEE_PERCENT = 0.0025;
 export const PAYOUT_FEE_FIXED_CENTS = 25;
 
+// Cross-border FX fee: 2% on transfers to non-USD connected accounts
+export const CROSS_BORDER_FX_PERCENT = 0.02;
+
 // Minimum withdrawal: must exceed the fixed fee meaningfully
 export const MIN_WITHDRAWAL_CENTS = 1000; // $10.00
 
@@ -69,9 +72,13 @@ function ensureStripeKey(): string {
 /**
  * Estimate the Stripe payout fee for a given withdrawal amount.
  * Developer pays all fees — platform absorbs nothing.
+ * Cross-border payouts (non-US connected accounts) incur an additional 2% FX fee.
  */
-export function estimatePayoutFee(amountCents: number): PayoutEstimate {
-  const feeCents = Math.ceil(amountCents * PAYOUT_FEE_PERCENT + PAYOUT_FEE_FIXED_CENTS);
+export function estimatePayoutFee(amountCents: number, isCrossBorder = false): PayoutEstimate {
+  let feeCents = Math.ceil(amountCents * PAYOUT_FEE_PERCENT + PAYOUT_FEE_FIXED_CENTS);
+  if (isCrossBorder) {
+    feeCents += Math.ceil(amountCents * CROSS_BORDER_FX_PERCENT);
+  }
   return {
     gross_cents: amountCents,
     stripe_fee_cents: feeCents,
@@ -86,7 +93,8 @@ export function estimatePayoutFee(amountCents: number): PayoutEstimate {
 
 export async function createConnectedAccount(
   email: string,
-  userId: string
+  userId: string,
+  country: string = 'US'
 ): Promise<{ account_id: string }> {
   const STRIPE_KEY = ensureStripeKey();
 
@@ -98,7 +106,7 @@ export async function createConnectedAccount(
     },
     body: new URLSearchParams({
       'type': 'express',
-      'country': 'US',
+      'country': country,
       'email': email,
       'capabilities[transfers][requested]': 'true',
       'metadata[user_id]': userId,
