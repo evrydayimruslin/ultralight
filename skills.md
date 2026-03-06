@@ -211,6 +211,27 @@ ul.download (scaffold) → implement → ul.test → ul.upload → ul.set
 5. `ul.upload` — deploy
 6. `ul.set` — configure version, visibility, rate limits, pricing
 
+**Important: Include a manifest.json with function definitions.** The manifest is what enables:
+- Per-function pricing configuration in the dashboard Payments tab
+- Typed parameter schemas for agent introspection (better tool use)
+- Per-function permission grants
+
+Without a manifest, functions are auto-detected from code exports but lack parameter/return metadata. Always include `manifest.json` with a `functions` object:
+
+```json
+{
+  "functions": {
+    "search": {
+      "description": "Search records by query",
+      "parameters": [
+        { "name": "query", "type": "string", "required": true },
+        { "name": "limit", "type": "number", "required": false }
+      ]
+    }
+  }
+}
+```
+
 After upload:
 1. Confirm to the user: name, function count, MCP endpoint
 2. If sharing: use `ul.permissions` to grant access
