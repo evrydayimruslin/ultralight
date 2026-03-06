@@ -282,7 +282,9 @@ const PLATFORM_TOOLS: MCPTool[] = [
         calls_per_minute: { description: 'Rate limit per minute. null = default.' },
         calls_per_day: { description: 'Rate limit per day. null = unlimited.' },
         default_price_cents: { description: 'Price in cents per call. Supports fractions (e.g. 0.5 = $0.005). null = free.' },
-        function_prices: { description: 'Per-function prices: { "fn": cents }. Supports fractions. null = remove.' },
+        default_free_calls: { type: 'integer', description: 'Default free calls per user before charging begins. 0 = charge from first call.' },
+        free_calls_scope: { type: 'string', enum: ['app', 'function'], description: 'Whether free calls are counted per-app (shared) or per-function (separate). Default: function.' },
+        function_prices: { description: 'Per-function prices: { "fn": cents } or { "fn": { price_cents: cents, free_calls?: N } }. null = remove.' },
         search_hints: { type: 'array', items: { type: 'string' }, description: 'Search keywords for app discovery. Improves semantic search accuracy. Include data domain terms, entity names, use cases.' },
         show_metrics: { type: 'boolean', description: 'Show usage metrics (calls, revenue, unique callers) on marketplace listing to potential bidders.' },
       },
@@ -1230,7 +1232,7 @@ async function handleToolsCall(
         if (toolArgs.download_access !== undefined) { setResults.download_access = await executeSetDownload(userId, { app_id: toolArgs.app_id, access: toolArgs.download_access }); setCount++; }
         if (toolArgs.supabase_server !== undefined) { setResults.supabase_server = await executeSetSupabase(userId, { app_id: toolArgs.app_id, server_name: toolArgs.supabase_server }); setCount++; }
         if (toolArgs.calls_per_minute !== undefined || toolArgs.calls_per_day !== undefined) { setResults.ratelimit = await executeSetRateLimit(userId, { app_id: toolArgs.app_id, calls_per_minute: toolArgs.calls_per_minute, calls_per_day: toolArgs.calls_per_day }); setCount++; }
-        if (toolArgs.default_price_cents !== undefined || toolArgs.function_prices !== undefined) { setResults.pricing = await executeSetPricing(userId, { app_id: toolArgs.app_id, default_price_cents: toolArgs.default_price_cents, functions: toolArgs.function_prices }); setCount++; }
+        if (toolArgs.default_price_cents !== undefined || toolArgs.function_prices !== undefined || toolArgs.default_free_calls !== undefined || toolArgs.free_calls_scope !== undefined) { setResults.pricing = await executeSetPricing(userId, { app_id: toolArgs.app_id, default_price_cents: toolArgs.default_price_cents, functions: toolArgs.function_prices, default_free_calls: toolArgs.default_free_calls, free_calls_scope: toolArgs.free_calls_scope }); setCount++; }
         if (toolArgs.search_hints !== undefined) { setResults.search_hints = await executeSetSearchHints(userId, { app_id: toolArgs.app_id, search_hints: toolArgs.search_hints }); setCount++; }
         if (toolArgs.show_metrics !== undefined) { setResults.show_metrics = await executeSetShowMetrics(userId, { app_id: toolArgs.app_id, show_metrics: toolArgs.show_metrics }); setCount++; }
         if (setCount === 0) throw new ToolError(INVALID_PARAMS, 'No settings provided.');
@@ -3852,12 +3854,16 @@ async function executeSetPricing(
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
   const defaultPrice = args.default_price_cents as number | null | undefined;
-  const functions = args.functions as Record<string, number> | null | undefined;
+  const defaultFreeCalls = args.default_free_calls as number | null | undefined;
+  const freeCallsScope = args.free_calls_scope as string | null | undefined;
+  const functions = args.functions as Record<string, unknown> | null | undefined;
 
-  // If both are null/undefined, clear pricing entirely
+  // If all are null/undefined, clear pricing entirely
   if (
     (defaultPrice === null || defaultPrice === undefined) &&
-    (functions === null || functions === undefined)
+    (functions === null || functions === undefined) &&
+    (defaultFreeCalls === null || defaultFreeCalls === undefined) &&
+    (freeCallsScope === null || freeCallsScope === undefined)
   ) {
     const patchRes = await fetch(`${SUPABASE_URL}/rest/v1/apps?id=eq.${app.id}`, {
       method: 'PATCH',
@@ -3892,13 +3898,39 @@ async function executeSetPricing(
     config.default_price_cents = 0;
   }
 
+  if (defaultFreeCalls !== undefined && defaultFreeCalls !== null) {
+    if (defaultFreeCalls < 0 || defaultFreeCalls > 1000000 || !Number.isInteger(defaultFreeCalls)) {
+      throw new ToolError(INVALID_PARAMS, 'default_free_calls must be a non-negative integer up to 1,000,000');
+    }
+    config.default_free_calls = defaultFreeCalls;
+  }
+
+  if (freeCallsScope !== undefined && freeCallsScope !== null) {
+    if (freeCallsScope !== 'app' && freeCallsScope !== 'function') {
+      throw new ToolError(INVALID_PARAMS, 'free_calls_scope must be "app" or "function"');
+    }
+    config.free_calls_scope = freeCallsScope;
+  }
+
   if (functions !== undefined && functions !== null) {
     if (typeof functions !== 'object' || Array.isArray(functions)) {
-      throw new ToolError(INVALID_PARAMS, 'functions must be an object { fnName: cents }');
+      throw new ToolError(INVALID_PARAMS, 'functions must be an object { fnName: cents } or { fnName: { price_cents, free_calls? } }');
     }
-    for (const [fn, price] of Object.entries(functions)) {
-      if (typeof price !== 'number' || price < 0 || price > 10000) {
-        throw new ToolError(INVALID_PARAMS, `Price for "${fn}" must be 0-10000 cents`);
+    for (const [fn, val] of Object.entries(functions)) {
+      if (typeof val === 'number') {
+        if (val < 0 || val > 10000) {
+          throw new ToolError(INVALID_PARAMS, `Price for "${fn}" must be 0-10000 cents`);
+        }
+      } else if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+        const fp = val as Record<string, unknown>;
+        if (typeof fp.price_cents !== 'number' || fp.price_cents < 0 || fp.price_cents > 10000) {
+          throw new ToolError(INVALID_PARAMS, `price_cents for "${fn}" must be 0-10000 cents`);
+        }
+        if (fp.free_calls !== undefined && (typeof fp.free_calls !== 'number' || fp.free_calls < 0 || !Number.isInteger(fp.free_calls))) {
+          throw new ToolError(INVALID_PARAMS, `free_calls for "${fn}" must be a non-negative integer`);
+        }
+      } else {
+        throw new ToolError(INVALID_PARAMS, `Price for "${fn}" must be a number or { price_cents, free_calls? }`);
       }
     }
     config.functions = functions;
@@ -3926,9 +3958,22 @@ async function executeSetPricing(
   if (config.default_price_cents) {
     parts.push(`default: ${config.default_price_cents}¢/call`);
   }
+  if (config.default_free_calls) {
+    parts.push(`${config.default_free_calls} free calls per user`);
+  }
+  if (config.free_calls_scope === 'app') {
+    parts.push('free calls shared across all functions');
+  }
   if (config.functions && typeof config.functions === 'object') {
-    for (const [fn, price] of Object.entries(config.functions as Record<string, number>)) {
-      parts.push(`${fn}: ${price}¢/call`);
+    for (const [fn, val] of Object.entries(config.functions as Record<string, unknown>)) {
+      if (typeof val === 'number') {
+        parts.push(`${fn}: ${val}¢/call`);
+      } else if (typeof val === 'object' && val !== null) {
+        const fp = val as { price_cents: number; free_calls?: number };
+        const fpParts = [`${fp.price_cents}¢/call`];
+        if (fp.free_calls) fpParts.push(`${fp.free_calls} free`);
+        parts.push(`${fn}: ${fpParts.join(', ')}`);
+      }
     }
   }
 

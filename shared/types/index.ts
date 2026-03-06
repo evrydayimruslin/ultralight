@@ -438,10 +438,22 @@ export interface AppRateLimitConfig {
 export interface AppPricingConfig {
   /** Default price in cents per tool call. Applies to any function not in `functions`. 0 = free. */
   default_price_cents: number;
-  /** Per-function price overrides. Key = function name, value = cents per call. */
-  functions?: Record<string, number>;
+  /** Default number of free calls per user before pricing kicks in. 0 = charge from first call. */
+  default_free_calls?: number;
+  /** Whether free call quota is counted per-app (shared) or per-function (separate). Default: 'function'. */
+  free_calls_scope?: 'app' | 'function';
+  /** Per-function price overrides. Value is cents (legacy) or FunctionPricing object. */
+  functions?: Record<string, number | FunctionPricing>;
   /** Product catalog for in-app purchases via ultralight.charge(). */
   products?: AppProduct[];
+}
+
+/** Per-function pricing override with optional free calls. */
+export interface FunctionPricing {
+  /** Price in cents per call. */
+  price_cents: number;
+  /** Number of free calls for this function per user. Overrides app-level default_free_calls. */
+  free_calls?: number;
 }
 
 /** A purchasable product defined by the app owner. */
@@ -467,9 +479,43 @@ export function getCallPriceCents(
   if (!pricingConfig) return 0;
   // Check per-function override first, then default
   if (pricingConfig.functions && functionName in pricingConfig.functions) {
-    return pricingConfig.functions[functionName];
+    const val = pricingConfig.functions[functionName];
+    if (typeof val === 'number') return val; // legacy format
+    return val.price_cents; // FunctionPricing format
   }
   return pricingConfig.default_price_cents || 0;
+}
+
+/**
+ * Get the number of free calls for a specific function.
+ * Checks per-function override first, then falls back to app-level default.
+ * Returns 0 if no free calls configured.
+ */
+export function getFreeCalls(
+  pricingConfig: AppPricingConfig | null | undefined,
+  functionName: string
+): number {
+  if (!pricingConfig) return 0;
+  // Check per-function override first (only in FunctionPricing format)
+  if (pricingConfig.functions && functionName in pricingConfig.functions) {
+    const val = pricingConfig.functions[functionName];
+    if (typeof val === 'object' && val.free_calls !== undefined) {
+      return val.free_calls;
+    }
+  }
+  // Fall back to app-level default
+  return pricingConfig.default_free_calls || 0;
+}
+
+/**
+ * Get the scope for free call counting.
+ * 'app' = single shared counter across all functions.
+ * 'function' = separate counter per function (default).
+ */
+export function getFreeCallsScope(
+  pricingConfig: AppPricingConfig | null | undefined
+): 'app' | 'function' {
+  return pricingConfig?.free_calls_scope || 'function';
 }
 
 // ============================================

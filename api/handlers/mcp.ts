@@ -11,7 +11,7 @@ import { checkRateLimit } from '../services/ratelimit.ts';
 import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
 import { checkProvisionalDailyLimit, updateLastActive } from '../services/provisional.ts';
 import { getPermissionsForUser } from './user.ts';
-import { type Tier, type AppPricingConfig, getCallPriceCents } from '../../shared/types/index.ts';
+import { type Tier, type AppPricingConfig, getCallPriceCents, getFreeCalls, getFreeCallsScope } from '../../shared/types/index.ts';
 import { executeInSandbox, type UserContext } from '../runtime/sandbox.ts';
 import { createR2Service } from '../services/storage.ts';
 import { createUserService } from '../services/user.ts';
@@ -1606,6 +1606,46 @@ async function executeAppFunction(
     if (result.success && userId !== app.owner_id) {
       const pricingConfig = (app as Record<string, unknown>).pricing_config as AppPricingConfig | null;
       callChargeCents = getCallPriceCents(pricingConfig, functionName);
+
+      // ── Free calls check: skip charge if within free quota ──
+      if (callChargeCents > 0) {
+        const freeCalls = getFreeCalls(pricingConfig, functionName);
+        if (freeCalls > 0) {
+          const scope = getFreeCallsScope(pricingConfig);
+          const counterKey = scope === 'app' ? '__app__' : functionName;
+          try {
+            // @ts-ignore
+            const _Deno = globalThis.Deno;
+            const _SB_URL = _Deno.env.get('SUPABASE_URL') || '';
+            const _SB_KEY = _Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+            const usageRes = await fetch(
+              `${_SB_URL}/rest/v1/rpc/increment_caller_usage`,
+              {
+                method: 'POST',
+                headers: {
+                  'apikey': _SB_KEY,
+                  'Authorization': `Bearer ${_SB_KEY}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  p_app_id: app.id,
+                  p_user_id: userId,
+                  p_counter_key: counterKey,
+                }),
+              }
+            );
+            if (usageRes.ok) {
+              const callCount = await usageRes.json();
+              if (callCount <= freeCalls) {
+                callChargeCents = 0; // Within free quota — no charge
+              }
+            }
+            // If RPC fails, fall through and charge normally (fail-closed for billing)
+          } catch (usageErr) {
+            console.error('[PRICING] Free calls usage check error:', usageErr);
+          }
+        }
+      }
 
       if (callChargeCents > 0) {
         try {

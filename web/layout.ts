@@ -3759,16 +3759,71 @@ export function getLayoutHTML(options: {
       if (pricingEl) {
         const pricingConfig = app.pricing_config || {};
         const defaultPrice = pricingConfig.default_price_cents || 0;
-        const fnPrices = pricingConfig.function_prices ? JSON.stringify(pricingConfig.function_prices, null, 2) : '';
+        const defaultFreeCalls = pricingConfig.default_free_calls || 0;
+        const freeCallsScope = pricingConfig.free_calls_scope || 'function';
+        const fnOverrides = pricingConfig.functions || {};
+        const fns = app.manifest?.functions || [];
+
+        // Build per-function rows
+        var fnRowsHtml = '';
+        if (fns.length > 0) {
+          fnRowsHtml = '<div style="margin-top:var(--space-4)">' +
+            '<h4 style="font-size:13px;font-weight:600;margin-bottom:var(--space-3)">Per-Function Pricing</h4>' +
+            '<div style="display:grid;grid-template-columns:1fr 90px 90px 60px;gap:8px 12px;align-items:center;font-size:12px;">' +
+              '<div style="color:var(--text-muted);font-weight:500;">Function</div>' +
+              '<div style="color:var(--text-muted);font-weight:500;">Price (\u00a2)</div>' +
+              '<div style="color:var(--text-muted);font-weight:500;">Free Calls</div>' +
+              '<div style="color:var(--text-muted);font-weight:500;text-align:center;">Custom</div>';
+
+          for (var fi = 0; fi < fns.length; fi++) {
+            var fn = fns[fi];
+            var fnName = fn.name;
+            var override = fnOverrides[fnName];
+            var hasOverride = override !== undefined;
+            var fnPrice = defaultPrice;
+            var fnFree = defaultFreeCalls;
+            if (hasOverride) {
+              if (typeof override === 'number') {
+                fnPrice = override;
+              } else if (typeof override === 'object' && override !== null) {
+                fnPrice = override.price_cents !== undefined ? override.price_cents : defaultPrice;
+                fnFree = override.free_calls !== undefined ? override.free_calls : defaultFreeCalls;
+              }
+            }
+            var disabledAttr = hasOverride ? '' : ' disabled';
+            var dimStyle = hasOverride ? '' : 'opacity:0.4;';
+            fnRowsHtml +=
+              '<div class="pricing-fn-row" style="display:contents;">' +
+                '<div style="font-family:var(--font-mono);font-size:12px;overflow:hidden;text-overflow:ellipsis;" title="' + escapeHtml(fnName) + '">' + escapeHtml(fnName) + '</div>' +
+                '<input type="number" class="form-input form-input-sm pricing-fn-price" data-fn="' + escapeHtml(fnName) + '" value="' + fnPrice + '" min="0" step="0.1" style="width:80px;font-size:12px;padding:4px 6px;' + dimStyle + '"' + disabledAttr + '>' +
+                '<input type="number" class="form-input form-input-sm pricing-fn-free" data-fn="' + escapeHtml(fnName) + '" value="' + fnFree + '" min="0" step="1" style="width:80px;font-size:12px;padding:4px 6px;' + dimStyle + '"' + disabledAttr + '>' +
+                '<div style="text-align:center;"><input type="checkbox" class="pricing-override-cb" data-fn="' + escapeHtml(fnName) + '"' + (hasOverride ? ' checked' : '') + ' onchange="togglePricingOverride(this)"></div>' +
+              '</div>';
+          }
+          fnRowsHtml += '</div></div>';
+        } else {
+          fnRowsHtml = '<div style="margin-top:var(--space-4);font-size:13px;color:var(--text-muted);">No functions in manifest. Deploy your app to configure per-function pricing.</div>';
+        }
 
         pricingEl.innerHTML =
           '<div class="section-card">' +
             '<h3 class="section-title">Pricing</h3>' +
-            '<div class="form-group"><label class="form-label">Default price per call (cents)</label>' +
-              '<input type="number" id="pricingDefault" class="form-input form-input-sm" value="' + defaultPrice + '" min="0" style="width:120px"></div>' +
-            '<div class="form-group"><label class="form-label">Per-function price overrides (JSON)</label>' +
-              '<textarea id="pricingFnOverrides" class="form-input" style="height:80px;font-family:var(--font-mono);font-size:12px" placeholder="e.g. {&quot;fn_name&quot;: 5}">' + escapeHtml(fnPrices) + '</textarea></div>' +
-            '<button class="btn btn-primary btn-sm" onclick="savePricing()">Save Pricing</button>' +
+            '<div style="display:flex;gap:var(--space-4);flex-wrap:wrap;">' +
+              '<div class="form-group" style="flex:1;min-width:120px;"><label class="form-label">Default price per call (cents)</label>' +
+                '<input type="number" id="pricingDefault" class="form-input form-input-sm" value="' + defaultPrice + '" min="0" step="0.1" style="width:120px"></div>' +
+              '<div class="form-group" style="flex:1;min-width:120px;"><label class="form-label">Default free calls per user</label>' +
+                '<input type="number" id="pricingFreeCalls" class="form-input form-input-sm" value="' + defaultFreeCalls + '" min="0" step="1" style="width:120px"></div>' +
+            '</div>' +
+            '<div class="form-group" style="margin-top:var(--space-3);">' +
+              '<label class="form-label">Free calls scope</label>' +
+              '<div style="display:flex;gap:var(--space-4);font-size:13px;">' +
+                '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="radio" name="freeCallsScope" value="function"' + (freeCallsScope === 'function' ? ' checked' : '') + ' onchange="updateFreeCallsScope()"> Per function</label>' +
+                '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="radio" name="freeCallsScope" value="app"' + (freeCallsScope === 'app' ? ' checked' : '') + ' onchange="updateFreeCallsScope()"> Entire app (shared)</label>' +
+              '</div>' +
+              '<div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Per function: each function has its own free call counter. Entire app: one shared counter across all functions.</div>' +
+            '</div>' +
+            fnRowsHtml +
+            '<button class="btn btn-primary btn-sm" style="margin-top:var(--space-4)" onclick="savePricing()">Save Pricing</button>' +
           '</div>';
       }
 
@@ -4945,18 +5000,68 @@ export function getLayoutHTML(options: {
     // ===== App Logs Tab =====
     // (Old loadAppLogs and loadAppBusiness removed — replaced by loadAppLogsSection and loadAppPayments)
 
+    window.togglePricingOverride = function(cb) {
+      var row = cb.closest('.pricing-fn-row') || cb.parentElement?.parentElement;
+      if (!row) return;
+      var priceInput = row.querySelector('.pricing-fn-price') || document.querySelector('.pricing-fn-price[data-fn="' + cb.dataset.fn + '"]');
+      var freeInput = row.querySelector('.pricing-fn-free') || document.querySelector('.pricing-fn-free[data-fn="' + cb.dataset.fn + '"]');
+      if (priceInput) { priceInput.disabled = !cb.checked; priceInput.style.opacity = cb.checked ? '1' : '0.4'; }
+      if (freeInput) { freeInput.disabled = !cb.checked; freeInput.style.opacity = cb.checked ? '1' : '0.4'; }
+    };
+
+    window.updateFreeCallsScope = function() {
+      var scope = document.querySelector('input[name="freeCallsScope"]:checked')?.value || 'function';
+      var freeInputs = document.querySelectorAll('.pricing-fn-free');
+      freeInputs.forEach(function(inp) {
+        var cb = document.querySelector('.pricing-override-cb[data-fn="' + inp.dataset.fn + '"]');
+        if (scope === 'app') {
+          inp.disabled = true;
+          inp.style.opacity = '0.4';
+          inp.title = 'Free calls are shared across entire app when scope is "Entire app"';
+        } else {
+          inp.disabled = !(cb && cb.checked);
+          inp.style.opacity = (cb && cb.checked) ? '1' : '0.4';
+          inp.title = '';
+        }
+      });
+    };
+
     window.savePricing = async function() {
       if (!currentAppId) return;
-      const defaultCents = parseInt(document.getElementById('pricingDefault')?.value || '0', 10);
-      let fnPrices = null;
-      const fnText = document.getElementById('pricingFnOverrides')?.value?.trim();
-      if (fnText) {
-        try { fnPrices = JSON.parse(fnText); } catch { showToast('Invalid JSON in price overrides', 'error'); return; }
-      }
+      var defaultCents = parseFloat(document.getElementById('pricingDefault')?.value || '0');
+      var defaultFreeCalls = parseInt(document.getElementById('pricingFreeCalls')?.value || '0', 10);
+      var scope = document.querySelector('input[name="freeCallsScope"]:checked')?.value || 'function';
+
+      var pricingConfig = {
+        default_price_cents: defaultCents
+      };
+      if (defaultFreeCalls > 0) pricingConfig.default_free_calls = defaultFreeCalls;
+      if (scope !== 'function') pricingConfig.free_calls_scope = scope;
+
+      // Collect per-function overrides
+      var fnFunctions = {};
+      var hasOverrides = false;
+      var checkboxes = document.querySelectorAll('.pricing-override-cb');
+      checkboxes.forEach(function(cb) {
+        if (!cb.checked) return;
+        var fnName = cb.dataset.fn;
+        var priceInput = document.querySelector('.pricing-fn-price[data-fn="' + fnName + '"]');
+        var freeInput = document.querySelector('.pricing-fn-free[data-fn="' + fnName + '"]');
+        var price = parseFloat(priceInput?.value || '0');
+        var freeCalls = parseInt(freeInput?.value || '0', 10);
+
+        // Use object format if free_calls differs from default, otherwise plain number for compat
+        if (freeCalls > 0 && freeCalls !== defaultFreeCalls) {
+          fnFunctions[fnName] = { price_cents: price, free_calls: freeCalls };
+        } else {
+          fnFunctions[fnName] = price;
+        }
+        hasOverrides = true;
+      });
+      if (hasOverrides) pricingConfig.functions = fnFunctions;
+
       try {
-        const pricingConfig = { default_price_cents: defaultCents };
-        if (fnPrices) pricingConfig.function_prices = fnPrices;
-        const res = await fetch('/api/apps/' + currentAppId, {
+        var res = await fetch('/api/apps/' + currentAppId, {
           method: 'PATCH',
           headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
           body: JSON.stringify({ pricing_config: pricingConfig }),

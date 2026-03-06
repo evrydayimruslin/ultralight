@@ -460,13 +460,39 @@ async function handleUpdateApp(request: Request, appId: string): Promise<Respons
             return error('default_price_cents must be 0-10000 (max $100 per call)', 400);
           }
         }
+        if (cfg.default_free_calls !== undefined) {
+          if (typeof cfg.default_free_calls !== 'number' || cfg.default_free_calls < 0 || !Number.isInteger(cfg.default_free_calls) || cfg.default_free_calls > 1000000) {
+            return error('default_free_calls must be a non-negative integer up to 1,000,000', 400);
+          }
+        }
+        if (cfg.free_calls_scope !== undefined) {
+          if (cfg.free_calls_scope !== 'app' && cfg.free_calls_scope !== 'function') {
+            return error('free_calls_scope must be "app" or "function"', 400);
+          }
+        }
         if (cfg.functions !== undefined) {
           if (typeof cfg.functions !== 'object' || cfg.functions === null || Array.isArray(cfg.functions)) {
-            return error('pricing_config.functions must be an object mapping function names to cents', 400);
+            return error('pricing_config.functions must be an object mapping function names to prices', 400);
           }
-          for (const [fn, price] of Object.entries(cfg.functions as Record<string, unknown>)) {
-            if (typeof price !== 'number' || price < 0 || price > 10000) {
-              return error(`Price for "${fn}" must be 0-10000 cents`, 400);
+          for (const [fn, val] of Object.entries(cfg.functions as Record<string, unknown>)) {
+            if (typeof val === 'number') {
+              // Legacy format: plain number (cents)
+              if (val < 0 || val > 10000) {
+                return error(`Price for "${fn}" must be 0-10000 cents`, 400);
+              }
+            } else if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+              // New format: FunctionPricing object
+              const fp = val as Record<string, unknown>;
+              if (typeof fp.price_cents !== 'number' || fp.price_cents < 0 || fp.price_cents > 10000) {
+                return error(`price_cents for "${fn}" must be 0-10000 cents`, 400);
+              }
+              if (fp.free_calls !== undefined) {
+                if (typeof fp.free_calls !== 'number' || fp.free_calls < 0 || !Number.isInteger(fp.free_calls) || fp.free_calls > 1000000) {
+                  return error(`free_calls for "${fn}" must be a non-negative integer up to 1,000,000`, 400);
+                }
+              }
+            } else {
+              return error(`Price for "${fn}" must be a number or { price_cents, free_calls? }`, 400);
             }
           }
         }
