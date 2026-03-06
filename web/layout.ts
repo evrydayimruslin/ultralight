@@ -2502,6 +2502,23 @@ export function getLayoutHTML(options: {
     }
     const escHtml = escapeHtml;
 
+    // Resolve function list from best available source: manifest > skills_parsed > exports
+    function getAppFunctions(app) {
+      // 1. Manifest functions (richest: name, description, parameters)
+      if (app.manifest?.functions && app.manifest.functions.length > 0) {
+        return { functions: app.manifest.functions, source: 'manifest' };
+      }
+      // 2. skills_parsed functions (name + description + parameter schemas)
+      if (app.skills_parsed?.functions && app.skills_parsed.functions.length > 0) {
+        return { functions: app.skills_parsed.functions, source: 'skills_parsed' };
+      }
+      // 3. exports array (just names, always available after build)
+      if (app.exports && app.exports.length > 0) {
+        return { functions: app.exports.map(function(name) { return { name: name }; }), source: 'exports' };
+      }
+      return { functions: [], source: 'none' };
+    }
+
     function relTime(d) {
       const ms = Date.now() - new Date(d).getTime();
       const m = Math.floor(ms / 60000);
@@ -3476,7 +3493,7 @@ export function getLayoutHTML(options: {
         const name = escapeHtml(app.name || app.slug || 'Untitled');
         const desc = escapeHtml((app.description || '').slice(0, 120));
         const version = escapeHtml(app.current_version || 'v1.0.0');
-        const fnCount = (app.manifest?.functions || []).length;
+        const fnCount = getAppFunctions(app).functions.length;
         return '<div class="app-row" onclick="navigateToApp(\\\'' + app.id + '\\\')">' +
           '<div class="app-row-emoji">' + emoji + '</div>' +
           '<div class="app-row-info">' +
@@ -3592,18 +3609,24 @@ export function getLayoutHTML(options: {
       // -- Functions list --
       const fnsEl = document.getElementById('appFunctionsSection');
       if (fnsEl) {
-        const fns = app.manifest?.functions || [];
+        const fnResult = getAppFunctions(app);
+        const fns = fnResult.functions;
+        const fnSource = fnResult.source;
         const functionsHtml = fns.length > 0
           ? '<div class="function-list">' + fns.map(function(fn) {
               const params = fn.parameters?.map(function(p) {
-                return '<span class="fn-param">' + escapeHtml(p.name) + '<span class="fn-param-type">: ' + escapeHtml(p.type || 'any') + '</span>' + (p.required ? '' : '?') + '</span>';
+                var pName = typeof p === 'object' ? (p.name || '') : '';
+                var pType = typeof p === 'object' ? (p.type || 'any') : 'any';
+                var pReq = typeof p === 'object' ? p.required : true;
+                return '<span class="fn-param">' + escapeHtml(pName) + '<span class="fn-param-type">: ' + escapeHtml(pType) + '</span>' + (pReq ? '' : '?') + '</span>';
               }).join(', ') || '';
               return '<div class="function-item">' +
-                '<div class="function-name"><code>' + escapeHtml(fn.name) + '</code>(' + params + ')</div>' +
+                '<div class="function-name"><code>' + escapeHtml(fn.name) + '</code>' + (params ? '(' + params + ')' : '') + '</div>' +
                 (fn.description ? '<div class="function-desc">' + escapeHtml(fn.description) + '</div>' : '') +
               '</div>';
-            }).join('') + '</div>'
-          : '<div style="font-size:13px;color:var(--text-muted);">No functions found in manifest.</div>';
+            }).join('') + '</div>' +
+            (fnSource !== 'manifest' ? '<div style="font-size:11px;color:var(--text-muted);margin-top:8px;">Functions detected from ' + (fnSource === 'skills_parsed' ? 'code analysis' : 'exports') + '. Add a manifest.json for richer parameter schemas.</div>' : '')
+          : '<div style="font-size:13px;color:var(--text-muted);">No functions found. Deploy your app to see functions here.</div>';
 
         fnsEl.innerHTML =
           '<div class="section-card">' +
@@ -3762,13 +3785,16 @@ export function getLayoutHTML(options: {
         const defaultFreeCalls = pricingConfig.default_free_calls || 0;
         const freeCallsScope = pricingConfig.free_calls_scope || 'function';
         const fnOverrides = pricingConfig.functions || {};
-        const fns = app.manifest?.functions || [];
+        const fnResult = getAppFunctions(app);
+        const fns = fnResult.functions;
+        const fnSource = fnResult.source;
 
         // Build per-function rows
         var fnRowsHtml = '';
         if (fns.length > 0) {
           fnRowsHtml = '<div style="margin-top:var(--space-4)">' +
             '<h4 style="font-size:13px;font-weight:600;margin-bottom:var(--space-3)">Per-Function Pricing</h4>' +
+            (fnSource !== 'manifest' ? '<div style="font-size:11px;color:var(--text-muted);margin-bottom:var(--space-2);">Functions detected from ' + (fnSource === 'skills_parsed' ? 'code analysis' : 'exports') + '. Add a manifest.json for richer schemas.</div>' : '') +
             '<div style="display:grid;grid-template-columns:1fr 90px 90px 60px;gap:8px 12px;align-items:center;font-size:12px;">' +
               '<div style="color:var(--text-muted);font-weight:500;">Function</div>' +
               '<div style="color:var(--text-muted);font-weight:500;">Price (\u00a2)</div>' +
@@ -3802,7 +3828,7 @@ export function getLayoutHTML(options: {
           }
           fnRowsHtml += '</div></div>';
         } else {
-          fnRowsHtml = '<div style="margin-top:var(--space-4);font-size:13px;color:var(--text-muted);">No functions in manifest. Deploy your app to configure per-function pricing.</div>';
+          fnRowsHtml = '<div style="margin-top:var(--space-4);font-size:13px;color:var(--text-muted);">No functions found. Deploy your app to configure per-function pricing.</div>';
         }
 
         pricingEl.innerHTML =
@@ -4439,7 +4465,7 @@ export function getLayoutHTML(options: {
       if (!email || !currentAppId) return;
       try {
         // Get app functions
-        const fns = (window._currentApp?.manifest?.functions || []).map(function(f) { return f.name; });
+        const fns = getAppFunctions(window._currentApp || {}).functions.map(function(f) { return f.name; });
         const perms = fns.map(function(fn) { return { function_name: fn, allowed: true }; });
 
         const res = await fetch('/api/user/permissions/' + currentAppId, {
@@ -4493,7 +4519,7 @@ export function getLayoutHTML(options: {
         if (!res.ok) { detail.innerHTML = 'Failed to load.'; return; }
         const data = await res.json();
         const perms = data.permissions || data || [];
-        const fns = window._currentApp?.manifest?.functions || [];
+        const fns = getAppFunctions(window._currentApp || {}).functions;
 
         let html = '<h4 style="margin-bottom:12px;font-size:14px">' + escapeHtml(email) + '</h4>';
         html += fns.map(function(fn, idx) {
