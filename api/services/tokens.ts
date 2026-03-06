@@ -398,6 +398,7 @@ export async function getUserFromToken(token: string, clientIp?: string): Promis
   tokenId: string;
   tokenAppIds?: string[] | null;
   tokenFunctionNames?: string[] | null;
+  scopes?: string[];
 } | null> {
   const validated = await validateToken(token, clientIp);
   if (!validated) {
@@ -432,6 +433,7 @@ export async function getUserFromToken(token: string, clientIp?: string): Promis
     tokenId: validated.token_id,
     tokenAppIds: validated.app_ids,
     tokenFunctionNames: validated.function_names,
+    scopes: validated.scopes,
   };
 }
 

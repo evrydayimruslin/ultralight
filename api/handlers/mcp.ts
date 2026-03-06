@@ -570,7 +570,7 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
   let tokenFunctionNames: string[] | null = null;
 
   // Run auth and app lookup concurrently — they have no dependency on each other
-  type AuthResult = { id: string; email: string; tier: string; tokenId?: string; tokenAppIds?: string[] | null; tokenFunctionNames?: string[] | null };
+  type AuthResult = { id: string; email: string; tier: string; tokenId?: string; tokenAppIds?: string[] | null; tokenFunctionNames?: string[] | null; scopes?: string[] };
   let authUser: AuthResult;
   let app: Awaited<ReturnType<typeof appsService.findById>>;
 
@@ -674,6 +674,18 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
         rpcRequest.id,
         -32003,
         `Token not authorized for this app. Scoped to: ${tokenAppIds.join(', ')}`
+      );
+    }
+  }
+
+  // Scope enforcement: require apps:call scope for tools/call
+  if (rpcRequest.method === 'tools/call') {
+    const scopes = authUser.scopes || ['*'];
+    if (!scopes.includes('*') && !scopes.includes('apps:call')) {
+      return jsonRpcErrorResponse(
+        rpcRequest.id,
+        -32003,
+        'Token missing required scope: apps:call'
       );
     }
   }

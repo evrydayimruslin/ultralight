@@ -7,6 +7,8 @@
 
 import { json, error } from './app.ts';
 import { createToken, revokeByToken } from '../services/tokens.ts';
+import { authenticate, hasScope } from './auth.ts';
+import { createUserService } from '../services/user.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 // @ts-ignore - Deno is available
@@ -29,6 +31,15 @@ interface OAuthClient {
   grant_types: string[];
   response_types: string[];
   token_endpoint_auth_method: string;
+}
+
+interface OAuthClientFull extends OAuthClient {
+  owner_user_id?: string;
+  client_secret_hash?: string;
+  client_secret_salt?: string;
+  logo_url?: string;
+  description?: string;
+  is_developer_app: boolean;
 }
 
 /**
@@ -72,6 +83,73 @@ async function getOAuthClient(clientId: string): Promise<OAuthClient | null> {
     response_types: data.response_types,
     token_endpoint_auth_method: data.token_endpoint_auth_method,
   };
+}
+
+/**
+ * Look up full OAuth client including developer app fields.
+ */
+async function getOAuthClientFull(clientId: string): Promise<OAuthClientFull | null> {
+  const { data, error: err } = await supabase
+    .from('oauth_clients')
+    .select('client_id, client_name, redirect_uris, grant_types, response_types, token_endpoint_auth_method, owner_user_id, client_secret_hash, client_secret_salt, logo_url, description, is_developer_app')
+    .eq('client_id', clientId)
+    .single();
+
+  if (err || !data) return null;
+
+  return {
+    client_id: data.client_id,
+    client_name: data.client_name || undefined,
+    redirect_uris: data.redirect_uris,
+    grant_types: data.grant_types,
+    response_types: data.response_types,
+    token_endpoint_auth_method: data.token_endpoint_auth_method,
+    owner_user_id: data.owner_user_id || undefined,
+    client_secret_hash: data.client_secret_hash || undefined,
+    client_secret_salt: data.client_secret_salt || undefined,
+    logo_url: data.logo_url || undefined,
+    description: data.description || undefined,
+    is_developer_app: data.is_developer_app || false,
+  };
+}
+
+/**
+ * Get existing consent record for a user/client pair.
+ */
+async function getExistingConsent(userId: string, clientId: string): Promise<{ scopes: string[] } | null> {
+  const { data, error: err } = await supabase
+    .from('oauth_consents')
+    .select('scopes')
+    .eq('user_id', userId)
+    .eq('client_id', clientId)
+    .is('revoked_at', null)
+    .single();
+
+  if (err || !data) return null;
+  return { scopes: data.scopes || [] };
+}
+
+/**
+ * Save or update consent record.
+ */
+async function saveConsent(userId: string, clientId: string, scopes: string[]): Promise<void> {
+  await supabase
+    .from('oauth_consents')
+    .upsert({
+      user_id: userId,
+      client_id: clientId,
+      scopes,
+      created_at: new Date().toISOString(),
+      revoked_at: null,
+    }, { onConflict: 'user_id,client_id' });
+}
+
+/**
+ * Check if existing consent scopes satisfy the requested scopes.
+ */
+function scopesSatisfied(existingScopes: string[], requestedScopes: string[]): boolean {
+  if (existingScopes.includes('*')) return true;
+  return requestedScopes.every(s => existingScopes.includes(s));
 }
 
 // ============================================
@@ -391,6 +469,21 @@ export async function handleOAuth(request: Request): Promise<Response> {
     return handleTokenExchange(request);
   }
 
+  // Userinfo endpoint (OIDC-compatible)
+  if (path === '/oauth/userinfo' && (method === 'GET' || method === 'POST')) {
+    return handleUserinfo(request);
+  }
+
+  // Consent approval (POST from consent screen form)
+  if (path === '/oauth/consent/approve' && method === 'POST') {
+    return handleConsentApprove(request);
+  }
+
+  // Consent denial
+  if (path === '/oauth/consent/deny' && method === 'POST') {
+    return handleConsentDeny(request);
+  }
+
   // Token revocation (RFC 7009)
   if (path === '/oauth/revoke' && method === 'POST') {
     return handleTokenRevocation(request);
@@ -405,6 +498,394 @@ export async function handleOAuth(request: Request): Promise<Response> {
 }
 
 // ============================================
+// USERINFO ENDPOINT (OIDC-compatible)
+// ============================================
+
+async function handleUserinfo(request: Request): Promise<Response> {
+  let authResult: { id: string; email: string; scopes?: string[] };
+  try {
+    authResult = await authenticate(request);
+  } catch {
+    return new Response(JSON.stringify({ error: 'invalid_token' }), {
+      status: 401,
+      headers: {
+        'Content-Type': 'application/json',
+        'WWW-Authenticate': 'Bearer error="invalid_token"',
+      },
+    });
+  }
+
+  // Require user:read scope
+  if (!hasScope(authResult.scopes, 'user:read')) {
+    return new Response(JSON.stringify({ error: 'insufficient_scope' }), {
+      status: 403,
+      headers: {
+        'Content-Type': 'application/json',
+        'WWW-Authenticate': 'Bearer error="insufficient_scope", scope="user:read"',
+      },
+    });
+  }
+
+  // Fetch full profile
+  const userService = createUserService();
+  const profile = await userService.getUser(authResult.id);
+  if (!profile) {
+    return new Response(JSON.stringify({ error: 'user_not_found' }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Build OIDC-compatible response
+  const response: Record<string, unknown> = {
+    sub: profile.id,
+    name: profile.display_name || profile.email.split('@')[0],
+    picture: profile.avatar_url || null,
+  };
+
+  // Only include email if user:email scope is present
+  if (hasScope(authResult.scopes, 'user:email')) {
+    response.email = profile.email;
+    response.email_verified = true; // Google OAuth emails are always verified
+  }
+
+  return json(response);
+}
+
+// ============================================
+// CONSENT FLOW
+// ============================================
+
+/**
+ * Encrypt OAuth state + Supabase tokens into an opaque consent token.
+ * Uses the same AES-256-GCM pattern as auth code encryption.
+ */
+async function encryptConsentToken(data: {
+  supabase_access_token: string;
+  supabase_refresh_token?: string;
+  oauth_state: string; // signed state string
+  user_id: string;
+  user_email: string;
+}): Promise<string> {
+  return encryptToken(JSON.stringify(data));
+}
+
+async function decryptConsentToken(encrypted: string): Promise<{
+  supabase_access_token: string;
+  supabase_refresh_token?: string;
+  oauth_state: string;
+  user_id: string;
+  user_email: string;
+} | null> {
+  try {
+    const decrypted = await decryptToken(encrypted);
+    return JSON.parse(decrypted);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if consent is needed for a developer app. If so, render consent screen.
+ * MCP dynamic clients auto-approve. Developer apps check existing consent.
+ */
+async function checkAndRenderConsent(
+  supabaseAccessToken: string,
+  supabaseRefreshToken: string | undefined,
+  oauthState: {
+    client_id: string;
+    redirect_uri: string;
+    code_challenge: string;
+    code_challenge_method: string;
+    state: string;
+    scope: string;
+  },
+  signedState: string
+): Promise<Response> {
+  // Look up full client info
+  const client = await getOAuthClientFull(oauthState.client_id);
+
+  // If not a developer app (MCP dynamic client), auto-approve
+  if (!client || !client.is_developer_app) {
+    return generateAuthCodeAndRedirect(supabaseAccessToken, supabaseRefreshToken, oauthState);
+  }
+
+  // Verify user identity
+  const user = await verifySupabaseToken(supabaseAccessToken);
+  if (!user) {
+    return error('Failed to verify user identity', 500);
+  }
+
+  // Check existing consent
+  const requestedScopes = oauthState.scope.split(' ').filter(Boolean);
+  const existingConsent = await getExistingConsent(user.id, oauthState.client_id);
+
+  if (existingConsent && scopesSatisfied(existingConsent.scopes, requestedScopes)) {
+    // Already consented with sufficient scopes — auto-approve
+    return generateAuthCodeAndRedirect(supabaseAccessToken, supabaseRefreshToken, oauthState);
+  }
+
+  // Need consent — encrypt state into consent token and render screen
+  const consentToken = await encryptConsentToken({
+    supabase_access_token: supabaseAccessToken,
+    supabase_refresh_token: supabaseRefreshToken,
+    oauth_state: signedState,
+    user_id: user.id,
+    user_email: user.email,
+  });
+
+  return new Response(getConsentScreenHTML(client, requestedScopes, consentToken, oauthState.redirect_uri), {
+    headers: { 'Content-Type': 'text/html' },
+  });
+}
+
+/**
+ * Handle consent approval — decrypt token, save consent, resume auth code flow.
+ */
+async function handleConsentApprove(request: Request): Promise<Response> {
+  let body: Record<string, string>;
+  try {
+    const contentType = request.headers.get('content-type') || '';
+    if (contentType.includes('application/x-www-form-urlencoded')) {
+      const text = await request.text();
+      const params = new URLSearchParams(text);
+      body = Object.fromEntries(params.entries());
+    } else {
+      body = await request.json();
+    }
+  } catch {
+    return error('Invalid request', 400);
+  }
+
+  const consentTokenStr = body.consent_token;
+  if (!consentTokenStr) {
+    return error('Missing consent_token', 400);
+  }
+
+  // Decrypt consent token
+  const consentData = await decryptConsentToken(consentTokenStr);
+  if (!consentData) {
+    return error('Invalid or expired consent token', 400);
+  }
+
+  // Verify the signed state
+  const encodedState = await verifySignedState(consentData.oauth_state);
+  if (!encodedState) {
+    return error('Invalid OAuth state in consent token', 400);
+  }
+
+  let oauthState: {
+    client_id: string;
+    redirect_uri: string;
+    code_challenge: string;
+    code_challenge_method: string;
+    state: string;
+    scope: string;
+  };
+  try {
+    oauthState = JSON.parse(atob(encodedState));
+  } catch {
+    return error('Invalid OAuth state', 400);
+  }
+
+  // Save consent record
+  const requestedScopes = oauthState.scope.split(' ').filter(Boolean);
+  await saveConsent(consentData.user_id, oauthState.client_id, requestedScopes);
+
+  // Resume the auth code flow
+  return generateAuthCodeAndRedirect(
+    consentData.supabase_access_token,
+    consentData.supabase_refresh_token,
+    oauthState
+  );
+}
+
+/**
+ * Handle consent denial — redirect back to client with error=access_denied.
+ */
+async function handleConsentDeny(request: Request): Promise<Response> {
+  let body: Record<string, string>;
+  try {
+    const contentType = request.headers.get('content-type') || '';
+    if (contentType.includes('application/x-www-form-urlencoded')) {
+      const text = await request.text();
+      const params = new URLSearchParams(text);
+      body = Object.fromEntries(params.entries());
+    } else {
+      body = await request.json();
+    }
+  } catch {
+    return error('Invalid request', 400);
+  }
+
+  const redirectUri = body.redirect_uri;
+  if (!redirectUri) {
+    return error('Missing redirect_uri', 400);
+  }
+
+  const redirectUrl = new URL(redirectUri);
+  redirectUrl.searchParams.set('error', 'access_denied');
+  redirectUrl.searchParams.set('error_description', 'User denied the authorization request');
+
+  return new Response(null, {
+    status: 302,
+    headers: { 'Location': redirectUrl.toString() },
+  });
+}
+
+/**
+ * Generate consent screen HTML.
+ */
+function getConsentScreenHTML(
+  client: OAuthClientFull,
+  scopes: string[],
+  consentToken: string,
+  redirectUri: string
+): string {
+  const appName = client.client_name || 'Unknown Application';
+  const logoHtml = client.logo_url
+    ? `<img src="${escapeHtml(client.logo_url)}" alt="" style="width:64px;height:64px;border-radius:12px;margin-bottom:1rem;">`
+    : `<div style="width:64px;height:64px;border-radius:12px;background:#222;display:flex;align-items:center;justify-content:center;margin-bottom:1rem;font-size:28px;">${escapeHtml(appName.charAt(0).toUpperCase())}</div>`;
+
+  const scopeDescriptions: Record<string, string> = {
+    'user:read': 'View your profile information (name, avatar)',
+    'user:email': 'View your email address',
+    'apps:read': 'List your apps and their details',
+    'apps:call': 'Call your app functions via MCP',
+    'mcp:read': 'Read access to MCP tools',
+    'mcp:write': 'Write access to MCP tools',
+  };
+
+  const scopeListHtml = scopes
+    .map(s => {
+      const desc = scopeDescriptions[s] || s;
+      return `<li style="padding:0.5rem 0;border-bottom:1px solid #222;">${escapeHtml(desc)}</li>`;
+    })
+    .join('');
+
+  // Escape the consent token for safe embedding in HTML form
+  const escapedToken = escapeHtml(consentToken);
+  const escapedRedirectUri = escapeHtml(redirectUri);
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <title>Authorize ${escapeHtml(appName)}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #0a0a0a; color: #e5e5e5; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 1rem; }
+    .card { background: #141414; border: 1px solid #222; border-radius: 16px; padding: 2rem; max-width: 420px; width: 100%; }
+    .header { text-align: center; margin-bottom: 1.5rem; display: flex; flex-direction: column; align-items: center; }
+    h1 { font-size: 1.25rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .subtitle { color: #888; font-size: 0.875rem; }
+    .scopes { margin: 1.5rem 0; }
+    .scopes h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #888; margin-bottom: 0.75rem; }
+    .scopes ul { list-style: none; font-size: 0.875rem; }
+    .scopes li { display: flex; align-items: center; gap: 0.5rem; }
+    .scopes li::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #22c55e; flex-shrink: 0; }
+    .actions { display: flex; gap: 0.75rem; margin-top: 1.5rem; }
+    .actions form { flex: 1; }
+    button { width: 100%; padding: 0.75rem; border-radius: 8px; font-size: 0.875rem; font-weight: 500; cursor: pointer; border: none; transition: background 0.15s; }
+    .btn-authorize { background: #fff; color: #000; }
+    .btn-authorize:hover { background: #e5e5e5; }
+    .btn-deny { background: #222; color: #888; }
+    .btn-deny:hover { background: #333; color: #e5e5e5; }
+    .description { color: #888; font-size: 0.8rem; margin-top: 0.5rem; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      ${logoHtml}
+      <h1>${escapeHtml(appName)}</h1>
+      <p class="subtitle">wants to access your Ultralight account</p>
+    </div>
+    <div class="scopes">
+      <h2>This will allow the application to:</h2>
+      <ul>${scopeListHtml}</ul>
+    </div>
+    <div class="actions">
+      <form method="POST" action="/oauth/consent/approve">
+        <input type="hidden" name="consent_token" value="${escapedToken}">
+        <button type="submit" class="btn-authorize">Authorize</button>
+      </form>
+      <form method="POST" action="/oauth/consent/deny">
+        <input type="hidden" name="redirect_uri" value="${escapedRedirectUri}">
+        <button type="submit" class="btn-deny">Deny</button>
+      </form>
+    </div>
+    <p class="description">Authorizing will redirect you back to ${escapeHtml(new URL(redirectUri).hostname)}</p>
+  </div>
+</body>
+</html>`;
+}
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// ============================================
+// CLIENT SECRET HELPERS
+// ============================================
+
+const CLIENT_SECRET_PREFIX = 'uls_';
+
+/**
+ * Generate a client secret: uls_ + 32 hex chars
+ */
+export function generateClientSecret(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+  return `${CLIENT_SECRET_PREFIX}${hex}`;
+}
+
+/**
+ * Generate a random hex salt for client secret hashing.
+ */
+export function generateSecretSalt(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Hash a client secret with HMAC-SHA256 using a per-secret salt.
+ */
+export async function hashClientSecret(secret: string, salt: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(salt),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(secret));
+  return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Verify a client secret against stored hash + salt.
+ */
+async function verifyClientSecret(secret: string, storedHash: string, salt: string): Promise<boolean> {
+  const hash = await hashClientSecret(secret, salt);
+  // Constant-time comparison
+  if (hash.length !== storedHash.length) return false;
+  let result = 0;
+  for (let i = 0; i < hash.length; i++) {
+    result |= hash.charCodeAt(i) ^ storedHash.charCodeAt(i);
+  }
+  return result === 0;
+}
+
+// ============================================
 // P2A: PROTECTED RESOURCE METADATA
 // ============================================
 
@@ -414,7 +895,7 @@ function handleProtectedResourceMetadata(request: Request): Response {
   return json({
     resource: baseUrl,
     authorization_servers: [baseUrl],
-    scopes_supported: ['mcp:read', 'mcp:write'],
+    scopes_supported: ['user:read', 'user:email', 'apps:read', 'apps:call'],
     bearer_methods_supported: ['header'],
   });
 }
@@ -431,11 +912,12 @@ function handleAuthorizationServerMetadata(request: Request): Response {
     authorization_endpoint: `${baseUrl}/oauth/authorize`,
     token_endpoint: `${baseUrl}/oauth/token`,
     registration_endpoint: `${baseUrl}/oauth/register`,
-    scopes_supported: ['mcp:read', 'mcp:write'],
+    userinfo_endpoint: `${baseUrl}/oauth/userinfo`,
+    scopes_supported: ['user:read', 'user:email', 'apps:read', 'apps:call'],
     response_types_supported: ['code'],
     grant_types_supported: ['authorization_code'],
     code_challenge_methods_supported: ['S256'],
-    token_endpoint_auth_methods_supported: ['none'],
+    token_endpoint_auth_methods_supported: ['none', 'client_secret_post'],
     revocation_endpoint: `${baseUrl}/oauth/revoke`,
     revocation_endpoint_auth_methods_supported: ['none'],
     service_documentation: 'https://ultralight.dev/docs/mcp',
@@ -602,7 +1084,7 @@ async function handleOAuthCallback(request: Request): Promise<Response> {
 
     if (tokenResponse.ok) {
       const tokens = await tokenResponse.json();
-      return generateAuthCodeAndRedirect(tokens.access_token, tokens.refresh_token, oauthState);
+      return checkAndRenderConsent(tokens.access_token, tokens.refresh_token, oauthState, signedState);
     }
   }
 
@@ -721,11 +1203,29 @@ async function handleTokenExchange(request: Request): Promise<Response> {
     return oauthError('invalid_grant', 'PKCE verification failed', 400);
   }
 
+  // For developer apps, verify client_secret
+  const client = await getOAuthClientFull(codeEntry.client_id);
+  if (client && client.is_developer_app && client.client_secret_hash) {
+    const clientSecret = body.client_secret;
+    if (!clientSecret) {
+      return oauthError('invalid_client', 'client_secret required for this application', 401);
+    }
+    const secretValid = await verifyClientSecret(clientSecret, client.client_secret_hash, client.client_secret_salt || '');
+    if (!secretValid) {
+      return oauthError('invalid_client', 'Invalid client_secret', 401);
+    }
+  }
+
+  // Parse scopes from the authorization code — use real scopes instead of wildcard
+  const scopes = codeEntry.scope
+    ? codeEntry.scope.split(' ').filter(Boolean)
+    : ['*'];
+
   // Mint an Ultralight API token for this user
   try {
-    const tokenName = `mcp-oauth-${codeEntry.client_id.slice(0, 8)}-${Date.now()}`;
+    const tokenName = `oauth-${codeEntry.client_id.slice(0, 8)}-${Date.now()}`;
     const result = await createToken(codeEntry.user_id, tokenName, {
-      scopes: ['*'],
+      scopes,
     });
 
     return json({
@@ -819,7 +1319,32 @@ async function handleOAuthCallbackComplete(request: Request): Promise<Response> 
     return error('Invalid OAuth state', 400);
   }
 
-  // Verify the Supabase token
+  // Check if this is a developer app that needs consent
+  const client = await getOAuthClientFull(oauthState.client_id);
+  if (client && client.is_developer_app) {
+    // Verify the Supabase token to check consent
+    const user = await verifySupabaseToken(accessToken);
+    if (!user) {
+      return error('Invalid Supabase token', 401);
+    }
+
+    const requestedScopes = oauthState.scope.split(' ').filter(Boolean);
+    const existingConsent = await getExistingConsent(user.id, oauthState.client_id);
+
+    if (!existingConsent || !scopesSatisfied(existingConsent.scopes, requestedScopes)) {
+      // Need consent — return consent HTML for the browser to render
+      const consentToken = await encryptConsentToken({
+        supabase_access_token: accessToken,
+        supabase_refresh_token: refreshToken,
+        oauth_state: signedState,
+        user_id: user.id,
+        user_email: user.email,
+      });
+      return json({ consent_required: true, consent_html: getConsentScreenHTML(client, requestedScopes, consentToken, oauthState.redirect_uri) });
+    }
+  }
+
+  // No consent needed — proceed with auth code generation
   const user = await verifySupabaseToken(accessToken);
   if (!user) {
     return error('Invalid Supabase token', 401);
@@ -916,7 +1441,11 @@ function getOAuthCallbackHTML(encodedState: string): string {
 
         if (res.ok) {
           const data = await res.json();
-          if (data.redirect) {
+          if (data.consent_required && data.consent_html) {
+            document.open();
+            document.write(data.consent_html);
+            document.close();
+          } else if (data.redirect) {
             window.location.href = data.redirect;
           } else {
             document.querySelector('p').textContent = 'Authorization complete!';

@@ -14,6 +14,7 @@ import { handleMcpConfig } from './config.ts';
 import { handleHttpEndpoint, handleHttpOptions } from './http.ts';
 import { handleTierChange } from './tier.ts';
 import { handleAdmin } from './admin.ts';
+import { handleDeveloper } from './developer.ts';
 import { getLayoutHTML } from '../../web/layout.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
@@ -87,6 +88,20 @@ export function createApp() {
       const url = new URL(request.url);
       const path = url.pathname;
       const method = request.method;
+
+      // Developer portal subdomain routing
+      const host = request.headers.get('host') || '';
+      if (host.startsWith('dev.')) {
+        return handleDeveloper(request);
+      }
+
+      // Developer portal on main domain path
+      if (path === '/developer' && method === 'GET') {
+        return handleDeveloper(request);
+      }
+      if (path.startsWith('/api/developer/')) {
+        return handleDeveloper(request);
+      }
 
       // Public homepage
       if (path === '/' && method === 'GET') {

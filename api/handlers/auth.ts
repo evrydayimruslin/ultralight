@@ -254,7 +254,16 @@ export async function handleAuth(request: Request): Promise<Response> {
  * Extract and verify JWT or API token from request
  * Also ensures user exists in public.users table
  */
-export async function authenticate(request: Request): Promise<{ id: string; email: string; tier: string; provisional?: boolean; tokenId?: string; tokenAppIds?: string[] | null; tokenFunctionNames?: string[] | null }> {
+/**
+ * Check if a set of scopes includes the required scope.
+ * Wildcard '*' matches everything (backward compat for existing tokens).
+ */
+export function hasScope(scopes: string[] | undefined, required: string): boolean {
+  if (!scopes) return true; // No scopes = full access (JWT sessions)
+  return scopes.includes('*') || scopes.includes(required);
+}
+
+export async function authenticate(request: Request): Promise<{ id: string; email: string; tier: string; provisional?: boolean; tokenId?: string; tokenAppIds?: string[] | null; tokenFunctionNames?: string[] | null; scopes?: string[] }> {
   const authHeader = request.headers.get('Authorization');
 
   if (!authHeader?.startsWith('Bearer ')) {
