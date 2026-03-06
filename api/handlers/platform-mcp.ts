@@ -726,13 +726,14 @@ Test code in sandbox without deploying.
 - Returns: \`{ success, result?, error?, duration_ms, exports, logs?, lint? }\`.
 - Always test before \`ul.upload\`.
 
-### ul.set({ app_id, version?, visibility?, download_access?, supabase_server?, calls_per_minute?, calls_per_day?, default_price_cents?, function_prices?, search_hints?, show_metrics? })
+### ul.set({ app_id, version?, visibility?, download_access?, supabase_server?, calls_per_minute?, calls_per_day?, default_price_cents?, default_free_calls?, free_calls_scope?, function_prices?, search_hints?, show_metrics? })
 Batch configure app settings. Each field is optional — only provided fields are updated.
 - \`version\`: set which version is live
 - \`visibility\`: "private" | "unlisted" | "published" (published = app store)
 - \`supabase_server\`: assign Bring Your Own Supabase server (or null to unassign)
 - Rate limits: \`calls_per_minute\`, \`calls_per_day\` (null = platform defaults)
-- Pricing: \`default_price_cents\`, \`function_prices: { "fn_name": cents }\`
+- Pricing: \`default_price_cents\`, \`function_prices: { "fn_name": cents }\` or \`{ "fn_name": { price_cents, free_calls? } }\`
+- Free preview: \`default_free_calls\` (number of free calls per user before charging), \`free_calls_scope\`: "function" (each function counted separately) or "app" (shared counter across all functions)
 - \`search_hints\`: array of keywords for better semantic search discovery. Regenerates embedding.
 - \`show_metrics\`: true/false — show usage metrics (calls, revenue, unique callers) on marketplace listing to bidders.
 
@@ -763,6 +764,8 @@ View call logs and health events.
 ## Building Apps
 
 **Workflow:** \`ul.download\` (scaffold) → implement → \`ul.test\` → \`ul.upload\` → \`ul.set\`
+
+**Always include a manifest.json** alongside index.ts. The manifest enables per-function pricing in the dashboard, typed parameter schemas for better agent tool use, and per-function permission grants. Without it, functions are auto-detected from exports but lack parameter/return metadata. Structure: \`{ "functions": { "fnName": { "description": "...", "parameters": [{ "name": "...", "type": "string", "required": true }] } } }\`. \`ul.download\` scaffolds this automatically.
 
 ### Critical Rules
 1. **FUNCTION SIGNATURE:** Single args object. \`function search(args: { query: string })\` NOT \`function search(query: string)\`. The sandbox passes args as a single object.
