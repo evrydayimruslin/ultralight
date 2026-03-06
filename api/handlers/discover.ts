@@ -586,11 +586,12 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
     // Search skills (published pages)
     if (includeSkills) {
       try {
-        const rpcRes = await fetch(`${supabaseUrl}/rest/v1/rpc/search_content`, {
+        const rpcRes = await fetch(`${supabaseUrl}/rest/v1/rpc/search_content_fusion`, {
           method: 'POST',
           headers: { ...dbHeaders, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             p_query_embedding: JSON.stringify(embeddingResult.embedding),
+            p_query_text: query,
             p_user_id: user?.id || '00000000-0000-0000-0000-000000000000',
             p_types: ['page'],
             p_visibility: 'public',
@@ -602,6 +603,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
           const pageRows = await rpcRes.json() as Array<{
             id: string; slug: string; title: string | null;
             description: string | null; similarity: number;
+            keyword_score: number; final_score: number;
             tags: string[] | null; published: boolean;
             likes: number; dislikes: number;
             weighted_likes: number; weighted_dislikes: number;
@@ -612,15 +614,16 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
             const wLikes = r.weighted_likes ?? 0;
             const wDislikes = r.weighted_dislikes ?? 0;
             const likeSignal = wLikes / (wLikes + wDislikes + 1);
-            const finalScore = (r.similarity * 0.7) + (0.5 * 0.15) + (likeSignal * 0.15);
+            const baseSimilarity = r.final_score || r.similarity;
+            const compositeScore = (baseSimilarity * 0.7) + (0.5 * 0.15) + (likeSignal * 0.15);
             scored.push({
               id: r.id,
               name: r.title || r.slug,
               slug: r.slug,
               description: r.description,
               type: 'page',
-              similarity: Math.round(r.similarity * 10000) / 10000,
-              final_score: Math.round(finalScore * 10000) / 10000,
+              similarity: Math.round(baseSimilarity * 10000) / 10000,
+              final_score: Math.round(compositeScore * 10000) / 10000,
               url: `/p/${r.slug}`,
               likes: r.likes ?? 0,
               tags: r.tags || [],
@@ -634,6 +637,52 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
     scored.sort((a, b) => b.final_score - a.final_score);
 
     const finalResults = scored.slice(0, limit);
+
+    // ── LOG QUERY + IMPRESSIONS (fire-and-forget) ──
+    const queryId = crypto.randomUUID();
+    try {
+      const resultsForLog = finalResults.map((r, i) => ({
+        app_id: r.type === 'app' ? r.id : null,
+        content_id: r.type === 'page' ? r.id : null,
+        position: i + 1,
+        final_score: r.final_score,
+        similarity: r.similarity,
+        type: r.type,
+      }));
+
+      // Log query to appstore_queries
+      fetch(`${supabaseUrl}/rest/v1/appstore_queries`, {
+        method: 'POST',
+        headers: { ...dbHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: queryId,
+          query: query,
+          top_similarity: finalResults.length > 0 ? finalResults[0].similarity : null,
+          top_final_score: finalResults.length > 0 ? finalResults[0].final_score : null,
+          result_count: finalResults.length,
+          results: resultsForLog,
+        }),
+      }).catch(err => console.error('Failed to log marketplace query:', err));
+
+      // Log impressions
+      const impressionRows = finalResults
+        .map((r, i) => ({
+          app_id: r.type === 'app' ? r.id : null,
+          content_id: r.type === 'page' ? r.id : null,
+          query_id: queryId,
+          source: 'marketplace',
+          position: i + 1,
+        }))
+        .filter(row => row.app_id || row.content_id);
+
+      if (impressionRows.length > 0) {
+        fetch(`${supabaseUrl}/rest/v1/app_impressions`, {
+          method: 'POST',
+          headers: { ...dbHeaders, 'Content-Type': 'application/json' },
+          body: JSON.stringify(impressionRows),
+        }).catch(err => console.error('Failed to log marketplace impressions:', err));
+      }
+    } catch { /* best effort */ }
 
     return json({
       mode: 'search',

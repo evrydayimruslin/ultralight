@@ -56,9 +56,29 @@ Use `ul.discover` with different scopes:
 1. **Desk** — `scope: "desk"` — Last 5 apps with schemas and recent calls. Check first.
 2. **Inspect** — `scope: "inspect"` — Deep introspection of any app by ID. Full skills doc, storage architecture, KV keys, cached summary, suggested queries, permissions.
 3. **Library** — `scope: "library"` — Owned + saved apps. Without `query`: full Library.md + memory.md. With `query`: semantic search (matches app names, descriptions, function signatures, capabilities).
-4. **App Store** — `scope: "appstore"` — All published apps. With `query`: semantic search.
+4. **App Store** — `scope: "appstore"` — All published apps + skill pages. With `query`: semantic search. With `task`: auto-includes pages and returns inline content.
 
 If nothing matches the user's *exact* intent — not approximately, not close enough — propose building a bespoke tool.
+
+---
+
+## Knowledge-First Workflow
+
+Before performing domain-specific work (writing emails, analyzing data, creating documents, designing UI), search the appstore for relevant knowledge pages and tools:
+
+1. **Search with task context** — `ul.discover({ scope: "appstore", query: "negotiation email", task: "writing a negotiation email for a lease renewal" })`. The `task` parameter auto-includes published pages and returns inline markdown content (first 2KB) for top matches — no second round-trip needed.
+2. **Use returned content** — When results include pages with an inline `content` field, use that knowledge directly as context for the task. This is how the platform's collective knowledge helps every agent.
+3. **Save useful pages** — If a page was helpful, save it to the user's library: `ul.rate({ app_id: "<content_id>", rating: "like" })`. This makes it surface faster in future `ul.discover({ scope: "library" })` searches.
+
+**When to search:**
+- The user asks you to write something domain-specific (emails, proposals, analyses)
+- The user mentions an unfamiliar domain or industry term
+- You are about to give general advice that might benefit from specific frameworks or templates
+
+**When NOT to search:**
+- Simple code generation or debugging tasks
+- Tasks where the user has already provided all needed context
+- Follow-up turns in an ongoing conversation where knowledge was already loaded
 
 ---
 
@@ -468,7 +488,8 @@ When a user pastes a URL containing `/mcp/` followed by a UUID:
 
 ## Agent Guidance Summary
 
-- **Discovery order:** Check desk apps (from initialize) → `ul.discover({ scope: "library", query })` → `ul.discover({ scope: "appstore", query })` → propose building
+- **Discovery order:** Check desk apps (from initialize) → `ul.discover({ scope: "library", query })` → `ul.discover({ scope: "appstore", query, task })` → propose building
+- **Knowledge-first:** Before domain-specific tasks, search appstore with `task` param for relevant pages. Use inline content. Save useful ones with `ul.rate({ rating: "like" })`.
 - **Be specific when sensing gaps:** Function names, signatures, state model, not vague offers
 - **Clarify before building:** Frame as choices, not open-ended questions
 - **Error recovery:** Read error carefully, fix input, retry max 2x. Never retry blindly.

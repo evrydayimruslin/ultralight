@@ -2336,7 +2336,7 @@ export function getLayoutHTML(options: {
           </div>
           <div class="settings-sidebar-item" data-app-section="logs">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-            Logs
+            Data
           </div>
           <div class="settings-sidebar-item" data-app-section="market">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 002 1.61h9.72a2 2 0 002-1.61L23 6H6"/></svg>
@@ -2379,10 +2379,10 @@ export function getLayoutHTML(options: {
             <div id="revenueSection" style="margin-top:var(--space-6);"></div>
           </section>
 
-          <!-- Logs Panel -->
+          <!-- Data Panel -->
           <section id="appLogsPanel" class="settings-panel" style="display:none;">
             <div class="app-panel-name"></div>
-            <h2 class="app-section-title">Logs</h2>
+            <h2 class="app-section-title">Data</h2>
             <div id="appLogsContent"></div>
             <div id="appHealthSection" style="margin-top:var(--space-6);"></div>
           </section>
@@ -3780,26 +3780,82 @@ export function getLayoutHTML(options: {
     }
 
     function loadAppLogsSection(appId) {
-      const logsEl = document.getElementById('appLogsContent');
-      if (logsEl) {
-        logsEl.innerHTML = '<div class="loading-text">Loading logs...</div>';
+      var logsEl = document.getElementById('appLogsContent');
+      if (!logsEl) return;
+      logsEl.innerHTML = '<div class="loading-text">Loading data...</div>';
 
+      // Parallel fetch: metrics + call logs
+      Promise.all([
+        fetch('/api/marketplace/metrics/' + appId, {
+          headers: { 'Authorization': 'Bearer ' + authToken }
+        }).then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; }),
         fetch('/api/user/call-log?limit=50&app_id=' + appId, {
-          headers: { 'Authorization': 'Bearer ' + authToken },
-        }).then(function(res) {
-          if (!res.ok) { logsEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px">Could not load logs.</div>'; return; }
-          return res.json();
-        }).then(function(data) {
-          if (!data) return;
-          const logs = Array.isArray(data) ? data : (data.logs || []);
+          headers: { 'Authorization': 'Bearer ' + authToken }
+        }).then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; })
+      ]).then(function(results) {
+        var metrics = results[0];
+        var data = results[1];
+        var logs = data ? (Array.isArray(data) ? data : (data.logs || [])) : [];
 
-          if (logs.length === 0) {
-            logsEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:var(--space-4) 0;">No calls recorded yet.</div>';
-            return;
+        var html = '';
+
+        // ── METRICS CARDS ──
+        if (metrics) {
+          var successPct = metrics.success_rate_30d != null
+            ? (metrics.success_rate_30d * 100).toFixed(1) + '%'
+            : '-';
+          var successColor = !metrics.success_rate_30d && metrics.success_rate_30d !== 0
+            ? 'var(--text-muted)'
+            : metrics.success_rate_30d >= 0.95
+              ? 'var(--success)'
+              : metrics.success_rate_30d >= 0.8
+                ? '#f59e0b'
+                : 'var(--error)';
+
+          html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:var(--space-3);margin-bottom:var(--space-4)">';
+
+          // Total Calls
+          html += '<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:var(--space-3);text-align:center">' +
+            '<div style="font-size:22px;font-weight:700;color:var(--text-primary)">' + (metrics.total_calls || 0).toLocaleString() + '</div>' +
+            '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">Total Calls</div>' +
+          '</div>';
+
+          // Calls 30d
+          html += '<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:var(--space-3);text-align:center">' +
+            '<div style="font-size:22px;font-weight:700;color:var(--text-primary)">' + (metrics.calls_30d || 0).toLocaleString() + '</div>' +
+            '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">Calls (30d)</div>' +
+          '</div>';
+
+          // Success Rate
+          html += '<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:var(--space-3);text-align:center">' +
+            '<div style="font-size:22px;font-weight:700;color:' + successColor + '">' + successPct + '</div>' +
+            '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">Success Rate (30d)</div>' +
+          '</div>';
+
+          // Unique Callers
+          html += '<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:var(--space-3);text-align:center">' +
+            '<div style="font-size:22px;font-weight:700;color:var(--text-primary)">' + (metrics.unique_callers_30d || 0).toLocaleString() + '</div>' +
+            '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">Unique Callers (30d)</div>' +
+          '</div>';
+
+          // Revenue (only show if > 0)
+          if (metrics.revenue_30d_cents > 0) {
+            html += '<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:var(--space-3);text-align:center">' +
+              '<div style="font-size:22px;font-weight:700;color:var(--success)">$' + (metrics.revenue_30d_cents / 100).toFixed(2) + '</div>' +
+              '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">Revenue (30d)</div>' +
+            '</div>';
           }
 
-          logsEl.innerHTML =
-            '<table style="width:100%;font-size:13px;border-collapse:collapse">' +
+          html += '</div>'; // close grid
+        }
+
+        // ── RECENT CALLS TABLE ──
+        html += '<h3 style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:var(--space-2);text-transform:uppercase;letter-spacing:0.5px">Recent Calls</h3>';
+
+        if (logs.length === 0) {
+          html += '<div style="color:var(--text-muted);font-size:13px;padding:var(--space-4) 0;">No calls recorded yet.</div>';
+        } else {
+          html += '<table style="width:100%;font-size:13px;border-collapse:collapse">' +
             '<thead><tr style="border-bottom:1px solid var(--border);text-align:left">' +
               '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Status</th>' +
               '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Function</th>' +
@@ -3807,7 +3863,7 @@ export function getLayoutHTML(options: {
               '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Time</th>' +
             '</tr></thead><tbody>' +
             logs.map(function(log) {
-              const success = log.success !== false;
+              var success = log.success !== false;
               return '<tr style="border-bottom:1px solid var(--border)">' +
                 '<td style="padding:8px 12px"><div style="width:8px;height:8px;border-radius:50%;background:' + (success ? 'var(--success)' : 'var(--error)') + '"></div></td>' +
                 '<td style="padding:8px 12px;font-family:var(--font-mono)">' + escapeHtml(log.function_name || log.method || '') + '</td>' +
@@ -3816,13 +3872,15 @@ export function getLayoutHTML(options: {
               '</tr>';
             }).join('') +
             '</tbody></table>';
-        }).catch(function() {
-          logsEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px">Could not load logs.</div>';
-        });
-      }
+        }
+
+        logsEl.innerHTML = html;
+      }).catch(function() {
+        logsEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px">Could not load data.</div>';
+      });
 
       // Health section
-      const healthEl = document.getElementById('appHealthSection');
+      var healthEl = document.getElementById('appHealthSection');
       if (healthEl) {
         healthEl.innerHTML = '<div class="section-card" id="appHealthSummary"><h3 class="section-title">Health</h3><div class="loading-text">Loading...</div></div>';
         loadAppHealth(appId);

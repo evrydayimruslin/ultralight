@@ -62,9 +62,9 @@ export async function writeUserMemory(userId: string, content: string): Promise<
     contentType: 'text/markdown',
   });
 
-  // Upsert content row + generate embedding (fire-and-forget)
-  upsertContentWithEmbedding(userId, 'memory_md', '_memory', content, bytes.length).catch(err =>
-    console.error('Memory content upsert failed:', err)
+  // Chunk and upsert content rows + generate embeddings (fire-and-forget)
+  upsertMemoryChunks(userId, content).catch(err =>
+    console.error('Memory chunk upsert failed:', err)
   );
 }
 
@@ -134,7 +134,7 @@ async function upsertContentWithEmbedding(
   const prefix = type === 'memory_md'
     ? 'User memory and preferences: '
     : 'User app library and capabilities: ';
-  const words = content.split(/\s+/).slice(0, 500);
+  const words = content.split(/\s+/).slice(0, 6000);
   const embeddingText = prefix + words.join(' ');
 
   // Generate embedding
@@ -185,6 +185,188 @@ async function upsertContentWithEmbedding(
   } catch (err) {
     console.error(`Content upsert fetch failed for ${type}:`, err);
   }
+}
+
+// ============================================
+// MEMORY.MD CHUNKING
+// ============================================
+
+/**
+ * Split memory.md into chunks on ## headers, delete old chunks, and upsert new ones.
+ * Each chunk gets its own row in content table for precise semantic search.
+ * Fire-and-forget safe — all errors logged but not thrown.
+ */
+async function upsertMemoryChunks(
+  userId: string,
+  content: string
+): Promise<void> {
+  // @ts-ignore
+  const Deno = globalThis.Deno;
+  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
+
+  const headers = {
+    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    'Content-Type': 'application/json',
+  };
+
+  // Step 1: Chunk the content
+  const chunks = chunkMemoryContent(content);
+
+  // Step 2: Delete ALL existing memory chunks for this user
+  try {
+    const delRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${userId}&type=eq.memory_md&slug=like._memory*`,
+      {
+        method: 'DELETE',
+        headers: { ...headers, 'Prefer': 'return=minimal' },
+      }
+    );
+    if (!delRes.ok) {
+      console.error('Memory chunk cleanup failed:', await delRes.text());
+    }
+  } catch (err) {
+    console.error('Memory chunk cleanup fetch failed:', err);
+  }
+
+  if (chunks.length === 0) return;
+
+  // Step 3: Batch-embed all chunks
+  const embeddingService = createEmbeddingService();
+  let embeddings: Array<{ embedding: number[] }> = [];
+
+  if (embeddingService) {
+    const embeddingTexts = chunks.map((chunk, i) =>
+      `User memory (section ${i + 1}/${chunks.length}): ${chunk.text}`
+    );
+    try {
+      const BATCH_SIZE = 100;
+      for (let i = 0; i < embeddingTexts.length; i += BATCH_SIZE) {
+        const batch = embeddingTexts.slice(i, i + BATCH_SIZE);
+        const results = await embeddingService.embedBatch(batch);
+        embeddings.push(...results);
+      }
+    } catch (err) {
+      console.error('Memory chunk batch embedding failed:', err);
+      // Embeddings stay empty — processor will fill them later via NULL check
+    }
+  }
+
+  // Step 4: Upsert each chunk as a content row
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const slug = `_memory_chunk_${i}`;
+    const embeddingText = `User memory (section ${i + 1}/${chunks.length}): ${chunk.text}`;
+    const row: Record<string, unknown> = {
+      owner_id: userId,
+      type: 'memory_md',
+      slug: slug,
+      title: chunk.title || `Memory section ${i + 1}`,
+      description: `Memory chunk: ${chunk.title || 'untitled'}`,
+      visibility: 'private',
+      size: new TextEncoder().encode(chunk.text).length,
+      embedding_text: embeddingText,
+      updated_at: new Date().toISOString(),
+    };
+
+    const emb = embeddings[i];
+    if (emb && emb.embedding && emb.embedding.length > 0) {
+      row.embedding = JSON.stringify(emb.embedding);
+    }
+    // If no embedding, leave NULL for background processor to fill
+
+    try {
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/content?on_conflict=owner_id,type,slug`,
+        {
+          method: 'POST',
+          headers: { ...headers, 'Prefer': 'resolution=merge-duplicates' },
+          body: JSON.stringify(row),
+        }
+      );
+      if (!res.ok) {
+        console.error(`Memory chunk upsert failed for ${slug}:`, await res.text());
+      }
+    } catch (err) {
+      console.error(`Memory chunk upsert fetch failed for ${slug}:`, err);
+    }
+  }
+}
+
+/**
+ * Split memory content into chunks on ## headers.
+ * Fallback: 1,000-word chunks if no ## headers found.
+ * Each chunk capped at 6,000 words for embedding model limit.
+ */
+function chunkMemoryContent(content: string): Array<{ title: string; text: string }> {
+  if (!content || content.trim().length === 0) return [];
+
+  const sections: Array<{ title: string; text: string }> = [];
+  const lines = content.split('\n');
+  let currentTitle = '';
+  let currentLines: string[] = [];
+  let foundH2 = false;
+
+  for (const line of lines) {
+    const h2Match = line.match(/^## (.+)$/);
+    if (h2Match) {
+      foundH2 = true;
+      // Save previous section if any
+      if (currentLines.length > 0) {
+        const text = currentLines.join('\n').trim();
+        if (text.length > 0) {
+          sections.push({
+            title: currentTitle || 'Overview',
+            text: text,
+          });
+        }
+      }
+      currentTitle = h2Match[1];
+      currentLines = [line]; // include the header in the chunk text
+    } else {
+      currentLines.push(line);
+    }
+  }
+
+  // Capture final section
+  if (currentLines.length > 0) {
+    const text = currentLines.join('\n').trim();
+    if (text.length > 0) {
+      sections.push({
+        title: currentTitle || 'Overview',
+        text: text,
+      });
+    }
+  }
+
+  // Fallback: if no ## headers found, chunk by 1,000 words
+  if (!foundH2 && sections.length > 0) {
+    const fullText = sections[0].text;
+    const words = fullText.split(/\s+/);
+    if (words.length > 1000) {
+      const chunked: Array<{ title: string; text: string }> = [];
+      const CHUNK_SIZE = 1000;
+      for (let i = 0; i < words.length; i += CHUNK_SIZE) {
+        const chunkWords = words.slice(i, i + CHUNK_SIZE);
+        chunked.push({
+          title: `Section ${Math.floor(i / CHUNK_SIZE) + 1}`,
+          text: chunkWords.join(' '),
+        });
+      }
+      return chunked.map(s => ({
+        title: s.title,
+        text: s.text.split(/\s+/).slice(0, 6000).join(' '),
+      }));
+    }
+  }
+
+  // Cap each chunk at 6,000 words
+  return sections.map(s => ({
+    title: s.title,
+    text: s.text.split(/\s+/).slice(0, 6000).join(' '),
+  }));
 }
 
 // ============================================

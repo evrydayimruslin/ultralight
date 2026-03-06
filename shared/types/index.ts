@@ -982,6 +982,8 @@ export interface ManifestFunction {
   parameters?: Record<string, ManifestParameter>;
   returns?: ManifestReturn;
   examples?: string[];
+  /** MCP tool annotations — behavioral hints for agents (readOnlyHint, destructiveHint, etc.) */
+  annotations?: MCPToolAnnotations;
 }
 
 export interface ManifestParameter {
@@ -1099,13 +1101,21 @@ export function manifestToMCPTools(manifest: AppManifest, appId: string, appSlug
   if (!manifest.functions) return [];
 
   const tools: MCPTool[] = [];
+  const defaultAnnotations: MCPToolAnnotations = {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  };
 
   for (const [fnName, fnDef] of Object.entries(manifest.functions)) {
     const tool: MCPTool = {
       name: `${appSlug}_${fnName}`,
       title: fnName,
       description: fnDef.description,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      annotations: fnDef.annotations
+        ? { ...defaultAnnotations, ...fnDef.annotations }
+        : defaultAnnotations,
       inputSchema: {
         type: 'object',
         properties: {},

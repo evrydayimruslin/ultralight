@@ -55,6 +55,139 @@ function getMemoryService(): MemoryServiceImpl | null {
 }
 
 // ============================================
+// KV INDEX HELPERS (fire-and-forget content table upserts for search)
+// ============================================
+
+/**
+ * Upsert a content row for an app KV entry with NULL embedding.
+ * The background embedding processor fills the embedding later.
+ */
+async function indexAppKV(
+  appId: string,
+  appOwnerId: string,
+  key: string,
+  value: unknown
+): Promise<void> {
+  // @ts-ignore
+  const _Deno = globalThis.Deno;
+  const SUPABASE_URL = _Deno.env.get('SUPABASE_URL') || '';
+  const SUPABASE_SERVICE_ROLE_KEY = _Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
+
+  const embeddingText = typeof value === 'string' ? value : JSON.stringify(value);
+  // Skip very large values to prevent content table bloat
+  if (embeddingText.length > 50_000) return;
+
+  const slug = `${appId}/${key}`;
+  const row = {
+    owner_id: appOwnerId,
+    type: 'app_kv',
+    slug: slug,
+    title: key,
+    description: `App data: ${key}`,
+    visibility: 'private',
+    size: new TextEncoder().encode(embeddingText).length,
+    embedding_text: embeddingText.split(/\s+/).slice(0, 6000).join(' '),
+    embedding: null,
+    updated_at: new Date().toISOString(),
+  };
+
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/content?on_conflict=owner_id,type,slug`,
+    {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates',
+      },
+      body: JSON.stringify(row),
+    }
+  );
+  if (!res.ok) {
+    console.error('[KV-INDEX] Content upsert failed:', await res.text());
+  }
+}
+
+/**
+ * Upsert a content row for a user KV entry with NULL embedding.
+ */
+async function indexUserKV(
+  userId: string,
+  scope: string,
+  key: string,
+  value: unknown
+): Promise<void> {
+  // @ts-ignore
+  const _Deno = globalThis.Deno;
+  const SUPABASE_URL = _Deno.env.get('SUPABASE_URL') || '';
+  const SUPABASE_SERVICE_ROLE_KEY = _Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
+
+  const embeddingText = typeof value === 'string' ? value : JSON.stringify(value);
+  if (embeddingText.length > 50_000) return;
+
+  const slug = `${scope}/${key}`;
+  const row = {
+    owner_id: userId,
+    type: 'user_kv',
+    slug: slug,
+    title: key,
+    description: `User data: ${scope}/${key}`,
+    visibility: 'private',
+    size: new TextEncoder().encode(embeddingText).length,
+    embedding_text: embeddingText.split(/\s+/).slice(0, 6000).join(' '),
+    embedding: null,
+    updated_at: new Date().toISOString(),
+  };
+
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/content?on_conflict=owner_id,type,slug`,
+    {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates',
+      },
+      body: JSON.stringify(row),
+    }
+  );
+  if (!res.ok) {
+    console.error('[KV-INDEX] User KV content upsert failed:', await res.text());
+  }
+}
+
+/**
+ * Delete a content index row for a removed KV entry.
+ */
+async function removeKVIndex(
+  ownerId: string,
+  type: string,
+  slug: string
+): Promise<void> {
+  // @ts-ignore
+  const _Deno = globalThis.Deno;
+  const SUPABASE_URL = _Deno.env.get('SUPABASE_URL') || '';
+  const SUPABASE_SERVICE_ROLE_KEY = _Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
+
+  await fetch(
+    `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${ownerId}&type=eq.${type}&slug=eq.${encodeURIComponent(slug)}`,
+    {
+      method: 'DELETE',
+      headers: {
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'Prefer': 'return=minimal',
+      },
+    }
+  );
+}
+
+// ============================================
 // TYPES
 // ============================================
 
@@ -836,7 +969,7 @@ async function handleToolsCall(
 
   // Check if it's an SDK tool (always allowed)
   if (name.startsWith('ultralight.')) {
-    return await executeSDKTool(id, name, args || {}, app.id, userId, user, request);
+    return await executeSDKTool(id, name, args || {}, app.id, app.owner_id, userId, user, request);
   }
 
   // Token function scoping: if the API token restricts callable functions, enforce it
@@ -986,6 +1119,7 @@ async function executeSDKTool(
   toolName: string,
   args: Record<string, unknown>,
   appId: string,
+  appOwnerId: string,
   userId: string,
   user: UserContext | null,
   request?: Request
@@ -1016,10 +1150,16 @@ async function executeSDKTool(
       }
 
       // Storage
-      case 'ultralight.store':
-        await appDataService.store(args.key as string, args.value);
+      case 'ultralight.store': {
+        const storeKey = args.key as string;
+        await appDataService.store(storeKey, args.value);
+        // Index KV data for semantic search (fire-and-forget)
+        indexAppKV(appId, appOwnerId, storeKey, args.value).catch(err =>
+          console.error('[KV-INDEX] App KV index failed:', err)
+        );
         result = { success: true };
         break;
+      }
 
       case 'ultralight.load':
         result = await appDataService.load(args.key as string);
@@ -1036,10 +1176,16 @@ async function executeSDKTool(
         });
         break;
 
-      case 'ultralight.remove':
-        await appDataService.remove(args.key as string);
+      case 'ultralight.remove': {
+        const removeKey = args.key as string;
+        await appDataService.remove(removeKey);
+        // Clean up content index (fire-and-forget)
+        removeKVIndex(appOwnerId, 'app_kv', `${appId}/${removeKey}`).catch(err =>
+          console.error('[KV-INDEX] App KV remove failed:', err)
+        );
         result = { success: true };
         break;
+      }
 
       // Memory (cross-app)
       case 'ultralight.remember': {
@@ -1049,8 +1195,13 @@ async function executeSDKTool(
           break;
         }
         const scope = args.scope as string || `app:${appId}`;
-        await memService.remember(userId, scope, args.key as string, args.value);
-        result = { success: true, key: args.key, scope };
+        const rememberKey = args.key as string;
+        await memService.remember(userId, scope, rememberKey, args.value);
+        // Index user KV data for semantic search (fire-and-forget)
+        indexUserKV(userId, scope, rememberKey, args.value).catch(err =>
+          console.error('[KV-INDEX] User KV index failed:', err)
+        );
+        result = { success: true, key: rememberKey, scope };
         break;
       }
 

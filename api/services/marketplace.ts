@@ -97,6 +97,7 @@ export interface AppMetrics {
   calls_30d: number;
   unique_callers_30d: number;
   revenue_30d_cents: number;
+  success_rate_30d: number;  // 0.0 to 1.0
 }
 
 export interface SaleHistory {
@@ -549,9 +550,9 @@ export async function getAppMetrics(appId: string): Promise<AppMetrics> {
       `${SUPABASE_URL}/rest/v1/mcp_call_logs?app_id=eq.${appId}&select=id`,
       { headers: { ...dbHeaders(), 'Prefer': 'count=exact', 'Range-Unit': 'items', 'Range': '0-0' } }
     ),
-    // 30d calls + sum revenue
+    // 30d calls + sum revenue + success flag
     fetch(
-      `${SUPABASE_URL}/rest/v1/mcp_call_logs?app_id=eq.${appId}&created_at=gte.${thirtyDaysAgo}&select=call_charge_cents`,
+      `${SUPABASE_URL}/rest/v1/mcp_call_logs?app_id=eq.${appId}&created_at=gte.${thirtyDaysAgo}&select=call_charge_cents,success`,
       { headers: dbHeaders() }
     ),
     // 30d unique callers
@@ -566,10 +567,12 @@ export async function getAppMetrics(appId: string): Promise<AppMetrics> {
   const totalMatch = contentRange.match(/\/(\d+)/);
   const totalCalls = totalMatch ? parseInt(totalMatch[1], 10) : 0;
 
-  // Parse 30d calls + revenue
-  const recentRows = recentRes.ok ? await recentRes.json() as Array<{ call_charge_cents: number | null }> : [];
+  // Parse 30d calls + revenue + success rate
+  const recentRows = recentRes.ok ? await recentRes.json() as Array<{ call_charge_cents: number | null; success: boolean | null }> : [];
   const calls30d = recentRows.length;
   const revenue30dCents = recentRows.reduce((sum, r) => sum + (r.call_charge_cents || 0), 0);
+  const successCount = recentRows.filter(r => r.success !== false).length;
+  const successRate30d = calls30d > 0 ? Math.round((successCount / calls30d) * 10000) / 10000 : 1.0;
 
   // Parse unique callers
   const callerRows = callersRes.ok ? await callersRes.json() as Array<{ user_id: string }> : [];
@@ -580,6 +583,7 @@ export async function getAppMetrics(appId: string): Promise<AppMetrics> {
     calls_30d: calls30d,
     unique_callers_30d: uniqueCallers30d,
     revenue_30d_cents: Math.round(revenue30dCents * 100) / 100,
+    success_rate_30d: successRate30d,
   };
 }
 

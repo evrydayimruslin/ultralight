@@ -143,6 +143,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
         scope: { type: 'string', enum: ['desk', 'inspect', 'library', 'appstore'], description: 'Discovery scope.' },
         app_id: { type: 'string', description: 'Required for scope="inspect".' },
         query: { type: 'string', description: 'Semantic search. For library + appstore.' },
+        task: { type: 'string', description: 'Task description for context-aware search. Auto-includes pages and returns inline markdown content (first 2KB) for top matches. For appstore.' },
         types: {
           type: 'array',
           items: { type: 'string', enum: ['app', 'page', 'memory_md', 'library_md'] },
@@ -697,12 +698,12 @@ Execute any app's function through this single platform connection.
 - Subsequent calls return result + lightweight metadata
 - Uses your auth — no separate per-app connection needed
 
-### ul.discover({ scope, app_id?, query? })
+### ul.discover({ scope, app_id?, query?, task? })
 Find and explore apps.
 - \`scope: "desk"\` — Last 5 used apps with schemas and recent calls
 - \`scope: "inspect"\` — Deep introspection: full skills doc, storage architecture, KV keys, cached summary, permissions, suggested queries. Requires \`app_id\`.
 - \`scope: "library"\` — Your owned + saved apps. Without \`query\`: full Library.md + memory.md. With \`query\`: semantic search (matches app names, descriptions, function signatures, capabilities).
-- \`scope: "appstore"\` — All published apps. With \`query\`: semantic search across all public apps.
+- \`scope: "appstore"\` — All published apps. With \`query\`: semantic search across all public apps. Use \`task\` for context-aware knowledge retrieval — auto-includes pages and returns inline markdown content (first 2KB) for top page matches.
 
 ### ul.upload({ files, name?, description?, visibility?, app_id?, type? })
 Deploy TypeScript app or publish markdown page.
@@ -736,8 +737,8 @@ Batch configure app settings. Each field is optional — only provided fields ar
 ### ul.memory({ action, content?, key?, value?, scope?, prefix?, append?, delete_key?, limit?, owner_email? })
 Persistent cross-session storage. Two layers:
 - \`action: "read"\` — Read your memory.md
-- \`action: "write"\` — Overwrite memory.md (use \`append: true\` to append instead)
-- \`action: "recall"\` — Get/set KV key. Provide \`key\` + \`value\` to store, \`key\` only to retrieve.
+- \`action: "write"\` — Overwrite memory.md (use \`append: true\` to append instead). Structure with \`## Section Headers\` for better semantic search retrieval.
+- \`action: "recall"\` — Get/set KV key. Provide \`key\` + \`value\` to store, \`key\` only to retrieve. All KV data is searchable via \`ul.discover\`.
 - \`action: "query"\` — List KV keys by prefix. Use \`delete_key\` to remove a key.
 - \`owner_email\` on read/recall/query: access another user's shared memory.
 
@@ -808,6 +809,15 @@ When the user pastes ANY message containing \`/mcp/\` followed by a UUID (e.g. \
 5. Record in \`ul.memory({ action: "write" })\`: app_id, name, capabilities, date
 
 The user shared the URL because they want you to connect. Never ask "would you like me to inspect this?" — just inspect it.
+
+### Knowledge-First Workflow
+Before performing domain-specific work (writing emails, drafting proposals, industry analysis, general advice), search for relevant knowledge:
+1. **Search with task context** — \`ul.discover({ scope: "appstore", query: "negotiation", task: "writing a negotiation email for lease renewal" })\`. The \`task\` parameter auto-includes pages and returns inline markdown content for top matches.
+2. **Use returned content** — Page results with an inline \`content\` field provide knowledge directly. No second round-trip needed.
+3. **Save useful pages** — \`ul.rate({ app_id: "<page_id>", rating: "like" })\` saves to the user's library for faster future access via \`scope: "library"\`.
+
+**When to search:** Domain-specific writing, unfamiliar industries, general advice that could benefit from specific knowledge, creative tasks.
+**When NOT to search:** Simple code tasks, user already provided sufficient context, follow-up turns where knowledge was already loaded.
 
 ### General Guidance
 - **Discovery order:** Check desk apps above → \`ul.discover({ scope: "library", query })\` for semantic search → \`ul.discover({ scope: "appstore", query })\` for public apps → propose building a bespoke tool.
@@ -3228,6 +3238,23 @@ async function executeSetVisibility(
 
   await appsService.update(app.id, { visibility: dbVisibility as 'private' | 'unlisted' | 'public' });
 
+  // If going TO published for the first time: set first_published_at
+  if (dbVisibility === 'public' && previousVisibility !== 'public') {
+    try {
+      // Only set if not already set (preserves the original publish date)
+      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
+      await fetch(`${sbUrl}/rest/v1/apps?id=eq.${app.id}&first_published_at=is.null`, {
+        method: 'PATCH',
+        headers: {
+          'apikey': sbKey,
+          'Authorization': `Bearer ${sbKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ first_published_at: new Date().toISOString() }),
+      });
+    } catch { /* best effort — non-critical metadata */ }
+  }
+
   // If going TO published: ensure embedding is in global index
   if (dbVisibility === 'public' && previousVisibility !== 'public') {
     try {
@@ -5140,7 +5167,7 @@ async function executeDiscoverLibrary(
 
   // Determine which content types to search
   const searchApps = !types || types.includes('app');
-  const contentTypes = types?.filter(t => t !== 'app') || []; // ['page', 'memory_md', 'library_md']
+  const contentTypes = types?.filter(t => t !== 'app') ?? ['memory_md', 'library_md', 'page', 'app_kv', 'user_kv'];
   const searchContent = contentTypes.length > 0;
 
   // Fetch saved app IDs from user_app_library (liked apps)
@@ -5327,11 +5354,12 @@ async function executeDiscoverLibrary(
 
   if (searchContent) {
     try {
-      const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/search_content`, {
+      const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/search_content_fusion`, {
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           p_query_embedding: JSON.stringify(queryResult.embedding),
+          p_query_text: query,
           p_user_id: userId,
           p_types: contentTypes,
           p_visibility: null,
@@ -5343,8 +5371,8 @@ async function executeDiscoverLibrary(
         const rows = await rpcRes.json() as Array<{
           id: string; type: string; slug: string; title: string | null;
           description: string | null; owner_id: string; visibility: string;
-          similarity: number; tags: string[] | null; published: boolean;
-          updated_at: string;
+          similarity: number; keyword_score: number; final_score: number;
+          tags: string[] | null; published: boolean; updated_at: string;
         }>;
 
         const savedContentIdSet = new Set(savedContentIds);
@@ -5353,7 +5381,7 @@ async function executeDiscoverLibrary(
           name: r.title || r.slug,
           slug: r.slug,
           description: r.description,
-          similarity: r.similarity,
+          similarity: r.final_score,
           source: r.owner_id === userId ? 'owned' : savedContentIdSet.has(r.id) ? 'saved' : 'shared',
           type: r.type,
           tags: r.tags || undefined,
@@ -5364,12 +5392,55 @@ async function executeDiscoverLibrary(
   }
 
   // Merge and sort by similarity
-  const allResults = [...appResults, ...contentResults];
+  let allResults = [...appResults, ...contentResults];
   allResults.sort((a, b) => b.similarity - a.similarity);
+
+  // Auto-escalation: if library results are thin, search appstore too
+  let escalated = false;
+  const topSimilarity = allResults.length > 0 ? allResults[0].similarity : 0;
+  if (allResults.length < 3 || topSimilarity < 0.5) {
+    try {
+      const appstoreResult = await executeDiscoverAppstore(userId, {
+        query: query,
+        limit: 10,
+      }) as {
+        results?: Array<{
+          id: string; name: string; slug: string; description: string | null;
+          similarity?: number; final_score?: number; type: string;
+          mcp_endpoint?: string; url?: string; tags?: string[];
+        }>;
+      };
+
+      if (appstoreResult.results && appstoreResult.results.length > 0) {
+        const existingIds = new Set(allResults.map(r => r.id));
+        const newResults = appstoreResult.results
+          .filter(r => !existingIds.has(r.id))
+          .map(r => ({
+            id: r.id,
+            name: r.name,
+            slug: r.slug,
+            description: r.description,
+            similarity: r.final_score || r.similarity || 0,
+            source: 'appstore' as string,
+            type: r.type,
+            ...(r.mcp_endpoint ? { mcp_endpoint: r.mcp_endpoint } : {}),
+            ...(r.url ? { url: r.url } : {}),
+            ...(r.tags ? { tags: r.tags } : {}),
+          }));
+
+        allResults = [...allResults, ...newResults];
+        allResults.sort((a, b) => b.similarity - a.similarity);
+        escalated = true;
+      }
+    } catch (err) {
+      console.error('[DISCOVER] Auto-escalation failed:', err);
+    }
+  }
 
   return {
     query,
-    types: types || ['app'],
+    types: types || ['app', 'memory_md', 'library_md', 'page', 'app_kv', 'user_kv'],
+    escalated,
     results: allResults.slice(0, 20).map(r => ({
       id: r.id,
       name: r.name,
@@ -5378,8 +5449,9 @@ async function executeDiscoverLibrary(
       similarity: r.similarity,
       source: r.source,
       type: r.type,
-      ...(r.type === 'app' ? { mcp_endpoint: (r as typeof appResults[0]).mcp_endpoint } : {}),
-      ...(r.type === 'page' && 'owner_id' in r && r.owner_id ? { url: `/p/${r.owner_id}/${r.slug}` } : {}),
+      ...(r.type === 'app' && 'mcp_endpoint' in r ? { mcp_endpoint: (r as typeof appResults[0]).mcp_endpoint } : {}),
+      ...(r.type === 'page' && 'owner_id' in r && (r as { owner_id?: string }).owner_id ? { url: `/p/${(r as { owner_id: string }).owner_id}/${r.slug}` } : {}),
+      ...('url' in r && r.url ? { url: r.url } : {}),
       ...('tags' in r && r.tags ? { tags: r.tags } : {}),
     })),
   };
@@ -5392,12 +5464,13 @@ async function executeDiscoverAppstore(
   args: Record<string, unknown>
 ): Promise<unknown> {
   const query = (args.query as string) || '';
+  const task = (args.task as string) || '';
   const limit = (args.limit as number) || 10;
   const types = args.types as string[] | undefined;
 
-  // Determine what to search
+  // Determine what to search — task auto-includes pages for knowledge retrieval
   const searchApps = !types || types.includes('app');
-  const searchPages = types?.includes('page') || false;
+  const searchPages = (types?.includes('page') || false) || !!task;
 
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   const headers = {
@@ -5507,7 +5580,11 @@ async function executeDiscoverAppstore(
     throw new ToolError(INTERNAL_ERROR, 'Embedding service not available');
   }
 
-  const queryResult = await embeddingService.embed(query);
+  // When task is provided, enrich the embedding input for better knowledge matching
+  const embeddingInput = task
+    ? `Task: ${task}${query ? '. ' + query : ''}`
+    : query;
+  const queryResult = await embeddingService.embed(embeddingInput);
 
   // ── APP SEARCH ──
   type ScoredResult = {
@@ -5623,11 +5700,12 @@ async function executeDiscoverAppstore(
   // ── PUBLISHED PAGE SEARCH ──
   if (searchPages) {
     try {
-      const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/search_content`, {
+      const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/search_content_fusion`, {
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           p_query_embedding: JSON.stringify(queryResult.embedding),
+          p_query_text: query || task,
           p_user_id: userId,
           p_types: ['page'],
           p_visibility: 'public',
@@ -5639,7 +5717,8 @@ async function executeDiscoverAppstore(
         const pageRows = await rpcRes.json() as Array<{
           id: string; type: string; slug: string; title: string | null;
           description: string | null; owner_id: string; visibility: string;
-          similarity: number; tags: string[] | null; published: boolean;
+          similarity: number; keyword_score: number; final_score: number;
+          tags: string[] | null; published: boolean;
           updated_at: string; likes: number; dislikes: number;
           weighted_likes: number; weighted_dislikes: number;
         }>;
@@ -5647,21 +5726,22 @@ async function executeDiscoverAppstore(
         // Only include published pages, filter blocked content
         const publishedPages = pageRows.filter(r => r.published && !blockedContentIds.has(r.id));
 
-        // Score pages: same composite formula as apps (real like signal from content_likes)
+        // Score pages: use fusion final_score + like signal
         const pageScored: ScoredResult[] = publishedPages.map(r => {
           const wLikes = r.weighted_likes ?? 0;
           const wDislikes = r.weighted_dislikes ?? 0;
           const likeSignal = wLikes / (wLikes + wDislikes + 1);
+          const baseSimilarity = r.final_score || r.similarity;
           return {
             id: r.id,
             name: r.title || r.slug,
             slug: r.slug,
             description: r.description,
             owner_id: r.owner_id,
-            similarity: r.similarity,
+            similarity: baseSimilarity,
             likes: r.likes ?? 0,
             dislikes: r.dislikes ?? 0,
-            finalScore: (r.similarity * 0.7) + (0.5 * 0.15) + (likeSignal * 0.15),
+            finalScore: (baseSimilarity * 0.7) + (0.5 * 0.15) + (likeSignal * 0.15),
             type: 'page',
             tags: r.tags || undefined,
           };
@@ -5670,6 +5750,35 @@ async function executeDiscoverAppstore(
         scored.push(...pageScored);
       }
     } catch { /* best effort — page search failure shouldn't break app search */ }
+  }
+
+  // ── INLINE PAGE CONTENT (when task is set) ──
+  // Fetch markdown from R2 for top page results so agents get knowledge without a second round-trip
+  const pageContentMap = new Map<string, string>();
+  if (task && scored.some(r => r.type === 'page')) {
+    try {
+      const r2Service = createR2Service();
+      // Sort page results by score, take top 3 for inline content
+      const topPages = scored
+        .filter(r => r.type === 'page')
+        .sort((a, b) => b.finalScore - a.finalScore)
+        .slice(0, 3);
+
+      const contentFetches = topPages.map(async (page) => {
+        try {
+          const content = await r2Service.fetchTextFile(`users/${page.owner_id}/pages/${page.slug}.md`);
+          if (content) {
+            // Truncate to 2KB to keep response size reasonable
+            const truncated = content.length > 2048
+              ? content.slice(0, 2048) + '\n\n[... truncated, ' + content.length + ' chars total]'
+              : content;
+            pageContentMap.set(page.id, truncated);
+          }
+        } catch { /* skip individual page failures */ }
+      });
+
+      await Promise.all(contentFetches);
+    } catch { /* best effort — inline content is a bonus, not critical */ }
   }
 
   // Sort by final_score DESC
@@ -5721,12 +5830,34 @@ async function executeDiscoverAppstore(
     }).catch(err => console.error('Failed to log appstore query:', err));
   } catch { /* best effort */ }
 
+  // ── LOG IMPRESSIONS (fire-and-forget) ──
+  try {
+    const impressionRows = finalResults
+      .map((r, i) => ({
+        app_id: r.type === 'app' ? r.id : null,
+        content_id: r.type !== 'app' ? r.id : null,
+        query_id: queryId,
+        source: 'appstore',
+        position: i + 1,
+      }))
+      .filter(row => row.app_id || row.content_id);
+
+    if (impressionRows.length > 0) {
+      fetch(`${SUPABASE_URL}/rest/v1/app_impressions`, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify(impressionRows),
+      }).catch(err => console.error('Failed to log impressions:', err));
+    }
+  } catch { /* best effort */ }
+
   // ── FORMAT RESPONSE ──
   return {
     mode: 'search',
     query: query,
+    ...(task ? { task: task } : {}),
     query_id: queryId,
-    types: types || ['app'],
+    types: types || (task ? ['app', 'page'] : ['app']),
     results: finalResults.map(r => ({
       id: r.id,
       name: r.name,
@@ -5737,7 +5868,10 @@ async function executeDiscoverAppstore(
       type: r.type,
       is_owner: r.owner_id === userId,
       ...(r.type === 'app' ? { mcp_endpoint: `/mcp/${r.id}` } : {}),
-      ...(r.type === 'page' ? { url: `/p/${r.owner_id}/${r.slug}` } : {}),
+      ...(r.type === 'page' ? {
+        url: `/p/${r.owner_id}/${r.slug}`,
+        ...(pageContentMap.has(r.id) ? { content: pageContentMap.get(r.id) } : {}),
+      } : {}),
       likes: r.likes,
       dislikes: r.dislikes,
       ...(r.requiredSecrets && r.requiredSecrets.length > 0 ? { required_secrets: r.requiredSecrets } : {}),
@@ -5934,6 +6068,37 @@ async function executeMemoryRecall(
   if (value !== undefined) {
     const memoryService = createMemoryService();
     await memoryService.remember(userId, scope, key, value);
+
+    // Index user KV data for semantic search (fire-and-forget)
+    const { SUPABASE_URL: _sbUrl, SUPABASE_SERVICE_ROLE_KEY: _sbKey } = getSupabaseEnv();
+    if (_sbUrl && _sbKey) {
+      const embeddingText = typeof value === 'string' ? value : JSON.stringify(value);
+      if (embeddingText.length <= 50_000) {
+        const kvSlug = `${scope}/${key}`;
+        fetch(`${_sbUrl}/rest/v1/content?on_conflict=owner_id,type,slug`, {
+          method: 'POST',
+          headers: {
+            'apikey': _sbKey,
+            'Authorization': `Bearer ${_sbKey}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'resolution=merge-duplicates',
+          },
+          body: JSON.stringify({
+            owner_id: userId,
+            type: 'user_kv',
+            slug: kvSlug,
+            title: key,
+            description: `User data: ${scope}/${key}`,
+            visibility: 'private',
+            size: new TextEncoder().encode(embeddingText).length,
+            embedding_text: embeddingText.split(/\s+/).slice(0, 6000).join(' '),
+            embedding: null,
+            updated_at: new Date().toISOString(),
+          }),
+        }).catch(err => console.error('[KV-INDEX] Platform recall KV index failed:', err));
+      }
+    }
+
     return { success: true, key: key, scope: scope };
   }
 
@@ -6432,8 +6597,8 @@ function generatePageEmbeddingText(title: string, content: string, tags?: string
   const parts: string[] = [];
   parts.push(title);
   if (tags && tags.length > 0) parts.push(`Tags: ${tags.join(', ')}`);
-  // Truncate content to first ~500 words for embedding
-  const words = content.split(/\s+/).slice(0, 500);
+  // Truncate content to first ~6000 words for embedding (model supports 8192 tokens)
+  const words = content.split(/\s+/).slice(0, 6000);
   parts.push(words.join(' '));
   return parts.join('\n');
 }
