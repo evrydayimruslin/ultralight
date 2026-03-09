@@ -1369,6 +1369,40 @@ export function getLayoutHTML(options: {
       color: var(--text-tertiary);
     }
 
+    .marketplace-section {
+      margin-bottom: var(--space-6);
+    }
+
+    .marketplace-section-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: var(--space-3);
+    }
+
+    .marketplace-section-grid {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-3);
+    }
+
+    .marketplace-copy-btn {
+      margin-left: auto;
+      padding: 2px 8px;
+      font-size: 11px;
+      border: 1px solid var(--border);
+      border-radius: 0;
+      background: var(--bg-base);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+
+    .marketplace-copy-btn:hover {
+      border-color: var(--text-primary);
+      color: var(--text-primary);
+    }
+
     /* ============================================
        APP DETAIL VIEW STYLES
        ============================================ */
@@ -2193,17 +2227,13 @@ export function getLayoutHTML(options: {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
             Marketplace
           </div>
-          <div class="settings-sidebar-item" data-dash-section="keys">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-            API Keys
-          </div>
-          <div class="settings-sidebar-item" data-dash-section="offers">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-            Offers
-          </div>
           <div class="settings-sidebar-item" data-dash-section="billing">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
             Wallet
+          </div>
+          <div class="settings-sidebar-item" data-dash-section="keys">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+            API Key
           </div>
         </nav>
 
@@ -2212,6 +2242,11 @@ export function getLayoutHTML(options: {
           <!-- Library Panel -->
           <section id="dashLibraryPanel" class="settings-panel">
             <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Library</h2>
+            <div class="marketplace-filters">
+              <button class="marketplace-filter active" data-lib-tab="my-apps">My Apps</button>
+              <button class="marketplace-filter" data-lib-tab="saved">Saved</button>
+              <button class="marketplace-filter" data-lib-tab="shared">Shared</button>
+            </div>
             <div id="appList" class="app-list"></div>
           </section>
 
@@ -2229,79 +2264,98 @@ export function getLayoutHTML(options: {
             </div>
           </section>
 
-          <!-- Offers Panel -->
-          <section id="dashOffersPanel" class="settings-panel" style="display:none;">
-            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">My Offers</h2>
-            <div id="offersIncoming" style="margin-bottom:var(--space-6);"></div>
-            <div id="offersOutgoing"></div>
-          </section>
-
-          <!-- API Keys Panel -->
-          <section id="dashKeysPanel" class="settings-panel" style="display:none;">
-            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">API Keys</h2>
-            <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Manage your API tokens for CLI authentication and programmatic access.</p>
-            <div id="tokensList" style="display:flex;flex-direction:column;gap:var(--space-2);margin-bottom:var(--space-4);"></div>
-            <button id="createTokenBtn" class="btn btn-primary btn-sm" style="border-radius:0;">Create New Token</button>
-          </section>
-
           <!-- Wallet Panel -->
           <section id="dashBillingPanel" class="settings-panel" style="display:none;">
             <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Wallet</h2>
-
-            <!-- Balance Section -->
-            <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);margin-bottom:var(--space-4);">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-4);">
-                <div>
-                  <div style="font-size:12px;color:var(--text-muted);margin-bottom:var(--space-1);">Available Balance</div>
-                  <div id="accountBalance" style="font-size:28px;font-weight:700;color:var(--text-primary);">$0.00</div>
-                </div>
-                <div style="display:flex;gap:var(--space-2);">
-                  <button id="addFundsBtn" class="btn btn-primary btn-sm" style="border-radius:0;">Add Funds</button>
-                  <button id="withdrawBtn" class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);display:none;" onclick="showWithdrawModal()">Withdraw</button>
-                </div>
-              </div>
+            <div class="marketplace-filters">
+              <button class="marketplace-filter active" data-wallet-tab="balance">Balance</button>
+              <button class="marketplace-filter" data-wallet-tab="earnings">Earnings</button>
+              <button class="marketplace-filter" data-wallet-tab="offers">Offers</button>
             </div>
 
-            <!-- Earnings Section -->
-            <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);margin-bottom:var(--space-4);">
-              <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:var(--space-3);">Earnings</div>
-              <div id="earningsSummary" style="font-size:13px;color:var(--text-muted);">Loading...</div>
-            </div>
-
-            <!-- Bank Payouts Section -->
-            <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);margin-bottom:var(--space-4);">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-3);">
-                <div style="font-size:13px;font-weight:600;color:var(--text-primary);">Bank Payouts</div>
-                <span id="connectStatusBadge" style="font-size:11px;padding:2px 8px;border-radius:2px;background:rgba(239,68,68,0.15);color:var(--error);">Not Connected</span>
-              </div>
-              <div id="connectSection">
-                <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-3);">Connect your bank account to withdraw earnings.</p>
-                <button id="connectBankBtn" class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);" onclick="startConnectOnboarding()">Connect Bank Account</button>
-              </div>
-              <div id="payoutsHistory" style="margin-top:var(--space-3);font-size:13px;color:var(--text-muted);"></div>
-            </div>
-
-            <!-- Auto Top-up Section -->
-            <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);">
-              <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:var(--space-3);">Auto Top-up</div>
-              <label style="display:flex;align-items:center;gap:var(--space-2);font-size:13px;color:var(--text-secondary);cursor:pointer;margin-bottom:var(--space-3);">
-                <input type="checkbox" id="autoTopupEnabled" style="accent-color:var(--accent);">
-                Enable automatic top-up when balance is low
-              </label>
-              <div id="autoTopupFields" style="display:none;">
-                <div style="display:flex;gap:var(--space-3);margin-bottom:var(--space-3);">
-                  <div style="flex:1;">
-                    <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Threshold (cents)</label>
-                    <input type="number" id="autoTopupThreshold" value="100" style="width:100%;padding:6px 8px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">
+            <!-- Balance Tab -->
+            <div id="walletBalanceTab" style="margin-top:var(--space-4);">
+              <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);margin-bottom:var(--space-4);">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-4);">
+                  <div>
+                    <div style="font-size:12px;color:var(--text-muted);margin-bottom:var(--space-1);">Available Balance</div>
+                    <div id="accountBalance" style="font-size:28px;font-weight:700;color:var(--text-primary);">$0.00</div>
                   </div>
-                  <div style="flex:1;">
-                    <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Amount (cents)</label>
-                    <input type="number" id="autoTopupAmount" value="1000" style="width:100%;padding:6px 8px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">
+                  <div style="display:flex;gap:var(--space-2);">
+                    <button id="addFundsBtn" class="btn btn-primary btn-sm" style="border-radius:0;">Add Funds</button>
+                    <button id="withdrawBtn" class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);display:none;" onclick="showWithdrawModal()">Withdraw</button>
                   </div>
                 </div>
-                <button class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);" onclick="saveAutoTopup()">Save</button>
+              </div>
+
+              <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);margin-bottom:var(--space-4);">
+                <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:var(--space-3);">Auto Top-up</div>
+                <label style="display:flex;align-items:center;gap:var(--space-2);font-size:13px;color:var(--text-secondary);cursor:pointer;margin-bottom:var(--space-3);">
+                  <input type="checkbox" id="autoTopupEnabled" style="accent-color:var(--accent);">
+                  Enable automatic top-up when balance is low
+                </label>
+                <div id="autoTopupFields" style="display:none;">
+                  <div style="display:flex;gap:var(--space-3);margin-bottom:var(--space-3);">
+                    <div style="flex:1;">
+                      <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Threshold (cents)</label>
+                      <input type="number" id="autoTopupThreshold" value="100" style="width:100%;padding:6px 8px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">
+                    </div>
+                    <div style="flex:1;">
+                      <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Amount (cents)</label>
+                      <input type="number" id="autoTopupAmount" value="1000" style="width:100%;padding:6px 8px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">
+                    </div>
+                  </div>
+                  <button class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);" onclick="saveAutoTopup()">Save</button>
+                </div>
+              </div>
+
+              <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-3);">
+                  <div style="font-size:13px;font-weight:600;color:var(--text-primary);">Bank Payouts</div>
+                  <span id="connectStatusBadge" style="font-size:11px;padding:2px 8px;border-radius:2px;background:rgba(239,68,68,0.15);color:var(--error);">Not Connected</span>
+                </div>
+                <div id="connectSection">
+                  <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-3);">Connect your bank account to withdraw earnings.</p>
+                  <button id="connectBankBtn" class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);" onclick="startConnectOnboarding()">Connect Bank Account</button>
+                </div>
               </div>
             </div>
+
+            <!-- Earnings Tab -->
+            <div id="walletEarningsTab" style="display:none;margin-top:var(--space-4);">
+              <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);margin-bottom:var(--space-4);">
+                <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:var(--space-3);">Earnings Summary</div>
+                <div id="earningsSummary" style="font-size:13px;color:var(--text-muted);">Loading...</div>
+              </div>
+              <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);">
+                <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:var(--space-3);">Payout History</div>
+                <div id="payoutsHistory" style="font-size:13px;color:var(--text-muted);">Loading...</div>
+              </div>
+            </div>
+
+            <!-- Offers Tab -->
+            <div id="walletOffersTab" style="display:none;margin-top:var(--space-4);">
+              <div id="offersIncoming" style="margin-bottom:var(--space-6);"></div>
+              <div id="offersOutgoing"></div>
+            </div>
+          </section>
+
+          <!-- API Key Panel -->
+          <section id="dashKeysPanel" class="settings-panel" style="display:none;">
+            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">API Key</h2>
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Use this key to connect agents and CLI tools to your account.</p>
+            <div id="apiKeyDisplay" style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-4);margin-bottom:var(--space-3);">
+              <div style="display:flex;align-items:center;gap:var(--space-3);">
+                <code id="apiKeyValue" style="flex:1;font-size:13px;color:var(--text-primary);letter-spacing:0.5px;">Loading...</code>
+                <button id="apiKeyToggleBtn" class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);min-width:60px;" onclick="toggleApiKeyVisibility()">Show</button>
+                <button id="apiKeyCopyBtn" class="btn btn-primary btn-sm" style="border-radius:0;" onclick="copyApiKey()">Copy</button>
+              </div>
+              <div style="margin-top:var(--space-3);font-size:11px;color:var(--text-muted);">
+                Created <span id="apiKeyCreated">&mdash;</span> &middot; Last used <span id="apiKeyLastUsed">never</span>
+              </div>
+            </div>
+            <button id="apiKeyRegenBtn" class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);color:var(--text-secondary);" onclick="regenerateApiKey()">Regenerate Key</button>
+            <p style="font-size:11px;color:var(--text-muted);margin-top:var(--space-2);">Regenerating creates a new key and revokes the current one. Connected agents will need to re-authenticate.</p>
           </section>
         </div>
       </div>
@@ -2803,12 +2857,32 @@ export function getLayoutHTML(options: {
         if (pathname === '/settings' || pathname.startsWith('/settings/')) {
           var settingsSection = pathname.split('/settings/')[1] || 'keys';
           if (settingsSection === 'tokens') settingsSection = 'keys';
+          var autoWalletTab = null;
+          if (settingsSection === 'offers') { settingsSection = 'billing'; autoWalletTab = 'offers'; }
           showView('dashboard');
           switchDashSection(settingsSection);
+          if (autoWalletTab) {
+            activeWalletTab = 'offers';
+            document.querySelectorAll('[data-wallet-tab]').forEach(function(btn) {
+              btn.classList.toggle('active', btn.dataset.walletTab === 'offers');
+            });
+            var _bt = document.getElementById('walletBalanceTab');
+            var _et = document.getElementById('walletEarningsTab');
+            var _ot = document.getElementById('walletOffersTab');
+            if (_bt) _bt.style.display = 'none';
+            if (_et) _et.style.display = 'none';
+            if (_ot) _ot.style.display = 'block';
+            loadMyOffers();
+            history.replaceState({}, '', '/settings/billing');
+          }
           loadAccountData();
         } else if (pathname === '/marketplace') {
           showView('dashboard');
           switchDashSection('marketplace');
+        } else if (pathname === '/keys') {
+          showView('dashboard');
+          switchDashSection('keys');
+          loadAccountData();
         } else {
           showView('dashboard');
           switchDashSection('library');
@@ -2894,7 +2968,11 @@ export function getLayoutHTML(options: {
       var sec = section || 'keys';
       // Map old names to new
       if (sec === 'tokens') sec = 'keys';
-      history.pushState({}, '', '/settings/' + sec);
+      if (sec === 'keys') {
+        history.pushState({}, '', '/keys');
+      } else {
+        history.pushState({}, '', '/settings/' + sec);
+      }
       showView('dashboard');
       switchDashSection(sec);
       loadAccountData();
@@ -2913,10 +2991,30 @@ export function getLayoutHTML(options: {
       } else if (path === '/marketplace') {
         showView('dashboard');
         switchDashSection('marketplace');
-      } else if (path === '/settings' || path.startsWith('/settings/')) {
-        const section = path.split('/settings/')[1] || 'keys';
+      } else if (path === '/keys') {
         showView('dashboard');
-        switchDashSection(section);
+        switchDashSection('keys');
+        loadAccountData();
+      } else if (path === '/settings' || path.startsWith('/settings/')) {
+        var popSection = path.split('/settings/')[1] || 'keys';
+        var popWalletTab = null;
+        if (popSection === 'offers') { popSection = 'billing'; popWalletTab = 'offers'; }
+        showView('dashboard');
+        switchDashSection(popSection);
+        if (popWalletTab) {
+          activeWalletTab = 'offers';
+          document.querySelectorAll('[data-wallet-tab]').forEach(function(btn) {
+            btn.classList.toggle('active', btn.dataset.walletTab === 'offers');
+          });
+          var _pbt = document.getElementById('walletBalanceTab');
+          var _pet = document.getElementById('walletEarningsTab');
+          var _pot = document.getElementById('walletOffersTab');
+          if (_pbt) _pbt.style.display = 'none';
+          if (_pet) _pet.style.display = 'none';
+          if (_pot) _pot.style.display = 'block';
+          loadMyOffers();
+          history.replaceState({}, '', '/settings/billing');
+        }
         loadAccountData();
       } else if (path.startsWith('/a/')) {
         const parts = path.slice(3).split('/');
@@ -2977,7 +3075,6 @@ export function getLayoutHTML(options: {
       var panelMap = {
         library: 'dashLibraryPanel',
         marketplace: 'dashMarketplacePanel',
-        offers: 'dashOffersPanel',
         keys: 'dashKeysPanel',
         billing: 'dashBillingPanel'
       };
@@ -2993,21 +3090,32 @@ export function getLayoutHTML(options: {
       // Update URL and load section data
       if (section === 'library') {
         history.replaceState({}, '', '/dash');
+        // Reset to My Apps tab
+        activeLibTab = 'my-apps';
+        document.querySelectorAll('[data-lib-tab]').forEach(function(btn) {
+          btn.classList.toggle('active', btn.dataset.libTab === 'my-apps');
+        });
+        renderAppList();
       } else if (section === 'marketplace') {
         history.replaceState({}, '', '/marketplace');
         loadMarketplace('', 'all');
-      } else if (section === 'offers') {
-        history.replaceState({}, '', '/settings/offers');
-        loadMyOffers();
       } else if (section === 'keys') {
-        history.replaceState({}, '', '/settings/' + section);
-        loadTokens();
+        history.replaceState({}, '', '/keys');
+        loadApiKey();
       } else if (section === 'billing') {
         history.replaceState({}, '', '/settings/billing');
+        activeWalletTab = 'balance';
+        document.querySelectorAll('[data-wallet-tab]').forEach(function(btn) {
+          btn.classList.toggle('active', btn.dataset.walletTab === 'balance');
+        });
+        var balTab = document.getElementById('walletBalanceTab');
+        var earnTab = document.getElementById('walletEarningsTab');
+        var offTab = document.getElementById('walletOffersTab');
+        if (balTab) balTab.style.display = 'block';
+        if (earnTab) earnTab.style.display = 'none';
+        if (offTab) offTab.style.display = 'none';
         loadHostingData();
-        loadEarnings();
         loadConnectStatus();
-        loadPayouts();
       } else {
         history.replaceState({}, '', '/settings/' + section);
       }
@@ -3025,6 +3133,38 @@ export function getLayoutHTML(options: {
     var marketplaceDebounce = null;
     var marketplaceLoaded = false;
 
+    function renderMarketplaceCard(item) {
+      var badge = item.type === 'app' ? 'App' : 'Skill';
+      var desc = item.description || '';
+      if (desc.length > 120) desc = desc.slice(0, 120) + '...';
+      var stats = '';
+      if (item.type === 'app') {
+        var parts = [];
+        if (item.likes > 0) parts.push(item.likes + ' likes');
+        if (item.runs_30d > 0) parts.push(item.runs_30d + ' runs');
+        if (item.fully_native) parts.push('native');
+        if (parts.length > 0) stats = '<div class="marketplace-stats">' + parts.join(' &middot; ') + '</div>';
+      } else {
+        var tagStr = (item.tags || []).slice(0, 3).join(', ');
+        if (tagStr) stats = '<div class="marketplace-stats">' + tagStr + '</div>';
+      }
+      var clickAction = item.type === 'app'
+        ? 'navigateToApp(\\\'' + item.id + '\\\')'
+        : 'window.open(\\\'' + (item.url || '/p/' + item.slug) + '\\\', \\\'_blank\\\')';
+      var copyBtn = item.type === 'app'
+        ? '<button class="marketplace-copy-btn" onclick="event.stopPropagation(); copyAppInstructions(\\\'' + item.id + '\\\', this)">Copy</button>'
+        : '';
+      return '<div class="marketplace-card" onclick="' + clickAction + '">'
+        + '<div class="marketplace-card-header">'
+        + '<span class="marketplace-card-name">' + escapeHtml(item.name || item.slug) + '</span>'
+        + '<span class="marketplace-badge">' + badge + '</span>'
+        + copyBtn
+        + '</div>'
+        + (desc ? '<div class="marketplace-card-desc">' + escapeHtml(desc) + '</div>' : '')
+        + stats
+        + '</div>';
+    }
+
     function loadMarketplace(query, type) {
       var resultsEl = document.getElementById('marketplaceResults');
       if (!resultsEl) return;
@@ -3034,46 +3174,57 @@ export function getLayoutHTML(options: {
       if (query) params.set('q', query);
       if (type && type !== 'all') params.set('type', type);
       params.set('limit', '30');
+      // Use sectioned layout for browse mode (no query)
+      if (!query) params.set('format', 'sections');
 
       fetch('/api/discover/marketplace?' + params.toString())
         .then(function(r) { return r.json(); })
         .then(function(data) {
+          // Sectioned browse mode
+          if (data.sections && Array.isArray(data.sections)) {
+            if (data.sections.length === 0) {
+              resultsEl.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">No apps yet.</div>';
+              return;
+            }
+            resultsEl.innerHTML = data.sections.map(function(section) {
+              return '<div class="marketplace-section">'
+                + '<div class="marketplace-section-title">' + escapeHtml(section.title) + '</div>'
+                + '<div class="marketplace-section-grid">'
+                + section.results.map(renderMarketplaceCard).join('')
+                + '</div>'
+                + '</div>';
+            }).join('');
+            marketplaceLoaded = true;
+            return;
+          }
+
+          // Flat search results
           if (!data.results || data.results.length === 0) {
             resultsEl.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">No results found.</div>';
             return;
           }
-          resultsEl.innerHTML = data.results.map(function(item) {
-            var badge = item.type === 'app' ? 'App' : 'Skill';
-            var desc = item.description || '';
-            if (desc.length > 120) desc = desc.slice(0, 120) + '...';
-            var stats = '';
-            if (item.type === 'app') {
-              var parts = [];
-              if (item.likes > 0) parts.push(item.likes + ' likes');
-              if (item.runs_30d > 0) parts.push(item.runs_30d + ' runs');
-              if (item.fully_native) parts.push('native');
-              if (parts.length > 0) stats = '<div class="marketplace-stats">' + parts.join(' &middot; ') + '</div>';
-            } else {
-              var tagStr = (item.tags || []).slice(0, 3).join(', ');
-              if (tagStr) stats = '<div class="marketplace-stats">' + tagStr + '</div>';
-            }
-            var clickAction = item.type === 'app'
-              ? 'navigateToApp(\\\'' + item.id + '\\\')'
-              : 'window.open(\\\'' + (item.url || '/p/' + item.slug) + '\\\', \\\'_blank\\\')';
-            return '<div class="marketplace-card" onclick="' + clickAction + '">'
-              + '<div class="marketplace-card-header">'
-              + '<span class="marketplace-card-name">' + (item.name || item.slug) + '</span>'
-              + '<span class="marketplace-badge">' + badge + '</span>'
-              + '</div>'
-              + (desc ? '<div class="marketplace-card-desc">' + desc + '</div>' : '')
-              + stats
-              + '</div>';
-          }).join('');
+          resultsEl.innerHTML = data.results.map(renderMarketplaceCard).join('');
           marketplaceLoaded = true;
         })
         .catch(function() {
           resultsEl.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Failed to load marketplace.</div>';
         });
+    }
+
+    async function copyAppInstructions(appId, btn) {
+      var origText = btn.textContent;
+      btn.textContent = '...';
+      try {
+        var res = await fetch('/api/apps/' + appId + '/instructions');
+        if (!res.ok) throw new Error('Failed');
+        var data = await res.json();
+        await navigator.clipboard.writeText(data.instructions);
+        btn.textContent = 'Copied!';
+        setTimeout(function() { btn.textContent = origText; }, 2000);
+      } catch {
+        btn.textContent = 'Error';
+        setTimeout(function() { btn.textContent = origText; }, 2000);
+      }
     }
 
     // Marketplace search input
@@ -3455,6 +3606,10 @@ export function getLayoutHTML(options: {
     });
 
     // ===== Apps =====
+    var activeLibTab = 'my-apps';
+    var savedItems = [];
+    var sharedItems = [];
+
     async function loadApps() {
       if (!authToken) return;
       try {
@@ -3511,6 +3666,120 @@ export function getLayoutHTML(options: {
     document.getElementById('appSearchInput')?.addEventListener('input', function() {
       renderAppList(this.value);
     });
+
+    // Library filter tabs
+    document.querySelectorAll('[data-lib-tab]').forEach(function(el) {
+      el.addEventListener('click', function() {
+        activeLibTab = this.dataset.libTab;
+        document.querySelectorAll('[data-lib-tab]').forEach(function(btn) {
+          btn.classList.toggle('active', btn.dataset.libTab === activeLibTab);
+        });
+        if (activeLibTab === 'my-apps') {
+          renderAppList();
+        } else {
+          loadLibraryTab(activeLibTab);
+        }
+      });
+    });
+
+    // Wallet sub-tab state
+    var activeWalletTab = 'balance';
+
+    // Wallet filter tabs
+    document.querySelectorAll('[data-wallet-tab]').forEach(function(el) {
+      el.addEventListener('click', function() {
+        activeWalletTab = this.dataset.walletTab;
+        document.querySelectorAll('[data-wallet-tab]').forEach(function(btn) {
+          btn.classList.toggle('active', btn.dataset.walletTab === activeWalletTab);
+        });
+        ['walletBalanceTab', 'walletEarningsTab', 'walletOffersTab'].forEach(function(id) {
+          var tabEl = document.getElementById(id);
+          if (tabEl) tabEl.style.display = 'none';
+        });
+        var tabMap = { balance: 'walletBalanceTab', earnings: 'walletEarningsTab', offers: 'walletOffersTab' };
+        var activeEl = document.getElementById(tabMap[activeWalletTab]);
+        if (activeEl) activeEl.style.display = 'block';
+        if (activeWalletTab === 'earnings') { loadEarnings(); loadPayouts(); }
+        else if (activeWalletTab === 'offers') { loadMyOffers(); }
+      });
+    });
+
+    async function loadLibraryTab(tab) {
+      var list = document.getElementById('appList');
+      if (!list) return;
+
+      // Return cached data if available
+      var cached = tab === 'saved' ? savedItems : sharedItems;
+      if (cached.length > 0) {
+        renderLibraryItems(cached, tab);
+        return;
+      }
+
+      list.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Loading...</div>';
+
+      try {
+        var res = await fetch('/api/apps/me/library?tab=' + tab, {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) throw new Error('Failed to load');
+        var items = await res.json();
+
+        if (tab === 'saved') savedItems = items;
+        else sharedItems = items;
+
+        renderLibraryItems(items, tab);
+      } catch (err) {
+        list.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Failed to load.</div>';
+      }
+    }
+
+    function renderLibraryItems(items, tab) {
+      var list = document.getElementById('appList');
+      if (!list) return;
+
+      if (!items || items.length === 0) {
+        var emptyIcon = tab === 'saved' ? '⭐' : '🤝';
+        var emptyTitle = tab === 'saved' ? 'No saved items' : 'Nothing shared with you';
+        var emptyDesc = tab === 'saved'
+          ? 'Like apps in the Marketplace to save them here.'
+          : 'When someone shares an app or page with you, it will appear here.';
+        list.innerHTML = '<div class="empty-state"><div class="empty-state-icon">' + emptyIcon +
+          '</div><div class="empty-state-title">' + emptyTitle +
+          '</div><div class="empty-state-desc">' + emptyDesc +
+          '</div></div>';
+        return;
+      }
+
+      list.innerHTML = items.map(function(item) {
+        var emoji = item.type === 'app' ? getAppEmoji(item.name || item.slug) : '📄';
+        var name = escapeHtml(item.name || item.slug || 'Untitled');
+        var desc = escapeHtml((item.description || '').slice(0, 120));
+        var badge = item.type === 'app' ? 'App' : 'Page';
+        var versionHtml = item.version
+          ? ' <span class="app-row-version">' + escapeHtml(item.version) + '</span>'
+          : '';
+        var fnCountHtml = item.type === 'app' && item.fn_count > 0
+          ? ' <span class="app-row-fn-count">' + item.fn_count + ' fn' + (item.fn_count !== 1 ? 's' : '') + '</span>'
+          : '';
+        var ownerHtml = item.owner_email
+          ? '<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">' + escapeHtml(item.owner_email) + '</div>'
+          : '';
+        var clickAction = item.type === 'app'
+          ? 'navigateToApp(\\\'' + item.id + '\\\')'
+          : 'window.open(\\\'/p/' + escapeHtml(item.slug) + '\\\', \\\'_blank\\\')';
+
+        return '<div class="app-row" onclick="' + clickAction + '">' +
+          '<div class="app-row-emoji">' + emoji + '</div>' +
+          '<div class="app-row-info">' +
+            '<div class="app-row-name">' + name + versionHtml + fnCountHtml +
+              ' <span class="marketplace-badge">' + badge + '</span>' +
+            '</div>' +
+            (desc ? '<div class="app-row-desc">' + desc + '</div>' : '') +
+            ownerHtml +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }
 
     // (Copy agent instructions moved to nav bar — see navCopyInstructionsBtn handler above)
 
@@ -5130,97 +5399,148 @@ export function getLayoutHTML(options: {
 
     // ===== Account Settings =====
     async function loadAccountData() {
-      loadTokens();
+      loadApiKey();
       loadHostingData();
     }
 
-    // --- API Tokens ---
-    async function loadTokens() {
-      const container = document.getElementById('tokensList');
-      if (!container) return;
+    // --- API Key (single key) ---
+    var currentApiKey = null;
+    var apiKeyPlaintext = null;
+    var apiKeyVisible = false;
+
+    function renderApiKeyDisplay() {
+      var valEl = document.getElementById('apiKeyValue');
+      var createdEl = document.getElementById('apiKeyCreated');
+      var lastUsedEl = document.getElementById('apiKeyLastUsed');
+      var toggleBtn = document.getElementById('apiKeyToggleBtn');
+      if (!valEl) return;
+
+      if (!currentApiKey) {
+        valEl.textContent = 'No key';
+        if (createdEl) createdEl.textContent = '\u2014';
+        if (lastUsedEl) lastUsedEl.textContent = 'never';
+        return;
+      }
+
+      if (apiKeyVisible && apiKeyPlaintext) {
+        valEl.textContent = apiKeyPlaintext;
+        if (toggleBtn) toggleBtn.textContent = 'Hide';
+      } else {
+        var prefix = currentApiKey.token_prefix || 'ul_????';
+        valEl.textContent = prefix + '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022';
+        if (toggleBtn) toggleBtn.textContent = 'Show';
+      }
+
+      if (createdEl) createdEl.textContent = new Date(currentApiKey.created_at).toLocaleDateString();
+      if (lastUsedEl) lastUsedEl.textContent = currentApiKey.last_used_at ? relTime(currentApiKey.last_used_at) : 'never';
+    }
+
+    async function loadApiKey() {
+      var valEl = document.getElementById('apiKeyValue');
+      if (!valEl) return;
+      valEl.textContent = 'Loading...';
+
       try {
-        const res = await fetch('/api/user/tokens', {
+        var res = await fetch('/api/user/tokens', {
           headers: { 'Authorization': 'Bearer ' + authToken },
         });
-        if (!res.ok) return;
+        if (!res.ok) { valEl.textContent = 'Failed to load'; return; }
         var tokenData = await res.json();
-        currentTokens = tokenData.tokens || tokenData;
+        var tokens = tokenData.tokens || tokenData;
 
-        if (currentTokens.length === 0) {
-          container.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">No API tokens. Create one to connect agents.</div>';
+        if (tokens.length > 0) {
+          // Prefer token named "default", else use first
+          currentApiKey = tokens.find(function(t) { return t.name === 'default'; }) || tokens[0];
+          apiKeyPlaintext = null;
+          apiKeyVisible = false;
+          renderApiKeyDisplay();
           return;
         }
 
-        container.innerHTML = currentTokens.map(function(t) {
-          const prefix = escapeHtml(t.token_prefix || t.id?.slice(0, 8) || '');
-          const created = new Date(t.created_at).toLocaleDateString();
-          const lastUsed = t.last_used_at ? relTime(t.last_used_at) : 'Never';
-          const expired = t.expires_at && new Date(t.expires_at) < new Date();
-          return '<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px">' +
-            '<code style="color:var(--text-primary)">' + prefix + '...</code>' +
-            '<span style="color:var(--text-muted)">Created ' + created + '</span>' +
-            '<span style="color:var(--text-muted)">Last used: ' + lastUsed + '</span>' +
-            (expired ? '<span style="color:var(--error);font-size:11px">Expired</span>' : '') +
-            '<button class="btn btn-danger btn-sm" style="margin-left:auto" onclick="revokeToken(\\\'' + t.id + '\\\')">Revoke</button>' +
-          '</div>';
-        }).join('');
-      } catch {}
-    }
-
-    window.createToken = async function() {
-      var name = prompt('Token name:');
-      if (!name || !name.trim()) return;
-
-      try {
-        var createBtn = document.getElementById('createTokenBtn');
-        if (createBtn) { createBtn.disabled = true; createBtn.textContent = 'Creating...'; }
-
-        const res = await fetch('/api/user/tokens', {
+        // No tokens — auto-create one
+        var createRes = await fetch('/api/user/tokens', {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name.trim() }),
+          body: JSON.stringify({ name: 'default' }),
         });
+        if (!createRes.ok) { valEl.textContent = 'Failed to create key'; return; }
+        var createData = await createRes.json();
+        currentApiKey = createData.token;
+        apiKeyPlaintext = createData.plaintext_token || null;
+        apiKeyVisible = false;
+        renderApiKeyDisplay();
+      } catch { if (valEl) valEl.textContent = 'Failed to load'; }
+    }
 
-        if (createBtn) { createBtn.disabled = false; createBtn.textContent = 'Create New Token'; }
+    window.toggleApiKeyVisibility = function() {
+      if (!currentApiKey) return;
+      if (!apiKeyPlaintext) {
+        showToast('Full key is only visible after creation. Regenerate to get a new copyable key.');
+        return;
+      }
+      apiKeyVisible = !apiKeyVisible;
+      renderApiKeyDisplay();
+    };
+
+    window.copyApiKey = async function() {
+      if (!apiKeyPlaintext) {
+        showToast('Key not available. Regenerate to get a new copyable key.');
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(apiKeyPlaintext);
+        showToast('API key copied to clipboard!');
+      } catch {
+        prompt('Copy your API key:', apiKeyPlaintext);
+      }
+    };
+
+    window.regenerateApiKey = async function() {
+      if (!confirm('Regenerate your API key? The current key will stop working immediately. Connected agents will need to re-authenticate.')) return;
+
+      var regenBtn = document.getElementById('apiKeyRegenBtn');
+      if (regenBtn) { regenBtn.disabled = true; regenBtn.textContent = 'Regenerating...'; }
+
+      try {
+        // Revoke current key
+        if (currentApiKey && currentApiKey.id) {
+          await fetch('/api/user/tokens/' + currentApiKey.id, {
+            method: 'DELETE',
+            headers: { 'Authorization': 'Bearer ' + authToken },
+          });
+        }
+
+        // Create new key
+        var res = await fetch('/api/user/tokens', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'default' }),
+        });
 
         if (!res.ok) {
           var errData = await res.json().catch(function() { return {}; });
-          showToast(errData.error || 'Failed to create token', 'error');
+          showToast(errData.error || 'Failed to regenerate key', 'error');
           return;
         }
-        const data = await res.json();
 
-        if (data.plaintext_token) {
+        var data = await res.json();
+        currentApiKey = data.token;
+        apiKeyPlaintext = data.plaintext_token || null;
+        apiKeyVisible = false;
+        renderApiKeyDisplay();
+
+        if (apiKeyPlaintext) {
           try {
-            await navigator.clipboard.writeText(data.plaintext_token);
-            showToast('Token created and copied to clipboard!');
+            await navigator.clipboard.writeText(apiKeyPlaintext);
+            showToast('New API key generated and copied to clipboard!');
           } catch {
-            prompt('Token created! Copy it now — it will not be shown again:', data.plaintext_token);
+            prompt('New API key generated! Copy it now:', apiKeyPlaintext);
           }
         }
-        loadTokens();
-      } catch { showToast('Failed to create token', 'error'); }
-    };
-
-    document.getElementById('createTokenBtn')?.addEventListener('click', function() {
-      window.createToken();
-    });
-
-    window.copyNewToken = function() {
-      const el = document.getElementById('newTokenValue');
-      if (el) navigator.clipboard.writeText(el.textContent).then(function() { showToast('Token copied!'); });
-    };
-
-    window.revokeToken = async function(tokenId) {
-      if (!confirm('Revoke this API token? This cannot be undone.')) return;
-      try {
-        const res = await fetch('/api/user/tokens/' + tokenId, {
-          method: 'DELETE',
-          headers: { 'Authorization': 'Bearer ' + authToken },
-        });
-        if (res.ok) { showToast('Token revoked'); loadTokens(); }
-        else showToast('Failed to revoke', 'error');
-      } catch { showToast('Failed to revoke', 'error'); }
+      } catch { showToast('Failed to regenerate key', 'error'); }
+      finally {
+        if (regenBtn) { regenBtn.disabled = false; regenBtn.textContent = 'Regenerate Key'; }
+      }
     };
 
     // --- Billing ---

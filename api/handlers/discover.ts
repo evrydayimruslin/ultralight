@@ -49,6 +49,8 @@ interface AppRow {
   env_schema: Record<string, EnvSchemaEntry> | null;
   similarity?: number;
   hosting_suspended?: boolean;
+  category?: string | null;
+  featured_at?: string | null;
 }
 
 interface ScoredApp {
@@ -398,42 +400,46 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
 
   // ── BROWSE MODE (no query) ──
   if (!query) {
-    const results: Array<Record<string, unknown>> = [];
+    const format = url.searchParams.get('format') || 'flat';
 
-    // Featured apps
+    // Helper: convert AppRow to result object
+    function appToResult(a: AppRow) {
+      const schema = a.env_schema || {};
+      const perUserEntries = Object.entries(schema).filter(([, v]) => v.scope === 'per_user');
+      return {
+        id: a.id,
+        name: a.name,
+        slug: a.slug,
+        description: a.description,
+        type: 'app' as const,
+        mcp_endpoint: `/mcp/${a.id}`,
+        likes: a.likes ?? 0,
+        runs_30d: a.runs_30d ?? 0,
+        fully_native: perUserEntries.length === 0,
+      };
+    }
+
+    // Fetch all public apps with category + featured_at for sectioning
+    let allApps: AppRow[] = [];
     if (includeApps) {
       try {
-        const overFetchLimit = limit + blockedAppIds.size + 5;
+        const overFetchLimit = limit * 5 + blockedAppIds.size + 10;
         const topRes = await fetch(
           `${supabaseUrl}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&hosting_suspended=eq.false` +
-          `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,runs_30d` +
+          `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,runs_30d,category,featured_at` +
           `&order=weighted_likes.desc,likes.desc,runs_30d.desc` +
           `&limit=${overFetchLimit}`,
           { headers: dbHeaders }
         );
         if (topRes.ok) {
-          const topApps = await topRes.json() as AppRow[];
-          const filtered = topApps.filter(a => !blockedAppIds.has(a.id)).slice(0, limit);
-          for (const a of filtered) {
-            const schema = a.env_schema || {};
-            const perUserEntries = Object.entries(schema).filter(([, v]) => v.scope === 'per_user');
-            results.push({
-              id: a.id,
-              name: a.name,
-              slug: a.slug,
-              description: a.description,
-              type: 'app',
-              mcp_endpoint: `/mcp/${a.id}`,
-              likes: a.likes ?? 0,
-              runs_30d: a.runs_30d ?? 0,
-              fully_native: perUserEntries.length === 0,
-            });
-          }
+          const raw = await topRes.json() as AppRow[];
+          allApps = raw.filter(a => !blockedAppIds.has(a.id));
         }
       } catch { /* best effort */ }
     }
 
-    // Recent published pages (skills)
+    // Fetch recent pages
+    let allPages: Array<Record<string, unknown>> = [];
     if (includeSkills) {
       try {
         const pagesRes = await fetch(
@@ -448,22 +454,86 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
             id: string; slug: string; title: string | null;
             description: string | null; tags: string[] | null; updated_at: string;
           }>;
-          const filteredPages = pages.filter(p => !blockedContentIds.has(p.id));
-          for (const p of filteredPages) {
-            results.push({
-              id: p.id,
-              name: p.title || p.slug,
-              slug: p.slug,
-              description: p.description,
-              type: 'page',
-              url: `/p/${p.slug}`,
-              tags: p.tags || [],
-            });
-          }
+          allPages = pages.filter(p => !blockedContentIds.has(p.id)).map(p => ({
+            id: p.id,
+            name: p.title || p.slug,
+            slug: p.slug,
+            description: p.description,
+            type: 'page',
+            url: `/p/${p.slug}`,
+            tags: p.tags || [],
+          }));
         }
       } catch { /* best effort */ }
     }
 
+    // Sectioned format: group by featured + category
+    if (format === 'sections') {
+      const sections: Array<{ title: string; type: string; results: Array<Record<string, unknown>> }> = [];
+      const usedAppIds = new Set<string>();
+
+      // Featured section (admin-curated)
+      const featuredApps = allApps
+        .filter(a => a.featured_at)
+        .sort((a, b) => new Date(b.featured_at!).getTime() - new Date(a.featured_at!).getTime())
+        .slice(0, 6);
+      if (featuredApps.length > 0) {
+        sections.push({
+          title: 'Featured',
+          type: 'featured',
+          results: featuredApps.map(appToResult),
+        });
+        for (const a of featuredApps) usedAppIds.add(a.id);
+      }
+
+      // Category sections
+      const categoryMap = new Map<string, AppRow[]>();
+      for (const a of allApps) {
+        if (a.category && !usedAppIds.has(a.id)) {
+          if (!categoryMap.has(a.category)) categoryMap.set(a.category, []);
+          categoryMap.get(a.category)!.push(a);
+        }
+      }
+      // Sort categories alphabetically
+      const sortedCategories = [...categoryMap.keys()].sort();
+      for (const cat of sortedCategories) {
+        const catApps = categoryMap.get(cat)!.slice(0, 6);
+        sections.push({
+          title: cat,
+          type: 'category',
+          results: catApps.map(appToResult),
+        });
+        for (const a of catApps) usedAppIds.add(a.id);
+      }
+
+      // Uncategorized apps (popular, not yet in a section)
+      const uncategorized = allApps.filter(a => !usedAppIds.has(a.id)).slice(0, 6);
+      if (uncategorized.length > 0) {
+        sections.push({
+          title: 'More Apps',
+          type: 'category',
+          results: uncategorized.map(appToResult),
+        });
+      }
+
+      // Skills section
+      if (allPages.length > 0) {
+        sections.push({
+          title: 'Recent Skills',
+          type: 'skills',
+          results: allPages.slice(0, limit),
+        });
+      }
+
+      const totalItems = sections.reduce((sum, s) => sum + s.results.length, 0);
+      return json({ mode: 'browse', sections, total: totalItems });
+    }
+
+    // Flat format (backward compat default)
+    const results: Array<Record<string, unknown>> = [
+      ...allApps.slice(0, limit).map(appToResult),
+      ...allPages.slice(0, limit),
+    ];
     return json({
       mode: 'browse',
       results: results.slice(0, limit),

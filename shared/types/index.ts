@@ -587,7 +587,7 @@ export type Tier = 'free' | 'fun' | 'pro' | 'scale' | 'enterprise';
 export const MIN_PUBLISH_DEPOSIT_CENTS = 500; // $5.00
 
 /** Hosting rate for published content. */
-export const HOSTING_RATE_CENTS_PER_MB_PER_HOUR = 0.025;
+export const HOSTING_RATE_CENTS_PER_MB_PER_HOUR = 2.5;
 
 /** Default auto top-up threshold (cents). When balance drops below this, auto-charge triggers. */
 export const AUTO_TOPUP_DEFAULT_THRESHOLD_CENTS = 100; // $1.00

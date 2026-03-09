@@ -95,6 +95,18 @@ export async function handleAdmin(request: Request): Promise<Response> {
     return cleanupProvisionals();
   }
 
+  // PATCH /api/admin/apps/:appId/category — Set app category
+  const categoryMatch = path.match(/^\/api\/admin\/apps\/([0-9a-f-]+)\/category$/);
+  if (categoryMatch && method === 'PATCH') {
+    return setAppCategory(request, categoryMatch[1]);
+  }
+
+  // PATCH /api/admin/apps/:appId/featured — Toggle featured status
+  const featuredMatch = path.match(/^\/api\/admin\/apps\/([0-9a-f-]+)\/featured$/);
+  if (featuredMatch && method === 'PATCH') {
+    return setAppFeatured(request, featuredMatch[1]);
+  }
+
   // GET /api/admin/analytics — Distribution pipeline analytics dashboard
   if (path === '/api/admin/analytics' && method === 'GET') {
     const days = parseInt(url.searchParams.get('days') || '30', 10);
@@ -724,5 +736,61 @@ async function getAnalytics(days: number): Promise<Response> {
   } catch (err) {
     console.error('[ADMIN] Analytics failed:', err);
     return error('Analytics query failed', 500);
+  }
+}
+
+// ============================================
+// APP CURATION
+// ============================================
+
+async function setAppCategory(request: Request, appId: string): Promise<Response> {
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getEnv();
+  try {
+    const body = await request.json() as { category: string | null };
+    const category = body.category ?? null;
+
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}`,
+      {
+        method: 'PATCH',
+        headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
+        body: JSON.stringify({ category }),
+      }
+    );
+    if (!res.ok) {
+      const text = await res.text();
+      return error(`Failed to update category: ${text}`, 500);
+    }
+    const updated = await res.json();
+    return json({ success: true, app_id: appId, category, app: updated[0] || null });
+  } catch (err) {
+    console.error('[ADMIN] setAppCategory failed:', err);
+    return error('Failed to set category', 500);
+  }
+}
+
+async function setAppFeatured(request: Request, appId: string): Promise<Response> {
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getEnv();
+  try {
+    const body = await request.json() as { featured: boolean };
+    const featured_at = body.featured ? new Date().toISOString() : null;
+
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}`,
+      {
+        method: 'PATCH',
+        headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
+        body: JSON.stringify({ featured_at }),
+      }
+    );
+    if (!res.ok) {
+      const text = await res.text();
+      return error(`Failed to update featured status: ${text}`, 500);
+    }
+    const updated = await res.json();
+    return json({ success: true, app_id: appId, featured: !!featured_at, featured_at, app: updated[0] || null });
+  } catch (err) {
+    console.error('[ADMIN] setAppFeatured failed:', err);
+    return error('Failed to set featured status', 500);
   }
 }

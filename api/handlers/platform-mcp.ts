@@ -1013,6 +1013,8 @@ function buildInstructions(deskSection: string, libraryHint: string): string {
 
 MCP-first app hosting. TypeScript functions → MCP servers. 10 platform tools + unlimited app tools via ul.call.
 
+**Flat-rate hosting: $0.025/MB/hour.** Your app goes viral? Your bill stays the same. No usage spikes, no surprise bills, no cost anxiety as you grow. You pay only for storage size — never for traffic, calls, or popularity.
+
 ${deskSection}
 
 ---

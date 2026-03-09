@@ -1676,11 +1676,24 @@ async function executeAppFunction(
             const rows = await transferRes.json() as Array<{ from_new_balance: number; to_new_balance: number }>;
             if (!rows || rows.length === 0) {
               // Empty result = insufficient balance. Return payment-required error.
+              const costDisplay = callChargeCents < 1 ? callChargeCents.toFixed(3) : callChargeCents;
+              let insufficientMsg: string;
+              if (user?.provisional) {
+                insufficientMsg =
+                  `Insufficient balance. This tool costs ${costDisplay}¢ per call. ` +
+                  `You're using a provisional account — sign in at https://ultralight.dev/dash ` +
+                  `to add funds to your wallet and continue using paid tools.`;
+              } else {
+                insufficientMsg =
+                  `Insufficient balance. This tool costs ${costDisplay}¢ per call. ` +
+                  `Add funds to your wallet at https://ultralight.dev/settings/billing ` +
+                  `or enable auto top-up to avoid interruptions.`;
+              }
               return jsonRpcResponse(id, {
                 isError: true,
                 content: [{
                   type: 'text',
-                  text: `Insufficient balance. This tool costs ${callChargeCents < 1 ? callChargeCents.toFixed(3) : callChargeCents}¢ per call. Top up your hosting balance to continue.`,
+                  text: insufficientMsg,
                 }],
               });
             }

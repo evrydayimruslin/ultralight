@@ -63,6 +63,12 @@ export async function handleApps(request: Request): Promise<Response> {
     return handleListMyApps(request);
   }
 
+  // GET /api/apps/me/library?tab=saved|shared - Library tabs
+  if (path === '/api/apps/me/library' && method === 'GET') {
+    console.log('[APPS] Routing to handleLibraryTab');
+    return handleLibraryTab(request);
+  }
+
   // Routes with app ID: /api/apps/:appId/*
   const appIdMatch = path.match(/^\/api\/apps\/([^\/]+)(\/.*)?$/);
   if (appIdMatch) {
@@ -107,6 +113,11 @@ export async function handleApps(request: Request): Promise<Response> {
     // POST /api/apps/:appId/generate-docs - Generate Skills.md and parse skills
     if (subPath === '/generate-docs' && method === 'POST') {
       return handleGenerateDocs(request, appId);
+    }
+
+    // GET /api/apps/:appId/instructions - Agent-ready instruction block for this app
+    if (subPath === '/instructions' && method === 'GET') {
+      return handleGetAppInstructions(appId);
     }
 
     // GET /api/apps/:appId/skills.md - Get Skills.md documentation
@@ -262,6 +273,300 @@ async function handleListMyApps(request: Request): Promise<Response> {
   } catch (listErr) {
     console.error('handleListMyApps: failed to list apps:', listErr);
     return error('Failed to list apps', 500);
+  }
+}
+
+/**
+ * Resolve owner emails for a list of user IDs.
+ */
+async function resolveOwnerEmails(
+  ownerIds: string[],
+  supabaseUrl: string,
+  headers: Record<string, string>
+): Promise<Map<string, string>> {
+  if (ownerIds.length === 0) return new Map();
+  const res = await fetch(
+    `${supabaseUrl}/rest/v1/users?id=in.(${ownerIds.join(',')})&select=id,email`,
+    { headers }
+  );
+  if (!res.ok) return new Map();
+  const rows = await res.json() as Array<{ id: string; email: string }>;
+  return new Map(rows.map(r => [r.id, r.email]));
+}
+
+/**
+ * Library tabs: saved and shared items
+ * GET /api/apps/me/library?tab=saved|shared
+ */
+async function handleLibraryTab(request: Request): Promise<Response> {
+  // Authenticate
+  let user;
+  try {
+    user = await authenticate(request);
+  } catch {
+    return error('Authentication required', 401);
+  }
+
+  const url = new URL(request.url);
+  const tab = url.searchParams.get('tab');
+  if (tab !== 'saved' && tab !== 'shared') {
+    return error('Invalid tab parameter. Must be "saved" or "shared".', 400);
+  }
+
+  // @ts-ignore
+  const Deno = globalThis.Deno;
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const headers: Record<string, string> = {
+    'apikey': supabaseKey,
+    'Authorization': `Bearer ${supabaseKey}`,
+    'Content-Type': 'application/json',
+  };
+
+  try {
+    if (tab === 'saved') {
+      return await handleSavedTab(user.id, supabaseUrl, headers);
+    } else {
+      return await handleSharedTab(user.id, user.email, supabaseUrl, headers);
+    }
+  } catch (err) {
+    console.error('[LIBRARY] Failed to load tab:', tab, err);
+    return error('Failed to load library tab', 500);
+  }
+}
+
+async function handleSavedTab(
+  userId: string,
+  supabaseUrl: string,
+  headers: Record<string, string>
+): Promise<Response> {
+  // Saved apps
+  const savedAppsRes = await fetch(
+    `${supabaseUrl}/rest/v1/user_app_library?user_id=eq.${userId}&select=app_id&limit=100`,
+    { headers }
+  );
+  const savedAppRows = savedAppsRes.ok ? await savedAppsRes.json() : [];
+  const savedAppIds: string[] = savedAppRows.map((r: { app_id: string }) => r.app_id);
+
+  let savedApps: Array<Record<string, unknown>> = [];
+  if (savedAppIds.length > 0) {
+    const appsRes = await fetch(
+      `${supabaseUrl}/rest/v1/apps?id=in.(${savedAppIds.join(',')})&deleted_at=is.null&select=id,name,slug,description,current_version,exports,skills_parsed,manifest,owner_id`,
+      { headers }
+    );
+    if (appsRes.ok) savedApps = await appsRes.json();
+  }
+
+  // Saved content (pages)
+  const savedContentRes = await fetch(
+    `${supabaseUrl}/rest/v1/user_content_library?user_id=eq.${userId}&select=content_id&limit=100`,
+    { headers }
+  );
+  const savedContentRows = savedContentRes.ok ? await savedContentRes.json() : [];
+  const savedContentIds: string[] = savedContentRows.map((r: { content_id: string }) => r.content_id);
+
+  let savedContent: Array<Record<string, unknown>> = [];
+  if (savedContentIds.length > 0) {
+    const contentRes = await fetch(
+      `${supabaseUrl}/rest/v1/content?id=in.(${savedContentIds.join(',')})&type=eq.page&select=id,type,slug,title,description,owner_id`,
+      { headers }
+    );
+    if (contentRes.ok) savedContent = await contentRes.json();
+  }
+
+  // Resolve owner emails
+  const ownerIds = [...new Set([
+    ...savedApps.map(a => a.owner_id as string),
+    ...savedContent.map(c => c.owner_id as string),
+  ])];
+  const ownerMap = await resolveOwnerEmails(ownerIds, supabaseUrl, headers);
+
+  // Build unified response
+  const items = [
+    ...savedApps.map(a => ({
+      id: a.id,
+      type: 'app',
+      name: (a.name as string) || (a.slug as string),
+      slug: a.slug,
+      description: a.description || null,
+      version: a.current_version || null,
+      fn_count: getFnCount(a),
+      owner_email: ownerMap.get(a.owner_id as string) || null,
+    })),
+    ...savedContent.map(c => ({
+      id: c.id,
+      type: 'page',
+      name: (c.title as string) || (c.slug as string),
+      slug: c.slug,
+      description: c.description || null,
+      version: null,
+      fn_count: 0,
+      owner_email: ownerMap.get(c.owner_id as string) || null,
+    })),
+  ];
+
+  return json(items);
+}
+
+async function handleSharedTab(
+  userId: string,
+  userEmail: string,
+  supabaseUrl: string,
+  headers: Record<string, string>
+): Promise<Response> {
+  // Shared apps (via permissions)
+  const sharedPermsRes = await fetch(
+    `${supabaseUrl}/rest/v1/user_app_permissions?granted_to_user_id=eq.${userId}&allowed=eq.true&select=app_id&limit=200`,
+    { headers }
+  );
+  const sharedPermRows = sharedPermsRes.ok ? await sharedPermsRes.json() : [];
+  const sharedAppIds = [...new Set(sharedPermRows.map((r: { app_id: string }) => r.app_id))];
+
+  let sharedApps: Array<Record<string, unknown>> = [];
+  if (sharedAppIds.length > 0) {
+    // Exclude own apps
+    const appsRes = await fetch(
+      `${supabaseUrl}/rest/v1/apps?id=in.(${sharedAppIds.join(',')})&owner_id=neq.${userId}&deleted_at=is.null&select=id,name,slug,description,current_version,exports,skills_parsed,manifest,owner_id`,
+      { headers }
+    );
+    if (appsRes.ok) sharedApps = await appsRes.json();
+  }
+
+  // Shared content (via content_shares)
+  const encodedEmail = encodeURIComponent(userEmail);
+  const sharedContentRes = await fetch(
+    `${supabaseUrl}/rest/v1/content_shares?or=(shared_with_user_id.eq.${userId},shared_with_email.eq.${encodedEmail})&select=content_id,expires_at&limit=200`,
+    { headers }
+  );
+  const allShares = sharedContentRes.ok ? await sharedContentRes.json() : [];
+  // Filter out expired shares
+  const now = new Date();
+  const validShares = allShares.filter((s: { expires_at: string | null }) =>
+    !s.expires_at || new Date(s.expires_at) > now
+  );
+  const sharedContentIds = [...new Set(validShares.map((s: { content_id: string }) => s.content_id))];
+
+  let sharedContent: Array<Record<string, unknown>> = [];
+  if (sharedContentIds.length > 0) {
+    const contentRes = await fetch(
+      `${supabaseUrl}/rest/v1/content?id=in.(${sharedContentIds.join(',')})&type=eq.page&select=id,type,slug,title,description,owner_id`,
+      { headers }
+    );
+    if (contentRes.ok) sharedContent = await contentRes.json();
+  }
+
+  // Resolve owner emails
+  const ownerIds = [...new Set([
+    ...sharedApps.map(a => a.owner_id as string),
+    ...sharedContent.map(c => c.owner_id as string),
+  ])];
+  const ownerMap = await resolveOwnerEmails(ownerIds, supabaseUrl, headers);
+
+  // Build unified response
+  const items = [
+    ...sharedApps.map(a => ({
+      id: a.id,
+      type: 'app',
+      name: (a.name as string) || (a.slug as string),
+      slug: a.slug,
+      description: a.description || null,
+      version: a.current_version || null,
+      fn_count: getFnCount(a),
+      owner_email: ownerMap.get(a.owner_id as string) || null,
+    })),
+    ...sharedContent.map(c => ({
+      id: c.id,
+      type: 'page',
+      name: (c.title as string) || (c.slug as string),
+      slug: c.slug,
+      description: c.description || null,
+      version: null,
+      fn_count: 0,
+      owner_email: ownerMap.get(c.owner_id as string) || null,
+    })),
+  ];
+
+  return json(items);
+}
+
+/**
+ * Extract function count from an app record.
+ */
+function getFnCount(app: Record<string, unknown>): number {
+  const manifest = app.manifest as Record<string, unknown> | null;
+  if (manifest && typeof manifest === 'object') {
+    const fns = manifest.functions as Record<string, unknown> | undefined;
+    if (fns && typeof fns === 'object') return Object.keys(fns).length;
+  }
+  const parsed = app.skills_parsed as Record<string, unknown> | null;
+  if (parsed && typeof parsed === 'object') {
+    const fns = parsed.functions as unknown[];
+    if (Array.isArray(fns)) return fns.length;
+  }
+  const exports = app.exports as string[] | null;
+  if (Array.isArray(exports)) return exports.length;
+  return 0;
+}
+
+/**
+ * Generate agent-ready instruction block for an app.
+ * Public endpoint — no auth required for public apps.
+ */
+async function handleGetAppInstructions(appId: string): Promise<Response> {
+  try {
+    const appsService = createAppsService();
+    const app = await appsService.findById(appId);
+    if (!app || app.visibility === 'private') {
+      return error('App not found', 404);
+    }
+
+    const name = app.name || app.slug || 'Untitled';
+    const desc = app.description || '';
+
+    // Build function list from best source: manifest > skills_parsed > exports
+    const fnLines: string[] = [];
+    const manifest = app.manifest as Record<string, unknown> | null;
+    const skillsParsed = app.skills_parsed as Record<string, unknown> | null;
+
+    if (manifest && typeof manifest === 'object' && manifest.functions) {
+      const fns = manifest.functions as Record<string, Record<string, unknown>>;
+      for (const [fnName, fnMeta] of Object.entries(fns)) {
+        const params = fnMeta.parameters as Array<{ name: string; type?: string; required?: boolean }> | undefined;
+        const paramStr = params
+          ? params.map(p => `${p.name}${p.required === false ? '?' : ''}: ${p.type || 'any'}`).join(', ')
+          : '';
+        const fnDesc = fnMeta.description ? ` — ${fnMeta.description}` : '';
+        fnLines.push(`- ${fnName}({ ${paramStr} })${fnDesc}`);
+      }
+    } else if (skillsParsed && typeof skillsParsed === 'object' && Array.isArray(skillsParsed.functions)) {
+      for (const fn of skillsParsed.functions as Array<{ name: string; description?: string; parameters?: Array<{ name: string }> }>) {
+        const paramStr = fn.parameters ? fn.parameters.map(p => p.name).join(', ') : '';
+        const fnDesc = fn.description ? ` — ${fn.description}` : '';
+        fnLines.push(`- ${fn.name}(${paramStr ? `{ ${paramStr} }` : ''})${fnDesc}`);
+      }
+    } else if (Array.isArray(app.exports)) {
+      for (const exp of app.exports) {
+        fnLines.push(`- ${exp}()`);
+      }
+    }
+
+    const firstFn = fnLines.length > 0
+      ? (manifest && typeof manifest === 'object' && manifest.functions
+          ? Object.keys(manifest.functions as Record<string, unknown>)[0]
+          : Array.isArray(app.exports) && app.exports.length > 0 ? app.exports[0] : 'main')
+      : 'main';
+
+    const instructions = [
+      `Use the Ultralight app "${name}" via ul.call.`,
+      desc ? `\n${desc}` : '',
+      fnLines.length > 0 ? `\n\nAvailable functions:\n${fnLines.join('\n')}` : '',
+      `\n\nExample call:\nul.call({ app_id: "${appId}", function_name: "${firstFn}", args: {} })`,
+    ].join('');
+
+    return json({ instructions });
+  } catch (err) {
+    console.error('[APPS] handleGetAppInstructions failed:', err);
+    return error('Failed to generate instructions', 500);
   }
 }
 
