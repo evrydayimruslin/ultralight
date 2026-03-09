@@ -555,6 +555,71 @@ export function getLayoutHTML(options: {
       box-shadow: 0 0 0 3px var(--error-soft) !important;
     }
 
+    /* App management form classes */
+    .section-card {
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: var(--space-5);
+      margin-bottom: var(--space-4);
+    }
+
+    .section-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: var(--space-4);
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+      margin-bottom: var(--space-3);
+    }
+
+    .form-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    .form-input,
+    .input-field {
+      width: 100%;
+      height: 36px;
+      padding: 0 var(--space-3);
+      font-size: 13px;
+      color: var(--text-primary);
+      background: var(--bg-base);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-md);
+      transition: all var(--transition-fast);
+      outline: none;
+    }
+
+    .form-input:hover,
+    .input-field:hover { border-color: rgba(0,0,0,0.2); }
+
+    .form-input:focus,
+    .input-field:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+    .form-input::placeholder,
+    .input-field::placeholder { color: var(--text-muted); }
+
+    select.form-input,
+    select.input-field { cursor: pointer; }
+
+    .form-input-sm {
+      height: 32px;
+      font-size: 12px;
+      padding: 0 var(--space-2);
+    }
+
     /* Search input */
     .search-input-wrapper {
       position: relative;
@@ -1481,6 +1546,39 @@ export function getLayoutHTML(options: {
     .param-tag .param-required {
       color: var(--warning);
     }
+
+    /* App overview function items */
+    .function-item {
+      background: var(--bg-base);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: var(--space-3) var(--space-4);
+      transition: border-color var(--transition-fast);
+    }
+    .function-item:hover { border-color: var(--border-strong); }
+
+    .function-name {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--accent-text);
+      margin-bottom: var(--space-1);
+    }
+    .function-name code { background: none; padding: 0; font-size: inherit; }
+
+    .function-desc {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    .fn-param {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    .fn-param-type { color: var(--text-muted); }
 
     /* Code editor area */
     .code-editor-wrapper {
@@ -5234,16 +5332,18 @@ export function getLayoutHTML(options: {
         });
         if (res.ok) {
           const text = await res.text();
-          container.innerHTML = '<pre style="font-size:12px;font-family:var(--font-mono);white-space:pre-wrap;color:var(--text-secondary);max-height:200px;overflow:auto;padding:12px;background:var(--bg-base);border-radius:8px;border:1px solid var(--border)">' + escapeHtml(text).slice(0, 2000) + '</pre>' +
+          container.innerHTML = '<div class="section-card"><h3 class="section-title">Skills / Documentation</h3>' +
+            '<pre style="font-size:12px;font-family:var(--font-mono);white-space:pre-wrap;color:var(--text-secondary);max-height:200px;overflow:auto;padding:12px;background:var(--bg-base);border-radius:8px;border:1px solid var(--border)">' + escapeHtml(text).slice(0, 2000) + '</pre>' +
             '<div style="display:flex;gap:8px;margin-top:12px">' +
               '<button class="btn btn-secondary btn-sm" onclick="openSkillsEditor()">Edit Skills.md</button>' +
               '<button class="btn btn-ghost btn-sm" onclick="generateDocs()">Generate Docs</button>' +
-            '</div>';
+            '</div></div>';
         } else {
-          container.innerHTML = '<div style="font-size:13px;color:var(--text-muted)">No Skills.md found.</div>' +
-            '<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="generateDocs()">Generate Documentation</button>';
+          container.innerHTML = '<div class="section-card"><h3 class="section-title">Skills / Documentation</h3>' +
+            '<div style="font-size:13px;color:var(--text-muted)">No Skills.md found.</div>' +
+            '<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="generateDocs()">Generate Documentation</button></div>';
         }
-      } catch { container.innerHTML = '<div class="empty-state"><div class="empty-state-desc">Could not load skills.</div></div>'; }
+      } catch { container.innerHTML = '<div class="section-card"><h3 class="section-title">Skills / Documentation</h3><div class="empty-state"><div class="empty-state-desc">Could not load skills.</div></div></div>'; }
     }
 
     window.openSkillsEditor = async function() {
