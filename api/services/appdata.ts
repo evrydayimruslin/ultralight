@@ -158,16 +158,23 @@ export function createAppDataService(appId: string, userId?: string): AppDataSer
     /**
      * Store a value by key
      * Stored as JSON at apps/{appId}/data/{key}.json
+     * Includes _size_bytes for efficient metering delta tracking.
      */
     async store(key: string, value: unknown): Promise<void> {
       const sanitizedKey = sanitizeKey(key);
       const path = `${dataPrefix}${sanitizedKey}.json`;
 
-      const data = JSON.stringify({
+      // Build payload and compute size (include _size_bytes for metering)
+      const payload = {
         key: sanitizedKey,
         value,
         updated_at: new Date().toISOString(),
-      });
+        _size_bytes: 0, // placeholder — computed below
+      };
+      const baseData = JSON.stringify(payload);
+      const sizeBytes = new TextEncoder().encode(baseData).length;
+      payload._size_bytes = sizeBytes;
+      const data = JSON.stringify(payload);
 
       await r2.uploadFile(path, {
         name: `${sanitizedKey}.json`,

@@ -7,6 +7,7 @@ import { authenticate } from './auth.ts';
 import { isApiToken } from '../services/tokens.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createAppDataService, createWorkerAppDataService } from '../services/appdata.ts';
+import { createMeteredAppDataService } from '../services/appdata-metered.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
 import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
 import { checkProvisionalDailyLimit, updateLastActive } from '../services/provisional.ts';
@@ -1138,13 +1139,17 @@ async function executeSDKTool(
 ): Promise<Response> {
   try {
     // Create app data service — use Worker-backed service if configured (native R2, ~10x faster)
+    // Wrap with metered service when userId is present to track user data storage.
     // @ts-ignore - Deno is available in Deno Deploy
     const __Deno = globalThis.Deno;
     const _workerUrl = __Deno?.env?.get('WORKER_DATA_URL') || '';
     const _workerSecret = __Deno?.env?.get('WORKER_SECRET') || '';
-    const appDataService = (_workerUrl && _workerSecret)
+    const _rawAppDataService = (_workerUrl && _workerSecret)
       ? createWorkerAppDataService(appId, userId, _workerUrl, _workerSecret)
       : createAppDataService(appId, userId);
+    const appDataService = userId
+      ? createMeteredAppDataService(_rawAppDataService, userId)
+      : _rawAppDataService;
 
     let result: unknown;
 
@@ -1381,11 +1386,15 @@ async function executeAppFunction(
 
     const r2Service = createR2Service();
     // Use Worker-backed data service if configured (native R2 bindings, ~10x faster)
+    // Wrap with metered service when userId is present to track user data storage.
     const _wUrl = _Deno?.env?.get('WORKER_DATA_URL') || '';
     const _wSecret = _Deno?.env?.get('WORKER_SECRET') || '';
-    const appDataService = (_wUrl && _wSecret)
+    const _rawAppDataService2 = (_wUrl && _wSecret)
       ? createWorkerAppDataService(app.id, userId, _wUrl, _wSecret)
       : createAppDataService(app.id, userId);
+    const appDataService = userId
+      ? createMeteredAppDataService(_rawAppDataService2, userId)
+      : _rawAppDataService2;
     const userService = createUserService();
 
     // Phase 2C: Run independent setup tasks in parallel

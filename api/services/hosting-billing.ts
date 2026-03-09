@@ -1,16 +1,20 @@
 // Hosting Billing Service
-// Charges $0.025/MB/hour for ALL published apps + markdown pages.
-// No free tier — every published MB costs from the first byte.
+// Charges $0.025/MB/hour for ALL published apps + markdown pages (publisher pays).
+// Charges $0.0005/MB/hour for user data storage exceeding the 100MB free tier (user pays).
+// Both charges debit from the same hosting_balance_cents pool.
+// No free tier for hosting — every published MB costs from the first byte.
+// 100MB free tier for user data — overage billed hourly.
 // Users hold a hosting_balance_cents that drains continuously.
-// Balance → 0 = content goes offline (hosting_suspended = true).
+// Balance → 0 = published content goes offline (hosting_suspended = true).
 // Runs hourly via setInterval (same pattern as subscription-expiry.ts).
 
 // @ts-ignore
 const Deno = globalThis.Deno;
 
-import { HOSTING_RATE_CENTS_PER_MB_PER_HOUR } from '../../shared/types/index.ts';
+import { HOSTING_RATE_CENTS_PER_MB_PER_HOUR, DATA_RATE_CENTS_PER_MB_PER_HOUR, COMBINED_FREE_TIER_BYTES } from '../../shared/types/index.ts';
 
 const RATE_CENTS_PER_MB_PER_HOUR = HOSTING_RATE_CENTS_PER_MB_PER_HOUR;
+const DATA_RATE = DATA_RATE_CENTS_PER_MB_PER_HOUR;
 
 interface BillingUser {
   id: string;
@@ -20,6 +24,10 @@ interface BillingUser {
   auto_topup_threshold_cents: number;
   auto_topup_amount_cents: number;
   stripe_customer_id: string | null;
+  // Data storage metering fields
+  data_storage_used_bytes: number;
+  storage_used_bytes: number;
+  storage_limit_bytes: number;
 }
 
 interface UserStorage {
@@ -32,7 +40,16 @@ export interface BillingResult {
   usersSuspended: number;
   totalChargedCents: number;
   errors: string[];
-  details: { userId: string; storageMb: number; chargedCents: number; newBalance: number; suspended: boolean }[];
+  details: {
+    userId: string;
+    storageMb: number;
+    hostingChargedCents: number;
+    dataOverageMb: number;
+    dataOverageCents: number;
+    totalChargedCents: number;
+    newBalance: number;
+    suspended: boolean;
+  }[];
 }
 
 /**
@@ -71,11 +88,12 @@ export async function processHostingBilling(): Promise<BillingResult> {
   };
 
   try {
-    // 1. Find users with published (non-suspended) apps or pages
-    //    We query users who have hosting_balance_cents > 0 OR have active published content.
-    //    Users with balance=0 and already-suspended content are skipped.
+    // 1. Find users who need billing:
+    //    - hosting_balance_cents > 0 (have balance for publisher hosting), OR
+    //    - data_storage_used_bytes > 0 (have user data that may need overage billing)
     const usersRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?hosting_balance_cents=gt.0&select=id,hosting_balance_cents,hosting_last_billed_at,auto_topup_enabled,auto_topup_threshold_cents,auto_topup_amount_cents,stripe_customer_id`,
+      `${SUPABASE_URL}/rest/v1/users?or=(hosting_balance_cents.gt.0,data_storage_used_bytes.gt.0)` +
+      `&select=id,hosting_balance_cents,hosting_last_billed_at,auto_topup_enabled,auto_topup_threshold_cents,auto_topup_amount_cents,stripe_customer_id,data_storage_used_bytes,storage_used_bytes,storage_limit_bytes`,
       { headers }
     );
 
@@ -123,12 +141,18 @@ export async function processHostingBilling(): Promise<BillingResult> {
           contentBytes = pages.reduce((sum, p) => sum + (p.size || 0), 0);
         }
 
-        const totalBytes = appBytes + contentBytes;
+        const totalHostingBytes = appBytes + contentBytes;
 
-        // Skip users with zero storage (nothing to bill)
-        if (totalBytes === 0) continue;
+        // 2c. Calculate data storage overage (user data exceeding 100MB combined free tier)
+        const combinedStorageBytes = (user.storage_used_bytes || 0) + (user.data_storage_used_bytes || 0);
+        const freeBytes = user.storage_limit_bytes || COMBINED_FREE_TIER_BYTES;
+        const overageBytes = Math.max(0, combinedStorageBytes - freeBytes);
+        const dataOverageMb = overageBytes / (1024 * 1024);
 
-        // 2c. Calculate hours since last billed
+        // Skip users with nothing to bill (no published apps AND no data overage)
+        if (totalHostingBytes === 0 && overageBytes === 0) continue;
+
+        // 2d. Calculate hours since last billed
         const lastBilled = new Date(user.hosting_last_billed_at);
         const now = new Date();
         const hoursSinceLastBilled = Math.max(
@@ -139,12 +163,18 @@ export async function processHostingBilling(): Promise<BillingResult> {
         // Skip if less than 1 minute since last bill (prevent double-billing)
         if (hoursSinceLastBilled < 1 / 60) continue;
 
-        // 2d. Calculate cost — every published MB costs from the first byte
-        const totalMb = totalBytes / (1024 * 1024);
-        const costCents = totalMb * RATE_CENTS_PER_MB_PER_HOUR * hoursSinceLastBilled;
+        // 2e. Calculate publisher hosting cost — every published MB costs from the first byte
+        const totalMb = totalHostingBytes / (1024 * 1024);
+        const hostingCostCents = totalMb * RATE_CENTS_PER_MB_PER_HOUR * hoursSinceLastBilled;
+
+        // 2f. Calculate user data overage cost — $0.0005/MB/hr for storage above 100MB
+        const dataOverageCostCents = dataOverageMb * DATA_RATE * hoursSinceLastBilled;
+
+        // Combined charge (hosting + data overage)
+        const totalCostCents = hostingCostCents + dataOverageCostCents;
 
         // Round to 2 decimal places (sub-cent precision for fractional rates)
-        const chargedCents = Math.max(Math.round(costCents * 100) / 100, costCents > 0 ? 0.01 : 0);
+        const chargedCents = Math.max(Math.round(totalCostCents * 100) / 100, totalCostCents > 0 ? 0.01 : 0);
 
         // 2e. Atomic debit via Postgres RPC — prevents race with concurrent webhook credits
         const debitRes = await fetch(
@@ -228,16 +258,21 @@ export async function processHostingBilling(): Promise<BillingResult> {
           result.usersSuspended++;
           console.log(
             `[BILLING] User ${user.id}: SUSPENDED — balance depleted ` +
-            `(${totalMb.toFixed(2)} MB, charged ${chargedCents.toFixed(2)}¢)`
+            `(hosting: ${totalMb.toFixed(2)} MB, data overage: ${dataOverageMb.toFixed(2)} MB, charged ${chargedCents.toFixed(2)}¢)`
           );
         }
 
         result.usersProcessed++;
         result.totalChargedCents += chargedCents;
+        const hostingRounded = Math.max(Math.round(hostingCostCents * 100) / 100, hostingCostCents > 0 ? 0.01 : 0);
+        const dataOverageRounded = Math.round(dataOverageCostCents * 100) / 100;
         result.details.push({
           userId: user.id,
           storageMb: totalMb,
-          chargedCents,
+          hostingChargedCents: hostingRounded,
+          dataOverageMb,
+          dataOverageCents: dataOverageRounded,
+          totalChargedCents: chargedCents,
           newBalance,
           suspended,
         });

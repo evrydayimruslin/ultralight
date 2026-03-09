@@ -1599,7 +1599,7 @@ async function handleToolsCall(
           case 'status': {
             const [userRes, earningsRes] = await Promise.all([
               fetch(
-                `${wSbUrl}/rest/v1/users?id=eq.${userId}&select=hosting_balance_cents,escrow_held_cents,stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled`,
+                `${wSbUrl}/rest/v1/users?id=eq.${userId}&select=hosting_balance_cents,escrow_held_cents,stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled,storage_used_bytes,data_storage_used_bytes,storage_limit_bytes`,
                 { headers: wHeaders }
               ),
               fetch(
@@ -1614,6 +1614,13 @@ async function handleToolsCall(
             const balance = (wUserData?.hosting_balance_cents as number) || 0;
             const escrow = (wUserData?.escrow_held_cents as number) || 0;
 
+            // Storage breakdown
+            const sourceBytes = (wUserData?.storage_used_bytes as number) || 0;
+            const dataBytes = (wUserData?.data_storage_used_bytes as number) || 0;
+            const combinedBytes = sourceBytes + dataBytes;
+            const limitBytes = (wUserData?.storage_limit_bytes as number) || 104857600;
+            const toMb = (b: number) => (b / (1024 * 1024)).toFixed(2);
+
             result = {
               balance_cents: balance,
               balance_dollars: '$' + (balance / 100).toFixed(2),
@@ -1622,6 +1629,19 @@ async function handleToolsCall(
               available_dollars: '$' + ((balance - escrow) / 100).toFixed(2),
               total_earned_cents: totalEarned,
               total_earned_dollars: '$' + (totalEarned / 100).toFixed(2),
+              storage: {
+                source_code_bytes: sourceBytes,
+                source_code_mb: toMb(sourceBytes) + ' MB',
+                user_data_bytes: dataBytes,
+                user_data_mb: toMb(dataBytes) + ' MB',
+                combined_bytes: combinedBytes,
+                combined_mb: toMb(combinedBytes) + ' MB',
+                limit_bytes: limitBytes,
+                limit_mb: toMb(limitBytes) + ' MB',
+                used_percent: limitBytes > 0 ? Math.round((combinedBytes / limitBytes) * 100) : 0,
+                overage_bytes: Math.max(0, combinedBytes - limitBytes),
+                overage_rate: '$0.0005/MB/hr (~$0.36/MB/month)',
+              },
               connect: {
                 connected: !!wUserData?.stripe_connect_account_id,
                 onboarded: (wUserData?.stripe_connect_onboarded as boolean) || false,

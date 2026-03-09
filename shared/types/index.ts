@@ -586,8 +586,17 @@ export type Tier = 'free' | 'fun' | 'pro' | 'scale' | 'enterprise';
 /** Minimum hosting balance (in cents) required to publish an app. */
 export const MIN_PUBLISH_DEPOSIT_CENTS = 500; // $5.00
 
-/** Hosting rate for published content. */
+/** Hosting rate for published content (publisher pays). */
 export const HOSTING_RATE_CENTS_PER_MB_PER_HOUR = 2.5;
+
+/** Data storage overage rate for user-generated data (user pays).
+ *  Charged hourly for combined storage exceeding the free tier (100MB).
+ *  $0.0005/MB/hr = 0.05 cents/MB/hr ≈ $0.36/MB/month.
+ *  50x cheaper than publisher hosting rate (no compute/routing overhead). */
+export const DATA_RATE_CENTS_PER_MB_PER_HOUR = 0.05;
+
+/** Combined free tier storage limit (source code + user data). 100MB. */
+export const COMBINED_FREE_TIER_BYTES = 104_857_600;
 
 /** Default auto top-up threshold (cents). When balance drops below this, auto-charge triggers. */
 export const AUTO_TOPUP_DEFAULT_THRESHOLD_CENTS = 100; // $1.00
@@ -624,7 +633,7 @@ const PLATFORM_LIMITS = {
   monthly_ai_credit_cents: 6_000,
   max_file_size_mb: 10,
   max_files_per_app: 50,
-  max_storage_bytes: 26_214_400,         // 25 MB
+  max_storage_bytes: 104_857_600,        // 100 MB (combined: source code + user data)
   execution_timeout_ms: 120_000,         // 2min
   log_retention_days: 90,
   allowed_visibility: ['private', 'unlisted', 'public'] as const,

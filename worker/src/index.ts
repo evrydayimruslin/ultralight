@@ -102,15 +102,21 @@ export default {
           case 'store': {
             const key = sanitizeKey(body.key as string);
             const path = `${dataPrefix}${key}.json`;
-            const data = JSON.stringify({
+            // Include _size_bytes for metering delta tracking
+            const payload = {
               key: key,
               value: body.value,
               updated_at: new Date().toISOString(),
-            });
+              _size_bytes: 0,
+            };
+            const baseData = JSON.stringify(payload);
+            const sizeBytes = new TextEncoder().encode(baseData).length;
+            payload._size_bytes = sizeBytes;
+            const data = JSON.stringify(payload);
             await env.R2_BUCKET.put(path, data, {
               httpMetadata: { contentType: 'application/json' },
             });
-            return json({ ok: true });
+            return json({ ok: true, _size_bytes: sizeBytes });
           }
 
           case 'load': {
@@ -147,22 +153,30 @@ export default {
 
             // Process in parallel batches of 10
             const BATCH_SIZE = 10;
+            let totalSizeBytes = 0;
             for (let i = 0; i < items.length; i += BATCH_SIZE) {
               const batch = items.slice(i, i + BATCH_SIZE);
               await Promise.all(batch.map(item => {
                 const key = sanitizeKey(item.key);
                 const path = `${dataPrefix}${key}.json`;
-                const data = JSON.stringify({
+                // Include _size_bytes for metering delta tracking
+                const payload = {
                   key: key,
                   value: item.value,
                   updated_at: new Date().toISOString(),
-                });
+                  _size_bytes: 0,
+                };
+                const baseData = JSON.stringify(payload);
+                const sizeBytes = new TextEncoder().encode(baseData).length;
+                payload._size_bytes = sizeBytes;
+                totalSizeBytes += sizeBytes;
+                const data = JSON.stringify(payload);
                 return env.R2_BUCKET.put(path, data, {
                   httpMetadata: { contentType: 'application/json' },
                 });
               }));
             }
-            return json({ ok: true });
+            return json({ ok: true, _total_size_bytes: totalSizeBytes });
           }
 
           case 'batch-load': {

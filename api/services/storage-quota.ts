@@ -1,15 +1,15 @@
 // Storage Quota Service
 // Tracks storage usage per app and per user via Supabase RPC functions.
 // Used by the hosting billing system to calculate hosting costs.
-// Enforces a platform-wide 25MB storage limit per user.
+// Enforces a combined 100MB storage limit per user (source code + user data).
 
 // @ts-ignore
 const Deno = globalThis.Deno;
 
-import { TIER_LIMITS } from '../../shared/types/index.ts';
+import { COMBINED_FREE_TIER_BYTES } from '../../shared/types/index.ts';
 
-/** Platform-wide storage limit — same for everyone. */
-const STORAGE_LIMIT_BYTES = TIER_LIMITS.free.max_storage_bytes; // 25 MB
+/** Combined storage limit: source code + user data = 100MB. */
+const STORAGE_LIMIT_BYTES = COMBINED_FREE_TIER_BYTES; // 100 MB
 
 export interface StorageQuotaResult {
   allowed: boolean;
@@ -19,8 +19,9 @@ export interface StorageQuotaResult {
 }
 
 /**
- * Check whether a user has enough storage quota for an upload.
- * Queries users.storage_used_bytes and compares against platform limit (25MB).
+ * Check whether a user has enough storage quota for a source code upload.
+ * Queries users.storage_used_bytes + data_storage_used_bytes (combined budget)
+ * and compares against the 100MB combined limit.
  * Falls back to allowing the upload if the DB query fails (fail-open).
  */
 export async function checkStorageQuota(
@@ -36,9 +37,9 @@ export async function checkStorageQuota(
   }
 
   try {
-    // Query current storage usage from users table
+    // Query combined storage usage (source code + user data) from users table
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=storage_used_bytes`,
+      `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=storage_used_bytes,data_storage_used_bytes`,
       {
         headers: {
           'apikey': SUPABASE_SERVICE_ROLE_KEY,
@@ -48,17 +49,19 @@ export async function checkStorageQuota(
     );
 
     if (!res.ok) {
-      console.warn('[STORAGE] Failed to query storage_used_bytes, allowing upload:', await res.text());
+      console.warn('[STORAGE] Failed to query storage bytes, allowing upload:', await res.text());
       return { allowed: true, used_bytes: 0, limit_bytes: STORAGE_LIMIT_BYTES, remaining_bytes: STORAGE_LIMIT_BYTES };
     }
 
-    const rows = await res.json() as Array<{ storage_used_bytes: number | null }>;
-    const usedBytes = rows[0]?.storage_used_bytes ?? 0;
-    const remaining = Math.max(0, STORAGE_LIMIT_BYTES - usedBytes);
+    const rows = await res.json() as Array<{ storage_used_bytes: number | null; data_storage_used_bytes: number | null }>;
+    const sourceBytes = rows[0]?.storage_used_bytes ?? 0;
+    const dataBytes = rows[0]?.data_storage_used_bytes ?? 0;
+    const combinedUsed = sourceBytes + dataBytes;
+    const remaining = Math.max(0, STORAGE_LIMIT_BYTES - combinedUsed);
 
     return {
-      allowed: (usedBytes + uploadSizeBytes) <= STORAGE_LIMIT_BYTES,
-      used_bytes: usedBytes,
+      allowed: (combinedUsed + uploadSizeBytes) <= STORAGE_LIMIT_BYTES,
+      used_bytes: combinedUsed,
       limit_bytes: STORAGE_LIMIT_BYTES,
       remaining_bytes: remaining,
     };
