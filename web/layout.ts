@@ -3981,7 +3981,7 @@ export function getLayoutHTML(options: {
         const fnSource = fnResult.source;
         const functionsHtml = fns.length > 0
           ? '<div class="function-list">' + fns.map(function(fn) {
-              const params = (fn.parameters || []).map(function(p) {
+              const params = (Array.isArray(fn.parameters) ? fn.parameters : []).map(function(p) {
                 var pName = typeof p === 'object' ? (p.name || '') : '';
                 var pType = typeof p === 'object' ? (p.type || 'any') : 'any';
                 var pReq = typeof p === 'object' ? p.required : true;
