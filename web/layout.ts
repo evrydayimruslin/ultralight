@@ -3915,13 +3915,13 @@ export function getLayoutHTML(options: {
           el.textContent = app.name || app.slug || 'Untitled';
         });
 
-        // Load all sections
-        loadAppOverview(app);
-        loadAppPermissions(app);
-        loadAppEnvironment(app);
-        loadAppPayments(appId, app);
-        loadAppLogsSection(appId);
-        loadAppMarket(appId, app);
+        // Load all sections (each in its own try/catch so one failure doesn't block the rest)
+        try { loadAppOverview(app); } catch (e) { console.error('loadAppOverview:', e); }
+        try { loadAppPermissions(app); } catch (e) { console.error('loadAppPermissions:', e); }
+        try { loadAppEnvironment(app); } catch (e) { console.error('loadAppEnvironment:', e); }
+        try { loadAppPayments(appId, app); } catch (e) { console.error('loadAppPayments:', e); }
+        try { loadAppLogsSection(appId); } catch (e) { console.error('loadAppLogsSection:', e); }
+        try { loadAppMarket(appId, app); } catch (e) { console.error('loadAppMarket:', e); }
 
       } catch (err) {
         showToast('Error loading app: ' + (err.message || ''), 'error');
@@ -3981,12 +3981,12 @@ export function getLayoutHTML(options: {
         const fnSource = fnResult.source;
         const functionsHtml = fns.length > 0
           ? '<div class="function-list">' + fns.map(function(fn) {
-              const params = fn.parameters?.map(function(p) {
+              const params = (fn.parameters || []).map(function(p) {
                 var pName = typeof p === 'object' ? (p.name || '') : '';
                 var pType = typeof p === 'object' ? (p.type || 'any') : 'any';
                 var pReq = typeof p === 'object' ? p.required : true;
                 return '<span class="fn-param">' + escapeHtml(pName) + '<span class="fn-param-type">: ' + escapeHtml(pType) + '</span>' + (pReq ? '' : '?') + '</span>';
-              }).join(', ') || '';
+              }).join(', ');
               return '<div class="function-item">' +
                 '<div class="function-name"><code>' + escapeHtml(fn.name) + '</code>' + (params ? '(' + params + ')' : '') + '</div>' +
                 (fn.description ? '<div class="function-desc">' + escapeHtml(fn.description) + '</div>' : '') +
