@@ -12,7 +12,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Config
-API_URL="${ULTRALIGHT_API_URL:-https://ultralight.dev}"
+API_URL="${ULTRALIGHT_API_URL:-https://ultralight-api-iikqz.ondigitalocean.app}"
 TOKEN="${ULTRALIGHT_TOKEN:-}"
 
 # Parse args

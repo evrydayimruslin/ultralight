@@ -1075,7 +1075,7 @@ function handleOpenApiSpec(): Response {
       title: 'Ultralight Discovery API',
       description: 'Semantic search across the Ultralight MCP app ecosystem. Find agent-callable tools by natural language query. Every result includes an mcp_endpoint for direct JSON-RPC 2.0 access.',
       version: '1.0.0',
-      contact: { name: 'Ultralight', url: 'https://ultralight.dev' },
+      contact: { name: 'Ultralight', url: 'https://ultralight-api-iikqz.ondigitalocean.app' },
     },
     servers: [
       { url: 'https://ultralight-api-iikqz.ondigitalocean.app', description: 'Production' },
@@ -1197,7 +1197,7 @@ function handleOpenApiSpec(): Response {
         bearerAuth: {
           type: 'http',
           scheme: 'bearer',
-          description: 'Ultralight API token (ul_xxx) or OAuth 2.1 token. Obtain via POST /oauth/token or create at ultralight.dev settings.',
+          description: 'Ultralight API token (ul_xxx) or OAuth 2.1 token. Obtain via POST /oauth/token or create in your Ultralight dashboard settings.',
         },
       },
     },
@@ -1217,15 +1217,15 @@ function handleOpenApiSpec(): Response {
 // ============================================
 
 function getOnboardingTemplate(): { template: string; version: string; updated_at: string } {
-  const TEMPLATE_VERSION = '1.0.0';
-  const TEMPLATE_UPDATED = '2026-03-02T00:00:00Z';
+  const TEMPLATE_VERSION = '1.1.0';
+  const TEMPLATE_UPDATED = '2026-03-10T00:00:00Z';
 
   const template = `I'd like you to set up Ultralight, a platform that gives you access to instant MCP apps — tools you can use right now, or build and deploy yourself.
 
 Run this command to connect:
 npx ultralightpro setup --token {TOKEN}
 {SESSION_NOTE}
-After setup, you'll have access to the Ultralight platform and marketplace. You can connect to any app below by its ID using the Ultralight tools.
+The setup command works immediately — no extra dependencies needed. After it runs, you can use Ultralight tools right away in this session via the agent bridge output. MCP integration activates automatically on your next session restart.
 
 ## Recommended Apps
 
@@ -1247,10 +1247,12 @@ These are curated apps from the Ultralight marketplace. Each works instantly —
 ## What to do next
 
 After running the setup command:
-1. Look at what I'm currently working on or interested in.
-2. Suggest 2-3 apps from the list above that seem most relevant to me and briefly explain why.
-3. Offer to connect them so I can start using them.
-4. Ask what else I'd want my agent to help with — there are more apps in the full marketplace, or I can build and deploy my own custom tools.`;
+1. Read the "ULTRALIGHT AGENT BRIDGE" section in the setup output — it contains the API endpoint and auth header you need to call tools immediately.
+2. Try listing available tools by calling \`tools/list\` on the MCP endpoint, or use \`ul.discover\` to search the app store.
+3. Look at what I'm currently working on or interested in.
+4. Suggest 2-3 apps from the list above that seem most relevant to me and briefly explain why.
+5. Offer to connect them so I can start using them.
+6. Ask what else I'd want my agent to help with — there are more apps in the full marketplace, or I can build and deploy my own custom tools.`;
 
   return {
     template,

@@ -920,7 +920,7 @@ function handleAuthorizationServerMetadata(request: Request): Response {
     token_endpoint_auth_methods_supported: ['none', 'client_secret_post'],
     revocation_endpoint: `${baseUrl}/oauth/revoke`,
     revocation_endpoint_auth_methods_supported: ['none'],
-    service_documentation: 'https://ultralight.dev/docs/mcp',
+    service_documentation: 'https://ultralight-api-iikqz.ondigitalocean.app/docs/mcp',
   });
 }
 

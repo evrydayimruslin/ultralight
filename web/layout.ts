@@ -3676,7 +3676,7 @@ export function getLayoutHTML(options: {
       localStorage.setItem('ultralight_provisional_user_id', data.user_id);
 
       // Replace placeholders — provisional users get a session note about limits
-      var sessionNote = '\\n> Note: This is a provisional session (50 calls/day, 5MB storage, no memory). Sign in at ultralight.dev to unlock full access and keep your data permanently.\\n';
+      var sessionNote = '\\n> Note: This is a provisional session (50 calls/day, 5MB storage, no memory). Sign in at ultralight-api-iikqz.ondigitalocean.app to unlock full access and keep your data permanently.\\n';
       setupCommandStr = template.replace(/\\{TOKEN\\}/g, token).replace(/\\{SESSION_NOTE\\}/g, sessionNote);
       localStorage.setItem('ultralight_setup_v3', setupCommandStr);
 

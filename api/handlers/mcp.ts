@@ -751,7 +751,7 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
     if (provisionalRL && !provisionalRL.allowed) {
       return jsonRpcErrorResponse(
         rpcRequest.id, RATE_LIMITED,
-        `Provisional account daily limit reached (50 calls/day). Sign in at ultralight.dev to unlock full access.`
+        `Provisional account daily limit reached (50 calls/day). Sign in at ultralight-api-iikqz.ondigitalocean.app to unlock full access.`
       );
     }
   }
@@ -1690,12 +1690,12 @@ async function executeAppFunction(
               if (user?.provisional) {
                 insufficientMsg =
                   `Insufficient balance. This tool costs ${costDisplay}¢ per call. ` +
-                  `You're using a provisional account — sign in at https://ultralight.dev/dash ` +
+                  `You're using a provisional account — sign in at https://ultralight-api-iikqz.ondigitalocean.app/dash ` +
                   `to add funds to your wallet and continue using paid tools.`;
               } else {
                 insufficientMsg =
                   `Insufficient balance. This tool costs ${costDisplay}¢ per call. ` +
-                  `Add funds to your wallet at https://ultralight.dev/settings/billing ` +
+                  `Add funds to your wallet at https://ultralight-api-iikqz.ondigitalocean.app/settings/billing ` +
                   `or enable auto top-up to avoid interruptions.`;
               }
               return jsonRpcResponse(id, {

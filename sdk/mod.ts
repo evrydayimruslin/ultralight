@@ -5,7 +5,7 @@
  *
  * @example
  * ```typescript
- * import { Ultralight } from 'https://ultralight.dev/sdk/mod.ts';
+ * import { Ultralight } from 'https://ultralight-api-iikqz.ondigitalocean.app/sdk/mod.ts';
  *
  * const ul = new Ultralight({ token: 'your-token' });
  *
@@ -24,7 +24,7 @@
  */
 
 export interface UltralightConfig {
-  /** API base URL (default: https://ultralight.dev) */
+  /** API base URL (default: https://ultralight-api-iikqz.ondigitalocean.app) */
   apiUrl?: string;
   /** Authentication token (JWT or API key) */
   token: string;
@@ -131,7 +131,7 @@ export class Ultralight {
   readonly docs: DocsClient;
 
   constructor(config: UltralightConfig) {
-    this.apiUrl = config.apiUrl || 'https://ultralight.dev';
+    this.apiUrl = config.apiUrl || 'https://ultralight-api-iikqz.ondigitalocean.app';
     this.token = config.token;
 
     this.apps = new AppsClient(this);

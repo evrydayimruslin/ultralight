@@ -1323,7 +1323,7 @@ function getPublicAppPageHTML(
   </div>
 
   <div class="footer-bar">
-    Powered by <a href="https://ultralight.dev">Ultralight</a>
+    Powered by <a href="https://ultralight-api-iikqz.ondigitalocean.app">Ultralight</a>
   </div>
 </div>
 <script>
@@ -2160,7 +2160,7 @@ function renderMarkdownPage(title: string, markdown: string, meta?: { authorName
 <article>
 ${metaHeader}
 ${html}
-<div class="footer">Published with <a href="https://ultralight.dev">Ultralight</a></div>
+<div class="footer">Published with <a href="https://ultralight-api-iikqz.ondigitalocean.app">Ultralight</a></div>
 </article>
 </body>
 </html>`;

@@ -24,7 +24,7 @@
  */
 
 export interface UltralightConfig {
-  /** API base URL (default: https://ultralight.dev) */
+  /** API base URL (default: https://ultralight-api-iikqz.ondigitalocean.app) */
   apiUrl?: string;
   /** Authentication token (JWT or API key) */
   token: string;
@@ -137,7 +137,7 @@ export class Ultralight {
   readonly docs: DocsClient;
 
   constructor(config: UltralightConfig) {
-    this.apiUrl = config.apiUrl || 'https://ultralight.dev';
+    this.apiUrl = config.apiUrl || 'https://ultralight-api-iikqz.ondigitalocean.app';
     this.token = config.token;
 
     this.apps = new AppsClient(this);

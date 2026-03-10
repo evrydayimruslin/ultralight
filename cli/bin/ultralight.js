@@ -1,60 +1,644 @@
 #!/usr/bin/env node
 
 /**
- * Ultralight CLI - npm wrapper
+ * Ultralight CLI — npm package entry point
  *
- * This is a thin wrapper that invokes the Deno CLI.
- * The actual CLI is written in Deno/TypeScript for consistency with the platform.
+ * The `setup` command runs in pure Node.js (no extra dependencies).
+ * Other commands delegate to the full Deno CLI if available.
  */
 
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { join } from 'path';
+import { homedir, platform } from 'os';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-import { existsSync } from 'fs';
+import { dirname } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Check if Deno is installed
-function checkDeno() {
-  return new Promise((resolve) => {
+const API_URL = process.env.ULTRALIGHT_API_URL || 'https://ultralight-api-iikqz.ondigitalocean.app';
+
+// ─── Color helpers (no dependencies) ─────────────────────────────────
+const isTTY = process.stdout.isTTY;
+const c = {
+  green:  (s) => isTTY ? `\x1b[32m${s}\x1b[0m` : s,
+  red:    (s) => isTTY ? `\x1b[31m${s}\x1b[0m` : s,
+  cyan:   (s) => isTTY ? `\x1b[36m${s}\x1b[0m` : s,
+  dim:    (s) => isTTY ? `\x1b[2m${s}\x1b[0m`  : s,
+  bold:   (s) => isTTY ? `\x1b[1m${s}\x1b[0m`  : s,
+  yellow: (s) => isTTY ? `\x1b[33m${s}\x1b[0m` : s,
+};
+
+// ─── Config helpers ──────────────────────────────────────────────────
+function getConfigDir() {
+  return join(homedir(), '.ultralight');
+}
+
+function readJSON(filePath) {
+  try {
+    return JSON.parse(readFileSync(filePath, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+function writeJSON(filePath, data) {
+  const dir = dirname(filePath);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n');
+}
+
+// ─── Plugin content ──────────────────────────────────────────────────
+
+const PLUGIN_JSON = {
+  name: 'ultralight',
+  description: 'Ultralight — serverless MCP platform. Discover, build, test, and deploy AI agent tools.',
+  version: '1.0.0',
+  author: { name: 'Ultralight', url: 'https://ultralight-api-iikqz.ondigitalocean.app' },
+  homepage: 'https://ultralight-api-iikqz.ondigitalocean.app',
+  license: 'MIT',
+  keywords: ['ultralight', 'mcp', 'serverless', 'ai', 'tools', 'agent'],
+};
+
+const SKILL_FRONTMATTER = `---
+name: ultralight-platform
+description: >
+  Ultralight MCP platform guidance. Use when the user works with Ultralight tools
+  (ul.call, ul.discover, ul.upload, ul.download, ul.test, ul.set, ul.memory,
+  ul.permissions, ul.logs, ul.rate), builds serverless MCP apps, deploys TypeScript
+  functions, manages app permissions, or mentions "ultralight". Provides tool curation
+  workflow, building guide with SDK globals, and agent best practices.
+---
+
+`;
+
+const COMMANDS = {
+  'discover.md': `---
+description: Search and explore Ultralight apps across desk, library, and app store
+argument-hint: [query or scope]
+---
+
+# Discover Ultralight Apps
+
+Search and explore apps using the Ultralight platform.
+
+1. Parse the user's intent from: $ARGUMENTS
+2. Determine the right scope:
+   - No arguments or "desk" → \`ul.discover({ scope: "desk" })\` — show recent apps
+   - An app ID or URL → \`ul.discover({ scope: "inspect", app_id: "<id>" })\` — deep introspection
+   - "library" or "my apps" → \`ul.discover({ scope: "library" })\` — owned + saved apps
+   - A search query → \`ul.discover({ scope: "appstore", query: "<query>" })\` — search all published apps
+   - A task description → \`ul.discover({ scope: "appstore", query: "<query>", task: "<task>" })\` — context-aware search with inline content
+3. Call ul.discover with the appropriate parameters
+4. Present results clearly: app names, descriptions, function counts, and capabilities
+5. For inspect results, summarize function schemas, storage architecture, and permissions
+6. Suggest next steps: call a function with /call, save to library, or build something new
+`,
+
+  'call.md': `---
+description: Execute any Ultralight app function through the platform connection
+argument-hint: <app_id> <function_name> [args as JSON]
+---
+
+# Call Ultralight App Function
+
+Execute a function on any Ultralight app through the single platform connection.
+
+1. Parse from: $ARGUMENTS
+   - First argument: app_id (required)
+   - Second argument: function_name (required)
+   - Remaining: JSON args object (optional)
+2. If args provided as a JSON string, parse it into an object
+3. Call \`ul.call({ app_id, function_name, args })\`
+4. On first call per app, the response includes full inspect context — summarize the app's capabilities briefly
+5. Present the function result clearly to the user
+6. If error occurs, read the message carefully and suggest specific fixes
+7. Suggest follow-up actions based on the result
+`,
+
+  'upload.md': `---
+description: Deploy a TypeScript app or publish a markdown page to Ultralight
+argument-hint: [name or app_id] [description]
+---
+
+# Upload to Ultralight
+
+Deploy an app or publish content to the Ultralight platform.
+
+1. Parse from: $ARGUMENTS — look for app name, app_id (for new version), or description
+2. Look for source files in the current project:
+   - Read index.ts (or src/*.ts) for the app code
+   - Read manifest.json for function definitions
+   - Read .ultralightrc.json for app config (app_id for updates)
+3. Prepare the upload payload with files array
+4. For new apps (no app_id): \`ul.upload({ files, name, description, visibility: "private" })\`
+5. For updates (with app_id): \`ul.upload({ files, app_id })\` — creates new version (NOT auto-live)
+6. For markdown pages: \`ul.upload({ type: "page", content, slug, title })\`
+7. After upload, confirm: name, function count, version, MCP endpoint
+8. Suggest next steps: activate version with /set, grant permissions, record in memory
+`,
+
+  'download.md': `---
+description: Download app source code or scaffold a new Ultralight app
+argument-hint: [app_id] or [new app name and description]
+---
+
+# Download from Ultralight
+
+Download source code or scaffold a new app.
+
+1. Parse from: $ARGUMENTS
+2. If an app_id or slug is provided:
+   - Call \`ul.download({ app_id })\` to get the source code
+   - Write the received files to the current directory
+3. If no app_id (scaffold mode):
+   - Parse name, description, and any function specs from arguments
+   - Call \`ul.download({ name, description, functions, storage })\`
+   - Write the scaffolded files to a new directory
+4. Explain the file structure: index.ts (code), manifest.json (schemas), .ultralightrc.json (config)
+5. Suggest next steps: implement functions, test with /test, deploy with /upload
+`,
+
+  'test.md': `---
+description: Test and lint Ultralight app code in sandbox without deploying
+argument-hint: [function_name] [test args as JSON]
+---
+
+# Test Ultralight App
+
+Test code in the Ultralight sandbox without deploying.
+
+1. Read source files from the current project (index.ts, manifest.json)
+2. Parse from: $ARGUMENTS — optional function_name and test args JSON
+3. Prepare the files array from the source code
+4. If "lint" or "lint_only" in arguments: \`ul.test({ files, lint_only: true })\`
+5. Otherwise: \`ul.test({ files, function_name, test_args })\`
+6. Present results clearly:
+   - Success/failure status and duration
+   - Exported function list
+   - Lint warnings or errors (if any)
+   - Function return value (if executed)
+7. If errors, analyze the error message and suggest specific code fixes
+8. If all passes, suggest deploying with /upload
+`,
+
+  'set.md': `---
+description: Configure Ultralight app settings (version, visibility, pricing, rate limits)
+argument-hint: <app_id> [setting=value ...]
+---
+
+# Configure Ultralight App
+
+Batch-configure app settings. Only provided fields are updated.
+
+1. Parse from: $ARGUMENTS — app_id (required) and setting key=value pairs
+2. Supported settings:
+   - version=X.Y.Z — set which version is live
+   - visibility=private|unlisted|published — control discoverability
+   - download_access=owner|public — who can download source
+   - calls_per_minute=N — rate limit per minute
+   - calls_per_day=N — rate limit per day
+   - default_price_cents=N — price per call in cents
+3. Build the settings object from parsed values
+4. Call \`ul.set({ app_id, ...settings })\`
+5. Confirm what was changed and the current state
+`,
+
+  'memory.md': `---
+description: Read or write to your persistent Ultralight memory (markdown notes and KV store)
+argument-hint: [read | write <content> | recall <key> [value] | query [prefix]]
+---
+
+# Ultralight Memory
+
+Access persistent cross-session storage with two layers: memory.md (free-form notes) and KV store (structured data).
+
+1. Parse from: $ARGUMENTS
+2. Determine the action:
+   - "read" or no args → \`ul.memory({ action: "read" })\` — show memory.md
+   - "write <content>" → \`ul.memory({ action: "write", content, append: true })\` — append to memory.md
+   - "recall <key>" → \`ul.memory({ action: "recall", key })\` — get a KV value
+   - "recall <key> <value>" → \`ul.memory({ action: "recall", key, value })\` — set a KV value
+   - "query" or "query <prefix>" → \`ul.memory({ action: "query", prefix })\` — list KV keys
+3. Call ul.memory with the appropriate parameters
+4. Present results clearly
+5. For write operations, confirm what was stored
+`,
+
+  'permissions.md': `---
+description: Manage access control for Ultralight apps (grant, revoke, list, export)
+argument-hint: <app_id> <grant|revoke|list|export> [email] [options]
+---
+
+# Ultralight Permissions
+
+Manage app access control with granular constraints.
+
+1. Parse from: $ARGUMENTS — app_id, action, and optional parameters
+2. Determine the action:
+   - "grant <email>" → \`ul.permissions({ app_id, action: "grant", email })\`
+   - "grant <email> <functions>" → grant with function restrictions
+   - "revoke <email>" → \`ul.permissions({ app_id, action: "revoke", email })\`
+   - "list" → \`ul.permissions({ app_id, action: "list" })\`
+   - "export" → \`ul.permissions({ app_id, action: "export" })\`
+3. For grants, parse optional constraints: IP whitelist, time windows, budget limits, expiry
+4. Call ul.permissions with the appropriate parameters
+5. Present the current permission state clearly
+6. For export, format as requested (JSON or CSV)
+`,
+
+  'logs.md': `---
+description: View call logs and health events for Ultralight apps
+argument-hint: [app_id] [--health] [--since <date>]
+---
+
+# Ultralight Logs
+
+View call logs and health events for your apps.
+
+1. Parse from: $ARGUMENTS — optional app_id and filter flags
+2. Determine the mode:
+   - Default: call logs → \`ul.logs({ app_id })\`
+   - "--health" or "health": health events → \`ul.logs({ app_id, health: true })\`
+   - "--since <date>": filter by time → \`ul.logs({ app_id, since: "<ISO date>" })\`
+3. Call ul.logs with the appropriate parameters
+4. Present logs in a readable format with timestamps, functions called, and status
+5. Highlight any errors or anomalies
+6. For health events, show status (detected/acknowledged/resolved) and suggest actions
+`,
+
+  'rate.md': `---
+description: Rate Ultralight apps (save to library) or report platform issues
+argument-hint: <app_id> [like | dislike | none]
+---
+
+# Rate Ultralight App
+
+Rate apps to manage your library, or report platform shortcomings.
+
+1. Parse from: $ARGUMENTS — app_id and rating
+2. Determine the action:
+   - "like" → \`ul.rate({ app_id, rating: "like" })\` — save to library
+   - "dislike" → \`ul.rate({ app_id, rating: "dislike" })\` — hide from appstore
+   - "none" → \`ul.rate({ app_id, rating: "none" })\` — remove rating
+3. Call ul.rate with the appropriate parameters
+4. Confirm the action taken
+`,
+};
+
+// ─── Plugin registration ─────────────────────────────────────────────
+
+function getSkillsContent() {
+  // Try reading from bundled skills.md first
+  const candidates = [
+    join(__dirname, '..', '..', 'skills.md'),
+    join(__dirname, '..', 'skills.md'),
+  ];
+  for (const p of candidates) {
+    try {
+      return readFileSync(p, 'utf-8');
+    } catch {
+      // continue
+    }
+  }
+  return null;
+}
+
+function registerPlugin(token, apiUrl) {
+  const home = homedir();
+  const marketplaceDir = join(home, '.claude', 'plugins', 'marketplaces',
+    'claude-plugins-official', 'external_plugins');
+
+  if (!existsSync(marketplaceDir)) {
+    console.log(c.yellow('⚠ Claude Code plugin marketplace not found. Skipping plugin registration.'));
+    console.log(c.dim('  MCP config in ~/.claude.json is still active — tools will work after restart.'));
+    return false;
+  }
+
+  const pluginBase = join(marketplaceDir, 'ultralight');
+
+  try {
+    // Create directory structure
+    mkdirSync(join(pluginBase, '.claude-plugin'), { recursive: true });
+    mkdirSync(join(pluginBase, 'commands'), { recursive: true });
+    mkdirSync(join(pluginBase, 'skills', 'ultralight-platform'), { recursive: true });
+
+    // 1. Write plugin.json
+    writeJSON(join(pluginBase, '.claude-plugin', 'plugin.json'), PLUGIN_JSON);
+
+    // 2. Write .mcp.json (flat format — standard for external plugins)
+    const mcpConfig = {
+      ultralight: {
+        type: 'http',
+        url: `${apiUrl}/mcp/platform`,
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      },
+    };
+    writeJSON(join(pluginBase, '.mcp.json'), mcpConfig);
+
+    // 3. Write SKILL.md
+    const skillsBody = getSkillsContent();
+    if (skillsBody) {
+      writeFileSync(
+        join(pluginBase, 'skills', 'ultralight-platform', 'SKILL.md'),
+        SKILL_FRONTMATTER + skillsBody
+      );
+    } else {
+      console.log(c.yellow('⚠ Skills.md source not found. Skipping skill registration.'));
+    }
+
+    // 4. Write 10 command files
+    for (const [filename, content] of Object.entries(COMMANDS)) {
+      writeFileSync(join(pluginBase, 'commands', filename), content);
+    }
+
+    console.log(c.green('✓ Claude Code plugin registered'));
+    console.log(c.dim(`  Plugin:   ${pluginBase}`));
+    console.log(c.dim('  Commands: /discover, /call, /upload, /download, /test, /set, /memory, /permissions, /logs, /rate'));
+    if (skillsBody) {
+      console.log(c.dim('  Skill:    ultralight-platform (auto-activates for Ultralight tasks)'));
+    }
+
+    return true;
+  } catch (err) {
+    console.log(c.yellow(`⚠ Plugin registration failed: ${err.message}`));
+    console.log(c.dim('  MCP config in ~/.claude.json is still active — tools will work after restart.'));
+    return false;
+  }
+}
+
+// ─── setup command ───────────────────────────────────────────────────
+async function runSetup(args) {
+  // Parse --token / -t
+  let token = null;
+  let showHelp = false;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--help' || arg === '-h') { showHelp = true; break; }
+    if (arg === '--token' || arg === '-t') { token = args[i + 1]; i++; }
+    else if (arg.startsWith('--token=')) { token = arg.slice(8); }
+  }
+
+  if (showHelp) {
+    console.log(`
+${c.bold('ultralight setup')}
+
+Set up Ultralight: authenticate and configure your agent's MCP connection.
+
+${c.dim('OPTIONS')}
+  --token, -t <token>   Your API token (starts with ul_)
+
+${c.dim('WHAT IT DOES')}
+  1. Saves your token to ~/.ultralight/config.json
+  2. Verifies the token against the Ultralight API
+  3. Detects MCP client config files (Claude Code, Claude Desktop, Cursor)
+  4. Writes the Ultralight MCP server entry to each detected config
+  5. Registers Ultralight as a Claude Code plugin (skills + slash commands)
+  6. Outputs connection info so your agent can use tools immediately
+
+${c.dim('EXAMPLES')}
+  npx ultralightpro setup --token ul_abc123...
+  ultralight setup -t ul_abc123...
+`);
+    return;
+  }
+
+  if (!token) {
+    console.log(`
+${c.bold('Ultralight Setup')}
+
+To set up, you need an API token.
+
+${c.dim('Get a token:')}
+  1. Go to ${c.cyan(API_URL)}
+  2. Sign in with Google
+  3. Go to Settings > API Tokens
+  4. Create a new token
+
+${c.dim('Then run:')}
+  ${c.cyan('npx ultralightpro setup --token <your-token>')}
+`);
+    return;
+  }
+
+  // Validate token format
+  if (!token.startsWith('ul_')) {
+    console.log(c.red('x Invalid token format. Ultralight API tokens start with ul_'));
+    process.exit(1);
+  }
+
+  // Step 1: Save token to config
+  const configDir = getConfigDir();
+  const configPath = join(configDir, 'config.json');
+  const config = readJSON(configPath) || {};
+  config.api_url = API_URL;
+  config.auth = { token, is_api_token: true };
+  if (!config.defaults) config.defaults = { visibility: 'private', auto_docs: true };
+  writeJSON(configPath, config);
+  console.log(c.green('✓ Token saved to ~/.ultralight/config.json'));
+
+  // Step 2: Verify token
+  let userInfo = null;
+  try {
+    const res = await fetch(`${API_URL}/api/user`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(res.status === 401 ? 'Invalid or expired token' : `HTTP ${res.status}: ${body}`);
+    }
+    userInfo = await res.json();
+    console.log(c.green(`✓ Authenticated as ${c.cyan(userInfo.email || userInfo.display_name || 'user')}`));
+  } catch (err) {
+    console.log(c.red(`x Token validation failed: ${err.message}`));
+    console.log(c.dim('  Check that your token is correct and try again.'));
+    // Clear the bad token
+    delete config.auth;
+    writeJSON(configPath, config);
+    process.exit(1);
+  }
+
+  // Step 3: Detect and write MCP client configs
+  const home = homedir();
+  const appData = process.env.APPDATA || '';
+  const mcpEndpoint = `${API_URL}/mcp/platform`;
+
+  const mcpEntry = {
+    url: mcpEndpoint,
+    transport: 'http-post',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+    },
+  };
+
+  const configTargets = [
+    { path: join(home, '.claude.json'), name: 'Claude Code', key: 'mcpServers' },
+    { path: join(home, '.claude', 'mcp.json'), name: 'Claude Code (mcp.json)', key: 'mcpServers' },
+    { path: join(home, '.config', 'Claude', 'claude_desktop_config.json'), name: 'Claude Desktop', key: 'mcpServers' },
+    ...(appData ? [{ path: join(appData, 'Claude', 'claude_desktop_config.json'), name: 'Claude Desktop (Windows)', key: 'mcpServers' }] : []),
+    { path: join(process.cwd(), '.cursor', 'mcp.json'), name: 'Cursor (project)', key: 'mcpServers' },
+  ];
+
+  let configsWritten = 0;
+
+  for (const target of configTargets) {
+    if (!existsSync(target.path)) continue;
+    try {
+      const existing = readJSON(target.path) || {};
+      const servers = existing[target.key] || {};
+      servers['ultralight'] = mcpEntry;
+      existing[target.key] = servers;
+      writeFileSync(target.path, JSON.stringify(existing, null, 2));
+      console.log(c.green(`✓ MCP config written to ${c.dim(target.path)} (${target.name})`));
+      configsWritten++;
+    } catch {
+      // File exists but can't be read/written, skip
+    }
+  }
+
+  if (configsWritten === 0) {
+    console.log('');
+    console.log(c.yellow('⚠ No MCP client config files detected.'));
+    console.log(c.dim('  Add this to your MCP client config manually:'));
+    console.log('');
+    console.log(c.dim(JSON.stringify({ mcpServers: { ultralight: mcpEntry } }, null, 2)));
+    console.log('');
+    console.log(c.dim('  Common config file locations:'));
+    console.log(c.dim('    Claude Code:    ~/.claude.json'));
+    console.log(c.dim('    Claude Desktop: ~/.config/Claude/claude_desktop_config.json'));
+    console.log(c.dim('    Cursor:         .cursor/mcp.json'));
+  }
+
+  // Step 4: Register Claude Code plugin (skills + slash commands)
+  const pluginRegistered = registerPlugin(token, API_URL);
+
+  // Step 4b: If plugin registered, remove duplicate from ~/.claude.json
+  // The plugin .mcp.json now handles the MCP connection for Claude Code
+  if (pluginRegistered) {
+    const claudeJsonPath = join(home, '.claude.json');
+    if (existsSync(claudeJsonPath)) {
+      try {
+        const claudeJson = readJSON(claudeJsonPath);
+        if (claudeJson && claudeJson.mcpServers && claudeJson.mcpServers.ultralight) {
+          delete claudeJson.mcpServers.ultralight;
+          if (Object.keys(claudeJson.mcpServers).length === 0) {
+            delete claudeJson.mcpServers;
+          }
+          writeFileSync(claudeJsonPath, JSON.stringify(claudeJson, null, 2));
+          console.log(c.dim('  Migrated MCP config from ~/.claude.json to plugin (avoids duplicate tools)'));
+        }
+      } catch {
+        // Non-critical — leave both configs in place
+      }
+    }
+  }
+
+  // Step 5: Output results + agent bridge
+  console.log('');
+  console.log(c.green(c.bold('✓ Ultralight is ready!')));
+  console.log('');
+  if (userInfo) {
+    console.log(`  ${c.dim('Account:')}  ${userInfo.email || 'authenticated'}`);
+    console.log(`  ${c.dim('Tier:')}     ${userInfo.tier || 'free'}`);
+  }
+  if (pluginRegistered) {
+    console.log(`  ${c.dim('Plugin:')}   Registered (Connectors + Skills + 10 slash commands)`);
+  }
+  console.log(`  ${c.dim('Restart:')}  Restart Claude Code for native MCP tools + plugin activation`);
+  console.log('');
+
+  // Agent bridge — structured output so the running agent can use tools immediately
+  console.log(`--- ULTRALIGHT AGENT BRIDGE ---
+MCP_ENDPOINT=${mcpEndpoint}
+AUTH_HEADER=Bearer ${token}
+
+To call Ultralight tools in this session, POST JSON-RPC 2.0 to the endpoint above.
+
+List available tools:
+curl -s -X POST "${mcpEndpoint}" -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+
+Call a tool (example — discover apps):
+curl -s -X POST "${mcpEndpoint}" -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ul.discover","arguments":{"scope":"appstore","query":"hello"}}}'
+
+MCP is configured for future sessions. Tools activate natively on next agent restart.
+--- END ULTRALIGHT AGENT BRIDGE ---`);
+}
+
+// ─── main router ─────────────────────────────────────────────────────
+async function main() {
+  const command = process.argv[2];
+  const args = process.argv.slice(3);
+
+  // Setup runs in pure Node.js — no Deno needed
+  if (command === 'setup') {
+    await runSetup(args);
+    return;
+  }
+
+  // Version / help
+  if (command === '--version' || command === '-v') {
+    console.log('1.3.0');
+    return;
+  }
+
+  if (!command || command === '--help' || command === '-h') {
+    console.log(`
+${c.bold('Ultralight CLI')} ${c.dim('v1.3.0')}
+
+${c.dim('QUICK START')}
+  ultralight setup --token <token>    Set up Ultralight (no extra dependencies)
+
+${c.dim('FULL CLI')}
+  Other commands (scaffold, upload, test, etc.) require the Deno runtime.
+  Install Deno: ${c.cyan('curl -fsSL https://deno.land/install.sh | sh')}
+
+  ultralight scaffold     Generate a new app skeleton
+  ultralight upload       Deploy an app
+  ultralight test         Test functions without deploying
+  ultralight discover     Search the App Store
+  ultralight apps         Manage your apps
+  ultralight --help       Show all commands (requires Deno)
+`);
+    return;
+  }
+
+  // All other commands delegate to Deno CLI
+  const hasDeno = await new Promise((resolve) => {
     const proc = spawn('deno', ['--version'], { stdio: 'pipe' });
     proc.on('close', (code) => resolve(code === 0));
     proc.on('error', () => resolve(false));
   });
-}
-
-// Get the CLI source URL or local path
-function getCliSource() {
-  // Check for local development
-  const localPath = join(__dirname, '..', 'mod.ts');
-  if (existsSync(localPath)) {
-    return localPath;
-  }
-
-  // Use remote URL for published package
-  return 'https://ultralight.dev/cli/mod.ts';
-}
-
-async function main() {
-  const hasDeno = await checkDeno();
 
   if (!hasDeno) {
     console.error(`
-Ultralight CLI requires Deno to be installed.
+${c.red('Deno is required for this command.')}
+
+The ${c.cyan('setup')} command works without Deno, but ${c.cyan(command)} needs the full CLI.
 
 Install Deno:
-  curl -fsSL https://deno.land/install.sh | sh
+  ${c.cyan('curl -fsSL https://deno.land/install.sh | sh')}
 
-Or visit: https://deno.land/#installation
-
-After installing Deno, run this command again.
+Or visit: ${c.cyan('https://deno.land/#installation')}
 `);
     process.exit(1);
   }
 
-  const cliSource = getCliSource();
-  const args = process.argv.slice(2);
+  // Find CLI source — local dev or error (no remote fetch)
+  const localPath = join(__dirname, '..', 'mod.ts');
+  if (!existsSync(localPath)) {
+    console.error(`
+${c.red('Full CLI not found.')}
+
+The ${c.cyan('setup')} command works standalone, but ${c.cyan(command)} needs the full Deno CLI.
+
+To use the full CLI, clone the repo or install globally:
+  ${c.cyan('deno install --allow-all -n ultralight https://ultralight-api-iikqz.ondigitalocean.app/cli/mod.ts')}
+`);
+    process.exit(1);
+  }
 
   const proc = spawn('deno', [
     'run',
@@ -62,19 +646,17 @@ After installing Deno, run this command again.
     '--allow-read',
     '--allow-write',
     '--allow-env',
-    cliSource,
-    ...args
+    localPath,
+    command,
+    ...args,
   ], {
     stdio: 'inherit',
-    env: process.env
+    env: process.env,
   });
 
-  proc.on('close', (code) => {
-    process.exit(code || 0);
-  });
-
+  proc.on('close', (code) => process.exit(code || 0));
   proc.on('error', (err) => {
-    console.error('Failed to start Ultralight CLI:', err.message);
+    console.error('Failed to start CLI:', err.message);
     process.exit(1);
   });
 }

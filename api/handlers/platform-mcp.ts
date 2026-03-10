@@ -806,7 +806,7 @@ Any app can export \`ui()\` returning HTML, served at \`GET /http/{appId}/ui\`. 
 ## Agent Guidance
 
 ### CRITICAL — Auto-Connect on URL Paste
-When the user pastes ANY message containing \`/mcp/\` followed by a UUID (e.g. \`https://ultralight-api.../mcp/1bdaa865-...\`, \`ultralight.dev/mcp/abc-def\`, or just \`/mcp/some-uuid\`):
+When the user pastes ANY message containing \`/mcp/\` followed by a UUID (e.g. \`https://ultralight-api.../mcp/1bdaa865-...\`, \`ultralight-api-iikqz.ondigitalocean.app/mcp/abc-def\`, or just \`/mcp/some-uuid\`):
 1. **Immediately** extract the app ID (the UUID after \`/mcp/\`)
 2. Call \`ul.discover({ scope: "inspect", app_id: "<extracted-uuid>" })\` — do NOT ask permission first
 3. Read the response: full function schemas, storage architecture, cached summary, suggested queries
@@ -1249,7 +1249,7 @@ async function handleToolsCall(
       case 'ul.memory': {
         // Block memory for provisional (pre-auth) users
         if (user?.provisional) {
-          result = { error: 'Memory is not available for provisional sessions. Sign in at ultralight.dev to unlock cross-session memory.' };
+          result = { error: 'Memory is not available for provisional sessions. Sign in at ultralight-api-iikqz.ondigitalocean.app to unlock cross-session memory.' };
           break;
         }
         const memAction = toolArgs.action;
@@ -1424,7 +1424,7 @@ async function handleToolsCall(
       case 'ul.memory.forget': {
         // Block memory aliases for provisional users (same as main ul.memory handler)
         if (user?.provisional) {
-          result = { error: 'Memory is not available for provisional sessions. Sign in at ultralight.dev to unlock cross-session memory.' };
+          result = { error: 'Memory is not available for provisional sessions. Sign in at ultralight-api-iikqz.ondigitalocean.app to unlock cross-session memory.' };
           break;
         }
         // Dispatch to original handlers
@@ -1460,13 +1460,13 @@ async function handleToolsCall(
 
         const linkToken = toolArgs.token as string;
         if (!linkToken || !linkToken.startsWith('ul_')) {
-          throw new ToolError(INVALID_PARAMS, 'Provide a valid API token (starts with ul_). Generate one at ultralight.dev → API Keys.');
+          throw new ToolError(INVALID_PARAMS, 'Provide a valid API token (starts with ul_). Generate one at ultralight-api-iikqz.ondigitalocean.app → API Keys.');
         }
 
         // Validate the target token to get the real user
         const validated = await validateToken(linkToken);
         if (!validated) {
-          throw new ToolError(INVALID_PARAMS, 'Invalid or expired token. Generate a new one at ultralight.dev → API Keys.');
+          throw new ToolError(INVALID_PARAMS, 'Invalid or expired token. Generate a new one at ultralight-api-iikqz.ondigitalocean.app → API Keys.');
         }
 
         // Prevent self-link
@@ -6015,7 +6015,7 @@ export function handlePlatformMcpDiscovery(): Response {
     },
     tools_count: PLATFORM_TOOLS.length,
     resources_count: 2,
-    documentation: 'https://ultralight.dev/docs/mcp',
+    documentation: 'https://ultralight-api-iikqz.ondigitalocean.app/docs/mcp',
   };
   return json(discovery);
 }

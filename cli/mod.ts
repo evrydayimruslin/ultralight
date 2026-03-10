@@ -166,7 +166,7 @@ ${colors.dim('EXAMPLES')}
   ultralight permissions grant my-app user@email.com
 
 ${colors.dim('DOCUMENTATION')}
-  https://ultralight.dev/docs/cli
+  https://ultralight-api-iikqz.ondigitalocean.app/docs/cli
 `);
 }
 
@@ -381,7 +381,7 @@ if (ultralight.isAuthenticated()) {
 
 ## Learn More
 
-- [Ultralight Documentation](https://ultralight.dev/docs)
+- [Ultralight Documentation](https://ultralight-api-iikqz.ondigitalocean.app/docs)
 - [SDK Types](https://www.npmjs.com/package/@ultralightpro/types)
 `;
 
@@ -569,7 +569,7 @@ export async function myServerFunction(args: { key: string }) {
 
 ## Learn More
 
-- [Ultralight Documentation](https://ultralight.dev/docs)
+- [Ultralight Documentation](https://ultralight-api-iikqz.ondigitalocean.app/docs)
 - [SDK Types](https://www.npmjs.com/package/@ultralightpro/types)
 `;
 
@@ -1335,7 +1335,7 @@ async function apps(args: string[], client: ApiClient, _config: Config) {
 
       // No direct delete tool — guide user to web UI
       console.log(colors.yellow('App deletion is available via the web dashboard.'));
-      console.log(`Visit your app settings to delete: ${colors.cyan(`https://ultralight.dev/app/${appId}/settings`)}`);
+      console.log(`Visit your app settings to delete: ${colors.cyan(`https://ultralight-api-iikqz.ondigitalocean.app/app/${appId}/settings`)}`);
       break;
     }
 

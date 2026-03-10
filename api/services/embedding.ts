@@ -52,7 +52,7 @@ export class EmbeddingService {
       headers: {
         'Authorization': `Bearer ${this.apiKey}`,
         'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://ultralight.dev',
+        'HTTP-Referer': 'https://ultralight-api-iikqz.ondigitalocean.app',
         'X-Title': 'Ultralight',
       },
       body: JSON.stringify({
@@ -89,7 +89,7 @@ export class EmbeddingService {
       headers: {
         'Authorization': `Bearer ${this.apiKey}`,
         'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://ultralight.dev',
+        'HTTP-Referer': 'https://ultralight-api-iikqz.ondigitalocean.app',
         'X-Title': 'Ultralight',
       },
       body: JSON.stringify({
