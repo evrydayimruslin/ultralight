@@ -3392,9 +3392,11 @@ export function getLayoutHTML(options: {
               fnsEl.dataset.loaded = 'true';
               // Extract function lines from instructions text
               var text = data.instructions || '';
-              var fnMatch = text.match(/Available functions:\n([\s\S]*?)(\n\nExample|$)/);
-              if (fnMatch && fnMatch[1]) {
-                fnsEl.textContent = fnMatch[1].trim();
+              var fnStart = text.indexOf('Available functions:');
+              var fnEnd = text.indexOf('Example call:');
+              if (fnStart !== -1) {
+                var fnBlock = text.substring(fnStart + 'Available functions:'.length, fnEnd !== -1 ? fnEnd : text.length);
+                fnsEl.textContent = fnBlock.trim();
               } else {
                 fnsEl.textContent = '';
               }
