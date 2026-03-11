@@ -1210,7 +1210,7 @@ export function getLayoutHTML(options: {
     .settings-sidebar {
       width: 200px;
       flex-shrink: 0;
-      position: sticky;
+      position: fixed;
       top: calc(var(--nav-height) + var(--space-8));
       align-self: flex-start;
     }
@@ -1242,6 +1242,7 @@ export function getLayoutHTML(options: {
     .settings-content {
       flex: 1;
       min-width: 0;
+      margin-left: calc(200px + var(--space-8));
     }
 
     .settings-panel {
@@ -1451,21 +1452,43 @@ export function getLayoutHTML(options: {
       gap: var(--space-3);
     }
 
-    .marketplace-copy-btn {
-      margin-left: auto;
-      padding: 2px 8px;
-      font-size: 11px;
-      border: 1px solid var(--border);
-      border-radius: 0;
-      background: var(--bg-base);
-      color: var(--text-secondary);
-      cursor: pointer;
-      transition: all var(--transition-fast);
+    .marketplace-card.expanded {
+      border-color: var(--text-primary);
     }
 
-    .marketplace-copy-btn:hover {
-      border-color: var(--text-primary);
-      color: var(--text-primary);
+    .marketplace-card-detail {
+      margin-top: var(--space-3);
+      padding-top: var(--space-3);
+      border-top: 1px solid var(--border);
+    }
+
+    .marketplace-card-full-desc {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+      margin-bottom: var(--space-3);
+    }
+
+    .marketplace-card-endpoint {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      margin-bottom: var(--space-2);
+    }
+
+    .marketplace-card-endpoint code {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .marketplace-card-functions {
+      font-size: 12px;
+      font-family: var(--font-mono);
+      color: var(--text-secondary);
+      line-height: 1.6;
+      margin-bottom: var(--space-3);
+      white-space: pre-wrap;
     }
 
     /* ============================================
@@ -1985,6 +2008,10 @@ export function getLayoutHTML(options: {
       .settings-sidebar-item.active {
         border-left-color: transparent;
         border-bottom-color: var(--accent);
+      }
+
+      .settings-content {
+        margin-left: 0;
       }
 
       .nav-copy-btn {
@@ -3234,7 +3261,7 @@ export function getLayoutHTML(options: {
     function renderMarketplaceCard(item) {
       var badge = item.type === 'app' ? 'App' : 'Skill';
       var desc = item.description || '';
-      if (desc.length > 120) desc = desc.slice(0, 120) + '...';
+      var shortDesc = desc.length > 120 ? desc.slice(0, 120) + '...' : desc;
       var stats = '';
       if (item.type === 'app') {
         var parts = [];
@@ -3246,20 +3273,42 @@ export function getLayoutHTML(options: {
         var tagStr = (item.tags || []).slice(0, 3).join(', ');
         if (tagStr) stats = '<div class="marketplace-stats">' + tagStr + '</div>';
       }
-      var clickAction = item.type === 'app'
-        ? 'window.location.href = \\\'/app/' + item.id + '\\\''
-        : 'window.open(\\\'' + (item.url || '/p/' + item.slug) + '\\\', \\\'_blank\\\')';
-      var copyBtn = item.type === 'app'
-        ? '<button class="marketplace-copy-btn" onclick="event.stopPropagation(); copyAppInstructions(\\\'' + item.id + '\\\', this)">Copy</button>'
-        : '';
-      return '<div class="marketplace-card" onclick="' + clickAction + '">'
+
+      // Skills: open in new tab as before
+      if (item.type !== 'app') {
+        return '<div class="marketplace-card" onclick="window.open(\'' + (item.url || '/p/' + item.slug) + '\', \'_blank\')">'
+          + '<div class="marketplace-card-header">'
+          + '<span class="marketplace-card-name">' + escapeHtml(item.name || item.slug) + '</span>'
+          + '<span class="marketplace-badge">' + badge + '</span>'
+          + '</div>'
+          + (shortDesc ? '<div class="marketplace-card-desc">' + escapeHtml(shortDesc) + '</div>' : '')
+          + stats
+          + '</div>';
+      }
+
+      // Apps: expandable accordion
+      var copyIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+      var detailHtml = '<div class="marketplace-card-detail" style="display:none">'
+        + (desc ? '<div class="marketplace-card-full-desc">' + escapeHtml(desc) + '</div>' : '')
+        + '<div class="marketplace-card-endpoint">'
+        + '<span style="font-size:11px;color:var(--text-tertiary)">MCP Endpoint</span>'
+        + '<code>' + escapeHtml(item.mcp_endpoint || '/mcp/' + item.id) + '</code>'
+        + '</div>'
+        + '<div class="marketplace-card-functions" id="mp-fns-' + item.id + '">Loading functions...</div>'
+        + '<button class="btn btn-primary" style="gap:var(--space-2);margin-top:var(--space-3);border-radius:0;" onclick="event.stopPropagation(); copyMarketplaceInstructions(\'' + item.id + '\', this)">'
+        + copyIcon
+        + '<span>Copy Agent Instructions</span>'
+        + '</button>'
+        + '</div>';
+
+      return '<div class="marketplace-card" data-app-id="' + item.id + '" onclick="toggleMarketplaceCard(\'' + item.id + '\')">'
         + '<div class="marketplace-card-header">'
         + '<span class="marketplace-card-name">' + escapeHtml(item.name || item.slug) + '</span>'
         + '<span class="marketplace-badge">' + badge + '</span>'
-        + copyBtn
         + '</div>'
-        + (desc ? '<div class="marketplace-card-desc">' + escapeHtml(desc) + '</div>' : '')
+        + (shortDesc ? '<div class="marketplace-card-desc">' + escapeHtml(shortDesc) + '</div>' : '')
         + stats
+        + detailHtml
         + '</div>';
     }
 
@@ -3309,22 +3358,70 @@ export function getLayoutHTML(options: {
         });
     }
 
-    async function copyAppInstructions(appId, btn) {
-      var origText = btn.textContent;
-      btn.textContent = '...';
+    // Expandable marketplace cards — one open at a time
+    var expandedMarketplaceCard = null;
+
+    function toggleMarketplaceCard(appId) {
+      // Collapse previously expanded card
+      if (expandedMarketplaceCard && expandedMarketplaceCard !== appId) {
+        var prev = document.querySelector('[data-app-id="' + expandedMarketplaceCard + '"]');
+        if (prev) {
+          var prevDetail = prev.querySelector('.marketplace-card-detail');
+          if (prevDetail) prevDetail.style.display = 'none';
+          prev.classList.remove('expanded');
+        }
+      }
+
+      var card = document.querySelector('[data-app-id="' + appId + '"]');
+      if (!card) return;
+      var detail = card.querySelector('.marketplace-card-detail');
+      if (!detail) return;
+
+      var isExpanding = detail.style.display === 'none';
+      detail.style.display = isExpanding ? 'block' : 'none';
+      card.classList.toggle('expanded', isExpanding);
+      expandedMarketplaceCard = isExpanding ? appId : null;
+
+      // Fetch functions on first expand
+      if (isExpanding) {
+        var fnsEl = document.getElementById('mp-fns-' + appId);
+        if (fnsEl && fnsEl.dataset.loaded !== 'true') {
+          fetch('/api/apps/' + appId + '/instructions')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              fnsEl.dataset.loaded = 'true';
+              // Extract function lines from instructions text
+              var text = data.instructions || '';
+              var fnMatch = text.match(/Available functions:\n([\s\S]*?)(\n\nExample|$)/);
+              if (fnMatch && fnMatch[1]) {
+                fnsEl.textContent = fnMatch[1].trim();
+              } else {
+                fnsEl.textContent = '';
+              }
+            })
+            .catch(function() { fnsEl.textContent = ''; });
+        }
+      }
+    }
+    window.toggleMarketplaceCard = toggleMarketplaceCard;
+
+    async function copyMarketplaceInstructions(appId, btn) {
+      var origHTML = btn.innerHTML;
+      btn.disabled = true;
       try {
         var res = await fetch('/api/apps/' + appId + '/instructions');
         if (!res.ok) throw new Error('Failed');
         var data = await res.json();
         await navigator.clipboard.writeText(data.instructions);
-        btn.textContent = 'Copied!';
-        setTimeout(function() { btn.textContent = origText; }, 2000);
+        var checkSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+        btn.innerHTML = checkSvg + ' <span>Copied! Paste to agent</span>';
+        setTimeout(function() { btn.innerHTML = origHTML; btn.disabled = false; }, 5000);
       } catch {
-        btn.textContent = 'Error';
-        setTimeout(function() { btn.textContent = origText; }, 2000);
+        btn.innerHTML = '<span>Error</span>';
+        setTimeout(function() { btn.innerHTML = origHTML; btn.disabled = false; }, 2000);
       }
     }
-    window.copyAppInstructions = copyAppInstructions;
+    window.copyMarketplaceInstructions = copyMarketplaceInstructions;
 
     // Marketplace search input
     var mpSearchInput = document.getElementById('marketplaceSearch');
