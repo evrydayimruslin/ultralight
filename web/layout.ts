@@ -3276,7 +3276,7 @@ export function getLayoutHTML(options: {
 
       // Skills: open in new tab as before
       if (item.type !== 'app') {
-        return '<div class="marketplace-card" onclick="window.open(\'' + (item.url || '/p/' + item.slug) + '\', \'_blank\')">'
+        return '<div class="marketplace-card" onclick="window.open(\\\'' + (item.url || '/p/' + item.slug) + '\\\', \\\'_blank\\\')">'
           + '<div class="marketplace-card-header">'
           + '<span class="marketplace-card-name">' + escapeHtml(item.name || item.slug) + '</span>'
           + '<span class="marketplace-badge">' + badge + '</span>'
@@ -3295,13 +3295,13 @@ export function getLayoutHTML(options: {
         + '<code>' + escapeHtml(item.mcp_endpoint || '/mcp/' + item.id) + '</code>'
         + '</div>'
         + '<div class="marketplace-card-functions" id="mp-fns-' + item.id + '">Loading functions...</div>'
-        + '<button class="btn btn-primary" style="gap:var(--space-2);margin-top:var(--space-3);border-radius:0;" onclick="event.stopPropagation(); copyMarketplaceInstructions(\'' + item.id + '\', this)">'
+        + '<button class="btn btn-primary" style="gap:var(--space-2);margin-top:var(--space-3);border-radius:0;" onclick="event.stopPropagation(); copyMarketplaceInstructions(\\\'' + item.id + '\\\', this)">'
         + copyIcon
         + '<span>Copy Agent Instructions</span>'
         + '</button>'
         + '</div>';
 
-      return '<div class="marketplace-card" data-app-id="' + item.id + '" onclick="toggleMarketplaceCard(\'' + item.id + '\')">'
+      return '<div class="marketplace-card" data-app-id="' + item.id + '" onclick="toggleMarketplaceCard(\\\'' + item.id + '\\\')">'
         + '<div class="marketplace-card-header">'
         + '<span class="marketplace-card-name">' + escapeHtml(item.name || item.slug) + '</span>'
         + '<span class="marketplace-badge">' + badge + '</span>'
