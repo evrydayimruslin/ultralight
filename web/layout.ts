@@ -1469,19 +1469,6 @@ export function getLayoutHTML(options: {
       margin-bottom: var(--space-3);
     }
 
-    .marketplace-card-endpoint {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      margin-bottom: var(--space-2);
-    }
-
-    .marketplace-card-endpoint code {
-      font-family: var(--font-mono);
-      font-size: 12px;
-      color: var(--text-secondary);
-    }
-
     .marketplace-card-functions {
       font-size: 12px;
       font-family: var(--font-mono);
@@ -3290,10 +3277,6 @@ export function getLayoutHTML(options: {
       var copyIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
       var detailHtml = '<div class="marketplace-card-detail" style="display:none">'
         + (desc ? '<div class="marketplace-card-full-desc">' + escapeHtml(desc) + '</div>' : '')
-        + '<div class="marketplace-card-endpoint">'
-        + '<span style="font-size:11px;color:var(--text-tertiary)">MCP Endpoint</span>'
-        + '<code>' + escapeHtml(item.mcp_endpoint || '/mcp/' + item.id) + '</code>'
-        + '</div>'
         + '<div class="marketplace-card-functions" id="mp-fns-' + item.id + '">Loading functions...</div>'
         + '<button class="btn btn-primary" style="gap:var(--space-2);margin-top:var(--space-3);border-radius:0;" onclick="event.stopPropagation(); copyMarketplaceInstructions(\\\'' + item.id + '\\\', this)">'
         + copyIcon
@@ -3409,18 +3392,23 @@ export function getLayoutHTML(options: {
 
     async function copyMarketplaceInstructions(appId, btn) {
       var origHTML = btn.innerHTML;
-      btn.disabled = true;
+      btn.style.pointerEvents = 'none';
       try {
         var res = await fetch('/api/apps/' + appId + '/instructions');
         if (!res.ok) throw new Error('Failed');
         var data = await res.json();
-        await navigator.clipboard.writeText(data.instructions);
+        // Inject user's auth token if available
+        var text = data.instructions || '';
+        if (authToken) {
+          text = text.replace(/\\{TOKEN\\}/g, authToken);
+        }
+        await navigator.clipboard.writeText(text);
         var checkSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
         btn.innerHTML = checkSvg + ' <span>Copied! Paste to agent</span>';
-        setTimeout(function() { btn.innerHTML = origHTML; btn.disabled = false; }, 5000);
+        setTimeout(function() { btn.innerHTML = origHTML; btn.style.pointerEvents = ''; }, 5000);
       } catch {
         btn.innerHTML = '<span>Error</span>';
-        setTimeout(function() { btn.innerHTML = origHTML; btn.disabled = false; }, 2000);
+        setTimeout(function() { btn.innerHTML = origHTML; btn.style.pointerEvents = ''; }, 2000);
       }
     }
     window.copyMarketplaceInstructions = copyMarketplaceInstructions;

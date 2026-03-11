@@ -117,7 +117,7 @@ export async function handleApps(request: Request): Promise<Response> {
 
     // GET /api/apps/:appId/instructions - Agent-ready instruction block for this app
     if (subPath === '/instructions' && method === 'GET') {
-      return handleGetAppInstructions(appId);
+      return handleGetAppInstructions(request, appId);
     }
 
     // GET /api/apps/:appId/skills.md - Get Skills.md documentation
@@ -512,7 +512,7 @@ function getFnCount(app: Record<string, unknown>): number {
  * Generate agent-ready instruction block for an app.
  * Public endpoint — no auth required for public apps.
  */
-async function handleGetAppInstructions(appId: string): Promise<Response> {
+async function handleGetAppInstructions(request: Request, appId: string): Promise<Response> {
   try {
     const appsService = createAppsService();
     const app = await appsService.findById(appId);
@@ -556,13 +556,38 @@ async function handleGetAppInstructions(appId: string): Promise<Response> {
           : Array.isArray(app.exports) && app.exports.length > 0 ? app.exports[0] : 'main')
       : 'main';
 
-    const instructions = [
-      `Use the Ultralight app "${name}" via ul.call.`,
-      desc ? `\n${desc}` : '',
-      fnLines.length > 0 ? `\n\nAvailable functions:\n${fnLines.join('\n')}` : '',
-      `\n\nExample call:\nul.call({ app_id: "${appId}", function_name: "${firstFn}", args: {} })`,
-    ].join('');
+    // Derive base URL from request
+    const proto = request.headers.get('x-forwarded-proto') || 'https';
+    const host = request.headers.get('host') || 'ultralight-api-iikqz.ondigitalocean.app';
+    const baseUrl = `${proto}://${host}`;
 
+    const sections: string[] = [];
+
+    // Header
+    sections.push(`# ${name} — Ultralight MCP App`);
+    if (desc) sections.push(desc);
+
+    // Functions
+    if (fnLines.length > 0) {
+      sections.push(`## Available Functions\n${fnLines.join('\n')}`);
+    }
+
+    // Connection: Platform gateway (for agents already connected to Ultralight)
+    sections.push(
+      `## Connect & Use\n\n` +
+      `**Option A — If already connected to Ultralight:**\n` +
+      `ul.call({ app_id: "${appId}", function_name: "${firstFn}", args: {} })\n\n` +
+      `**Option B — Direct MCP (any HTTP agent):**\n` +
+      `POST ${baseUrl}/mcp/${appId}\n` +
+      `Authorization: Bearer {TOKEN}\n` +
+      `Content-Type: application/json\n\n` +
+      `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"${firstFn}","arguments":{}}}`
+    );
+
+    // Documentation link
+    sections.push(`## Full Documentation\n${baseUrl}/api/apps/${appId}/skills.md`);
+
+    const instructions = sections.join('\n\n');
     return json({ instructions });
   } catch (err) {
     console.error('[APPS] handleGetAppInstructions failed:', err);
