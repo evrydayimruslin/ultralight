@@ -86,7 +86,21 @@ export async function handleUser(request: Request): Promise<Response> {
 
         if (eventUserId && amountCents > 0 && depositType === 'hosting_deposit' && session.payment_status === 'paid') {
           console.log(`[STRIPE] Crediting ${amountCents} cents to user ${eventUserId} (event: ${event.id})`);
-          await creditHostingBalance(eventUserId, amountCents);
+          const creditResult = await creditHostingBalance(eventUserId, amountCents);
+          // Log billing transaction
+          try {
+            const { SUPABASE_URL: sUrl, SUPABASE_SERVICE_ROLE_KEY: sKey } = getSupabaseEnv();
+            await fetch(`${sUrl}/rest/v1/billing_transactions`, {
+              method: 'POST',
+              headers: { 'apikey': sKey, 'Authorization': `Bearer ${sKey}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+              body: JSON.stringify({
+                user_id: eventUserId, type: 'credit', category: 'deposit',
+                description: `Deposit: $${(amountCents / 100).toFixed(2)}`,
+                amount_cents: amountCents, balance_after: creditResult.new_balance_cents,
+                metadata: { stripe_event_id: event.id },
+              }),
+            });
+          } catch { /* don't break webhook for logging */ }
         }
       }
 
@@ -99,7 +113,21 @@ export async function handleUser(request: Request): Promise<Response> {
 
         if (eventUserId && amountCents > 0 && intentType === 'auto_topup') {
           console.log(`[STRIPE] Auto top-up succeeded: crediting ${amountCents} cents to user ${eventUserId} (event: ${event.id})`);
-          await creditHostingBalance(eventUserId, amountCents);
+          const topupResult = await creditHostingBalance(eventUserId, amountCents);
+          // Log billing transaction
+          try {
+            const { SUPABASE_URL: sUrl, SUPABASE_SERVICE_ROLE_KEY: sKey } = getSupabaseEnv();
+            await fetch(`${sUrl}/rest/v1/billing_transactions`, {
+              method: 'POST',
+              headers: { 'apikey': sKey, 'Authorization': `Bearer ${sKey}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+              body: JSON.stringify({
+                user_id: eventUserId, type: 'credit', category: 'auto_topup',
+                description: `Auto top-up: $${(amountCents / 100).toFixed(2)}`,
+                amount_cents: amountCents, balance_after: topupResult.new_balance_cents,
+                metadata: { stripe_event_id: event.id },
+              }),
+            });
+          } catch { /* don't break webhook for logging */ }
         }
       }
 
@@ -1387,6 +1415,95 @@ export async function handleUser(request: Request): Promise<Response> {
     } catch (err) {
       console.error('Revoke permissions error:', err);
       return error('Failed to revoke permissions', 500);
+    }
+  }
+
+  // ============================================
+  // BILLING TRANSACTIONS
+  // ============================================
+
+  // GET /api/user/transactions — transaction history with current charge rate
+  if (path === '/api/user/transactions' && method === 'GET') {
+    try {
+      const user = await authenticate(request);
+      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
+      const sbHeaders = { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` };
+
+      const url = new URL(request.url);
+      const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 100);
+      const offset = parseInt(url.searchParams.get('offset') || '0', 10);
+      const category = url.searchParams.get('category');
+
+      // Fetch transactions
+      let query = `${sbUrl}/rest/v1/billing_transactions?user_id=eq.${user.id}&order=created_at.desc&limit=${limit}&offset=${offset}`;
+      if (category) query += `&category=eq.${category}`;
+
+      const [txRes, countRes] = await Promise.all([
+        fetch(query, { headers: { ...sbHeaders, 'Prefer': 'count=exact' } }),
+        // Calculate current charge rate from published apps + pages
+        Promise.all([
+          fetch(
+            `${sbUrl}/rest/v1/apps?owner_id=eq.${user.id}&deleted_at=is.null&hosting_suspended=eq.false&visibility=in.(public,unlisted)&select=storage_bytes`,
+            { headers: sbHeaders }
+          ),
+          fetch(
+            `${sbUrl}/rest/v1/content?owner_id=eq.${user.id}&type=eq.page&hosting_suspended=eq.false&visibility=eq.public&select=size`,
+            { headers: sbHeaders }
+          ),
+          fetch(
+            `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=storage_used_bytes,data_storage_used_bytes,storage_limit_bytes`,
+            { headers: sbHeaders }
+          ),
+        ]),
+      ]);
+
+      const transactions = txRes.ok ? await txRes.json() : [];
+      const totalHeader = txRes.headers.get('content-range');
+      const total = totalHeader ? parseInt(totalHeader.split('/')[1] || '0', 10) : transactions.length;
+
+      // Calculate current hourly rate
+      const [appsRes, pagesRes, userDataRes] = countRes;
+      let hostingMb = 0;
+      let appCount = 0;
+      if (appsRes.ok) {
+        const apps = await appsRes.json() as Array<{ storage_bytes: number | null }>;
+        appCount = apps.length;
+        hostingMb = apps.reduce((s: number, a: { storage_bytes: number | null }) => s + (a.storage_bytes || 0), 0) / (1024 * 1024);
+      }
+      if (pagesRes.ok) {
+        const pages = await pagesRes.json() as Array<{ size: number | null }>;
+        hostingMb += pages.reduce((s: number, p: { size: number | null }) => s + (p.size || 0), 0) / (1024 * 1024);
+      }
+
+      let dataOverageMb = 0;
+      if (userDataRes.ok) {
+        const [ud] = await userDataRes.json() as Array<{ storage_used_bytes: number; data_storage_used_bytes: number; storage_limit_bytes: number }>;
+        if (ud) {
+          const combined = (ud.storage_used_bytes || 0) + (ud.data_storage_used_bytes || 0);
+          const freeBytes = ud.storage_limit_bytes || 104857600;
+          dataOverageMb = Math.max(0, combined - freeBytes) / (1024 * 1024);
+        }
+      }
+
+      const hostingCentsPerHour = hostingMb * 2.5; // HOSTING_RATE_CENTS_PER_MB_PER_HOUR
+      const dataOverageCentsPerHour = dataOverageMb * 0.05; // DATA_RATE_CENTS_PER_MB_PER_HOUR
+
+      return json({
+        transactions,
+        total,
+        current_rate: {
+          hosting_mb: Math.round(hostingMb * 100) / 100,
+          hosting_apps: appCount,
+          hosting_cents_per_hour: Math.round(hostingCentsPerHour * 10000) / 10000,
+          data_overage_mb: Math.round(dataOverageMb * 100) / 100,
+          data_overage_cents_per_hour: Math.round(dataOverageCentsPerHour * 10000) / 10000,
+          estimated_daily_cents: Math.round((hostingCentsPerHour + dataOverageCentsPerHour) * 24 * 100) / 100,
+          estimated_monthly_cents: Math.round((hostingCentsPerHour + dataOverageCentsPerHour) * 24 * 30 * 100) / 100,
+        },
+      });
+    } catch (err) {
+      console.error('Transactions error:', err);
+      return error('Failed to load transactions', 500);
     }
   }
 

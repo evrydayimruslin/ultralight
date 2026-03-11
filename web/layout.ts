@@ -2406,6 +2406,7 @@ export function getLayoutHTML(options: {
             <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Wallet</h2>
             <div class="marketplace-filters">
               <button class="marketplace-filter active" data-wallet-tab="balance">Balance</button>
+              <button class="marketplace-filter" data-wallet-tab="transactions">Transactions</button>
               <button class="marketplace-filter" data-wallet-tab="earnings">Earnings</button>
               <button class="marketplace-filter" data-wallet-tab="offers">Offers</button>
             </div>
@@ -2456,6 +2457,12 @@ export function getLayoutHTML(options: {
                   <button id="connectBankBtn" class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);" onclick="startConnectOnboarding()">Connect Bank Account</button>
                 </div>
               </div>
+            </div>
+
+            <!-- Transactions Tab -->
+            <div id="walletTransactionsTab" style="display:none;margin-top:var(--space-4);">
+              <div id="storageChargesSummary"></div>
+              <div id="transactionsList" style="font-size:13px;color:var(--text-muted);">Loading...</div>
             </div>
 
             <!-- Earnings Tab -->
@@ -3967,14 +3974,15 @@ export function getLayoutHTML(options: {
         document.querySelectorAll('[data-wallet-tab]').forEach(function(btn) {
           btn.classList.toggle('active', btn.dataset.walletTab === activeWalletTab);
         });
-        ['walletBalanceTab', 'walletEarningsTab', 'walletOffersTab'].forEach(function(id) {
+        ['walletBalanceTab', 'walletTransactionsTab', 'walletEarningsTab', 'walletOffersTab'].forEach(function(id) {
           var tabEl = document.getElementById(id);
           if (tabEl) tabEl.style.display = 'none';
         });
-        var tabMap = { balance: 'walletBalanceTab', earnings: 'walletEarningsTab', offers: 'walletOffersTab' };
+        var tabMap = { balance: 'walletBalanceTab', transactions: 'walletTransactionsTab', earnings: 'walletEarningsTab', offers: 'walletOffersTab' };
         var activeEl = document.getElementById(tabMap[activeWalletTab]);
         if (activeEl) activeEl.style.display = 'block';
-        if (activeWalletTab === 'earnings') { loadEarnings(); loadPayouts(); }
+        if (activeWalletTab === 'transactions') { loadTransactions(true); }
+        else if (activeWalletTab === 'earnings') { loadEarnings(); loadPayouts(); }
         else if (activeWalletTab === 'offers') { loadMyOffers(); }
       });
     });
@@ -5799,6 +5807,87 @@ export function getLayoutHTML(options: {
         if (regenBtn) { regenBtn.disabled = false; regenBtn.textContent = 'Regenerate Key'; }
       }
     };
+
+    // --- Transactions ---
+    var txOffset = 0;
+    var txLoaded = false;
+
+    async function loadTransactions(reset) {
+      if (reset) { txOffset = 0; txLoaded = false; }
+      var listEl = document.getElementById('transactionsList');
+      var summaryEl = document.getElementById('storageChargesSummary');
+      if (!listEl) return;
+      if (txOffset === 0) listEl.innerHTML = '<span class="btn-spinner" style="width:12px;height:12px;border-width:1.5px;"></span>';
+
+      try {
+        var res = await fetch('/api/user/transactions?limit=50&offset=' + txOffset, {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) { listEl.innerHTML = 'Failed to load transactions'; return; }
+        var data = await res.json();
+        var txs = data.transactions || [];
+        var rate = data.current_rate || {};
+
+        // Render charge rate summary
+        if (summaryEl && txOffset === 0) {
+          var dailyCents = rate.estimated_daily_cents || 0;
+          var monthlyCents = rate.estimated_monthly_cents || 0;
+          summaryEl.innerHTML = '<div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-4);margin-bottom:var(--space-4);">'
+            + '<div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:var(--space-3);">Current Storage Charges</div>'
+            + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-3);font-size:13px;">'
+            + '<div><div style="color:var(--text-muted);font-size:11px;margin-bottom:2px;">Hourly Rate</div><div style="font-weight:600;">$' + ((rate.hosting_cents_per_hour || 0) / 100).toFixed(4) + '</div></div>'
+            + '<div><div style="color:var(--text-muted);font-size:11px;margin-bottom:2px;">Est. Daily</div><div style="font-weight:600;">$' + (dailyCents / 100).toFixed(4) + '</div></div>'
+            + '<div><div style="color:var(--text-muted);font-size:11px;margin-bottom:2px;">Est. Monthly</div><div style="font-weight:600;">$' + (monthlyCents / 100).toFixed(2) + '</div></div>'
+            + '</div>'
+            + '<div style="font-size:11px;color:var(--text-muted);margin-top:var(--space-3);">'
+            + (rate.hosting_apps || 0) + ' published app(s) \\u00B7 ' + (rate.hosting_mb || 0).toFixed(2) + ' MB \\u00B7 $0.025/MB/hr'
+            + (rate.data_overage_mb > 0 ? ' \\u00B7 ' + rate.data_overage_mb.toFixed(2) + ' MB data overage' : '')
+            + '</div>'
+            + '</div>';
+        }
+
+        // Render transactions
+        if (txOffset === 0) listEl.innerHTML = '';
+
+        if (txs.length === 0 && txOffset === 0) {
+          listEl.innerHTML = '<div style="color:var(--text-muted);padding:var(--space-4) 0;">No transactions yet. Charges will appear here after the next billing cycle.</div>';
+          return;
+        }
+
+        var html = '';
+        for (var ti = 0; ti < txs.length; ti++) {
+          var tx = txs[ti];
+          var isCredit = tx.amount_cents > 0;
+          var amtStr = (isCredit ? '+' : '') + '$' + (Math.abs(tx.amount_cents) / 100).toFixed(4);
+          var amtColor = isCredit ? 'var(--success)' : 'var(--error)';
+          var dateStr = relTime(tx.created_at);
+          var fullDate = new Date(tx.created_at).toLocaleString();
+          var meta = tx.metadata || {};
+
+          html += '<div style="display:flex;align-items:flex-start;justify-content:space-between;padding:var(--space-3) 0;border-bottom:1px solid var(--border);gap:var(--space-3);">'
+            + '<div style="flex:1;min-width:0;">'
+            + '<div style="font-size:13px;color:var(--text-primary);">' + escapeHtml(tx.description) + '</div>'
+            + '<div style="font-size:11px;color:var(--text-muted);margin-top:2px;" title="' + escapeHtml(fullDate) + '">'
+            + escapeHtml(dateStr)
+            + (tx.app_name ? ' \\u00B7 ' + escapeHtml(tx.app_name) : '')
+            + (meta.hours ? ' \\u00B7 ' + Number(meta.hours).toFixed(1) + 'h' : '')
+            + '</div>'
+            + '</div>'
+            + '<div style="font-size:13px;font-weight:600;color:' + amtColor + ';white-space:nowrap;">' + amtStr + '</div>'
+            + '</div>';
+        }
+        listEl.innerHTML += html;
+
+        txOffset += txs.length;
+        // Add "Load more" button if there are more
+        if (txOffset < (data.total || 0)) {
+          listEl.innerHTML += '<div style="text-align:center;padding:var(--space-3) 0;">'
+            + '<button class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);" onclick="loadTransactions()">Load more</button>'
+            + '</div>';
+        }
+      } catch { if (listEl) listEl.innerHTML = 'Failed to load transactions'; }
+    }
+    window.loadTransactions = loadTransactions;
 
     // --- Billing ---
     async function loadHostingData() {

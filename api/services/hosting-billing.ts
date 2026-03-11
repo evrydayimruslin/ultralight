@@ -123,8 +123,10 @@ export async function processHostingBilling(): Promise<BillingResult> {
         );
 
         let appBytes = 0;
+        let publishedAppCount = 0;
         if (appStorageRes.ok) {
           const apps = await appStorageRes.json() as Array<{ storage_bytes: number | null }>;
+          publishedAppCount = apps.length;
           appBytes = apps.reduce((sum, a) => sum + (a.storage_bytes || 0), 0);
         }
 
@@ -211,6 +213,40 @@ export async function processHostingBilling(): Promise<BillingResult> {
         }
 
         const { new_balance: newBalance, was_depleted: suspended } = debitResult[0];
+
+        // Log billing transaction(s) — separate line items for hosting vs data overage
+        try {
+          const txRows: Array<Record<string, unknown>> = [];
+          if (hostingCostCents > 0) {
+            txRows.push({
+              user_id: user.id,
+              type: 'charge',
+              category: 'hosting',
+              description: `Hosting: ${publishedAppCount} app(s), ${totalMb.toFixed(2)} MB`,
+              amount_cents: -Math.max(Math.round(hostingCostCents * 100) / 100, 0.01),
+              balance_after: newBalance + (dataOverageCostCents > 0 ? Math.max(Math.round(dataOverageCostCents * 100) / 100, 0.01) : 0),
+              metadata: { hosting_mb: totalMb, hours: hoursSinceLastBilled, rate: RATE_CENTS_PER_MB_PER_HOUR, apps: publishedAppCount },
+            });
+          }
+          if (dataOverageCostCents > 0) {
+            txRows.push({
+              user_id: user.id,
+              type: 'charge',
+              category: 'data_storage',
+              description: `Data storage overage: ${dataOverageMb.toFixed(2)} MB over ${(freeBytes / (1024 * 1024)).toFixed(0)} MB free`,
+              amount_cents: -Math.max(Math.round(dataOverageCostCents * 100) / 100, 0.01),
+              balance_after: newBalance,
+              metadata: { overage_mb: dataOverageMb, hours: hoursSinceLastBilled, rate: DATA_RATE },
+            });
+          }
+          if (txRows.length > 0) {
+            await fetch(`${SUPABASE_URL}/rest/v1/billing_transactions`, {
+              method: 'POST',
+              headers: writeHeaders,
+              body: JSON.stringify(txRows),
+            }).catch(() => {}); // Fire-and-forget — don't break billing if tx log fails
+          }
+        } catch { /* never break billing for logging */ }
 
         // 2f. Auto top-up: if balance dropped below threshold, trigger a charge
         if (
