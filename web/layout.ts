@@ -3394,6 +3394,7 @@ export function getLayoutHTML(options: {
     async function ensureApiKey() {
       if (!authToken) return '';
       var cached = localStorage.getItem('ultralight_api_key');
+      var defaultTokenId = null;
 
       // Always validate cached key against the user's primary "default" token
       try {
@@ -3405,12 +3406,15 @@ export function getLayoutHTML(options: {
           var tokens = listData.tokens || listData;
           // Find the "default" token — this is the one shown in Settings > API Key
           var defaultToken = tokens.find(function(t) { return t.name === 'default'; }) || tokens[0];
-          if (defaultToken && cached) {
-            var prefix = cached.substring(0, 11); // "ul_" + 8 hex chars
-            if (defaultToken.token_prefix === prefix) return cached;
-            // Cached key doesn't match current default — stale
-            localStorage.removeItem('ultralight_api_key');
-            cached = null;
+          if (defaultToken) {
+            defaultTokenId = defaultToken.id;
+            if (cached) {
+              var prefix = cached.substring(0, 11); // "ul_" + 8 hex chars
+              if (defaultToken.token_prefix === prefix) return cached;
+              // Cached key doesn't match current default — stale
+              localStorage.removeItem('ultralight_api_key');
+              cached = null;
+            }
           }
         }
       } catch { /* if validation fails, try other sources */ }
@@ -3419,16 +3423,36 @@ export function getLayoutHTML(options: {
       if (cached) return cached;
 
       // Auto-create a "default" key (same as Settings > API Key page)
+      var authHeaders = { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' };
       try {
         var createRes = await fetch('/api/user/tokens', {
           method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          headers: authHeaders,
           body: JSON.stringify({ name: 'default' }),
         });
         if (createRes.ok) {
           var createData = await createRes.json();
           var newKey = createData.plaintext_token;
           if (newKey) { localStorage.setItem('ultralight_api_key', newKey); return newKey; }
+        }
+        // 409 = "default" token exists but plaintext is unrecoverable — regenerate it
+        if (createRes.status === 409 && defaultTokenId) {
+          var delRes = await fetch('/api/user/tokens/' + defaultTokenId, {
+            method: 'DELETE',
+            headers: authHeaders,
+          });
+          if (delRes.ok) {
+            var retryRes = await fetch('/api/user/tokens', {
+              method: 'POST',
+              headers: authHeaders,
+              body: JSON.stringify({ name: 'default' }),
+            });
+            if (retryRes.ok) {
+              var retryData = await retryRes.json();
+              var retryKey = retryData.plaintext_token;
+              if (retryKey) { localStorage.setItem('ultralight_api_key', retryKey); return retryKey; }
+            }
+          }
         }
       } catch { /* fall through */ }
       return '';
