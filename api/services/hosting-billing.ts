@@ -577,23 +577,18 @@ async function disableAutoTopup(
 
 /**
  * Start the hosting billing job.
- * Runs after a short startup delay, then every hour.
+ * Runs strictly every hour — no startup run, so deploys don't trigger extra charges.
+ * Per-app billing clocks ensure no time is lost between intervals.
  */
 export function startHostingBillingJob(): void {
   const INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
-  console.log('[BILLING] Starting hosting billing job (hourly)');
+  console.log('[BILLING] Starting hosting billing job (hourly, no startup run)');
 
-  // Run on startup (after a short delay to let the server initialize)
-  setTimeout(async () => {
-    try {
-      await processHostingBilling();
-    } catch (err) {
-      console.error('[BILLING] Startup billing failed:', err);
-    }
-  }, 15_000); // 15 second delay (staggered from other startup jobs)
-
-  // Then run every hour
+  // Run every hour — per-app clocks accumulate naturally, so the first
+  // interval after a deploy just bills for however long since each app's
+  // last_billed_at (up to ~2h if deploy happened right before the old
+  // interval would have fired). No charge is lost, no double-billing.
   setInterval(async () => {
     try {
       await processHostingBilling();

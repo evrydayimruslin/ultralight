@@ -5909,13 +5909,47 @@ export function getLayoutHTML(options: {
         var txs = data.transactions || [];
         var rate = data.current_rate || {};
 
-        // Render charge rate summary
+        // Separate storage charges from general transactions
+        var storageTxs = [];
+        var generalTxs = [];
+        for (var i = 0; i < txs.length; i++) {
+          if (txs[i].category === 'hosting' || txs[i].category === 'data_storage') {
+            storageTxs.push(txs[i]);
+          } else {
+            generalTxs.push(txs[i]);
+          }
+        }
+
+        // Render charge rate summary card with expandable storage history
         if (summaryEl && txOffset === 0) {
           var dailyCents = rate.estimated_daily_cents || 0;
           var monthlyCents = rate.estimated_monthly_cents || 0;
-          summaryEl.innerHTML = '<div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-4);margin-bottom:var(--space-4);">'
-            + '<div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:var(--space-3);">Current Storage Charges</div>'
-            + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-3);font-size:13px;">'
+          var storageHtml = '';
+          if (storageTxs.length > 0) {
+            storageHtml = '<div id="storageChargesDetail" style="display:none;margin-top:var(--space-3);padding-top:var(--space-3);border-top:1px solid var(--border);">';
+            for (var si = 0; si < storageTxs.length; si++) {
+              var stx = storageTxs[si];
+              var sDate = relTime(stx.created_at);
+              var sFullDate = new Date(stx.created_at).toLocaleString();
+              var sAmt = '$' + (Math.abs(stx.amount_cents) / 100).toFixed(4);
+              var sMeta = stx.metadata || {};
+              storageHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px;">'
+                + '<div style="color:var(--text-secondary);">'
+                + escapeHtml(stx.description)
+                + '<span style="color:var(--text-muted);margin-left:6px;" title="' + escapeHtml(sFullDate) + '">' + escapeHtml(sDate) + '</span>'
+                + '</div>'
+                + '<div style="color:var(--text-primary);font-weight:500;white-space:nowrap;">' + sAmt + '</div>'
+                + '</div>';
+            }
+            storageHtml += '</div>';
+          }
+
+          summaryEl.innerHTML = '<div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-4);margin-bottom:var(--space-4);cursor:pointer;" onclick="var d=document.getElementById(\\\'storageChargesDetail\\\');var a=document.getElementById(\\\'storageToggleArrow\\\');if(d){d.style.display=d.style.display===\\\'none\\\'?\\\'block\\\':\\\'none\\\';if(a)a.textContent=d.style.display===\\\'none\\\'?\\\'\\u25B6\\\':\\\'\\u25BC\\\';}">'
+            + '<div style="display:flex;align-items:center;justify-content:space-between;">'
+            + '<div style="font-size:13px;font-weight:600;color:var(--text-primary);">Current Storage Charges</div>'
+            + '<span id="storageToggleArrow" style="font-size:10px;color:var(--text-muted);">\\u25B6</span>'
+            + '</div>'
+            + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-3);font-size:13px;margin-top:var(--space-3);">'
             + '<div><div style="color:var(--text-muted);font-size:11px;margin-bottom:2px;">Hourly Rate</div><div style="font-weight:600;">$' + ((rate.hosting_cents_per_hour || 0) / 100).toFixed(4) + '</div></div>'
             + '<div><div style="color:var(--text-muted);font-size:11px;margin-bottom:2px;">Est. Daily</div><div style="font-weight:600;">$' + (dailyCents / 100).toFixed(4) + '</div></div>'
             + '<div><div style="color:var(--text-muted);font-size:11px;margin-bottom:2px;">Est. Monthly</div><div style="font-weight:600;">$' + (monthlyCents / 100).toFixed(2) + '</div></div>'
@@ -5924,20 +5958,21 @@ export function getLayoutHTML(options: {
             + (rate.hosting_apps || 0) + ' published app(s) \\u00B7 ' + (rate.hosting_mb || 0).toFixed(2) + ' MB \\u00B7 $0.025/MB/hr'
             + (rate.data_overage_mb > 0 ? ' \\u00B7 ' + rate.data_overage_mb.toFixed(2) + ' MB data overage' : '')
             + '</div>'
+            + storageHtml
             + '</div>';
         }
 
-        // Render transactions
+        // Render only general transactions (deposits, credits, etc.) in main list
         if (txOffset === 0) listEl.innerHTML = '';
 
-        if (txs.length === 0 && txOffset === 0) {
-          listEl.innerHTML = '<div style="color:var(--text-muted);padding:var(--space-4) 0;">No transactions yet. Charges will appear here after the next billing cycle.</div>';
+        if (generalTxs.length === 0 && txOffset === 0) {
+          listEl.innerHTML = '<div style="color:var(--text-muted);padding:var(--space-4) 0;">No transactions yet. Deposits and credits will appear here.</div>';
           return;
         }
 
         var html = '';
-        for (var ti = 0; ti < txs.length; ti++) {
-          var tx = txs[ti];
+        for (var ti = 0; ti < generalTxs.length; ti++) {
+          var tx = generalTxs[ti];
           var isCredit = tx.amount_cents > 0;
           var amtStr = (isCredit ? '+' : '') + '$' + (Math.abs(tx.amount_cents) / 100).toFixed(4);
           var amtColor = isCredit ? 'var(--success)' : 'var(--text-primary)';
@@ -5951,7 +5986,6 @@ export function getLayoutHTML(options: {
             + '<div style="font-size:11px;color:var(--text-muted);margin-top:2px;" title="' + escapeHtml(fullDate) + '">'
             + escapeHtml(dateStr)
             + (tx.app_name ? ' \\u00B7 ' + escapeHtml(tx.app_name) : '')
-            + (meta.hours ? ' \\u00B7 ' + Number(meta.hours).toFixed(1) + 'h' : '')
             + '</div>'
             + '</div>'
             + '<div style="font-size:13px;font-weight:600;color:' + amtColor + ';white-space:nowrap;">' + amtStr + '</div>'
@@ -5960,8 +5994,9 @@ export function getLayoutHTML(options: {
         listEl.innerHTML += html;
 
         txOffset += txs.length;
-        // Add "Load more" button if there are more
-        if (txOffset < (data.total || 0)) {
+        // Add "Load more" button if there are more general transactions
+        var totalGeneral = (data.total || 0) - storageTxs.length;
+        if (generalTxs.length > 0 && txOffset < (data.total || 0)) {
           listEl.innerHTML += '<div style="text-align:center;padding:var(--space-3) 0;">'
             + '<button class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);" onclick="loadTransactions()">Load more</button>'
             + '</div>';
