@@ -7023,3 +7023,35 @@ async function executePages(userId: string): Promise<unknown> {
     total: enrichedPages.length,
   };
 }
+
+// ============================================
+// PUBLIC SKILLS ENDPOINT
+// ============================================
+
+/**
+ * GET /api/skills — Serve platform Skills.md as plain text over HTTP.
+ * No auth required. Any agent (web, CLI, custom) can fetch this to get
+ * the full Ultralight platform documentation including building conventions,
+ * tool reference, resource URIs, and agent guidance.
+ *
+ * Cached for 1 hour. Returns text/markdown.
+ */
+export function handleSkills(): Response {
+  const skills = `# Ultralight Platform MCP — Skills
+
+Endpoint: \`POST /mcp/platform\`
+Protocol: JSON-RPC 2.0
+Namespace: \`ul.*\`
+10 tools + MCP Resources + 27 backward-compat aliases
+
+${buildPlatformDocs()}`;
+
+  return new Response(skills, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/markdown; charset=utf-8',
+      'Cache-Control': 'public, max-age=3600',
+      'Access-Control-Allow-Origin': '*',
+    },
+  });
+}

@@ -1260,6 +1260,12 @@ Protocol: JSON-RPC 2.0
 
 This works with ChatGPT Custom Actions, Gemini Extensions, open-source web agents, or any system that can POST JSON over HTTPS.
 
+**Platform docs & building conventions** (no auth needed):
+\`\`\`
+GET https://ultralight-api-iikqz.ondigitalocean.app/api/skills
+\`\`\`
+Returns the full Skills.md — tool reference, building guide, SDK globals, resource URIs, and agent conventions. Fetch this to understand how to build and use Ultralight tools.
+
 ## Recommended Apps
 
 These are curated apps from the Ultralight marketplace. Each works instantly — just ask to connect one:

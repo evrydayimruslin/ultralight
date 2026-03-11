@@ -7,7 +7,7 @@ import { handleAuth } from './auth.ts';
 import { handleApps } from './apps.ts';
 import { handleUser } from './user.ts';
 import { handleMcp, handleMcpDiscovery } from './mcp.ts';
-import { handlePlatformMcp, handlePlatformMcpDiscovery } from './platform-mcp.ts';
+import { handlePlatformMcp, handlePlatformMcpDiscovery, handleSkills } from './platform-mcp.ts';
 import { handleOAuth } from './oauth.ts';
 import { handleDiscover, handleOnboarding } from './discover.ts';
 import { handleMcpConfig } from './config.ts';
@@ -221,6 +221,11 @@ export function createApp() {
       if (path.startsWith('/api/mcp-config/') && method === 'GET') {
         const appId = path.slice('/api/mcp-config/'.length).split('/')[0];
         return handleMcpConfig(request, appId);
+      }
+
+      // Platform Skills.md — plain HTTP access for any agent
+      if (path === '/api/skills' && method === 'GET') {
+        return handleSkills();
       }
 
       // Onboarding instructions template (must be before /api/discover catch-all)
