@@ -3336,7 +3336,12 @@ async function executeSetVisibility(
     }
   }
 
-  await appsService.update(app.id, { visibility: dbVisibility as 'private' | 'unlisted' | 'public' });
+  // Set per-app billing clock when transitioning from private to published
+  const updatePayload: Record<string, unknown> = { visibility: dbVisibility };
+  if (dbVisibility !== 'private' && previousVisibility === 'private') {
+    updatePayload.hosting_last_billed_at = new Date().toISOString();
+  }
+  await appsService.update(app.id, updatePayload as { visibility: 'private' | 'unlisted' | 'public' });
 
   // If going TO published for the first time: set first_published_at
   if (dbVisibility === 'public' && previousVisibility !== 'public') {

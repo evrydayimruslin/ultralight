@@ -801,6 +801,11 @@ async function handleUpdateApp(request: Request, appId: string): Promise<Respons
           return error(depositErr, 402); // 402 Payment Required
         }
       }
+
+      // Set per-app billing clock when transitioning from private to published
+      if (filteredUpdates.visibility !== 'private' && app.visibility === 'private') {
+        filteredUpdates.hosting_last_billed_at = new Date().toISOString();
+      }
     }
 
     // Validate pricing_config structure if provided

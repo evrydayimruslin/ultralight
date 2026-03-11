@@ -1,6 +1,7 @@
 // Hosting Billing Service
-// Charges $0.025/MB/hour for ALL published apps + markdown pages (publisher pays).
-// Charges $0.0005/MB/hour for user data storage exceeding the 100MB free tier (user pays).
+// Per-app billing: each published app/page has its own billing clock (hosting_last_billed_at).
+// Charges $0.025/MB/hour for each published app/page from the moment it was published.
+// Charges $0.0005/MB/hour for user data storage exceeding the 100MB free tier (user-level clock).
 // Both charges debit from the same hosting_balance_cents pool.
 // No free tier for hosting — every published MB costs from the first byte.
 // 100MB free tier for user data — overage billed hourly.
@@ -115,70 +116,94 @@ export async function processHostingBilling(): Promise<BillingResult> {
     // 2. Process each user
     for (const user of users) {
       try {
-        // 2a. Calculate total storage for published (non-suspended) apps
+        // 2a. Get all published apps with per-app billing clocks
         const appStorageRes = await fetch(
           `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${user.id}&deleted_at=is.null&hosting_suspended=eq.false` +
-          `&visibility=in.(public,unlisted)&select=storage_bytes`,
+          `&visibility=in.(public,unlisted)&select=id,name,storage_bytes,hosting_last_billed_at`,
           { headers }
         );
 
-        let appBytes = 0;
+        let totalAppBytes = 0;
         let publishedAppCount = 0;
+        let hostingCostCents = 0;
+        const appCharges: Array<{ id: string; name: string; mb: number; hours: number; cents: number }> = [];
+        const now = new Date();
+
         if (appStorageRes.ok) {
-          const apps = await appStorageRes.json() as Array<{ storage_bytes: number | null }>;
+          const apps = await appStorageRes.json() as Array<{
+            id: string; name: string; storage_bytes: number | null; hosting_last_billed_at: string | null;
+          }>;
           publishedAppCount = apps.length;
-          appBytes = apps.reduce((sum, a) => sum + (a.storage_bytes || 0), 0);
+          for (const app of apps) {
+            const bytes = app.storage_bytes || 0;
+            totalAppBytes += bytes;
+            const mb = bytes / (1024 * 1024);
+            // Per-app billing clock — each app bills from its own last_billed_at
+            const lastBilled = app.hosting_last_billed_at ? new Date(app.hosting_last_billed_at) : now;
+            const hours = Math.max((now.getTime() - lastBilled.getTime()) / (1000 * 60 * 60), 0);
+            if (hours < 1 / 60) continue; // < 1 minute — skip
+            const cents = mb * RATE_CENTS_PER_MB_PER_HOUR * hours;
+            if (cents > 0) {
+              hostingCostCents += cents;
+              appCharges.push({ id: app.id, name: app.name, mb, hours, cents });
+            }
+          }
         }
 
-        // 2b. Calculate total storage for published (non-suspended) pages
+        // 2b. Get all published pages with per-page billing clocks
         const contentStorageRes = await fetch(
           `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${user.id}&type=eq.page&hosting_suspended=eq.false` +
-          `&visibility=eq.public&select=size`,
+          `&visibility=eq.public&select=id,title,size,hosting_last_billed_at`,
           { headers }
         );
 
-        let contentBytes = 0;
+        let totalContentBytes = 0;
+        const pageCharges: Array<{ id: string; name: string; mb: number; hours: number; cents: number }> = [];
+
         if (contentStorageRes.ok) {
-          const pages = await contentStorageRes.json() as Array<{ size: number | null }>;
-          contentBytes = pages.reduce((sum, p) => sum + (p.size || 0), 0);
+          const pages = await contentStorageRes.json() as Array<{
+            id: string; title: string; size: number | null; hosting_last_billed_at: string | null;
+          }>;
+          for (const page of pages) {
+            const bytes = page.size || 0;
+            totalContentBytes += bytes;
+            const mb = bytes / (1024 * 1024);
+            const lastBilled = page.hosting_last_billed_at ? new Date(page.hosting_last_billed_at) : now;
+            const hours = Math.max((now.getTime() - lastBilled.getTime()) / (1000 * 60 * 60), 0);
+            if (hours < 1 / 60) continue;
+            const cents = mb * RATE_CENTS_PER_MB_PER_HOUR * hours;
+            if (cents > 0) {
+              hostingCostCents += cents;
+              pageCharges.push({ id: page.id, name: page.title || 'Untitled page', mb, hours, cents });
+            }
+          }
         }
 
-        const totalHostingBytes = appBytes + contentBytes;
+        const totalHostingBytes = totalAppBytes + totalContentBytes;
+        const totalMb = totalHostingBytes / (1024 * 1024);
 
-        // 2c. Calculate data storage overage (user data exceeding 100MB combined free tier)
+        // 2c. Calculate data storage overage (user-level timing, not per-app)
         const combinedStorageBytes = (user.storage_used_bytes || 0) + (user.data_storage_used_bytes || 0);
         const freeBytes = user.storage_limit_bytes || COMBINED_FREE_TIER_BYTES;
         const overageBytes = Math.max(0, combinedStorageBytes - freeBytes);
         const dataOverageMb = overageBytes / (1024 * 1024);
 
-        // Skip users with nothing to bill (no published apps AND no data overage)
-        if (totalHostingBytes === 0 && overageBytes === 0) continue;
+        // Data overage uses user-level billing clock
+        const userLastBilled = new Date(user.hosting_last_billed_at);
+        const userHours = Math.max((now.getTime() - userLastBilled.getTime()) / (1000 * 60 * 60), 0);
+        const dataOverageCostCents = (userHours >= 1 / 60 && dataOverageMb > 0)
+          ? dataOverageMb * DATA_RATE * userHours
+          : 0;
 
-        // 2d. Calculate hours since last billed
-        const lastBilled = new Date(user.hosting_last_billed_at);
-        const now = new Date();
-        const hoursSinceLastBilled = Math.max(
-          (now.getTime() - lastBilled.getTime()) / (1000 * 60 * 60),
-          0
-        );
+        // Skip users with nothing to bill
+        if (hostingCostCents === 0 && dataOverageCostCents === 0) continue;
 
-        // Skip if less than 1 minute since last bill (prevent double-billing)
-        if (hoursSinceLastBilled < 1 / 60) continue;
-
-        // 2e. Calculate publisher hosting cost — every published MB costs from the first byte
-        const totalMb = totalHostingBytes / (1024 * 1024);
-        const hostingCostCents = totalMb * RATE_CENTS_PER_MB_PER_HOUR * hoursSinceLastBilled;
-
-        // 2f. Calculate user data overage cost — $0.0005/MB/hr for storage above 100MB
-        const dataOverageCostCents = dataOverageMb * DATA_RATE * hoursSinceLastBilled;
-
-        // Combined charge (hosting + data overage)
         const totalCostCents = hostingCostCents + dataOverageCostCents;
 
         // Round to 2 decimal places (sub-cent precision for fractional rates)
         const chargedCents = Math.max(Math.round(totalCostCents * 100) / 100, totalCostCents > 0 ? 0.01 : 0);
 
-        // 2e. Atomic debit via Postgres RPC — prevents race with concurrent webhook credits
+        // 2d. Atomic debit via Postgres RPC — prevents race with concurrent webhook credits
         const debitRes = await fetch(
           `${SUPABASE_URL}/rest/v1/rpc/debit_hosting_balance`,
           {
@@ -214,6 +239,23 @@ export async function processHostingBilling(): Promise<BillingResult> {
 
         const { new_balance: newBalance, was_depleted: suspended } = debitResult[0];
 
+        // Update per-app/page billing clocks after successful debit
+        const nowStr = now.toISOString();
+        if (appCharges.length > 0) {
+          const appIds = appCharges.map(a => a.id).join(',');
+          await fetch(
+            `${SUPABASE_URL}/rest/v1/apps?id=in.(${appIds})`,
+            { method: 'PATCH', headers: writeHeaders, body: JSON.stringify({ hosting_last_billed_at: nowStr }) }
+          ).catch(() => {});
+        }
+        if (pageCharges.length > 0) {
+          const pageIds = pageCharges.map(p => p.id).join(',');
+          await fetch(
+            `${SUPABASE_URL}/rest/v1/content?id=in.(${pageIds})`,
+            { method: 'PATCH', headers: writeHeaders, body: JSON.stringify({ hosting_last_billed_at: nowStr }) }
+          ).catch(() => {});
+        }
+
         // Log billing transaction(s) — separate line items for hosting vs data overage
         try {
           const txRows: Array<Record<string, unknown>> = [];
@@ -225,7 +267,12 @@ export async function processHostingBilling(): Promise<BillingResult> {
               description: `Hosting: ${publishedAppCount} app(s), ${totalMb.toFixed(2)} MB`,
               amount_cents: -Math.max(Math.round(hostingCostCents * 100) / 100, 0.01),
               balance_after: newBalance + (dataOverageCostCents > 0 ? Math.max(Math.round(dataOverageCostCents * 100) / 100, 0.01) : 0),
-              metadata: { hosting_mb: totalMb, hours: hoursSinceLastBilled, rate: RATE_CENTS_PER_MB_PER_HOUR, apps: publishedAppCount },
+              metadata: {
+                hosting_mb: totalMb,
+                rate: RATE_CENTS_PER_MB_PER_HOUR,
+                apps: appCharges.map(a => ({ id: a.id, name: a.name, mb: +a.mb.toFixed(4), hours: +a.hours.toFixed(2), cents: +a.cents.toFixed(4) })),
+                pages: pageCharges.length > 0 ? pageCharges.map(p => ({ id: p.id, name: p.name, mb: +p.mb.toFixed(4), hours: +p.hours.toFixed(2), cents: +p.cents.toFixed(4) })) : undefined,
+              },
             });
           }
           if (dataOverageCostCents > 0) {
@@ -236,7 +283,7 @@ export async function processHostingBilling(): Promise<BillingResult> {
               description: `Data storage overage: ${dataOverageMb.toFixed(2)} MB over ${(freeBytes / (1024 * 1024)).toFixed(0)} MB free`,
               amount_cents: -Math.max(Math.round(dataOverageCostCents * 100) / 100, 0.01),
               balance_after: newBalance,
-              metadata: { overage_mb: dataOverageMb, hours: hoursSinceLastBilled, rate: DATA_RATE },
+              metadata: { overage_mb: dataOverageMb, hours: userHours, rate: DATA_RATE },
             });
           }
           if (txRows.length > 0) {
@@ -350,24 +397,26 @@ export async function unsuspendContent(userId: string): Promise<{ apps: number; 
     'Prefer': 'return=representation',
   };
 
-  // Unsuspend apps
+  const nowStr = new Date().toISOString();
+
+  // Unsuspend apps and reset per-app billing clocks (don't charge for suspended period)
   const appsRes = await fetch(
     `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${userId}&hosting_suspended=eq.true&select=id`,
     {
       method: 'PATCH',
       headers: writeHeaders,
-      body: JSON.stringify({ hosting_suspended: false }),
+      body: JSON.stringify({ hosting_suspended: false, hosting_last_billed_at: nowStr }),
     }
   );
   const appsUnsuspended = appsRes.ok ? (await appsRes.json()).length : 0;
 
-  // Unsuspend pages
+  // Unsuspend pages and reset per-page billing clocks
   const pagesRes = await fetch(
     `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${userId}&type=eq.page&hosting_suspended=eq.true&select=id`,
     {
       method: 'PATCH',
       headers: writeHeaders,
-      body: JSON.stringify({ hosting_suspended: false }),
+      body: JSON.stringify({ hosting_suspended: false, hosting_last_billed_at: nowStr }),
     }
   );
   const pagesUnsuspended = pagesRes.ok ? (await pagesRes.json()).length : 0;
