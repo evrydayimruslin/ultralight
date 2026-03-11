@@ -187,8 +187,13 @@ export function createRateLimitService(): RateLimitService {
   return rateLimitService;
 }
 
+// UUID v4 pattern — the Supabase RPC expects p_user_id as UUID type
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
- * Check rate limit with fallback to in-memory if Supabase fails
+ * Check rate limit with fallback to in-memory if Supabase fails.
+ * Non-UUID keys (e.g. IP addresses for unauthenticated requests) use the
+ * in-memory limiter directly since the Supabase RPC requires a UUID.
  */
 export async function checkRateLimit(
   userId: string,
@@ -196,17 +201,21 @@ export async function checkRateLimit(
   limit?: number,
   windowMinutes?: number
 ): Promise<RateLimitResult> {
+  const config = RATE_LIMITS[endpoint] || { limit: 100, windowMinutes: 1 };
+  const effectiveLimit = limit ?? config.limit;
+  const effectiveWindow = windowMinutes ?? config.windowMinutes;
+
+  // Non-UUID keys (IP addresses, 'anonymous') can't be sent to the
+  // check_rate_limit RPC which expects p_user_id UUID — use in-memory.
+  if (!UUID_RE.test(userId)) {
+    return checkInMemoryLimit(userId, endpoint, effectiveLimit, effectiveWindow * 60 * 1000);
+  }
+
   try {
     const service = createRateLimitService();
     return await service.checkLimit(userId, endpoint, limit, windowMinutes);
   } catch {
     // Fallback to in-memory
-    const config = RATE_LIMITS[endpoint] || { limit: 100, windowMinutes: 1 };
-    return checkInMemoryLimit(
-      userId,
-      endpoint,
-      limit ?? config.limit,
-      (windowMinutes ?? config.windowMinutes) * 60 * 1000
-    );
+    return checkInMemoryLimit(userId, endpoint, effectiveLimit, effectiveWindow * 60 * 1000);
   }
 }
