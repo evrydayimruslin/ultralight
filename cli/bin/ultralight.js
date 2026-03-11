@@ -307,8 +307,9 @@ function getSkillsContent() {
 
 function registerPlugin(token, apiUrl) {
   const home = homedir();
-  const marketplaceDir = join(home, '.claude', 'plugins', 'marketplaces',
-    'claude-plugins-official', 'external_plugins');
+  const marketplaceBase = join(home, '.claude', 'plugins', 'marketplaces',
+    'claude-plugins-official');
+  const marketplaceDir = join(marketplaceBase, 'external_plugins');
 
   if (!existsSync(marketplaceDir)) {
     console.log(c.yellow('⚠ Claude Code plugin marketplace not found. Skipping plugin registration.'));
@@ -353,6 +354,29 @@ function registerPlugin(token, apiUrl) {
     // 4. Write 10 command files
     for (const [filename, content] of Object.entries(COMMANDS)) {
       writeFileSync(join(pluginBase, 'commands', filename), content);
+    }
+
+    // 5. Register in marketplace.json so Claude Code discovers the plugin
+    const manifestPath = join(marketplaceBase, '.claude-plugin', 'marketplace.json');
+    if (existsSync(manifestPath)) {
+      try {
+        const manifest = readJSON(manifestPath);
+        if (manifest && Array.isArray(manifest.plugins)) {
+          const exists = manifest.plugins.some((p) => p.name === 'ultralight');
+          if (!exists) {
+            manifest.plugins.push({
+              name: 'ultralight',
+              description: 'Ultralight — serverless MCP platform. Discover, build, test, and deploy AI agent tools instantly.',
+              category: 'development',
+              source: './external_plugins/ultralight',
+              homepage: 'https://ultralight-api-iikqz.ondigitalocean.app',
+            });
+            writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+          }
+        }
+      } catch {
+        // Non-critical — plugin files are still written
+      }
     }
 
     console.log(c.green('✓ Claude Code plugin registered'));
@@ -477,7 +501,8 @@ ${c.dim('Then run:')}
   const configTargets = [
     { path: join(home, '.claude.json'), name: 'Claude Code', key: 'mcpServers' },
     { path: join(home, '.claude', 'mcp.json'), name: 'Claude Code (mcp.json)', key: 'mcpServers' },
-    { path: join(home, '.config', 'Claude', 'claude_desktop_config.json'), name: 'Claude Desktop', key: 'mcpServers' },
+    { path: join(home, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'), name: 'Claude Desktop (macOS)', key: 'mcpServers' },
+    { path: join(home, '.config', 'Claude', 'claude_desktop_config.json'), name: 'Claude Desktop (Linux)', key: 'mcpServers' },
     ...(appData ? [{ path: join(appData, 'Claude', 'claude_desktop_config.json'), name: 'Claude Desktop (Windows)', key: 'mcpServers' }] : []),
     { path: join(process.cwd(), '.cursor', 'mcp.json'), name: 'Cursor (project)', key: 'mcpServers' },
   ];
@@ -512,29 +537,8 @@ ${c.dim('Then run:')}
     console.log(c.dim('    Cursor:         .cursor/mcp.json'));
   }
 
-  // Step 4: Register Claude Code plugin (skills + slash commands)
+  // Step 4: Register Claude Code plugin (skills + slash commands + marketplace manifest)
   const pluginRegistered = registerPlugin(token, API_URL);
-
-  // Step 4b: If plugin registered, remove duplicate from ~/.claude.json
-  // The plugin .mcp.json now handles the MCP connection for Claude Code
-  if (pluginRegistered) {
-    const claudeJsonPath = join(home, '.claude.json');
-    if (existsSync(claudeJsonPath)) {
-      try {
-        const claudeJson = readJSON(claudeJsonPath);
-        if (claudeJson && claudeJson.mcpServers && claudeJson.mcpServers.ultralight) {
-          delete claudeJson.mcpServers.ultralight;
-          if (Object.keys(claudeJson.mcpServers).length === 0) {
-            delete claudeJson.mcpServers;
-          }
-          writeFileSync(claudeJsonPath, JSON.stringify(claudeJson, null, 2));
-          console.log(c.dim('  Migrated MCP config from ~/.claude.json to plugin (avoids duplicate tools)'));
-        }
-      } catch {
-        // Non-critical — leave both configs in place
-      }
-    }
-  }
 
   // Step 5: Output results + agent bridge
   console.log('');
@@ -545,9 +549,9 @@ ${c.dim('Then run:')}
     console.log(`  ${c.dim('Tier:')}     ${userInfo.tier || 'free'}`);
   }
   if (pluginRegistered) {
-    console.log(`  ${c.dim('Plugin:')}   Registered (Connectors + Skills + 10 slash commands)`);
+    console.log(`  ${c.dim('Plugin:')}   Registered (Skills + 10 slash commands)`);
   }
-  console.log(`  ${c.dim('Restart:')}  Restart Claude Code for native MCP tools + plugin activation`);
+  console.log(`  ${c.dim('Restart:')}  Restart Claude Code / Claude Desktop for native MCP tools`);
   console.log('');
 
   // Agent bridge — structured output so the running agent can use tools immediately

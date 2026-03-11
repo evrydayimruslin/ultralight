@@ -1073,6 +1073,18 @@ function handleResourcesList(id: string | number, _userId: string): Response {
       description: 'All your owned and saved apps with their capabilities. Equivalent to ul.discover({ scope: "library" }) with no query.',
       mimeType: 'text/markdown',
     },
+    {
+      uri: 'ultralight://platform/memory.md',
+      name: 'Your Cross-Session Memory',
+      description: 'Persistent markdown notes, preferences, and project context. Maintained across all apps and sessions via ul.memory.',
+      mimeType: 'text/markdown',
+    },
+    {
+      uri: 'ultralight://platform/memory/kv',
+      name: 'Memory Key-Value Store',
+      description: 'Cross-app structured key-value memory. Lists all keys. Read individual keys at ultralight://platform/memory/kv/{key}.',
+      mimeType: 'application/json',
+    },
   ];
 
   return jsonRpcResponse(id, { resources });
@@ -1128,6 +1140,67 @@ async function handleResourcesRead(
       text: libraryMd,
     }];
     return jsonRpcResponse(id, { contents });
+  }
+
+  // Phase 1A: User's cross-session memory markdown
+  if (uri === 'ultralight://platform/memory.md') {
+    const r2Service = createR2Service();
+    let memoryMd: string | null = null;
+    try {
+      memoryMd = await r2Service.fetchTextFile(`users/${userId}/memory.md`);
+    } catch { /* not found */ }
+
+    if (!memoryMd) {
+      memoryMd = '# Memory\n\nNo notes yet. Use `ul.memory({ action: "write" })` to start.';
+    }
+
+    const contents: MCPResourceContent[] = [{
+      uri: uri,
+      mimeType: 'text/markdown',
+      text: memoryMd,
+    }];
+    return jsonRpcResponse(id, { contents });
+  }
+
+  // Phase 2B: Memory KV — list all keys
+  if (uri === 'ultralight://platform/memory/kv') {
+    const memoryService = createMemoryService();
+    try {
+      const entries = await memoryService.query(userId, { scope: 'user', limit: 200 });
+      const keys = entries.map((e: { key: string; value: unknown }) => e.key);
+      const contents: MCPResourceContent[] = [{
+        uri: uri,
+        mimeType: 'application/json',
+        text: JSON.stringify({ keys, count: keys.length }),
+      }];
+      return jsonRpcResponse(id, { contents });
+    } catch (err) {
+      return jsonRpcErrorResponse(id, INTERNAL_ERROR, `Failed to read memory KV: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  }
+
+  // Phase 2B: Memory KV — read individual key
+  const kvPrefix = 'ultralight://platform/memory/kv/';
+  if (uri.startsWith(kvPrefix)) {
+    const key = decodeURIComponent(uri.slice(kvPrefix.length));
+    if (!key) {
+      return jsonRpcErrorResponse(id, INVALID_PARAMS, 'Missing key in URI');
+    }
+    const memoryService = createMemoryService();
+    try {
+      const value = await memoryService.recall(userId, 'user', key);
+      if (value === null || value === undefined) {
+        return jsonRpcErrorResponse(id, NOT_FOUND, `Memory key not found: ${key}`);
+      }
+      const contents: MCPResourceContent[] = [{
+        uri: uri,
+        mimeType: 'application/json',
+        text: JSON.stringify(value),
+      }];
+      return jsonRpcResponse(id, { contents });
+    } catch (err) {
+      return jsonRpcErrorResponse(id, INTERNAL_ERROR, `Failed to read memory key: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
   }
 
   return jsonRpcErrorResponse(id, NOT_FOUND, `Resource not found: ${uri}`);

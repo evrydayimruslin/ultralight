@@ -222,6 +222,8 @@ const INVALID_REQUEST = -32600;
 const METHOD_NOT_FOUND = -32601;
 const INVALID_PARAMS = -32602;
 const INTERNAL_ERROR = -32603;
+const AUTH_REQUIRED = -32001;
+const NOT_FOUND = -32002;
 const RATE_LIMITED = -32000;
 
 // Session sequence counters — tracks call order within a session.
@@ -784,7 +786,7 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
         return handleResourcesList(id, appId, app);
 
       case 'resources/read':
-        return handleResourcesRead(id, appId, app, params);
+        return await handleResourcesRead(id, appId, app, params, userId);
 
       default:
         return jsonRpcErrorResponse(id, METHOD_NOT_FOUND, `Method not found: ${rpcMethod}`);
@@ -852,11 +854,11 @@ function handleInitialize(
 function handleResourcesList(
   id: string | number,
   appId: string,
-  app: { name: string; slug: string; skills_md?: string | null }
+  app: { name: string; slug: string; skills_md?: string | null; manifest?: string | null }
 ): Response {
   const resources: MCPResourceDescriptor[] = [];
 
-  // Always advertise skills.md — even if not yet generated, so clients know it exists
+  // Skills.md — auto-generated function documentation
   if (app.skills_md) {
     resources.push({
       uri: `ultralight://app/${appId}/skills.md`,
@@ -866,18 +868,35 @@ function handleResourcesList(
     });
   }
 
+  // Phase 1B: Manifest — structured function schemas + app metadata
+  resources.push({
+    uri: `ultralight://app/${appId}/manifest.json`,
+    name: `${app.name || app.slug} — App Manifest`,
+    description: 'Function definitions, parameter schemas, and app configuration. Machine-readable complement to skills.md.',
+    mimeType: 'application/json',
+  });
+
+  // Phase 2A: Storage — browsable app data
+  resources.push({
+    uri: `ultralight://app/${appId}/data`,
+    name: `${app.name || app.slug} — Stored Data`,
+    description: 'List of all storage keys for this app. Read individual keys at ultralight://app/{appId}/data/{key}.',
+    mimeType: 'application/json',
+  });
+
   return jsonRpcResponse(id, { resources });
 }
 
 /**
  * Handle resources/read request - return resource content
  */
-function handleResourcesRead(
+async function handleResourcesRead(
   id: string | number,
   appId: string,
-  app: { name: string; slug: string; skills_md?: string | null },
-  params: unknown
-): Response {
+  app: { name: string; slug: string; skills_md?: string | null; manifest?: string | null; current_version?: string; visibility?: string; exports?: string[]; total_runs?: number },
+  params: unknown,
+  userId?: string
+): Promise<Response> {
   const readParams = params as { uri?: string } | undefined;
   const uri = readParams?.uri;
 
@@ -885,8 +904,8 @@ function handleResourcesRead(
     return jsonRpcErrorResponse(id, INVALID_PARAMS, 'Missing required parameter: uri');
   }
 
+  // Skills.md — auto-generated function documentation
   const expectedSkillsUri = `ultralight://app/${appId}/skills.md`;
-
   if (uri === expectedSkillsUri) {
     if (!app.skills_md) {
       return jsonRpcErrorResponse(id, -32002, 'Skills.md not yet generated for this app');
@@ -899,6 +918,79 @@ function handleResourcesRead(
     }];
 
     return jsonRpcResponse(id, { contents });
+  }
+
+  // Phase 1B: Manifest — structured function schemas + runtime metadata
+  if (uri === `ultralight://app/${appId}/manifest.json`) {
+    let manifest: Record<string, unknown> = {};
+    if (app.manifest) {
+      try {
+        manifest = JSON.parse(app.manifest);
+      } catch { /* invalid manifest JSON, return empty */ }
+    }
+    // Enrich with runtime metadata
+    manifest._meta = {
+      app_id: appId,
+      name: app.name,
+      slug: app.slug,
+      version: app.current_version || null,
+      visibility: app.visibility || null,
+      exports: app.exports || [],
+      total_runs: app.total_runs || 0,
+    };
+
+    const contents: MCPResourceContent[] = [{
+      uri: uri,
+      mimeType: 'application/json',
+      text: JSON.stringify(manifest, null, 2),
+    }];
+    return jsonRpcResponse(id, { contents });
+  }
+
+  // Phase 2A: Storage key listing
+  if (uri === `ultralight://app/${appId}/data`) {
+    if (!userId) {
+      return jsonRpcErrorResponse(id, AUTH_REQUIRED, 'Authentication required to access app storage');
+    }
+    try {
+      const appData = createAppDataService(appId, userId);
+      const keys = await appData.list();
+      const contents: MCPResourceContent[] = [{
+        uri: uri,
+        mimeType: 'application/json',
+        text: JSON.stringify({ keys, count: keys.length }),
+      }];
+      return jsonRpcResponse(id, { contents });
+    } catch (err) {
+      return jsonRpcErrorResponse(id, INTERNAL_ERROR, `Failed to list storage keys: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  }
+
+  // Phase 2A: Individual storage key read
+  const dataPrefix = `ultralight://app/${appId}/data/`;
+  if (uri.startsWith(dataPrefix)) {
+    if (!userId) {
+      return jsonRpcErrorResponse(id, AUTH_REQUIRED, 'Authentication required to access app storage');
+    }
+    const key = decodeURIComponent(uri.slice(dataPrefix.length));
+    if (!key) {
+      return jsonRpcErrorResponse(id, INVALID_PARAMS, 'Missing key in URI');
+    }
+    try {
+      const appData = createAppDataService(appId, userId);
+      const value = await appData.load(key);
+      if (value === null || value === undefined) {
+        return jsonRpcErrorResponse(id, NOT_FOUND, `Storage key not found: ${key}`);
+      }
+      const contents: MCPResourceContent[] = [{
+        uri: uri,
+        mimeType: 'application/json',
+        text: JSON.stringify(value),
+      }];
+      return jsonRpcResponse(id, { contents });
+    } catch (err) {
+      return jsonRpcErrorResponse(id, INTERNAL_ERROR, `Failed to read storage key: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
   }
 
   return jsonRpcErrorResponse(id, -32002, `Resource not found: ${uri}`);
