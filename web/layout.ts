@@ -898,6 +898,17 @@ export function getLayoutHTML(options: {
       50% { opacity: 0.5; }
     }
 
+    .btn-spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid currentColor;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      vertical-align: middle;
+    }
+
     @keyframes slide-up {
       from { opacity: 0; transform: translateY(12px); }
       to   { opacity: 1; transform: translateY(0); }
@@ -1470,12 +1481,26 @@ export function getLayoutHTML(options: {
     }
 
     .marketplace-card-functions {
-      font-size: 12px;
-      font-family: var(--font-mono);
+      font-size: 13px;
       color: var(--text-secondary);
-      line-height: 1.6;
+      line-height: 1.7;
       margin-bottom: var(--space-3);
-      white-space: pre-wrap;
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-1);
+    }
+    .marketplace-fn-item {
+      display: flex;
+      gap: var(--space-2);
+      align-items: baseline;
+    }
+    .marketplace-fn-name {
+      font-weight: 600;
+      color: var(--text-primary);
+      white-space: nowrap;
+    }
+    .marketplace-fn-desc {
+      color: var(--text-muted);
     }
 
     /* ============================================
@@ -3275,9 +3300,10 @@ export function getLayoutHTML(options: {
 
       // Apps: expandable accordion
       var copyIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+      var wasTruncated = desc.length > 120;
       var detailHtml = '<div class="marketplace-card-detail" style="display:none">'
-        + (desc ? '<div class="marketplace-card-full-desc">' + escapeHtml(desc) + '</div>' : '')
-        + '<div class="marketplace-card-functions" id="mp-fns-' + item.id + '">Loading functions...</div>'
+        + (wasTruncated ? '<div class="marketplace-card-full-desc">' + escapeHtml(desc) + '</div>' : '')
+        + '<div class="marketplace-card-functions" id="mp-fns-' + item.id + '"><span class="btn-spinner" style="width:12px;height:12px;border-width:1.5px;"></span></div>'
         + '<button class="btn btn-primary" style="gap:var(--space-2);margin-top:var(--space-3);border-radius:0;" onclick="event.stopPropagation(); copyMarketplaceInstructions(\\\'' + item.id + '\\\', this)">'
         + copyIcon
         + '<span>Copy Agent Instructions</span>'
@@ -3373,18 +3399,39 @@ export function getLayoutHTML(options: {
             .then(function(r) { return r.json(); })
             .then(function(data) {
               fnsEl.dataset.loaded = 'true';
-              // Extract function lines from instructions text
               var text = data.instructions || '';
               var fnStart = text.indexOf('## Available Functions');
               var fnEnd = text.indexOf('## Connect');
-              if (fnStart !== -1) {
-                var fnBlock = text.substring(fnStart + '## Available Functions'.length, fnEnd !== -1 ? fnEnd : text.length);
-                fnsEl.textContent = fnBlock.trim();
-              } else {
-                fnsEl.textContent = '';
+              if (fnStart === -1) { fnsEl.innerHTML = ''; return; }
+              var fnBlock = text.substring(fnStart + '## Available Functions'.length, fnEnd !== -1 ? fnEnd : text.length).trim();
+              var lines = fnBlock.split('\\n').filter(function(l) { return l.trim().indexOf('- ') === 0; });
+              var html = '';
+              for (var li = 0; li < lines.length; li++) {
+                var line = lines[li].trim().substring(2); // remove "- "
+                var fnName = '';
+                var fnDesc = '';
+                var parenIdx = line.indexOf('(');
+                var dashIdx = line.indexOf(' \\u2014 ');
+                var dashLen = 3;
+                if (dashIdx === -1) { dashIdx = line.indexOf(' -- '); dashLen = 4; }
+                if (parenIdx !== -1) {
+                  fnName = line.substring(0, parenIdx);
+                } else if (dashIdx !== -1) {
+                  fnName = line.substring(0, dashIdx);
+                } else {
+                  fnName = line;
+                }
+                if (dashIdx !== -1) {
+                  fnDesc = line.substring(dashIdx + dashLen).trim();
+                }
+                html += '<div class="marketplace-fn-item">'
+                  + '<span class="marketplace-fn-name">' + escapeHtml(fnName) + '</span>'
+                  + (fnDesc ? '<span class="marketplace-fn-desc">\\u2014 ' + escapeHtml(fnDesc) + '</span>' : '')
+                  + '</div>';
               }
+              fnsEl.innerHTML = html || '';
             })
-            .catch(function() { fnsEl.textContent = ''; });
+            .catch(function() { fnsEl.innerHTML = ''; });
         }
       }
     }
@@ -3461,6 +3508,7 @@ export function getLayoutHTML(options: {
     async function copyMarketplaceInstructions(appId, btn) {
       var origHTML = btn.innerHTML;
       btn.style.pointerEvents = 'none';
+      btn.innerHTML = '<span class="btn-spinner"></span> <span>Generating...</span>';
       try {
         // Fetch instructions and ensure API key exist in parallel
         var results = await Promise.all([
