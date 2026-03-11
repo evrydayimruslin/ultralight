@@ -3390,35 +3390,33 @@ export function getLayoutHTML(options: {
     }
     window.toggleMarketplaceCard = toggleMarketplaceCard;
 
-    // Ensure user has a valid API key — validate cached key, extract from instructions, or create
+    // Ensure user has a valid API key — validate against the "default" token shown in Settings
     async function ensureApiKey() {
       if (!authToken) return '';
       var cached = localStorage.getItem('ultralight_api_key');
 
-      // Validate cached key against server's current token list
-      if (cached) {
-        try {
-          var listRes = await fetch('/api/user/tokens', {
-            headers: { 'Authorization': 'Bearer ' + authToken },
-          });
-          if (listRes.ok) {
-            var listData = await listRes.json();
-            var tokens = listData.tokens || listData;
+      // Always validate cached key against the user's primary "default" token
+      try {
+        var listRes = await fetch('/api/user/tokens', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (listRes.ok) {
+          var listData = await listRes.json();
+          var tokens = listData.tokens || listData;
+          // Find the "default" token — this is the one shown in Settings > API Key
+          var defaultToken = tokens.find(function(t) { return t.name === 'default'; }) || tokens[0];
+          if (defaultToken && cached) {
             var prefix = cached.substring(0, 11); // "ul_" + 8 hex chars
-            var valid = tokens.some(function(t) { return t.token_prefix === prefix; });
-            if (valid) return cached;
-            // Key is stale — clear it
+            if (defaultToken.token_prefix === prefix) return cached;
+            // Cached key doesn't match current default — stale
             localStorage.removeItem('ultralight_api_key');
             cached = null;
           }
-        } catch { /* if validation fails, try other sources */ }
-      }
+        }
+      } catch { /* if validation fails, try other sources */ }
 
-      // Extract from cached platform setup instructions
-      if (setupCommandStr) {
-        var m = setupCommandStr.match(/ul_[0-9a-f]{32}/);
-        if (m) { localStorage.setItem('ultralight_api_key', m[0]); return m[0]; }
-      }
+      // If we still have a cached key (validation request failed), use it
+      if (cached) return cached;
 
       // Auto-create a "default" key (same as Settings > API Key page)
       try {
