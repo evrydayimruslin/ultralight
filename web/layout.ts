@@ -1411,6 +1411,26 @@ export function getLayoutHTML(options: {
       align-items: center;
       gap: var(--space-2);
       margin-bottom: var(--space-2);
+      position: relative;
+    }
+
+    .marketplace-heart {
+      position: absolute;
+      right: 0;
+      top: 0;
+      cursor: pointer;
+      padding: 2px;
+      color: var(--border);
+      transition: color 0.15s ease;
+    }
+    .marketplace-heart:hover {
+      color: var(--text-tertiary);
+    }
+    .marketplace-heart.saved {
+      color: #e06b6b;
+    }
+    .marketplace-heart.saved:hover {
+      color: #c55;
     }
 
     .marketplace-card-name {
@@ -3241,6 +3261,7 @@ export function getLayoutHTML(options: {
         renderAppList();
       } else if (section === 'marketplace') {
         history.replaceState({}, '', '/marketplace');
+        loadSavedAppIds();
         loadMarketplace('', 'all');
       } else if (section === 'keys') {
         history.replaceState({}, '', '/keys');
@@ -3275,6 +3296,55 @@ export function getLayoutHTML(options: {
     var marketplaceType = 'all';
     var marketplaceDebounce = null;
     var marketplaceLoaded = false;
+    var savedAppIds = new Set();
+
+    // Load user's saved app IDs for heart state
+    async function loadSavedAppIds() {
+      if (!authToken) return;
+      try {
+        var res = await fetch('/api/apps/me/library?tab=saved', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (res.ok) {
+          var items = await res.json();
+          savedAppIds = new Set(items.filter(function(i) { return i.type === 'app'; }).map(function(i) { return i.id; }));
+          // Update any visible hearts
+          document.querySelectorAll('.marketplace-heart').forEach(function(el) {
+            var isSaved = savedAppIds.has(el.dataset.appId);
+            el.classList.toggle('saved', isSaved);
+            var svg = el.querySelector('path');
+            if (svg) svg.setAttribute('fill', isSaved ? 'currentColor' : 'none');
+          });
+        }
+      } catch(e) {}
+    }
+
+    function toggleSaveApp(appId, el) {
+      if (!authToken) { showToast('Sign in to save apps', 'error'); return; }
+      var isSaved = savedAppIds.has(appId);
+      var method = isSaved ? 'DELETE' : 'POST';
+      fetch('/api/apps/' + appId + '/save', {
+        method: method,
+        headers: { 'Authorization': 'Bearer ' + authToken },
+      }).then(function(res) {
+        if (res.ok) {
+          if (isSaved) {
+            savedAppIds.delete(appId);
+            el.classList.remove('saved');
+          } else {
+            savedAppIds.add(appId);
+            el.classList.add('saved');
+          }
+          // Update SVG fill
+          var svg = el.querySelector('path');
+          if (svg) svg.setAttribute('fill', savedAppIds.has(appId) ? 'currentColor' : 'none');
+          // Invalidate library cache so Saved tab refreshes
+          savedItems = [];
+        }
+      }).catch(function() {
+        showToast('Failed to save app', 'error');
+      });
+    }
 
     function renderMarketplaceCard(item) {
       var badge = item.type === 'app' ? 'App' : 'Skill';
@@ -3316,10 +3386,16 @@ export function getLayoutHTML(options: {
         + '</button>'
         + '</div>';
 
+      var heartSaved = savedAppIds.has(item.id) ? ' saved' : '';
+      var heartSvg = '<span class="marketplace-heart' + heartSaved + '" data-app-id="' + item.id + '" onclick="event.stopPropagation(); toggleSaveApp(\\\'' + item.id + '\\\', this)" title="Save to Library">'
+        + '<svg width="16" height="16" viewBox="0 0 24 24" fill="' + (heartSaved ? 'currentColor' : 'none') + '" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>'
+        + '</span>';
+
       return '<div class="marketplace-card" data-app-id="' + item.id + '" onclick="toggleMarketplaceCard(\\\'' + item.id + '\\\')">'
         + '<div class="marketplace-card-header">'
         + '<span class="marketplace-card-name">' + escapeHtml(item.name || item.slug) + '</span>'
         + '<span class="marketplace-badge">' + badge + '</span>'
+        + heartSvg
         + '</div>'
         + (shortDesc ? '<div class="marketplace-card-desc">' + escapeHtml(shortDesc) + '</div>' : '')
         + stats
@@ -3990,6 +4066,10 @@ export function getLayoutHTML(options: {
     async function loadLibraryTab(tab) {
       var list = document.getElementById('appList');
       if (!list) return;
+      if (!authToken) {
+        list.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Sign in to view your ' + tab + ' items.</div>';
+        return;
+      }
 
       // Return cached data if available
       var cached = tab === 'saved' ? savedItems : sharedItems;

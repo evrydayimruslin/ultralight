@@ -217,6 +217,16 @@ export async function handleApps(request: Request): Promise<Response> {
     if (subPath === '/health' && method === 'PATCH') {
       return handleUpdateHealth(request, appId);
     }
+
+    // POST /api/apps/:appId/save - Save app to user's library
+    if (subPath === '/save' && method === 'POST') {
+      return handleSaveApp(request, appId);
+    }
+
+    // DELETE /api/apps/:appId/save - Remove app from user's library
+    if (subPath === '/save' && method === 'DELETE') {
+      return handleUnsaveApp(request, appId);
+    }
   }
 
   return error('Not found', 404);
@@ -487,6 +497,76 @@ async function handleSharedTab(
   ];
 
   return json(items);
+}
+
+/**
+ * POST /api/apps/:appId/save — Save app to user's library
+ */
+async function handleSaveApp(request: Request, appId: string): Promise<Response> {
+  let user;
+  try {
+    user = await authenticate(request);
+  } catch {
+    return error('Authentication required', 401);
+  }
+
+  // @ts-ignore
+  const Deno = globalThis.Deno;
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+
+  try {
+    const res = await fetch(`${supabaseUrl}/rest/v1/user_app_library`, {
+      method: 'POST',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates',
+      },
+      body: JSON.stringify({ user_id: user.id, app_id: appId, source: 'like' }),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      return error('Failed to save app: ' + err, 500);
+    }
+    return json({ saved: true });
+  } catch (err) {
+    return error('Failed to save app', 500);
+  }
+}
+
+/**
+ * DELETE /api/apps/:appId/save — Remove app from user's library
+ */
+async function handleUnsaveApp(request: Request, appId: string): Promise<Response> {
+  let user;
+  try {
+    user = await authenticate(request);
+  } catch {
+    return error('Authentication required', 401);
+  }
+
+  // @ts-ignore
+  const Deno = globalThis.Deno;
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+
+  try {
+    await fetch(
+      `${supabaseUrl}/rest/v1/user_app_library?user_id=eq.${user.id}&app_id=eq.${appId}`,
+      {
+        method: 'DELETE',
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+        },
+      }
+    );
+    return json({ saved: false });
+  } catch (err) {
+    return error('Failed to unsave app', 500);
+  }
 }
 
 /**
