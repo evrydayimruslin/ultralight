@@ -3247,7 +3247,7 @@ export function getLayoutHTML(options: {
         if (tagStr) stats = '<div class="marketplace-stats">' + tagStr + '</div>';
       }
       var clickAction = item.type === 'app'
-        ? 'navigateToApp(\\\'' + item.id + '\\\')'
+        ? 'window.location.href = \\\'/app/' + item.id + '\\\''
         : 'window.open(\\\'' + (item.url || '/p/' + item.slug) + '\\\', \\\'_blank\\\')';
       var copyBtn = item.type === 'app'
         ? '<button class="marketplace-copy-btn" onclick="event.stopPropagation(); copyAppInstructions(\\\'' + item.id + '\\\', this)">Copy</button>'
