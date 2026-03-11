@@ -531,10 +531,19 @@ async function handleGetAppInstructions(request: Request, appId: string): Promis
     if (manifest && typeof manifest === 'object' && manifest.functions) {
       const fns = manifest.functions as Record<string, Record<string, unknown>>;
       for (const [fnName, fnMeta] of Object.entries(fns)) {
-        const params = fnMeta.parameters as Array<{ name: string; type?: string; required?: boolean }> | undefined;
-        const paramStr = params
-          ? params.map(p => `${p.name}${p.required === false ? '?' : ''}: ${p.type || 'any'}`).join(', ')
-          : '';
+        // Parameters can be an array [{name, type}] or an object {name: {type, required}}
+        let paramStr = '';
+        const rawParams = fnMeta.parameters;
+        if (Array.isArray(rawParams)) {
+          paramStr = rawParams.map((p: Record<string, unknown>) =>
+            `${p.name}${p.required === false ? '?' : ''}: ${p.type || 'any'}`
+          ).join(', ');
+        } else if (rawParams && typeof rawParams === 'object') {
+          paramStr = Object.entries(rawParams as Record<string, Record<string, unknown>>)
+            .map(([pName, pMeta]) =>
+              `${pName}${pMeta.required === false ? '?' : ''}: ${pMeta.type || 'any'}`
+            ).join(', ');
+        }
         const fnDesc = fnMeta.description ? ` — ${fnMeta.description}` : '';
         fnLines.push(`- ${fnName}({ ${paramStr} })${fnDesc}`);
       }
