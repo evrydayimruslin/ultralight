@@ -3375,10 +3375,10 @@ export function getLayoutHTML(options: {
               fnsEl.dataset.loaded = 'true';
               // Extract function lines from instructions text
               var text = data.instructions || '';
-              var fnStart = text.indexOf('Available functions:');
-              var fnEnd = text.indexOf('Example call:');
+              var fnStart = text.indexOf('## Available Functions');
+              var fnEnd = text.indexOf('## Connect');
               if (fnStart !== -1) {
-                var fnBlock = text.substring(fnStart + 'Available functions:'.length, fnEnd !== -1 ? fnEnd : text.length);
+                var fnBlock = text.substring(fnStart + '## Available Functions'.length, fnEnd !== -1 ? fnEnd : text.length);
                 fnsEl.textContent = fnBlock.trim();
               } else {
                 fnsEl.textContent = '';
@@ -3390,20 +3390,37 @@ export function getLayoutHTML(options: {
     }
     window.toggleMarketplaceCard = toggleMarketplaceCard;
 
-    // Ensure user has an API key — check cache, extract from instructions, or auto-create
+    // Ensure user has a valid API key — validate cached key, extract from instructions, or create
     async function ensureApiKey() {
-      // 1. Check localStorage
+      if (!authToken) return '';
       var cached = localStorage.getItem('ultralight_api_key');
-      if (cached) return cached;
 
-      // 2. Extract from cached platform setup instructions
+      // Validate cached key against server's current token list
+      if (cached) {
+        try {
+          var listRes = await fetch('/api/user/tokens', {
+            headers: { 'Authorization': 'Bearer ' + authToken },
+          });
+          if (listRes.ok) {
+            var listData = await listRes.json();
+            var tokens = listData.tokens || listData;
+            var prefix = cached.substring(0, 11); // "ul_" + 8 hex chars
+            var valid = tokens.some(function(t) { return t.token_prefix === prefix; });
+            if (valid) return cached;
+            // Key is stale — clear it
+            localStorage.removeItem('ultralight_api_key');
+            cached = null;
+          }
+        } catch { /* if validation fails, try other sources */ }
+      }
+
+      // Extract from cached platform setup instructions
       if (setupCommandStr) {
         var m = setupCommandStr.match(/ul_[0-9a-f]{32}/);
         if (m) { localStorage.setItem('ultralight_api_key', m[0]); return m[0]; }
       }
 
-      // 3. Auto-create a "default" key (same as Settings > API Key page)
-      if (!authToken) return '';
+      // Auto-create a "default" key (same as Settings > API Key page)
       try {
         var createRes = await fetch('/api/user/tokens', {
           method: 'POST',
@@ -3415,7 +3432,6 @@ export function getLayoutHTML(options: {
           var newKey = createData.plaintext_token;
           if (newKey) { localStorage.setItem('ultralight_api_key', newKey); return newKey; }
         }
-        // 409 = key already exists but we don't have plaintext — fall through
       } catch { /* fall through */ }
       return '';
     }

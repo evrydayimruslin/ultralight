@@ -523,37 +523,54 @@ async function handleGetAppInstructions(request: Request, appId: string): Promis
     const name = app.name || app.slug || 'Untitled';
     const desc = app.description || '';
 
-    // Build function list from best source: manifest > skills_parsed > exports
+    // Build function list from best source: manifest > skills_parsed (non-empty) > exports
     const fnLines: string[] = [];
-    const manifest = app.manifest as Record<string, unknown> | null;
+    let rawManifest = app.manifest;
+    // Handle manifest stored as JSON string
+    if (typeof rawManifest === 'string') {
+      try { rawManifest = JSON.parse(rawManifest); } catch { rawManifest = null; }
+    }
+    const manifest = rawManifest as Record<string, unknown> | null;
     const skillsParsed = app.skills_parsed as Record<string, unknown> | null;
 
     if (manifest && typeof manifest === 'object' && manifest.functions) {
       const fns = manifest.functions as Record<string, Record<string, unknown>>;
       for (const [fnName, fnMeta] of Object.entries(fns)) {
-        // Parameters can be an array [{name, type}] or an object {name: {type, required}}
-        let paramStr = '';
-        const rawParams = fnMeta.parameters;
-        if (Array.isArray(rawParams)) {
-          paramStr = rawParams.map((p: Record<string, unknown>) =>
-            `${p.name}${p.required === false ? '?' : ''}: ${p.type || 'any'}`
-          ).join(', ');
-        } else if (rawParams && typeof rawParams === 'object') {
-          paramStr = Object.entries(rawParams as Record<string, Record<string, unknown>>)
-            .map(([pName, pMeta]) =>
-              `${pName}${pMeta.required === false ? '?' : ''}: ${pMeta.type || 'any'}`
+        try {
+          // Parameters can be an array [{name, type}] or an object {name: {type, required}}
+          let paramStr = '';
+          const rawParams = fnMeta.parameters;
+          if (Array.isArray(rawParams)) {
+            paramStr = rawParams.map((p: Record<string, unknown>) =>
+              `${p.name}${p.required === false ? '?' : ''}: ${p.type || 'any'}`
             ).join(', ');
+          } else if (rawParams && typeof rawParams === 'object') {
+            paramStr = Object.entries(rawParams as Record<string, Record<string, unknown>>)
+              .map(([pName, pMeta]) =>
+                `${pName}${pMeta.required === false ? '?' : ''}: ${pMeta.type || 'any'}`
+              ).join(', ');
+          }
+          const fnDesc = fnMeta.description ? ` — ${fnMeta.description}` : '';
+          fnLines.push(`- ${fnName}({ ${paramStr} })${fnDesc}`);
+        } catch (fnErr) {
+          // Skip malformed function, log for debugging
+          console.warn(`[INSTRUCTIONS] Error parsing function ${fnName}:`, fnErr);
+          fnLines.push(`- ${fnName}()`);
         }
-        const fnDesc = fnMeta.description ? ` — ${fnMeta.description}` : '';
-        fnLines.push(`- ${fnName}({ ${paramStr} })${fnDesc}`);
       }
-    } else if (skillsParsed && typeof skillsParsed === 'object' && Array.isArray(skillsParsed.functions)) {
+    } else if (
+      skillsParsed && typeof skillsParsed === 'object' &&
+      Array.isArray(skillsParsed.functions) && (skillsParsed.functions as unknown[]).length > 0
+    ) {
       for (const fn of skillsParsed.functions as Array<{ name: string; description?: string; parameters?: Array<{ name: string }> }>) {
         const paramStr = fn.parameters ? fn.parameters.map(p => p.name).join(', ') : '';
         const fnDesc = fn.description ? ` — ${fn.description}` : '';
         fnLines.push(`- ${fn.name}(${paramStr ? `{ ${paramStr} }` : ''})${fnDesc}`);
       }
-    } else if (Array.isArray(app.exports)) {
+    }
+
+    // Always fall through to exports if no functions found yet
+    if (fnLines.length === 0 && Array.isArray(app.exports)) {
       for (const exp of app.exports) {
         fnLines.push(`- ${exp}()`);
       }
