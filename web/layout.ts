@@ -3397,9 +3397,14 @@ export function getLayoutHTML(options: {
         var res = await fetch('/api/apps/' + appId + '/instructions');
         if (!res.ok) throw new Error('Failed');
         var data = await res.json();
-        // Inject user's API key (ul_*) if available, fall back to session token
+        // Inject user's API key (ul_*) — try stored key, then extract from setup instructions, then session token
         var text = data.instructions || '';
-        var apiKey = localStorage.getItem('ultralight_api_key') || authToken || '';
+        var apiKey = localStorage.getItem('ultralight_api_key') || '';
+        if (!apiKey && setupCommandStr) {
+          var m = setupCommandStr.match(/ul_[0-9a-f]{32}/);
+          if (m) apiKey = m[0];
+        }
+        if (!apiKey) apiKey = authToken || '';
         if (apiKey) {
           text = text.replace(/\\{TOKEN\\}/g, apiKey);
         }
@@ -5662,6 +5667,7 @@ export function getLayoutHTML(options: {
         var createData = await createRes.json();
         currentApiKey = createData.token;
         apiKeyPlaintext = createData.plaintext_token || null;
+        if (apiKeyPlaintext) localStorage.setItem('ultralight_api_key', apiKeyPlaintext);
         apiKeyVisible = false;
         renderApiKeyDisplay();
       } catch { if (valEl) valEl.textContent = 'Failed to load'; }
@@ -5724,7 +5730,11 @@ export function getLayoutHTML(options: {
         apiKeyVisible = false;
         renderApiKeyDisplay();
 
+        // Update stored API key and invalidate cached instructions
         if (apiKeyPlaintext) {
+          localStorage.setItem('ultralight_api_key', apiKeyPlaintext);
+          localStorage.removeItem('ultralight_setup_v4');
+          setupCommandStr = '';
           try {
             await navigator.clipboard.writeText(apiKeyPlaintext);
             showToast('New API key generated and copied to clipboard!');
