@@ -3584,6 +3584,7 @@ export function getLayoutHTML(options: {
       }
     }
     window.copyMarketplaceInstructions = copyMarketplaceInstructions;
+    window.toggleSaveApp = toggleSaveApp;
 
     // Marketplace search input
     var mpSearchInput = document.getElementById('marketplaceSearch');
