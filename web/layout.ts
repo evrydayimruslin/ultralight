@@ -3390,21 +3390,47 @@ export function getLayoutHTML(options: {
     }
     window.toggleMarketplaceCard = toggleMarketplaceCard;
 
+    // Ensure user has an API key — check cache, extract from instructions, or auto-create
+    async function ensureApiKey() {
+      // 1. Check localStorage
+      var cached = localStorage.getItem('ultralight_api_key');
+      if (cached) return cached;
+
+      // 2. Extract from cached platform setup instructions
+      if (setupCommandStr) {
+        var m = setupCommandStr.match(/ul_[0-9a-f]{32}/);
+        if (m) { localStorage.setItem('ultralight_api_key', m[0]); return m[0]; }
+      }
+
+      // 3. Auto-create a "default" key (same as Settings > API Key page)
+      if (!authToken) return '';
+      try {
+        var createRes = await fetch('/api/user/tokens', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'default' }),
+        });
+        if (createRes.ok) {
+          var createData = await createRes.json();
+          var newKey = createData.plaintext_token;
+          if (newKey) { localStorage.setItem('ultralight_api_key', newKey); return newKey; }
+        }
+        // 409 = key already exists but we don't have plaintext — fall through
+      } catch { /* fall through */ }
+      return '';
+    }
+
     async function copyMarketplaceInstructions(appId, btn) {
       var origHTML = btn.innerHTML;
       btn.style.pointerEvents = 'none';
       try {
-        var res = await fetch('/api/apps/' + appId + '/instructions');
-        if (!res.ok) throw new Error('Failed');
-        var data = await res.json();
-        // Inject user's API key (ul_*) — try stored key, then extract from setup instructions, then session token
-        var text = data.instructions || '';
-        var apiKey = localStorage.getItem('ultralight_api_key') || '';
-        if (!apiKey && setupCommandStr) {
-          var m = setupCommandStr.match(/ul_[0-9a-f]{32}/);
-          if (m) apiKey = m[0];
-        }
-        if (!apiKey) apiKey = authToken || '';
+        // Fetch instructions and ensure API key exist in parallel
+        var results = await Promise.all([
+          fetch('/api/apps/' + appId + '/instructions').then(function(r) { return r.json(); }),
+          ensureApiKey()
+        ]);
+        var text = results[0].instructions || '';
+        var apiKey = results[1];
         if (apiKey) {
           text = text.replace(/\\{TOKEN\\}/g, apiKey);
         }
