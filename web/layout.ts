@@ -5859,7 +5859,7 @@ export function getLayoutHTML(options: {
           var tx = txs[ti];
           var isCredit = tx.amount_cents > 0;
           var amtStr = (isCredit ? '+' : '') + '$' + (Math.abs(tx.amount_cents) / 100).toFixed(4);
-          var amtColor = isCredit ? 'var(--success)' : 'var(--error)';
+          var amtColor = isCredit ? 'var(--success)' : 'var(--text-primary)';
           var dateStr = relTime(tx.created_at);
           var fullDate = new Date(tx.created_at).toLocaleString();
           var meta = tx.metadata || {};
