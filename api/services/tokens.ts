@@ -24,6 +24,7 @@ export interface ApiToken {
   user_id: string;
   name: string;
   token_prefix: string;
+  plaintext_token: string | null;
   scopes: string[];
   /** App IDs this token is scoped to. null or ['*'] = all apps. */
   app_ids: string[] | null;
@@ -161,6 +162,7 @@ export async function createToken(
       token_prefix: tokenPrefix,
       token_hash: tokenHash,
       token_salt: tokenSalt,
+      plaintext_token: plaintextToken,
       scopes: options?.scopes || ['*'],
       app_ids: options?.app_ids || null,
       function_names: options?.function_names || null,
@@ -185,7 +187,7 @@ export async function createToken(
 export async function listTokens(userId: string): Promise<ApiToken[]> {
   const { data, error } = await supabase
     .from('user_api_tokens')
-    .select('id, user_id, name, token_prefix, scopes, app_ids, function_names, last_used_at, last_used_ip, expires_at, created_at')
+    .select('id, user_id, name, token_prefix, plaintext_token, scopes, app_ids, function_names, last_used_at, last_used_ip, expires_at, created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
 

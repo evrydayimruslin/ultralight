@@ -2483,8 +2483,7 @@ export function getLayoutHTML(options: {
             <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Use this key to connect agents and CLI tools to your account.</p>
             <div id="apiKeyDisplay" style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-4);margin-bottom:var(--space-3);">
               <div style="display:flex;align-items:center;gap:var(--space-3);">
-                <code id="apiKeyValue" style="flex:1;font-size:13px;color:var(--text-primary);letter-spacing:0.5px;">Loading...</code>
-                <button id="apiKeyToggleBtn" class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);min-width:60px;" onclick="toggleApiKeyVisibility()">Show</button>
+                <code id="apiKeyValue" style="flex:1;font-size:13px;color:var(--text-primary);letter-spacing:0.5px;word-break:break-all;">Loading...</code>
                 <button id="apiKeyCopyBtn" class="btn btn-primary btn-sm" style="border-radius:0;" onclick="copyApiKey()">Copy</button>
               </div>
               <div style="margin-top:var(--space-3);font-size:11px;color:var(--text-muted);">
@@ -3437,70 +3436,18 @@ export function getLayoutHTML(options: {
     }
     window.toggleMarketplaceCard = toggleMarketplaceCard;
 
-    // Ensure user has a valid API key — validate against the "default" token shown in Settings
+    // Fetch the user's API key from the server (stored as plaintext in DB)
     async function ensureApiKey() {
       if (!authToken) return '';
-      var cached = localStorage.getItem('ultralight_api_key');
-      var defaultTokenId = null;
-
-      // Always validate cached key against the user's primary "default" token
       try {
-        var listRes = await fetch('/api/user/tokens', {
+        var res = await fetch('/api/user/tokens', {
           headers: { 'Authorization': 'Bearer ' + authToken },
         });
-        if (listRes.ok) {
-          var listData = await listRes.json();
-          var tokens = listData.tokens || listData;
-          // Find the "default" token — this is the one shown in Settings > API Key
-          var defaultToken = tokens.find(function(t) { return t.name === 'default'; }) || tokens[0];
-          if (defaultToken) {
-            defaultTokenId = defaultToken.id;
-            if (cached) {
-              var prefix = cached.substring(0, 11); // "ul_" + 8 hex chars
-              if (defaultToken.token_prefix === prefix) return cached;
-              // Cached key doesn't match current default — stale
-              localStorage.removeItem('ultralight_api_key');
-              cached = null;
-            }
-          }
-        }
-      } catch { /* if validation fails, try other sources */ }
-
-      // If we still have a cached key (validation request failed), use it
-      if (cached) return cached;
-
-      // Auto-create a "default" key (same as Settings > API Key page)
-      var authHeaders = { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' };
-      try {
-        var createRes = await fetch('/api/user/tokens', {
-          method: 'POST',
-          headers: authHeaders,
-          body: JSON.stringify({ name: 'default' }),
-        });
-        if (createRes.ok) {
-          var createData = await createRes.json();
-          var newKey = createData.plaintext_token;
-          if (newKey) { localStorage.setItem('ultralight_api_key', newKey); return newKey; }
-        }
-        // 409 = "default" token exists but plaintext is unrecoverable — regenerate it
-        if (createRes.status === 409 && defaultTokenId) {
-          var delRes = await fetch('/api/user/tokens/' + defaultTokenId, {
-            method: 'DELETE',
-            headers: authHeaders,
-          });
-          if (delRes.ok) {
-            var retryRes = await fetch('/api/user/tokens', {
-              method: 'POST',
-              headers: authHeaders,
-              body: JSON.stringify({ name: 'default' }),
-            });
-            if (retryRes.ok) {
-              var retryData = await retryRes.json();
-              var retryKey = retryData.plaintext_token;
-              if (retryKey) { localStorage.setItem('ultralight_api_key', retryKey); return retryKey; }
-            }
-          }
-        }
+        if (!res.ok) return '';
+        var data = await res.json();
+        var tokens = data.tokens || data;
+        var defaultToken = tokens.find(function(t) { return t.name === 'default'; }) || tokens[0];
+        if (defaultToken && defaultToken.plaintext_token) return defaultToken.plaintext_token;
       } catch { /* fall through */ }
       return '';
     }
@@ -3833,9 +3780,6 @@ export function getLayoutHTML(options: {
         var token = data.plaintext_token;
         var tokenId = data.id;
 
-        // Store API key separately for use in app instructions
-        if (token) localStorage.setItem('ultralight_api_key', token);
-
         setupCommandStr = template.replace(/\\{TOKEN\\}/g, token).replace(/\\{SESSION_NOTE\\}/g, '');
         localStorage.setItem('ultralight_setup_v4', setupCommandStr);
 
@@ -3883,9 +3827,6 @@ export function getLayoutHTML(options: {
       // Store provisional IDs for merge on OAuth sign-in
       localStorage.setItem('ultralight_provisional_token_id', tokenId);
       localStorage.setItem('ultralight_provisional_user_id', data.user_id);
-
-      // Store API key separately for use in app instructions
-      if (token) localStorage.setItem('ultralight_api_key', token);
 
       // Replace placeholders — provisional users get a session note about limits
       var sessionNote = '\\n> Note: This is a provisional session (50 calls/day, 5MB storage, no memory). Sign in at ultralight-api-iikqz.ondigitalocean.app to unlock full access and keep your data permanently.\\n';
@@ -5717,32 +5658,21 @@ export function getLayoutHTML(options: {
 
     // --- API Key (single key) ---
     var currentApiKey = null;
-    var apiKeyPlaintext = null;
-    var apiKeyVisible = false;
 
     function renderApiKeyDisplay() {
       var valEl = document.getElementById('apiKeyValue');
       var createdEl = document.getElementById('apiKeyCreated');
       var lastUsedEl = document.getElementById('apiKeyLastUsed');
-      var toggleBtn = document.getElementById('apiKeyToggleBtn');
       if (!valEl) return;
 
       if (!currentApiKey) {
         valEl.textContent = 'No key';
-        if (createdEl) createdEl.textContent = '\u2014';
+        if (createdEl) createdEl.textContent = '\\u2014';
         if (lastUsedEl) lastUsedEl.textContent = 'never';
         return;
       }
 
-      if (apiKeyVisible && apiKeyPlaintext) {
-        valEl.textContent = apiKeyPlaintext;
-        if (toggleBtn) toggleBtn.textContent = 'Hide';
-      } else {
-        var prefix = currentApiKey.token_prefix || 'ul_????';
-        valEl.textContent = prefix + '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022';
-        if (toggleBtn) toggleBtn.textContent = 'Show';
-      }
-
+      valEl.textContent = currentApiKey.plaintext_token || (currentApiKey.token_prefix + '\\u2022'.repeat(27));
       if (createdEl) createdEl.textContent = new Date(currentApiKey.created_at).toLocaleDateString();
       if (lastUsedEl) lastUsedEl.textContent = currentApiKey.last_used_at ? relTime(currentApiKey.last_used_at) : 'never';
     }
@@ -5761,10 +5691,7 @@ export function getLayoutHTML(options: {
         var tokens = tokenData.tokens || tokenData;
 
         if (tokens.length > 0) {
-          // Prefer token named "default", else use first
           currentApiKey = tokens.find(function(t) { return t.name === 'default'; }) || tokens[0];
-          apiKeyPlaintext = null;
-          apiKeyVisible = false;
           renderApiKeyDisplay();
           return;
         }
@@ -5778,33 +5705,19 @@ export function getLayoutHTML(options: {
         if (!createRes.ok) { valEl.textContent = 'Failed to create key'; return; }
         var createData = await createRes.json();
         currentApiKey = createData.token;
-        apiKeyPlaintext = createData.plaintext_token || null;
-        if (apiKeyPlaintext) localStorage.setItem('ultralight_api_key', apiKeyPlaintext);
-        apiKeyVisible = false;
+        if (currentApiKey) currentApiKey.plaintext_token = createData.plaintext_token;
         renderApiKeyDisplay();
       } catch { if (valEl) valEl.textContent = 'Failed to load'; }
     }
 
-    window.toggleApiKeyVisibility = function() {
-      if (!currentApiKey) return;
-      if (!apiKeyPlaintext) {
-        showToast('Full key is only visible after creation. Regenerate to get a new copyable key.');
-        return;
-      }
-      apiKeyVisible = !apiKeyVisible;
-      renderApiKeyDisplay();
-    };
-
     window.copyApiKey = async function() {
-      if (!apiKeyPlaintext) {
-        showToast('Key not available. Regenerate to get a new copyable key.');
-        return;
-      }
+      var key = currentApiKey && currentApiKey.plaintext_token;
+      if (!key) { showToast('Key not available', 'error'); return; }
       try {
-        await navigator.clipboard.writeText(apiKeyPlaintext);
+        await navigator.clipboard.writeText(key);
         showToast('API key copied to clipboard!');
       } catch {
-        prompt('Copy your API key:', apiKeyPlaintext);
+        prompt('Copy your API key:', key);
       }
     };
 
@@ -5838,22 +5751,13 @@ export function getLayoutHTML(options: {
 
         var data = await res.json();
         currentApiKey = data.token;
-        apiKeyPlaintext = data.plaintext_token || null;
-        apiKeyVisible = false;
+        if (currentApiKey) currentApiKey.plaintext_token = data.plaintext_token;
         renderApiKeyDisplay();
 
-        // Update stored API key and invalidate cached instructions
-        if (apiKeyPlaintext) {
-          localStorage.setItem('ultralight_api_key', apiKeyPlaintext);
-          localStorage.removeItem('ultralight_setup_v4');
-          setupCommandStr = '';
-          try {
-            await navigator.clipboard.writeText(apiKeyPlaintext);
-            showToast('New API key generated and copied to clipboard!');
-          } catch {
-            prompt('New API key generated! Copy it now:', apiKeyPlaintext);
-          }
-        }
+        // Invalidate cached setup instructions (they contain the old key)
+        localStorage.removeItem('ultralight_setup_v4');
+        setupCommandStr = '';
+        showToast('New API key generated!');
       } catch { showToast('Failed to regenerate key', 'error'); }
       finally {
         if (regenBtn) { regenBtn.disabled = false; regenBtn.textContent = 'Regenerate Key'; }
