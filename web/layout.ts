@@ -3439,15 +3439,39 @@ export function getLayoutHTML(options: {
     // Fetch the user's API key from the server (stored as plaintext in DB)
     async function ensureApiKey() {
       if (!authToken) return '';
+      var authHeaders = { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' };
       try {
-        var res = await fetch('/api/user/tokens', {
-          headers: { 'Authorization': 'Bearer ' + authToken },
-        });
+        var res = await fetch('/api/user/tokens', { headers: authHeaders });
         if (!res.ok) return '';
         var data = await res.json();
         var tokens = data.tokens || data;
         var defaultToken = tokens.find(function(t) { return t.name === 'default'; }) || tokens[0];
         if (defaultToken && defaultToken.plaintext_token) return defaultToken.plaintext_token;
+
+        // Legacy token without stored plaintext — regenerate once to backfill
+        if (defaultToken && !defaultToken.plaintext_token) {
+          await fetch('/api/user/tokens/' + defaultToken.id, { method: 'DELETE', headers: authHeaders });
+          var createRes = await fetch('/api/user/tokens', {
+            method: 'POST', headers: authHeaders,
+            body: JSON.stringify({ name: 'default' }),
+          });
+          if (createRes.ok) {
+            var createData = await createRes.json();
+            if (createData.plaintext_token) return createData.plaintext_token;
+          }
+        }
+
+        // No tokens at all — create one
+        if (!defaultToken) {
+          var newRes = await fetch('/api/user/tokens', {
+            method: 'POST', headers: authHeaders,
+            body: JSON.stringify({ name: 'default' }),
+          });
+          if (newRes.ok) {
+            var newData = await newRes.json();
+            if (newData.plaintext_token) return newData.plaintext_token;
+          }
+        }
       } catch { /* fall through */ }
       return '';
     }
@@ -5681,25 +5705,37 @@ export function getLayoutHTML(options: {
       var valEl = document.getElementById('apiKeyValue');
       if (!valEl) return;
       valEl.textContent = 'Loading...';
+      var authHeaders = { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' };
 
       try {
-        var res = await fetch('/api/user/tokens', {
-          headers: { 'Authorization': 'Bearer ' + authToken },
-        });
+        var res = await fetch('/api/user/tokens', { headers: authHeaders });
         if (!res.ok) { valEl.textContent = 'Failed to load'; return; }
         var tokenData = await res.json();
         var tokens = tokenData.tokens || tokenData;
 
         if (tokens.length > 0) {
           currentApiKey = tokens.find(function(t) { return t.name === 'default'; }) || tokens[0];
+
+          // Legacy token without stored plaintext — regenerate to backfill
+          if (currentApiKey && !currentApiKey.plaintext_token) {
+            await fetch('/api/user/tokens/' + currentApiKey.id, { method: 'DELETE', headers: authHeaders });
+            var regenRes = await fetch('/api/user/tokens', {
+              method: 'POST', headers: authHeaders,
+              body: JSON.stringify({ name: 'default' }),
+            });
+            if (regenRes.ok) {
+              var regenData = await regenRes.json();
+              currentApiKey = regenData.token;
+              if (currentApiKey) currentApiKey.plaintext_token = regenData.plaintext_token;
+            }
+          }
           renderApiKeyDisplay();
           return;
         }
 
         // No tokens — auto-create one
         var createRes = await fetch('/api/user/tokens', {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          method: 'POST', headers: authHeaders,
           body: JSON.stringify({ name: 'default' }),
         });
         if (!createRes.ok) { valEl.textContent = 'Failed to create key'; return; }

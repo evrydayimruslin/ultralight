@@ -154,22 +154,34 @@ export async function createToken(
   }
 
   // Insert token (token_salt column enables per-token salted hashing)
-  const { data, error } = await supabase
+  const insertPayload: Record<string, unknown> = {
+    user_id: userId,
+    name,
+    token_prefix: tokenPrefix,
+    token_hash: tokenHash,
+    token_salt: tokenSalt,
+    plaintext_token: plaintextToken,
+    scopes: options?.scopes || ['*'],
+    app_ids: options?.app_ids || null,
+    function_names: options?.function_names || null,
+    expires_at: expiresAt,
+  };
+
+  let { data, error } = await supabase
     .from('user_api_tokens')
-    .insert({
-      user_id: userId,
-      name,
-      token_prefix: tokenPrefix,
-      token_hash: tokenHash,
-      token_salt: tokenSalt,
-      plaintext_token: plaintextToken,
-      scopes: options?.scopes || ['*'],
-      app_ids: options?.app_ids || null,
-      function_names: options?.function_names || null,
-      expires_at: expiresAt,
-    })
+    .insert(insertPayload)
     .select()
     .single();
+
+  // Fallback: if plaintext_token column doesn't exist yet, retry without it
+  if (error && error.message?.includes('plaintext_token')) {
+    delete insertPayload.plaintext_token;
+    ({ data, error } = await supabase
+      .from('user_api_tokens')
+      .insert(insertPayload)
+      .select()
+      .single());
+  }
 
   if (error) {
     throw new Error(`Failed to create token: ${error.message}`);
@@ -185,11 +197,20 @@ export async function createToken(
  * List all tokens for a user (without exposing hashes)
  */
 export async function listTokens(userId: string): Promise<ApiToken[]> {
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('user_api_tokens')
     .select('id, user_id, name, token_prefix, plaintext_token, scopes, app_ids, function_names, last_used_at, last_used_ip, expires_at, created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
+
+  // Fallback: if plaintext_token column doesn't exist yet, query without it
+  if (error && error.message?.includes('plaintext_token')) {
+    ({ data, error } = await supabase
+      .from('user_api_tokens')
+      .select('id, user_id, name, token_prefix, scopes, app_ids, function_names, last_used_at, last_used_ip, expires_at, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false }));
+  }
 
   if (error) {
     throw new Error(`Failed to list tokens: ${error.message}`);
