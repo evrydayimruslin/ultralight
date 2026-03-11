@@ -3397,10 +3397,11 @@ export function getLayoutHTML(options: {
         var res = await fetch('/api/apps/' + appId + '/instructions');
         if (!res.ok) throw new Error('Failed');
         var data = await res.json();
-        // Inject user's auth token if available
+        // Inject user's API key (ul_*) if available, fall back to session token
         var text = data.instructions || '';
-        if (authToken) {
-          text = text.replace(/\\{TOKEN\\}/g, authToken);
+        var apiKey = localStorage.getItem('ultralight_api_key') || authToken || '';
+        if (apiKey) {
+          text = text.replace(/\\{TOKEN\\}/g, apiKey);
         }
         await navigator.clipboard.writeText(text);
         var checkSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
@@ -3715,6 +3716,9 @@ export function getLayoutHTML(options: {
         var token = data.plaintext_token;
         var tokenId = data.id;
 
+        // Store API key separately for use in app instructions
+        if (token) localStorage.setItem('ultralight_api_key', token);
+
         setupCommandStr = template.replace(/\\{TOKEN\\}/g, token).replace(/\\{SESSION_NOTE\\}/g, '');
         localStorage.setItem('ultralight_setup_v4', setupCommandStr);
 
@@ -3762,6 +3766,9 @@ export function getLayoutHTML(options: {
       // Store provisional IDs for merge on OAuth sign-in
       localStorage.setItem('ultralight_provisional_token_id', tokenId);
       localStorage.setItem('ultralight_provisional_user_id', data.user_id);
+
+      // Store API key separately for use in app instructions
+      if (token) localStorage.setItem('ultralight_api_key', token);
 
       // Replace placeholders — provisional users get a session note about limits
       var sessionNote = '\\n> Note: This is a provisional session (50 calls/day, 5MB storage, no memory). Sign in at ultralight-api-iikqz.ondigitalocean.app to unlock full access and keep your data permanently.\\n';
