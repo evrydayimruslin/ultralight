@@ -1217,15 +1217,48 @@ function handleOpenApiSpec(): Response {
 // ============================================
 
 function getOnboardingTemplate(): { template: string; version: string; updated_at: string } {
-  const TEMPLATE_VERSION = '1.1.0';
-  const TEMPLATE_UPDATED = '2026-03-10T00:00:00Z';
+  const TEMPLATE_VERSION = '1.2.0';
+  const TEMPLATE_UPDATED = '2026-03-10T12:00:00Z';
 
   const template = `I'd like you to set up Ultralight, a platform that gives you access to instant MCP apps — tools you can use right now, or build and deploy yourself.
 
-Run this command to connect:
+## Connect to Ultralight
+
+### Option A: Desktop / CLI agents (Claude Code, Cursor, terminals)
+
+Run this command:
 npx ultralightpro setup --token {TOKEN}
 {SESSION_NOTE}
-The setup command works immediately — no extra dependencies needed. After it runs, you can use Ultralight tools right away in this session via the agent bridge output. MCP integration activates automatically on your next session restart.
+This installs MCP config, registers Skills + slash commands, and outputs an agent bridge for immediate use. MCP tools activate natively on next session restart.
+
+### Option B: Web agents, GPTs, or any HTTP-capable agent
+
+No install needed — connect directly via HTTP:
+
+\`\`\`
+Endpoint: https://ultralight-api-iikqz.ondigitalocean.app/mcp/platform
+Authorization: Bearer {TOKEN}
+Method: POST
+Content-Type: application/json
+Protocol: JSON-RPC 2.0
+\`\`\`
+
+**List available tools:**
+\`\`\`json
+{"jsonrpc":"2.0","id":1,"method":"tools/list"}
+\`\`\`
+
+**Call a tool (example — discover apps):**
+\`\`\`json
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ul.discover","arguments":{"scope":"appstore","query":"productivity"}}}
+\`\`\`
+
+**Read a resource (example — your memory):**
+\`\`\`json
+{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"ultralight://platform/memory.md"}}
+\`\`\`
+
+This works with ChatGPT Custom Actions, Gemini Extensions, open-source web agents, or any system that can POST JSON over HTTPS.
 
 ## Recommended Apps
 
@@ -1246,13 +1279,13 @@ These are curated apps from the Ultralight marketplace. Each works instantly —
 
 ## What to do next
 
-After running the setup command:
-1. Read the "ULTRALIGHT AGENT BRIDGE" section in the setup output — it contains the API endpoint and auth header you need to call tools immediately.
-2. Try listing available tools by calling \`tools/list\` on the MCP endpoint, or use \`ul.discover\` to search the app store.
-3. Look at what I'm currently working on or interested in.
-4. Suggest 2-3 apps from the list above that seem most relevant to me and briefly explain why.
-5. Offer to connect them so I can start using them.
-6. Ask what else I'd want my agent to help with — there are more apps in the full marketplace, or I can build and deploy my own custom tools.`;
+After connecting:
+1. Try listing available tools by calling \`tools/list\` on the MCP endpoint, or use \`ul.discover\` to search the app store.
+2. Look at what I'm currently working on or interested in.
+3. Suggest 2-3 apps from the list above that seem most relevant to me and briefly explain why.
+4. Offer to connect them so I can start using them.
+5. Ask what else I'd want my agent to help with — there are more apps in the full marketplace, or I can build and deploy my own custom tools.
+6. All my data (tools, memory, storage) is portable — it works across any agent that connects to Ultralight.`;
 
   return {
     template,
