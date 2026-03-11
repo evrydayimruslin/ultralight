@@ -434,8 +434,12 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
         if (topRes.ok) {
           const raw = await topRes.json() as AppRow[];
           allApps = raw.filter(a => !blockedAppIds.has(a.id));
+        } else {
+          console.error('[MARKETPLACE] Apps query failed:', topRes.status, await topRes.text());
         }
-      } catch { /* best effort */ }
+      } catch (err) {
+        console.error('[MARKETPLACE] Apps query error:', err);
+      }
     }
 
     // Fetch recent pages

@@ -5,9 +5,11 @@
 -- properly track storage.
 
 -- ============================================
--- 1. Ensure version_metadata column exists
+-- 1. Ensure missing columns exist
 -- ============================================
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS version_metadata JSONB DEFAULT '[]';
+-- featured_at is required by the marketplace query but was missing
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS featured_at TIMESTAMPTZ;
 
 -- ============================================
 -- 2. Create/replace record_upload_storage RPC
