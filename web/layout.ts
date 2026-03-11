@@ -3324,6 +3324,7 @@ export function getLayoutHTML(options: {
         setTimeout(function() { btn.textContent = origText; }, 2000);
       }
     }
+    window.copyAppInstructions = copyAppInstructions;
 
     // Marketplace search input
     var mpSearchInput = document.getElementById('marketplaceSearch');

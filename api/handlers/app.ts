@@ -1071,8 +1071,6 @@ function getPublicAppPageHTML(
   const description = app.description ? escapeHtml(app.description) : '';
   const version = app.current_version ? escapeHtml(app.current_version) : '1.0';
   const mcpEndpoint = `${baseUrl}/mcp/${app.id}`;
-  const dashboardUrl = `/http/${app.id}/_ui`;
-
   // Render skills documentation
   let skillsHtml = '';
   if (app.skills_md) {
@@ -1099,65 +1097,64 @@ function getPublicAppPageHTML(
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${appName} — Ultralight MCP Server</title>
 <meta name="description" content="${description}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #0a0a0f;
-    color: #e4e4e7;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #ffffff;
+    color: #0a0a0a;
     padding: 2rem 1rem;
     min-height: 100vh;
   }
-  .container { max-width: 760px; margin: 0 auto; }
+  .container { max-width: 680px; margin: 0 auto; }
 
-  /* Header */
   .app-header {
     display: flex;
     align-items: flex-start;
     gap: 1rem;
-    margin-bottom: 1.5rem;
+    margin-bottom: 1.25rem;
   }
   .app-icon {
-    width: 56px; height: 56px;
-    background: linear-gradient(135deg, #6366f1, #8b5cf6);
-    border-radius: 14px;
+    width: 48px; height: 48px;
+    background: #0a0a0a;
     display: flex; align-items: center; justify-content: center;
-    font-size: 1.75rem;
+    font-size: 1.5rem;
     flex-shrink: 0;
+    color: #fff;
   }
-  .app-info h1 { font-size: 1.75rem; font-weight: 700; color: #fafafa; }
+  .app-info h1 { font-size: 1.5rem; font-weight: 700; color: #0a0a0a; line-height: 1.2; }
   .app-meta {
-    display: flex; align-items: center; gap: 0.75rem;
-    margin-top: 0.35rem; font-size: 0.875rem; color: #71717a;
+    display: flex; align-items: center; gap: 0.5rem;
+    margin-top: 0.25rem; font-size: 0.8125rem; color: #999;
   }
-  .app-meta a { color: #a78bfa; text-decoration: none; }
+  .app-meta a { color: #555; text-decoration: none; }
   .app-meta a:hover { text-decoration: underline; }
   .version-badge {
-    background: rgba(139, 92, 246, 0.2);
-    color: #a78bfa;
-    padding: 0.15rem 0.5rem;
-    border-radius: 9999px;
+    background: #fafafa;
+    color: #555;
+    padding: 0.1rem 0.4rem;
     font-size: 0.75rem;
     font-weight: 500;
+    border: 1px solid rgba(0,0,0,0.08);
   }
   .app-desc {
-    color: #a1a1aa;
-    font-size: 1rem;
+    color: #555;
+    font-size: 0.9375rem;
     line-height: 1.6;
     margin-bottom: 1.5rem;
   }
 
-  /* Endpoint Box */
   .endpoint-box {
-    background: #18181b;
-    border: 1px solid #27272a;
-    border-radius: 12px;
+    background: #fafafa;
+    border: 1px solid rgba(0,0,0,0.08);
     padding: 1.25rem;
     margin-bottom: 1.5rem;
   }
   .endpoint-label {
-    font-size: 0.75rem;
-    color: #71717a;
+    font-size: 0.6875rem;
+    color: #999;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     margin-bottom: 0.5rem;
@@ -1165,127 +1162,124 @@ function getPublicAppPageHTML(
   .endpoint-row {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.5rem;
   }
   .endpoint-url {
     flex: 1;
-    background: #09090b;
-    border: 1px solid #27272a;
-    border-radius: 8px;
-    padding: 0.65rem 0.85rem;
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 0.85rem;
-    color: #a78bfa;
+    background: #fff;
+    border: 1px solid rgba(0,0,0,0.08);
+    padding: 0.6rem 0.75rem;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.8125rem;
+    color: #0a0a0a;
     word-break: break-all;
     user-select: all;
   }
   .btn {
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.55rem 1rem;
-    border-radius: 8px;
+    gap: 0.35rem;
+    padding: 0.5rem 0.875rem;
+    font-family: 'Inter', -apple-system, sans-serif;
     font-size: 0.8125rem;
     font-weight: 500;
     text-decoration: none;
     border: none;
     cursor: pointer;
-    transition: background 0.15s, opacity 0.15s;
+    transition: background 0.15s;
     white-space: nowrap;
   }
   .btn-primary {
-    background: rgba(99, 102, 241, 0.15);
-    color: #a78bfa;
+    background: #0a0a0a;
+    color: #ffffff;
   }
-  .btn-primary:hover { background: rgba(99, 102, 241, 0.25); }
-  .btn-copy {
-    background: #27272a;
-    color: #e4e4e7;
+  .btn-primary:hover { background: #333; }
+  .btn-primary.copied { background: #333; }
+  .btn-secondary {
+    background: #fafafa;
+    color: #0a0a0a;
+    border: 1px solid rgba(0,0,0,0.08);
   }
-  .btn-copy:hover { background: #3f3f46; }
-  .btn-copy.copied { background: rgba(34, 197, 94, 0.2); color: #4ade80; }
+  .btn-secondary:hover { background: rgba(0,0,0,0.04); }
+  .btn-secondary.copied { background: #0a0a0a; color: #fff; }
   .endpoint-actions {
     display: flex;
     gap: 0.5rem;
     margin-top: 0.75rem;
   }
 
-  /* Documentation / Skills */
   .docs-section {
-    background: #18181b;
-    border: 1px solid #27272a;
-    border-radius: 12px;
+    background: #fafafa;
+    border: 1px solid rgba(0,0,0,0.08);
     padding: 1.5rem;
     margin-bottom: 1.5rem;
   }
   .docs-title {
-    font-size: 0.75rem;
-    color: #71717a;
+    font-size: 0.6875rem;
+    color: #999;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     margin-bottom: 1rem;
   }
-  .docs-content { color: #d4d4d8; line-height: 1.7; }
-  .docs-content h1 { font-size: 1.5rem; color: #fafafa; margin: 1.5rem 0 0.75rem; }
-  .docs-content h2 { font-size: 1.25rem; color: #fafafa; margin: 1.5rem 0 0.5rem; border-bottom: 1px solid #27272a; padding-bottom: 0.3rem; }
-  .docs-content h3 { font-size: 1.1rem; color: #e4e4e7; margin: 1.25rem 0 0.5rem; }
+  .docs-content { color: #333; line-height: 1.7; }
+  .docs-content h1 { font-size: 1.375rem; color: #0a0a0a; margin: 1.5rem 0 0.75rem; }
+  .docs-content h2 { font-size: 1.125rem; color: #0a0a0a; margin: 1.5rem 0 0.5rem; border-bottom: 1px solid rgba(0,0,0,0.08); padding-bottom: 0.3rem; }
+  .docs-content h3 { font-size: 1rem; color: #0a0a0a; margin: 1.25rem 0 0.5rem; }
   .docs-content p { margin: 0.6rem 0; }
-  .docs-content a { color: #818cf8; }
+  .docs-content a { color: #0a0a0a; text-decoration: underline; }
   .docs-content code {
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 0.875em;
-    background: #27272a;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.85em;
+    background: rgba(0,0,0,0.04);
     padding: 0.15em 0.4em;
-    border-radius: 4px;
-    color: #e4e4e7;
+    color: #0a0a0a;
   }
   .docs-content pre {
     margin: 1rem 0;
     padding: 1rem;
-    background: #09090b;
-    border: 1px solid #27272a;
-    border-radius: 8px;
+    background: #fff;
+    border: 1px solid rgba(0,0,0,0.08);
     overflow-x: auto;
   }
-  .docs-content pre code { background: none; padding: 0; font-size: 0.85em; color: #a1a1aa; }
+  .docs-content pre code { background: none; padding: 0; font-size: 0.8125em; color: #555; }
   .docs-content ul, .docs-content ol { margin: 0.5rem 0; padding-left: 1.5rem; }
   .docs-content li { margin: 0.25rem 0; }
   .docs-content blockquote {
     margin: 1rem 0;
     padding: 0.75rem 1rem;
-    border-left: 3px solid #6366f1;
-    background: rgba(99, 102, 241, 0.05);
-    color: #a1a1aa;
+    border-left: 3px solid #0a0a0a;
+    background: #fafafa;
+    color: #555;
   }
-  .docs-content hr { margin: 1.5rem 0; border: none; border-top: 1px solid #27272a; }
+  .docs-content hr { margin: 1.5rem 0; border: none; border-top: 1px solid rgba(0,0,0,0.08); }
 
   .fn-item {
     padding: 0.65rem 0;
-    border-bottom: 1px solid #27272a;
+    border-bottom: 1px solid rgba(0,0,0,0.06);
   }
   .fn-item:last-child { border-bottom: none; }
   .fn-name {
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    color: #22c55e;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    color: #0a0a0a;
     font-weight: 500;
-    font-size: 0.9rem;
+    font-size: 0.875rem;
   }
   .fn-desc {
     display: block;
     font-size: 0.8125rem;
-    color: #71717a;
+    color: #999;
     margin-top: 0.2rem;
   }
-  .no-docs { color: #52525b; font-style: italic; }
+  .no-docs { color: #999; font-style: italic; }
 
   .footer-bar {
     text-align: center;
     padding-top: 1.5rem;
-    font-size: 0.8rem;
-    color: #52525b;
+    font-size: 0.75rem;
+    color: #999;
   }
-  .footer-bar a { color: #71717a; text-decoration: none; }
-  .footer-bar a:hover { color: #a1a1aa; }
+  .footer-bar a { color: #555; text-decoration: none; }
+  .footer-bar a:hover { color: #0a0a0a; }
 
   @media (max-width: 600px) {
     body { padding: 1rem 0.5rem; }
@@ -1313,10 +1307,10 @@ function getPublicAppPageHTML(
     <div class="endpoint-label">MCP Endpoint</div>
     <div class="endpoint-row">
       <div class="endpoint-url" id="mcpUrl">${escapeHtml(mcpEndpoint)}</div>
-      <button class="btn btn-copy" onclick="copyUrl()" id="copyBtn">&#128203; Copy</button>
+      <button class="btn btn-secondary" onclick="copyUrl()" id="copyUrlBtn">Copy</button>
     </div>
     <div class="endpoint-actions">
-      <a href="${escapeHtml(dashboardUrl)}" class="btn btn-primary">&#9881; Open Dashboard</a>
+      <button class="btn btn-primary" onclick="copyInstructions()" id="copyInstructionsBtn">Copy Agent Instructions</button>
     </div>
   </div>
 
@@ -1335,14 +1329,34 @@ function getPublicAppPageHTML(
 function copyUrl() {
   var url = document.getElementById('mcpUrl').textContent;
   navigator.clipboard.writeText(url).then(function() {
-    var btn = document.getElementById('copyBtn');
-    btn.className = 'btn btn-copy copied';
-    btn.innerHTML = '&#10003; Copied';
+    var btn = document.getElementById('copyUrlBtn');
+    btn.className = 'btn btn-secondary copied';
+    btn.textContent = 'Copied';
     setTimeout(function() {
-      btn.className = 'btn btn-copy';
-      btn.innerHTML = '&#128203; Copy';
+      btn.className = 'btn btn-secondary';
+      btn.textContent = 'Copy';
     }, 2000);
   });
+}
+function copyInstructions() {
+  var btn = document.getElementById('copyInstructionsBtn');
+  btn.textContent = '...';
+  fetch('/api/apps/${app.id}/instructions')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      return navigator.clipboard.writeText(data.instructions).then(function() {
+        btn.className = 'btn btn-primary copied';
+        btn.textContent = 'Copied. Paste to agent';
+        setTimeout(function() {
+          btn.className = 'btn btn-primary';
+          btn.textContent = 'Copy Agent Instructions';
+        }, 3000);
+      });
+    })
+    .catch(function() {
+      btn.textContent = 'Error';
+      setTimeout(function() { btn.textContent = 'Copy Agent Instructions'; }, 2000);
+    });
 }
 </script>
 </body>
