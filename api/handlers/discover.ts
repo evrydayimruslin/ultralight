@@ -1217,8 +1217,8 @@ function handleOpenApiSpec(): Response {
 // ============================================
 
 function getOnboardingTemplate(): { template: string; version: string; updated_at: string } {
-  const TEMPLATE_VERSION = '1.2.0';
-  const TEMPLATE_UPDATED = '2026-03-10T12:00:00Z';
+  const TEMPLATE_VERSION = '1.3.0';
+  const TEMPLATE_UPDATED = '2026-03-11T12:00:00Z';
 
   const template = `I'd like you to set up Ultralight, a platform that gives you access to instant MCP apps — tools you can use right now, or build and deploy yourself.
 
@@ -1270,18 +1270,14 @@ Returns the full Skills.md — tool reference, building guide, SDK globals, reso
 
 These are curated apps from the Ultralight marketplace. Each works instantly — just ask to connect one:
 
-1. **Smart Budget** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Track spending, manage budgets, and get financial insights by telling your agent about transactions.
-2. **Fitness Tracker** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Log meals, workouts, and body metrics. AI-powered calorie estimation from food descriptions.
-3. **Travel Planner** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Search flights and hotels, build itineraries, save and compare trip options.
-4. **Study Coach** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Personalized learning paths with spaced repetition for any subject.
-5. **Story Builder** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Create fictional worlds, characters, and plotlines that persist across sessions.
-6. **Real Estate Hub** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Track property listings, compare neighborhoods, and manage real estate research.
-7. **Cell Service** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Monitor mobile usage, compare carrier plans, and manage your service.
-8. **Recipe Box** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Save recipes, plan meals, and generate grocery lists from your meal plan.
-9. **Reading List** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Track books, articles, and papers. Save highlights and reading notes.
-10. **Home Inventory** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Catalog belongings for insurance, moving, or organization.
-11. **Goal Tracker** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Set goals, break them into milestones, and track progress over time.
-12. **Journal** (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) — Daily journal entries stored in the cloud. Searchable, portable, and private.
+1. **Smart Budget** (ID: d2109945-e720-4e0c-9f6f-5bff5c2a6358) — Track spending, manage budgets, and get financial insights by telling your agent about transactions.
+2. **Fitness Tracker** (ID: 242ea64e-89f2-4339-93b0-66b3281f6d87) — Log meals, workouts, and body metrics. AI-powered calorie estimation from food descriptions.
+3. **Study Coach** (ID: 736e468f-dcd7-4d9d-a95c-567d2f0f4b72) — Personalized learning paths with spaced repetition for any subject.
+4. **Story Builder** (ID: 2972d642-8e70-409b-ae86-0c2504f53261) — Create fictional worlds, characters, and plotlines that persist across sessions.
+5. **Recipe Box** (ID: b43e8c92-511c-45a0-b5cd-ef7d22dad559) — Save recipes, plan meals, and generate grocery lists from your meal plan.
+6. **Reading List** (ID: 86670430-1281-478c-8ed5-9b30ecf5391d) — Track books, articles, and papers. Save highlights and reading notes.
+7. **Home Inventory** (ID: a87ac9bf-fe40-4667-97be-581c441c9ce0) — Catalog belongings for insurance, moving, or organization.
+8. **Goal Tracker** (ID: 8c3ccff5-8cb8-456d-9099-0b2528640d6b) — Set goals, break them into milestones, and track progress over time.
 
 ## What to do next
 

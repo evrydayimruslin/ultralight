@@ -1,0 +1,61 @@
+{
+  "name": "Study Coach",
+  "version": "1.0.0",
+  "type": "mcp",
+  "description": "Personalized learning paths with spaced repetition for any subject. Track concepts, rate understanding, and get AI-generated quizzes.",
+  "author": "ultralight",
+  "entry": {
+    "functions": "index.ts"
+  },
+  "permissions": ["ai:call"],
+  "functions": {
+    "add_concept": {
+      "description": "Add a concept to study. Concepts can be organized hierarchically with parent-child relationships.",
+      "parameters": {
+        "name": { "type": "string", "description": "Concept name", "required": true },
+        "parent_id": { "type": "string", "description": "Parent concept ID for creating hierarchies" },
+        "description": { "type": "string", "description": "Brief description of the concept" },
+        "subject": { "type": "string", "description": "Subject this concept belongs to (auto-created if new)" }
+      },
+      "returns": { "type": "object", "description": "Concept ID and confirmation" }
+    },
+    "rate": {
+      "description": "Rate your understanding of a concept (1-5). Used for spaced repetition scheduling.",
+      "parameters": {
+        "concept_id": { "type": "string", "description": "Concept ID to rate", "required": true },
+        "understanding": { "type": "number", "description": "Understanding level 1-5 (1=don't know, 5=mastered)", "required": true },
+        "notes": { "type": "string", "description": "Notes about your understanding" }
+      },
+      "returns": { "type": "object", "description": "Rating confirmation" }
+    },
+    "study": {
+      "description": "Get concepts to review next, prioritized by spaced repetition. Low-understanding and stale concepts appear first.",
+      "parameters": {
+        "subject_id": { "type": "string", "description": "Filter to a specific subject" },
+        "limit": { "type": "number", "description": "Max concepts to return (default 10)" }
+      },
+      "returns": { "type": "object", "description": "Prioritized list of concepts to review" }
+    },
+    "tree": {
+      "description": "View the concept hierarchy as a tree structure.",
+      "parameters": {
+        "subject_id": { "type": "string", "description": "Filter to a specific subject" }
+      },
+      "returns": { "type": "object", "description": "Concept tree with parent-child relationships" }
+    },
+    "quiz": {
+      "description": "Generate an AI-powered quiz on your concepts. Focuses on weak areas by default.",
+      "parameters": {
+        "subject_id": { "type": "string", "description": "Quiz on concepts from this subject" },
+        "concept_ids": { "type": "array", "description": "Specific concept IDs to quiz on", "items": { "type": "string" } },
+        "count": { "type": "number", "description": "Number of questions (default 5)" }
+      },
+      "returns": { "type": "object", "description": "Quiz questions with options, answers, and explanations" }
+    },
+    "status": {
+      "description": "Overview of subjects, concepts, and average understanding.",
+      "parameters": {},
+      "returns": { "type": "object", "description": "Study stats" }
+    }
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "name": "Fitness Tracker",
+  "version": "1.0.0",
+  "type": "mcp",
+  "description": "Log meals, workouts, sleep, and body metrics. AI-powered calorie estimation from food descriptions.",
+  "author": "ultralight",
+  "entry": {
+    "functions": "index.ts"
+  },
+  "permissions": ["ai:call"],
+  "functions": {
+    "log_meal": {
+      "description": "Log a meal with AI-powered calorie and macro estimation. Just describe what you ate.",
+      "parameters": {
+        "description": { "type": "string", "description": "What you ate (e.g. 'grilled chicken salad with ranch dressing')", "required": true },
+        "meal_type": { "type": "string", "description": "Meal type", "enum": ["breakfast", "lunch", "dinner", "snack", "meal"] },
+        "date": { "type": "string", "description": "Date (YYYY-MM-DD, defaults to today)" }
+      },
+      "returns": { "type": "object", "description": "Estimated calories, protein, carbs, and fat" }
+    },
+    "log_workout": {
+      "description": "Log a workout session.",
+      "parameters": {
+        "type": { "type": "string", "description": "Workout type (e.g. running, weights, yoga, swimming)", "required": true },
+        "duration_min": { "type": "number", "description": "Duration in minutes", "required": true },
+        "calories_burned": { "type": "number", "description": "Estimated calories burned (optional)" },
+        "notes": { "type": "string", "description": "Workout notes" },
+        "date": { "type": "string", "description": "Date (YYYY-MM-DD, defaults to today)" }
+      },
+      "returns": { "type": "object", "description": "Workout confirmation" }
+    },
+    "log_sleep": {
+      "description": "Log sleep for a night.",
+      "parameters": {
+        "hours": { "type": "number", "description": "Hours of sleep", "required": true },
+        "quality": { "type": "number", "description": "Sleep quality 1-5 (1=poor, 5=excellent)" },
+        "notes": { "type": "string", "description": "Sleep notes" },
+        "date": { "type": "string", "description": "Date (YYYY-MM-DD, defaults to today)" }
+      },
+      "returns": { "type": "object", "description": "Sleep entry confirmation" }
+    },
+    "log_weight": {
+      "description": "Log your weight.",
+      "parameters": {
+        "value": { "type": "number", "description": "Weight value", "required": true },
+        "unit": { "type": "string", "description": "Unit (lbs or kg, default: lbs)", "enum": ["lbs", "kg"] },
+        "date": { "type": "string", "description": "Date (YYYY-MM-DD, defaults to today)" }
+      },
+      "returns": { "type": "object", "description": "Weight entry confirmation" }
+    },
+    "summary": {
+      "description": "Get a daily or weekly fitness summary including meals, workouts, sleep, and weight.",
+      "parameters": {
+        "period": { "type": "string", "description": "Summary period", "enum": ["daily", "weekly"] },
+        "date": { "type": "string", "description": "Target date (YYYY-MM-DD, defaults to today)" }
+      },
+      "returns": { "type": "object", "description": "Fitness summary with calorie totals, macros, workout stats, and sleep" }
+    },
+    "status": {
+      "description": "Quick check of what's been logged today.",
+      "parameters": {},
+      "returns": { "type": "object", "description": "Today's logging status" }
+    }
+  }
+}

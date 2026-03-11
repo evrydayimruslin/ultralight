@@ -1,0 +1,68 @@
+{
+  "name": "Story Builder",
+  "version": "1.0.0",
+  "type": "mcp",
+  "description": "Create fictional worlds, characters, and plotlines that persist across sessions. AI-powered scene and chapter generation.",
+  "author": "ultralight",
+  "entry": {
+    "functions": "index.ts"
+  },
+  "permissions": ["ai:call"],
+  "functions": {
+    "create_world": {
+      "description": "Create a new fictional world with a name, genre, and description.",
+      "parameters": {
+        "name": { "type": "string", "description": "World name", "required": true },
+        "genre": { "type": "string", "description": "Genre (e.g. fantasy, sci-fi, mystery, romance)", "required": true },
+        "description": { "type": "string", "description": "World description and premise" }
+      },
+      "returns": { "type": "object", "description": "World ID and confirmation" }
+    },
+    "add_character": {
+      "description": "Add a character to a world with traits, backstory, and role.",
+      "parameters": {
+        "world_id": { "type": "string", "description": "World ID", "required": true },
+        "name": { "type": "string", "description": "Character name", "required": true },
+        "traits": { "type": "array", "description": "Character traits", "items": { "type": "string" } },
+        "backstory": { "type": "string", "description": "Character backstory" },
+        "role": { "type": "string", "description": "Role in the story (e.g. protagonist, antagonist, mentor)" }
+      },
+      "returns": { "type": "object", "description": "Character ID and confirmation" }
+    },
+    "add_setting": {
+      "description": "Add a location or setting to a world.",
+      "parameters": {
+        "world_id": { "type": "string", "description": "World ID", "required": true },
+        "name": { "type": "string", "description": "Setting name", "required": true },
+        "description": { "type": "string", "description": "Setting description", "required": true }
+      },
+      "returns": { "type": "object", "description": "Setting ID and confirmation" }
+    },
+    "add_theme": {
+      "description": "Add a thematic element to a world (e.g. redemption, power, identity).",
+      "parameters": {
+        "world_id": { "type": "string", "description": "World ID", "required": true },
+        "name": { "type": "string", "description": "Theme name", "required": true },
+        "description": { "type": "string", "description": "How this theme manifests in the story", "required": true }
+      },
+      "returns": { "type": "object", "description": "Theme ID and confirmation" }
+    },
+    "generate": {
+      "description": "Generate new content (scene, chapter, dialogue, outline) using AI with full world context. The AI uses all characters, settings, themes, and recent scenes for consistency.",
+      "parameters": {
+        "world_id": { "type": "string", "description": "World ID", "required": true },
+        "type": { "type": "string", "description": "What to generate", "enum": ["scene", "chapter", "dialogue", "outline", "description"] },
+        "prompt": { "type": "string", "description": "Creative direction (e.g. 'A confrontation between X and Y at the castle')" },
+        "character_ids": { "type": "array", "description": "Focus on specific characters", "items": { "type": "string" } },
+        "setting_id": { "type": "string", "description": "Set the scene location" },
+        "save": { "type": "boolean", "description": "Save as a scene (default: true)" }
+      },
+      "returns": { "type": "object", "description": "Generated content with scene ID if saved" }
+    },
+    "status": {
+      "description": "Overview of all worlds with character, setting, theme, and scene counts.",
+      "parameters": {},
+      "returns": { "type": "object", "description": "World summaries" }
+    }
+  }
+}
