@@ -288,3 +288,39 @@ export async function handleChatModels(request: Request): Promise<Response> {
 
   return json({ models });
 }
+
+// ============================================
+// POST /chat/provision-key — Pre-provision OpenRouter key
+// ============================================
+
+/**
+ * Create per-user OpenRouter key ahead of first chat.
+ * Called by the desktop app after login so the key is ready
+ * when the user sends their first message (avoids 504 timeout).
+ */
+export async function handleProvisionKey(request: Request): Promise<Response> {
+  // Auth
+  let user: { id: string; email: string; tier: string; provisional?: boolean };
+  try {
+    user = await authenticate(request);
+  } catch (err) {
+    return json({ error: 'Unauthorized', detail: err instanceof Error ? err.message : 'Auth failed' }, 401);
+  }
+
+  if (user.provisional) {
+    return json({ error: 'Full account required' }, 403);
+  }
+
+  // Get or create key
+  try {
+    const key = await getOrCreateOpenRouterKey(user.id, user.email);
+    console.log(`[CHAT] Provisioned OpenRouter key for ${user.id}: ${key.substring(0, 8)}...`);
+    return json({ ok: true, provisioned: true, key_prefix: key.substring(0, 8) });
+  } catch (err) {
+    console.error(`[CHAT] Key provisioning failed for ${user.id}:`, err);
+    return json({
+      ok: false,
+      error: err instanceof Error ? err.message : 'Key provisioning failed',
+    }, 500);
+  }
+}

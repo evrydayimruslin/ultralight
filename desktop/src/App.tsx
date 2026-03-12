@@ -1,22 +1,58 @@
 // Root component — auth gate + chat layout.
 
 import { useState, useEffect } from 'react';
-import { getToken } from './lib/storage';
+import { getToken, getApiBase } from './lib/storage';
 import AuthGate from './components/AuthGate';
 import ChatView from './components/ChatView';
+
+/**
+ * Pre-provision the user's OpenRouter key in the background.
+ * Called once after login — creates a per-user sub-key via the
+ * OpenRouter Management API so the first chat doesn't timeout.
+ */
+function provisionKeyInBackground(token: string) {
+  const base = getApiBase();
+  fetch(`${base}/chat/provision-key`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  })
+    .then(res => res.json())
+    .then(data => {
+      if (data.ok) {
+        console.log('[App] OpenRouter key provisioned:', data.key_prefix);
+      } else {
+        console.warn('[App] Key provisioning failed:', data.error);
+      }
+    })
+    .catch(err => console.warn('[App] Key provisioning error:', err));
+}
 
 export default function App() {
   const [authenticated, setAuthenticated] = useState(false);
   const [checking, setChecking] = useState(true);
 
-  // Check for existing token on mount
+  // Check for existing token on mount + provision key
   useEffect(() => {
     const token = getToken();
     if (token) {
       setAuthenticated(true);
+      // Pre-provision OpenRouter key in background
+      provisionKeyInBackground(token);
     }
     setChecking(false);
   }, []);
+
+  const handleAuthenticated = () => {
+    setAuthenticated(true);
+    // Provision key right after login
+    const token = getToken();
+    if (token) {
+      provisionKeyInBackground(token);
+    }
+  };
 
   // Loading state
   if (checking) {
@@ -29,7 +65,7 @@ export default function App() {
 
   // Auth gate
   if (!authenticated) {
-    return <AuthGate onAuthenticated={() => setAuthenticated(true)} />;
+    return <AuthGate onAuthenticated={handleAuthenticated} />;
   }
 
   // Chat

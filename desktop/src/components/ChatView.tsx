@@ -44,24 +44,23 @@ export default function ChatView() {
   };
 
   const runDiagnostics = async () => {
-    setDiagnostics('Running...');
+    setDiagnostics('Running preflight checks...');
     try {
       const token = getToken();
       const base = getApiBase();
-      const res = await fetch(`${base}/debug/auth-test`, {
+      const res = await fetch(`${base}/debug/chat-preflight`, {
         headers: { 'Authorization': `Bearer ${token}` },
       });
       const data = await res.json();
-      const lines = (data.steps || []).map((s: { step: string; result: string; ok: boolean }) =>
-        `${s.ok ? '✓' : '✗'} ${s.step}: ${s.result}`
+      const items = data.checks || data.steps || [];
+      const lines = items.map((s: { check?: string; step?: string; result: string; ok: boolean }) =>
+        `${s.ok ? '✓' : '✗'} ${s.check || s.step}: ${s.result}`
       );
       setDiagnostics(lines.join('\n') || JSON.stringify(data, null, 2));
     } catch (err) {
       setDiagnostics(`Network error: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
-
-  const isAuthError = error?.toLowerCase().includes('auth');
 
   return (
     <div className="flex flex-col h-full">
@@ -101,22 +100,18 @@ export default function ChatView() {
           <div className="flex items-center justify-between">
             <p className="text-small text-ul-error">{error}</p>
             <div className="flex items-center gap-2">
-              {isAuthError && (
-                <>
-                  <button
-                    onClick={runDiagnostics}
-                    className="text-caption text-ul-text-secondary hover:underline"
-                  >
-                    Diagnose
-                  </button>
-                  <button
-                    onClick={handleSignOut}
-                    className="text-caption text-ul-error hover:underline"
-                  >
-                    Re-enter Token
-                  </button>
-                </>
-              )}
+              <button
+                onClick={runDiagnostics}
+                className="text-caption text-ul-text-secondary hover:underline"
+              >
+                Diagnose
+              </button>
+              <button
+                onClick={handleSignOut}
+                className="text-caption text-ul-error hover:underline"
+              >
+                Re-enter Token
+              </button>
               <button
                 onClick={() => { clearError(); setDiagnostics(null); }}
                 className="text-caption text-ul-error hover:underline"
