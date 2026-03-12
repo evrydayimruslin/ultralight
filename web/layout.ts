@@ -1473,12 +1473,9 @@ export function getLayoutHTML(options: {
       border: none;
       cursor: pointer;
       padding: 4px;
-      color: var(--text-muted);
+      color: var(--text-primary);
       font-size: 18px;
       line-height: 1;
-    }
-    .offers-popup-close:hover {
-      color: var(--text-primary);
     }
     .offers-popup-body {
       padding: 20px;
@@ -1499,7 +1496,7 @@ export function getLayoutHTML(options: {
       font-weight: 500;
       text-transform: uppercase;
       letter-spacing: 0.06em;
-      color: var(--text-muted);
+      color: var(--text-primary);
       margin-bottom: 6px;
     }
     .offers-ask-price {
@@ -1510,7 +1507,7 @@ export function getLayoutHTML(options: {
     }
     .offers-ask-note {
       font-size: 13px;
-      color: var(--text-secondary);
+      color: var(--text-primary);
       margin-bottom: 16px;
       font-style: italic;
     }
@@ -1542,7 +1539,7 @@ export function getLayoutHTML(options: {
       font-weight: 500;
       text-transform: uppercase;
       letter-spacing: 0.06em;
-      color: var(--text-muted);
+      color: var(--text-primary);
       margin-bottom: 10px;
     }
     .offers-bid-row {
@@ -1563,14 +1560,14 @@ export function getLayoutHTML(options: {
     }
     .offers-bid-info {
       flex: 1;
-      color: var(--text-muted);
+      color: var(--text-primary);
       margin-left: 12px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
     .offers-bid-time {
-      color: var(--text-muted);
+      color: var(--text-primary);
       font-size: 11px;
       margin-left: 12px;
       white-space: nowrap;
@@ -1578,14 +1575,10 @@ export function getLayoutHTML(options: {
     .offers-bid-cancel {
       margin-left: 12px;
       background: none;
-      border: 1px solid var(--border);
+      border: 1px solid var(--text-primary);
       padding: 3px 8px;
       font-size: 11px;
       cursor: pointer;
-      color: var(--text-muted);
-    }
-    .offers-bid-cancel:hover {
-      border-color: var(--text-primary);
       color: var(--text-primary);
     }
     .offers-bid-form {
@@ -1640,12 +1633,8 @@ export function getLayoutHTML(options: {
     }
     .offers-bid-balance {
       font-size: 11px;
-      color: var(--text-muted);
-      margin-bottom: 12px;
-    }
-    .offers-bid-balance span {
       color: var(--text-primary);
-      font-weight: 500;
+      margin-bottom: 12px;
     }
     .offers-bid-submit {
       display: block;
@@ -1671,7 +1660,7 @@ export function getLayoutHTML(options: {
     }
     .offers-no-bids {
       font-size: 13px;
-      color: var(--text-muted);
+      color: var(--text-primary);
       padding: 8px 0;
     }
     .offers-your-bid {
@@ -1699,7 +1688,7 @@ export function getLayoutHTML(options: {
     }
     .offers-login-msg {
       font-size: 13px;
-      color: var(--text-muted);
+      color: var(--text-primary);
       text-align: center;
       padding: 12px 0;
     }
@@ -5325,7 +5314,7 @@ export function getLayoutHTML(options: {
       if (listing && listing.ask_price_cents) {
         html += '<div class="offers-ask-price">$' + (listing.ask_price_cents / 100).toFixed(2) + '</div>';
       } else {
-        html += '<div class="offers-ask-price" style="font-size:16px;color:var(--text-muted)">Open</div>';
+        html += '<div class="offers-ask-price" style="font-size:16px">Open</div>';
       }
       html += '</div>';
       html += '<div class="offers-price-col" style="text-align:right">';
@@ -5333,7 +5322,7 @@ export function getLayoutHTML(options: {
       if (highestBid) {
         html += '<div class="offers-ask-price">$' + (highestBid.amount_cents / 100).toFixed(2) + '</div>';
       } else {
-        html += '<div class="offers-ask-price" style="font-size:16px;color:var(--text-muted)">&mdash;</div>';
+        html += '<div class="offers-ask-price" style="font-size:16px">&mdash;</div>';
       }
       html += '</div>';
       html += '</div>';
