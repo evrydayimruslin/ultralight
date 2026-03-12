@@ -1,0 +1,86 @@
+import type { Config } from 'tailwindcss';
+
+export default {
+  content: ['./index.html', './src/**/*.{ts,tsx}'],
+  theme: {
+    extend: {
+      colors: {
+        ul: {
+          text: '#0a0a0a',
+          'text-secondary': '#555555',
+          'text-muted': '#999999',
+          bg: '#ffffff',
+          'bg-raised': '#fafafa',
+          'bg-hover': 'rgba(0,0,0,0.04)',
+          'bg-active': 'rgba(0,0,0,0.06)',
+          'bg-subtle': 'rgba(0,0,0,0.02)',
+          border: 'rgba(0,0,0,0.08)',
+          'border-strong': 'rgba(0,0,0,0.15)',
+          'border-focus': 'rgba(0,0,0,0.4)',
+          accent: '#0a0a0a',
+          'accent-hover': '#333333',
+          'accent-soft': 'rgba(0,0,0,0.06)',
+          success: '#22c55e',
+          'success-soft': 'rgba(34,197,94,0.1)',
+          error: '#ef4444',
+          'error-soft': 'rgba(239,68,68,0.08)',
+          warning: '#f59e0b',
+          'warning-soft': 'rgba(245,158,11,0.08)',
+        },
+      },
+      fontFamily: {
+        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+        mono: ['JetBrains Mono', 'Fira Code', 'Cascadia Code', 'monospace'],
+      },
+      fontSize: {
+        'display': ['48px', { lineHeight: '1.1', fontWeight: '700', letterSpacing: '-0.03em' }],
+        'h1': ['32px', { lineHeight: '1.2', fontWeight: '700', letterSpacing: '-0.02em' }],
+        'h2': ['24px', { lineHeight: '1.3', fontWeight: '600', letterSpacing: '-0.015em' }],
+        'h3': ['18px', { lineHeight: '1.4', fontWeight: '600', letterSpacing: '-0.01em' }],
+        'body-lg': ['16px', { lineHeight: '1.6', fontWeight: '400' }],
+        'body': ['14px', { lineHeight: '1.6', fontWeight: '400' }],
+        'small': ['13px', { lineHeight: '1.5', fontWeight: '400' }],
+        'caption': ['12px', { lineHeight: '1.4', fontWeight: '500', letterSpacing: '0.01em' }],
+      },
+      borderRadius: {
+        'sm': '6px',
+        'md': '8px',
+        'lg': '12px',
+        'xl': '16px',
+      },
+      boxShadow: {
+        'sm': '0 1px 2px rgba(0,0,0,0.05)',
+        'md': '0 4px 12px rgba(0,0,0,0.08)',
+        'lg': '0 8px 30px rgba(0,0,0,0.1)',
+        'xl': '0 16px 50px rgba(0,0,0,0.12)',
+        'glow': '0 0 0 3px rgba(0,0,0,0.06)',
+      },
+      spacing: {
+        '1': '4px',
+        '2': '8px',
+        '3': '12px',
+        '4': '16px',
+        '5': '20px',
+        '6': '24px',
+        '8': '32px',
+        '10': '40px',
+        '12': '48px',
+        '16': '64px',
+        '20': '80px',
+      },
+      transitionDuration: {
+        'fast': '120ms',
+        'base': '200ms',
+        'slow': '300ms',
+      },
+      maxWidth: {
+        'content': '1200px',
+        'narrow': '720px',
+      },
+      height: {
+        'nav': '64px',
+      },
+    },
+  },
+  plugins: [],
+} satisfies Config;
