@@ -240,14 +240,81 @@ export function createApp() {
         return handleChatModels(request);
       }
 
-      // Debug: auth test endpoint — validates token and returns user info (no side effects)
+      // Debug: auth test endpoint — step-by-step token validation with diagnostic output
       if (path === '/debug/auth-test' && method === 'GET') {
+        const authHeader = request.headers.get('Authorization');
+        const steps: { step: string; result: string; ok: boolean }[] = [];
+
+        if (!authHeader?.startsWith('Bearer ')) {
+          return json({ ok: false, error: 'Missing or invalid authorization header', steps: [{ step: 'header', result: `Authorization header: ${authHeader ? 'present but wrong format' : 'missing'}`, ok: false }] }, 401);
+        }
+
+        const token = authHeader.slice(7);
+        steps.push({ step: 'header', result: `Bearer token extracted (${token.length} chars)`, ok: true });
+
+        // Check format
+        const hasPrefix = token.startsWith('ul_');
+        steps.push({ step: 'prefix', result: `Starts with "ul_": ${hasPrefix} (got "${token.substring(0, 4)}")`, ok: hasPrefix });
+        if (!hasPrefix) {
+          return json({ ok: false, error: 'Not a ul_ token', steps }, 401);
+        }
+
+        steps.push({ step: 'length', result: `Token length: ${token.length} (expected 35)`, ok: token.length === 35 });
+        if (token.length !== 35) {
+          return json({ ok: false, error: `Wrong token length: ${token.length}, expected 35`, steps }, 401);
+        }
+
+        const tokenPrefix = token.substring(0, 8);
+        steps.push({ step: 'prefix_extract', result: `Token prefix for DB lookup: "${tokenPrefix}"`, ok: true });
+
+        // Direct DB lookup to show what's happening
+        const { createClient } = await import('npm:@supabase/supabase-js@2');
+        const supabase = createClient(
+          Deno.env.get('SUPABASE_URL')!,
+          Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+        );
+
+        const { data: tokenRow, error: dbErr } = await supabase
+          .from('user_api_tokens')
+          .select('id, user_id, token_salt, expires_at, scopes, created_at')
+          .eq('token_prefix', tokenPrefix)
+          .single();
+
+        if (dbErr || !tokenRow) {
+          steps.push({ step: 'db_lookup', result: `No token found with prefix "${tokenPrefix}" — ${dbErr?.message || 'no rows returned'} (code: ${dbErr?.code || 'n/a'})`, ok: false });
+
+          // Also check how many tokens exist total (sanity check)
+          const { count } = await supabase.from('user_api_tokens').select('id', { count: 'exact', head: true });
+          steps.push({ step: 'db_count', result: `Total tokens in DB: ${count ?? 'unknown'}`, ok: true });
+
+          return json({ ok: false, error: 'Token not found in database', steps }, 401);
+        }
+
+        steps.push({ step: 'db_lookup', result: `Token found — id: ${tokenRow.id}, user_id: ${tokenRow.user_id}, created: ${tokenRow.created_at}, has_salt: ${!!tokenRow.token_salt}`, ok: true });
+
+        // Check user exists
+        const { data: userRow, error: userErr } = await supabase
+          .from('users')
+          .select('id, email, tier, provisional')
+          .eq('id', tokenRow.user_id)
+          .single();
+
+        if (userErr || !userRow) {
+          steps.push({ step: 'user_lookup', result: `User not found for user_id: ${tokenRow.user_id} — ${userErr?.message || 'no user'}`, ok: false });
+          return json({ ok: false, error: 'User not found', steps }, 401);
+        }
+
+        steps.push({ step: 'user_lookup', result: `User found — email: ${userRow.email}, tier: ${userRow.tier}, provisional: ${userRow.provisional}`, ok: true });
+
+        // Now try full auth
         const { authenticate } = await import('./auth.ts');
         try {
           const user = await authenticate(request);
-          return json({ ok: true, user: { id: user.id, email: user.email, tier: user.tier, provisional: user.provisional } });
+          steps.push({ step: 'full_auth', result: `Auth SUCCESS — ${user.email}, tier: ${user.tier}`, ok: true });
+          return json({ ok: true, user: { id: user.id, email: user.email, tier: user.tier, provisional: user.provisional }, steps });
         } catch (err) {
-          return json({ ok: false, error: err instanceof Error ? err.message : 'Unknown error' }, 401);
+          steps.push({ step: 'full_auth', result: `Auth FAILED — ${err instanceof Error ? err.message : 'unknown'}`, ok: false });
+          return json({ ok: false, error: err instanceof Error ? err.message : 'Unknown error', steps }, 401);
         }
       }
 
