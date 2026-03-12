@@ -47,7 +47,7 @@ interface AppRow {
   weighted_dislikes: number;
   runs_30d: number;
   env_schema: Record<string, EnvSchemaEntry> | null;
-  supabase_enabled?: boolean;
+  had_external_db?: boolean;
   similarity?: number;
   hosting_suspended?: boolean;
   category?: string | null;
@@ -417,7 +417,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
         likes: a.likes ?? 0,
         runs_30d: a.runs_30d ?? 0,
         fully_native: perUserEntries.length === 0,
-        supabase_enabled: !!a.supabase_enabled,
+        had_external_db: !!a.had_external_db,
       };
     }
 
@@ -428,7 +428,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
         const overFetchLimit = limit * 5 + blockedAppIds.size + 10;
         const topRes = await fetch(
           `${supabaseUrl}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&hosting_suspended=eq.false` +
-          `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,runs_30d,category,featured_at,supabase_enabled` +
+          `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,runs_30d,category,featured_at,had_external_db` +
           `&order=weighted_likes.desc,likes.desc,runs_30d.desc` +
           `&limit=${overFetchLimit}`,
           { headers: dbHeaders }
@@ -575,7 +575,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
       likes?: number;
       runs_30d?: number;
       fully_native?: boolean;
-      supabase_enabled?: boolean;
+      had_external_db?: boolean;
       tags?: string[];
     }
 
@@ -600,12 +600,12 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
         // Fetch env schemas + metadata
         const appIds = filteredApps.map(r => r.id);
         let envSchemas = new Map<string, Record<string, EnvSchemaEntry>>();
-        let appMeta = new Map<string, { weighted_likes: number; weighted_dislikes: number; runs_30d: number; supabase_enabled: boolean }>();
+        let appMeta = new Map<string, { weighted_likes: number; weighted_dislikes: number; runs_30d: number; had_external_db: boolean }>();
 
         if (appIds.length > 0) {
           try {
             const metaRes = await fetch(
-              `${supabaseUrl}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,env_schema,weighted_likes,weighted_dislikes,runs_30d,likes,dislikes,supabase_enabled`,
+              `${supabaseUrl}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,env_schema,weighted_likes,weighted_dislikes,runs_30d,likes,dislikes,had_external_db`,
               { headers: dbHeaders }
             );
             if (metaRes.ok) {
@@ -616,7 +616,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
                   weighted_likes: row.weighted_likes ?? 0,
                   weighted_dislikes: row.weighted_dislikes ?? 0,
                   runs_30d: row.runs_30d ?? 0,
-                  supabase_enabled: !!row.supabase_enabled,
+                  had_external_db: !!row.had_external_db,
                 });
               }
             }
@@ -656,7 +656,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
             likes: rr.likes ?? 0,
             runs_30d: meta?.runs_30d ?? 0,
             fully_native: perUserEntries.length === 0,
-            supabase_enabled: meta?.supabase_enabled ?? false,
+            had_external_db: meta?.had_external_db ?? false,
           });
         }
       } catch { /* best effort */ }

@@ -154,14 +154,14 @@ export async function placeBid(
 ): Promise<BidResult> {
   if (amountCents <= 0) throw createError('Bid amount must be positive', 400);
 
-  // Only apps using Ultralight storage can be traded
+  // Apps that have ever used an external database are permanently ineligible
   const appCheck = await fetch(
-    `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}&select=supabase_enabled,supabase_config_id`,
+    `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}&select=had_external_db`,
     { headers: dbHeaders() }
   );
   const appRows = appCheck.ok ? await appCheck.json() : [];
-  if (appRows[0]?.supabase_enabled || appRows[0]?.supabase_config_id) {
-    throw createError('Only apps using Ultralight storage can be traded. Apps with external Supabase connections are not eligible.', 400);
+  if (appRows[0]?.had_external_db) {
+    throw createError('This app is permanently ineligible for trading because it has used an external database.', 400);
   }
 
   const expiresAt = expiresInHours
@@ -220,15 +220,15 @@ export async function setAskPrice(
 ): Promise<ListingResult> {
   // Verify ownership + storage eligibility
   const appRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}&select=owner_id,supabase_enabled,supabase_config_id`,
+    `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}&select=owner_id,had_external_db`,
     { headers: dbHeaders() }
   );
   const apps = appRes.ok ? await appRes.json() : [];
   if (!apps[0] || apps[0].owner_id !== ownerId) {
     throw createError('Only the app owner can set ask price', 403);
   }
-  if (apps[0].supabase_enabled || apps[0].supabase_config_id) {
-    throw createError('Only apps using Ultralight storage can be traded. Disconnect external Supabase first.', 400);
+  if (apps[0].had_external_db) {
+    throw createError('This app is permanently ineligible for trading because it has used an external database.', 400);
   }
 
   // Upsert listing
@@ -598,6 +598,58 @@ export async function getAppMetrics(appId: string): Promise<AppMetrics> {
     revenue_30d_cents: Math.round(revenue30dCents * 100) / 100,
     success_rate_30d: successRate30d,
   };
+}
+
+/**
+ * Mark an app as permanently ineligible for trading.
+ * Called when a Supabase connection is made. Sets had_external_db = true,
+ * cancels all active bids (refunding escrow), and removes any listing.
+ */
+export async function flagExternalDb(appId: string): Promise<void> {
+  // 1. Set the permanent flag
+  const flagRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}`,
+    {
+      method: 'PATCH',
+      headers: writeHeaders(),
+      body: JSON.stringify({ had_external_db: true }),
+    }
+  );
+  if (!flagRes.ok) {
+    console.error('[MARKETPLACE] Failed to set had_external_db:', await flagRes.text());
+  }
+
+  // 2. Cancel all active bids on this app (refunds escrow via RPC)
+  const bidsRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/app_bids?app_id=eq.${appId}&status=eq.active&select=id,bidder_id`,
+    { headers: dbHeaders() }
+  );
+  if (bidsRes.ok) {
+    const bids = await bidsRes.json() as Array<{ id: string; bidder_id: string }>;
+    for (const bid of bids) {
+      try {
+        await fetch(`${SUPABASE_URL}/rest/v1/rpc/cancel_bid`, {
+          method: 'POST',
+          headers: rpcHeaders(),
+          body: JSON.stringify({ p_bidder_id: bid.bidder_id, p_bid_id: bid.id }),
+        });
+        console.log(`[MARKETPLACE] Auto-cancelled bid ${bid.id} due to external DB flag on app ${appId}`);
+      } catch (err) {
+        console.error(`[MARKETPLACE] Failed to cancel bid ${bid.id}:`, err);
+      }
+    }
+  }
+
+  // 3. Delist the app (remove listing)
+  await fetch(
+    `${SUPABASE_URL}/rest/v1/app_listings?app_id=eq.${appId}`,
+    {
+      method: 'DELETE',
+      headers: dbHeaders(),
+    }
+  );
+
+  console.log(`[MARKETPLACE] App ${appId} permanently flagged had_external_db — bids cancelled, listing removed`);
 }
 
 // ============================================

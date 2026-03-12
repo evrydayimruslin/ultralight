@@ -2466,6 +2466,16 @@ async function handleSetSupabaseConfig(request: Request, appId: string): Promise
       supabase_enabled: !!config_id,
     });
 
+    // If connecting Supabase, permanently flag app as ineligible for trading
+    if (config_id) {
+      try {
+        const { flagExternalDb } = await import('../services/marketplace.ts');
+        await flagExternalDb(appId);
+      } catch (err) {
+        console.error('[APPS] Failed to flag external DB for marketplace:', err);
+      }
+    }
+
     return json({
       success: true,
       message: config_id ? 'Supabase server assigned' : 'Supabase disabled',

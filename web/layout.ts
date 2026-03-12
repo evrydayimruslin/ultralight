@@ -3620,7 +3620,7 @@ export function getLayoutHTML(options: {
       var copyIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
       var wasTruncated = desc.length > 120;
       var offersIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>';
-      var showOffersBtn = item.type === 'app' && !item.supabase_enabled;
+      var showOffersBtn = item.type === 'app' && !item.had_external_db;
       var detailHtml = '<div class="marketplace-card-detail" style="display:none">'
         + (wasTruncated ? '<div class="marketplace-card-full-desc">' + escapeHtml(desc) + '</div>' : '')
         + '<div class="marketplace-card-functions" id="mp-fns-' + item.id + '"><span class="btn-spinner" style="width:12px;height:12px;border-width:1.5px;"></span></div>'
@@ -4860,13 +4860,13 @@ export function getLayoutHTML(options: {
       const historyEl = document.getElementById('appMarketHistory');
       if (!contentEl) return;
 
-      // Apps with external Supabase cannot be traded
-      if (app && (app.supabase_enabled || app.supabase_config_id)) {
+      // Apps that have ever used an external database are permanently ineligible
+      if (app && app.had_external_db) {
         contentEl.innerHTML =
           '<div class="section-card">' +
             '<h3 class="section-title">Trading Unavailable</h3>' +
-            '<p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-2)">Apps with an external Supabase connection cannot be traded on the marketplace.</p>' +
-            '<p style="font-size:13px;color:var(--text-muted)">To enable trading, disconnect the external database and use <strong>ultralight.store()</strong> for data storage. This ensures all app data transfers seamlessly with ownership.</p>' +
+            '<p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-2)">This app is permanently ineligible for marketplace trading because it has used an external database.</p>' +
+            '<p style="font-size:13px;color:var(--text-muted)">Apps that connect to external Supabase are excluded from trading to protect buyers from acquiring apps with inaccessible data dependencies.</p>' +
           '</div>';
         if (bidsEl) bidsEl.innerHTML = '';
         if (historyEl) historyEl.innerHTML = '';

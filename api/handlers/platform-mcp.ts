@@ -3474,6 +3474,14 @@ async function executeSetSupabase(
     throw new ToolError(INTERNAL_ERROR, `Failed to assign Supabase config: ${err instanceof Error ? err.message : String(err)}`);
   }
 
+  // Permanently flag app as ineligible for marketplace trading
+  try {
+    const { flagExternalDb } = await import('../services/marketplace.ts');
+    await flagExternalDb(app.id);
+  } catch (err) {
+    console.error('[MCP] Failed to flag external DB for marketplace:', err);
+  }
+
   return { app_id: app.id, supabase: serverName, config_id: config.id };
 }
 
