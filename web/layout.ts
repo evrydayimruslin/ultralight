@@ -1437,24 +1437,23 @@ export function getLayoutHTML(options: {
       position: fixed;
       inset: 0;
       background: rgba(0, 0, 0, 0.4);
-      z-index: 9999;
+      z-index: 100000;
       display: flex;
       align-items: center;
       justify-content: center;
-      animation: offers-fade-in 0.15s ease;
-    }
-    @keyframes offers-fade-in {
-      from { opacity: 0; }
-      to { opacity: 1; }
+      opacity: 1;
     }
     .offers-popup {
-      background: var(--bg-primary);
+      background: #fff;
       border: 1px solid var(--border);
       width: 460px;
       max-width: 94vw;
       max-height: 80vh;
       overflow-y: auto;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+      opacity: 1;
+      position: relative;
+      z-index: 100001;
     }
     .offers-popup-header {
       display: flex;
@@ -1653,20 +1652,18 @@ export function getLayoutHTML(options: {
     .offers-btn-outline {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
       padding: 7px 14px;
       background: none;
-      border: 1px solid var(--border);
+      border: 1px solid var(--text-primary);
       font-size: 12px;
       font-weight: 500;
       cursor: pointer;
-      color: var(--text-secondary);
-      transition: border-color 0.15s, color 0.15s;
+      color: var(--text-primary);
       white-space: nowrap;
     }
     .offers-btn-outline:hover {
-      border-color: var(--text-primary);
-      color: var(--text-primary);
+      background: var(--text-primary);
+      color: var(--bg-primary);
     }
     .offers-login-msg {
       font-size: 13px;
@@ -3619,7 +3616,6 @@ export function getLayoutHTML(options: {
       // Apps: expandable accordion
       var copyIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
       var wasTruncated = desc.length > 120;
-      var offersIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>';
       var showOffersBtn = item.type === 'app' && !item.had_external_db;
       var detailHtml = '<div class="marketplace-card-detail" style="display:none">'
         + (wasTruncated ? '<div class="marketplace-card-full-desc">' + escapeHtml(desc) + '</div>' : '')
@@ -3630,10 +3626,7 @@ export function getLayoutHTML(options: {
         + '<span>Copy Agent Instructions</span>'
         + '</button>'
         + (showOffersBtn
-          ? '<button class="offers-btn-outline" onclick="event.stopPropagation(); openOffersPopup(\\\'' + item.id + '\\\')">'
-            + offersIcon
-            + '<span>Offers</span>'
-            + '</button>'
+          ? '<button class="offers-btn-outline" onclick="event.stopPropagation(); openOffersPopup(\\\'' + item.id + '\\\')">Offer</button>'
           : '')
         + '</div>'
         + '</div>';
@@ -5247,7 +5240,7 @@ export function getLayoutHTML(options: {
       popup.onclick = function(e) { e.stopPropagation(); };
       popup.innerHTML =
         '<div class="offers-popup-header">' +
-          '<h3>Offers</h3>' +
+          '<h3>Offer</h3>' +
           '<button class="offers-popup-close" onclick="closeOffersPopup()">&times;</button>' +
         '</div>' +
         '<div class="offers-popup-body" id="offersPopupBody">' +
