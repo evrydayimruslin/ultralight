@@ -43,15 +43,21 @@ const ALLOWED_MODELS = new Set([
 
 export async function handleChatStream(request: Request): Promise<Response> {
   // ── 1. Auth ──
+  const authHeader = request.headers.get('Authorization');
+  console.log(`[CHAT] Auth attempt — header present: ${!!authHeader}, prefix: ${authHeader?.substring(0, 12)}...`);
+
   let user: { id: string; email: string; tier: string; provisional?: boolean };
   try {
     user = await authenticate(request);
-  } catch {
-    return error('Unauthorized', 401);
+    console.log(`[CHAT] Auth success — user: ${user.id}, email: ${user.email}, tier: ${user.tier}, provisional: ${user.provisional}`);
+  } catch (err) {
+    console.error(`[CHAT] Auth FAILED:`, err instanceof Error ? err.message : err);
+    return json({ error: 'Unauthorized', detail: err instanceof Error ? err.message : 'Auth failed' }, 401);
   }
 
   // Block provisional users (no balance, no billing)
   if (user.provisional) {
+    console.log(`[CHAT] Blocked provisional user: ${user.id}`);
     return json({ error: 'Chat requires a full account. Sign in at ultralight.dev' }, 403);
   }
 
