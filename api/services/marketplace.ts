@@ -154,6 +154,16 @@ export async function placeBid(
 ): Promise<BidResult> {
   if (amountCents <= 0) throw createError('Bid amount must be positive', 400);
 
+  // Only apps using Ultralight storage can be traded
+  const appCheck = await fetch(
+    `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}&select=supabase_enabled,supabase_config_id`,
+    { headers: dbHeaders() }
+  );
+  const appRows = appCheck.ok ? await appCheck.json() : [];
+  if (appRows[0]?.supabase_enabled || appRows[0]?.supabase_config_id) {
+    throw createError('Only apps using Ultralight storage can be traded. Apps with external Supabase connections are not eligible.', 400);
+  }
+
   const expiresAt = expiresInHours
     ? new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString()
     : null;
@@ -208,14 +218,17 @@ export async function setAskPrice(
   instantBuy?: boolean,
   note?: string
 ): Promise<ListingResult> {
-  // Verify ownership
+  // Verify ownership + storage eligibility
   const appRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}&select=owner_id`,
+    `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}&select=owner_id,supabase_enabled,supabase_config_id`,
     { headers: dbHeaders() }
   );
   const apps = appRes.ok ? await appRes.json() : [];
   if (!apps[0] || apps[0].owner_id !== ownerId) {
     throw createError('Only the app owner can set ask price', 403);
+  }
+  if (apps[0].supabase_enabled || apps[0].supabase_config_id) {
+    throw createError('Only apps using Ultralight storage can be traded. Disconnect external Supabase first.', 400);
   }
 
   // Upsert listing

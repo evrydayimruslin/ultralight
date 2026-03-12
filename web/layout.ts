@@ -1433,6 +1433,248 @@ export function getLayoutHTML(options: {
       color: #c55;
     }
 
+    .offers-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.4);
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: offers-fade-in 0.15s ease;
+    }
+    @keyframes offers-fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    .offers-popup {
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      width: 460px;
+      max-width: 94vw;
+      max-height: 80vh;
+      overflow-y: auto;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+    }
+    .offers-popup-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .offers-popup-header h3 {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      margin: 0;
+    }
+    .offers-popup-close {
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px;
+      color: var(--text-muted);
+      font-size: 18px;
+      line-height: 1;
+    }
+    .offers-popup-close:hover {
+      color: var(--text-primary);
+    }
+    .offers-popup-body {
+      padding: 20px;
+    }
+    .offers-ask-section {
+      margin-bottom: 20px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .offers-ask-label {
+      font-size: 11px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    .offers-ask-price {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+    }
+    .offers-ask-floor {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+    .offers-ask-note {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-top: 8px;
+      font-style: italic;
+    }
+    .offers-buynow-btn {
+      display: block;
+      width: 100%;
+      padding: 10px 0;
+      background: var(--text-primary);
+      color: var(--bg-primary);
+      border: none;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 12px;
+      text-align: center;
+      letter-spacing: 0.01em;
+      transition: opacity 0.15s;
+    }
+    .offers-buynow-btn:hover {
+      opacity: 0.85;
+    }
+    .offers-bids-section {
+      margin-bottom: 20px;
+    }
+    .offers-bids-title {
+      font-size: 11px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+    .offers-bid-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .offers-bid-row:last-child {
+      border-bottom: none;
+    }
+    .offers-bid-amount {
+      font-weight: 600;
+      color: var(--text-primary);
+      min-width: 72px;
+    }
+    .offers-bid-info {
+      flex: 1;
+      color: var(--text-muted);
+      margin-left: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .offers-bid-time {
+      color: var(--text-muted);
+      font-size: 11px;
+      margin-left: 12px;
+      white-space: nowrap;
+    }
+    .offers-bid-cancel {
+      margin-left: 12px;
+      background: none;
+      border: 1px solid var(--border);
+      padding: 3px 8px;
+      font-size: 11px;
+      cursor: pointer;
+      color: var(--text-muted);
+    }
+    .offers-bid-cancel:hover {
+      border-color: var(--text-primary);
+      color: var(--text-primary);
+    }
+    .offers-bid-form {
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+    }
+    .offers-bid-form-title {
+      font-size: 11px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+    .offers-bid-input-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .offers-bid-input {
+      flex: 1;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      background: var(--bg-primary);
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+    }
+    .offers-bid-input:focus {
+      border-color: var(--text-primary);
+    }
+    .offers-bid-input::placeholder {
+      color: var(--text-muted);
+    }
+    .offers-bid-submit {
+      padding: 8px 16px;
+      background: var(--text-primary);
+      color: var(--bg-primary);
+      border: none;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: opacity 0.15s;
+    }
+    .offers-bid-submit:hover {
+      opacity: 0.85;
+    }
+    .offers-bid-submit:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .offers-no-bids {
+      font-size: 13px;
+      color: var(--text-muted);
+      padding: 8px 0;
+    }
+    .offers-your-bid {
+      background: var(--bg-secondary);
+      padding: 10px 12px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+    }
+    .offers-btn-outline {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 14px;
+      background: none;
+      border: 1px solid var(--border);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      color: var(--text-secondary);
+      transition: border-color 0.15s, color 0.15s;
+      white-space: nowrap;
+    }
+    .offers-btn-outline:hover {
+      border-color: var(--text-primary);
+      color: var(--text-primary);
+    }
+    .offers-login-msg {
+      font-size: 13px;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 12px 0;
+    }
+
     .marketplace-card-name {
       font-size: 14px;
       font-weight: 600;
@@ -3377,13 +3619,23 @@ export function getLayoutHTML(options: {
       // Apps: expandable accordion
       var copyIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
       var wasTruncated = desc.length > 120;
+      var offersIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>';
+      var showOffersBtn = item.type === 'app' && !item.supabase_enabled;
       var detailHtml = '<div class="marketplace-card-detail" style="display:none">'
         + (wasTruncated ? '<div class="marketplace-card-full-desc">' + escapeHtml(desc) + '</div>' : '')
         + '<div class="marketplace-card-functions" id="mp-fns-' + item.id + '"><span class="btn-spinner" style="width:12px;height:12px;border-width:1.5px;"></span></div>'
-        + '<button class="btn btn-primary" style="gap:var(--space-2);margin-top:var(--space-3);border-radius:0;" onclick="event.stopPropagation(); copyMarketplaceInstructions(\\\'' + item.id + '\\\', this)">'
+        + '<div style="display:flex;gap:8px;margin-top:var(--space-3)">'
+        + '<button class="btn btn-primary" style="gap:var(--space-2);border-radius:0;" onclick="event.stopPropagation(); copyMarketplaceInstructions(\\\'' + item.id + '\\\', this)">'
         + copyIcon
         + '<span>Copy Agent Instructions</span>'
         + '</button>'
+        + (showOffersBtn
+          ? '<button class="offers-btn-outline" onclick="event.stopPropagation(); openOffersPopup(\\\'' + item.id + '\\\')">'
+            + offersIcon
+            + '<span>Offers</span>'
+            + '</button>'
+          : '')
+        + '</div>'
         + '</div>';
 
       var heartSaved = savedAppIds.has(item.id) ? ' saved' : '';
@@ -4608,6 +4860,19 @@ export function getLayoutHTML(options: {
       const historyEl = document.getElementById('appMarketHistory');
       if (!contentEl) return;
 
+      // Apps with external Supabase cannot be traded
+      if (app && (app.supabase_enabled || app.supabase_config_id)) {
+        contentEl.innerHTML =
+          '<div class="section-card">' +
+            '<h3 class="section-title">Trading Unavailable</h3>' +
+            '<p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-2)">Apps with an external Supabase connection cannot be traded on the marketplace.</p>' +
+            '<p style="font-size:13px;color:var(--text-muted)">To enable trading, disconnect the external database and use <strong>ultralight.store()</strong> for data storage. This ensures all app data transfers seamlessly with ownership.</p>' +
+          '</div>';
+        if (bidsEl) bidsEl.innerHTML = '';
+        if (historyEl) historyEl.innerHTML = '';
+        return;
+      }
+
       const isOwner = app && app.owner_id === window._currentUserId;
 
       contentEl.innerHTML = '<div class="loading-text">Loading marketplace data...</div>';
@@ -4962,6 +5227,235 @@ export function getLayoutHTML(options: {
         setTimeout(function() { window.location.reload(); }, 1500);
       }).catch(function(err) {
         showToast(err.message || 'Failed to buy app', 'error');
+      });
+    };
+
+    // ===== Offers Popup =====
+    window.openOffersPopup = function(appId) {
+      // Close any existing popup
+      closeOffersPopup();
+
+      // Create overlay
+      var overlay = document.createElement('div');
+      overlay.className = 'offers-overlay';
+      overlay.id = 'offersOverlay';
+      overlay.onclick = function(e) { if (e.target === overlay) closeOffersPopup(); };
+
+      // Create popup shell with loading state
+      var popup = document.createElement('div');
+      popup.className = 'offers-popup';
+      popup.onclick = function(e) { e.stopPropagation(); };
+      popup.innerHTML =
+        '<div class="offers-popup-header">' +
+          '<h3>Offers</h3>' +
+          '<button class="offers-popup-close" onclick="closeOffersPopup()">&times;</button>' +
+        '</div>' +
+        '<div class="offers-popup-body" id="offersPopupBody">' +
+          '<div style="text-align:center;padding:24px 0"><span class="btn-spinner" style="width:16px;height:16px;border-width:2px"></span></div>' +
+        '</div>';
+
+      overlay.appendChild(popup);
+      document.body.appendChild(overlay);
+
+      // Close on Escape
+      var escHandler = function(e) {
+        if (e.key === 'Escape') { closeOffersPopup(); document.removeEventListener('keydown', escHandler); }
+      };
+      document.addEventListener('keydown', escHandler);
+
+      // Fetch listing data
+      var headers = {};
+      if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
+      fetch('/api/marketplace/listing/' + appId, { headers: headers })
+        .then(function(res) { return res.ok ? res.json() : Promise.reject(new Error('Failed')); })
+        .then(function(data) {
+          var body = document.getElementById('offersPopupBody');
+          if (!body) return;
+          renderOffersPopupContent(body, appId, data);
+        })
+        .catch(function() {
+          var body = document.getElementById('offersPopupBody');
+          if (body) body.innerHTML = '<p class="offers-no-bids">Unable to load offers data.</p>';
+        });
+    };
+
+    function renderOffersPopupContent(body, appId, data) {
+      var listing = data.listing;
+      var bids = data.bids || [];
+      var appData = data.app;
+      var isOwner = appData && appData.owner_id === window._currentUserId;
+      var html = '';
+
+      // ── Ask Price Section ──
+      html += '<div class="offers-ask-section">';
+      if (listing && listing.ask_price_cents) {
+        html += '<div class="offers-ask-label">Ask Price</div>';
+        html += '<div class="offers-ask-price">$' + (listing.ask_price_cents / 100).toFixed(2) + '</div>';
+        if (listing.floor_price_cents) {
+          html += '<div class="offers-ask-floor">Floor: $' + (listing.floor_price_cents / 100).toFixed(2) + '</div>';
+        }
+        if (listing.listing_note) {
+          html += '<div class="offers-ask-note">' + escapeHtml(listing.listing_note) + '</div>';
+        }
+        if (!isOwner && listing.instant_buy) {
+          html += '<button class="offers-buynow-btn" onclick="popupBuyNow(\'' + appId + '\')">Buy Now &mdash; $' + (listing.ask_price_cents / 100).toFixed(2) + '</button>';
+        }
+      } else {
+        html += '<div class="offers-ask-label">Ask Price</div>';
+        html += '<div style="font-size:14px;color:var(--text-muted)">Open to offers</div>';
+        if (listing && listing.listing_note) {
+          html += '<div class="offers-ask-note">' + escapeHtml(listing.listing_note) + '</div>';
+        }
+      }
+      html += '</div>';
+
+      // ── Bids Section ──
+      html += '<div class="offers-bids-section">';
+      html += '<div class="offers-bids-title">Active Bids' + (bids.length > 0 ? ' (' + bids.length + ')' : '') + '</div>';
+
+      // Check if current user has an active bid
+      var myBid = null;
+      if (window._currentUserId) {
+        myBid = bids.find(function(b) { return b.bidder_id === window._currentUserId; });
+      }
+
+      if (myBid && !isOwner) {
+        html += '<div class="offers-your-bid">' +
+          '<span>Your bid: <strong>$' + (myBid.amount_cents / 100).toFixed(2) + '</strong></span>' +
+          '<button class="offers-bid-cancel" onclick="popupCancelBid(\'' + myBid.id + '\',\'' + appId + '\')">Cancel</button>' +
+        '</div>';
+      }
+
+      if (bids.length === 0) {
+        html += '<p class="offers-no-bids">No active bids yet.</p>';
+      } else {
+        bids.forEach(function(bid) {
+          var isMyBid = bid.bidder_id === window._currentUserId;
+          html += '<div class="offers-bid-row">';
+          html += '<span class="offers-bid-amount">$' + (bid.amount_cents / 100).toFixed(2) + '</span>';
+          html += '<span class="offers-bid-info">' +
+            (bid.message ? escapeHtml(bid.message) : (bid.bidder_email ? escapeHtml(bid.bidder_email) : bid.bidder_id.slice(0, 8))) +
+            (isMyBid ? ' <strong>(you)</strong>' : '') +
+          '</span>';
+          html += '<span class="offers-bid-time">' + relTime(bid.created_at) + '</span>';
+          if (isOwner) {
+            html += '<button class="offers-bid-cancel" style="border-color:var(--text-primary);color:var(--text-primary)" onclick="popupAcceptBid(\'' + bid.id + '\',\'' + appId + '\')">Accept</button>';
+            html += '<button class="offers-bid-cancel" onclick="popupRejectBid(\'' + bid.id + '\',\'' + appId + '\')">Reject</button>';
+          }
+          html += '</div>';
+        });
+      }
+      html += '</div>';
+
+      // ── Place Bid Form (non-owners only, no existing bid) ──
+      if (!isOwner && !myBid) {
+        if (!authToken) {
+          html += '<div class="offers-login-msg">Sign in to place a bid.</div>';
+        } else {
+          html += '<div class="offers-bid-form">';
+          html += '<div class="offers-bid-form-title">Place a Bid</div>';
+          html += '<div class="offers-bid-input-row">' +
+            '<input class="offers-bid-input" id="popupBidAmount" type="number" step="0.01" min="0.01" placeholder="Amount ($)">' +
+            '<input class="offers-bid-input" id="popupBidMessage" type="text" placeholder="Message (optional)" style="flex:2">' +
+          '</div>';
+          html += '<button class="offers-bid-submit" id="popupBidBtn" onclick="popupPlaceBid(\'' + appId + '\')">Place Bid</button>';
+          html += '</div>';
+        }
+      }
+
+      body.innerHTML = html;
+    }
+
+    window.closeOffersPopup = closeOffersPopup;
+    function closeOffersPopup() {
+      var overlay = document.getElementById('offersOverlay');
+      if (overlay) overlay.remove();
+    }
+
+    window.popupPlaceBid = function(appId) {
+      var amountEl = document.getElementById('popupBidAmount');
+      var messageEl = document.getElementById('popupBidMessage');
+      var btn = document.getElementById('popupBidBtn');
+      var amount = parseFloat(amountEl ? amountEl.value : '');
+      var message = messageEl ? messageEl.value : '';
+      if (!amount || amount <= 0) { showToast('Enter a valid bid amount', 'error'); return; }
+      if (btn) { btn.disabled = true; btn.textContent = 'Placing...'; }
+
+      fetch('/api/marketplace/bid', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ app_id: appId, amount_cents: Math.round(amount * 100), message: message || null }),
+      }).then(function(res) {
+        if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
+        showToast('Bid placed! $' + amount.toFixed(2) + ' escrowed from your balance.');
+        openOffersPopup(appId); // Refresh popup
+      }).catch(function(err) {
+        showToast(err.message || 'Failed to place bid', 'error');
+        if (btn) { btn.disabled = false; btn.textContent = 'Place Bid'; }
+      });
+    };
+
+    window.popupCancelBid = function(bidId, appId) {
+      fetch('/api/marketplace/cancel', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bid_id: bidId }),
+      }).then(function(res) {
+        if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
+        showToast('Bid cancelled. Escrow refunded.');
+        openOffersPopup(appId); // Refresh popup
+      }).catch(function(err) {
+        showToast(err.message || 'Failed to cancel bid', 'error');
+      });
+    };
+
+    window.popupBuyNow = function(appId) {
+      if (!confirm('Buy this app now at the listed price? Ownership transfers immediately.')) return;
+      fetch('/api/marketplace/buy', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ app_id: appId }),
+      }).then(function(res) {
+        if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
+        return res.json();
+      }).then(function() {
+        closeOffersPopup();
+        showToast('Purchase complete! You now own this app.');
+        setTimeout(function() { window.location.reload(); }, 1500);
+      }).catch(function(err) {
+        showToast(err.message || 'Failed to buy app', 'error');
+      });
+    };
+
+    window.popupAcceptBid = function(bidId, appId) {
+      if (!confirm('Accept this bid? Ownership will transfer and you receive 90% of the bid amount.')) return;
+      fetch('/api/marketplace/accept', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bid_id: bidId }),
+      }).then(function(res) {
+        if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
+        return res.json();
+      }).then(function(data) {
+        closeOffersPopup();
+        showToast('App sold for $' + (data.sale_price_cents / 100).toFixed(2) + '!');
+        setTimeout(function() { window.location.reload(); }, 1500);
+      }).catch(function(err) {
+        showToast(err.message || 'Failed to accept bid', 'error');
+      });
+    };
+
+    window.popupRejectBid = function(bidId, appId) {
+      fetch('/api/marketplace/reject', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bid_id: bidId }),
+      }).then(function(res) {
+        if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
+        showToast('Bid rejected');
+        openOffersPopup(appId); // Refresh popup
+      }).catch(function(err) {
+        showToast(err.message || 'Failed to reject bid', 'error');
       });
     };
 
