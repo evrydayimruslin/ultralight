@@ -5298,7 +5298,7 @@ export function getLayoutHTML(options: {
           html += '<div class="offers-ask-note">' + escapeHtml(listing.listing_note) + '</div>';
         }
         if (!isOwner && listing.instant_buy) {
-          html += '<button class="offers-buynow-btn" onclick="popupBuyNow(\'' + appId + '\')">Buy Now &mdash; $' + (listing.ask_price_cents / 100).toFixed(2) + '</button>';
+          html += '<button class="offers-buynow-btn" onclick="popupBuyNow(\\\'' + appId + '\\\')">Buy Now &mdash; $' + (listing.ask_price_cents / 100).toFixed(2) + '</button>';
         }
       } else {
         html += '<div class="offers-ask-label">Ask Price</div>';
@@ -5322,7 +5322,7 @@ export function getLayoutHTML(options: {
       if (myBid && !isOwner) {
         html += '<div class="offers-your-bid">' +
           '<span>Your bid: <strong>$' + (myBid.amount_cents / 100).toFixed(2) + '</strong></span>' +
-          '<button class="offers-bid-cancel" onclick="popupCancelBid(\'' + myBid.id + '\',\'' + appId + '\')">Cancel</button>' +
+          '<button class="offers-bid-cancel" onclick="popupCancelBid(\\\'' + myBid.id + '\\\',\\\'' + appId + '\\\')">Cancel</button>' +
         '</div>';
       }
 
@@ -5339,8 +5339,8 @@ export function getLayoutHTML(options: {
           '</span>';
           html += '<span class="offers-bid-time">' + relTime(bid.created_at) + '</span>';
           if (isOwner) {
-            html += '<button class="offers-bid-cancel" style="border-color:var(--text-primary);color:var(--text-primary)" onclick="popupAcceptBid(\'' + bid.id + '\',\'' + appId + '\')">Accept</button>';
-            html += '<button class="offers-bid-cancel" onclick="popupRejectBid(\'' + bid.id + '\',\'' + appId + '\')">Reject</button>';
+            html += '<button class="offers-bid-cancel" style="border-color:var(--text-primary);color:var(--text-primary)" onclick="popupAcceptBid(\\\'' + bid.id + '\\\',\\\'' + appId + '\\\')">Accept</button>';
+            html += '<button class="offers-bid-cancel" onclick="popupRejectBid(\\\'' + bid.id + '\\\',\\\'' + appId + '\\\')">Reject</button>';
           }
           html += '</div>';
         });
@@ -5358,7 +5358,7 @@ export function getLayoutHTML(options: {
             '<input class="offers-bid-input" id="popupBidAmount" type="number" step="0.01" min="0.01" placeholder="Amount ($)">' +
             '<input class="offers-bid-input" id="popupBidMessage" type="text" placeholder="Message (optional)" style="flex:2">' +
           '</div>';
-          html += '<button class="offers-bid-submit" id="popupBidBtn" onclick="popupPlaceBid(\'' + appId + '\')">Place Bid</button>';
+          html += '<button class="offers-bid-submit" id="popupBidBtn" onclick="popupPlaceBid(\\\'' + appId + '\\\')">Place Bid</button>';
           html += '</div>';
         }
       }
