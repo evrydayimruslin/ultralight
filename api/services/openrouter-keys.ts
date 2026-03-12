@@ -84,14 +84,21 @@ export async function createOpenRouterKey(userId: string, userEmail: string): Pr
 }
 
 // ── Store / Retrieve Key ──
+//
+// Stores the platform-provisioned OpenRouter key inside the existing
+// `byok_keys` JSONB column under the special `_platform_openrouter` key.
+// This avoids needing a schema migration for a new column.
+
+const PLATFORM_OR_KEY = '_platform_openrouter';
 
 /**
  * Get the user's OpenRouter API key from the database.
+ * Reads from byok_keys._platform_openrouter in the users table.
  * Returns null if no key is stored.
  */
 export async function getStoredOpenRouterKey(userId: string): Promise<string | null> {
   const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=openrouter_api_key`,
+    `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=byok_keys`,
     {
       headers: {
         'apikey': SUPABASE_SERVICE_ROLE_KEY,
@@ -105,17 +112,51 @@ export async function getStoredOpenRouterKey(userId: string): Promise<string | n
     return null;
   }
 
-  const rows = await res.json();
+  const rows = await res.json() as { byok_keys: Record<string, unknown> | null }[];
   if (!rows || rows.length === 0) return null;
 
-  return rows[0].openrouter_api_key || null;
+  const byokKeys = rows[0].byok_keys;
+  if (!byokKeys || !byokKeys[PLATFORM_OR_KEY]) return null;
+
+  const entry = byokKeys[PLATFORM_OR_KEY] as { key?: string };
+  return entry?.key || null;
 }
 
 /**
  * Store an OpenRouter API key for a user.
+ * Merges into the existing byok_keys JSONB column under _platform_openrouter.
  */
 export async function storeOpenRouterKey(userId: string, key: string): Promise<void> {
-  const res = await fetch(
+  // 1. Read current byok_keys to preserve existing BYOK provider configs
+  const getRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=byok_keys`,
+    {
+      headers: {
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+    }
+  );
+
+  let currentKeys: Record<string, unknown> = {};
+  if (getRes.ok) {
+    const rows = await getRes.json() as { byok_keys: Record<string, unknown> | null }[];
+    if (rows && rows.length > 0 && rows[0].byok_keys) {
+      currentKeys = rows[0].byok_keys;
+    }
+  }
+
+  // 2. Merge in the platform OpenRouter key
+  const updatedKeys = {
+    ...currentKeys,
+    [PLATFORM_OR_KEY]: {
+      key,
+      provisioned_at: new Date().toISOString(),
+    },
+  };
+
+  // 3. Write back
+  const patchRes = await fetch(
     `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`,
     {
       method: 'PATCH',
@@ -125,17 +166,17 @@ export async function storeOpenRouterKey(userId: string, key: string): Promise<v
         'Content-Type': 'application/json',
         'Prefer': 'return=minimal',
       },
-      body: JSON.stringify({ openrouter_api_key: key }),
+      body: JSON.stringify({ byok_keys: updatedKeys }),
     }
   );
 
-  if (!res.ok) {
-    const errText = await res.text();
+  if (!patchRes.ok) {
+    const errText = await patchRes.text();
     console.error(`[OR-KEYS] Failed to store key for ${userId}: ${errText}`);
     throw new Error(`Failed to store OpenRouter key: ${errText}`);
   }
 
-  console.log(`[OR-KEYS] Key stored for user ${userId}`);
+  console.log(`[OR-KEYS] Key stored for user ${userId} in byok_keys.${PLATFORM_OR_KEY}`);
 }
 
 // ── Get or Create ──
