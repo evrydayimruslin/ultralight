@@ -1483,10 +1483,16 @@ export function getLayoutHTML(options: {
     .offers-popup-body {
       padding: 20px;
     }
-    .offers-ask-section {
+    .offers-price-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
       margin-bottom: 20px;
       padding-bottom: 20px;
       border-bottom: 1px solid var(--border);
+    }
+    .offers-price-col {
+      flex: 1;
     }
     .offers-ask-label {
       font-size: 11px;
@@ -1502,15 +1508,10 @@ export function getLayoutHTML(options: {
       color: var(--text-primary);
       letter-spacing: -0.02em;
     }
-    .offers-ask-floor {
-      font-size: 12px;
-      color: var(--text-muted);
-      margin-top: 2px;
-    }
     .offers-ask-note {
       font-size: 13px;
       color: var(--text-secondary);
-      margin-top: 8px;
+      margin-bottom: 16px;
       font-style: italic;
     }
     .offers-buynow-btn {
@@ -1532,7 +1533,9 @@ export function getLayoutHTML(options: {
       opacity: 0.85;
     }
     .offers-bids-section {
-      margin-bottom: 20px;
+      margin-top: 20px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
     }
     .offers-bids-title {
       font-size: 11px;
@@ -1586,16 +1589,7 @@ export function getLayoutHTML(options: {
       color: var(--text-primary);
     }
     .offers-bid-form {
-      padding-top: 20px;
-      border-top: 1px solid var(--border);
-    }
-    .offers-bid-form-title {
-      font-size: 11px;
-      font-weight: 500;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: var(--text-muted);
-      margin-bottom: 10px;
+      margin-bottom: 0;
     }
     .offers-bid-amount-row {
       display: flex;
@@ -5315,34 +5309,8 @@ export function getLayoutHTML(options: {
       var bids = data.bids || [];
       var appData = data.app;
       var isOwner = appData && appData.owner_id === window._currentUserId;
+      var highestBid = bids.length > 0 ? bids[0] : null;
       var html = '';
-
-      // ── Ask Price Section ──
-      html += '<div class="offers-ask-section">';
-      if (listing && listing.ask_price_cents) {
-        html += '<div class="offers-ask-label">Ask Price</div>';
-        html += '<div class="offers-ask-price">$' + (listing.ask_price_cents / 100).toFixed(2) + '</div>';
-        if (listing.floor_price_cents) {
-          html += '<div class="offers-ask-floor">Floor: $' + (listing.floor_price_cents / 100).toFixed(2) + '</div>';
-        }
-        if (listing.listing_note) {
-          html += '<div class="offers-ask-note">' + escapeHtml(listing.listing_note) + '</div>';
-        }
-        if (!isOwner && listing.instant_buy) {
-          html += '<button class="offers-buynow-btn" onclick="popupBuyNow(\\\'' + appId + '\\\')">Buy Now &mdash; $' + (listing.ask_price_cents / 100).toFixed(2) + '</button>';
-        }
-      } else {
-        html += '<div class="offers-ask-label">Ask Price</div>';
-        html += '<div style="font-size:14px;color:var(--text-muted)">Open to offers</div>';
-        if (listing && listing.listing_note) {
-          html += '<div class="offers-ask-note">' + escapeHtml(listing.listing_note) + '</div>';
-        }
-      }
-      html += '</div>';
-
-      // ── Bids Section ──
-      html += '<div class="offers-bids-section">';
-      html += '<div class="offers-bids-title">Active Bids' + (bids.length > 0 ? ' (' + bids.length + ')' : '') + '</div>';
 
       // Check if current user has an active bid
       var myBid = null;
@@ -5350,6 +5318,35 @@ export function getLayoutHTML(options: {
         myBid = bids.find(function(b) { return b.bidder_id === window._currentUserId; });
       }
 
+      // ── Price Overview: Ask + Highest Bid side by side ──
+      html += '<div class="offers-price-row">';
+      html += '<div class="offers-price-col">';
+      html += '<div class="offers-ask-label">Ask</div>';
+      if (listing && listing.ask_price_cents) {
+        html += '<div class="offers-ask-price">$' + (listing.ask_price_cents / 100).toFixed(2) + '</div>';
+      } else {
+        html += '<div class="offers-ask-price" style="font-size:16px;color:var(--text-muted)">Open</div>';
+      }
+      html += '</div>';
+      html += '<div class="offers-price-col" style="text-align:right">';
+      html += '<div class="offers-ask-label">Highest Bid</div>';
+      if (highestBid) {
+        html += '<div class="offers-ask-price">$' + (highestBid.amount_cents / 100).toFixed(2) + '</div>';
+      } else {
+        html += '<div class="offers-ask-price" style="font-size:16px;color:var(--text-muted)">&mdash;</div>';
+      }
+      html += '</div>';
+      html += '</div>';
+
+      // ── Note + Buy Now ──
+      if (listing && listing.listing_note) {
+        html += '<div class="offers-ask-note">' + escapeHtml(listing.listing_note) + '</div>';
+      }
+      if (!isOwner && listing && listing.instant_buy && listing.ask_price_cents) {
+        html += '<button class="offers-buynow-btn" onclick="popupBuyNow(\\\'' + appId + '\\\')">Buy Now &mdash; $' + (listing.ask_price_cents / 100).toFixed(2) + '</button>';
+      }
+
+      // ── Your Bid (if exists) ──
       if (myBid && !isOwner) {
         html += '<div class="offers-your-bid">' +
           '<span>Your bid: <strong>$' + (myBid.amount_cents / 100).toFixed(2) + '</strong></span>' +
@@ -5357,9 +5354,27 @@ export function getLayoutHTML(options: {
         '</div>';
       }
 
-      if (bids.length === 0) {
-        html += '<p class="offers-no-bids">No active bids yet.</p>';
-      } else {
+      // ── Place Bid Form (non-owners only, no existing bid) ──
+      if (!isOwner && !myBid) {
+        if (!authToken) {
+          html += '<div class="offers-login-msg">Sign in to place a bid.</div>';
+        } else {
+          html += '<div class="offers-bid-form">';
+          html += '<div class="offers-bid-amount-row">' +
+            '<span class="offers-bid-currency">$</span>' +
+            '<input class="offers-bid-input" id="popupBidAmount" type="number" step="0.01" min="0.01" placeholder="0.00">' +
+          '</div>';
+          html += '<input class="offers-bid-input-msg" id="popupBidMessage" type="text" placeholder="Message (optional)">';
+          html += '<div class="offers-bid-balance" id="popupBidBalance"></div>';
+          html += '<button class="offers-bid-submit" id="popupBidBtn" onclick="popupPlaceBid(\\\'' + appId + '\\\')">Place Bid</button>';
+          html += '</div>';
+        }
+      }
+
+      // ── Bids List ──
+      if (bids.length > 0) {
+        html += '<div class="offers-bids-section">';
+        html += '<div class="offers-bids-title">All Bids (' + bids.length + ')</div>';
         bids.forEach(function(bid) {
           var isMyBid = bid.bidder_id === window._currentUserId;
           html += '<div class="offers-bid-row">';
@@ -5375,25 +5390,7 @@ export function getLayoutHTML(options: {
           }
           html += '</div>';
         });
-      }
-      html += '</div>';
-
-      // ── Place Bid Form (non-owners only, no existing bid) ──
-      if (!isOwner && !myBid) {
-        if (!authToken) {
-          html += '<div class="offers-login-msg">Sign in to place a bid.</div>';
-        } else {
-          html += '<div class="offers-bid-form">';
-          html += '<div class="offers-bid-form-title">Place a Bid</div>';
-          html += '<div class="offers-bid-amount-row">' +
-            '<span class="offers-bid-currency">$</span>' +
-            '<input class="offers-bid-input" id="popupBidAmount" type="number" step="0.01" min="0.01" placeholder="0.00">' +
-          '</div>';
-          html += '<input class="offers-bid-input-msg" id="popupBidMessage" type="text" placeholder="Message (optional)">';
-          html += '<div class="offers-bid-balance" id="popupBidBalance"></div>';
-          html += '<button class="offers-bid-submit" id="popupBidBtn" onclick="popupPlaceBid(\\\'' + appId + '\\\')">Place Bid</button>';
-          html += '</div>';
-        }
+        html += '</div>';
       }
 
       body.innerHTML = html;
