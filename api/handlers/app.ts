@@ -318,6 +318,72 @@ export function createApp() {
         }
       }
 
+      // Debug: add dev credits to authenticated user ($5.00) — temporary, for testing
+      if (path === '/debug/add-credits' && method === 'POST') {
+        const { authenticate } = await import('./auth.ts');
+        try {
+          const user = await authenticate(request);
+          const { createClient } = await import('npm:@supabase/supabase-js@2');
+          const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+          // Add 500 cents ($5.00)
+          const { error: dbErr } = await supabase.rpc('debit_hosting_balance', {
+            p_user_id: user.id,
+            p_amount: -500, // Negative = credit
+            p_update_billed_at: false,
+          });
+          if (dbErr) {
+            // Fallback: direct update
+            await supabase.from('users').update({ hosting_balance_cents: 500 }).eq('id', user.id);
+          }
+          // Check new balance
+          const { data: userData } = await supabase.from('users').select('hosting_balance_cents').eq('id', user.id).single();
+          return json({ ok: true, message: 'Added $5.00 dev credits', balance_cents: userData?.hosting_balance_cents ?? 'unknown' });
+        } catch (err) {
+          return json({ ok: false, error: err instanceof Error ? err.message : 'failed' }, 401);
+        }
+      }
+
+      // Debug: chat preflight — checks auth + balance + OpenRouter key without making a request
+      if (path === '/debug/chat-preflight' && method === 'GET') {
+        const checks: { check: string; result: string; ok: boolean }[] = [];
+
+        // 1. Auth
+        const { authenticate } = await import('./auth.ts');
+        let userId: string | null = null;
+        try {
+          const user = await authenticate(request);
+          userId = user.id;
+          checks.push({ check: 'auth', result: `${user.email}, tier: ${user.tier}`, ok: true });
+
+          if (user.provisional) {
+            checks.push({ check: 'provisional', result: 'Provisional users cannot use chat', ok: false });
+            return json({ ok: false, checks });
+          }
+          checks.push({ check: 'provisional', result: 'Not provisional', ok: true });
+        } catch (err) {
+          checks.push({ check: 'auth', result: err instanceof Error ? err.message : 'failed', ok: false });
+          return json({ ok: false, checks }, 401);
+        }
+
+        // 2. Balance
+        const { checkChatBalance } = await import('../services/chat-billing.ts');
+        const { CHAT_MIN_BALANCE_CENTS: minBalance } = await import('../../shared/types/index.ts');
+        try {
+          const balance = await checkChatBalance(userId!);
+          const ok = balance >= minBalance;
+          checks.push({ check: 'balance', result: `${(balance / 100).toFixed(2)} (min: $${(minBalance / 100).toFixed(2)})`, ok });
+        } catch (err) {
+          checks.push({ check: 'balance', result: `Failed: ${err instanceof Error ? err.message : 'unknown'}`, ok: false });
+        }
+
+        // 3. OpenRouter key
+        const orKey = Deno.env.get('OPENROUTER_API_KEY') || '';
+        checks.push({ check: 'openrouter_key', result: orKey ? `Set (${orKey.substring(0, 8)}...${orKey.substring(orKey.length - 4)})` : 'NOT SET', ok: !!orKey });
+
+        const allOk = checks.every(c => c.ok);
+        return json({ ok: allOk, checks });
+      }
+
       // Onboarding instructions template (must be before /api/discover catch-all)
       if (path === '/api/onboarding/instructions' && method === 'GET') {
         return handleOnboarding(request);

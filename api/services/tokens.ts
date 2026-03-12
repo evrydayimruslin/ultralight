@@ -5,7 +5,7 @@
  * Tokens are generated with a secure random value, hashed for storage,
  * and the plaintext is shown only once during creation.
  *
- * Token format: ul_[32 random hex chars] = 36 chars total
+ * Token format: ul_[32 random hex chars] = 35 chars total
  * Example: ul_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6
  */
 
