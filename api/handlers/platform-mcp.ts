@@ -5924,11 +5924,7 @@ async function executeDiscoverAppstore(
         try {
           const content = await r2Service.fetchTextFile(`users/${page.owner_id}/pages/${page.slug}.md`);
           if (content) {
-            // Truncate to 2KB to keep response size reasonable
-            const truncated = content.length > 2048
-              ? content.slice(0, 2048) + '\n\n[... truncated, ' + content.length + ' chars total]'
-              : content;
-            pageContentMap.set(page.id, truncated);
+            pageContentMap.set(page.id, content);
           }
         } catch { /* skip individual page failures */ }
       });

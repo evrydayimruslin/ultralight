@@ -27,6 +27,8 @@ export const RATE_LIMITS: Record<string, RateLimitConfig> = {
   'mcp:initialize': { endpoint: 'mcp:initialize', limit: 10, windowMinutes: 1 },
   'generate-docs': { endpoint: 'generate-docs', limit: 10, windowMinutes: 60 },
   'discover': { endpoint: 'discover', limit: 60, windowMinutes: 1 },
+  'chat:stream': { endpoint: 'chat:stream', limit: 30, windowMinutes: 1 },
+  'chat:models': { endpoint: 'chat:models', limit: 30, windowMinutes: 1 },
 };
 
 // ============================================

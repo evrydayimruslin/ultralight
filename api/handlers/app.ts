@@ -15,6 +15,7 @@ import { handleHttpEndpoint, handleHttpOptions } from './http.ts';
 import { handleTierChange } from './tier.ts';
 import { handleAdmin } from './admin.ts';
 import { handleDeveloper } from './developer.ts';
+import { handleChatStream, handleChatModels } from './chat.ts';
 import { getLayoutHTML } from '../../web/layout.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
@@ -226,6 +227,17 @@ export function createApp() {
       // Platform Skills.md — plain HTTP access for any agent
       if (path === '/api/skills' && method === 'GET') {
         return handleSkills();
+      }
+
+      // Chat stream endpoint — metered OpenRouter proxy with SSE streaming
+      // Also serves /v1/chat/completions for OpenAI-compatible clients
+      if ((path === '/chat/stream' || path === '/v1/chat/completions') && method === 'POST') {
+        return handleChatStream(request);
+      }
+
+      // Chat models endpoint — available model list for model picker
+      if (path === '/chat/models' && method === 'GET') {
+        return handleChatModels(request);
       }
 
       // Onboarding instructions template (must be before /api/discover catch-all)

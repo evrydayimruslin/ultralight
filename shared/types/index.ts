@@ -1211,3 +1211,66 @@ export function manifestToMCPTools(manifest: AppManifest, appId: string, appSlug
 
   return tools;
 }
+
+// ============================================
+// CHAT (Agent Platform)
+// ============================================
+
+/** Request body for POST /chat/stream */
+export interface ChatStreamRequest {
+  model: string;
+  messages: ChatMessage[];
+  tools?: ChatTool[];
+  temperature?: number;   // default 0.7
+  max_tokens?: number;    // default 4096
+  stream?: boolean;       // default true
+}
+
+/** OpenAI-compatible message format */
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string | null;
+  tool_calls?: ChatToolCall[];
+  tool_call_id?: string;
+  name?: string;
+}
+
+/** OpenAI-compatible tool definition */
+export interface ChatTool {
+  type: 'function';
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+  };
+}
+
+/** OpenAI-compatible tool call */
+export interface ChatToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+/** Token usage reported in the final SSE chunk */
+export interface ChatUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
+/** Result of a chat billing deduction */
+export interface ChatBillingResult {
+  cost_cents: number;
+  balance_after: number;
+  was_depleted: boolean;
+}
+
+/** Minimum balance in cents required to start a chat stream */
+export const CHAT_MIN_BALANCE_CENTS = 50; // $0.50
+
+/** Platform markup multiplier on OpenRouter costs */
+export const CHAT_PLATFORM_MARKUP = 1.2; // 20% margin
