@@ -240,6 +240,17 @@ export function createApp() {
         return handleChatModels(request);
       }
 
+      // Debug: auth test endpoint — validates token and returns user info (no side effects)
+      if (path === '/debug/auth-test' && method === 'GET') {
+        const { authenticate } = await import('./auth.ts');
+        try {
+          const user = await authenticate(request);
+          return json({ ok: true, user: { id: user.id, email: user.email, tier: user.tier, provisional: user.provisional } });
+        } catch (err) {
+          return json({ ok: false, error: err instanceof Error ? err.message : 'Unknown error' }, 401);
+        }
+      }
+
       // Onboarding instructions template (must be before /api/discover catch-all)
       if (path === '/api/onboarding/instructions' && method === 'GET') {
         return handleOnboarding(request);

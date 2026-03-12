@@ -358,11 +358,17 @@ export async function validateToken(
   clientIp?: string
 ): Promise<ValidatedToken | null> {
   // Quick format check
-  if (!token.startsWith(TOKEN_PREFIX) || token.length !== 35) {
+  if (!token.startsWith(TOKEN_PREFIX)) {
+    console.log(`[TOKEN] Rejected: missing prefix "ul_" — got "${token.substring(0, 6)}..."`);
+    return null;
+  }
+  if (token.length !== 35) {
+    console.log(`[TOKEN] Rejected: wrong length — expected 35, got ${token.length} (prefix: ${token.substring(0, 8)})`);
     return null;
   }
 
   const tokenPrefix = token.substring(0, 8);
+  console.log(`[TOKEN] Validating token with prefix: ${tokenPrefix}`);
 
   // Look up token by prefix first (indexed), then verify hash
   const { data, error } = await supabase
@@ -372,8 +378,10 @@ export async function validateToken(
     .single();
 
   if (error || !data) {
+    console.log(`[TOKEN] Prefix lookup FAILED for "${tokenPrefix}" — error: ${error?.message || 'no rows'}, code: ${error?.code || 'n/a'}`);
     return null;
   }
+  console.log(`[TOKEN] Prefix lookup OK — token_id: ${data.id}, user_id: ${data.user_id}, has_salt: ${!!data.token_salt}`);
 
   // Use salted hash if token has a salt, otherwise fall back to legacy unsalted SHA-256
   const tokenHash = data.token_salt
@@ -382,11 +390,14 @@ export async function validateToken(
 
   // Verify hash matches (constant-time comparison)
   if (!constantTimeEqual(data.token_hash, tokenHash)) {
+    console.log(`[TOKEN] Hash MISMATCH for token_id: ${data.id} (method: ${data.token_salt ? 'HMAC-SHA256' : 'SHA-256'})`);
     return null;
   }
+  console.log(`[TOKEN] Hash verified OK for token_id: ${data.id}`);
 
   // Check expiry
   if (data.expires_at && new Date(data.expires_at) < new Date()) {
+    console.log(`[TOKEN] EXPIRED — token_id: ${data.id}, expired_at: ${data.expires_at}`);
     return null;
   }
 
@@ -400,6 +411,7 @@ export async function validateToken(
     .eq('id', data.id)
     .then(() => {}); // Ignore result
 
+  console.log(`[TOKEN] Validation SUCCESS — token_id: ${data.id}, user_id: ${data.user_id}`);
   return {
     user_id: data.user_id,
     token_id: data.id,
@@ -423,8 +435,11 @@ export async function getUserFromToken(token: string, clientIp?: string): Promis
   tokenFunctionNames?: string[] | null;
   scopes?: string[];
 } | null> {
+  console.log(`[TOKEN] getUserFromToken called — token length: ${token.length}, prefix: ${token.substring(0, 8)}`);
+
   const validated = await validateToken(token, clientIp);
   if (!validated) {
+    console.log(`[TOKEN] getUserFromToken: validateToken returned null`);
     return null;
   }
 
@@ -436,18 +451,22 @@ export async function getUserFromToken(token: string, clientIp?: string): Promis
     .single();
 
   if (error || !user) {
+    console.log(`[TOKEN] getUserFromToken: user lookup FAILED for user_id: ${validated.user_id} — error: ${error?.message || 'no user found'}`);
     return null;
   }
+  console.log(`[TOKEN] getUserFromToken: user found — email: ${user.email}, tier: ${user.tier}, provisional: ${user.provisional}`);
 
   // Reject expired provisional users (no MCP call in 24 hours)
   if (user.provisional && user.last_active_at) {
     const lastActive = new Date(user.last_active_at).getTime();
     const twentyFourHoursAgo = Date.now() - (24 * 60 * 60 * 1000);
     if (lastActive < twentyFourHoursAgo) {
+      console.log(`[TOKEN] getUserFromToken: provisional user EXPIRED — last_active: ${user.last_active_at}`);
       return null; // Expired provisional — treat as invalid token
     }
   }
 
+  console.log(`[TOKEN] getUserFromToken SUCCESS — user: ${user.id}, tier: ${user.tier}`);
   return {
     id: user.id,
     email: user.email,
