@@ -1517,7 +1517,7 @@ export async function handleUser(request: Request): Promise<Response> {
       const user = await authenticate(request);
       const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
       const userRes = await fetch(
-        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=hosting_balance_cents,hosting_last_billed_at,auto_topup_enabled,auto_topup_threshold_cents,auto_topup_amount_cents,auto_topup_last_failed_at,stripe_customer_id`,
+        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=hosting_balance_cents,escrow_held_cents,hosting_last_billed_at,auto_topup_enabled,auto_topup_threshold_cents,auto_topup_amount_cents,auto_topup_last_failed_at,stripe_customer_id`,
         {
           headers: {
             'apikey': sbKey,
@@ -1532,6 +1532,7 @@ export async function handleUser(request: Request): Promise<Response> {
 
       return json({
         hosting_balance_cents: ud.hosting_balance_cents ?? 0,
+        escrow_held_cents: ud.escrow_held_cents ?? 0,
         hosting_last_billed_at: ud.hosting_last_billed_at ?? null,
         auto_topup: {
           enabled: ud.auto_topup_enabled ?? false,

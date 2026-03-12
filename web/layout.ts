@@ -1597,36 +1597,76 @@ export function getLayoutHTML(options: {
       color: var(--text-muted);
       margin-bottom: 10px;
     }
-    .offers-bid-input-row {
+    .offers-bid-amount-row {
       display: flex;
-      gap: 8px;
+      align-items: center;
+      border: 1px solid var(--border);
       margin-bottom: 8px;
+      background: var(--bg-primary);
+    }
+    .offers-bid-amount-row:focus-within {
+      border-color: var(--text-primary);
+    }
+    .offers-bid-currency {
+      padding: 0 0 0 12px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      pointer-events: none;
+      user-select: none;
     }
     .offers-bid-input {
       flex: 1;
-      padding: 8px 10px;
+      padding: 10px 12px;
+      border: none;
+      background: transparent;
+      font-size: 14px;
+      font-family: inherit;
+      outline: none;
+      color: var(--text-primary);
+    }
+    .offers-bid-input-msg {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px 12px;
       border: 1px solid var(--border);
       background: var(--bg-primary);
       font-size: 13px;
       font-family: inherit;
       outline: none;
+      margin-bottom: 10px;
+      color: var(--text-primary);
     }
-    .offers-bid-input:focus {
+    .offers-bid-input-msg:focus {
       border-color: var(--text-primary);
     }
-    .offers-bid-input::placeholder {
+    .offers-bid-input::placeholder,
+    .offers-bid-input-msg::placeholder {
       color: var(--text-muted);
     }
+    .offers-bid-balance {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+    .offers-bid-balance span {
+      color: var(--text-primary);
+      font-weight: 500;
+    }
     .offers-bid-submit {
-      padding: 8px 16px;
+      display: block;
+      width: 100%;
+      padding: 10px 0;
       background: var(--text-primary);
       color: var(--bg-primary);
       border: none;
       font-size: 13px;
-      font-weight: 500;
+      font-weight: 600;
       cursor: pointer;
       white-space: nowrap;
       transition: opacity 0.15s;
+      text-align: center;
+      letter-spacing: 0.01em;
     }
     .offers-bid-submit:hover {
       opacity: 0.85;
@@ -1652,18 +1692,16 @@ export function getLayoutHTML(options: {
     .offers-btn-outline {
       display: inline-flex;
       align-items: center;
-      padding: 7px 14px;
+      justify-content: center;
+      height: 36px;
+      padding: 0 var(--space-4);
       background: none;
       border: 1px solid var(--text-primary);
-      font-size: 12px;
+      font-size: 13px;
       font-weight: 500;
       cursor: pointer;
       color: var(--text-primary);
       white-space: nowrap;
-    }
-    .offers-btn-outline:hover {
-      background: var(--text-primary);
-      color: var(--bg-primary);
     }
     .offers-login-msg {
       font-size: 13px;
@@ -5347,16 +5385,31 @@ export function getLayoutHTML(options: {
         } else {
           html += '<div class="offers-bid-form">';
           html += '<div class="offers-bid-form-title">Place a Bid</div>';
-          html += '<div class="offers-bid-input-row">' +
-            '<input class="offers-bid-input" id="popupBidAmount" type="number" step="0.01" min="0.01" placeholder="Amount ($)">' +
-            '<input class="offers-bid-input" id="popupBidMessage" type="text" placeholder="Message (optional)" style="flex:2">' +
+          html += '<div class="offers-bid-amount-row">' +
+            '<span class="offers-bid-currency">$</span>' +
+            '<input class="offers-bid-input" id="popupBidAmount" type="number" step="0.01" min="0.01" placeholder="0.00">' +
           '</div>';
+          html += '<input class="offers-bid-input-msg" id="popupBidMessage" type="text" placeholder="Message (optional)">';
+          html += '<div class="offers-bid-balance" id="popupBidBalance"></div>';
           html += '<button class="offers-bid-submit" id="popupBidBtn" onclick="popupPlaceBid(\\\'' + appId + '\\\')">Place Bid</button>';
           html += '</div>';
         }
       }
 
       body.innerHTML = html;
+
+      // Load available balance into bid form
+      var balDiv = document.getElementById('popupBidBalance');
+      if (balDiv && authToken) {
+        fetch('/api/user/hosting', { headers: { 'Authorization': 'Bearer ' + authToken } })
+          .then(function(r) { return r.ok ? r.json() : null; })
+          .then(function(d) {
+            if (d && balDiv) {
+              var avail = (d.hosting_balance_cents || 0) - (d.escrow_held_cents || 0);
+              balDiv.innerHTML = 'Available balance: <span>$' + (avail / 100).toFixed(2) + '</span>';
+            }
+          }).catch(function() {});
+      }
     }
 
     window.closeOffersPopup = closeOffersPopup;
@@ -5381,7 +5434,12 @@ export function getLayoutHTML(options: {
       }).then(function(res) {
         if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
         showToast('Bid placed! $' + amount.toFixed(2) + ' escrowed from your balance.');
-        openOffersPopup(appId); // Refresh popup
+        // Refresh wallet balance display
+        var balEl = document.getElementById('accountBalance');
+        if (balEl && typeof loadHostingData === 'function') {
+          loadHostingData();
+        }
+        openOffersPopup(appId); // Refresh popup (also refreshes balance in bid form)
       }).catch(function(err) {
         showToast(err.message || 'Failed to place bid', 'error');
         if (btn) { btn.disabled = false; btn.textContent = 'Place Bid'; }
@@ -5396,6 +5454,7 @@ export function getLayoutHTML(options: {
       }).then(function(res) {
         if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
         showToast('Bid cancelled. Escrow refunded.');
+        if (typeof loadHostingData === 'function') loadHostingData();
         openOffersPopup(appId); // Refresh popup
       }).catch(function(err) {
         showToast(err.message || 'Failed to cancel bid', 'error');
