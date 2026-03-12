@@ -6,26 +6,44 @@ import { executeMcpTool, type ChatTool } from '../lib/api';
 
 // ── Platform Tools ──
 
-/** MCP tools exposed to the chat model */
+/** MCP tools exposed to the chat model — must match the server's platform-mcp.ts schemas */
 const PLATFORM_TOOLS: ChatTool[] = [
   {
     type: 'function',
     function: {
       name: 'ul_discover',
-      description: 'Search the Ultralight app registry. Find deployed functions/APIs by keyword, category, or capability. Returns app names, descriptions, and available endpoints.',
+      description:
+        'Find and explore apps on the Ultralight platform. ' +
+        'scope="desk": last 5 used apps (check first). ' +
+        'scope="inspect": deep introspection of one app (requires app_id). ' +
+        'scope="library": your owned+liked apps. ' +
+        'scope="appstore": all published apps (use query/task for search).',
       parameters: {
         type: 'object',
         properties: {
+          scope: {
+            type: 'string',
+            enum: ['desk', 'inspect', 'library', 'appstore'],
+            description: 'Discovery scope.',
+          },
+          app_id: {
+            type: 'string',
+            description: 'Required for scope="inspect".',
+          },
           query: {
             type: 'string',
-            description: 'Search query to find apps (e.g., "weather API", "image processing", "data analysis")',
+            description: 'Semantic search query. For library + appstore.',
           },
-          category: {
+          task: {
             type: 'string',
-            description: 'Optional category filter',
+            description: 'Task description for context-aware search. For appstore.',
+          },
+          limit: {
+            type: 'number',
+            description: 'Max results. For appstore.',
           },
         },
-        required: ['query'],
+        required: ['scope'],
       },
     },
   },
@@ -33,29 +51,26 @@ const PLATFORM_TOOLS: ChatTool[] = [
     type: 'function',
     function: {
       name: 'ul_call',
-      description: 'Call a deployed Ultralight app/function. Execute any discovered function with the given arguments. The function runs on the Ultralight platform and returns results.',
+      description:
+        "Call any app's function through the Ultralight platform. " +
+        'No separate per-app connection needed. Uses your auth context.',
       parameters: {
         type: 'object',
         properties: {
-          app: {
+          app_id: {
             type: 'string',
-            description: 'App name or ID to call (from ul_discover results)',
+            description: 'App ID or slug of the target app.',
           },
-          path: {
+          function_name: {
             type: 'string',
-            description: 'Endpoint path (e.g., "/" or "/analyze")',
+            description: 'Function to call (e.g. "search").',
           },
-          method: {
-            type: 'string',
-            enum: ['GET', 'POST', 'PUT', 'DELETE'],
-            description: 'HTTP method (default: POST)',
-          },
-          body: {
+          args: {
             type: 'object',
-            description: 'Request body (for POST/PUT)',
+            description: 'Arguments to pass to the function.',
           },
         },
-        required: ['app'],
+        required: ['app_id', 'function_name'],
       },
     },
   },
@@ -63,22 +78,39 @@ const PLATFORM_TOOLS: ChatTool[] = [
     type: 'function',
     function: {
       name: 'ul_memory',
-      description: 'Read or write persistent memory/notes. Store information across conversations for later recall.',
+      description:
+        'Persistent cross-session memory. ' +
+        'action="read": read memory.md. ' +
+        'action="write": overwrite/append memory.md. ' +
+        'action="recall": get/set a KV key. ' +
+        'action="query": list/delete KV keys.',
       parameters: {
         type: 'object',
         properties: {
           action: {
             type: 'string',
-            enum: ['read', 'write', 'list'],
-            description: 'Memory action',
+            enum: ['read', 'write', 'recall', 'query'],
+            description: 'Memory operation.',
+          },
+          content: {
+            type: 'string',
+            description: 'Markdown content. For write.',
+          },
+          append: {
+            type: 'boolean',
+            description: 'Append instead of overwrite. For write.',
           },
           key: {
             type: 'string',
-            description: 'Memory key (for read/write)',
+            description: 'KV key. For recall.',
           },
           value: {
             type: 'string',
-            description: 'Value to store (for write)',
+            description: 'JSON value to store. Omit to retrieve. For recall.',
+          },
+          prefix: {
+            type: 'string',
+            description: 'Key prefix filter. For query.',
           },
         },
         required: ['action'],
