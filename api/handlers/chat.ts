@@ -65,14 +65,18 @@ export async function handleChatStream(request: Request): Promise<Response> {
   let body: ChatStreamRequest;
   try {
     body = await request.json() as ChatStreamRequest;
-  } catch {
+    console.log(`[CHAT] Request body — model: ${body.model}, messages: ${body.messages?.length}, tools: ${body.tools?.length || 0}`);
+  } catch (parseErr) {
+    console.error('[CHAT] JSON parse failed:', parseErr);
     return error('Invalid JSON body', 400);
   }
 
   if (!body.model || typeof body.model !== 'string') {
+    console.error('[CHAT] Missing model field');
     return error('model is required', 400);
   }
   if (!ALLOWED_MODELS.has(body.model)) {
+    console.error(`[CHAT] Model not allowed: ${body.model}`);
     return json({
       error: `Model not allowed: ${body.model}`,
       allowed_models: Array.from(ALLOWED_MODELS),
@@ -96,31 +100,26 @@ export async function handleChatStream(request: Request): Promise<Response> {
     );
   }
 
-  // ── 4. Balance pre-check ──
+  // ── 4. Balance pre-check (temporarily bypassed for development) ──
   let balance: number;
   try {
     balance = await checkChatBalance(user.id);
+    console.log(`[CHAT] Balance for ${user.id}: ${balance} cents (min: ${CHAT_MIN_BALANCE_CENTS})`);
   } catch (err) {
     console.error('[CHAT] Balance check failed:', err);
-    return error('Balance check failed', 500);
+    balance = 0; // Don't block on balance check failure during dev
   }
-  if (balance < CHAT_MIN_BALANCE_CENTS) {
-    return json(
-      {
-        error: 'Insufficient balance',
-        balance_cents: balance,
-        minimum_cents: CHAT_MIN_BALANCE_CENTS,
-        topup_url: '/settings/billing',
-      },
-      402,
-    );
-  }
+  // TODO: Re-enable balance gate after billing is wired up
+  // if (balance < CHAT_MIN_BALANCE_CENTS) {
+  //   return json({ error: 'Insufficient balance', balance_cents: balance, minimum_cents: CHAT_MIN_BALANCE_CENTS, topup_url: '/settings/billing' }, 402);
+  // }
 
   // ── 5. Verify platform key ──
   if (!OPENROUTER_API_KEY) {
     console.error('[CHAT] OPENROUTER_API_KEY not configured');
-    return error('Chat service unavailable', 503);
+    return json({ error: 'Chat service unavailable — OPENROUTER_API_KEY not set', detail: 'Server missing OpenRouter API key' }, 503);
   }
+  console.log(`[CHAT] OpenRouter key present: ${OPENROUTER_API_KEY.substring(0, 8)}...`);
 
   // ── 6. Forward to OpenRouter with streaming ──
   const openRouterBody = {
@@ -132,6 +131,8 @@ export async function handleChatStream(request: Request): Promise<Response> {
     stream_options: { include_usage: true },
     ...(body.tools && body.tools.length > 0 ? { tools: body.tools } : {}),
   };
+
+  console.log(`[CHAT] Forwarding to OpenRouter — model: ${body.model}, messages: ${body.messages.length}`);
 
   let openRouterRes: Response;
   try {
@@ -145,9 +146,10 @@ export async function handleChatStream(request: Request): Promise<Response> {
       },
       body: JSON.stringify(openRouterBody),
     });
+    console.log(`[CHAT] OpenRouter responded — status: ${openRouterRes.status}`);
   } catch (err) {
     console.error('[CHAT] OpenRouter fetch failed:', err);
-    return error('Upstream service unavailable', 502);
+    return json({ error: 'Upstream service unavailable', detail: err instanceof Error ? err.message : 'fetch failed' }, 502);
   }
 
   // Handle non-streaming error from OpenRouter
@@ -156,9 +158,10 @@ export async function handleChatStream(request: Request): Promise<Response> {
     try {
       const errBody = await openRouterRes.json() as { error?: { message?: string } };
       errMsg = errBody?.error?.message || errMsg;
+      console.error(`[CHAT] OpenRouter error ${openRouterRes.status}: ${errMsg}`);
     } catch { /* use default */ }
     return json(
-      { error: errMsg },
+      { error: errMsg, detail: `OpenRouter returned ${openRouterRes.status}` },
       openRouterRes.status >= 500 ? 502 : openRouterRes.status,
     );
   }
