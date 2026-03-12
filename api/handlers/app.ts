@@ -376,9 +376,14 @@ export function createApp() {
           checks.push({ check: 'balance', result: `Failed: ${err instanceof Error ? err.message : 'unknown'}`, ok: false });
         }
 
-        // 3. OpenRouter key
-        const orKey = Deno.env.get('OPENROUTER_API_KEY') || '';
-        checks.push({ check: 'openrouter_key', result: orKey ? `Set (${orKey.substring(0, 8)}...${orKey.substring(orKey.length - 4)})` : 'NOT SET', ok: !!orKey });
+        // 3. OpenRouter management key (for provisioning per-user keys)
+        const mgmtKey = Deno.env.get('OPENROUTER_API_KEY') || '';
+        checks.push({ check: 'openrouter_mgmt_key', result: mgmtKey ? `Set (${mgmtKey.substring(0, 8)}...${mgmtKey.substring(mgmtKey.length - 4)})` : 'NOT SET', ok: !!mgmtKey });
+
+        // 4. Per-user OpenRouter key (created on first chat via management API)
+        const { getStoredOpenRouterKey } = await import('../services/openrouter-keys.ts');
+        const userOrKey = await getStoredOpenRouterKey(userId!);
+        checks.push({ check: 'user_openrouter_key', result: userOrKey ? `Provisioned (${userOrKey.substring(0, 8)}...)` : 'Not yet created (will be provisioned on first chat)', ok: true });
 
         const allOk = checks.every(c => c.ok);
         return json({ ok: allOk, checks });

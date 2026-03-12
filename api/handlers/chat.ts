@@ -1,8 +1,8 @@
 // Chat Stream Handler
 // Authenticated streaming proxy to OpenRouter with metered billing.
-// Uses platform OPENROUTER_API_KEY; charges user's hosting_balance_cents.
+// Uses per-user OpenRouter API keys (provisioned via management key).
 //
-// Architecture: Client-side tool dispatch — the Tauri app (Vercel AI SDK)
+// Architecture: Client-side tool dispatch — the Tauri app
 // handles the tool-use loop. This endpoint is a billing/auth proxy that
 // streams tokens and captures usage for post-stream cost deduction.
 
@@ -10,6 +10,7 @@ import { authenticate } from './auth.ts';
 import { json, error } from './app.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
 import { checkChatBalance, deductChatCost } from '../services/chat-billing.ts';
+import { getOrCreateOpenRouterKey } from '../services/openrouter-keys.ts';
 import {
   CHAT_MIN_BALANCE_CENTS,
   type ChatStreamRequest,
@@ -19,7 +20,6 @@ import {
 // @ts-ignore
 const Deno = globalThis.Deno;
 
-const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') || '';
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
 // ============================================
@@ -114,12 +114,18 @@ export async function handleChatStream(request: Request): Promise<Response> {
   //   return json({ error: 'Insufficient balance', balance_cents: balance, minimum_cents: CHAT_MIN_BALANCE_CENTS, topup_url: '/settings/billing' }, 402);
   // }
 
-  // ── 5. Verify platform key ──
-  if (!OPENROUTER_API_KEY) {
-    console.error('[CHAT] OPENROUTER_API_KEY not configured');
-    return json({ error: 'Chat service unavailable — OPENROUTER_API_KEY not set', detail: 'Server missing OpenRouter API key' }, 503);
+  // ── 5. Get or create per-user OpenRouter API key ──
+  let userOpenRouterKey: string;
+  try {
+    userOpenRouterKey = await getOrCreateOpenRouterKey(user.id, user.email);
+    console.log(`[CHAT] OpenRouter key for ${user.id}: ${userOpenRouterKey.substring(0, 8)}...`);
+  } catch (err) {
+    console.error(`[CHAT] Failed to get/create OpenRouter key for ${user.id}:`, err);
+    return json({
+      error: 'Chat service unavailable',
+      detail: err instanceof Error ? err.message : 'OpenRouter key provisioning failed',
+    }, 503);
   }
-  console.log(`[CHAT] OpenRouter key present: ${OPENROUTER_API_KEY.substring(0, 8)}...`);
 
   // ── 6. Forward to OpenRouter with streaming ──
   const openRouterBody = {
@@ -139,7 +145,7 @@ export async function handleChatStream(request: Request): Promise<Response> {
     openRouterRes = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+        'Authorization': `Bearer ${userOpenRouterKey}`,
         'Content-Type': 'application/json',
         'HTTP-Referer': 'https://ultralight-api-iikqz.ondigitalocean.app',
         'X-Title': 'Ultralight Chat',
