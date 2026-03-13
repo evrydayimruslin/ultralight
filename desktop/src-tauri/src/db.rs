@@ -86,6 +86,7 @@ pub struct Agent {
     pub admin_notes: Option<String>,
     pub end_goal: Option<String>,
     pub context: Option<String>,
+    pub launch_mode: String,
     pub created_at: i64,
     pub updated_at: i64,
     // Enriched fields (from JOINs, only present in list queries)
@@ -93,6 +94,16 @@ pub struct Agent {
     pub last_message_preview: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_count: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CardReport {
+    pub id: String,
+    pub card_id: String,
+    pub agent_id: String,
+    pub report_type: String,
+    pub content: String,
+    pub created_at: i64,
 }
 
 // ── Schema ──
@@ -185,6 +196,17 @@ CREATE INDEX IF NOT EXISTS idx_kanban_cards_agent
     ON kanban_cards(assigned_agent_id);
 CREATE INDEX IF NOT EXISTS idx_kanban_cards_column
     ON kanban_cards(column_id, position);
+
+CREATE TABLE IF NOT EXISTS card_reports (
+    id TEXT PRIMARY KEY,
+    card_id TEXT NOT NULL REFERENCES kanban_cards(id) ON DELETE CASCADE,
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    report_type TEXT NOT NULL DEFAULT 'progress',
+    content TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_card_reports_card
+    ON card_reports(card_id, created_at ASC);
 ";
 
 // ── Init ──
@@ -203,6 +225,12 @@ pub fn init_db(app_data_dir: &std::path::Path) -> Result<Connection, String> {
 
     conn.execute_batch(SCHEMA)
         .map_err(|e| format!("Failed to create schema: {}", e))?;
+
+    // Migrations — idempotent column additions for existing databases
+    let _ = conn.execute(
+        "ALTER TABLE agents ADD COLUMN launch_mode TEXT NOT NULL DEFAULT 'build_now'",
+        [],
+    );
 
     log::info!("Database initialized at {:?}", db_path);
     Ok(conn)
@@ -456,7 +484,7 @@ pub fn db_save_messages_batch(
 const AGENT_SELECT_COLS: &str =
     "id, conversation_id, parent_agent_id, name, role, status, system_prompt, \
      initial_task, project_dir, model, permission_level, admin_notes, end_goal, \
-     context, created_at, updated_at";
+     context, launch_mode, created_at, updated_at";
 
 #[tauri::command]
 pub fn db_create_agent(
@@ -474,10 +502,12 @@ pub fn db_create_agent(
     admin_notes: Option<String>,
     end_goal: Option<String>,
     context: Option<String>,
+    launch_mode: Option<String>,
 ) -> Result<Agent, String> {
     let conn = db.0.lock().map_err(|e| format!("DB lock error: {}", e))?;
     let now = chrono_now();
     let perm = permission_level.unwrap_or_else(|| "auto_edit".to_string());
+    let lm = launch_mode.unwrap_or_else(|| "build_now".to_string());
     let model_for_conv = model.clone().unwrap_or_else(|| "anthropic/claude-sonnet-4-20250514".to_string());
 
     let tx = conn.unchecked_transaction()
@@ -494,12 +524,12 @@ pub fn db_create_agent(
     tx.execute(
         "INSERT INTO agents (id, conversation_id, parent_agent_id, name, role, status, \
          system_prompt, initial_task, project_dir, model, permission_level, \
-         admin_notes, end_goal, context, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+         admin_notes, end_goal, context, launch_mode, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         params![
             id, conversation_id, parent_agent_id, name, role, "pending",
             system_prompt, initial_task, project_dir, model, perm,
-            admin_notes, end_goal, context, now, now,
+            admin_notes, end_goal, context, lm, now, now,
         ],
     ).map_err(|e| format!("Create agent error: {}", e))?;
 
@@ -520,6 +550,7 @@ pub fn db_create_agent(
         admin_notes,
         end_goal,
         context,
+        launch_mode: lm,
         created_at: now,
         updated_at: now,
         last_message_preview: None,
@@ -530,7 +561,7 @@ pub fn db_create_agent(
 const AGENT_ENRICHED_SELECT: &str =
     "a.id, a.conversation_id, a.parent_agent_id, a.name, a.role, a.status, a.system_prompt, \
      a.initial_task, a.project_dir, a.model, a.permission_level, a.admin_notes, a.end_goal, \
-     a.context, a.created_at, a.updated_at, \
+     a.context, a.launch_mode, a.created_at, a.updated_at, \
      COUNT(m.id) as message_count, \
      (SELECT content FROM messages WHERE conversation_id = a.conversation_id ORDER BY sort_order DESC LIMIT 1) as last_message_preview";
 
@@ -1056,6 +1087,65 @@ pub fn db_list_cards(
     Ok(cards)
 }
 
+// ── Card Report Commands ──
+
+#[tauri::command]
+pub fn db_create_card_report(
+    db: State<'_, DbState>,
+    id: String,
+    card_id: String,
+    agent_id: String,
+    report_type: String,
+    content: String,
+) -> Result<CardReport, String> {
+    let conn = db.0.lock().map_err(|e| format!("DB lock error: {}", e))?;
+    let now = chrono_now();
+    conn.execute(
+        "INSERT INTO card_reports (id, card_id, agent_id, report_type, content, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![id, card_id, agent_id, report_type, content, now],
+    ).map_err(|e| format!("Create card report error: {}", e))?;
+
+    Ok(CardReport {
+        id,
+        card_id,
+        agent_id,
+        report_type,
+        content,
+        created_at: now,
+    })
+}
+
+#[tauri::command]
+pub fn db_list_card_reports(
+    db: State<'_, DbState>,
+    card_id: String,
+) -> Result<Vec<CardReport>, String> {
+    let conn = db.0.lock().map_err(|e| format!("DB lock error: {}", e))?;
+    let mut stmt = conn.prepare(
+        "SELECT id, card_id, agent_id, report_type, content, created_at \
+         FROM card_reports WHERE card_id = ?1 ORDER BY created_at ASC"
+    ).map_err(|e| format!("Query error: {}", e))?;
+    let rows = stmt.query_map(params![card_id], row_to_card_report)
+        .map_err(|e| format!("Query error: {}", e))?;
+    let mut reports = Vec::new();
+    for row in rows {
+        reports.push(row.map_err(|e| format!("Row error: {}", e))?);
+    }
+    Ok(reports)
+}
+
+#[tauri::command]
+pub fn db_delete_card_report(
+    db: State<'_, DbState>,
+    id: String,
+) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| format!("DB lock error: {}", e))?;
+    conn.execute("DELETE FROM card_reports WHERE id = ?1", params![id])
+        .map_err(|e| format!("Delete card report error: {}", e))?;
+    Ok(())
+}
+
 // ── Helpers ──
 
 fn row_to_board(row: &rusqlite::Row) -> rusqlite::Result<KanbanBoard> {
@@ -1122,8 +1212,9 @@ fn row_to_agent(row: &rusqlite::Row) -> rusqlite::Result<Agent> {
         admin_notes: row.get(11)?,
         end_goal: row.get(12)?,
         context: row.get(13)?,
-        created_at: row.get(14)?,
-        updated_at: row.get(15)?,
+        launch_mode: row.get(14)?,
+        created_at: row.get(15)?,
+        updated_at: row.get(16)?,
         last_message_preview: None,
         message_count: None,
     })
@@ -1145,10 +1236,22 @@ fn row_to_agent_enriched(row: &rusqlite::Row) -> rusqlite::Result<Agent> {
         admin_notes: row.get(11)?,
         end_goal: row.get(12)?,
         context: row.get(13)?,
-        created_at: row.get(14)?,
-        updated_at: row.get(15)?,
-        message_count: row.get(16)?,
-        last_message_preview: row.get::<_, Option<String>>(17)?.map(|s| truncate(&s, 100)),
+        launch_mode: row.get(14)?,
+        created_at: row.get(15)?,
+        updated_at: row.get(16)?,
+        message_count: row.get(17)?,
+        last_message_preview: row.get::<_, Option<String>>(18)?.map(|s| truncate(&s, 100)),
+    })
+}
+
+fn row_to_card_report(row: &rusqlite::Row) -> rusqlite::Result<CardReport> {
+    Ok(CardReport {
+        id: row.get(0)?,
+        card_id: row.get(1)?,
+        agent_id: row.get(2)?,
+        report_type: row.get(3)?,
+        content: row.get(4)?,
+        created_at: row.get(5)?,
     })
 }
 
@@ -1181,6 +1284,11 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
         conn.execute_batch(SCHEMA).unwrap();
+        // Run migrations (same as init_db)
+        let _ = conn.execute(
+            "ALTER TABLE agents ADD COLUMN launch_mode TEXT NOT NULL DEFAULT 'build_now'",
+            [],
+        );
         conn
     }
 
@@ -1388,9 +1496,7 @@ mod tests {
         // List by parent
         let mut stmt = conn.prepare(&format!(
             "SELECT {} FROM agents WHERE parent_agent_id = ?1 ORDER BY created_at DESC",
-            "id, conversation_id, parent_agent_id, name, role, status, system_prompt, \
-             initial_task, project_dir, model, permission_level, admin_notes, end_goal, \
-             context, created_at, updated_at"
+            AGENT_SELECT_COLS
         )).unwrap();
         let children: Vec<Agent> = stmt.query_map(params!["parent"], row_to_agent)
             .unwrap().map(|r| r.unwrap()).collect();
@@ -1779,5 +1885,145 @@ mod tests {
         assert_eq!(role, "builder");
         assert_eq!(task.as_deref(), Some("Build feature X"));
         assert_eq!(notes.as_deref(), Some("Keep logs"));
+    }
+
+    // ── Card Report Tests ──
+
+    #[test]
+    fn test_create_and_list_card_reports() {
+        let conn = setup_db();
+        let now = chrono_now();
+
+        // Create board + column + card + agent prerequisites
+        conn.execute(
+            "INSERT INTO kanban_boards (id, name, project_dir, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params!["board1", "Test Board", "/tmp", now, now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO kanban_columns (id, board_id, name, position, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params!["col1", "board1", "Backlog", 0, now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO kanban_cards (id, column_id, title, position, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params!["card1", "col1", "Test Card", 0, "todo", now, now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO conversations (id, title, model, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params!["conv-r1", "Agent", "model", now, now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO agents (id, conversation_id, name, role, status, permission_level, launch_mode, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params!["agent-r1", "conv-r1", "Reporter", "analyst", "running", "auto_edit", "discuss_first", now, now],
+        ).unwrap();
+
+        // Create reports (out of order to test ordering)
+        conn.execute(
+            "INSERT INTO card_reports (id, card_id, agent_id, report_type, content, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params!["rpt2", "card1", "agent-r1", "completion", "Done!", now + 100],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO card_reports (id, card_id, agent_id, report_type, content, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params!["rpt1", "card1", "agent-r1", "plan", "Here is my plan...", now],
+        ).unwrap();
+
+        // List — should be ordered by created_at ASC
+        let mut stmt = conn.prepare(
+            "SELECT id, card_id, agent_id, report_type, content, created_at \
+             FROM card_reports WHERE card_id = ?1 ORDER BY created_at ASC"
+        ).unwrap();
+        let reports: Vec<CardReport> = stmt.query_map(params!["card1"], row_to_card_report)
+            .unwrap().map(|r| r.unwrap()).collect();
+
+        assert_eq!(reports.len(), 2);
+        assert_eq!(reports[0].id, "rpt1");
+        assert_eq!(reports[0].report_type, "plan");
+        assert_eq!(reports[1].id, "rpt2");
+        assert_eq!(reports[1].report_type, "completion");
+    }
+
+    #[test]
+    fn test_card_report_cascade_on_card_delete() {
+        let conn = setup_db();
+        let now = chrono_now();
+
+        // Setup
+        conn.execute(
+            "INSERT INTO kanban_boards (id, name, project_dir, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params!["board-c", "Board", "/tmp", now, now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO kanban_columns (id, board_id, name, position, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params!["col-c", "board-c", "Col", 0, now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO kanban_cards (id, column_id, title, position, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params!["card-c", "col-c", "Card", 0, "todo", now, now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO conversations (id, title, model, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params!["conv-c", "Agent", "model", now, now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO agents (id, conversation_id, name, role, status, permission_level, launch_mode, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params!["agent-c", "conv-c", "Agent", "builder", "running", "auto_edit", "build_now", now, now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO card_reports (id, card_id, agent_id, report_type, content, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params!["rpt-c", "card-c", "agent-c", "progress", "Working...", now],
+        ).unwrap();
+
+        // Delete card — should cascade to reports
+        conn.execute("DELETE FROM kanban_cards WHERE id = 'card-c'", []).unwrap();
+
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM card_reports WHERE card_id = 'card-c'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_agent_launch_mode() {
+        let conn = setup_db();
+        let now = chrono_now();
+
+        // Create agent with explicit launch_mode
+        conn.execute(
+            "INSERT INTO conversations (id, title, model, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params!["conv-lm", "Agent", "model", now, now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO agents (id, conversation_id, name, role, status, permission_level, launch_mode, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params!["agent-lm", "conv-lm", "Planner", "analyst", "pending", "auto_edit", "discuss_first", now, now],
+        ).unwrap();
+
+        let launch_mode: String = conn.query_row(
+            "SELECT launch_mode FROM agents WHERE id = 'agent-lm'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(launch_mode, "discuss_first");
+
+        // Default launch_mode
+        conn.execute(
+            "INSERT INTO conversations (id, title, model, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params!["conv-lm2", "Agent2", "model", now, now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO agents (id, conversation_id, name, role, status, permission_level, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params!["agent-lm2", "conv-lm2", "Builder", "builder", "pending", "auto_edit", now, now],
+        ).unwrap();
+
+        let launch_mode2: String = conn.query_row(
+            "SELECT launch_mode FROM agents WHERE id = 'agent-lm2'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(launch_mode2, "build_now");
     }
 }

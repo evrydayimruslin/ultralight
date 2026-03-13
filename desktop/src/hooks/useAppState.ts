@@ -6,12 +6,14 @@ import { useState, useCallback } from 'react';
 
 export type AppView =
   | { kind: 'home' }
-  | { kind: 'agent'; agentId: string };
+  | { kind: 'agent'; agentId: string }
+  | { kind: 'new-chat' };
 
 export interface UseAppStateReturn {
   view: AppView;
   navigateHome: () => void;
   navigateToAgent: (agentId: string) => void;
+  navigateToNewChat: () => void;
   selectedProjectDir: string | null;
   setSelectedProjectDir: (dir: string | null) => void;
 }
@@ -56,6 +58,10 @@ export function useAppState(): UseAppStateReturn {
     setView({ kind: 'agent', agentId });
   }, []);
 
+  const navigateToNewChat = useCallback(() => {
+    setView({ kind: 'new-chat' });
+  }, []);
+
   const setSelectedProjectDir = useCallback((dir: string | null) => {
     _setSelectedProjectDir(dir);
     storeProjectDir(dir);
@@ -65,6 +71,7 @@ export function useAppState(): UseAppStateReturn {
     view,
     navigateHome,
     navigateToAgent,
+    navigateToNewChat,
     selectedProjectDir,
     setSelectedProjectDir,
   };

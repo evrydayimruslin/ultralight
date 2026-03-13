@@ -69,6 +69,10 @@ pub fn run() {
       db::db_update_card,
       db::db_delete_card,
       db::db_list_cards,
+      // Card report commands
+      db::db_create_card_report,
+      db::db_list_card_reports,
+      db::db_delete_card_report,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

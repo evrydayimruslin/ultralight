@@ -18,6 +18,8 @@ interface HomeViewProps {
   selectedProjectDir: string | null;
   onSelectProjectDir: (dir: string | null) => void;
   onNavigateToAgent: (agentId: string) => void;
+  sidebarOpen?: boolean;
+  onToggleSidebar?: () => void;
 }
 
 // ── Helpers ──
@@ -29,6 +31,7 @@ function statusDot(status: string): string {
     case 'completed': return 'bg-blue-400';
     case 'error': return 'bg-red-500';
     case 'stopped': return 'bg-amber-400';
+    case 'waiting_for_approval': return 'bg-amber-500';
     default: return 'bg-gray-300';
   }
 }
@@ -53,6 +56,8 @@ export default function HomeView({
   selectedProjectDir,
   onSelectProjectDir,
   onNavigateToAgent,
+  sidebarOpen = false,
+  onToggleSidebar,
 }: HomeViewProps) {
   const {
     columns,
@@ -131,17 +136,21 @@ export default function HomeView({
     model: string;
     permissionLevel: string;
     cardId?: string;
+    launchMode: string;
   }) => {
-    const systemPrompt = buildAgentSystemPrompt(params.role, params.name, selectedProjectDir, undefined);
+    const systemPrompt = buildAgentSystemPrompt(
+      params.role, params.name, selectedProjectDir, undefined, undefined, params.launchMode,
+    );
     const agent = await createAgent({
       name: params.name,
       role: params.role,
-      initialTask: params.task,
+      initialTask: params.cardId ? `[Card: ${params.cardId}]\n\n${params.task}` : params.task,
       systemPrompt,
       projectDir: selectedProjectDir,
       model: params.model,
       parentAgentId: null,
       permissionLevel: params.permissionLevel,
+      launchMode: params.launchMode,
     });
 
     // Assign agent to card if created from card
@@ -153,10 +162,69 @@ export default function HomeView({
     onNavigateToAgent(agent.id);
   }, [selectedProjectDir, createAgent, assignAgent, onNavigateToAgent]);
 
+  // Plan approval: spawn a child builder agent from the discuss agent's plan
+  const handleApproveAgent = useCallback(async (discussAgentId: string, plan: string, card: KanbanCardType) => {
+    // 1. Mark discuss agent → completed
+    await invoke('db_update_agent', { id: discussAgentId, status: 'completed' });
+
+    // 2. Create a new builder agent with plan as context
+    const taskText = card.description
+      ? `${card.title}\n\nDescription: ${card.description}`
+      : card.title;
+    const systemPrompt = buildAgentSystemPrompt(
+      'builder', card.title.slice(0, 40), selectedProjectDir, undefined, undefined, 'build_now',
+    );
+    const builder = await createAgent({
+      name: `${card.title.slice(0, 30)} Builder`,
+      role: 'builder',
+      initialTask: card.id ? `[Card: ${card.id}]\n\n${taskText}` : taskText,
+      systemPrompt,
+      projectDir: selectedProjectDir,
+      model: 'anthropic/claude-sonnet-4',
+      parentAgentId: discussAgentId,
+      launchMode: 'build_now',
+      context: `Approved plan:\n${plan}`,
+    });
+
+    // 3. Reassign card to the builder
+    await assignAgent(card.id, builder.id);
+
+    // 4. Navigate to builder's chat (startAgent will happen from ChatView)
+    onNavigateToAgent(builder.id);
+  }, [selectedProjectDir, createAgent, assignAgent, onNavigateToAgent]);
+
+  // Plan rejection
+  const handleRejectAgent = useCallback(async (agentId: string) => {
+    await invoke('db_update_agent', { id: agentId, status: 'stopped' });
+    // Post a progress report noting rejection
+    await invoke('db_create_card_report', {
+      id: crypto.randomUUID(),
+      cardId: selectedCard?.id ?? '',
+      agentId,
+      reportType: 'progress',
+      content: 'Plan rejected by user.',
+    });
+  }, [selectedCard]);
+
   return (
     <div className="flex-1 flex flex-col h-full bg-white overflow-y-auto">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-ul-border">
+      <div className="flex items-center justify-between px-4 h-nav border-b border-ul-border">
+        <div className="flex items-center gap-3">
+          {/* Sidebar toggle */}
+          <button
+            onClick={onToggleSidebar}
+            className="p-1 rounded hover:bg-gray-100 text-ul-text-secondary"
+            title={sidebarOpen ? 'Close sidebar' : 'Open sidebar'}
+          >
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+              <line x1="3" y1="5" x2="15" y2="5" />
+              <line x1="3" y1="9" x2="15" y2="9" />
+              <line x1="3" y1="13" x2="15" y2="13" />
+            </svg>
+          </button>
+          <h1 className="text-h3 text-ul-text tracking-tight">Home</h1>
+        </div>
         <ProjectDropdown
           selectedDir={selectedProjectDir}
           onSelect={onSelectProjectDir}
@@ -289,6 +357,8 @@ export default function HomeView({
           onUpdate={handleCardUpdate}
           onDelete={handleCardDelete}
           onCreateAgent={handleCreateAgentFromCard}
+          onApproveAgent={handleApproveAgent}
+          onRejectAgent={handleRejectAgent}
           onClose={() => setSelectedCard(null)}
         />
       )}

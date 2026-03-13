@@ -23,6 +23,7 @@ export interface Agent {
   admin_notes: string | null;
   end_goal: string | null;
   context: string | null;
+  launch_mode: string;
   created_at: number;
   updated_at: number;
   // Enriched fields (from JOINs, only present in list queries)
@@ -42,6 +43,7 @@ export interface CreateAgentParams {
   adminNotes?: string;
   endGoal?: string;
   context?: string;
+  launchMode?: string;
 }
 
 export interface UseAgentFleetReturn {
@@ -136,6 +138,7 @@ export function useAgentFleet(): UseAgentFleetReturn {
       adminNotes: params.adminNotes ?? null,
       endGoal: params.endGoal ?? null,
       context: params.context ?? null,
+      launchMode: params.launchMode ?? null,
     });
 
     await refreshAgents();

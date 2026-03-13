@@ -40,6 +40,7 @@ function statusDot(status: string): string {
     case 'completed': return 'bg-blue-400';
     case 'error': return 'bg-ul-error';
     case 'stopped': return 'bg-ul-warning';
+    case 'waiting_for_approval': return 'bg-amber-500';
     default: return 'bg-gray-300';
   }
 }

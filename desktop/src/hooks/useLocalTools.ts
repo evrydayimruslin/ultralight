@@ -288,6 +288,95 @@ const LOCAL_TOOLS: ChatTool[] = [
       },
     },
   },
+
+  // ── Card Reports ──
+  {
+    type: 'function',
+    function: {
+      name: 'add_card_report',
+      description:
+        'Post a progress update or report to your assigned kanban card. ' +
+        'Use to communicate what you did, what changed, and any follow-up items.',
+      parameters: {
+        type: 'object',
+        properties: {
+          card_id: {
+            type: 'string',
+            description: 'The ID of the kanban card.',
+          },
+          content: {
+            type: 'string',
+            description: 'Report content — concise summary of work done or status.',
+          },
+          report_type: {
+            type: 'string',
+            enum: ['progress', 'completion', 'plan'],
+            description: 'Type of report. Default: progress.',
+          },
+        },
+        required: ['card_id', 'content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'submit_plan',
+      description:
+        'Submit your analysis plan for user approval. Pauses execution until approved. ' +
+        'Only use in discuss-first mode. After calling this, STOP — do not implement anything.',
+      parameters: {
+        type: 'object',
+        properties: {
+          card_id: {
+            type: 'string',
+            description: 'The ID of the kanban card.',
+          },
+          plan: {
+            type: 'string',
+            description: 'Structured plan in markdown: summary, approach, files to modify, risks.',
+          },
+        },
+        required: ['card_id', 'plan'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'hand_off_task',
+      description:
+        'Complete your work, write a handoff report, and pass the card to a new agent. ' +
+        'Creates a successor agent with a different specialization assigned to the same card.',
+      parameters: {
+        type: 'object',
+        properties: {
+          card_id: {
+            type: 'string',
+            description: 'The ID of the kanban card.',
+          },
+          summary: {
+            type: 'string',
+            description: 'What you did + context for the successor agent.',
+          },
+          next_agent_name: {
+            type: 'string',
+            description: 'Name for the successor agent.',
+          },
+          next_agent_role: {
+            type: 'string',
+            enum: ['builder', 'analyst', 'support', 'general'],
+            description: 'Role specialization for the successor.',
+          },
+          next_agent_task: {
+            type: 'string',
+            description: 'The specific task for the successor to complete.',
+          },
+        },
+        required: ['card_id', 'summary', 'next_agent_name', 'next_agent_role', 'next_agent_task'],
+      },
+    },
+  },
 ];
 
 // ── Tool Name → Rust Command Mapping ──
@@ -310,6 +399,9 @@ export const LOCAL_TOOL_NAMES = new Set([
   'spawn_agent',
   'check_agent',
   'update_card_status',
+  'add_card_report',
+  'submit_plan',
+  'hand_off_task',
 ]);
 
 // ── Agent Tool Context ──
@@ -325,8 +417,14 @@ export interface AgentToolContext {
   createAgent: (params: CreateAgentParams) => Promise<Agent>;
   startAgent: (agentId: string, config: Omit<AgentRunConfig, 'agentId'>) => Promise<void>;
   parentAgentId: string | null;
+  /** The agent calling the tool (null if user-driven chat) */
+  currentAgentId: string | null;
+  /** Card assigned to this agent, if any */
+  currentCardId: string | null;
   tools: ChatTool[];
   onToolCall: (name: string, args: Record<string, unknown>) => Promise<string>;
+  /** Abort the current agent's run (for pause / handoff) */
+  abortCurrentRun: () => void;
 }
 
 // ── Hook ──
@@ -413,6 +511,113 @@ export function useLocalTools(): UseLocalToolsReturn {
         const { card_id, status } = args as { card_id: string; status: string };
         await invoke('db_update_card', { id: card_id, status });
         return JSON.stringify({ card_id, status, message: `Card status updated to "${status}"` });
+      } catch (err) {
+        return `Tool error: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+
+    if (name === 'add_card_report' && agentCtx) {
+      try {
+        const { card_id, content, report_type = 'progress' } = args as {
+          card_id: string; content: string; report_type?: string;
+        };
+        const reportId = crypto.randomUUID();
+        await invoke('db_create_card_report', {
+          id: reportId,
+          cardId: card_id,
+          agentId: agentCtx.currentAgentId ?? 'unknown',
+          reportType: report_type,
+          content,
+        });
+        return JSON.stringify({ report_id: reportId, message: 'Report posted to card.' });
+      } catch (err) {
+        return `Tool error: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+
+    if (name === 'submit_plan' && agentCtx) {
+      try {
+        const { card_id, plan } = args as { card_id: string; plan: string };
+        // 1. Create a plan report on the card
+        const reportId = crypto.randomUUID();
+        await invoke('db_create_card_report', {
+          id: reportId,
+          cardId: card_id,
+          agentId: agentCtx.currentAgentId ?? 'unknown',
+          reportType: 'plan',
+          content: plan,
+        });
+        // 2. Update agent status → waiting_for_approval
+        if (agentCtx.currentAgentId) {
+          await invoke('db_update_agent', {
+            id: agentCtx.currentAgentId,
+            status: 'waiting_for_approval',
+          });
+        }
+        // 3. Abort the current run (agent pauses here)
+        agentCtx.abortCurrentRun();
+        return JSON.stringify({ status: 'waiting_for_approval', message: 'Plan submitted. Awaiting approval.' });
+      } catch (err) {
+        return `Tool error: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+
+    if (name === 'hand_off_task' && agentCtx) {
+      try {
+        const { card_id, summary, next_agent_name, next_agent_role, next_agent_task } = args as {
+          card_id: string; summary: string; next_agent_name: string;
+          next_agent_role: string; next_agent_task: string;
+        };
+        // 1. Create a handoff report on the card
+        const reportId = crypto.randomUUID();
+        await invoke('db_create_card_report', {
+          id: reportId,
+          cardId: card_id,
+          agentId: agentCtx.currentAgentId ?? 'unknown',
+          reportType: 'handoff',
+          content: summary,
+        });
+        // 2. Mark current agent completed
+        if (agentCtx.currentAgentId) {
+          await invoke('db_update_agent', {
+            id: agentCtx.currentAgentId,
+            status: 'completed',
+          });
+        }
+        // 3. Create successor agent
+        const systemPrompt = buildAgentSystemPrompt(next_agent_role, next_agent_name, projectRoot, undefined);
+        const successor = await agentCtx.createAgent({
+          name: next_agent_name,
+          role: next_agent_role,
+          initialTask: next_agent_task,
+          systemPrompt,
+          projectDir: projectRoot,
+          model: getModel(),
+          parentAgentId: agentCtx.currentAgentId,
+          context: `Handoff from previous agent:\n${summary}`,
+        });
+        // 4. Reassign card to successor
+        await invoke('db_update_card', {
+          id: card_id,
+          assignedAgentId: successor.id,
+          columnId: null, title: null, description: null,
+          acceptanceCriteria: null, position: null, status: null,
+        });
+        // 5. Start successor agent
+        await agentCtx.startAgent(successor.id, {
+          conversationId: successor.conversation_id,
+          systemPrompt,
+          initialTask: next_agent_task,
+          model: getModel(),
+          tools: agentCtx.tools,
+          onToolCall: agentCtx.onToolCall,
+        });
+        // 6. Abort current agent's run — it's done
+        agentCtx.abortCurrentRun();
+        return JSON.stringify({
+          handoff_agent_id: successor.id,
+          message: `Handed off to ${next_agent_name} (${next_agent_role}).`,
+        });
       } catch (err) {
         return `Tool error: ${err instanceof Error ? err.message : String(err)}`;
       }

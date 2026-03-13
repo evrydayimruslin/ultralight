@@ -22,11 +22,13 @@ function statusDotClass(status: string): string {
     case 'completed': return 'bg-blue-400';
     case 'error': return 'bg-red-500';
     case 'stopped': return 'bg-amber-400';
+    case 'waiting_for_approval': return 'bg-amber-500';
     default: return 'bg-gray-300';
   }
 }
 
 function statusLabel(status: string): string {
+  if (status === 'waiting_for_approval') return 'Awaiting Approval';
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 

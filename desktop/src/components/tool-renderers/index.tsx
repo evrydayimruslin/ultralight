@@ -130,10 +130,12 @@ export default function ToolResultRenderer({ toolName, args, result }: ToolResul
         if (data.error) return null;
         const statusColor =
           data.status === 'running' ? 'bg-green-500' :
+          data.status === 'waiting_for_approval' ? 'bg-amber-500' :
           data.status === 'completed' ? 'bg-blue-500' :
           data.status === 'error' ? 'bg-red-500' : 'bg-gray-400';
         const statusLabel =
           data.status === 'running' ? 'text-green-600' :
+          data.status === 'waiting_for_approval' ? 'text-amber-600' :
           data.status === 'completed' ? 'text-blue-600' :
           data.status === 'error' ? 'text-red-600' : 'text-ul-text-muted';
         return (
@@ -173,6 +175,60 @@ export default function ToolResultRenderer({ toolName, args, result }: ToolResul
           <div className="flex items-center gap-2 p-2 bg-ul-bg-secondary rounded border border-ul-border">
             <span className="text-small text-green-600">✓</span>
             <span className="text-small text-ul-text-primary">{data.message}</span>
+          </div>
+        );
+      } catch {
+        return null;
+      }
+    }
+
+    case 'add_card_report': {
+      try {
+        const data = JSON.parse(result);
+        return (
+          <div className="flex items-center gap-2 p-2 bg-green-50 rounded border border-green-200">
+            <span className="text-small text-green-600">&#10003;</span>
+            <span className="text-small text-green-800">{data.message || 'Report posted to card.'}</span>
+          </div>
+        );
+      } catch {
+        return null;
+      }
+    }
+
+    case 'submit_plan': {
+      try {
+        const data = JSON.parse(result);
+        const planPreview = String(args.plan || '').slice(0, 200);
+        return (
+          <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="w-2 h-2 rounded-full bg-amber-500" />
+              <span className="text-small font-medium text-amber-900">
+                {data.message || 'Plan submitted — awaiting approval'}
+              </span>
+            </div>
+            {planPreview && (
+              <p className="text-caption text-amber-800 mt-1 line-clamp-3">{planPreview}...</p>
+            )}
+          </div>
+        );
+      } catch {
+        return null;
+      }
+    }
+
+    case 'hand_off_task': {
+      try {
+        const data = JSON.parse(result);
+        return (
+          <div className="p-3 bg-purple-50 rounded-lg border border-purple-200">
+            <div className="flex items-center gap-2">
+              <span className="text-small text-purple-600">&#8594;</span>
+              <span className="text-small font-medium text-purple-900">
+                {data.message || 'Handed off to successor agent.'}
+              </span>
+            </div>
           </div>
         );
       } catch {

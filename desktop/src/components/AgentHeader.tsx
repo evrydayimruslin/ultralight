@@ -33,6 +33,7 @@ function statusDotClass(status: string): string {
     case 'completed': return 'bg-blue-400';
     case 'error': return 'bg-ul-error';
     case 'stopped': return 'bg-ul-warning';
+    case 'waiting_for_approval': return 'bg-amber-500';
     default: return 'bg-gray-300';
   }
 }
@@ -177,7 +178,7 @@ export default function AgentHeader({
           {/* Status + Actions */}
           <div className="flex items-center justify-between mt-3">
             <span className="text-caption text-ul-text-muted">
-              {agent.status} · {formatElapsed(agent.created_at)}
+              {agent.status === 'waiting_for_approval' ? 'Awaiting Approval' : agent.status} · {formatElapsed(agent.created_at)}
             </span>
             <div className="flex items-center gap-2">
               {isRunning && (

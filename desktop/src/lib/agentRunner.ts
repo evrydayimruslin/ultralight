@@ -8,7 +8,7 @@ import type { ChatTool } from './api';
 
 // ── Types ──
 
-export type AgentStatus = 'pending' | 'running' | 'completed' | 'error' | 'stopped';
+export type AgentStatus = 'pending' | 'running' | 'completed' | 'error' | 'stopped' | 'waiting_for_approval';
 
 export interface AgentRunConfig {
   agentId: string;
@@ -123,9 +123,25 @@ class AgentRunner {
 
       // Update status based on result
       if (abortController.signal.aborted) {
-        run.status = 'stopped';
-        await this.updateDbStatus(agentId, 'stopped');
-        this.emit({ type: 'status_change', agentId, status: 'stopped' });
+        // Check if this was a deliberate pause (submit_plan) or handoff (already completed)
+        // The tool handler may have already set the DB status before aborting.
+        let finalStatus: AgentStatus = 'stopped';
+        try {
+          const dbAgent = await invoke<{ status: string } | null>('db_get_agent', { id: agentId });
+          if (dbAgent?.status === 'waiting_for_approval') {
+            finalStatus = 'waiting_for_approval';
+          } else if (dbAgent?.status === 'completed') {
+            finalStatus = 'completed';
+          }
+        } catch {
+          // Fall through to default 'stopped'
+        }
+
+        if (finalStatus === 'stopped') {
+          await this.updateDbStatus(agentId, 'stopped');
+        }
+        run.status = finalStatus;
+        this.emit({ type: 'status_change', agentId, status: finalStatus });
       } else {
         run.status = 'completed';
         await this.updateDbStatus(agentId, 'completed');

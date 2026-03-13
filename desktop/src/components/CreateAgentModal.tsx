@@ -16,6 +16,7 @@ interface CreateAgentModalProps {
     model: string;
     permissionLevel: string;
     cardId?: string;
+    launchMode: string;
   }) => Promise<void>;
   onClose: () => void;
 }
@@ -44,6 +45,7 @@ export default function CreateAgentModal({
   const [task, setTask] = useState(card ? buildTaskFromCard(card) : '');
   const [model, setModel] = useState(defaultModel);
   const [permissionLevel, setPermissionLevel] = useState('auto_edit');
+  const [launchMode, setLaunchMode] = useState<'build_now' | 'discuss_first'>('build_now');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
@@ -76,13 +78,14 @@ export default function CreateAgentModal({
         model,
         permissionLevel,
         cardId: card?.id,
+        launchMode,
       });
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setCreating(false);
     }
-  }, [name, role, task, model, permissionLevel, card, onCreateAndStart, onClose]);
+  }, [name, role, task, model, permissionLevel, launchMode, card, onCreateAndStart, onClose]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -163,6 +166,40 @@ export default function CreateAgentModal({
             </select>
           </div>
 
+          {/* Launch Mode */}
+          <div>
+            <label className="text-caption font-medium text-ul-text-secondary mb-1 block">Launch Mode</label>
+            <div className="flex rounded border border-ul-border overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setLaunchMode('build_now')}
+                className={`flex-1 text-small py-1.5 px-3 transition-colors ${
+                  launchMode === 'build_now'
+                    ? 'bg-ul-text text-white font-medium'
+                    : 'bg-white text-ul-text-secondary hover:bg-gray-50'
+                }`}
+              >
+                Build Now
+              </button>
+              <button
+                type="button"
+                onClick={() => setLaunchMode('discuss_first')}
+                className={`flex-1 text-small py-1.5 px-3 border-l border-ul-border transition-colors ${
+                  launchMode === 'discuss_first'
+                    ? 'bg-amber-500 text-white font-medium'
+                    : 'bg-white text-ul-text-secondary hover:bg-gray-50'
+                }`}
+              >
+                Discuss First
+              </button>
+            </div>
+            <p className="text-caption text-ul-text-muted mt-1">
+              {launchMode === 'discuss_first'
+                ? 'Agent will analyze and submit a plan for approval before building.'
+                : 'Agent will start implementing the task immediately.'}
+            </p>
+          </div>
+
           {/* Task */}
           <div>
             <label className="text-caption font-medium text-ul-text-secondary mb-1 block">Task</label>
@@ -194,7 +231,7 @@ export default function CreateAgentModal({
             disabled={creating || !name.trim() || !task.trim()}
             className="text-small px-4 py-1.5 rounded bg-ul-text text-white font-medium hover:bg-ul-text/90 transition-colors disabled:opacity-40"
           >
-            {creating ? 'Creating...' : 'Create & Start'}
+            {creating ? 'Creating...' : launchMode === 'discuss_first' ? 'Create & Discuss' : 'Create & Start'}
           </button>
         </div>
       </div>

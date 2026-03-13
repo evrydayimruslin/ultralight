@@ -79,6 +79,7 @@ export default function KanbanCard({ card, assignedAgent, onClick }: KanbanCardP
           <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 max-w-[120px]">
             <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
               assignedAgent.status === 'running' ? 'bg-green-500' :
+              assignedAgent.status === 'waiting_for_approval' ? 'bg-amber-500' :
               assignedAgent.status === 'completed' ? 'bg-blue-400' :
               assignedAgent.status === 'error' ? 'bg-red-500' : 'bg-gray-400'
             }`} />

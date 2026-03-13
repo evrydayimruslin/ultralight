@@ -12,22 +12,26 @@ import { useAgentFleet } from '../hooks/useAgentFleet';
 import MessageList from './MessageList';
 import ChatInput from './ChatInput';
 import PermissionModal from './PermissionModal';
-import AgentSidebar from './AgentSidebar';
 import AgentHeader from './AgentHeader';
 import { clearToken, getToken, getApiBase, getModel } from '../lib/storage';
 import { getContextWindow } from '../lib/tokens';
 import { buildSystemPrompt } from '../lib/systemPrompt';
+import { agentRunner } from '../lib/agentRunner';
 
 interface ChatViewProps {
   agentId?: string | null;
   onNavigateHome?: () => void;
   onNavigateToAgent?: (agentId: string) => void;
+  sidebarOpen?: boolean;
+  onToggleSidebar?: () => void;
 }
 
 export default function ChatView({
   agentId,
   onNavigateHome,
   onNavigateToAgent,
+  sidebarOpen = false,
+  onToggleSidebar,
 }: ChatViewProps = {}) {
   const { tools: mcpTools, executeToolCall: executeMcpTool } = useMcp();
   const { tools: localTools, executeToolCall: executeLocalTool, isLocalTool } = useLocalTools();
@@ -66,7 +70,6 @@ export default function ChatView({
   } = useAgentFleet();
 
   const [diagnostics, setDiagnostics] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Build system prompt — full coding agent prompt when project dir is set
   const systemPrompt = useMemo(() => buildSystemPrompt(projectDir), [projectDir]);
@@ -99,13 +102,20 @@ export default function ChatView({
         return 'Permission denied by user.';
       }
 
-      // Build agent context for JS-handled tools (spawn_agent, check_agent, update_card_status)
+      // Build agent context for JS-handled tools (spawn_agent, check_agent, update_card_status, card reports)
       const agentCtx: AgentToolContext = {
         createAgent,
         startAgent,
         parentAgentId: activeAgent?.id ?? null,
+        currentAgentId: activeAgent?.id ?? null,
+        currentCardId: null, // Card ID is passed through the agent's initial_task as [Card: <id>]
         tools: allTools,
         onToolCall: (n, a) => handleToolCallRef.current(n, a),
+        abortCurrentRun: () => {
+          if (activeAgent) {
+            agentRunner.stop(activeAgent.id);
+          }
+        },
       };
 
       return executeLocalTool(name, args, projectDir, agentCtx);
@@ -284,75 +294,58 @@ export default function ChatView({
   };
 
   return (
-    <div className="flex h-full">
-      {/* Sidebar */}
-      <AgentSidebar
-        agents={agents}
-        activeAgentId={activeAgent?.id ?? null}
-        isOpen={sidebarOpen}
-        onSelect={handleSelectAgent}
-        onNewAgent={handleNewAgent}
-        onGoHome={onNavigateHome ?? (() => {})}
-        onDelete={handleDeleteAgent}
-        onStop={handleStopAgent}
-        onClose={() => setSidebarOpen(false)}
-        isAgentRunning={isAgentRunning}
+    <div className="flex flex-col flex-1 min-w-0 h-full">
+      {/* Agent Header */}
+      <AgentHeader
+        agent={activeAgent}
+        isRunning={activeAgent ? isAgentRunning(activeAgent.id) : false}
+        tokenCount={tokenCount}
+        contextWindow={contextWindow}
+        sidebarOpen={sidebarOpen}
+        childAgents={childAgents}
+        onToggleSidebar={onToggleSidebar ?? (() => {})}
+        onUpdateAgent={handleUpdateAgent}
+        onStop={() => activeAgent && stopAgent(activeAgent.id)}
+        onNewSession={handleNewSession}
+        onSignOut={handleSignOut}
+        onOpenSubagentChat={onNavigateToAgent}
+        onStopSubagent={stopAgent}
       />
 
-      {/* Main chat area */}
-      <div className="flex flex-col flex-1 min-w-0">
-        {/* Agent Header */}
-        <AgentHeader
-          agent={activeAgent}
-          isRunning={activeAgent ? isAgentRunning(activeAgent.id) : false}
-          tokenCount={tokenCount}
-          contextWindow={contextWindow}
-          sidebarOpen={sidebarOpen}
-          childAgents={childAgents}
-          onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
-          onUpdateAgent={handleUpdateAgent}
-          onStop={() => activeAgent && stopAgent(activeAgent.id)}
-          onNewSession={handleNewSession}
-          onSignOut={handleSignOut}
-          onOpenSubagentChat={onNavigateToAgent}
-          onStopSubagent={stopAgent}
-        />
-
-        {/* Error banner */}
-        {error && (
-          <div className="px-4 py-2 bg-ul-error-soft border-b border-ul-border">
-            <div className="flex items-center justify-between">
-              <p className="text-small text-ul-error">{error}</p>
-              <div className="flex items-center gap-2">
-                <button onClick={runDiagnostics} className="text-caption text-ul-text-secondary hover:underline">
-                  Diagnose
-                </button>
-                <button onClick={handleSignOut} className="text-caption text-ul-error hover:underline">
-                  Re-enter Token
-                </button>
-                <button onClick={() => { clearError(); setDiagnostics(null); }} className="text-caption text-ul-error hover:underline">
-                  Dismiss
-                </button>
-              </div>
+      {/* Error banner */}
+      {error && (
+        <div className="px-4 py-2 bg-ul-error-soft border-b border-ul-border">
+          <div className="flex items-center justify-between">
+            <p className="text-small text-ul-error">{error}</p>
+            <div className="flex items-center gap-2">
+              <button onClick={runDiagnostics} className="text-caption text-ul-text-secondary hover:underline">
+                Diagnose
+              </button>
+              <button onClick={handleSignOut} className="text-caption text-ul-error hover:underline">
+                Re-enter Token
+              </button>
+              <button onClick={() => { clearError(); setDiagnostics(null); }} className="text-caption text-ul-error hover:underline">
+                Dismiss
+              </button>
             </div>
-            {diagnostics && (
-              <pre className="mt-2 p-2 bg-white rounded text-xs text-ul-text-secondary font-mono whitespace-pre-wrap border border-ul-border">
-                {diagnostics}
-              </pre>
-            )}
           </div>
-        )}
+          {diagnostics && (
+            <pre className="mt-2 p-2 bg-white rounded text-xs text-ul-text-secondary font-mono whitespace-pre-wrap border border-ul-border">
+              {diagnostics}
+            </pre>
+          )}
+        </div>
+      )}
 
-        {/* Messages */}
-        <MessageList messages={messages} isLoading={isLoading} />
+      {/* Messages */}
+      <MessageList messages={messages} isLoading={isLoading} />
 
-        {/* Input */}
-        <ChatInput
-          onSend={sendMessage}
-          isLoading={isLoading}
-          onStop={stopGeneration}
-        />
-      </div>
+      {/* Input */}
+      <ChatInput
+        onSend={sendMessage}
+        isLoading={isLoading}
+        onStop={stopGeneration}
+      />
 
       {/* Permission modal overlay */}
       {pendingRequest && (

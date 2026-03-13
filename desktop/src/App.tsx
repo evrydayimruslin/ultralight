@@ -1,11 +1,13 @@
-// Root component — auth gate + view routing.
+// Root component — auth gate + view routing + sidebar.
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { getToken, getApiBase } from './lib/storage';
 import { useAppState } from './hooks/useAppState';
+import { useAgentFleet } from './hooks/useAgentFleet';
 import AuthGate from './components/AuthGate';
 import ChatView from './components/ChatView';
 import HomeView from './components/HomeView';
+import AgentSidebar from './components/AgentSidebar';
 
 /**
  * Pre-provision the user's OpenRouter key in the background.
@@ -35,33 +37,66 @@ function provisionKeyInBackground(token: string) {
 export default function App() {
   const [authenticated, setAuthenticated] = useState(false);
   const [checking, setChecking] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const {
     view,
     navigateHome,
     navigateToAgent,
+    navigateToNewChat,
     selectedProjectDir,
     setSelectedProjectDir,
   } = useAppState();
+  const {
+    agents,
+    deleteAgent,
+    stopAgent,
+    isAgentRunning,
+    setActiveAgent,
+  } = useAgentFleet();
 
   // Check for existing token on mount + provision key
   useEffect(() => {
     const token = getToken();
     if (token) {
       setAuthenticated(true);
-      // Pre-provision OpenRouter key in background
       provisionKeyInBackground(token);
     }
     setChecking(false);
   }, []);
 
-  const handleAuthenticated = () => {
+  // All hooks must be declared before any early returns
+  const handleAuthenticated = useCallback(() => {
     setAuthenticated(true);
-    // Provision key right after login
     const token = getToken();
     if (token) {
       provisionKeyInBackground(token);
     }
-  };
+  }, []);
+
+  const handleSelectAgent = useCallback((agentId: string) => {
+    navigateToAgent(agentId);
+  }, [navigateToAgent]);
+
+  const handleNewAgent = useCallback(() => {
+    setActiveAgent(null);
+    navigateToNewChat();
+  }, [setActiveAgent, navigateToNewChat]);
+
+  const handleDeleteAgent = useCallback(async (id: string) => {
+    await deleteAgent(id);
+    // If viewing the deleted agent, go home
+    if (view.kind === 'agent' && view.agentId === id) {
+      navigateHome();
+    }
+  }, [deleteAgent, view, navigateHome]);
+
+  const handleStopAgent = useCallback((id: string) => {
+    stopAgent(id);
+  }, [stopAgent]);
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarOpen(prev => !prev);
+  }, []);
 
   // Loading state
   if (checking) {
@@ -77,23 +112,58 @@ export default function App() {
     return <AuthGate onAuthenticated={handleAuthenticated} />;
   }
 
-  // Route based on view state
+  // Determine active agent ID for sidebar highlight
+  const activeAgentId = view.kind === 'agent' ? view.agentId : null;
+
+  // Route content based on view state
+  let content: React.ReactNode;
   if (view.kind === 'home') {
-    return (
+    content = (
       <HomeView
         selectedProjectDir={selectedProjectDir}
         onSelectProjectDir={setSelectedProjectDir}
         onNavigateToAgent={navigateToAgent}
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={toggleSidebar}
+      />
+    );
+  } else if (view.kind === 'agent') {
+    content = (
+      <ChatView
+        agentId={view.agentId}
+        onNavigateHome={navigateHome}
+        onNavigateToAgent={navigateToAgent}
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={toggleSidebar}
+      />
+    );
+  } else {
+    // new-chat view — ChatView with no agentId
+    content = (
+      <ChatView
+        onNavigateHome={navigateHome}
+        onNavigateToAgent={navigateToAgent}
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={toggleSidebar}
       />
     );
   }
 
-  // Agent conversation view
   return (
-    <ChatView
-      agentId={view.agentId}
-      onNavigateHome={navigateHome}
-      onNavigateToAgent={navigateToAgent}
-    />
+    <div className="flex h-full">
+      <AgentSidebar
+        agents={agents}
+        activeAgentId={activeAgentId}
+        isOpen={sidebarOpen}
+        onSelect={handleSelectAgent}
+        onNewAgent={handleNewAgent}
+        onGoHome={navigateHome}
+        onDelete={handleDeleteAgent}
+        onStop={handleStopAgent}
+        onClose={() => setSidebarOpen(false)}
+        isAgentRunning={isAgentRunning}
+      />
+      {content}
+    </div>
   );
 }

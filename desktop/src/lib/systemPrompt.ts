@@ -118,6 +118,27 @@ const SUBAGENT_TOOLS = `
 - **spawn_agent(name, role, task, custom_instructions?)** — Create a new autonomous subagent for a distinct sub-task. Roles: builder, analyst, support, general. Max tree depth: 3 levels.
 - **check_agent(agent_id, include_messages?)** — Get detailed status of a subagent including recent messages and progress.`;
 
+// ── Card Reporting Tools ──
+
+const CARD_REPORT_TOOLS = `
+
+### Card Reporting
+- **add_card_report(card_id, content, report_type?)** — Post a progress update to your assigned kanban card. Types: progress (default), completion, plan.
+- **submit_plan(card_id, plan)** — Submit your analysis plan for user approval. Pauses execution until approved. Only use in discuss-first mode.
+- **hand_off_task(card_id, summary, next_agent_name, next_agent_role, next_agent_task)** — Complete your work and pass the card to a successor agent with a different specialization.
+
+When you complete your task, call add_card_report() with report_type="completion" summarizing what changed and any follow-up items.`;
+
+// ── Discuss-First Instructions ──
+
+const DISCUSS_FIRST_INSTRUCTIONS = `
+## Discuss-First Mode
+You are in DISCUSS-FIRST mode. Do NOT modify any files.
+1. Read the codebase to understand the architecture relevant to the task.
+2. Analyze requirements, identify risks, consider approaches.
+3. Call submit_plan() with a structured plan: summary, approach, files to modify, risks.
+4. STOP after calling submit_plan(). Do not implement anything.`;
+
 // ── Assembly ──
 
 /**
@@ -155,6 +176,7 @@ export function buildAgentSystemPrompt(
   projectDir: string | null,
   customPrompt?: string,
   subagentSummary?: string,
+  launchMode?: string,
 ): string {
   const rolePrompt = (ROLE_PROMPTS[role] || ROLE_PROMPTS.general)
     .replaceAll('{name}', agentName);
@@ -163,8 +185,14 @@ export function buildAgentSystemPrompt(
     rolePrompt,
     TOOL_REFERENCE,
     SUBAGENT_TOOLS,
+    CARD_REPORT_TOOLS,
     WORKFLOW_RULES,
   ];
+
+  // Discuss-first mode overrides: agent must analyze and submit a plan, not implement
+  if (launchMode === 'discuss_first') {
+    sections.push(DISCUSS_FIRST_INSTRUCTIONS);
+  }
 
   if (customPrompt) {
     sections.push(`\n## Additional Instructions\n${customPrompt}`);

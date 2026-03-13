@@ -36,6 +36,15 @@ export interface KanbanCard {
   updated_at: number;
 }
 
+export interface CardReport {
+  id: string;
+  card_id: string;
+  agent_id: string;
+  report_type: 'plan' | 'progress' | 'completion' | 'handoff';
+  content: string;
+  created_at: number;
+}
+
 export interface UseKanbanReturn {
   /** Current board (null if loading or no project) */
   board: KanbanBoard | null;
@@ -57,6 +66,10 @@ export interface UseKanbanReturn {
   assignAgent: (cardId: string, agentId: string | null) => Promise<void>;
   /** Refresh board data from DB */
   refreshBoard: () => Promise<void>;
+  /** Load reports for a card (chronological) */
+  loadReports: (cardId: string) => Promise<CardReport[]>;
+  /** Create a report on a card */
+  createReport: (cardId: string, agentId: string, reportType: CardReport['report_type'], content: string) => Promise<CardReport>;
 }
 
 // ── Hook ──
@@ -228,6 +241,33 @@ export function useKanban(projectDir: string | null): UseKanbanReturn {
     ));
   }, []);
 
+  // Load reports for a card
+  const loadReports = useCallback(async (cardId: string): Promise<CardReport[]> => {
+    try {
+      return await invoke<CardReport[]>('db_list_card_reports', { cardId });
+    } catch (err) {
+      console.error('[useKanban] Failed to load reports:', err);
+      return [];
+    }
+  }, []);
+
+  // Create a report on a card
+  const createReport = useCallback(async (
+    cardId: string,
+    agentId: string,
+    reportType: CardReport['report_type'],
+    content: string,
+  ): Promise<CardReport> => {
+    const id = crypto.randomUUID();
+    return await invoke<CardReport>('db_create_card_report', {
+      id,
+      cardId,
+      agentId,
+      reportType,
+      content,
+    });
+  }, []);
+
   return {
     board,
     columns,
@@ -239,5 +279,7 @@ export function useKanban(projectDir: string | null): UseKanbanReturn {
     deleteCard,
     assignAgent,
     refreshBoard,
+    loadReports,
+    createReport,
   };
 }
