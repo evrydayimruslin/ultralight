@@ -3,9 +3,15 @@
   "identifier": "default",
   "description": "enables the default permissions",
   "windows": [
-    "main"
+    "main",
+    "subagent-*"
   ],
   "permissions": [
-    "core:default"
+    "core:default",
+    "core:window:allow-create",
+    "core:window:allow-set-focus",
+    "core:webview:allow-create-webview-window",
+    "dialog:default",
+    "dialog:allow-open"
   ]
 }

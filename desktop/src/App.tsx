@@ -1,9 +1,11 @@
-// Root component — auth gate + chat layout.
+// Root component — auth gate + view routing.
 
 import { useState, useEffect } from 'react';
 import { getToken, getApiBase } from './lib/storage';
+import { useAppState } from './hooks/useAppState';
 import AuthGate from './components/AuthGate';
 import ChatView from './components/ChatView';
+import HomeView from './components/HomeView';
 
 /**
  * Pre-provision the user's OpenRouter key in the background.
@@ -33,6 +35,13 @@ function provisionKeyInBackground(token: string) {
 export default function App() {
   const [authenticated, setAuthenticated] = useState(false);
   const [checking, setChecking] = useState(true);
+  const {
+    view,
+    navigateHome,
+    navigateToAgent,
+    selectedProjectDir,
+    setSelectedProjectDir,
+  } = useAppState();
 
   // Check for existing token on mount + provision key
   useEffect(() => {
@@ -68,6 +77,23 @@ export default function App() {
     return <AuthGate onAuthenticated={handleAuthenticated} />;
   }
 
-  // Chat
-  return <ChatView />;
+  // Route based on view state
+  if (view.kind === 'home') {
+    return (
+      <HomeView
+        selectedProjectDir={selectedProjectDir}
+        onSelectProjectDir={setSelectedProjectDir}
+        onNavigateToAgent={navigateToAgent}
+      />
+    );
+  }
+
+  // Agent conversation view
+  return (
+    <ChatView
+      agentId={view.agentId}
+      onNavigateHome={navigateHome}
+      onNavigateToAgent={navigateToAgent}
+    />
+  );
 }
