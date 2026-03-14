@@ -8,6 +8,7 @@ import {
   buildDescription,
   getRiskLevel,
 } from '../lib/permissions';
+import { getAutoApproveCents } from '../lib/storage';
 
 // ── Types ──
 
@@ -20,6 +21,13 @@ export interface PermissionRequest {
   description: string;
   /** Risk level for visual styling */
   risk: 'safe' | 'moderate' | 'high';
+}
+
+export interface SpendingRequest {
+  /** Human-readable description of the purchase */
+  description: string;
+  /** Cost in cents */
+  priceCents: number;
 }
 
 export interface UsePermissionsReturn {
@@ -37,6 +45,14 @@ export interface UsePermissionsReturn {
   alwaysAllow: () => void;
   /** User responded to the modal — Deny */
   deny: () => void;
+  /** Current pending spending request (null if none) */
+  pendingSpending: SpendingRequest | null;
+  /** Check if spending should be auto-approved or needs user confirmation */
+  checkSpending: (description: string, priceCents: number) => Promise<boolean>;
+  /** User approved spending */
+  approveSpending: () => void;
+  /** User denied spending */
+  denySpending: () => void;
 }
 
 // ── Hook ──
@@ -100,6 +116,39 @@ export function usePermissions(): UsePermissionsReturn {
     setPendingRequest(null);
   }, []);
 
+  // ── Spending approval ──
+
+  const [pendingSpending, setPendingSpending] = useState<SpendingRequest | null>(null);
+  const spendingResolverRef = useRef<((approved: boolean) => void) | null>(null);
+
+  const checkSpending = useCallback(async (
+    description: string,
+    priceCents: number,
+  ): Promise<boolean> => {
+    const threshold = getAutoApproveCents();
+    if (priceCents <= threshold) {
+      return true; // Auto-approve below threshold
+    }
+
+    // Show spending approval modal and wait for response
+    return new Promise<boolean>((resolve) => {
+      spendingResolverRef.current = resolve;
+      setPendingSpending({ description, priceCents });
+    });
+  }, []);
+
+  const approveSpending = useCallback(() => {
+    spendingResolverRef.current?.(true);
+    spendingResolverRef.current = null;
+    setPendingSpending(null);
+  }, []);
+
+  const denySpending = useCallback(() => {
+    spendingResolverRef.current?.(false);
+    spendingResolverRef.current = null;
+    setPendingSpending(null);
+  }, []);
+
   return {
     level,
     setLevel,
@@ -108,5 +157,9 @@ export function usePermissions(): UsePermissionsReturn {
     allow,
     alwaysAllow,
     deny,
+    pendingSpending,
+    checkSpending,
+    approveSpending,
+    denySpending,
   };
 }

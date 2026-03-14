@@ -6,11 +6,16 @@ import { invoke } from '@tauri-apps/api/core';
 import { useKanban, type KanbanCard as KanbanCardType } from '../hooks/useKanban';
 import type { Agent, CreateAgentParams } from '../hooks/useAgentFleet';
 import { useAgentFleet } from '../hooks/useAgentFleet';
+import { useMcp } from '../hooks/useMcp';
+import { usePermissions } from '../hooks/usePermissions';
 import { buildAgentSystemPrompt } from '../lib/systemPrompt';
+import { loadBaseContext, readAbsoluteFile, fileNameWithoutExt } from '../lib/templates';
 import ProjectDropdown from './ProjectDropdown';
 import KanbanBoard from './KanbanBoard';
 import CardDetailModal from './CardDetailModal';
 import CreateAgentModal from './CreateAgentModal';
+import SpendingSettings from './SpendingSettings';
+import SpendingApprovalModal from './SpendingApprovalModal';
 
 // ── Types ──
 
@@ -76,6 +81,9 @@ export default function HomeView({
     startAgent,
   } = useAgentFleet();
 
+  const { executeToolCall: executeMcpTool } = useMcp();
+  const { pendingSpending, checkSpending, approveSpending, denySpending } = usePermissions();
+
   const [selectedCard, setSelectedCard] = useState<KanbanCardType | null>(null);
   const [createAgentCard, setCreateAgentCard] = useState<KanbanCardType | null>(null);
 
@@ -137,10 +145,58 @@ export default function HomeView({
     permissionLevel: string;
     cardId?: string;
     launchMode: string;
+    templateBody?: string;
+    selectedContextPaths?: string[];
+    selectedSkillIds?: Array<{ id: string; name: string; priceCents: number }>;
   }) => {
+    // 1. Load base context (project.md, profile.md)
+    const baseCtx = await loadBaseContext(selectedProjectDir);
+
+    // 2. Load selected knowledge files
+    const knowledgeCtx: Array<{ name: string; content: string }> = [];
+    if (params.selectedContextPaths) {
+      for (const path of params.selectedContextPaths) {
+        // Skip base context files (already loaded)
+        if (baseCtx.some(b => b.path === path)) continue;
+        const content = await readAbsoluteFile(path);
+        if (content) {
+          knowledgeCtx.push({ name: fileNameWithoutExt(path), content });
+        }
+      }
+    }
+
+    // 3. Fetch marketplace skills (with spending approval)
+    const skillCtx: Array<{ name: string; content: string }> = [];
+    if (params.selectedSkillIds?.length) {
+      for (const skill of params.selectedSkillIds) {
+        const approved = await checkSpending(skill.name, skill.priceCents);
+        if (!approved) continue;
+        try {
+          const result = await executeMcpTool('ul_call', {
+            app_id: skill.id,
+            function_name: 'get_content',
+          });
+          skillCtx.push({ name: skill.name, content: result });
+        } catch (err) {
+          console.warn(`Failed to fetch skill ${skill.name}:`, err);
+        }
+      }
+    }
+
+    // 4. Build system prompt with all context
+    const allContext = [
+      ...baseCtx.map(f => ({ name: f.name, content: f.content })),
+      ...knowledgeCtx,
+    ];
     const systemPrompt = buildAgentSystemPrompt(
-      params.role, params.name, selectedProjectDir, undefined, undefined, params.launchMode,
+      params.role, params.name, selectedProjectDir,
+      params.templateBody,
+      undefined,
+      params.launchMode,
+      allContext.length > 0 ? allContext : undefined,
+      skillCtx.length > 0 ? skillCtx : undefined,
     );
+
     const agent = await createAgent({
       name: params.name,
       role: params.role,
@@ -160,7 +216,7 @@ export default function HomeView({
 
     // Navigate to the agent's chat
     onNavigateToAgent(agent.id);
-  }, [selectedProjectDir, createAgent, assignAgent, onNavigateToAgent]);
+  }, [selectedProjectDir, createAgent, assignAgent, onNavigateToAgent, executeMcpTool, checkSpending]);
 
   // Plan approval: spawn a child builder agent from the discuss agent's plan
   const handleApproveAgent = useCallback(async (discussAgentId: string, plan: string, card: KanbanCardType) => {
@@ -171,8 +227,10 @@ export default function HomeView({
     const taskText = card.description
       ? `${card.title}\n\nDescription: ${card.description}`
       : card.title;
+    const baseCtx = await loadBaseContext(selectedProjectDir);
     const systemPrompt = buildAgentSystemPrompt(
       'builder', card.title.slice(0, 40), selectedProjectDir, undefined, undefined, 'build_now',
+      baseCtx.length > 0 ? baseCtx.map(f => ({ name: f.name, content: f.content })) : undefined,
     );
     const builder = await createAgent({
       name: `${card.title.slice(0, 30)} Builder`,
@@ -225,10 +283,13 @@ export default function HomeView({
           </button>
           <h1 className="text-h3 text-ul-text tracking-tight">Home</h1>
         </div>
-        <ProjectDropdown
-          selectedDir={selectedProjectDir}
-          onSelect={onSelectProjectDir}
-        />
+        <div className="flex items-center gap-3">
+          <SpendingSettings />
+          <ProjectDropdown
+            selectedDir={selectedProjectDir}
+            onSelect={onSelectProjectDir}
+          />
+        </div>
       </div>
 
       {/* Content */}
@@ -368,8 +429,19 @@ export default function HomeView({
         <CreateAgentModal
           card={createAgentCard}
           defaultModel="anthropic/claude-sonnet-4"
+          projectDir={selectedProjectDir}
+          executeMcpTool={executeMcpTool}
           onCreateAndStart={handleCreateAndStartAgent}
           onClose={() => setCreateAgentCard(null)}
+        />
+      )}
+
+      {/* Spending approval modal */}
+      {pendingSpending && (
+        <SpendingApprovalModal
+          request={pendingSpending}
+          onApprove={approveSpending}
+          onDeny={denySpending}
         />
       )}
     </div>

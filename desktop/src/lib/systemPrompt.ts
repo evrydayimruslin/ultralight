@@ -115,7 +115,7 @@ Do NOT ask questions — make reasonable decisions and proceed. Be thorough and 
 const SUBAGENT_TOOLS = `
 
 ### Subagent Management
-- **spawn_agent(name, role, task, custom_instructions?)** — Create a new autonomous subagent for a distinct sub-task. Roles: builder, analyst, support, general. Max tree depth: 3 levels.
+- **spawn_agent(name, role, task, custom_instructions?, template?, context_files?, discover_skills?, skill_budget_cents?)** — Create a new autonomous subagent. \`template\`: filename from .ultralight/agents/ (applies config + body). \`context_files\`: filenames from .ultralight/knowledge/ to inject. \`discover_skills\`: search marketplace for relevant paid knowledge.
 - **check_agent(agent_id, include_messages?)** — Get detailed status of a subagent including recent messages and progress.`;
 
 // ── Card Reporting Tools ──
@@ -128,6 +128,20 @@ const CARD_REPORT_TOOLS = `
 - **hand_off_task(card_id, summary, next_agent_name, next_agent_role, next_agent_task)** — Complete your work and pass the card to a successor agent with a different specialization.
 
 When you complete your task, call add_card_report() with report_type="completion" summarizing what changed and any follow-up items.`;
+
+// ── Knowledge Persistence ──
+
+const KNOWLEDGE_WRITE_INSTRUCTIONS = `
+## Knowledge Persistence
+After completing your task, if you discovered reusable patterns, architecture decisions, or gotchas about this project, write them to \`.ultralight/knowledge/<topic>.md\` using file_write. Include YAML frontmatter with tags for future discoverability:
+\`\`\`
+---
+tags: [relevant, keywords]
+---
+# Topic Title
+Your observations here...
+\`\`\`
+This helps future agents work more effectively on this project.`;
 
 // ── Discuss-First Instructions ──
 
@@ -177,17 +191,35 @@ export function buildAgentSystemPrompt(
   customPrompt?: string,
   subagentSummary?: string,
   launchMode?: string,
+  contextFiles?: Array<{ name: string; content: string }>,
+  marketplaceSkills?: Array<{ name: string; content: string }>,
 ): string {
   const rolePrompt = (ROLE_PROMPTS[role] || ROLE_PROMPTS.general)
     .replaceAll('{name}', agentName);
 
-  const sections = [
-    rolePrompt,
-    TOOL_REFERENCE,
-    SUBAGENT_TOOLS,
-    CARD_REPORT_TOOLS,
-    WORKFLOW_RULES,
-  ];
+  const sections = [rolePrompt];
+
+  // Inject context files (project context, user profile, knowledge files)
+  if (contextFiles && contextFiles.length > 0) {
+    const contextSection = contextFiles
+      .map(f => `### ${f.name}\n${f.content}`)
+      .join('\n\n');
+    sections.push(`\n## Project Context\n${contextSection}`);
+  }
+
+  // Inject marketplace skill content (paid knowledge)
+  if (marketplaceSkills && marketplaceSkills.length > 0) {
+    const skillSection = marketplaceSkills
+      .map(s => `### ${s.name}\n${s.content}`)
+      .join('\n\n');
+    sections.push(`\n## Marketplace Knowledge\n${skillSection}`);
+  }
+
+  sections.push(TOOL_REFERENCE);
+  sections.push(SUBAGENT_TOOLS);
+  sections.push(CARD_REPORT_TOOLS);
+  sections.push(WORKFLOW_RULES);
+  sections.push(KNOWLEDGE_WRITE_INSTRUCTIONS);
 
   // Discuss-first mode overrides: agent must analyze and submit a plan, not implement
   if (launchMode === 'discuss_first') {

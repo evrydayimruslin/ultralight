@@ -4,6 +4,7 @@ const STORAGE_KEYS = {
   token: 'ul_token',
   model: 'ul_model',
   apiBase: 'ul_api_base',
+  autoApproveCents: 'ul_auto_approve_cents',
 } as const;
 
 const DEFAULT_API_BASE = 'https://ultralight-api-iikqz.ondigitalocean.app';
@@ -34,4 +35,13 @@ export function getApiBase(): string {
 
 export function setApiBase(url: string): void {
   localStorage.setItem(STORAGE_KEYS.apiBase, url);
+}
+
+export function getAutoApproveCents(): number {
+  const val = localStorage.getItem(STORAGE_KEYS.autoApproveCents);
+  return val ? parseFloat(val) : 25; // default $0.25
+}
+
+export function setAutoApproveCents(cents: number): void {
+  localStorage.setItem(STORAGE_KEYS.autoApproveCents, String(cents));
 }

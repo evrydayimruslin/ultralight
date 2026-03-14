@@ -236,6 +236,23 @@ const LOCAL_TOOLS: ChatTool[] = [
             type: 'string',
             description: 'Optional additional system-level instructions for this agent.',
           },
+          template: {
+            type: 'string',
+            description: 'Template name from .ultralight/agents/ (without .md). Applies frontmatter config + body as instructions.',
+          },
+          context_files: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Filenames from .ultralight/knowledge/ to inject as context (without .md).',
+          },
+          discover_skills: {
+            type: 'boolean',
+            description: 'Search marketplace for relevant skills and inject into context.',
+          },
+          skill_budget_cents: {
+            type: 'number',
+            description: 'Max cents to spend on marketplace skills (default: user auto-approve setting).',
+          },
         },
         required: ['name', 'role', 'task'],
       },
@@ -410,7 +427,8 @@ import type { Agent, CreateAgentParams } from './useAgentFleet';
 import type { AgentRunConfig } from '../lib/agentRunner';
 import { agentRunner } from '../lib/agentRunner';
 import { buildAgentSystemPrompt } from '../lib/systemPrompt';
-import { getModel } from '../lib/storage';
+import { getModel, getAutoApproveCents } from '../lib/storage';
+import { loadTemplates, loadBaseContext, readAbsoluteFile, fileNameWithoutExt } from '../lib/templates';
 
 /** Context passed from ChatView for JS-handled agent tools */
 export interface AgentToolContext {
@@ -448,13 +466,77 @@ export function useLocalTools(): UseLocalToolsReturn {
     // ── JS-handled agent tools ──
     if (name === 'spawn_agent' && agentCtx) {
       try {
-        const { name: agentName, role, task, custom_instructions } = args as {
+        const {
+          name: agentName, role, task, custom_instructions,
+          template, context_files, discover_skills, skill_budget_cents,
+        } = args as {
           name: string; role: string; task: string; custom_instructions?: string;
+          template?: string; context_files?: string[]; discover_skills?: boolean; skill_budget_cents?: number;
         };
-        const systemPrompt = buildAgentSystemPrompt(role, agentName, projectRoot, custom_instructions);
+
+        // 1. Load template if specified
+        let effectiveRole = role;
+        let templateBody: string | undefined;
+        if (template) {
+          const templates = await loadTemplates(projectRoot);
+          const match = templates.find(t =>
+            t.path.endsWith(`/${template}.md`) || t.name === template
+          );
+          if (match) {
+            effectiveRole = match.role;
+            templateBody = match.body;
+          }
+        }
+
+        // 2. Load base context
+        const baseCtx = await loadBaseContext(projectRoot);
+
+        // 3. Load specified knowledge files
+        const extraCtx: Array<{ name: string; content: string }> = [];
+        if (context_files) {
+          for (const cf of context_files) {
+            const path = cf.endsWith('.md') ? cf : `${cf}.md`;
+            const absPath = `${projectRoot}/.ultralight/knowledge/${path}`;
+            const content = await readAbsoluteFile(absPath);
+            if (content) extraCtx.push({ name: fileNameWithoutExt(absPath), content });
+          }
+        }
+
+        // 4. Marketplace discovery (if requested)
+        const skillCtx: Array<{ name: string; content: string }> = [];
+        if (discover_skills && agentCtx.onToolCall) {
+          try {
+            const discoverResult = await agentCtx.onToolCall('ul_discover', {
+              scope: 'appstore', task, types: ['memory_md', 'library_md'], limit: 3,
+            });
+            const parsed = JSON.parse(discoverResult);
+            const budget = skill_budget_cents ?? getAutoApproveCents();
+            for (const skill of (parsed.results || []).slice(0, 2)) {
+              const price = skill.pricing_config?.default_price_cents ?? 0;
+              if (price > budget) continue;
+              try {
+                const content = await agentCtx.onToolCall('ul_call', {
+                  app_id: skill.id, function_name: 'get_content',
+                });
+                skillCtx.push({ name: skill.name, content });
+              } catch { /* skip failed fetches */ }
+            }
+          } catch { /* discover failed, continue without */ }
+        }
+
+        // 5. Build system prompt with all context
+        const allContext = [...baseCtx.map(f => ({ name: f.name, content: f.content })), ...extraCtx];
+        const combinedCustom = [templateBody, custom_instructions].filter(Boolean).join('\n\n');
+        const systemPrompt = buildAgentSystemPrompt(
+          effectiveRole, agentName, projectRoot,
+          combinedCustom || undefined, undefined, undefined,
+          allContext.length > 0 ? allContext : undefined,
+          skillCtx.length > 0 ? skillCtx : undefined,
+        );
+
         const agent = await agentCtx.createAgent({
           name: agentName,
-          role,
+          role: effectiveRole,
           initialTask: task,
           systemPrompt,
           projectDir: projectRoot,

@@ -12,6 +12,7 @@ import { useAgentFleet } from '../hooks/useAgentFleet';
 import MessageList from './MessageList';
 import ChatInput from './ChatInput';
 import PermissionModal from './PermissionModal';
+import SpendingApprovalModal from './SpendingApprovalModal';
 import AgentHeader from './AgentHeader';
 import { clearToken, getToken, getApiBase, getModel } from '../lib/storage';
 import { getContextWindow } from '../lib/tokens';
@@ -44,6 +45,9 @@ export default function ChatView({
     allow,
     alwaysAllow,
     deny,
+    pendingSpending,
+    approveSpending,
+    denySpending,
   } = usePermissions();
   const {
     conversations: _conversations,
@@ -354,6 +358,15 @@ export default function ChatView({
           onAllow={allow}
           onAlwaysAllow={alwaysAllow}
           onDeny={deny}
+        />
+      )}
+
+      {/* Spending approval modal */}
+      {pendingSpending && (
+        <SpendingApprovalModal
+          request={pendingSpending}
+          onApprove={approveSpending}
+          onDeny={denySpending}
         />
       )}
     </div>
