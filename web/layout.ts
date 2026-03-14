@@ -8,8 +8,10 @@ export function getLayoutHTML(options: {
   appCode?: string;
   appName?: string;
   embed?: boolean;
+  /** Which dashboard section to show initially (library, marketplace, billing, keys). Defaults to library. */
+  dashSection?: string;
 }): string {
-  const { title = 'Ultralight', activeAppId, initialView, appCode, appName, embed = false } = options;
+  const { title = 'Ultralight', activeAppId, initialView, appCode, appName, embed = false, dashSection = 'library' } = options;
 
   const escapedCode = appCode
     ? appCode.replace(/\\\\/g, '\\\\\\\\').replace(/\`/g, '\\\\\`').replace(/\\$/g, '\\\\\\$')
@@ -2637,19 +2639,19 @@ export function getLayoutHTML(options: {
       <div class="settings-layout">
         <!-- Sidebar -->
         <nav class="settings-sidebar">
-          <div class="settings-sidebar-item active" data-dash-section="library">
+          <div class="settings-sidebar-item${dashSection === 'library' ? ' active' : ''}" data-dash-section="library">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
             Library
           </div>
-          <div class="settings-sidebar-item" data-dash-section="marketplace">
+          <div class="settings-sidebar-item${dashSection === 'marketplace' ? ' active' : ''}" data-dash-section="marketplace">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
             Marketplace
           </div>
-          <div class="settings-sidebar-item" data-dash-section="billing">
+          <div class="settings-sidebar-item${dashSection === 'billing' ? ' active' : ''}" data-dash-section="billing">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
             Wallet
           </div>
-          <div class="settings-sidebar-item" data-dash-section="keys">
+          <div class="settings-sidebar-item${dashSection === 'keys' ? ' active' : ''}" data-dash-section="keys">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
             API Key
           </div>
@@ -2658,7 +2660,7 @@ export function getLayoutHTML(options: {
         <!-- Content Panels -->
         <div class="settings-content">
           <!-- Library Panel -->
-          <section id="dashLibraryPanel" class="settings-panel">
+          <section id="dashLibraryPanel" class="settings-panel"${dashSection !== 'library' ? ' style="display:none;"' : ''}>
             <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Library</h2>
             <div class="marketplace-filters">
               <button class="marketplace-filter active" data-lib-tab="my-apps">My Apps</button>
@@ -2669,7 +2671,7 @@ export function getLayoutHTML(options: {
           </section>
 
           <!-- Marketplace Panel -->
-          <section id="dashMarketplacePanel" class="settings-panel" style="display:none;">
+          <section id="dashMarketplacePanel" class="settings-panel" style="display:${dashSection === 'marketplace' ? 'block' : 'none'};">
             <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Marketplace</h2>
             <input id="marketplaceSearch" class="marketplace-search" type="text" placeholder="Search apps and skills...">
             <div class="marketplace-filters">
@@ -2683,7 +2685,7 @@ export function getLayoutHTML(options: {
           </section>
 
           <!-- Wallet Panel -->
-          <section id="dashBillingPanel" class="settings-panel" style="display:none;">
+          <section id="dashBillingPanel" class="settings-panel" style="display:${dashSection === 'billing' ? 'block' : 'none'};">
             <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Wallet</h2>
             <div class="marketplace-filters">
               <button class="marketplace-filter active" data-wallet-tab="balance">Balance</button>
@@ -2766,7 +2768,7 @@ export function getLayoutHTML(options: {
           </section>
 
           <!-- API Key Panel -->
-          <section id="dashKeysPanel" class="settings-panel" style="display:none;">
+          <section id="dashKeysPanel" class="settings-panel" style="display:${dashSection === 'keys' ? 'block' : 'none'};">
             <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">API Key</h2>
             <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Use this key to connect agents and CLI tools to your account.</p>
             <div id="apiKeyDisplay" style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-4);margin-bottom:var(--space-3);">
@@ -3521,7 +3523,7 @@ export function getLayoutHTML(options: {
     });
 
     // ===== Dashboard Sidebar =====
-    let activeDashSection = 'library';
+    let activeDashSection = '${dashSection}';
 
     function switchDashSection(section) {
       activeDashSection = section;

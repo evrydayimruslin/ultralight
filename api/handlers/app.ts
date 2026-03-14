@@ -116,21 +116,23 @@ export function createApp() {
 
       // Dashboard (authenticated app management)
       if (path === '/dash' && method === 'GET') {
-        return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed }), {
+        return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed, dashSection: 'library' }), {
           headers: { 'Content-Type': 'text/html' },
         });
       }
 
       // Settings page (account settings) — supports /settings, /settings/tokens, /settings/billing, /settings/supabase
       if ((path === '/settings' || path.startsWith('/settings/')) && method === 'GET') {
-        return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed }), {
+        const settingsSub = path.split('/settings/')[1] || 'keys';
+        const section = settingsSub === 'billing' ? 'billing' : settingsSub === 'tokens' ? 'keys' : settingsSub;
+        return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed, dashSection: section }), {
           headers: { 'Content-Type': 'text/html' },
         });
       }
 
       // Marketplace
       if (path === '/marketplace' && method === 'GET') {
-        return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed }), {
+        return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed, dashSection: 'marketplace' }), {
           headers: { 'Content-Type': 'text/html' },
         });
       }
