@@ -70,6 +70,8 @@ Deno.serve({ port, hostname: '0.0.0.0' }, async (request: Request) => {
 
     // Apply standard headers to all responses
     for (const [key, value] of Object.entries(standardHeaders)) {
+      // Skip X-Frame-Options for embed mode (desktop app iframe)
+      if (key === 'X-Frame-Options' && url.searchParams.get('embed') === '1') continue;
       response.headers.set(key, value);
     }
 

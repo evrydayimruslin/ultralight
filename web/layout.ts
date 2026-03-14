@@ -2943,6 +2943,22 @@ export function getLayoutHTML(options: {
   (async function() {
     'use strict';
 
+    // ===== Embed Mode (desktop app iframe) =====
+    var _embedParams = new URLSearchParams(window.location.search);
+    var _isEmbed = _embedParams.get('embed') === '1';
+
+    // Auto-login from ?token=xxx (desktop app passes auth token via URL)
+    if (_embedParams.get('token')) {
+      localStorage.setItem('ultralight_token', _embedParams.get('token'));
+    }
+
+    // Hide chrome in embed mode (desktop app provides its own nav)
+    if (_isEmbed) {
+      var _embedStyle = document.createElement('style');
+      _embedStyle.textContent = '.top-nav { display: none !important; } .settings-sidebar { display: none !important; } .settings-layout { gap: 0; } .settings-content { flex: 1; min-width: 0; } #dashboardView { padding-top: 0; }';
+      document.head.appendChild(_embedStyle);
+    }
+
     // ===== Global State =====
     let authToken = localStorage.getItem('ultralight_token');
     let currentUser = null;
@@ -2953,7 +2969,13 @@ export function getLayoutHTML(options: {
     let setupCommandStr = localStorage.getItem('ultralight_setup_v4') || '';
 
     // Instant auth nav switch — prevents flash of wrong nav state
-    if (authToken) {
+    if (_isEmbed) {
+      // Embed mode: hide both nav states
+      var _navPre = document.getElementById('navPreAuth');
+      var _navPost = document.getElementById('navPostAuth');
+      if (_navPre) _navPre.style.display = 'none';
+      if (_navPost) _navPost.style.display = 'none';
+    } else if (authToken) {
       document.getElementById('navPostAuth').style.display = 'flex';
       document.getElementById('navPostAuth').classList.remove('hidden');
     } else {

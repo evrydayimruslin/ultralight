@@ -7,7 +7,8 @@ import { useAgentFleet } from './hooks/useAgentFleet';
 import AuthGate from './components/AuthGate';
 import ChatView from './components/ChatView';
 import HomeView from './components/HomeView';
-import AgentSidebar from './components/AgentSidebar';
+import NavSidebar from './components/NavSidebar';
+import WebPanel from './components/WebPanel';
 
 /**
  * Pre-provision the user's OpenRouter key in the background.
@@ -43,6 +44,10 @@ export default function App() {
     navigateHome,
     navigateToAgent,
     navigateToNewChat,
+    navigateToLibrary,
+    navigateToMarketplace,
+    navigateToWallet,
+    navigateToSettings,
     selectedProjectDir,
     setSelectedProjectDir,
   } = useAppState();
@@ -112,54 +117,98 @@ export default function App() {
     return <AuthGate onAuthenticated={handleAuthenticated} />;
   }
 
-  // Determine active agent ID for sidebar highlight
-  const activeAgentId = view.kind === 'agent' ? view.agentId : null;
-
   // Route content based on view state
   let content: React.ReactNode;
-  if (view.kind === 'home') {
-    content = (
-      <HomeView
-        selectedProjectDir={selectedProjectDir}
-        onSelectProjectDir={setSelectedProjectDir}
-        onNavigateToAgent={navigateToAgent}
-        sidebarOpen={sidebarOpen}
-        onToggleSidebar={toggleSidebar}
-      />
-    );
-  } else if (view.kind === 'agent') {
-    content = (
-      <ChatView
-        agentId={view.agentId}
-        onNavigateHome={navigateHome}
-        onNavigateToAgent={navigateToAgent}
-        sidebarOpen={sidebarOpen}
-        onToggleSidebar={toggleSidebar}
-      />
-    );
-  } else {
-    // new-chat view — ChatView with no agentId
-    content = (
-      <ChatView
-        onNavigateHome={navigateHome}
-        onNavigateToAgent={navigateToAgent}
-        sidebarOpen={sidebarOpen}
-        onToggleSidebar={toggleSidebar}
-      />
-    );
+  switch (view.kind) {
+    case 'home':
+      content = (
+        <HomeView
+          selectedProjectDir={selectedProjectDir}
+          onSelectProjectDir={setSelectedProjectDir}
+          onNavigateToAgent={navigateToAgent}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={toggleSidebar}
+        />
+      );
+      break;
+    case 'agent':
+      content = (
+        <ChatView
+          agentId={view.agentId}
+          onNavigateHome={navigateHome}
+          onNavigateToAgent={navigateToAgent}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={toggleSidebar}
+        />
+      );
+      break;
+    case 'new-chat':
+      content = (
+        <ChatView
+          onNavigateHome={navigateHome}
+          onNavigateToAgent={navigateToAgent}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={toggleSidebar}
+        />
+      );
+      break;
+    case 'library':
+      content = (
+        <WebPanel
+          path="/dash"
+          title="Library"
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={toggleSidebar}
+        />
+      );
+      break;
+    case 'marketplace':
+      content = (
+        <WebPanel
+          path="/marketplace"
+          title="Marketplace"
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={toggleSidebar}
+        />
+      );
+      break;
+    case 'wallet':
+      content = (
+        <WebPanel
+          path="/settings/billing"
+          title="Wallet"
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={toggleSidebar}
+        />
+      );
+      break;
+    case 'settings':
+      content = (
+        <WebPanel
+          path="/settings"
+          title="Settings"
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={toggleSidebar}
+        />
+      );
+      break;
   }
 
   return (
     <div className="flex h-full">
-      <AgentSidebar
+      <NavSidebar
         agents={agents}
-        activeAgentId={activeAgentId}
+        activeView={view}
         isOpen={sidebarOpen}
-        onSelect={handleSelectAgent}
+        onNavigateHome={navigateHome}
+        onNavigateToLibrary={navigateToLibrary}
+        onNavigateToMarketplace={navigateToMarketplace}
+        onNavigateToWallet={navigateToWallet}
+        onNavigateToSettings={navigateToSettings}
+        onSelectAgent={handleSelectAgent}
         onNewAgent={handleNewAgent}
-        onGoHome={navigateHome}
-        onDelete={handleDeleteAgent}
-        onStop={handleStopAgent}
+        onDeleteAgent={handleDeleteAgent}
+        onStopAgent={handleStopAgent}
         onClose={() => setSidebarOpen(false)}
         isAgentRunning={isAgentRunning}
       />

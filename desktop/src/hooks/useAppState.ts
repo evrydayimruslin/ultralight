@@ -7,13 +7,21 @@ import { useState, useCallback } from 'react';
 export type AppView =
   | { kind: 'home' }
   | { kind: 'agent'; agentId: string }
-  | { kind: 'new-chat' };
+  | { kind: 'new-chat' }
+  | { kind: 'library' }
+  | { kind: 'marketplace' }
+  | { kind: 'wallet' }
+  | { kind: 'settings' };
 
 export interface UseAppStateReturn {
   view: AppView;
   navigateHome: () => void;
   navigateToAgent: (agentId: string) => void;
   navigateToNewChat: () => void;
+  navigateToLibrary: () => void;
+  navigateToMarketplace: () => void;
+  navigateToWallet: () => void;
+  navigateToSettings: () => void;
   selectedProjectDir: string | null;
   setSelectedProjectDir: (dir: string | null) => void;
 }
@@ -62,6 +70,22 @@ export function useAppState(): UseAppStateReturn {
     setView({ kind: 'new-chat' });
   }, []);
 
+  const navigateToLibrary = useCallback(() => {
+    setView({ kind: 'library' });
+  }, []);
+
+  const navigateToMarketplace = useCallback(() => {
+    setView({ kind: 'marketplace' });
+  }, []);
+
+  const navigateToWallet = useCallback(() => {
+    setView({ kind: 'wallet' });
+  }, []);
+
+  const navigateToSettings = useCallback(() => {
+    setView({ kind: 'settings' });
+  }, []);
+
   const setSelectedProjectDir = useCallback((dir: string | null) => {
     _setSelectedProjectDir(dir);
     storeProjectDir(dir);
@@ -72,6 +96,10 @@ export function useAppState(): UseAppStateReturn {
     navigateHome,
     navigateToAgent,
     navigateToNewChat,
+    navigateToLibrary,
+    navigateToMarketplace,
+    navigateToWallet,
+    navigateToSettings,
     selectedProjectDir,
     setSelectedProjectDir,
   };
