@@ -3452,6 +3452,15 @@ export function getLayoutHTML(options: {
           switchDashSection('capabilities');
           loadDashboardData();
         }
+      } else if (currentView === 'profile') {
+        showView('profile');
+        // Load own profile or specific profile by slug
+        if (_profileSlug) {
+          loadProfilePage(_profileSlug);
+        } else if (userProfile) {
+          var _mySlug = userProfile.profile_slug || userProfile.id;
+          if (_mySlug) loadProfilePage(_mySlug);
+        }
       } else if (currentView === 'app') {
         showView('app');
       }
@@ -4132,10 +4141,7 @@ export function getLayoutHTML(options: {
       });
     }
 
-    // Auto-load profile if we're on a profile page
-    if (_profileSlug && currentView === 'profile') {
-      loadProfilePage(_profileSlug);
-    }
+    // Profile auto-load is handled in updateAuthUI after auth is resolved
 
     // ===== Profile Settings =====
     var COUNTRIES = [
