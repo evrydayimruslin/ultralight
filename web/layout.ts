@@ -3207,47 +3207,60 @@ export function getLayoutHTML(options: {
       localStorage.removeItem('ultralight_provisional_token_id');
       localStorage.removeItem('ultralight_provisional_user_id');
 
-      // Decode JWT
-      const payload = decodeJWT(authToken);
-      if (!payload) {
-        signOut();
-        return;
-      }
-
-      // Check expiration
-      if (payload.exp && payload.exp * 1000 < Date.now()) {
-        // Try refresh
-        const refreshToken = localStorage.getItem('ultralight_refresh_token');
-        if (refreshToken) {
-          try {
-            const res = await fetch('/auth/refresh', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ refresh_token: refreshToken }),
-            });
-            if (res.ok) {
-              const data = await res.json();
-              authToken = data.access_token;
-              localStorage.setItem('ultralight_token', data.access_token);
-              if (data.refresh_token) localStorage.setItem('ultralight_refresh_token', data.refresh_token);
-            } else {
-              signOut();
-              return;
-            }
-          } catch {
-            signOut();
-            return;
-          }
-        } else {
+      // API tokens (ul_...) skip JWT decode — verify via API instead
+      if (authToken.startsWith('ul_')) {
+        try {
+          const res = await fetch('/api/user', {
+            headers: { 'Authorization': 'Bearer ' + authToken },
+          });
+          if (!res.ok) { signOut(); return; }
+          userProfile = await res.json();
+          currentUser = { id: userProfile.id, email: userProfile.email };
+          if (userProfile.id) window._currentUserId = userProfile.id;
+        } catch { signOut(); return; }
+      } else {
+        // Decode JWT
+        const payload = decodeJWT(authToken);
+        if (!payload) {
           signOut();
           return;
         }
+
+        // Check expiration
+        if (payload.exp && payload.exp * 1000 < Date.now()) {
+          // Try refresh
+          const refreshToken = localStorage.getItem('ultralight_refresh_token');
+          if (refreshToken) {
+            try {
+              const res = await fetch('/auth/refresh', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ refresh_token: refreshToken }),
+              });
+              if (res.ok) {
+                const data = await res.json();
+                authToken = data.access_token;
+                localStorage.setItem('ultralight_token', data.access_token);
+                if (data.refresh_token) localStorage.setItem('ultralight_refresh_token', data.refresh_token);
+              } else {
+                signOut();
+                return;
+              }
+            } catch {
+              signOut();
+              return;
+            }
+          } else {
+            signOut();
+            return;
+          }
+        }
+
+        currentUser = payload;
       }
 
-      currentUser = payload;
-
-      // Fetch full profile
-      try {
+      // Fetch full profile (skip if already loaded via ul_ token path)
+      if (!userProfile) try {
         const res = await fetch('/api/user', {
           headers: { 'Authorization': 'Bearer ' + authToken },
         });
@@ -3347,6 +3360,7 @@ export function getLayoutHTML(options: {
       localStorage.removeItem('ultralight_refresh_token');
       localStorage.removeItem('ultralight_setup_v4');
       if (connectionPollInterval) clearInterval(connectionPollInterval);
+      if (_isEmbed) return; // Don't redirect in embed mode
       window.location.href = '/';
     }
     window.signOut = signOut;
