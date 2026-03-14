@@ -2826,12 +2826,8 @@ export function getLayoutHTML(options: {
                 <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:var(--space-3);">Earnings Summary</div>
                 <div id="earningsSummary" style="font-size:13px;color:var(--text-muted);">Loading...</div>
               </div>
-              <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);margin-bottom:var(--space-4);">
-                <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:var(--space-3);">Payout History</div>
-                <div id="payoutsHistory" style="font-size:13px;color:var(--text-muted);">Loading...</div>
-              </div>
 
-              <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);">
+              <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);margin-bottom:var(--space-4);">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-3);">
                   <div style="font-size:13px;font-weight:600;color:var(--text-primary);">Bank Payouts</div>
                   <span id="connectStatusBadge" style="font-size:11px;padding:2px 8px;border-radius:2px;background:rgba(239,68,68,0.15);color:var(--error);">Not Connected</span>
@@ -2840,6 +2836,11 @@ export function getLayoutHTML(options: {
                   <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-3);">Connect your bank account to withdraw earnings.</p>
                   <button id="connectBankBtn" class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);" onclick="startConnectOnboarding()">Connect Bank Account</button>
                 </div>
+              </div>
+
+              <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);">
+                <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:var(--space-3);">Payout History</div>
+                <div id="payoutsHistory" style="font-size:13px;color:var(--text-muted);">Loading...</div>
               </div>
             </div>
 
