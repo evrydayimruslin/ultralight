@@ -44,8 +44,8 @@ export default function App() {
     navigateHome,
     navigateToAgent,
     navigateToNewChat,
-    navigateToLibrary,
-    navigateToMarketplace,
+    navigateToCapabilities,
+    navigateToProfile,
     navigateToWallet,
     navigateToSettings,
     selectedProjectDir,
@@ -152,21 +152,21 @@ export default function App() {
         />
       );
       break;
-    case 'library':
+    case 'capabilities':
       content = (
         <WebPanel
-          path="/dash"
-          title="Library"
+          path="/capabilities"
+          title="Capabilities"
           sidebarOpen={sidebarOpen}
           onToggleSidebar={toggleSidebar}
         />
       );
       break;
-    case 'marketplace':
+    case 'profile':
       content = (
         <WebPanel
-          path="/marketplace"
-          title="Marketplace"
+          path="/my-profile"
+          title="Profile"
           sidebarOpen={sidebarOpen}
           onToggleSidebar={toggleSidebar}
         />
@@ -201,8 +201,8 @@ export default function App() {
         activeView={view}
         isOpen={sidebarOpen}
         onNavigateHome={navigateHome}
-        onNavigateToLibrary={navigateToLibrary}
-        onNavigateToMarketplace={navigateToMarketplace}
+        onNavigateToCapabilities={navigateToCapabilities}
+        onNavigateToProfile={navigateToProfile}
         onNavigateToWallet={navigateToWallet}
         onNavigateToSettings={navigateToSettings}
         onSelectAgent={handleSelectAgent}

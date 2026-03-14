@@ -364,6 +364,90 @@ export async function handleUser(request: Request): Promise<Response> {
   }
 
   // ============================================
+  // PUBLIC PROFILE
+  // ============================================
+
+  // GET /api/user/profile/:slug — Public user profile data
+  const profileMatch = path.match(/^\/api\/user\/profile\/([a-z0-9_-]+)$/);
+  if (profileMatch && method === 'GET') {
+    const slug = profileMatch[1];
+    try {
+      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
+      const headers = { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` };
+
+      // Look up user by profile_slug or by UUID
+      const isUuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(slug);
+      const userFilter = isUuid ? `id=eq.${slug}` : `profile_slug=eq.${slug}`;
+      const userRes = await fetch(
+        `${sbUrl}/rest/v1/users?${userFilter}&select=id,display_name,avatar_url,country,tier,featured_app_id,created_at`,
+        { headers }
+      );
+      if (!userRes.ok) return error('Failed to fetch profile', 500);
+      const users = await userRes.json();
+      if (!users.length) return error('Profile not found', 404);
+      const profile = users[0];
+
+      // Fetch stats, published apps, and acquisitions in parallel
+      const [statsRes, publishedRes, acquisitionsRes, featuredRes] = await Promise.all([
+        fetch(`${sbUrl}/rest/v1/rpc/get_user_profile_stats`, {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ p_user_id: profile.id }),
+        }),
+        fetch(
+          `${sbUrl}/rest/v1/apps?owner_id=eq.${profile.id}&visibility=eq.public&deleted_at=is.null` +
+          `&select=id,name,slug,description,runs_30d,current_version,first_published_at` +
+          `&order=runs_30d.desc&limit=50`,
+          { headers }
+        ),
+        fetch(
+          `${sbUrl}/rest/v1/app_sales?buyer_id=eq.${profile.id}&select=id,sale_price_cents,created_at,apps(name,slug)` +
+          `&order=created_at.desc&limit=50`,
+          { headers }
+        ),
+        profile.featured_app_id
+          ? fetch(`${sbUrl}/rest/v1/apps?id=eq.${profile.featured_app_id}&select=id,name,slug`, { headers })
+          : Promise.resolve(null),
+      ]);
+
+      const stats = statsRes.ok ? await statsRes.json() : { lifetime_gross_cents: 0, published_count: 0, acquired_count: 0 };
+      const published = publishedRes.ok ? await publishedRes.json() : [];
+      const acquisitionsRaw = acquisitionsRes.ok ? await acquisitionsRes.json() : [];
+      let featuredApp = null;
+      if (featuredRes && featuredRes.ok) {
+        const fa = await featuredRes.json();
+        if (fa.length) featuredApp = { id: fa[0].id, name: fa[0].name, slug: fa[0].slug };
+      }
+
+      const acquisitions = acquisitionsRaw.map((a: Record<string, unknown>) => {
+        const app = a.apps as Record<string, unknown> | null;
+        return {
+          app_name: app?.name || 'Unknown',
+          app_slug: app?.slug || '',
+          price_cents: a.sale_price_cents,
+          acquired_at: a.created_at,
+        };
+      });
+
+      return json({
+        id: profile.id,
+        display_name: profile.display_name,
+        avatar_url: profile.avatar_url,
+        country: profile.country,
+        tier: profile.tier,
+        created_at: profile.created_at,
+        stats,
+        featured_app: featuredApp,
+        published,
+        acquisitions,
+      });
+    } catch (err) {
+      console.error('Profile fetch error:', err);
+      return error('Failed to fetch profile', 500);
+    }
+  }
+
+  // ============================================
   // AUTHENTICATED ROUTES
   // ============================================
 
@@ -400,9 +484,43 @@ export async function handleUser(request: Request): Promise<Response> {
   if (path === '/api/user' && method === 'PATCH') {
     try {
       const body = await request.json();
-      const { display_name } = body;
+      const { display_name, country, featured_app_id } = body;
 
-      const user = await userService.updateUser(userId, { display_name });
+      const updates: Record<string, unknown> = {};
+      if (display_name !== undefined) {
+        updates.display_name = display_name;
+        // Auto-generate profile_slug from display_name
+        if (display_name) {
+          updates.profile_slug = display_name
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-|-$/g, '')
+            .slice(0, 40);
+        }
+      }
+      if (country !== undefined) {
+        // Validate 2-letter ISO code or null
+        if (country !== null && (typeof country !== 'string' || !/^[A-Z]{2}$/i.test(country))) {
+          return error('Country must be a 2-letter ISO code (e.g. US, JP, BR) or null', 400);
+        }
+        updates.country = country ? country.toUpperCase() : null;
+      }
+      if (featured_app_id !== undefined) {
+        if (featured_app_id !== null) {
+          // Validate the app belongs to this user
+          const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
+          const appRes = await fetch(
+            `${sbUrl}/rest/v1/apps?id=eq.${featured_app_id}&owner_id=eq.${userId}&deleted_at=is.null&select=id`,
+            { headers: { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` } }
+          );
+          if (!appRes.ok || (await appRes.json()).length === 0) {
+            return error('Featured app must be an app you own', 400);
+          }
+        }
+        updates.featured_app_id = featured_app_id;
+      }
+
+      const user = await userService.updateUser(userId, updates as any);
       return json(user);
     } catch (err) {
       console.error('Update user error:', err);

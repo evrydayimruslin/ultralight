@@ -114,9 +114,16 @@ export function createApp() {
         });
       }
 
-      // Dashboard (authenticated app management)
+      // Capabilities (unified Library + Marketplace)
+      if (path === '/capabilities' && method === 'GET') {
+        return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed, dashSection: 'capabilities' }), {
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+
+      // Dashboard — backward compat, maps to capabilities
       if (path === '/dash' && method === 'GET') {
-        return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed, dashSection: 'library' }), {
+        return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed, dashSection: 'capabilities' }), {
           headers: { 'Content-Type': 'text/html' },
         });
       }
@@ -130,18 +137,35 @@ export function createApp() {
         });
       }
 
-      // Marketplace
+      // Marketplace — backward compat, maps to capabilities
       if (path === '/marketplace' && method === 'GET') {
-        return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed, dashSection: 'marketplace' }), {
+        return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed, dashSection: 'capabilities' }), {
           headers: { 'Content-Type': 'text/html' },
         });
       }
 
-      // Gaps board & Leaderboard → redirect to dashboard
+      // Public user profile
+      if (path.startsWith('/u/') && method === 'GET') {
+        const slug = path.slice(3);
+        if (slug) {
+          return new Response(getLayoutHTML({ initialView: 'profile', profileSlug: slug }), {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }
+      }
+
+      // My profile (authenticated)
+      if (path === '/my-profile' && method === 'GET') {
+        return new Response(getLayoutHTML({ initialView: 'profile', embed: isEmbed }), {
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+
+      // Gaps board & Leaderboard → redirect to capabilities
       if ((path === '/gaps' || path === '/leaderboard') && method === 'GET') {
         return new Response(null, {
           status: 302,
-          headers: { 'Location': '/dash' },
+          headers: { 'Location': '/capabilities' },
         });
       }
 

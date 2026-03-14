@@ -8,8 +8,8 @@ export type AppView =
   | { kind: 'home' }
   | { kind: 'agent'; agentId: string }
   | { kind: 'new-chat' }
-  | { kind: 'library' }
-  | { kind: 'marketplace' }
+  | { kind: 'capabilities' }
+  | { kind: 'profile' }
   | { kind: 'wallet' }
   | { kind: 'settings' };
 
@@ -18,8 +18,8 @@ export interface UseAppStateReturn {
   navigateHome: () => void;
   navigateToAgent: (agentId: string) => void;
   navigateToNewChat: () => void;
-  navigateToLibrary: () => void;
-  navigateToMarketplace: () => void;
+  navigateToCapabilities: () => void;
+  navigateToProfile: () => void;
   navigateToWallet: () => void;
   navigateToSettings: () => void;
   selectedProjectDir: string | null;
@@ -70,12 +70,12 @@ export function useAppState(): UseAppStateReturn {
     setView({ kind: 'new-chat' });
   }, []);
 
-  const navigateToLibrary = useCallback(() => {
-    setView({ kind: 'library' });
+  const navigateToCapabilities = useCallback(() => {
+    setView({ kind: 'capabilities' });
   }, []);
 
-  const navigateToMarketplace = useCallback(() => {
-    setView({ kind: 'marketplace' });
+  const navigateToProfile = useCallback(() => {
+    setView({ kind: 'profile' });
   }, []);
 
   const navigateToWallet = useCallback(() => {
@@ -96,8 +96,8 @@ export function useAppState(): UseAppStateReturn {
     navigateHome,
     navigateToAgent,
     navigateToNewChat,
-    navigateToLibrary,
-    navigateToMarketplace,
+    navigateToCapabilities,
+    navigateToProfile,
     navigateToWallet,
     navigateToSettings,
     selectedProjectDir,

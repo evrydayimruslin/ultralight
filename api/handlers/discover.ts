@@ -123,6 +123,26 @@ export async function handleDiscover(request: Request): Promise<Response> {
     return handleMarketplace(request, url);
   }
 
+  // GET /api/discover/stats — Platform statistics for ticker tape
+  if (path === '/api/discover/stats' && method === 'GET') {
+    return handlePlatformStats();
+  }
+
+  // GET /api/discover/newly-published — Recently published capabilities
+  if (path === '/api/discover/newly-published' && method === 'GET') {
+    return handleNewlyPublished(url);
+  }
+
+  // GET /api/discover/newly-acquired — Recent marketplace acquisitions
+  if (path === '/api/discover/newly-acquired' && method === 'GET') {
+    return handleNewlyAcquired(url);
+  }
+
+  // GET /api/discover/leaderboard — Highest grossing profiles
+  if (path === '/api/discover/leaderboard' && method === 'GET') {
+    return handleLeaderboard(url);
+  }
+
   // GET /api/discover/status — Service health check
   if (path === '/api/discover/status' && method === 'GET') {
     return handleStatus(request);
@@ -1323,6 +1343,188 @@ export async function handleOnboarding(request: Request): Promise<Response> {
       'Cache-Control': 'public, max-age=3600',
     },
   });
+}
+
+// ============================================
+// PLATFORM STATS (ticker tape)
+// ============================================
+
+let _statsCache: { data: unknown; ts: number } | null = null;
+const STATS_CACHE_MS = 5 * 60 * 1000; // 5 minutes
+
+async function handlePlatformStats(): Promise<Response> {
+  // Return cached if fresh
+  if (_statsCache && Date.now() - _statsCache.ts < STATS_CACHE_MS) {
+    return json(_statsCache.data);
+  }
+
+  const supabaseUrl = Deno?.env?.get('SUPABASE_URL');
+  const supabaseKey = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!supabaseUrl || !supabaseKey) return error('Service unavailable', 503);
+
+  const dbHeaders = {
+    'apikey': supabaseKey,
+    'Authorization': `Bearer ${supabaseKey}`,
+    'Content-Type': 'application/json',
+  };
+
+  try {
+    const res = await fetch(`${supabaseUrl}/rest/v1/rpc/get_platform_stats`, {
+      method: 'POST',
+      headers: dbHeaders,
+      body: '{}',
+    });
+    if (!res.ok) return error('Failed to fetch stats', 500);
+    const data = await res.json();
+    _statsCache = { data, ts: Date.now() };
+    return json(data);
+  } catch {
+    return error('Failed to fetch stats', 500);
+  }
+}
+
+// ============================================
+// NEWLY PUBLISHED
+// ============================================
+
+async function handleNewlyPublished(url: URL): Promise<Response> {
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '8', 10), 30);
+
+  const supabaseUrl = Deno?.env?.get('SUPABASE_URL');
+  const supabaseKey = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!supabaseUrl || !supabaseKey) return error('Service unavailable', 503);
+
+  const dbHeaders = {
+    'apikey': supabaseKey,
+    'Authorization': `Bearer ${supabaseKey}`,
+  };
+
+  try {
+    const res = await fetch(
+      `${supabaseUrl}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&first_published_at=not.is.null` +
+      `&select=id,name,slug,description,first_published_at,app_type` +
+      `&order=first_published_at.desc` +
+      `&limit=${limit}`,
+      { headers: dbHeaders }
+    );
+    if (!res.ok) return error('Failed to fetch', 500);
+    const rows = await res.json();
+    const results = rows.map((r: Record<string, unknown>) => ({
+      id: r.id,
+      name: r.name,
+      slug: r.slug,
+      description: r.description,
+      type: r.app_type === 'mcp' ? 'app' : 'app',
+      first_published_at: r.first_published_at,
+    }));
+    return json(results);
+  } catch {
+    return error('Failed to fetch', 500);
+  }
+}
+
+// ============================================
+// NEWLY ACQUIRED
+// ============================================
+
+async function handleNewlyAcquired(url: URL): Promise<Response> {
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '8', 10), 30);
+
+  const supabaseUrl = Deno?.env?.get('SUPABASE_URL');
+  const supabaseKey = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!supabaseUrl || !supabaseKey) return error('Service unavailable', 503);
+
+  const dbHeaders = {
+    'apikey': supabaseKey,
+    'Authorization': `Bearer ${supabaseKey}`,
+  };
+
+  try {
+    // Join app_sales with apps to get names
+    const res = await fetch(
+      `${supabaseUrl}/rest/v1/app_sales?select=id,sale_price_cents,created_at,apps(name,slug)` +
+      `&order=created_at.desc` +
+      `&limit=${limit}`,
+      { headers: dbHeaders }
+    );
+    if (!res.ok) return error('Failed to fetch', 500);
+    const rows = await res.json();
+    const results = rows.map((r: Record<string, unknown>) => {
+      const app = r.apps as Record<string, unknown> | null;
+      return {
+        sale_id: r.id,
+        app_name: app?.name || 'Unknown',
+        app_slug: app?.slug || '',
+        sale_price_cents: r.sale_price_cents,
+        created_at: r.created_at,
+      };
+    });
+    return json(results);
+  } catch {
+    return error('Failed to fetch', 500);
+  }
+}
+
+// ============================================
+// LEADERBOARD
+// ============================================
+
+const _lbCache = new Map<string, { data: unknown; ts: number }>();
+const LB_CACHE_MS = 60 * 1000; // 1 minute
+
+async function handleLeaderboard(url: URL): Promise<Response> {
+  const period = url.searchParams.get('period') || '30d';
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '20', 10), 50);
+
+  // Validate period
+  const validPeriods = ['1d', '7d', '30d', '90d', '365d', 'at'];
+  if (!validPeriods.includes(period)) {
+    return discoverError('INVALID_PERIOD', 'Period must be one of: 1d, 7d, 30d, 90d, 365d, at', 400);
+  }
+
+  // Check cache
+  const cacheKey = `${period}:${limit}`;
+  const cached = _lbCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < LB_CACHE_MS) {
+    return json(cached.data);
+  }
+
+  const supabaseUrl = Deno?.env?.get('SUPABASE_URL');
+  const supabaseKey = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!supabaseUrl || !supabaseKey) return error('Service unavailable', 503);
+
+  const dbHeaders = {
+    'apikey': supabaseKey,
+    'Authorization': `Bearer ${supabaseKey}`,
+    'Content-Type': 'application/json',
+  };
+
+  try {
+    const res = await fetch(`${supabaseUrl}/rest/v1/rpc/get_leaderboard`, {
+      method: 'POST',
+      headers: dbHeaders,
+      body: JSON.stringify({ p_interval: period, p_limit: limit }),
+    });
+    if (!res.ok) return error('Failed to fetch leaderboard', 500);
+    const rows = await res.json();
+    const results = rows.map((r: Record<string, unknown>, i: number) => ({
+      rank: i + 1,
+      user_id: r.user_id,
+      display_name: r.display_name,
+      profile_slug: r.profile_slug,
+      avatar_url: r.avatar_url,
+      country: r.country,
+      earnings_cents: r.earnings_cents,
+      featured_app: r.featured_app_name ? {
+        name: r.featured_app_name,
+        slug: r.featured_app_slug,
+      } : null,
+    }));
+    _lbCache.set(cacheKey, { data: results, ts: Date.now() });
+    return json(results);
+  } catch {
+    return error('Failed to fetch leaderboard', 500);
+  }
 }
 
 // ============================================

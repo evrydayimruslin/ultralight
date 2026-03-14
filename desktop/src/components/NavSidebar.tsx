@@ -1,10 +1,11 @@
 // NavSidebar — Claude Code-inspired navigation sidebar.
-// Sections: New Session, Dashboard, Capabilities (Library/Marketplace),
-// Agents (time-grouped list), and bottom nav (Wallet/Settings).
+// Sections: New Session, Dashboard, Capabilities, Agents (time-grouped list),
+// and bottom profile menu (Profile/Wallet/Settings).
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { Agent } from '../hooks/useAgentFleet';
 import type { AppView } from '../hooks/useAppState';
+import { getToken, getApiBase } from '../lib/storage';
 
 // ── Props ──
 
@@ -13,8 +14,8 @@ interface NavSidebarProps {
   activeView: AppView;
   isOpen: boolean;
   onNavigateHome: () => void;
-  onNavigateToLibrary: () => void;
-  onNavigateToMarketplace: () => void;
+  onNavigateToCapabilities: () => void;
+  onNavigateToProfile: () => void;
   onNavigateToWallet: () => void;
   onNavigateToSettings: () => void;
   onSelectAgent: (agentId: string) => void;
@@ -156,18 +157,12 @@ const DashboardIcon = (
   </svg>
 );
 
-const LibraryIcon = (
+const CapabilitiesIcon = (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M2 3h12v10H2z" />
-    <path d="M5 3v10" />
-  </svg>
-);
-
-const MarketplaceIcon = (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M2 6l1.5-3h9L14 6" />
-    <path d="M2 6v7h12V6" />
-    <path d="M6 9h4" />
+    <rect x="2" y="2" width="5" height="5" rx="1" />
+    <rect x="9" y="2" width="5" height="5" rx="1" />
+    <rect x="2" y="9" width="5" height="5" rx="1" />
+    <rect x="9" y="9" width="5" height="5" rx="1" />
   </svg>
 );
 
@@ -186,6 +181,13 @@ const SettingsIcon = (
   </svg>
 );
 
+const ProfileIcon = (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="8" cy="5" r="3" />
+    <path d="M2 14c0-2.8 2.7-5 6-5s6 2.2 6 5" />
+  </svg>
+);
+
 // ── Component ──
 
 export default function NavSidebar({
@@ -193,8 +195,8 @@ export default function NavSidebar({
   activeView,
   isOpen,
   onNavigateHome,
-  onNavigateToLibrary,
-  onNavigateToMarketplace,
+  onNavigateToCapabilities,
+  onNavigateToProfile,
   onNavigateToWallet,
   onNavigateToSettings,
   onSelectAgent,
@@ -205,12 +207,28 @@ export default function NavSidebar({
   isAgentRunning,
 }: NavSidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [capabilitiesExpanded, setCapabilitiesExpanded] = useState(() => !getCollapsed('ul_nav_capabilities_collapsed', false));
   const [agentsExpanded, setAgentsExpanded] = useState(() => !getCollapsed('ul_nav_agents_collapsed', false));
   const [contextMenu, setContextMenu] = useState<{ agentId: string; x: number; y: number } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [userInfo, setUserInfo] = useState<{ email: string; display_name: string | null } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+
+  // Fetch user info for profile menu
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+    fetch(`${getApiBase()}/api/user`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data) setUserInfo({ email: data.email, display_name: data.display_name });
+      })
+      .catch(() => {});
+  }, []);
 
   // Close context menu on click outside
   useEffect(() => {
@@ -224,13 +242,17 @@ export default function NavSidebar({
     return () => document.removeEventListener('mousedown', handleClick);
   }, [contextMenu]);
 
-  const toggleCapabilities = useCallback(() => {
-    setCapabilitiesExpanded(v => {
-      const next = !v;
-      setCollapsed('ul_nav_capabilities_collapsed', !next);
-      return next;
-    });
-  }, []);
+  // Close profile menu on click outside
+  useEffect(() => {
+    if (!profileMenuOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) {
+        setProfileMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [profileMenuOpen]);
 
   const toggleAgents = useCallback(() => {
     setAgentsExpanded(v => {
@@ -282,6 +304,8 @@ export default function NavSidebar({
 
   const timeGroups = groupAgentsByTime(sorted);
   const activeAgentId = activeView.kind === 'agent' ? activeView.agentId : null;
+  const displayName = userInfo?.display_name || userInfo?.email?.split('@')[0] || 'User';
+  const initial = displayName.charAt(0).toUpperCase();
 
   return (
     <div className="flex flex-col w-64 h-full border-r border-ul-border bg-gray-50 flex-shrink-0">
@@ -322,23 +346,13 @@ export default function NavSidebar({
           active={activeView.kind === 'home'}
           onClick={onNavigateHome}
         />
+        <NavItem
+          icon={CapabilitiesIcon}
+          label="Capabilities"
+          active={activeView.kind === 'capabilities'}
+          onClick={onNavigateToCapabilities}
+        />
       </nav>
-
-      {/* Capabilities */}
-      <CollapsibleSection title="Capabilities" expanded={capabilitiesExpanded} onToggle={toggleCapabilities}>
-        <NavItem
-          icon={LibraryIcon}
-          label="Library"
-          active={activeView.kind === 'library'}
-          onClick={onNavigateToLibrary}
-        />
-        <NavItem
-          icon={MarketplaceIcon}
-          label="Marketplace"
-          active={activeView.kind === 'marketplace'}
-          onClick={onNavigateToMarketplace}
-        />
-      </CollapsibleSection>
 
       {/* Agents */}
       <CollapsibleSection title="Agents" expanded={agentsExpanded} onToggle={toggleAgents}>
@@ -396,20 +410,47 @@ export default function NavSidebar({
       {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Bottom nav */}
-      <div className="border-t border-ul-border px-2 py-2">
-        <NavItem
-          icon={WalletIcon}
-          label="Wallet"
-          active={activeView.kind === 'wallet'}
-          onClick={onNavigateToWallet}
-        />
-        <NavItem
-          icon={SettingsIcon}
-          label="Settings"
-          active={activeView.kind === 'settings'}
-          onClick={onNavigateToSettings}
-        />
+      {/* Profile menu trigger */}
+      <div className="relative border-t border-ul-border px-2 py-2" ref={profileMenuRef}>
+        {profileMenuOpen && (
+          <div className="absolute bottom-full left-2 right-2 mb-1 bg-white border border-ul-border rounded-md shadow-md py-1 z-50">
+            <button
+              onClick={() => { setProfileMenuOpen(false); onNavigateToProfile(); }}
+              className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100 flex items-center gap-2.5"
+            >
+              {ProfileIcon}
+              Profile
+            </button>
+            <button
+              onClick={() => { setProfileMenuOpen(false); onNavigateToWallet(); }}
+              className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100 flex items-center gap-2.5"
+            >
+              {WalletIcon}
+              Wallet
+            </button>
+            <button
+              onClick={() => { setProfileMenuOpen(false); onNavigateToSettings(); }}
+              className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100 flex items-center gap-2.5"
+            >
+              {SettingsIcon}
+              Settings
+            </button>
+          </div>
+        )}
+        <button
+          onClick={() => setProfileMenuOpen(v => !v)}
+          className="w-full flex items-center gap-2.5 px-2 py-1.5 rounded-md text-small text-ul-text-secondary hover:bg-ul-bg-hover transition-colors"
+        >
+          <span className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center text-caption font-semibold text-ul-text flex-shrink-0">
+            {initial}
+          </span>
+          <span className="truncate flex-1 text-left">{displayName}</span>
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
+            className={`transition-transform flex-shrink-0 ${profileMenuOpen ? 'rotate-180' : ''}`}
+          >
+            <path d="M3 4.5L6 7.5L9 4.5" />
+          </svg>
+        </button>
       </div>
 
       {/* Context menu */}

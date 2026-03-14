@@ -4,14 +4,19 @@
 export function getLayoutHTML(options: {
   title?: string;
   activeAppId?: string;
-  initialView: 'home' | 'dashboard' | 'app' | 'leaderboard';
+  initialView: 'home' | 'dashboard' | 'app' | 'leaderboard' | 'profile';
   appCode?: string;
   appName?: string;
   embed?: boolean;
-  /** Which dashboard section to show initially (library, marketplace, billing, keys). Defaults to library. */
+  /** Which dashboard section to show initially (capabilities, billing, keys). Defaults to capabilities. */
   dashSection?: string;
+  /** Profile slug for /u/:slug pages */
+  profileSlug?: string;
 }): string {
-  const { title = 'Ultralight', activeAppId, initialView, appCode, appName, embed = false, dashSection = 'library' } = options;
+  const { title = 'Ultralight', activeAppId, initialView, appCode, appName, embed = false, profileSlug } = options;
+  // Map legacy dashboard sections to new unified capabilities section
+  let dashSection = options.dashSection || 'capabilities';
+  if (dashSection === 'library' || dashSection === 'marketplace') dashSection = 'capabilities';
 
   const escapedCode = appCode
     ? appCode.replace(/\\\\/g, '\\\\\\\\').replace(/\`/g, '\\\\\`').replace(/\\$/g, '\\\\\\$')
@@ -2639,13 +2644,9 @@ export function getLayoutHTML(options: {
       <div class="settings-layout">
         <!-- Sidebar -->
         <nav class="settings-sidebar">
-          <div class="settings-sidebar-item${dashSection === 'library' ? ' active' : ''}" data-dash-section="library">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
-            Library
-          </div>
-          <div class="settings-sidebar-item${dashSection === 'marketplace' ? ' active' : ''}" data-dash-section="marketplace">
+          <div class="settings-sidebar-item${dashSection === 'capabilities' ? ' active' : ''}" data-dash-section="capabilities">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-            Marketplace
+            Capabilities
           </div>
           <div class="settings-sidebar-item${dashSection === 'billing' ? ' active' : ''}" data-dash-section="billing">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
@@ -2659,28 +2660,96 @@ export function getLayoutHTML(options: {
 
         <!-- Content Panels -->
         <div class="settings-content">
-          <!-- Library Panel -->
-          <section id="dashLibraryPanel" class="settings-panel"${dashSection !== 'library' ? ' style="display:none;"' : ''}>
-            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Library</h2>
-            <div class="marketplace-filters">
-              <button class="marketplace-filter active" data-lib-tab="my-apps">My Apps</button>
-              <button class="marketplace-filter" data-lib-tab="saved">Saved</button>
-              <button class="marketplace-filter" data-lib-tab="shared">Shared</button>
+          <!-- Capabilities Panel (unified Market + Library + Shared) -->
+          <section id="dashCapabilitiesPanel" class="settings-panel"${dashSection !== 'capabilities' ? ' style="display:none;"' : ''}>
+            <!-- Sub-tab bar -->
+            <div class="marketplace-filters" style="margin-bottom:var(--space-4);">
+              <button class="marketplace-filter active" data-cap-tab="market">Market</button>
+              <button class="marketplace-filter" data-cap-tab="library">Library</button>
+              <button class="marketplace-filter" data-cap-tab="shared">Shared</button>
             </div>
-            <div id="appList" class="app-list"></div>
-          </section>
 
-          <!-- Marketplace Panel -->
-          <section id="dashMarketplacePanel" class="settings-panel" style="display:${dashSection === 'marketplace' ? 'block' : 'none'};">
-            <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Marketplace</h2>
-            <input id="marketplaceSearch" class="marketplace-search" type="text" placeholder="Search apps and skills...">
-            <div class="marketplace-filters">
-              <button class="marketplace-filter active" data-mp-type="all">All</button>
-              <button class="marketplace-filter" data-mp-type="apps">Apps</button>
-              <button class="marketplace-filter" data-mp-type="skills">Skills</button>
+            <!-- Search + filters (shared across all sub-tabs) -->
+            <div style="display:flex;gap:var(--space-3);align-items:center;margin-bottom:var(--space-4);flex-wrap:wrap;">
+              <input id="capSearch" class="marketplace-search" type="text" placeholder="Search capabilities..." style="flex:1;min-width:200px;margin-bottom:0;">
+              <div class="marketplace-filters" style="margin-bottom:0;">
+                <button class="marketplace-filter active" data-cap-type="all">All</button>
+                <button class="marketplace-filter" data-cap-type="apps">Apps</button>
+                <button class="marketplace-filter" data-cap-type="skills">Skills</button>
+              </div>
+              <div class="marketplace-filters" style="margin-bottom:0;">
+                <button class="marketplace-filter active" data-cap-owner="all">All</button>
+                <button class="marketplace-filter" data-cap-owner="mine">Mine</button>
+              </div>
             </div>
-            <div id="marketplaceResults" class="marketplace-results">
-              <div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Loading...</div>
+
+            <!-- Market sub-tab content -->
+            <div id="capMarketContent">
+              <!-- Ticker tape stats -->
+              <div class="cap-carousel" style="margin-bottom:var(--space-6);">
+                <div class="cap-carousel-inner" id="marketTicker">
+                  <span>Loading platform stats...</span>
+                </div>
+              </div>
+
+              <!-- Two-column: Newly Published + Newly Acquired -->
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-6);margin-bottom:var(--space-8);">
+                <div>
+                  <h3 style="font-size:14px;font-weight:600;margin-bottom:var(--space-3);color:var(--text-primary);">Newly Published</h3>
+                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:var(--space-3);">Latest capabilities shipping</div>
+                  <div id="newlyPublishedList" style="display:flex;flex-direction:column;gap:var(--space-2);">
+                    <div style="font-size:13px;color:var(--text-muted);padding:var(--space-3) 0;">Loading...</div>
+                  </div>
+                </div>
+                <div>
+                  <h3 style="font-size:14px;font-weight:600;margin-bottom:var(--space-3);color:var(--text-primary);">Newly Acquired</h3>
+                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:var(--space-3);">Latest MCP/markdown acquisitions</div>
+                  <div id="newlyAcquiredList" style="display:flex;flex-direction:column;gap:var(--space-2);">
+                    <div style="font-size:13px;color:var(--text-muted);padding:var(--space-3) 0;">Loading...</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Highest Grossing Profiles -->
+              <div>
+                <h3 style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text-primary);">Highest grossing profiles</h3>
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:var(--space-3);">Revenue + acquisitions combined</div>
+                <div class="marketplace-filters" style="margin-bottom:var(--space-3);">
+                  <button class="marketplace-filter" data-lb-period="1d">1d</button>
+                  <button class="marketplace-filter" data-lb-period="7d">7d</button>
+                  <button class="marketplace-filter active" data-lb-period="30d">30d</button>
+                  <button class="marketplace-filter" data-lb-period="90d">90d</button>
+                  <button class="marketplace-filter" data-lb-period="365d">365d</button>
+                  <button class="marketplace-filter" data-lb-period="at">AT</button>
+                </div>
+                <table style="width:100%;font-size:13px;border-collapse:collapse;">
+                  <thead>
+                    <tr style="border-bottom:1px solid var(--border);text-align:left;">
+                      <th style="padding:var(--space-2) var(--space-1);color:var(--text-muted);font-weight:500;font-size:12px;width:36px;">#</th>
+                      <th style="padding:var(--space-2) var(--space-1);color:var(--text-muted);font-weight:500;font-size:12px;">Profile</th>
+                      <th style="padding:var(--space-2) var(--space-1);color:var(--text-muted);font-weight:500;font-size:12px;">Earnings</th>
+                      <th style="padding:var(--space-2) var(--space-1);color:var(--text-muted);font-weight:500;font-size:12px;">Origin</th>
+                      <th style="padding:var(--space-2) var(--space-1);color:var(--text-muted);font-weight:500;font-size:12px;">Featured</th>
+                    </tr>
+                  </thead>
+                  <tbody id="leaderboardBody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Library sub-tab content (hidden by default) -->
+            <div id="capLibraryContent" style="display:none;">
+              <div id="appList" class="app-list"></div>
+            </div>
+
+            <!-- Shared sub-tab content (hidden by default) -->
+            <div id="capSharedContent" style="display:none;">
+              <div id="sharedAppList" class="app-list"></div>
+            </div>
+
+            <!-- Search results (shown when searching, hides other content) -->
+            <div id="capSearchResults" style="display:none;">
+              <div id="capSearchResultsList" class="marketplace-results"></div>
             </div>
           </section>
 
@@ -2782,6 +2851,28 @@ export function getLayoutHTML(options: {
             </div>
             <button id="apiKeyRegenBtn" class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);color:var(--text-secondary);" onclick="regenerateApiKey()">Regenerate Key</button>
             <p style="font-size:11px;color:var(--text-muted);margin-top:var(--space-2);">Regenerating creates a new key and revokes the current one. Connected agents will need to re-authenticate.</p>
+
+            <!-- Profile Settings -->
+            <div style="margin-top:var(--space-8);padding-top:var(--space-6);border-top:1px solid var(--border);">
+              <h3 style="font-size:14px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Profile</h3>
+
+              <div style="margin-bottom:var(--space-4);">
+                <label style="font-size:13px;font-weight:500;display:block;margin-bottom:var(--space-2);color:var(--text-secondary);">Country</label>
+                <select id="profileCountrySelect" style="padding:6px 10px;border:1px solid var(--border);font-size:13px;background:var(--bg-base);color:var(--text-primary);min-width:200px;">
+                  <option value="">Not set</option>
+                </select>
+              </div>
+
+              <div style="margin-bottom:var(--space-4);">
+                <label style="font-size:13px;font-weight:500;display:block;margin-bottom:var(--space-2);color:var(--text-secondary);">Featured Capability</label>
+                <select id="profileFeaturedSelect" style="padding:6px 10px;border:1px solid var(--border);font-size:13px;background:var(--bg-base);color:var(--text-primary);min-width:300px;">
+                  <option value="">None</option>
+                </select>
+              </div>
+
+              <button id="profileSettingsSaveBtn" class="btn btn-primary btn-sm" style="border-radius:0;" onclick="saveProfileSettings()">Save Profile</button>
+              <span id="profileSettingsSaved" style="font-size:12px;color:var(--success);margin-left:var(--space-2);display:none;">Saved!</span>
+            </div>
           </section>
         </div>
       </div>
@@ -2938,6 +3029,17 @@ export function getLayoutHTML(options: {
       </div>
     </div>
   </div>
+
+    <!-- ==========================================
+         PROFILE VIEW
+         ========================================== -->
+    <div id="profileView" style="display:${initialView === 'profile' ? 'block' : 'none'};">
+      <div style="max-width:var(--content-max);margin:0 auto;padding:var(--space-8) var(--space-6);">
+        <div id="profileContent">
+          <div style="font-size:13px;color:var(--text-muted);padding:var(--space-8) 0;text-align:center;">Loading profile...</div>
+        </div>
+      </div>
+    </div>
 
   </main>
 
@@ -3219,7 +3321,7 @@ export function getLayoutHTML(options: {
           if (!res.ok) { signOut(); return; }
           userProfile = await res.json();
           currentUser = { id: userProfile.id, email: userProfile.email };
-          if (userProfile.id) window._currentUserId = userProfile.id;
+          if (userProfile.id) { window._currentUserId = userProfile.id; currentUserId = userProfile.id; }
         } catch { signOut(); return; }
       } else {
         // Decode JWT
@@ -3272,6 +3374,7 @@ export function getLayoutHTML(options: {
           // Store user ID for marketplace ownership checks
           if (userProfile && userProfile.id) {
             window._currentUserId = userProfile.id;
+            currentUserId = userProfile.id;
           }
         }
       } catch {}
@@ -3337,16 +3440,16 @@ export function getLayoutHTML(options: {
             history.replaceState({}, '', '/settings/billing');
           }
           loadAccountData();
-        } else if (pathname === '/marketplace') {
+        } else if (pathname === '/marketplace' || pathname === '/capabilities') {
           showView('dashboard');
-          switchDashSection('marketplace');
+          switchDashSection('capabilities');
         } else if (pathname === '/keys') {
           showView('dashboard');
           switchDashSection('keys');
           loadAccountData();
         } else {
           showView('dashboard');
-          switchDashSection('library');
+          switchDashSection('capabilities');
           loadDashboardData();
         }
       } else if (currentView === 'app') {
@@ -3371,7 +3474,7 @@ export function getLayoutHTML(options: {
     // ===== Navigation =====
     function showView(view) {
       currentView = view;
-      ['homeView', 'dashboardView', 'appView'].forEach(id => {
+      ['homeView', 'dashboardView', 'appView', 'profileView'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
       });
@@ -3381,6 +3484,7 @@ export function getLayoutHTML(options: {
         dashboard: 'dashboardView',
         app: 'appView',
         leaderboard: 'dashboardView',
+        profile: 'profileView',
       };
 
       const targetId = viewMap[view];
@@ -3526,6 +3630,8 @@ export function getLayoutHTML(options: {
     let activeDashSection = '${dashSection}';
 
     function switchDashSection(section) {
+      // Map legacy sections
+      if (section === 'library' || section === 'marketplace') section = 'capabilities';
       activeDashSection = section;
 
       // Update sidebar active state
@@ -3535,8 +3641,7 @@ export function getLayoutHTML(options: {
 
       // Show/hide panels
       var panelMap = {
-        library: 'dashLibraryPanel',
-        marketplace: 'dashMarketplacePanel',
+        capabilities: 'dashCapabilitiesPanel',
         keys: 'dashKeysPanel',
         billing: 'dashBillingPanel'
       };
@@ -3550,18 +3655,9 @@ export function getLayoutHTML(options: {
       if (panel) panel.style.display = 'block';
 
       // Update URL and load section data
-      if (section === 'library') {
-        history.replaceState({}, '', '/dash');
-        // Reset to My Apps tab
-        activeLibTab = 'my-apps';
-        document.querySelectorAll('[data-lib-tab]').forEach(function(btn) {
-          btn.classList.toggle('active', btn.dataset.libTab === 'my-apps');
-        });
-        renderAppList();
-      } else if (section === 'marketplace') {
-        history.replaceState({}, '', '/marketplace');
-        loadSavedAppIds();
-        loadMarketplace('', 'all');
+      if (section === 'capabilities') {
+        history.replaceState({}, '', '/capabilities');
+        switchCapTab(activeCapTab);
       } else if (section === 'keys') {
         history.replaceState({}, '', '/keys');
         loadApiKey();
@@ -3590,6 +3686,524 @@ export function getLayoutHTML(options: {
         switchDashSection(this.dataset.dashSection);
       });
     });
+
+    // ===== Capabilities Tab Management =====
+    var activeCapTab = 'market';
+    var activeCapType = 'all';
+    var activeCapOwner = 'all';
+    var leaderboardPeriod = '30d';
+    var capSearchDebounce = null;
+
+    function switchCapTab(tab) {
+      activeCapTab = tab;
+      document.querySelectorAll('[data-cap-tab]').forEach(function(btn) {
+        btn.classList.toggle('active', btn.dataset.capTab === tab);
+      });
+      var marketEl = document.getElementById('capMarketContent');
+      var libEl = document.getElementById('capLibraryContent');
+      var sharedEl = document.getElementById('capSharedContent');
+      var searchEl = document.getElementById('capSearchResults');
+      if (marketEl) marketEl.style.display = tab === 'market' ? 'block' : 'none';
+      if (libEl) libEl.style.display = tab === 'library' ? 'block' : 'none';
+      if (sharedEl) sharedEl.style.display = tab === 'shared' ? 'block' : 'none';
+      if (searchEl) searchEl.style.display = 'none';
+
+      // Clear search when switching tabs
+      var searchInput = document.getElementById('capSearch');
+      if (searchInput) searchInput.value = '';
+
+      if (tab === 'market') loadMarketPage();
+      else if (tab === 'library') { loadSavedAppIds(); renderAppList(); }
+      else if (tab === 'shared') loadSharedApps();
+    }
+
+    // Sub-tab click handlers
+    document.querySelectorAll('[data-cap-tab]').forEach(function(el) {
+      el.addEventListener('click', function() { switchCapTab(this.dataset.capTab); });
+    });
+
+    // Type filter handlers
+    document.querySelectorAll('[data-cap-type]').forEach(function(el) {
+      el.addEventListener('click', function() {
+        activeCapType = this.dataset.capType;
+        document.querySelectorAll('[data-cap-type]').forEach(function(b) {
+          b.classList.toggle('active', b.dataset.capType === activeCapType);
+        });
+        // Re-run search if there's a query
+        var q = (document.getElementById('capSearch') || {}).value || '';
+        if (q.length >= 2) handleCapSearch(q);
+      });
+    });
+
+    // Ownership filter handlers
+    document.querySelectorAll('[data-cap-owner]').forEach(function(el) {
+      el.addEventListener('click', function() {
+        activeCapOwner = this.dataset.capOwner;
+        document.querySelectorAll('[data-cap-owner]').forEach(function(b) {
+          b.classList.toggle('active', b.dataset.capOwner === activeCapOwner);
+        });
+        var q = (document.getElementById('capSearch') || {}).value || '';
+        if (q.length >= 2) handleCapSearch(q);
+      });
+    });
+
+    // Search input handler
+    var capSearchEl = document.getElementById('capSearch');
+    if (capSearchEl) {
+      capSearchEl.addEventListener('input', function() {
+        var q = this.value.trim();
+        clearTimeout(capSearchDebounce);
+        if (q.length < 2) {
+          // Restore current tab content
+          var searchResults = document.getElementById('capSearchResults');
+          if (searchResults) searchResults.style.display = 'none';
+          var marketEl = document.getElementById('capMarketContent');
+          var libEl = document.getElementById('capLibraryContent');
+          var sharedEl = document.getElementById('capSharedContent');
+          if (activeCapTab === 'market' && marketEl) marketEl.style.display = 'block';
+          if (activeCapTab === 'library' && libEl) libEl.style.display = 'block';
+          if (activeCapTab === 'shared' && sharedEl) sharedEl.style.display = 'block';
+          return;
+        }
+        capSearchDebounce = setTimeout(function() { handleCapSearch(q); }, 300);
+      });
+    }
+
+    function handleCapSearch(query) {
+      // Hide tab content, show search results
+      var marketEl = document.getElementById('capMarketContent');
+      var libEl = document.getElementById('capLibraryContent');
+      var sharedEl = document.getElementById('capSharedContent');
+      var searchEl = document.getElementById('capSearchResults');
+      if (marketEl) marketEl.style.display = 'none';
+      if (libEl) libEl.style.display = 'none';
+      if (sharedEl) sharedEl.style.display = 'none';
+      if (searchEl) searchEl.style.display = 'block';
+
+      var resultsList = document.getElementById('capSearchResultsList');
+      if (resultsList) resultsList.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Searching...</div>';
+
+      var params = new URLSearchParams();
+      params.set('q', query);
+      if (activeCapType !== 'all') params.set('type', activeCapType);
+      params.set('limit', '30');
+
+      fetch('/api/discover/marketplace?' + params.toString())
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var results = data.results || [];
+          // Filter by ownership if "Mine" is selected
+          if (activeCapOwner === 'mine' && currentUserId) {
+            results = results.filter(function(r) { return r.owner_id === currentUserId; });
+          }
+          if (!resultsList) return;
+          if (results.length === 0) {
+            resultsList.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">No results found.</div>';
+            return;
+          }
+          resultsList.innerHTML = results.map(renderMarketplaceCard).join('');
+        })
+        .catch(function() {
+          if (resultsList) resultsList.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Search failed.</div>';
+        });
+    }
+
+    // Current user ID (set from auth flow via window._currentUserId)
+    var currentUserId = window._currentUserId || null;
+
+    // Flag emoji helper
+    function getFlagEmoji(code) {
+      if (!code) return '';
+      return code.toUpperCase().replace(/./g, function(c) {
+        return String.fromCodePoint(127397 + c.charCodeAt(0));
+      });
+    }
+
+    // Format currency helper
+    function formatEarnings(cents) {
+      if (cents >= 100000000) return '$' + (cents / 100000000).toFixed(2) + 'M';
+      if (cents >= 100000) return '$' + Math.round(cents / 100000) + 'K';
+      if (cents >= 100) return '$' + (cents / 100).toFixed(0);
+      return '$' + (cents / 100).toFixed(2);
+    }
+
+    // Load platform ticker stats
+    function loadPlatformStats() {
+      fetch('/api/discover/stats')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var tickerEl = document.getElementById('marketTicker');
+          if (!tickerEl) return;
+          var gmv = formatEarnings(data.gmv_30d_cents || 0);
+          var changePct = (data.gmv_change_pct || 0).toFixed(1);
+          var changeSign = data.gmv_change_pct >= 0 ? '+' : '';
+          var items = [
+            '30d GMV ' + gmv + ' ' + changeSign + changePct + '%',
+            'Acquisitions (30d) ' + (data.acquisitions_30d || 0) + ' ' + (data.acquisitions_change >= 0 ? '+' : '') + (data.acquisitions_change || 0),
+            'Capabilities listed ' + (data.capabilities_listed || 0)
+          ];
+          // Double items for seamless scroll
+          var doubled = items.concat(items);
+          tickerEl.innerHTML = doubled.map(function(t) { return '<span>' + escapeHtml(t) + '</span>'; }).join('');
+        })
+        .catch(function() {});
+    }
+
+    // Load newly published apps
+    function loadNewlyPublished() {
+      fetch('/api/discover/newly-published?limit=5')
+        .then(function(r) { return r.json(); })
+        .then(function(apps) {
+          var el = document.getElementById('newlyPublishedList');
+          if (!el) return;
+          if (!apps || apps.length === 0) {
+            el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);">No recent publications.</div>';
+            return;
+          }
+          el.innerHTML = '<div style="border:1px solid var(--border);background:var(--bg-base);">' + apps.map(function(app, i) {
+            var timeAgo = formatTimeAgo(app.first_published_at);
+            var isNew = (Date.now() - new Date(app.first_published_at).getTime()) < 24 * 60 * 60 * 1000;
+            var border = i > 0 ? 'border-top:1px solid var(--border);' : '';
+            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-2) var(--space-3);' + border + '">'
+              + '<div style="display:flex;align-items:center;gap:var(--space-2);">'
+              + '<span style="width:6px;height:6px;border-radius:50%;background:var(--text-muted);"></span>'
+              + '<span style="font-size:13px;font-weight:500;">' + escapeHtml(app.name) + '</span>'
+              + (isNew ? ' <span style="font-size:10px;font-weight:600;padding:1px 6px;background:#dcfce7;color:#16a34a;border-radius:3px;">New</span>' : '')
+              + '</div>'
+              + '<span style="font-size:12px;color:var(--text-muted);">' + timeAgo + '</span>'
+              + '</div>';
+          }).join('') + '</div>';
+        })
+        .catch(function() {});
+    }
+
+    // Load newly acquired apps
+    function loadNewlyAcquired() {
+      fetch('/api/discover/newly-acquired?limit=5')
+        .then(function(r) { return r.json(); })
+        .then(function(sales) {
+          var el = document.getElementById('newlyAcquiredList');
+          if (!el) return;
+          if (!sales || sales.length === 0) {
+            el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);">No recent acquisitions.</div>';
+            return;
+          }
+          el.innerHTML = '<div style="border:1px solid var(--border);background:var(--bg-base);">' + sales.map(function(sale, i) {
+            var border = i > 0 ? 'border-top:1px solid var(--border);' : '';
+            var price = formatEarnings(sale.sale_price_cents || 0);
+            var timeAgo = formatTimeAgo(sale.created_at);
+            var color = sale.sale_price_cents >= 3000000 ? '#ef4444' : sale.sale_price_cents >= 1000000 ? '#3b82f6' : '#22c55e';
+            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-2) var(--space-3);' + border + '">'
+              + '<div style="display:flex;align-items:center;gap:var(--space-2);">'
+              + '<span style="width:6px;height:6px;border-radius:50%;background:' + color + ';"></span>'
+              + '<span style="font-size:13px;font-weight:500;">' + escapeHtml(sale.app_name) + '</span>'
+              + ' <span style="font-size:12px;font-weight:600;padding:1px 6px;background:' + color + '22;color:' + color + ';border-radius:3px;">' + price + '</span>'
+              + '</div>'
+              + '<span style="font-size:12px;color:var(--text-muted);">' + timeAgo + '</span>'
+              + '</div>';
+          }).join('') + '</div>';
+        })
+        .catch(function() {});
+    }
+
+    // Load leaderboard
+    function loadLeaderboard(period) {
+      if (period) leaderboardPeriod = period;
+      document.querySelectorAll('[data-lb-period]').forEach(function(btn) {
+        btn.classList.toggle('active', btn.dataset.lbPeriod === leaderboardPeriod);
+      });
+
+      var tbody = document.getElementById('leaderboardBody');
+      if (!tbody) return;
+      tbody.innerHTML = '<tr><td colspan="5" style="padding:var(--space-4);color:var(--text-muted);font-size:13px;">Loading...</td></tr>';
+
+      fetch('/api/discover/leaderboard?period=' + leaderboardPeriod + '&limit=20')
+        .then(function(r) { return r.json(); })
+        .then(function(entries) {
+          if (!tbody) return;
+          if (!entries || entries.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="padding:var(--space-4);color:var(--text-muted);font-size:13px;">No data for this period.</td></tr>';
+            return;
+          }
+          tbody.innerHTML = entries.map(function(e, i) {
+            var flag = getFlagEmoji(e.country);
+            var profileLink = e.profile_slug ? '/u/' + e.profile_slug : '#';
+            var featured = e.featured_app ? escapeHtml(e.featured_app.name) : '';
+            var featuredStyle = 'font-size:12px;padding:2px 8px;background:var(--bg-raised);border:1px solid var(--border);border-radius:3px;color:var(--text-secondary);';
+            return '<tr style="border-bottom:1px solid var(--border);">'
+              + '<td style="padding:var(--space-2) var(--space-1);color:var(--text-muted);font-weight:500;">' + (i + 1) + '</td>'
+              + '<td style="padding:var(--space-2) var(--space-1);"><a href="' + profileLink + '" style="color:var(--text-primary);font-weight:500;text-decoration:none;">' + escapeHtml(e.display_name || 'Anon profile') + '</a></td>'
+              + '<td style="padding:var(--space-2) var(--space-1);font-weight:600;">' + formatEarnings(e.earnings_cents || 0) + '</td>'
+              + '<td style="padding:var(--space-2) var(--space-1);">' + flag + '</td>'
+              + '<td style="padding:var(--space-2) var(--space-1);">' + (featured ? '<span style="' + featuredStyle + '">' + featured + '</span>' : '') + '</td>'
+              + '</tr>';
+          }).join('');
+        })
+        .catch(function() {
+          if (tbody) tbody.innerHTML = '<tr><td colspan="5" style="padding:var(--space-4);color:var(--text-muted);font-size:13px;">Failed to load.</td></tr>';
+        });
+    }
+
+    // Leaderboard period click handlers
+    document.querySelectorAll('[data-lb-period]').forEach(function(el) {
+      el.addEventListener('click', function() { loadLeaderboard(this.dataset.lbPeriod); });
+    });
+
+    // Format relative time for newly published/acquired
+    function formatTimeAgo(dateStr) {
+      if (!dateStr) return '';
+      var ms = Date.now() - new Date(dateStr).getTime();
+      var h = Math.floor(ms / 3600000);
+      var d = Math.floor(ms / 86400000);
+      if (h < 1) return 'now';
+      if (h < 24) return h + 'h';
+      if (d < 30) return d + 'd';
+      return Math.floor(d / 30) + 'mo';
+    }
+
+    // Load all market page data
+    function loadMarketPage() {
+      loadPlatformStats();
+      loadNewlyPublished();
+      loadNewlyAcquired();
+      loadLeaderboard();
+    }
+
+    // Load shared apps
+    function loadSharedApps() {
+      var el = document.getElementById('sharedAppList');
+      if (!el || !authToken) return;
+      el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Loading...</div>';
+      fetch('/api/apps/me/library?tab=shared', {
+        headers: { 'Authorization': 'Bearer ' + authToken },
+      })
+        .then(function(r) { return r.json(); })
+        .then(function(items) {
+          if (!items || items.length === 0) {
+            el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">No apps shared with you yet.</div>';
+            return;
+          }
+          el.innerHTML = items.map(function(item) {
+            return renderMarketplaceCard({
+              id: item.id,
+              name: item.name,
+              slug: item.slug,
+              description: item.description || '',
+              type: item.type || 'app',
+              likes: 0,
+              runs_30d: 0,
+              fully_native: true
+            });
+          }).join('');
+        })
+        .catch(function() {
+          el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Failed to load.</div>';
+        });
+    }
+
+    // ===== Profile View =====
+    var _profileSlug = '${profileSlug || ''}';
+
+    function loadProfilePage(slug) {
+      var el = document.getElementById('profileContent');
+      if (!el) return;
+      el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-8) 0;text-align:center;">Loading profile...</div>';
+
+      fetch('/api/user/profile/' + encodeURIComponent(slug))
+        .then(function(r) {
+          if (!r.ok) throw new Error('Not found');
+          return r.json();
+        })
+        .then(function(profile) { renderProfileView(profile); })
+        .catch(function() {
+          el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-8) 0;text-align:center;">Profile not found.</div>';
+        });
+    }
+
+    function renderProfileView(profile) {
+      var el = document.getElementById('profileContent');
+      if (!el) return;
+      var flag = getFlagEmoji(profile.country);
+      var tierBadge = profile.tier && profile.tier !== 'free'
+        ? '<span style="font-size:11px;padding:2px 8px;background:#fef3c7;color:#92400e;border-radius:3px;font-weight:600;margin-left:var(--space-2);">' + escapeHtml(profile.tier.charAt(0).toUpperCase() + profile.tier.slice(1)) + '</span>'
+        : '';
+      var since = new Date(profile.created_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+      var stats = profile.stats || {};
+      var initial = (profile.display_name || 'U').charAt(0).toUpperCase();
+      var avatarHtml = profile.avatar_url
+        ? '<img src="' + escapeHtml(profile.avatar_url) + '" style="width:72px;height:72px;border-radius:50%;object-fit:cover;">'
+        : '<span style="font-size:24px;font-weight:700;color:var(--text-primary);">' + initial + '</span>';
+
+      var html = ''
+        // Header
+        + '<div style="border:1px solid var(--border);padding:var(--space-6);margin-bottom:var(--space-6);">'
+        + '<div style="display:flex;gap:var(--space-5);align-items:center;margin-bottom:var(--space-5);">'
+        + '<div style="width:72px;height:72px;border-radius:50%;background:var(--bg-raised);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;flex-shrink:0;">' + avatarHtml + '</div>'
+        + '<div>'
+        + '<div style="font-size:20px;font-weight:700;">' + escapeHtml(profile.display_name || 'Anonymous') + tierBadge + '</div>'
+        + '<div style="font-size:13px;color:var(--text-muted);">' + (flag ? flag + ' &middot; ' : '') + 'Active since ' + since + '</div>'
+        + '</div>'
+        + '</div>'
+        // Stats row
+        + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);">'
+        + '<div style="background:var(--bg-raised);padding:var(--space-3) var(--space-4);"><div style="font-size:11px;color:var(--text-muted);">Lifetime gross</div><div style="font-size:18px;font-weight:700;font-family:monospace;">' + formatEarnings(stats.lifetime_gross_cents || 0) + '</div></div>'
+        + '<div style="background:var(--bg-raised);padding:var(--space-3) var(--space-4);"><div style="font-size:11px;color:var(--text-muted);">Published</div><div style="font-size:18px;font-weight:700;">' + (stats.published_count || 0) + '</div></div>'
+        + '<div style="background:var(--bg-raised);padding:var(--space-3) var(--space-4);"><div style="font-size:11px;color:var(--text-muted);">Acquired</div><div style="font-size:18px;font-weight:700;">' + (stats.acquired_count || 0) + '</div></div>'
+        + '<div style="background:var(--bg-raised);padding:var(--space-3) var(--space-4);"><div style="font-size:11px;color:var(--text-muted);">Featured</div><div style="font-size:14px;font-weight:600;">' + (profile.featured_app ? escapeHtml(profile.featured_app.name) : '-') + '</div></div>'
+        + '</div>'
+        + '</div>';
+
+      // Profile tabs
+      html += '<div class="marketplace-filters" style="margin-bottom:var(--space-4);">'
+        + '<button class="marketplace-filter active" data-profile-tab="published">Published capabilities</button>'
+        + '<button class="marketplace-filter" data-profile-tab="acquisitions">Acquisitions</button>'
+        + '</div>';
+
+      // Published tab
+      html += '<div id="profilePublishedTab">';
+      if (profile.published && profile.published.length > 0) {
+        html += profile.published.map(function(app) {
+          var pubDate = app.first_published_at ? new Date(app.first_published_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : '';
+          return '<div style="border:1px solid var(--border);padding:var(--space-3) var(--space-4);margin-bottom:var(--space-2);cursor:pointer;" onclick="window.location.href=\\'/apps/' + app.slug + '\\';">'
+            + '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'
+            + '<div>'
+            + '<div style="font-size:14px;font-weight:600;">' + escapeHtml(app.name) + '</div>'
+            + '<div style="font-size:12px;color:var(--text-muted);">MCP server</div>'
+            + '</div>'
+            + '</div>'
+            + (app.description ? '<div style="font-size:13px;color:var(--text-secondary);margin-top:var(--space-2);line-height:1.4;">' + escapeHtml((app.description || '').slice(0, 200)) + '</div>' : '')
+            + '<div style="font-size:12px;color:var(--text-muted);margin-top:var(--space-2);display:flex;gap:var(--space-4);">'
+            + (app.runs_30d ? '<span>30d runs <strong>' + app.runs_30d.toLocaleString() + '</strong></span>' : '')
+            + (pubDate ? '<span>Published <strong>' + pubDate + '</strong></span>' : '')
+            + (app.current_version ? '<span>Version <strong>' + escapeHtml(app.current_version) + '</strong></span>' : '')
+            + '</div>'
+            + '</div>';
+        }).join('');
+      } else {
+        html += '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">No published capabilities yet.</div>';
+      }
+      html += '</div>';
+
+      // Acquisitions tab (hidden)
+      html += '<div id="profileAcquisitionsTab" style="display:none;">';
+      if (profile.acquisitions && profile.acquisitions.length > 0) {
+        html += '<div style="border:1px solid var(--border);">'
+          + profile.acquisitions.map(function(a, i) {
+            var border = i > 0 ? 'border-top:1px solid var(--border);' : '';
+            var date = new Date(a.acquired_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+            return '<div style="display:flex;justify-content:space-between;align-items:center;padding:var(--space-3) var(--space-4);' + border + '">'
+              + '<div>'
+              + '<div style="font-size:14px;font-weight:500;">' + escapeHtml(a.app_name) + '</div>'
+              + (a.app_slug ? '<div style="font-size:12px;color:var(--text-muted);">' + escapeHtml(a.app_slug) + '</div>' : '')
+              + '</div>'
+              + '<div style="text-align:right;">'
+              + '<div style="font-size:14px;font-weight:600;">' + formatEarnings(a.price_cents || 0) + '</div>'
+              + '<div style="font-size:12px;color:var(--text-muted);">' + date + '</div>'
+              + '</div>'
+              + '</div>';
+          }).join('')
+          + '</div>';
+        // Summary stats
+        var totalSpend = profile.acquisitions.reduce(function(s, a) { return s + (a.price_cents || 0); }, 0);
+        var avgDeal = Math.round(totalSpend / profile.acquisitions.length);
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);margin-top:var(--space-4);">'
+          + '<div style="background:var(--bg-raised);padding:var(--space-3) var(--space-4);"><div style="font-size:11px;color:var(--text-muted);">Total acquisition spend</div><div style="font-size:18px;font-weight:700;font-family:monospace;">' + formatEarnings(totalSpend) + '</div></div>'
+          + '<div style="background:var(--bg-raised);padding:var(--space-3) var(--space-4);"><div style="font-size:11px;color:var(--text-muted);">Avg deal size</div><div style="font-size:18px;font-weight:700;font-family:monospace;">' + formatEarnings(avgDeal) + '</div></div>'
+          + '</div>';
+      } else {
+        html += '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">No acquisitions yet.</div>';
+      }
+      html += '</div>';
+
+      el.innerHTML = html;
+
+      // Profile tab click handlers
+      el.querySelectorAll('[data-profile-tab]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          var tab = this.dataset.profileTab;
+          el.querySelectorAll('[data-profile-tab]').forEach(function(b) {
+            b.classList.toggle('active', b.dataset.profileTab === tab);
+          });
+          var pub = document.getElementById('profilePublishedTab');
+          var acq = document.getElementById('profileAcquisitionsTab');
+          if (pub) pub.style.display = tab === 'published' ? 'block' : 'none';
+          if (acq) acq.style.display = tab === 'acquisitions' ? 'block' : 'none';
+        });
+      });
+    }
+
+    // Auto-load profile if we're on a profile page
+    if (_profileSlug && currentView === 'profile') {
+      loadProfilePage(_profileSlug);
+    }
+
+    // ===== Profile Settings =====
+    var COUNTRIES = [
+      ['US','United States'],['GB','United Kingdom'],['CA','Canada'],['AU','Australia'],['DE','Germany'],
+      ['FR','France'],['JP','Japan'],['KR','South Korea'],['BR','Brazil'],['IN','India'],['CN','China'],
+      ['NL','Netherlands'],['SE','Sweden'],['NO','Norway'],['DK','Denmark'],['FI','Finland'],['CH','Switzerland'],
+      ['AT','Austria'],['BE','Belgium'],['ES','Spain'],['IT','Italy'],['PT','Portugal'],['IE','Ireland'],
+      ['PL','Poland'],['CZ','Czech Republic'],['RO','Romania'],['HU','Hungary'],['SK','Slovakia'],
+      ['SG','Singapore'],['HK','Hong Kong'],['TW','Taiwan'],['NZ','New Zealand'],['IL','Israel'],
+      ['AE','UAE'],['SA','Saudi Arabia'],['ZA','South Africa'],['NG','Nigeria'],['KE','Kenya'],
+      ['EG','Egypt'],['MX','Mexico'],['AR','Argentina'],['CL','Chile'],['CO','Colombia'],['PE','Peru'],
+      ['TH','Thailand'],['VN','Vietnam'],['PH','Philippines'],['ID','Indonesia'],['MY','Malaysia'],
+      ['RU','Russia'],['UA','Ukraine'],['TR','Turkey'],['GR','Greece'],['HR','Croatia'],['RS','Serbia'],
+    ].sort(function(a, b) { return a[1].localeCompare(b[1]); });
+
+    function populateProfileSettings() {
+      var countrySelect = document.getElementById('profileCountrySelect');
+      if (countrySelect && countrySelect.options.length <= 1) {
+        COUNTRIES.forEach(function(c) {
+          var opt = document.createElement('option');
+          opt.value = c[0];
+          opt.textContent = getFlagEmoji(c[0]) + ' ' + c[1];
+          countrySelect.appendChild(opt);
+        });
+      }
+
+      // Set current values from userProfile
+      if (userProfile) {
+        if (countrySelect && userProfile.country) countrySelect.value = userProfile.country;
+        // Populate featured app select with user's apps
+        var featuredSelect = document.getElementById('profileFeaturedSelect');
+        if (featuredSelect && apps.length > 0) {
+          // Clear existing options except "None"
+          while (featuredSelect.options.length > 1) featuredSelect.options.remove(1);
+          apps.forEach(function(app) {
+            var opt = document.createElement('option');
+            opt.value = app.id;
+            opt.textContent = app.name;
+            featuredSelect.appendChild(opt);
+          });
+          if (userProfile.featured_app_id) featuredSelect.value = userProfile.featured_app_id;
+        }
+      }
+    }
+
+    window.saveProfileSettings = function() {
+      var country = (document.getElementById('profileCountrySelect') || {}).value || null;
+      var featuredAppId = (document.getElementById('profileFeaturedSelect') || {}).value || null;
+
+      fetch('/api/user', {
+        method: 'PATCH',
+        headers: {
+          'Authorization': 'Bearer ' + authToken,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ country: country || null, featured_app_id: featuredAppId || null }),
+      })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          userProfile = data;
+          var saved = document.getElementById('profileSettingsSaved');
+          if (saved) {
+            saved.style.display = 'inline';
+            setTimeout(function() { saved.style.display = 'none'; }, 2000);
+          }
+        })
+        .catch(function() { alert('Failed to save profile settings.'); });
+    };
 
     // ===== Marketplace =====
     var marketplaceType = 'all';
@@ -6338,6 +6952,7 @@ export function getLayoutHTML(options: {
     async function loadAccountData() {
       loadApiKey();
       loadHostingData();
+      populateProfileSettings();
     }
 
     // --- API Key (single key) ---
