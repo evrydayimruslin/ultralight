@@ -120,26 +120,30 @@ function NavItem({ icon, label, active, onClick }: {
   );
 }
 
-function CollapsibleSection({ title, expanded, onToggle, children }: {
+function CollapsibleSection({ title, expanded, onToggle, trailing, children }: {
   title: string;
   expanded: boolean;
   onToggle: () => void;
+  trailing?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div className="mt-1">
-      <button
-        onClick={onToggle}
-        className="w-full flex items-center justify-between px-3 py-1.5 text-caption font-medium text-ul-text-muted uppercase tracking-wider hover:text-ul-text-secondary transition-colors"
-      >
-        {title}
-        <svg
-          width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
-          className={`transition-transform ${expanded ? '' : '-rotate-90'}`}
+      <div className="flex items-center px-3 py-1.5">
+        <button
+          onClick={onToggle}
+          className="flex items-center gap-1 text-caption font-medium text-ul-text-muted uppercase tracking-wider hover:text-ul-text-secondary transition-colors"
         >
-          <path d="M3 4.5L6 7.5L9 4.5" />
-        </svg>
-      </button>
+          {title}
+          <svg
+            width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
+            className={`transition-transform ${expanded ? '' : '-rotate-90'}`}
+          >
+            <path d="M3 4.5L6 7.5L9 4.5" />
+          </svg>
+        </button>
+        {trailing && <div className="ml-auto">{trailing}</div>}
+      </div>
       {expanded && <div className="px-1">{children}</div>}
     </div>
   );
@@ -212,6 +216,7 @@ export default function NavSidebar({
   isAgentRunning,
 }: NavSidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
   const [agentsExpanded, setAgentsExpanded] = useState(() => !getCollapsed('ul_nav_agents_collapsed', false));
   const [contextMenu, setContextMenu] = useState<{ agentId: string; x: number; y: number } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -292,15 +297,8 @@ export default function NavSidebar({
 
   if (!isOpen) return null;
 
-  // Filter + sort agents
-  const filtered = searchQuery
-    ? agents.filter(a =>
-        a.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (a.initial_task && a.initial_task.toLowerCase().includes(searchQuery.toLowerCase()))
-      )
-    : agents;
-
-  const sorted = [...filtered].sort((a, b) => {
+  // Sort agents
+  const sorted = [...agents].sort((a, b) => {
     const aRunning = a.status === 'running' ? 0 : 1;
     const bRunning = b.status === 'running' ? 0 : 1;
     if (aRunning !== bRunning) return aRunning - bRunning;
@@ -337,24 +335,30 @@ export default function NavSidebar({
       </nav>
 
       {/* Agents */}
-      <CollapsibleSection title="Agents" expanded={agentsExpanded} onToggle={toggleAgents}>
-        {/* Search */}
-        <div className="px-2 pb-1.5">
-          <input
-            ref={searchRef}
-            type="text"
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            placeholder="Search agents..."
-            className="w-full px-2 py-1 text-small rounded border border-ul-border bg-white focus:outline-none focus:border-ul-border-focus"
-          />
-        </div>
-
+      <CollapsibleSection
+        title="Agents"
+        expanded={agentsExpanded}
+        onToggle={toggleAgents}
+        trailing={
+          agents.length > 0 ? (
+            <button
+              onClick={e => { e.stopPropagation(); setSearchOpen(true); }}
+              className="p-0.5 rounded hover:bg-ul-bg-hover text-ul-text-muted hover:text-ul-text-secondary transition-colors"
+              title="Search agents"
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <circle cx="7" cy="7" r="4.5" />
+                <line x1="10.5" y1="10.5" x2="14" y2="14" />
+              </svg>
+            </button>
+          ) : null
+        }
+      >
         {/* Time-grouped agent list */}
-        <div className="flex-1 overflow-y-auto min-h-0" style={{ maxHeight: 'calc(100vh - 380px)' }}>
+        <div className="flex-1 overflow-y-auto min-h-0" style={{ maxHeight: 'calc(100vh - 340px)' }}>
           {timeGroups.length === 0 ? (
             <div className="px-3 py-4 text-center text-caption text-ul-text-muted">
-              {searchQuery ? 'No agents found' : 'No agents yet'}
+              No agents yet
             </div>
           ) : (
             timeGroups.map(group => (
@@ -434,6 +438,82 @@ export default function NavSidebar({
           </svg>
         </button>
       </div>
+
+      {/* Search modal */}
+      {searchOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center pt-[15%] bg-black/20"
+          onClick={() => { setSearchOpen(false); setSearchQuery(''); }}
+        >
+          <div
+            className="w-[420px] max-h-[60vh] bg-white rounded-lg shadow-xl border border-ul-border flex flex-col overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-ul-border">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" className="text-ul-text-muted flex-shrink-0">
+                <circle cx="7" cy="7" r="4.5" />
+                <line x1="10.5" y1="10.5" x2="14" y2="14" />
+              </svg>
+              <input
+                ref={searchRef}
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Search agents..."
+                className="flex-1 text-sm outline-none bg-transparent text-ul-text placeholder:text-ul-text-muted"
+                autoFocus
+                onKeyDown={e => { if (e.key === 'Escape') { setSearchOpen(false); setSearchQuery(''); } }}
+              />
+              <button
+                onClick={() => { setSearchOpen(false); setSearchQuery(''); }}
+                className="text-ul-text-muted hover:text-ul-text"
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                  <line x1="3" y1="3" x2="11" y2="11" />
+                  <line x1="11" y1="3" x2="3" y2="11" />
+                </svg>
+              </button>
+            </div>
+            <div className="overflow-y-auto flex-1">
+              {sorted.filter(a =>
+                !searchQuery ||
+                a.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                (a.initial_task && a.initial_task.toLowerCase().includes(searchQuery.toLowerCase()))
+              ).length === 0 ? (
+                <div className="px-4 py-6 text-center text-sm text-ul-text-muted">
+                  No agents found
+                </div>
+              ) : (
+                sorted
+                  .filter(a =>
+                    !searchQuery ||
+                    a.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    (a.initial_task && a.initial_task.toLowerCase().includes(searchQuery.toLowerCase()))
+                  )
+                  .map(agent => (
+                    <button
+                      key={agent.id}
+                      onClick={() => { onSelectAgent(agent.id); setSearchOpen(false); setSearchQuery(''); }}
+                      className={`w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-gray-50 transition-colors
+                        ${activeAgentId === agent.id ? 'bg-gray-50' : ''}`}
+                    >
+                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDot(agent.status)}`} />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm text-ul-text truncate">{agent.name}</div>
+                        {agent.initial_task && (
+                          <div className="text-xs text-ul-text-muted truncate">{agent.initial_task}</div>
+                        )}
+                      </div>
+                      <span className="text-xs text-ul-text-muted flex-shrink-0">
+                        {formatRelativeTime(agent.updated_at)}
+                      </span>
+                    </button>
+                  ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Context menu */}
       {contextMenu && (

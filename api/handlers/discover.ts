@@ -1521,7 +1521,7 @@ async function handleNewlyAcquired(url: URL): Promise<Response> {
   try {
     // Join app_sales with apps to get names
     const res = await fetch(
-      `${supabaseUrl}/rest/v1/app_sales?select=id,sale_price_cents,created_at,apps(name,slug)` +
+      `${supabaseUrl}/rest/v1/app_sales?select=id,app_id,sale_price_cents,created_at,apps(name,slug)` +
       `&order=created_at.desc` +
       `&limit=${limit}`,
       { headers: dbHeaders }
@@ -1532,6 +1532,7 @@ async function handleNewlyAcquired(url: URL): Promise<Response> {
       const app = r.apps as Record<string, unknown> | null;
       return {
         sale_id: r.id,
+        app_id: r.app_id || '',
         app_name: app?.name || 'Unknown',
         app_slug: app?.slug || '',
         sale_price_cents: r.sale_price_cents,

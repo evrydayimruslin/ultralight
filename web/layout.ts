@@ -3073,7 +3073,7 @@ export function getLayoutHTML(options: {
     // Hide chrome in embed mode (desktop app provides its own nav)
     if (_isEmbed) {
       var _embedStyle = document.createElement('style');
-      _embedStyle.textContent = '.top-nav { display: none !important; } .settings-sidebar { display: none !important; } .settings-layout { gap: 0; } .settings-content { flex: 1; min-width: 0; } #dashboardView { padding-top: 0; }';
+      _embedStyle.textContent = '.top-nav { display: none !important; } #dashboardView .settings-sidebar { display: none !important; } #dashboardView .settings-layout { gap: 0; } #dashboardView .settings-content { flex: 1; min-width: 0; } #dashboardView { padding-top: 0; }';
       document.head.appendChild(_embedStyle);
     }
 
@@ -3886,15 +3886,14 @@ export function getLayoutHTML(options: {
             var timeAgo = formatTimeAgo(app.first_published_at);
             var isNew = (Date.now() - new Date(app.first_published_at).getTime()) < 24 * 60 * 60 * 1000;
             var border = i > 0 ? 'border-top:1px solid var(--border);' : '';
-            var href = app.slug ? '/apps/' + encodeURIComponent(app.slug) : '#';
-            return '<a href="' + href + '" class="market-list-link" style="' + border + '">'
+            return '<div class="market-list-link" style="cursor:pointer;' + border + '" onclick="navigateToApp(\'' + app.id + '\')">'
               + '<div style="display:flex;align-items:center;gap:var(--space-2);">'
               + '<span style="width:6px;height:6px;border-radius:50%;background:var(--text-muted);"></span>'
               + '<span style="font-size:13px;font-weight:500;">' + escapeHtml(app.name) + '</span>'
               + (isNew ? ' <span style="font-size:10px;font-weight:600;padding:1px 6px;background:#dcfce7;color:#16a34a;border-radius:3px;">New</span>' : '')
               + '</div>'
               + '<span style="font-size:12px;color:var(--text-muted);">' + timeAgo + '</span>'
-              + '</a>';
+              + '</div>';
           }).join('') + '</div>';
         })
         .catch(function() {});
@@ -3916,15 +3915,14 @@ export function getLayoutHTML(options: {
             var price = formatEarnings(sale.sale_price_cents || 0);
             var timeAgo = formatTimeAgo(sale.created_at);
             var color = sale.sale_price_cents >= 3000000 ? '#ef4444' : sale.sale_price_cents >= 1000000 ? '#3b82f6' : '#22c55e';
-            var href = sale.app_slug ? '/apps/' + encodeURIComponent(sale.app_slug) : '#';
-            return '<a href="' + href + '" class="market-list-link" style="' + border + '">'
+            return '<div class="market-list-link" style="cursor:pointer;' + border + '" onclick="navigateToApp(\'' + (sale.app_id || '') + '\')">'
               + '<div style="display:flex;align-items:center;gap:var(--space-2);">'
               + '<span style="width:6px;height:6px;border-radius:50%;background:' + color + ';"></span>'
               + '<span style="font-size:13px;font-weight:500;">' + escapeHtml(sale.app_name) + '</span>'
               + ' <span style="font-size:12px;font-weight:600;padding:1px 6px;background:' + color + '22;color:' + color + ';border-radius:3px;">' + price + '</span>'
               + '</div>'
               + '<span style="font-size:12px;color:var(--text-muted);">' + timeAgo + '</span>'
-              + '</a>';
+              + '</div>';
           }).join('') + '</div>';
         })
         .catch(function() {});
