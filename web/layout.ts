@@ -3886,7 +3886,7 @@ export function getLayoutHTML(options: {
             var timeAgo = formatTimeAgo(app.first_published_at);
             var isNew = (Date.now() - new Date(app.first_published_at).getTime()) < 24 * 60 * 60 * 1000;
             var border = i > 0 ? 'border-top:1px solid var(--border);' : '';
-            return '<div class="market-list-link" style="cursor:pointer;' + border + '" onclick="navigateToApp(\'' + app.id + '\')">'
+            return '<div class="market-list-link" style="cursor:pointer;' + border + '" onclick="navigateToApp(\\\'' + app.id + '\\\')">'
               + '<div style="display:flex;align-items:center;gap:var(--space-2);">'
               + '<span style="width:6px;height:6px;border-radius:50%;background:var(--text-muted);"></span>'
               + '<span style="font-size:13px;font-weight:500;">' + escapeHtml(app.name) + '</span>'
@@ -3915,7 +3915,7 @@ export function getLayoutHTML(options: {
             var price = formatEarnings(sale.sale_price_cents || 0);
             var timeAgo = formatTimeAgo(sale.created_at);
             var color = sale.sale_price_cents >= 3000000 ? '#ef4444' : sale.sale_price_cents >= 1000000 ? '#3b82f6' : '#22c55e';
-            return '<div class="market-list-link" style="cursor:pointer;' + border + '" onclick="navigateToApp(\'' + (sale.app_id || '') + '\')">'
+            return '<div class="market-list-link" style="cursor:pointer;' + border + '" onclick="navigateToApp(\\\'' + (sale.app_id || '') + '\\\')">'
               + '<div style="display:flex;align-items:center;gap:var(--space-2);">'
               + '<span style="width:6px;height:6px;border-radius:50%;background:' + color + ';"></span>'
               + '<span style="font-size:13px;font-weight:500;">' + escapeHtml(sale.app_name) + '</span>'
