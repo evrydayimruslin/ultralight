@@ -201,15 +201,6 @@
   }
 }
 
-/* Tauri window drag regions */
-.drag-region {
-  -webkit-app-region: drag;
-}
-
-.no-drag-region {
-  -webkit-app-region: no-drag;
-}
-
 /* Typing indicator animation */
 @keyframes typing-dot {
   0%, 60%, 100% { opacity: 0.3; }

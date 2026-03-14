@@ -1,6 +1,7 @@
 // TopToolbar — thin title bar toolbar with sidebar toggle and back/forward navigation.
 // Sits above the sidebar + content layout. Serves as macOS window drag region.
 // In windowed mode, left-pads for macOS traffic lights. In fullscreen, buttons shift left.
+// Uses data-tauri-drag-region for Tauri v2 window dragging.
 
 import { useState, useEffect } from 'react';
 
@@ -49,12 +50,15 @@ export default function TopToolbar({
   const btnBase = 'flex items-center justify-center w-[28px] h-[28px] rounded-[6px] transition-colors';
 
   return (
-    <div className="drag-region flex items-center h-[38px] bg-gray-50 border-b border-ul-border flex-shrink-0">
+    <div
+      data-tauri-drag-region
+      className="flex items-center h-[38px] bg-gray-50 border-b border-ul-border flex-shrink-0"
+    >
       {/* Traffic light spacer — collapses in fullscreen */}
-      {!isFullscreen && <div className="w-[70px] flex-shrink-0" />}
+      {!isFullscreen && <div data-tauri-drag-region className="w-[70px] h-full flex-shrink-0" />}
 
-      {/* Toolbar buttons — vertically centered via parent items-center */}
-      <div className={`no-drag-region flex items-center gap-[6px] ${isFullscreen ? 'pl-3' : ''}`}>
+      {/* Toolbar buttons */}
+      <div className={`flex items-center gap-[6px] ${isFullscreen ? 'pl-3' : ''}`}>
         {/* Sidebar toggle */}
         <button
           onClick={onToggleSidebar}
@@ -104,6 +108,9 @@ export default function TopToolbar({
           </svg>
         </button>
       </div>
+
+      {/* Remaining space is also draggable */}
+      <div data-tauri-drag-region className="flex-1 h-full" />
     </div>
   );
 }
