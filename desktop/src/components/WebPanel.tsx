@@ -9,11 +9,9 @@ interface WebPanelProps {
   path: string;
   /** Title shown in the header bar */
   title: string;
-  sidebarOpen?: boolean;
-  onToggleSidebar?: () => void;
 }
 
-export default function WebPanel({ path, title, sidebarOpen, onToggleSidebar }: WebPanelProps) {
+export default function WebPanel({ path, title }: WebPanelProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
@@ -39,19 +37,6 @@ export default function WebPanel({ path, title, sidebarOpen, onToggleSidebar }: 
       {/* Header bar */}
       <div className="flex items-center justify-between px-4 h-nav border-b border-ul-border flex-shrink-0">
         <div className="flex items-center gap-3">
-          {!sidebarOpen && (
-            <button
-              onClick={onToggleSidebar}
-              className="p-1 rounded hover:bg-gray-100 text-ul-text-secondary"
-              title="Open sidebar"
-            >
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                <line x1="3" y1="5" x2="15" y2="5" />
-                <line x1="3" y1="9" x2="15" y2="9" />
-                <line x1="3" y1="13" x2="15" y2="13" />
-              </svg>
-            </button>
-          )}
           <h1 className="text-h3 text-ul-text tracking-tight">{title}</h1>
         </div>
       </div>

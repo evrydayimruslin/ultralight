@@ -22,7 +22,6 @@ interface NavSidebarProps {
   onNewAgent: () => void;
   onDeleteAgent: (agentId: string) => void;
   onStopAgent: (agentId: string) => void;
-  onClose: () => void;
   isAgentRunning: (agentId: string) => boolean;
 }
 
@@ -148,6 +147,13 @@ function CollapsibleSection({ title, expanded, onToggle, children }: {
 
 // ── Icons (inline SVGs) ──
 
+const NewSessionIcon = (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+    <line x1="8" y1="3" x2="8" y2="13" />
+    <line x1="3" y1="8" x2="13" y2="8" />
+  </svg>
+);
+
 const DashboardIcon = (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
     <rect x="2" y="2" width="5" height="5" rx="1" />
@@ -203,7 +209,6 @@ export default function NavSidebar({
   onNewAgent,
   onDeleteAgent,
   onStopAgent,
-  onClose,
   isAgentRunning,
 }: NavSidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -309,37 +314,14 @@ export default function NavSidebar({
 
   return (
     <div className="flex flex-col w-64 h-full border-r border-ul-border bg-gray-50 flex-shrink-0">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-3 border-b border-ul-border">
-        <span className="text-small font-semibold text-ul-text tracking-tight">Ultralight</span>
-        <button
-          onClick={onClose}
-          className="p-1 rounded hover:bg-gray-200 text-ul-text-secondary"
-          title="Close sidebar"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <line x1="4" y1="4" x2="12" y2="12" />
-            <line x1="12" y1="4" x2="4" y2="12" />
-          </svg>
-        </button>
-      </div>
-
-      {/* New Session button */}
-      <div className="px-3 py-2">
-        <button
-          onClick={onNewAgent}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 text-small font-medium text-ul-text rounded-md border border-ul-border bg-white hover:bg-gray-50 transition-colors"
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <line x1="7" y1="2" x2="7" y2="12" />
-            <line x1="2" y1="7" x2="12" y2="7" />
-          </svg>
-          New Session
-        </button>
-      </div>
-
       {/* Primary nav */}
-      <nav className="px-2">
+      <nav className="px-2 pt-2">
+        <NavItem
+          icon={NewSessionIcon}
+          label="New Session"
+          active={activeView.kind === 'new-chat'}
+          onClick={onNewAgent}
+        />
         <NavItem
           icon={DashboardIcon}
           label="Dashboard"

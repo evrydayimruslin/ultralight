@@ -1,4 +1,4 @@
-// Root component — auth gate + view routing + sidebar.
+// Root component — auth gate + view routing + sidebar + top toolbar.
 
 import { useState, useEffect, useCallback } from 'react';
 import { getToken, getApiBase } from './lib/storage';
@@ -8,6 +8,7 @@ import AuthGate from './components/AuthGate';
 import ChatView from './components/ChatView';
 import HomeView from './components/HomeView';
 import NavSidebar from './components/NavSidebar';
+import TopToolbar from './components/TopToolbar';
 import WebPanel from './components/WebPanel';
 
 /**
@@ -48,6 +49,10 @@ export default function App() {
     navigateToProfile,
     navigateToWallet,
     navigateToSettings,
+    canGoBack,
+    canGoForward,
+    goBack,
+    goForward,
     selectedProjectDir,
     setSelectedProjectDir,
   } = useAppState();
@@ -126,8 +131,6 @@ export default function App() {
           selectedProjectDir={selectedProjectDir}
           onSelectProjectDir={setSelectedProjectDir}
           onNavigateToAgent={navigateToAgent}
-          sidebarOpen={sidebarOpen}
-          onToggleSidebar={toggleSidebar}
         />
       );
       break;
@@ -137,8 +140,6 @@ export default function App() {
           agentId={view.agentId}
           onNavigateHome={navigateHome}
           onNavigateToAgent={navigateToAgent}
-          sidebarOpen={sidebarOpen}
-          onToggleSidebar={toggleSidebar}
         />
       );
       break;
@@ -147,72 +148,51 @@ export default function App() {
         <ChatView
           onNavigateHome={navigateHome}
           onNavigateToAgent={navigateToAgent}
-          sidebarOpen={sidebarOpen}
-          onToggleSidebar={toggleSidebar}
         />
       );
       break;
     case 'capabilities':
-      content = (
-        <WebPanel
-          path="/capabilities"
-          title="Capabilities"
-          sidebarOpen={sidebarOpen}
-          onToggleSidebar={toggleSidebar}
-        />
-      );
+      content = <WebPanel path="/capabilities" title="Capabilities" />;
       break;
     case 'profile':
-      content = (
-        <WebPanel
-          path="/my-profile"
-          title="Profile"
-          sidebarOpen={sidebarOpen}
-          onToggleSidebar={toggleSidebar}
-        />
-      );
+      content = <WebPanel path="/my-profile" title="Profile" />;
       break;
     case 'wallet':
-      content = (
-        <WebPanel
-          path="/settings/billing"
-          title="Wallet"
-          sidebarOpen={sidebarOpen}
-          onToggleSidebar={toggleSidebar}
-        />
-      );
+      content = <WebPanel path="/settings/billing" title="Wallet" />;
       break;
     case 'settings':
-      content = (
-        <WebPanel
-          path="/settings"
-          title="Settings"
-          sidebarOpen={sidebarOpen}
-          onToggleSidebar={toggleSidebar}
-        />
-      );
+      content = <WebPanel path="/settings" title="Settings" />;
       break;
   }
 
   return (
-    <div className="flex h-full">
-      <NavSidebar
-        agents={agents}
-        activeView={view}
-        isOpen={sidebarOpen}
-        onNavigateHome={navigateHome}
-        onNavigateToCapabilities={navigateToCapabilities}
-        onNavigateToProfile={navigateToProfile}
-        onNavigateToWallet={navigateToWallet}
-        onNavigateToSettings={navigateToSettings}
-        onSelectAgent={handleSelectAgent}
-        onNewAgent={handleNewAgent}
-        onDeleteAgent={handleDeleteAgent}
-        onStopAgent={handleStopAgent}
-        onClose={() => setSidebarOpen(false)}
-        isAgentRunning={isAgentRunning}
+    <div className="flex flex-col h-full">
+      <TopToolbar
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={toggleSidebar}
+        canGoBack={canGoBack}
+        canGoForward={canGoForward}
+        onGoBack={goBack}
+        onGoForward={goForward}
       />
-      {content}
+      <div className="flex flex-1 min-h-0">
+        <NavSidebar
+          agents={agents}
+          activeView={view}
+          isOpen={sidebarOpen}
+          onNavigateHome={navigateHome}
+          onNavigateToCapabilities={navigateToCapabilities}
+          onNavigateToProfile={navigateToProfile}
+          onNavigateToWallet={navigateToWallet}
+          onNavigateToSettings={navigateToSettings}
+          onSelectAgent={handleSelectAgent}
+          onNewAgent={handleNewAgent}
+          onDeleteAgent={handleDeleteAgent}
+          onStopAgent={handleStopAgent}
+          isAgentRunning={isAgentRunning}
+        />
+        {content}
+      </div>
     </div>
   );
 }

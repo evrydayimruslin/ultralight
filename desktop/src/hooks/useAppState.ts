@@ -1,6 +1,6 @@
-// Central app state — manages view routing + project selection.
+// Central app state — manages view routing + navigation history + project selection.
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 
 // ── Types ──
 
@@ -22,6 +22,10 @@ export interface UseAppStateReturn {
   navigateToProfile: () => void;
   navigateToWallet: () => void;
   navigateToSettings: () => void;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  goBack: () => void;
+  goForward: () => void;
   selectedProjectDir: string | null;
   setSelectedProjectDir: (dir: string | null) => void;
 }
@@ -50,41 +54,76 @@ function storeProjectDir(dir: string | null) {
   }
 }
 
+// ── Helpers ──
+
+const MAX_HISTORY = 50;
+
+function viewsEqual(a: AppView, b: AppView): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'agent' && b.kind === 'agent') return a.agentId === b.agentId;
+  return true;
+}
+
 // ── Hook ──
 
 export function useAppState(): UseAppStateReturn {
+  const historyRef = useRef<{ stack: AppView[]; index: number }>({
+    stack: [{ kind: 'home' }],
+    index: 0,
+  });
   const [view, setView] = useState<AppView>({ kind: 'home' });
+  const [canGoBack, setCanGoBack] = useState(false);
+  const [canGoForward, setCanGoForward] = useState(false);
+
   const [selectedProjectDir, _setSelectedProjectDir] = useState<string | null>(
     getStoredProjectDir
   );
 
-  const navigateHome = useCallback(() => {
-    setView({ kind: 'home' });
+  const syncState = useCallback(() => {
+    const h = historyRef.current;
+    setView(h.stack[h.index]);
+    setCanGoBack(h.index > 0);
+    setCanGoForward(h.index < h.stack.length - 1);
   }, []);
 
-  const navigateToAgent = useCallback((agentId: string) => {
-    setView({ kind: 'agent', agentId });
-  }, []);
+  const navigate = useCallback((newView: AppView) => {
+    const h = historyRef.current;
+    // Skip if navigating to same view
+    if (viewsEqual(h.stack[h.index], newView)) return;
+    // Truncate forward history and push
+    h.stack = [...h.stack.slice(0, h.index + 1), newView];
+    h.index = h.stack.length - 1;
+    // Cap history size
+    if (h.stack.length > MAX_HISTORY) {
+      h.stack = h.stack.slice(-MAX_HISTORY);
+      h.index = h.stack.length - 1;
+    }
+    syncState();
+  }, [syncState]);
 
-  const navigateToNewChat = useCallback(() => {
-    setView({ kind: 'new-chat' });
-  }, []);
+  const goBack = useCallback(() => {
+    const h = historyRef.current;
+    if (h.index > 0) {
+      h.index -= 1;
+      syncState();
+    }
+  }, [syncState]);
 
-  const navigateToCapabilities = useCallback(() => {
-    setView({ kind: 'capabilities' });
-  }, []);
+  const goForward = useCallback(() => {
+    const h = historyRef.current;
+    if (h.index < h.stack.length - 1) {
+      h.index += 1;
+      syncState();
+    }
+  }, [syncState]);
 
-  const navigateToProfile = useCallback(() => {
-    setView({ kind: 'profile' });
-  }, []);
-
-  const navigateToWallet = useCallback(() => {
-    setView({ kind: 'wallet' });
-  }, []);
-
-  const navigateToSettings = useCallback(() => {
-    setView({ kind: 'settings' });
-  }, []);
+  const navigateHome = useCallback(() => navigate({ kind: 'home' }), [navigate]);
+  const navigateToAgent = useCallback((agentId: string) => navigate({ kind: 'agent', agentId }), [navigate]);
+  const navigateToNewChat = useCallback(() => navigate({ kind: 'new-chat' }), [navigate]);
+  const navigateToCapabilities = useCallback(() => navigate({ kind: 'capabilities' }), [navigate]);
+  const navigateToProfile = useCallback(() => navigate({ kind: 'profile' }), [navigate]);
+  const navigateToWallet = useCallback(() => navigate({ kind: 'wallet' }), [navigate]);
+  const navigateToSettings = useCallback(() => navigate({ kind: 'settings' }), [navigate]);
 
   const setSelectedProjectDir = useCallback((dir: string | null) => {
     _setSelectedProjectDir(dir);
@@ -100,6 +139,10 @@ export function useAppState(): UseAppStateReturn {
     navigateToProfile,
     navigateToWallet,
     navigateToSettings,
+    canGoBack,
+    canGoForward,
+    goBack,
+    goForward,
     selectedProjectDir,
     setSelectedProjectDir,
   };

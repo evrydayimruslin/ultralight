@@ -23,16 +23,12 @@ interface ChatViewProps {
   agentId?: string | null;
   onNavigateHome?: () => void;
   onNavigateToAgent?: (agentId: string) => void;
-  sidebarOpen?: boolean;
-  onToggleSidebar?: () => void;
 }
 
 export default function ChatView({
   agentId,
   onNavigateHome,
   onNavigateToAgent,
-  sidebarOpen = false,
-  onToggleSidebar,
 }: ChatViewProps = {}) {
   const { tools: mcpTools, executeToolCall: executeMcpTool } = useMcp();
   const { tools: localTools, executeToolCall: executeLocalTool, isLocalTool } = useLocalTools();
@@ -353,9 +349,7 @@ export default function ChatView({
         isRunning={activeAgent ? isAgentRunning(activeAgent.id) : false}
         tokenCount={tokenCount}
         contextWindow={contextWindow}
-        sidebarOpen={sidebarOpen}
         childAgents={childAgents}
-        onToggleSidebar={onToggleSidebar ?? (() => {})}
         onUpdateAgent={handleUpdateAgent}
         onStop={() => activeAgent && stopAgent(activeAgent.id)}
         onNewSession={handleNewSession}
