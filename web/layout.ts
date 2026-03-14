@@ -1402,6 +1402,19 @@ export function getLayoutHTML(options: {
       margin-top: var(--space-4);
     }
 
+    .market-list-link {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: var(--space-2) var(--space-3);
+      text-decoration: none;
+      color: inherit;
+      transition: background var(--transition-fast);
+    }
+    .market-list-link:hover {
+      background: var(--bg-raised);
+    }
+
     .marketplace-card {
       padding: var(--space-3) var(--space-4);
       border: 1px solid var(--border);
@@ -3874,7 +3887,7 @@ export function getLayoutHTML(options: {
             var isNew = (Date.now() - new Date(app.first_published_at).getTime()) < 24 * 60 * 60 * 1000;
             var border = i > 0 ? 'border-top:1px solid var(--border);' : '';
             var href = app.slug ? '/apps/' + encodeURIComponent(app.slug) : '#';
-            return '<a href="' + href + '" style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-2) var(--space-3);text-decoration:none;color:inherit;transition:background 0.15s;' + border + '" onmouseover="this.style.background=\'var(--bg-raised)\'" onmouseout="this.style.background=\'transparent\'">'
+            return '<a href="' + href + '" class="market-list-link" style="' + border + '">'
               + '<div style="display:flex;align-items:center;gap:var(--space-2);">'
               + '<span style="width:6px;height:6px;border-radius:50%;background:var(--text-muted);"></span>'
               + '<span style="font-size:13px;font-weight:500;">' + escapeHtml(app.name) + '</span>'
@@ -3904,7 +3917,7 @@ export function getLayoutHTML(options: {
             var timeAgo = formatTimeAgo(sale.created_at);
             var color = sale.sale_price_cents >= 3000000 ? '#ef4444' : sale.sale_price_cents >= 1000000 ? '#3b82f6' : '#22c55e';
             var href = sale.app_slug ? '/apps/' + encodeURIComponent(sale.app_slug) : '#';
-            return '<a href="' + href + '" style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-2) var(--space-3);text-decoration:none;color:inherit;transition:background 0.15s;' + border + '" onmouseover="this.style.background=\'var(--bg-raised)\'" onmouseout="this.style.background=\'transparent\'">'
+            return '<a href="' + href + '" class="market-list-link" style="' + border + '">'
               + '<div style="display:flex;align-items:center;gap:var(--space-2);">'
               + '<span style="width:6px;height:6px;border-radius:50%;background:' + color + ';"></span>'
               + '<span style="font-size:13px;font-weight:500;">' + escapeHtml(sale.app_name) + '</span>'
