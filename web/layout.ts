@@ -3873,14 +3873,15 @@ export function getLayoutHTML(options: {
             var timeAgo = formatTimeAgo(app.first_published_at);
             var isNew = (Date.now() - new Date(app.first_published_at).getTime()) < 24 * 60 * 60 * 1000;
             var border = i > 0 ? 'border-top:1px solid var(--border);' : '';
-            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-2) var(--space-3);' + border + '">'
+            var href = app.slug ? '/apps/' + encodeURIComponent(app.slug) : '#';
+            return '<a href="' + href + '" style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-2) var(--space-3);text-decoration:none;color:inherit;transition:background 0.15s;' + border + '" onmouseover="this.style.background=\'var(--bg-raised)\'" onmouseout="this.style.background=\'transparent\'">'
               + '<div style="display:flex;align-items:center;gap:var(--space-2);">'
               + '<span style="width:6px;height:6px;border-radius:50%;background:var(--text-muted);"></span>'
               + '<span style="font-size:13px;font-weight:500;">' + escapeHtml(app.name) + '</span>'
               + (isNew ? ' <span style="font-size:10px;font-weight:600;padding:1px 6px;background:#dcfce7;color:#16a34a;border-radius:3px;">New</span>' : '')
               + '</div>'
               + '<span style="font-size:12px;color:var(--text-muted);">' + timeAgo + '</span>'
-              + '</div>';
+              + '</a>';
           }).join('') + '</div>';
         })
         .catch(function() {});
@@ -3902,14 +3903,15 @@ export function getLayoutHTML(options: {
             var price = formatEarnings(sale.sale_price_cents || 0);
             var timeAgo = formatTimeAgo(sale.created_at);
             var color = sale.sale_price_cents >= 3000000 ? '#ef4444' : sale.sale_price_cents >= 1000000 ? '#3b82f6' : '#22c55e';
-            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-2) var(--space-3);' + border + '">'
+            var href = sale.app_slug ? '/apps/' + encodeURIComponent(sale.app_slug) : '#';
+            return '<a href="' + href + '" style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-2) var(--space-3);text-decoration:none;color:inherit;transition:background 0.15s;' + border + '" onmouseover="this.style.background=\'var(--bg-raised)\'" onmouseout="this.style.background=\'transparent\'">'
               + '<div style="display:flex;align-items:center;gap:var(--space-2);">'
               + '<span style="width:6px;height:6px;border-radius:50%;background:' + color + ';"></span>'
               + '<span style="font-size:13px;font-weight:500;">' + escapeHtml(sale.app_name) + '</span>'
               + ' <span style="font-size:12px;font-weight:600;padding:1px 6px;background:' + color + '22;color:' + color + ';border-radius:3px;">' + price + '</span>'
               + '</div>'
               + '<span style="font-size:12px;color:var(--text-muted);">' + timeAgo + '</span>'
-              + '</div>';
+              + '</a>';
           }).join('') + '</div>';
         })
         .catch(function() {});

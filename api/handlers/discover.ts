@@ -569,19 +569,6 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
 
   // ── SEARCH MODE (has query) ──
   try {
-    const embeddingService = createEmbeddingService(user?.openrouter_api_key);
-    if (!embeddingService) {
-      return json({
-        error: 'Embedding service not available',
-        message: 'Semantic search requires the embedding service.',
-        results: [],
-        total: 0,
-      }, 503);
-    }
-
-    const embeddingResult = await embeddingService.embed(query);
-    const overFetchLimit = limit * 3;
-
     interface MarketplaceResult {
       id: string;
       name: string;
@@ -600,136 +587,228 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
     }
 
     const scored: MarketplaceResult[] = [];
+    const overFetchLimit = limit * 3;
 
-    // Search apps
-    if (includeApps) {
+    // Try semantic search first
+    const embeddingService = createEmbeddingService(user?.openrouter_api_key);
+    let embeddingResult: { embedding: number[] } | null = null;
+    if (embeddingService) {
       try {
-        const appsService = createAppsService();
-        const appResults = await appsService.searchByEmbedding(
-          embeddingResult.embedding,
-          user?.id || '00000000-0000-0000-0000-000000000000',
-          false,
-          overFetchLimit,
-          0.4,
-        );
+        embeddingResult = await embeddingService.embed(query);
+      } catch {
+        console.warn('[MARKETPLACE] Embedding failed, falling back to keyword search');
+      }
+    }
 
-        const filteredApps = appResults.filter(r =>
-          !blockedAppIds.has(r.id) && !(r as Record<string, unknown>).hosting_suspended
-        );
+    if (embeddingResult) {
+      // Search apps by embedding
+      if (includeApps) {
+        try {
+          const appsService = createAppsService();
+          const appResults = await appsService.searchByEmbedding(
+            embeddingResult.embedding,
+            user?.id || '00000000-0000-0000-0000-000000000000',
+            false,
+            overFetchLimit,
+            0.4,
+          );
 
-        // Fetch env schemas + metadata
-        const appIds = filteredApps.map(r => r.id);
-        let envSchemas = new Map<string, Record<string, EnvSchemaEntry>>();
-        let appMeta = new Map<string, { weighted_likes: number; weighted_dislikes: number; runs_30d: number; had_external_db: boolean }>();
+          const filteredApps = appResults.filter(r =>
+            !blockedAppIds.has(r.id) && !(r as Record<string, unknown>).hosting_suspended
+          );
 
-        if (appIds.length > 0) {
-          try {
-            const metaRes = await fetch(
-              `${supabaseUrl}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,env_schema,weighted_likes,weighted_dislikes,runs_30d,likes,dislikes,had_external_db`,
-              { headers: dbHeaders }
-            );
-            if (metaRes.ok) {
-              const rows = await metaRes.json() as AppRow[];
-              for (const row of rows) {
-                if (row.env_schema) envSchemas.set(row.id, row.env_schema);
-                appMeta.set(row.id, {
-                  weighted_likes: row.weighted_likes ?? 0,
-                  weighted_dislikes: row.weighted_dislikes ?? 0,
-                  runs_30d: row.runs_30d ?? 0,
-                  had_external_db: !!row.had_external_db,
-                });
+          // Fetch env schemas + metadata
+          const appIds = filteredApps.map(r => r.id);
+          let envSchemas = new Map<string, Record<string, EnvSchemaEntry>>();
+          let appMeta = new Map<string, { weighted_likes: number; weighted_dislikes: number; runs_30d: number; had_external_db: boolean }>();
+
+          if (appIds.length > 0) {
+            try {
+              const metaRes = await fetch(
+                `${supabaseUrl}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,env_schema,weighted_likes,weighted_dislikes,runs_30d,likes,dislikes,had_external_db`,
+                { headers: dbHeaders }
+              );
+              if (metaRes.ok) {
+                const rows = await metaRes.json() as AppRow[];
+                for (const row of rows) {
+                  if (row.env_schema) envSchemas.set(row.id, row.env_schema);
+                  appMeta.set(row.id, {
+                    weighted_likes: row.weighted_likes ?? 0,
+                    weighted_dislikes: row.weighted_dislikes ?? 0,
+                    runs_30d: row.runs_30d ?? 0,
+                    had_external_db: !!row.had_external_db,
+                  });
+                }
               }
-            }
-          } catch { /* best effort */ }
-        }
-
-        for (const r of filteredApps) {
-          const rr = r as AppRow & { similarity: number };
-          const schema = envSchemas.get(rr.id) || {};
-          const perUserEntries = Object.entries(schema).filter(([, v]) => v.scope === 'per_user');
-          const requiredPerUser = perUserEntries.filter(([, v]) => v.required);
-
-          let nativeBoost: number;
-          if (perUserEntries.length === 0) {
-            nativeBoost = 1.0;
-          } else if (requiredPerUser.length === 0) {
-            nativeBoost = 0.3;
-          } else {
-            nativeBoost = 0.0;
+            } catch { /* best effort */ }
           }
 
-          const meta = appMeta.get(rr.id);
-          const wLikes = meta?.weighted_likes ?? 0;
-          const wDislikes = meta?.weighted_dislikes ?? 0;
-          const likeSignal = wLikes / (wLikes + wDislikes + 1);
-          const finalScore = (rr.similarity * 0.7) + (nativeBoost * 0.15) + (likeSignal * 0.15);
+          for (const r of filteredApps) {
+            const rr = r as AppRow & { similarity: number };
+            const schema = envSchemas.get(rr.id) || {};
+            const perUserEntries = Object.entries(schema).filter(([, v]) => v.scope === 'per_user');
+            const requiredPerUser = perUserEntries.filter(([, v]) => v.required);
 
-          scored.push({
-            id: rr.id,
-            name: rr.name,
-            slug: rr.slug,
-            description: rr.description,
-            type: 'app',
-            similarity: Math.round(rr.similarity * 10000) / 10000,
-            final_score: Math.round(finalScore * 10000) / 10000,
-            mcp_endpoint: `/mcp/${rr.id}`,
-            likes: rr.likes ?? 0,
-            runs_30d: meta?.runs_30d ?? 0,
-            fully_native: perUserEntries.length === 0,
-            had_external_db: meta?.had_external_db ?? false,
+            let nativeBoost: number;
+            if (perUserEntries.length === 0) {
+              nativeBoost = 1.0;
+            } else if (requiredPerUser.length === 0) {
+              nativeBoost = 0.3;
+            } else {
+              nativeBoost = 0.0;
+            }
+
+            const meta = appMeta.get(rr.id);
+            const wLikes = meta?.weighted_likes ?? 0;
+            const wDislikes = meta?.weighted_dislikes ?? 0;
+            const likeSignal = wLikes / (wLikes + wDislikes + 1);
+            const finalScore = (rr.similarity * 0.7) + (nativeBoost * 0.15) + (likeSignal * 0.15);
+
+            scored.push({
+              id: rr.id,
+              name: rr.name,
+              slug: rr.slug,
+              description: rr.description,
+              type: 'app',
+              similarity: Math.round(rr.similarity * 10000) / 10000,
+              final_score: Math.round(finalScore * 10000) / 10000,
+              mcp_endpoint: `/mcp/${rr.id}`,
+              likes: rr.likes ?? 0,
+              runs_30d: meta?.runs_30d ?? 0,
+              fully_native: perUserEntries.length === 0,
+              had_external_db: meta?.had_external_db ?? false,
+            });
+          }
+        } catch { /* best effort */ }
+      }
+
+      // Search skills by embedding
+      if (includeSkills) {
+        try {
+          const rpcRes = await fetch(`${supabaseUrl}/rest/v1/rpc/search_content_fusion`, {
+            method: 'POST',
+            headers: { ...dbHeaders, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              p_query_embedding: JSON.stringify(embeddingResult.embedding),
+              p_query_text: query,
+              p_user_id: user?.id || '00000000-0000-0000-0000-000000000000',
+              p_types: ['page'],
+              p_visibility: 'public',
+              p_limit: overFetchLimit,
+            }),
           });
+
+          if (rpcRes.ok) {
+            const pageRows = await rpcRes.json() as Array<{
+              id: string; slug: string; title: string | null;
+              description: string | null; similarity: number;
+              keyword_score: number; final_score: number;
+              tags: string[] | null; published: boolean;
+              likes: number; dislikes: number;
+              weighted_likes: number; weighted_dislikes: number;
+            }>;
+
+            const publishedPages = pageRows.filter(r => r.published && !blockedContentIds.has(r.id));
+            for (const r of publishedPages) {
+              const wLikes = r.weighted_likes ?? 0;
+              const wDislikes = r.weighted_dislikes ?? 0;
+              const likeSignal = wLikes / (wLikes + wDislikes + 1);
+              const baseSimilarity = r.final_score || r.similarity;
+              const compositeScore = (baseSimilarity * 0.7) + (0.5 * 0.15) + (likeSignal * 0.15);
+              scored.push({
+                id: r.id,
+                name: r.title || r.slug,
+                slug: r.slug,
+                description: r.description,
+                type: 'page',
+                similarity: Math.round(baseSimilarity * 10000) / 10000,
+                final_score: Math.round(compositeScore * 10000) / 10000,
+                url: `/p/${r.slug}`,
+                likes: r.likes ?? 0,
+                tags: r.tags || [],
+              });
+            }
+          }
+        } catch { /* best effort */ }
+      }
+    }
+
+    // ── KEYWORD FALLBACK ──
+    // If semantic search is unavailable or returned no results, do text search
+    const scoredAppIds = new Set(scored.filter(r => r.type === 'app').map(r => r.id));
+    const scoredPageIds = new Set(scored.filter(r => r.type === 'page').map(r => r.id));
+    const needKeywordFallback = scored.length === 0 || !embeddingResult;
+
+    if (needKeywordFallback && includeApps) {
+      try {
+        // Use ilike for keyword matching on name and description
+        const escapedQuery = query.replace(/%/g, '\\%').replace(/_/g, '\\_');
+        const keywordRes = await fetch(
+          `${supabaseUrl}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&hosting_suspended=eq.false` +
+          `&or=(name.ilike.*${encodeURIComponent(escapedQuery)}*,description.ilike.*${encodeURIComponent(escapedQuery)}*)` +
+          `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,runs_30d,had_external_db` +
+          `&order=weighted_likes.desc,likes.desc` +
+          `&limit=${overFetchLimit}`,
+          { headers: dbHeaders }
+        );
+        if (keywordRes.ok) {
+          const rows = await keywordRes.json() as AppRow[];
+          for (const a of rows) {
+            if (blockedAppIds.has(a.id) || scoredAppIds.has(a.id)) continue;
+            const schema = a.env_schema || {};
+            const perUserEntries = Object.entries(schema).filter(([, v]) => v.scope === 'per_user');
+            scored.push({
+              id: a.id,
+              name: a.name,
+              slug: a.slug,
+              description: a.description,
+              type: 'app',
+              similarity: 0,
+              final_score: 0.5, // give keyword matches a reasonable score
+              mcp_endpoint: `/mcp/${a.id}`,
+              likes: a.likes ?? 0,
+              runs_30d: a.runs_30d ?? 0,
+              fully_native: perUserEntries.length === 0,
+              had_external_db: !!a.had_external_db,
+            });
+          }
         }
       } catch { /* best effort */ }
     }
 
-    // Search skills (published pages)
-    if (includeSkills) {
+    if (needKeywordFallback && includeSkills) {
       try {
-        const rpcRes = await fetch(`${supabaseUrl}/rest/v1/rpc/search_content_fusion`, {
-          method: 'POST',
-          headers: { ...dbHeaders, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            p_query_embedding: JSON.stringify(embeddingResult.embedding),
-            p_query_text: query,
-            p_user_id: user?.id || '00000000-0000-0000-0000-000000000000',
-            p_types: ['page'],
-            p_visibility: 'public',
-            p_limit: overFetchLimit,
-          }),
-        });
-
-        if (rpcRes.ok) {
-          const pageRows = await rpcRes.json() as Array<{
+        const escapedQuery = query.replace(/%/g, '\\%').replace(/_/g, '\\_');
+        const keywordRes = await fetch(
+          `${supabaseUrl}/rest/v1/content?type=eq.page&published=eq.true&visibility=eq.public` +
+          `&or=(title.ilike.*${encodeURIComponent(escapedQuery)}*,description.ilike.*${encodeURIComponent(escapedQuery)}*)` +
+          `&select=id,slug,title,description,tags,updated_at` +
+          `&order=updated_at.desc` +
+          `&limit=${overFetchLimit}`,
+          { headers: dbHeaders }
+        );
+        if (keywordRes.ok) {
+          const pages = await keywordRes.json() as Array<{
             id: string; slug: string; title: string | null;
-            description: string | null; similarity: number;
-            keyword_score: number; final_score: number;
-            tags: string[] | null; published: boolean;
-            likes: number; dislikes: number;
-            weighted_likes: number; weighted_dislikes: number;
+            description: string | null; tags: string[] | null;
           }>;
-
-          const publishedPages = pageRows.filter(r => r.published && !blockedContentIds.has(r.id));
-          for (const r of publishedPages) {
-            const wLikes = r.weighted_likes ?? 0;
-            const wDislikes = r.weighted_dislikes ?? 0;
-            const likeSignal = wLikes / (wLikes + wDislikes + 1);
-            const baseSimilarity = r.final_score || r.similarity;
-            const compositeScore = (baseSimilarity * 0.7) + (0.5 * 0.15) + (likeSignal * 0.15);
+          for (const p of pages) {
+            if (blockedContentIds.has(p.id) || scoredPageIds.has(p.id)) continue;
             scored.push({
-              id: r.id,
-              name: r.title || r.slug,
-              slug: r.slug,
-              description: r.description,
+              id: p.id,
+              name: p.title || p.slug,
+              slug: p.slug,
+              description: p.description,
               type: 'page',
-              similarity: Math.round(baseSimilarity * 10000) / 10000,
-              final_score: Math.round(compositeScore * 10000) / 10000,
-              url: `/p/${r.slug}`,
-              likes: r.likes ?? 0,
-              tags: r.tags || [],
+              similarity: 0,
+              final_score: 0.5,
+              url: `/p/${p.slug}`,
+              likes: 0,
+              tags: p.tags || [],
             });
           }
         }
-      } catch { /* best effort — page search failure shouldn't break app search */ }
+      } catch { /* best effort */ }
     }
 
     // Sort by final_score DESC
