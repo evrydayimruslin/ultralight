@@ -2685,14 +2685,24 @@ export function getLayoutHTML(options: {
             <!-- Search + filters (shared across all sub-tabs) -->
             <div style="display:flex;gap:var(--space-3);align-items:center;margin-bottom:var(--space-4);flex-wrap:wrap;">
               <input id="capSearch" class="marketplace-search" type="text" placeholder="Search capabilities..." style="flex:1;min-width:200px;margin-bottom:0;">
-              <div class="marketplace-filters" style="margin-bottom:0;">
-                <button class="marketplace-filter active" data-cap-type="all">All</button>
-                <button class="marketplace-filter" data-cap-type="apps">Apps</button>
-                <button class="marketplace-filter" data-cap-type="skills">Skills</button>
-              </div>
-              <div class="marketplace-filters" style="margin-bottom:0;">
-                <button class="marketplace-filter active" data-cap-owner="all">All</button>
-                <button class="marketplace-filter" data-cap-owner="mine">Mine</button>
+              <div id="capFiltersBtn" style="position:relative;display:none;">
+                <button class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);display:flex;align-items:center;gap:6px;" onclick="document.getElementById('capFiltersDropdown').style.display = document.getElementById('capFiltersDropdown').style.display === 'none' ? 'block' : 'none';">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="11" y1="18" x2="13" y2="18"/></svg>
+                  <span id="capFilterLabel">Filters</span>
+                </button>
+                <div id="capFiltersDropdown" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;background:var(--bg-base);border:1px solid var(--border);padding:var(--space-3);z-index:50;min-width:200px;box-shadow:0 4px 12px rgba(0,0,0,0.1);">
+                  <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:var(--space-2);">Type</div>
+                  <div class="marketplace-filters" style="margin-bottom:var(--space-3);">
+                    <button class="marketplace-filter active" data-cap-type="all">All</button>
+                    <button class="marketplace-filter" data-cap-type="apps">Apps</button>
+                    <button class="marketplace-filter" data-cap-type="skills">Skills</button>
+                  </div>
+                  <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:var(--space-2);">Owner</div>
+                  <div class="marketplace-filters" style="margin-bottom:0;">
+                    <button class="marketplace-filter active" data-cap-owner="all">All</button>
+                    <button class="marketplace-filter" data-cap-owner="mine">Mine</button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -3718,6 +3728,28 @@ export function getLayoutHTML(options: {
     var leaderboardPeriod = '30d';
     var capSearchDebounce = null;
 
+    function updateFiltersVisibility() {
+      var btn = document.getElementById('capFiltersBtn');
+      if (!btn) return;
+      var q = (document.getElementById('capSearch') || {}).value || '';
+      var showFilters = activeCapTab !== 'market' || q.length >= 2;
+      btn.style.display = showFilters ? 'block' : 'none';
+      // Close dropdown when hiding
+      if (!showFilters) {
+        var dd = document.getElementById('capFiltersDropdown');
+        if (dd) dd.style.display = 'none';
+      }
+    }
+
+    // Close filters dropdown on outside click
+    document.addEventListener('click', function(e) {
+      var btn = document.getElementById('capFiltersBtn');
+      if (btn && !btn.contains(e.target)) {
+        var dd = document.getElementById('capFiltersDropdown');
+        if (dd) dd.style.display = 'none';
+      }
+    });
+
     function switchCapTab(tab) {
       activeCapTab = tab;
       document.querySelectorAll('[data-cap-tab]').forEach(function(btn) {
@@ -3736,6 +3768,8 @@ export function getLayoutHTML(options: {
       var searchInput = document.getElementById('capSearch');
       if (searchInput) searchInput.value = '';
 
+      updateFiltersVisibility();
+
       if (tab === 'market') loadMarketPage();
       else if (tab === 'library') { loadSavedAppIds(); renderAppList(); }
       else if (tab === 'shared') loadSharedApps();
@@ -3746,6 +3780,15 @@ export function getLayoutHTML(options: {
       el.addEventListener('click', function() { switchCapTab(this.dataset.capTab); });
     });
 
+    function updateFilterLabel() {
+      var label = document.getElementById('capFilterLabel');
+      if (!label) return;
+      var parts = [];
+      if (activeCapType !== 'all') parts.push(activeCapType === 'apps' ? 'Apps' : 'Skills');
+      if (activeCapOwner !== 'all') parts.push('Mine');
+      label.textContent = parts.length > 0 ? 'Filters (' + parts.join(', ') + ')' : 'Filters';
+    }
+
     // Type filter handlers
     document.querySelectorAll('[data-cap-type]').forEach(function(el) {
       el.addEventListener('click', function() {
@@ -3753,6 +3796,7 @@ export function getLayoutHTML(options: {
         document.querySelectorAll('[data-cap-type]').forEach(function(b) {
           b.classList.toggle('active', b.dataset.capType === activeCapType);
         });
+        updateFilterLabel();
         // Re-run search if there's a query
         var q = (document.getElementById('capSearch') || {}).value || '';
         if (q.length >= 2) handleCapSearch(q);
@@ -3766,6 +3810,7 @@ export function getLayoutHTML(options: {
         document.querySelectorAll('[data-cap-owner]').forEach(function(b) {
           b.classList.toggle('active', b.dataset.capOwner === activeCapOwner);
         });
+        updateFilterLabel();
         var q = (document.getElementById('capSearch') || {}).value || '';
         if (q.length >= 2) handleCapSearch(q);
       });
@@ -3787,8 +3832,10 @@ export function getLayoutHTML(options: {
           if (activeCapTab === 'market' && marketEl) marketEl.style.display = 'block';
           if (activeCapTab === 'library' && libEl) libEl.style.display = 'block';
           if (activeCapTab === 'shared' && sharedEl) sharedEl.style.display = 'block';
+          updateFiltersVisibility();
           return;
         }
+        updateFiltersVisibility();
         capSearchDebounce = setTimeout(function() { handleCapSearch(q); }, 300);
       });
     }
