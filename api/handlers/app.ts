@@ -104,30 +104,33 @@ export function createApp() {
         return handleDeveloper(request);
       }
 
+      // Detect embed mode (desktop app iframe)
+      const isEmbed = url.searchParams.get('embed') === '1';
+
       // Public homepage
       if (path === '/' && method === 'GET') {
-        return new Response(getLayoutHTML({ initialView: 'home' }), {
+        return new Response(getLayoutHTML({ initialView: 'home', embed: isEmbed }), {
           headers: { 'Content-Type': 'text/html' },
         });
       }
 
       // Dashboard (authenticated app management)
       if (path === '/dash' && method === 'GET') {
-        return new Response(getLayoutHTML({ initialView: 'dashboard' }), {
+        return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed }), {
           headers: { 'Content-Type': 'text/html' },
         });
       }
 
       // Settings page (account settings) — supports /settings, /settings/tokens, /settings/billing, /settings/supabase
       if ((path === '/settings' || path.startsWith('/settings/')) && method === 'GET') {
-        return new Response(getLayoutHTML({ initialView: 'dashboard' }), {
+        return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed }), {
           headers: { 'Content-Type': 'text/html' },
         });
       }
 
       // Marketplace
       if (path === '/marketplace' && method === 'GET') {
-        return new Response(getLayoutHTML({ initialView: 'dashboard' }), {
+        return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed }), {
           headers: { 'Content-Type': 'text/html' },
         });
       }

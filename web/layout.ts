@@ -7,8 +7,9 @@ export function getLayoutHTML(options: {
   initialView: 'home' | 'dashboard' | 'app' | 'leaderboard';
   appCode?: string;
   appName?: string;
+  embed?: boolean;
 }): string {
-  const { title = 'Ultralight', activeAppId, initialView, appCode, appName } = options;
+  const { title = 'Ultralight', activeAppId, initialView, appCode, appName, embed = false } = options;
 
   const escapedCode = appCode
     ? appCode.replace(/\\\\/g, '\\\\\\\\').replace(/\`/g, '\\\\\`').replace(/\\$/g, '\\\\\\$')
@@ -2414,7 +2415,7 @@ export function getLayoutHTML(options: {
   <!-- ============================================
        TOP NAVIGATION BAR
        ============================================ -->
-  <nav class="top-nav">
+  <nav class="top-nav"${embed ? ' style="display:none"' : ''}>
     <div class="nav-left">
       <a href="/" id="navLogoLink" class="nav-logo" style="text-decoration:none;font-size:20px;">
         Ultralight
@@ -2462,7 +2463,7 @@ export function getLayoutHTML(options: {
     <!-- ==========================================
          HOME / LANDING VIEW
          ========================================== -->
-    <div id="homeView">
+    <div id="homeView"${initialView !== 'home' ? ' style="display:none;"' : ''}>
       <section class="hero">
         <h1>Give your agent<br>superpowers</h1>
         <p style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-top:var(--space-8);margin-bottom:0;letter-spacing:0.08em;text-transform:uppercase;">Just paste and go</p>
@@ -2632,7 +2633,7 @@ export function getLayoutHTML(options: {
     <!-- ==========================================
          DASHBOARD VIEW
          ========================================== -->
-    <div id="dashboardView" style="display:none;">
+    <div id="dashboardView" style="display:${initialView === 'dashboard' || initialView === 'leaderboard' ? 'block' : 'none'};">
       <div class="settings-layout">
         <!-- Sidebar -->
         <nav class="settings-sidebar">
@@ -2787,7 +2788,7 @@ export function getLayoutHTML(options: {
     <!-- ==========================================
          APP DETAIL VIEW
          ========================================== -->
-    <div id="appView" style="display:none;">
+    <div id="appView" style="display:${initialView === 'app' ? 'block' : 'none'};">
       <div class="settings-layout">
         <!-- App Sidebar -->
         <nav class="settings-sidebar">
