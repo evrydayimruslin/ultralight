@@ -56,6 +56,10 @@ export interface UseChatReturn {
   clearMessages: () => void;
   clearError: () => void;
   stopGeneration: () => void;
+  /** Append a message from an external source (e.g. agentRunner events) */
+  appendMessage: (msg: Message) => void;
+  /** Update a streaming message's content by ID */
+  updateStreamContent: (id: string, content: string) => void;
 }
 
 // ── Hook ──
@@ -104,6 +108,31 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
   const stopGeneration = useCallback(() => {
     abortRef.current?.abort();
+  }, []);
+
+  const appendMessage = useCallback((msg: Message) => {
+    setMessages(prev => {
+      const exists = prev.find(m => m.id === msg.id);
+      if (exists) {
+        return prev.map(m => m.id === msg.id ? msg : m);
+      }
+      return [...prev, msg];
+    });
+  }, []);
+
+  const updateStreamContent = useCallback((id: string, content: string) => {
+    setMessages(prev => {
+      const exists = prev.find(m => m.id === id);
+      if (exists) {
+        return prev.map(m => m.id === id ? { ...m, content } : m);
+      }
+      return [...prev, {
+        id,
+        role: 'assistant' as const,
+        content,
+        created_at: Date.now(),
+      }];
+    });
   }, []);
 
   const sendMessage = useCallback(async (content: string) => {
@@ -203,5 +232,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     clearMessages,
     clearError,
     stopGeneration,
+    appendMessage,
+    updateStreamContent,
   };
 }

@@ -153,6 +153,54 @@ You are in DISCUSS-FIRST mode. Do NOT modify any files.
 3. Call submit_plan() with a structured plan: summary, approach, files to modify, risks.
 4. STOP after calling submit_plan(). Do not implement anything.`;
 
+// ── MCP Inspection ──
+
+/**
+ * Inspect declared MCPs and build a merged schema string for system prompt injection.
+ * Calls ul.discover({ scope: 'inspect', app_id }) for each MCP.
+ * Gracefully skips MCPs that fail inspection.
+ */
+export async function inspectAndBuildMcpSchemas(
+  mcpIds: string[],
+  executeMcpTool: (name: string, args: Record<string, unknown>) => Promise<string>,
+): Promise<string | undefined> {
+  if (!mcpIds.length) return undefined;
+
+  const allSchemas: string[] = [];
+
+  for (const appId of mcpIds) {
+    try {
+      const result = await executeMcpTool('ul_discover', {
+        scope: 'inspect',
+        app_id: appId,
+      });
+      const parsed = JSON.parse(result);
+      const appName = parsed.metadata?.name || parsed.name || appId;
+      const functions = parsed.functions || parsed.tools || [];
+      if (functions.length === 0) continue;
+
+      const fnDocs = functions.map((fn: {
+        name: string;
+        description?: string;
+        parameters?: { properties?: Record<string, { type?: string; description?: string }> };
+      }) => {
+        const params = fn.parameters?.properties || {};
+        const paramEntries = Object.entries(params);
+        const paramList = paramEntries
+          .map(([pname, pschema]) => `  - **${pname}** (${pschema.type || 'any'}): ${pschema.description || ''}`)
+          .join('\n');
+        return `### ${appName} / ${fn.name}\napp_id: \`${appId}\`\n${fn.description || 'No description.'}\n${paramList ? `\nParameters:\n${paramList}` : ''}`;
+      });
+
+      allSchemas.push(...fnDocs);
+    } catch {
+      // MCP not available — skip gracefully
+    }
+  }
+
+  return allSchemas.length > 0 ? allSchemas.join('\n\n') : undefined;
+}
+
 // ── Assembly ──
 
 /**
@@ -193,6 +241,7 @@ export function buildAgentSystemPrompt(
   launchMode?: string,
   contextFiles?: Array<{ name: string; content: string }>,
   marketplaceSkills?: Array<{ name: string; content: string }>,
+  mcpSchemas?: string,
 ): string {
   const rolePrompt = (ROLE_PROMPTS[role] || ROLE_PROMPTS.general)
     .replaceAll('{name}', agentName);
@@ -213,6 +262,11 @@ export function buildAgentSystemPrompt(
       .map(s => `### ${s.name}\n${s.content}`)
       .join('\n\n');
     sections.push(`\n## Marketplace Knowledge\n${skillSection}`);
+  }
+
+  // Inject MCP tool schemas (from template-declared MCPs)
+  if (mcpSchemas) {
+    sections.push(`\n## Your MCP Tools\nThe following tools are available via \`ul_call\`. Call them with \`ul_call({ app_id, function_name, args })\`.\n\n${mcpSchemas}`);
   }
 
   sections.push(TOOL_REFERENCE);

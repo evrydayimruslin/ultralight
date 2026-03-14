@@ -17,6 +17,8 @@ export interface AgentTemplate {
   role: string;
   /** Optional tool subset */
   tools?: string[];
+  /** Go-to MCP app IDs — inspected at creation time for schema injection */
+  mcps?: string[];
   /** Default launch mode */
   launch_mode?: string;
   /** Tags for matching against tasks */
@@ -204,6 +206,7 @@ export async function loadTemplates(projectDir: string | null): Promise<AgentTem
           name: (frontmatter.name as string) || fileNameWithoutExt(filePath),
           role: (frontmatter.role as string) || 'general',
           tools: frontmatter.tools as string[] | undefined,
+          mcps: frontmatter.mcps as string[] | undefined,
           launch_mode: frontmatter.launch_mode as string | undefined,
           tags: frontmatter.tags as string[] | undefined,
           body,
@@ -225,6 +228,7 @@ export async function loadTemplates(projectDir: string | null): Promise<AgentTem
         name: (frontmatter.name as string) || fileNameWithoutExt(filePath),
         role: (frontmatter.role as string) || 'general',
         tools: frontmatter.tools as string[] | undefined,
+        mcps: frontmatter.mcps as string[] | undefined,
         launch_mode: frontmatter.launch_mode as string | undefined,
         tags: frontmatter.tags as string[] | undefined,
         body,

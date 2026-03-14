@@ -26,7 +26,9 @@ export type AgentEvent =
   | { type: 'message_added'; agentId: string; message: LoopMessage }
   | { type: 'stream_delta'; agentId: string; assistantId: string; content: string }
   | { type: 'warning'; agentId: string; message: string }
-  | { type: 'completed'; agentId: string; toolRounds: number; hitLimit: boolean };
+  | { type: 'completed'; agentId: string; toolRounds: number; hitLimit: boolean }
+  | { type: 'message_queued'; agentId: string; content: string; queueLength: number }
+  | { type: 'queue_changed'; agentId: string; queueLength: number };
 
 interface ActiveRun {
   agentId: string;
@@ -35,6 +37,10 @@ interface ActiveRun {
   status: AgentStatus;
   messages: LoopMessage[];
   error?: string;
+  /** Queued follow-up messages — drained after current run completes */
+  pendingMessages: string[];
+  /** Stashed config so we can resume without re-supplying everything */
+  config?: AgentRunConfig;
 }
 
 type EventListener = (event: AgentEvent) => void;
@@ -66,6 +72,8 @@ class AgentRunner {
       abortController,
       status: 'running',
       messages: [],
+      pendingMessages: [],
+      config,
     };
 
     this.runs.set(agentId, run);
@@ -160,6 +168,169 @@ class AgentRunner {
       await this.updateDbStatus(agentId, 'error');
       this.emit({ type: 'status_change', agentId, status: 'error', error: errorMsg });
     }
+
+    // Drain the queue — if messages were queued during this run, auto-resume
+    this.drainQueue(agentId);
+  }
+
+  /**
+   * Resume a completed/stopped/error agent with a new user message.
+   * Reuses the original config (system prompt, tools, model).
+   * Loads existing messages from DB and appends the new one.
+   */
+  async resume(agentId: string, userMessage: string): Promise<void> {
+    const run = this.runs.get(agentId);
+    if (!run) {
+      console.warn(`[AgentRunner] Cannot resume agent ${agentId}: no run found`);
+      return;
+    }
+    if (run.status === 'running') {
+      // Agent is busy — queue the message instead
+      this.queueMessage(agentId, userMessage);
+      return;
+    }
+    if (!run.config) {
+      console.warn(`[AgentRunner] Cannot resume agent ${agentId}: no stashed config`);
+      return;
+    }
+
+    const abortController = new AbortController();
+    run.abortController = abortController;
+    run.status = 'running';
+    run.error = undefined;
+
+    this.emit({ type: 'status_change', agentId, status: 'running' });
+    await this.updateDbStatus(agentId, 'running');
+
+    // Load full conversation history from DB
+    let existingMessages: LoopMessage[] = [];
+    try {
+      interface DbMsg {
+        id: string;
+        role: string;
+        content: string;
+        tool_calls: string | null;
+        tool_call_id: string | null;
+        usage: string | null;
+        cost_cents: number | null;
+        created_at: number;
+      }
+      const dbMsgs = await invoke<DbMsg[]>('db_load_messages', {
+        conversationId: run.conversationId,
+      });
+      existingMessages = dbMsgs.map(db => ({
+        id: db.id,
+        role: db.role as LoopMessage['role'],
+        content: db.content,
+        tool_calls: db.tool_calls ? JSON.parse(db.tool_calls) : undefined,
+        tool_call_id: db.tool_call_id ?? undefined,
+        usage: db.usage ? JSON.parse(db.usage) : undefined,
+        cost_cents: db.cost_cents ?? undefined,
+        created_at: db.created_at,
+      }));
+    } catch {
+      // Fallback to in-memory messages
+      existingMessages = [...run.messages];
+    }
+
+    // Create and persist the new user message
+    const newMsg: LoopMessage = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: userMessage,
+      created_at: Date.now(),
+    };
+    existingMessages.push(newMsg);
+    run.messages.push(newMsg);
+    this.emit({ type: 'message_added', agentId, message: newMsg });
+    await this.persistMessage(run.conversationId, newMsg, existingMessages.length - 1);
+
+    // Set up callbacks (same as start)
+    const callbacks: AgentLoopCallbacks = {
+      onMessage: (msg: LoopMessage) => {
+        run.messages.push(msg);
+        this.emit({ type: 'message_added', agentId, message: msg });
+        this.persistMessage(run.conversationId, msg, run.messages.length - 1).catch(err => {
+          console.error(`[AgentRunner] Failed to persist message for agent ${agentId}:`, err);
+        });
+      },
+      onStreamDelta: (assistantId: string, content: string) => {
+        this.emit({ type: 'stream_delta', agentId, assistantId, content });
+      },
+      onToolCall: run.config.onToolCall,
+      onWarning: (message: string) => {
+        console.warn(`[AgentRunner] Agent ${agentId}: ${message}`);
+        this.emit({ type: 'warning', agentId, message });
+      },
+    };
+
+    // Run the loop
+    try {
+      const result = await runAgentLoop(
+        existingMessages,
+        callbacks,
+        {
+          systemPrompt: run.config.systemPrompt,
+          tools: run.config.tools,
+          model: run.config.model,
+          signal: abortController.signal,
+        },
+      );
+
+      if (abortController.signal.aborted) {
+        let finalStatus: AgentStatus = 'stopped';
+        try {
+          const dbAgent = await invoke<{ status: string } | null>('db_get_agent', { id: agentId });
+          if (dbAgent?.status === 'waiting_for_approval') finalStatus = 'waiting_for_approval';
+          else if (dbAgent?.status === 'completed') finalStatus = 'completed';
+        } catch { /* fallthrough */ }
+        if (finalStatus === 'stopped') await this.updateDbStatus(agentId, 'stopped');
+        run.status = finalStatus;
+        this.emit({ type: 'status_change', agentId, status: finalStatus });
+      } else {
+        run.status = 'completed';
+        await this.updateDbStatus(agentId, 'completed');
+        this.emit({ type: 'status_change', agentId, status: 'completed' });
+        this.emit({ type: 'completed', agentId, toolRounds: result.toolRounds, hitLimit: result.hitLimit });
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      run.status = 'error';
+      run.error = errorMsg;
+      await this.updateDbStatus(agentId, 'error');
+      this.emit({ type: 'status_change', agentId, status: 'error', error: errorMsg });
+    }
+
+    // Drain the queue — if messages were queued during this run, auto-resume
+    this.drainQueue(agentId);
+  }
+
+  /**
+   * Queue a follow-up message for a running agent.
+   * Will be delivered when the current run completes.
+   */
+  queueMessage(agentId: string, content: string): void {
+    const run = this.runs.get(agentId);
+    if (!run) return;
+    run.pendingMessages.push(content);
+    this.emit({ type: 'message_queued', agentId, content, queueLength: run.pendingMessages.length });
+  }
+
+  /**
+   * Remove a queued message by index.
+   */
+  dequeueMessage(agentId: string, index: number): void {
+    const run = this.runs.get(agentId);
+    if (!run || index < 0 || index >= run.pendingMessages.length) return;
+    run.pendingMessages.splice(index, 1);
+    this.emit({ type: 'queue_changed', agentId, queueLength: run.pendingMessages.length });
+  }
+
+  /**
+   * Get the pending message queue for an agent.
+   */
+  getQueue(agentId: string): string[] {
+    return this.runs.get(agentId)?.pendingMessages ?? [];
   }
 
   /**
@@ -201,6 +372,14 @@ class AgentRunner {
   }
 
   /**
+   * Check if an agent has a run entry (any status — running, completed, stopped, error).
+   * Used to determine if follow-ups should route through agentRunner vs useChat.
+   */
+  hasRun(agentId: string): boolean {
+    return this.runs.has(agentId);
+  }
+
+  /**
    * Get all active (running) agent IDs.
    */
   getActiveAgentIds(): string[] {
@@ -239,6 +418,22 @@ class AgentRunner {
         console.error('[AgentRunner] Listener error:', err);
       }
     }
+  }
+
+  /**
+   * After a run completes, if there are queued messages, auto-resume with the next one.
+   */
+  private drainQueue(agentId: string): void {
+    const run = this.runs.get(agentId);
+    if (!run || run.status === 'running') return;
+    if (run.pendingMessages.length === 0) return;
+
+    const nextMessage = run.pendingMessages.shift()!;
+    this.emit({ type: 'queue_changed', agentId, queueLength: run.pendingMessages.length });
+    // Fire-and-forget — resume handles its own error states
+    this.resume(agentId, nextMessage).catch(err => {
+      console.error(`[AgentRunner] Failed to drain queue for agent ${agentId}:`, err);
+    });
   }
 
   private async updateDbStatus(agentId: string, status: string): Promise<void> {

@@ -74,6 +74,7 @@ export default function ChatView({
   } = useAgentFleet();
 
   const [diagnostics, setDiagnostics] = useState<string | null>(null);
+  const [queuedMessages, setQueuedMessages] = useState<string[]>([]);
 
   // Build system prompt — full coding agent prompt when project dir is set
   const systemPrompt = useMemo(() => buildSystemPrompt(projectDir), [projectDir]);
@@ -141,6 +142,8 @@ export default function ChatView({
     clearMessages: chatClearMessages,
     clearError,
     stopGeneration,
+    appendMessage,
+    updateStreamContent,
   } = useChat({
     systemPrompt,
     tools: allTools,
@@ -178,11 +181,56 @@ export default function ChatView({
         switchConversation(agent.conversation_id);
         prevMessageCountRef.current = msgs.length;
       });
+      // Sync queued messages from agentRunner
+      setQueuedMessages(agentRunner.getQueue(agentId));
     }
   }, [agentId, agents, setActiveAgent, loadConversation, loadMessages, switchConversation]);
 
-  // Send message — auto-create "general" agent if none active
+  // Subscribe to agentRunner events for the active agent — live message updates
+  useEffect(() => {
+    if (!activeAgent) return;
+    const agentId = activeAgent.id;
+
+    const unsubscribe = agentRunner.on((event) => {
+      if ('agentId' in event && event.agentId !== agentId) return;
+
+      switch (event.type) {
+        case 'message_added':
+          appendMessage(event.message as import('../hooks/useChat').Message);
+          break;
+        case 'stream_delta':
+          updateStreamContent(event.assistantId, event.content);
+          break;
+        case 'message_queued':
+        case 'queue_changed':
+          setQueuedMessages(agentRunner.getQueue(agentId));
+          break;
+      }
+    });
+
+    return unsubscribe;
+  }, [activeAgent, appendMessage, updateStreamContent]);
+
+  // Whether the active agent is managed by agentRunner (background agent with run entry)
+  const isRunnerManaged = activeAgent ? agentRunner.hasRun(activeAgent.id) : false;
+  // Composite loading state: useChat loading OR agentRunner running
+  const isActive = isLoading || (activeAgent ? isAgentRunning(activeAgent.id) : false);
+
+  // Send message — routes through agentRunner for background agents, useChat for interactive
   const sendMessage = useCallback(async (content: string) => {
+    // If there's an active agent managed by agentRunner, route through it
+    if (activeAgent && isRunnerManaged) {
+      if (agentRunner.isRunning(activeAgent.id)) {
+        // Agent is busy — queue the message
+        agentRunner.queueMessage(activeAgent.id, content);
+      } else {
+        // Agent is idle — resume with follow-up
+        await agentRunner.resume(activeAgent.id, content);
+      }
+      return;
+    }
+
+    // Interactive path — useChat (first message or non-runner agent)
     let convId = activeId;
     if (!convId) {
       // Create a general agent on first message
@@ -201,7 +249,7 @@ export default function ChatView({
       if (onNavigateToAgent) onNavigateToAgent(agent.id);
     }
     await chatSendMessage(content);
-  }, [activeId, createAgent, systemPrompt, projectDir, chatSendMessage, switchConversation, setActiveAgent, onNavigateToAgent]);
+  }, [activeAgent, isRunnerManaged, activeId, createAgent, systemPrompt, projectDir, chatSendMessage, switchConversation, setActiveAgent, onNavigateToAgent]);
 
   // New agent (from sidebar [+])
   const handleNewAgent = useCallback(() => {
@@ -342,13 +390,51 @@ export default function ChatView({
       )}
 
       {/* Messages */}
-      <MessageList messages={messages} isLoading={isLoading} />
+      <MessageList messages={messages} isLoading={isActive} />
+
+      {/* Queued messages indicator */}
+      {queuedMessages.length > 0 && (
+        <div className="px-4 py-2 bg-amber-50 border-t border-amber-200">
+          <div className="max-w-narrow mx-auto">
+            <p className="text-caption font-medium text-amber-700 mb-1">
+              Queued ({queuedMessages.length})
+            </p>
+            {queuedMessages.map((msg, i) => (
+              <div key={i} className="flex items-center justify-between gap-2 py-1">
+                <p className="text-caption text-amber-600 truncate flex-1">
+                  {msg.length > 80 ? msg.slice(0, 80) + '...' : msg}
+                </p>
+                <button
+                  onClick={() => {
+                    if (activeAgent) {
+                      agentRunner.dequeueMessage(activeAgent.id, i);
+                    }
+                  }}
+                  className="text-amber-400 hover:text-amber-600 flex-shrink-0"
+                  title="Remove from queue"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Input */}
       <ChatInput
         onSend={sendMessage}
-        isLoading={isLoading}
-        onStop={stopGeneration}
+        isLoading={isActive}
+        onStop={() => {
+          if (activeAgent && isAgentRunning(activeAgent.id)) {
+            stopAgent(activeAgent.id);
+          } else {
+            stopGeneration();
+          }
+        }}
+        queueMode={isRunnerManaged}
       />
 
       {/* Permission modal overlay */}

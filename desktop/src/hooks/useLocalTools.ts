@@ -426,7 +426,7 @@ export const LOCAL_TOOL_NAMES = new Set([
 import type { Agent, CreateAgentParams } from './useAgentFleet';
 import type { AgentRunConfig } from '../lib/agentRunner';
 import { agentRunner } from '../lib/agentRunner';
-import { buildAgentSystemPrompt } from '../lib/systemPrompt';
+import { buildAgentSystemPrompt, inspectAndBuildMcpSchemas } from '../lib/systemPrompt';
 import { getModel, getAutoApproveCents } from '../lib/storage';
 import { loadTemplates, loadBaseContext, readAbsoluteFile, fileNameWithoutExt } from '../lib/templates';
 
@@ -477,6 +477,7 @@ export function useLocalTools(): UseLocalToolsReturn {
         // 1. Load template if specified
         let effectiveRole = role;
         let templateBody: string | undefined;
+        let templateMcps: string[] | undefined;
         if (template) {
           const templates = await loadTemplates(projectRoot);
           const match = templates.find(t =>
@@ -485,6 +486,7 @@ export function useLocalTools(): UseLocalToolsReturn {
           if (match) {
             effectiveRole = match.role;
             templateBody = match.body;
+            templateMcps = match.mcps;
           }
         }
 
@@ -524,7 +526,13 @@ export function useLocalTools(): UseLocalToolsReturn {
           } catch { /* discover failed, continue without */ }
         }
 
-        // 5. Build system prompt with all context
+        // 5. Inspect template MCPs
+        let mcpSchemas: string | undefined;
+        if (templateMcps?.length && agentCtx.onToolCall) {
+          mcpSchemas = await inspectAndBuildMcpSchemas(templateMcps, agentCtx.onToolCall);
+        }
+
+        // 6. Build system prompt with all context
         const allContext = [...baseCtx.map(f => ({ name: f.name, content: f.content })), ...extraCtx];
         const combinedCustom = [templateBody, custom_instructions].filter(Boolean).join('\n\n');
         const systemPrompt = buildAgentSystemPrompt(
@@ -532,6 +540,7 @@ export function useLocalTools(): UseLocalToolsReturn {
           combinedCustom || undefined, undefined, undefined,
           allContext.length > 0 ? allContext : undefined,
           skillCtx.length > 0 ? skillCtx : undefined,
+          mcpSchemas,
         );
 
         const agent = await agentCtx.createAgent({

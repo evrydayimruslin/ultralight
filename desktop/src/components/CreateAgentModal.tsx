@@ -29,6 +29,7 @@ interface CreateAgentModalProps {
     cardId?: string;
     launchMode: string;
     templateBody?: string;
+    templateMcps?: string[];
     selectedContextPaths?: string[];
     selectedSkillIds?: Array<{ id: string; name: string; priceCents: number }>;
   }) => Promise<void>;
@@ -238,6 +239,7 @@ export default function CreateAgentModal({
         cardId: card?.id,
         launchMode,
         templateBody: selectedTemplate?.body,
+        templateMcps: selectedTemplate?.mcps,
         selectedContextPaths: Array.from(selectedContextPaths),
         selectedSkillIds: marketplaceSkills
           .filter(s => selectedSkillIds.has(s.id))
@@ -344,6 +346,25 @@ export default function CreateAgentModal({
               />
             </div>
           </div>
+
+          {/* Declared MCPs from template */}
+          {selectedTemplate?.mcps && selectedTemplate.mcps.length > 0 && (
+            <div>
+              <label className="text-caption font-medium text-ul-text-secondary mb-1.5 block">Template MCPs</label>
+              <div className="space-y-1 rounded border border-ul-border p-2 bg-blue-50/50">
+                {selectedTemplate.mcps.map(mcpId => (
+                  <div key={mcpId} className="flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                    <span className="text-caption text-ul-text truncate flex-1">{mcpId}</span>
+                    <span className="text-[10px] text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded shrink-0">auto-inspect</span>
+                  </div>
+                ))}
+                <p className="text-[10px] text-ul-text-muted mt-1">
+                  Tool schemas will be inspected and injected into the agent.
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Permission Level */}
           <div>

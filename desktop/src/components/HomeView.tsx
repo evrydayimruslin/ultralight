@@ -8,7 +8,7 @@ import type { Agent, CreateAgentParams } from '../hooks/useAgentFleet';
 import { useAgentFleet } from '../hooks/useAgentFleet';
 import { useMcp } from '../hooks/useMcp';
 import { usePermissions } from '../hooks/usePermissions';
-import { buildAgentSystemPrompt } from '../lib/systemPrompt';
+import { buildAgentSystemPrompt, inspectAndBuildMcpSchemas } from '../lib/systemPrompt';
 import { loadBaseContext, readAbsoluteFile, fileNameWithoutExt } from '../lib/templates';
 import ProjectDropdown from './ProjectDropdown';
 import KanbanBoard from './KanbanBoard';
@@ -146,6 +146,7 @@ export default function HomeView({
     cardId?: string;
     launchMode: string;
     templateBody?: string;
+    templateMcps?: string[];
     selectedContextPaths?: string[];
     selectedSkillIds?: Array<{ id: string; name: string; priceCents: number }>;
   }) => {
@@ -183,7 +184,13 @@ export default function HomeView({
       }
     }
 
-    // 4. Build system prompt with all context
+    // 4. Inspect declared MCPs from template
+    let mcpSchemas: string | undefined;
+    if (params.templateMcps?.length) {
+      mcpSchemas = await inspectAndBuildMcpSchemas(params.templateMcps, executeMcpTool);
+    }
+
+    // 5. Build system prompt with all context
     const allContext = [
       ...baseCtx.map(f => ({ name: f.name, content: f.content })),
       ...knowledgeCtx,
@@ -195,6 +202,7 @@ export default function HomeView({
       params.launchMode,
       allContext.length > 0 ? allContext : undefined,
       skillCtx.length > 0 ? skillCtx : undefined,
+      mcpSchemas,
     );
 
     const agent = await createAgent({
