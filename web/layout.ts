@@ -3075,7 +3075,7 @@ export function getLayoutHTML(options: {
     // Hide chrome in embed mode (desktop app provides its own nav)
     if (_isEmbed) {
       var _embedStyle = document.createElement('style');
-      _embedStyle.textContent = '.top-nav { display: none !important; } #dashboardView .settings-sidebar { display: none !important; } #dashboardView .settings-layout { gap: 0; } #dashboardView .settings-content { flex: 1; min-width: 0; } #dashboardView { padding-top: 0; }';
+      _embedStyle.textContent = '.top-nav { display: none !important; } #dashboardView .settings-sidebar { display: none !important; } #dashboardView .settings-layout { gap: 0; justify-content: center; } #dashboardView .settings-content { flex: none; width: 100%; max-width: 800px; margin-left: auto; margin-right: auto; min-width: 0; } #dashboardView { padding-top: 0; }';
       document.head.appendChild(_embedStyle);
     }
 
