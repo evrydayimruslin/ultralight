@@ -2659,7 +2659,7 @@ export function getLayoutHTML(options: {
         <nav class="settings-sidebar">
           <div class="settings-sidebar-item${dashSection === 'capabilities' ? ' active' : ''}" data-dash-section="capabilities">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-            Capabilities
+            Tools
           </div>
           <div class="settings-sidebar-item${dashSection === 'billing' ? ' active' : ''}" data-dash-section="billing">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
@@ -2684,7 +2684,7 @@ export function getLayoutHTML(options: {
 
             <!-- Search + filters (shared across all sub-tabs) -->
             <div style="display:flex;gap:var(--space-3);align-items:center;margin-bottom:var(--space-4);flex-wrap:wrap;">
-              <input id="capSearch" class="marketplace-search" type="text" placeholder="Search capabilities..." style="flex:1;min-width:200px;margin-bottom:0;">
+              <input id="capSearch" class="marketplace-search" type="text" placeholder="Search tools..." style="flex:1;min-width:200px;margin-bottom:0;">
               <div id="capFiltersBtn" style="position:relative;display:none;">
                 <button class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);display:flex;align-items:center;gap:6px;" onclick="document.getElementById('capFiltersDropdown').style.display = document.getElementById('capFiltersDropdown').style.display === 'none' ? 'block' : 'none';">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="11" y1="18" x2="13" y2="18"/></svg>
@@ -2694,8 +2694,9 @@ export function getLayoutHTML(options: {
                   <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:var(--space-2);">Type</div>
                   <div class="marketplace-filters" style="margin-bottom:var(--space-3);">
                     <button class="marketplace-filter active" data-cap-type="all">All</button>
-                    <button class="marketplace-filter" data-cap-type="apps">Apps</button>
-                    <button class="marketplace-filter" data-cap-type="skills">Skills</button>
+                    <button class="marketplace-filter" data-cap-type="gpu">GPU</button>
+                    <button class="marketplace-filter" data-cap-type="apps">MCP</button>
+                    <button class="marketplace-filter" data-cap-type="skills">.MD</button>
                   </div>
                   <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:var(--space-2);">Owner</div>
                   <div class="marketplace-filters" style="margin-bottom:0;">
@@ -2719,7 +2720,7 @@ export function getLayoutHTML(options: {
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-6);margin-bottom:var(--space-8);">
                 <div>
                   <h3 style="font-size:14px;font-weight:600;margin-bottom:var(--space-3);color:var(--text-primary);">Newly Published</h3>
-                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:var(--space-3);">Latest capabilities shipping</div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:var(--space-3);">Latest tools shipping</div>
                   <div id="newlyPublishedList" style="display:flex;flex-direction:column;gap:var(--space-2);">
                     <div style="font-size:13px;color:var(--text-muted);padding:var(--space-3) 0;">Loading...</div>
                   </div>
@@ -3784,7 +3785,10 @@ export function getLayoutHTML(options: {
       var label = document.getElementById('capFilterLabel');
       if (!label) return;
       var parts = [];
-      if (activeCapType !== 'all') parts.push(activeCapType === 'apps' ? 'Apps' : 'Skills');
+      if (activeCapType !== 'all') {
+        var typeLabels = { gpu: 'GPU', apps: 'MCP', skills: '.MD' };
+        parts.push(typeLabels[activeCapType] || activeCapType);
+      }
       if (activeCapOwner !== 'all') parts.push('Mine');
       label.textContent = parts.length > 0 ? 'Filters (' + parts.join(', ') + ')' : 'Filters';
     }
@@ -3856,7 +3860,15 @@ export function getLayoutHTML(options: {
 
       var params = new URLSearchParams();
       params.set('q', query);
-      if (activeCapType !== 'all') params.set('type', activeCapType);
+      if (activeCapType === 'gpu') {
+        params.set('type', 'apps');
+        params.set('runtime', 'gpu');
+      } else if (activeCapType === 'apps') {
+        params.set('type', 'apps');
+        params.set('runtime', 'deno');
+      } else if (activeCapType === 'skills') {
+        params.set('type', 'skills');
+      }
       params.set('limit', '30');
 
       fetch('/api/discover/marketplace?' + params.toString())
@@ -3911,7 +3923,7 @@ export function getLayoutHTML(options: {
           var items = [
             '30d GMV ' + gmv + ' ' + changeSign + changePct + '%',
             'Acquisitions (30d) ' + (data.acquisitions_30d || 0) + ' ' + (data.acquisitions_change >= 0 ? '+' : '') + (data.acquisitions_change || 0),
-            'Capabilities listed ' + (data.capabilities_listed || 0)
+            'Tools listed ' + (data.capabilities_listed || 0)
           ];
           // Double items for seamless scroll
           var doubled = items.concat(items);
@@ -4126,7 +4138,7 @@ export function getLayoutHTML(options: {
 
       // Profile tabs
       html += '<div class="marketplace-filters" style="margin-bottom:var(--space-4);">'
-        + '<button class="marketplace-filter active" data-profile-tab="published">Published capabilities</button>'
+        + '<button class="marketplace-filter active" data-profile-tab="published">Published tools</button>'
         + '<button class="marketplace-filter" data-profile-tab="acquisitions">Acquisitions</button>'
         + '</div>';
 
@@ -4151,7 +4163,7 @@ export function getLayoutHTML(options: {
             + '</div>';
         }).join('');
       } else {
-        html += '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">No published capabilities yet.</div>';
+        html += '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">No published tools yet.</div>';
       }
       html += '</div>';
 
@@ -4328,7 +4340,7 @@ export function getLayoutHTML(options: {
     }
 
     function renderMarketplaceCard(item) {
-      var badge = item.type === 'app' ? 'App' : 'Skill';
+      var badge = item.type === 'app' ? (item.runtime === 'gpu' ? 'GPU' : 'MCP') : '.MD';
       var desc = item.description || '';
       var shortDesc = desc.length > 120 ? desc.slice(0, 120) + '...' : desc;
       var stats = '';
@@ -4336,7 +4348,8 @@ export function getLayoutHTML(options: {
         var parts = [];
         if (item.likes > 0) parts.push(item.likes + ' likes');
         if (item.runs_30d > 0) parts.push(item.runs_30d + ' runs');
-        if (item.fully_native) parts.push('native');
+        if (item.runtime === 'gpu' && item.gpu_type) parts.push(item.gpu_type);
+        else if (item.fully_native) parts.push('native');
         if (parts.length > 0) stats = '<div class="marketplace-stats">' + parts.join(' &middot; ') + '</div>';
       } else {
         var tagStr = (item.tags || []).slice(0, 3).join(', ');

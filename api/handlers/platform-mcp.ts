@@ -705,14 +705,15 @@ Find and explore apps.
 - \`scope: "desk"\` — Last 5 used apps with schemas and recent calls
 - \`scope: "inspect"\` — Deep introspection: full skills doc, storage architecture, KV keys, cached summary, permissions, suggested queries. Requires \`app_id\`.
 - \`scope: "library"\` — Your owned + saved apps. Without \`query\`: full Library.md + memory.md. With \`query\`: semantic search (matches app names, descriptions, function signatures, capabilities).
-- \`scope: "appstore"\` — All published apps. With \`query\`: semantic search across all public apps. Use \`task\` for context-aware knowledge retrieval — auto-includes pages and returns inline markdown content (first 2KB) for top page matches.
+- \`scope: "appstore"\` — All published apps. With \`query\`: semantic search across all public apps. Results include \`runtime\` ("deno" or "gpu") and \`gpu_type\` for GPU apps. Use \`task\` for context-aware knowledge retrieval — auto-includes pages and returns inline markdown content (first 2KB) for top page matches.
 
 ### ul.upload({ files, name?, description?, visibility?, app_id?, type? })
-Deploy TypeScript app or publish markdown page.
+Deploy TypeScript/Python app or publish markdown page.
 - \`type: "page"\`: publish markdown at a URL. Requires \`content\` + \`slug\`.
-- No \`app_id\`: creates new app at v1.0.0 (auto-live).
+- No \`app_id\`: creates new app at v1.0.0 (auto-live for Deno; GPU apps start building).
 - With \`app_id\`: adds new version (NOT live — use \`ul.set\` to activate).
 - \`files\`: array of \`{ path: string, content: string, encoding?: "text" | "base64" }\`.
+- **GPU functions:** Include \`ultralight.gpu.yaml\` + \`main.py\` in files. Runtime is auto-detected — no explicit parameter needed. Build is async; \`gpu_status\` transitions from \`building\` → \`live\`.
 
 ### ul.download({ app_id?, name?, description?, version? })
 - With \`app_id\`: download app source code (respects download_access setting).
@@ -802,6 +803,37 @@ View call logs and health events.
 
 ### The \`ui()\` Export
 Any app can export \`ui()\` returning HTML, served at \`GET /http/{appId}/ui\`. Direct users to this URL for visual data views. Supports \`#token=ul_...\` for authentication.
+
+## Building GPU Functions
+
+GPU functions run Python on dedicated GPU hardware (A40 through B200). They're broader than AI — any workload that benefits from GPU acceleration (3D rendering, physics simulation, video processing, cryptography, scientific computing).
+
+**Workflow:** Create files → \`ul.upload\` → wait for build → \`ul.set\` visibility
+
+### Required Files
+1. **\`ultralight.gpu.yaml\`** — GPU configuration:
+\`\`\`yaml
+runtime: gpu
+gpu_type: A100-80GB-SXM   # A40, L40, L40S, A100-80GB-PCIe, A100-80GB-SXM, H100-PCIe, H100-SXM, H100-NVL, H200, B200
+python: "3.11"             # Optional: 3.10 or 3.11 (default)
+max_duration_ms: 30000     # Optional: execution timeout
+\`\`\`
+2. **\`main.py\`** — Entry point. Export handler functions.
+3. **\`requirements.txt\`** — Python dependencies (optional).
+4. **\`test_fixture.json\`** — Maps function names to test args (optional). Keys become exported function names.
+
+### Key Differences from Deno Apps
+- **No bundling** — Python files uploaded raw, container built on RunPod
+- **Async build** — Upload returns immediately with \`gpu_status: "building"\`. Build takes 1-5 min.
+- **Per-execution billing** — Callers pay compute cost (GPU time) + developer fee. Set pricing via \`gpu_pricing_config\`.
+- **No SDK globals** — No \`ultralight.store/load\`, no \`ultralight.user\`. GPU functions are stateless compute.
+- **Concurrency limited** — Default 5 concurrent executions per endpoint.
+
+### GPU Pricing Modes
+Set via app settings (not yet in \`ul.set\` — use dashboard):
+- **per_call** — Flat fee per invocation (e.g., 10¢/call)
+- **per_unit** — Fee per output unit extracted from result (e.g., 5¢/image)
+- **per_duration** — Compute pass-through + markup
 
 ## Agent Guidance
 

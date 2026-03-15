@@ -203,12 +203,20 @@ max_duration_ms: 2000
 
 **Migration:** `migration-gpu-phase4.sql` — weights_included, gpu_reliability_7d materialized view
 
+### Phase 5: MCP Upload + Discovery Runtime Metadata
+
+**Modified files:**
+- `api/handlers/platform-mcp.ts` — `executeUpload()` GPU branch (detect `ultralight.gpu.yaml`, skip esbuild, fire-and-forget build), `executeDiscoverAppstore()` and `executeDiscoverLibrary()` return `runtime` + `gpu_type`
+- `api/handlers/upload.ts` — Export `generateSlug()` for MCP reuse
+
+**No migration needed.**
+
 ---
 
 ## Complete Inventory
 
 **17 new files:** 13 TypeScript services, 1 Python harness, 4 SQL migrations
-**10 modified files:** types, main, upload, mcp, run, http, call-logger, marketplace, discover, hosting-billing, app.yaml
+**11 modified files:** types, main, upload, platform-mcp, mcp, run, http, call-logger, discover, hosting-billing, app.yaml
 **1 new background job:** GPU Build Processor
 
 **What doesn't change:** Escrow/acquisition mechanics, existing Deno sandbox, balance/payout infrastructure, Stripe Connect, semantic search indexing, permission system
