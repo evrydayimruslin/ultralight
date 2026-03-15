@@ -1,7 +1,9 @@
 // GPU Compute Runtime — Billing Service
 // Computes GPU call costs, applies failure chargeability rules, and settles
-// balances via the existing transfer_balance RPC. Reuses the same atomic
-// transfer mechanism as Deno per-call pricing in mcp.ts.
+// balances via two mechanisms:
+//   1. transfer_balance — developer fee from caller to app owner
+//   2. debit_hosting_balance — compute cost burned from caller (platform revenue)
+// Same pattern as chat-billing.ts for the burn, and mcp.ts for the transfer.
 
 import type { GpuType, GpuPricingConfig, GpuPricingMode } from './types.ts';
 import { computeGpuCostCents, classifyFailure } from './types.ts';
@@ -28,7 +30,7 @@ export interface GpuCostBreakdown {
 export interface GpuSettlementResult {
   /** Whether any charge was applied. */
   charged: boolean;
-  /** Actual amount charged to caller in cents. */
+  /** Actual amount charged to caller in cents (compute debit + developer transfer). */
   chargedCents: number;
   /** Full cost breakdown (before failure policy adjustments). */
   breakdown: GpuCostBreakdown;
@@ -77,11 +79,7 @@ export function computeGpuCallCost(
     computeCostCents,
     developerFeeCents,
     totalCostCents,
-    // MVP billing: full total is transferred to owner via transfer_balance.
-    // Platform recoups compute portion at Stripe payout time (same model as
-    // delivery-app marketplaces where restaurant receives full order value
-    // and platform takes commission at settlement).
-    ownerRevenueCents: totalCostCents,
+    ownerRevenueCents: developerFeeCents,
   };
 }
 
@@ -137,12 +135,17 @@ export function estimateMaxGpuCost(
 /**
  * Settle billing for a completed GPU execution.
  *
- * Applies failure chargeability rules, performs atomic balance transfer
- * via transfer_balance RPC, logs the transfer, and returns settlement details.
+ * Uses two settlement mechanisms:
+ *   - transfer_balance: developer fee from caller → owner (developer revenue)
+ *   - debit_hosting_balance: compute cost burned from caller (platform revenue)
+ *
+ * This matches the chat-billing.ts pattern where debit_hosting_balance burns
+ * balance without a recipient (the platform implicitly keeps it, same as
+ * OpenRouter AI API key billing).
  *
  * Failure policy:
- * - success       → full charge (compute + developer fee)
- * - oom/timeout/exception → compute only (developer fee refunded)
+ * - success       → full charge (transfer dev fee + debit compute)
+ * - oom/timeout/exception → compute only (debit compute, no dev fee)
  * - infra_error    → nothing charged (full refund)
  *
  * If caller === owner, billing is skipped entirely (self-calls are free).
@@ -160,35 +163,33 @@ export async function settleGpuExecution(
   // Apply failure chargeability
   const chargeability = classifyFailure(gpuResult.exitCode);
   let failurePolicy: GpuSettlementResult['failurePolicy'];
-  let chargeableCents: number;
+  let devFeeToTransfer: number;
+  let computeToDebit: number;
 
   switch (chargeability) {
     case 'chargeable':
       if (gpuResult.exitCode === 'success') {
         failurePolicy = 'full_charge';
-        chargeableCents = breakdown.totalCostCents;
+        devFeeToTransfer = breakdown.developerFeeCents;
+        computeToDebit = breakdown.computeCostCents;
       } else {
         // oom, timeout, exception — developer earns nothing on failure.
-        // Compute cost is absorbed by platform for MVP (we lack a platform
-        // revenue account for the second transfer_balance call). This is
-        // acceptable because the 10-13× markup on GPU rates means the
-        // platform's cost is ~8-10% of the displayed compute rate.
+        // Caller pays compute cost (burned via debit_hosting_balance).
         failurePolicy = 'compute_only';
-        chargeableCents = 0;
-        console.log(
-          `[GPU-BILLING] Absorbed compute cost ${breakdown.computeCostCents.toFixed(4)}¢ ` +
-            `for failed ${gpuResult.exitCode} on ${app.id}.${functionName}`,
-        );
+        devFeeToTransfer = 0;
+        computeToDebit = breakdown.computeCostCents;
       }
       break;
     case 'non_chargeable':
       failurePolicy = 'full_refund';
-      chargeableCents = 0;
+      devFeeToTransfer = 0;
+      computeToDebit = 0;
       break;
     case 'partial':
-      // Not currently used — treat same as compute_only (absorb)
+      // Not currently used — treat same as compute_only
       failurePolicy = 'compute_only';
-      chargeableCents = 0;
+      devFeeToTransfer = 0;
+      computeToDebit = breakdown.computeCostCents;
       break;
   }
 
@@ -203,7 +204,8 @@ export async function settleGpuExecution(
   }
 
   // Nothing to charge
-  if (chargeableCents <= 0) {
+  const totalCharge = devFeeToTransfer + computeToDebit;
+  if (totalCharge <= 0) {
     return {
       charged: false,
       chargedCents: 0,
@@ -212,7 +214,7 @@ export async function settleGpuExecution(
     };
   }
 
-  // ── Atomic transfer via transfer_balance RPC ──
+  // ── Supabase config ──
   const supabaseUrl = globalThis.Deno?.env?.get('SUPABASE_URL') || '';
   const supabaseKey = globalThis.Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
@@ -226,92 +228,154 @@ export async function settleGpuExecution(
     };
   }
 
+  const rpcHeaders = {
+    'apikey': supabaseKey,
+    'Authorization': `Bearer ${supabaseKey}`,
+    'Content-Type': 'application/json',
+  };
+
   try {
-    const transferRes = await fetch(
-      `${supabaseUrl}/rest/v1/rpc/transfer_balance`,
-      {
-        method: 'POST',
-        headers: {
-          'apikey': supabaseKey,
-          'Authorization': `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json',
+    let actualDevFeeCharged = 0;
+    let actualComputeCharged = 0;
+
+    // ── Step 1: Transfer developer fee to owner (if any) ──
+    // transfer_balance has a built-in balance check (returns empty on insufficient).
+    // We do this first so the developer always gets paid on success.
+    if (devFeeToTransfer > 0) {
+      const transferRes = await fetch(
+        `${supabaseUrl}/rest/v1/rpc/transfer_balance`,
+        {
+          method: 'POST',
+          headers: rpcHeaders,
+          body: JSON.stringify({
+            p_from_user: userId,
+            p_to_user: app.owner_id,
+            p_amount_cents: devFeeToTransfer,
+          }),
         },
-        body: JSON.stringify({
-          p_from_user: userId,
-          p_to_user: app.owner_id,
-          p_amount_cents: chargeableCents,
-        }),
-      },
+      );
+
+      if (transferRes.ok) {
+        const rows = await transferRes.json() as Array<{
+          from_new_balance: number;
+          to_new_balance: number;
+        }>;
+
+        if (!rows || rows.length === 0) {
+          // Empty result = insufficient balance
+          const costDisplay = totalCharge < 1
+            ? totalCharge.toFixed(3)
+            : String(Math.ceil(totalCharge));
+
+          return {
+            charged: false,
+            chargedCents: 0,
+            breakdown,
+            failurePolicy,
+            insufficientBalance: true,
+            insufficientBalanceMessage:
+              `Insufficient balance. This GPU function costs ~${costDisplay}¢ per call. ` +
+              `Add funds to your wallet at https://ultralight-api-iikqz.ondigitalocean.app/settings/billing ` +
+              `or enable auto top-up to avoid interruptions.`,
+          };
+        }
+
+        actualDevFeeCharged = devFeeToTransfer;
+
+        // Log the developer fee transfer (fire-and-forget)
+        fetch(`${supabaseUrl}/rest/v1/transfers`, {
+          method: 'POST',
+          headers: { ...rpcHeaders, 'Prefer': 'return=minimal' },
+          body: JSON.stringify({
+            from_user_id: userId,
+            to_user_id: app.owner_id,
+            amount_cents: devFeeToTransfer,
+            reason: 'gpu_call',
+            app_id: app.id,
+            function_name: functionName,
+          }),
+        }).catch(() => {});
+      } else {
+        console.error(
+          `[GPU-BILLING] Transfer failed for ${userId} → ${app.owner_id}:`,
+          await transferRes.text(),
+        );
+      }
+    }
+
+    // ── Step 2: Debit compute cost from caller (platform revenue) ──
+    // Uses debit_hosting_balance — same pattern as chat-billing.ts.
+    // Clamps at 0, never goes negative, always succeeds.
+    // p_update_billed_at=false to not touch hosting billing clock.
+    if (computeToDebit > 0) {
+      const debitRes = await fetch(
+        `${supabaseUrl}/rest/v1/rpc/debit_hosting_balance`,
+        {
+          method: 'POST',
+          headers: rpcHeaders,
+          body: JSON.stringify({
+            p_user_id: userId,
+            p_amount: computeToDebit,
+            p_update_billed_at: false,
+          }),
+        },
+      );
+
+      if (debitRes.ok) {
+        const debitResult = await debitRes.json() as Array<{
+          old_balance: number;
+          new_balance: number;
+          was_depleted: boolean;
+        }>;
+
+        if (debitResult && debitResult.length > 0) {
+          actualComputeCharged = computeToDebit;
+
+          // Log compute deduction to billing_transactions (fire-and-forget)
+          fetch(`${supabaseUrl}/rest/v1/billing_transactions`, {
+            method: 'POST',
+            headers: { ...rpcHeaders, 'Prefer': 'return=minimal' },
+            body: JSON.stringify({
+              user_id: userId,
+              type: 'charge',
+              category: 'gpu_compute',
+              description: `GPU: ${app.gpu_type || 'unknown'} ${gpuResult.durationMs}ms — ${app.name || app.slug}.${functionName}`,
+              amount_cents: -computeToDebit, // negative = charge (same convention as hosting/chat)
+              balance_after: debitResult[0].new_balance,
+              metadata: {
+                app_id: app.id,
+                function_name: functionName,
+                gpu_type: gpuResult.gpuType,
+                duration_ms: gpuResult.durationMs,
+                exit_code: gpuResult.exitCode,
+                compute_cost_cents: computeToDebit,
+                failure_policy: failurePolicy,
+              },
+            }),
+          }).catch(() => {});
+        }
+      } else {
+        console.error(
+          `[GPU-BILLING] Compute debit failed for ${userId}:`,
+          await debitRes.text(),
+        );
+      }
+    }
+
+    const totalCharged = actualDevFeeCharged + actualComputeCharged;
+
+    console.log(
+      `[GPU-BILLING] ${userId}: dev_fee=${actualDevFeeCharged.toFixed(4)}¢ → ${app.owner_id}, ` +
+        `compute=${actualComputeCharged.toFixed(4)}¢ (burned) ` +
+        `[${failurePolicy}] for ${app.id}.${functionName}`,
     );
 
-    if (transferRes.ok) {
-      const rows = await transferRes.json() as Array<{
-        from_new_balance: number;
-        to_new_balance: number;
-      }>;
-
-      if (!rows || rows.length === 0) {
-        // Empty result = insufficient balance
-        const costDisplay = chargeableCents < 1
-          ? chargeableCents.toFixed(3)
-          : String(chargeableCents);
-
-        return {
-          charged: false,
-          chargedCents: 0,
-          breakdown,
-          failurePolicy,
-          insufficientBalance: true,
-          insufficientBalanceMessage:
-            `Insufficient balance. This GPU function costs ${costDisplay}¢ per call. ` +
-            `Add funds to your wallet at https://ultralight-api-iikqz.ondigitalocean.app/settings/billing ` +
-            `or enable auto top-up to avoid interruptions.`,
-        };
-      }
-
-      // Log the transfer (fire-and-forget)
-      fetch(`${supabaseUrl}/rest/v1/transfers`, {
-        method: 'POST',
-        headers: {
-          'apikey': supabaseKey,
-          'Authorization': `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=minimal',
-        },
-        body: JSON.stringify({
-          from_user_id: userId,
-          to_user_id: app.owner_id,
-          amount_cents: chargeableCents,
-          reason: 'gpu_call',
-          app_id: app.id,
-          function_name: functionName,
-        }),
-      }).catch(() => {});
-
-      console.log(
-        `[GPU-BILLING] ${userId} → ${app.owner_id}: ${chargeableCents.toFixed(4)}¢ ` +
-          `(${failurePolicy}) for ${app.id}.${functionName}`,
-      );
-
-      return {
-        charged: true,
-        chargedCents: chargeableCents,
-        breakdown,
-        failurePolicy,
-      };
-    } else {
-      // Transfer RPC failed — don't block the call, just log
-      console.error(
-        `[GPU-BILLING] Transfer failed for ${userId} → ${app.owner_id}:`,
-        await transferRes.text(),
-      );
-      return {
-        charged: false,
-        chargedCents: 0,
-        breakdown,
-        failurePolicy,
-      };
-    }
+    return {
+      charged: totalCharged > 0,
+      chargedCents: totalCharged,
+      breakdown,
+      failurePolicy,
+    };
   } catch (err) {
     console.error('[GPU-BILLING] Settlement error:', err);
     return {
