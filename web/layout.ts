@@ -3059,7 +3059,7 @@ export function getLayoutHTML(options: {
          PROFILE VIEW
          ========================================== -->
     <div id="profileView" style="display:${initialView === 'profile' ? 'block' : 'none'};">
-      <div style="max-width:var(--content-max);margin:0 auto;padding:var(--space-8) var(--space-6);">
+      <div style="max-width:var(--content-max);margin:0 auto;padding:var(--space-3) var(--space-6);">
         <div id="profileContent">
           <div style="font-size:13px;color:var(--text-muted);padding:var(--space-8) 0;text-align:center;">Loading profile...</div>
         </div>

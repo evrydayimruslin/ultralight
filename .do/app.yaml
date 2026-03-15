@@ -36,6 +36,11 @@ services:
         type: SECRET
       - key: WORKER_SECRET
         type: SECRET
+      # GPU Compute Runtime (RunPod Serverless)
+      - key: RUNPOD_API_KEY
+        type: SECRET
+      - key: RUNPOD_TEMPLATE_ID
+        type: SECRET
     health_check:
       http_path: /health
       port: 8000

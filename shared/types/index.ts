@@ -111,6 +111,16 @@ export interface App {
   // Manifest-based configuration (v2 architecture)
   manifest: string | null;  // JSON stringified AppManifest
   app_type: 'mcp' | null;  // null means legacy auto-detect; ui/hybrid removed
+  // GPU compute runtime
+  runtime: 'deno' | 'gpu' | null;           // null = legacy deno
+  gpu_type: string | null;                   // GpuType identifier (e.g. 'A100-80GB-SXM')
+  gpu_status: string | null;                 // 'building' | 'benchmarking' | 'live' | 'build_failed' | 'benchmark_failed'
+  gpu_endpoint_id: string | null;            // RunPod (or other provider) endpoint ID
+  gpu_config: Record<string, unknown> | null;           // Parsed ultralight.gpu.yaml
+  gpu_benchmark: Record<string, unknown> | null;        // BenchmarkStats from benchmark runs
+  gpu_pricing_config: Record<string, unknown> | null;   // GpuPricingConfig
+  gpu_max_duration_ms: number | null;        // Max execution time ceiling
+  gpu_concurrency_limit: number | null;      // Per-function concurrency cap
   // Per-app rate limit config (Pro, owner-configurable)
   rate_limit_config: AppRateLimitConfig | null;
   // Per-function pricing config (owner-configurable)
