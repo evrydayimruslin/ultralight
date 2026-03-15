@@ -10,6 +10,8 @@ import { createAIService } from '../services/ai.ts';
 import { decryptEnvVars, decryptEnvVar } from '../services/envvars.ts';
 import { executeInSandbox, type UserContext } from '../runtime/sandbox.ts';
 import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
+import { executeGpuFunction } from '../services/gpu/executor.ts';
+import { acquireGpuSlot } from '../services/gpu/concurrency.ts';
 import { getUserTier } from '../services/tier-enforcement.ts';
 
 // @ts-ignore - Deno is available in Deno Deploy
@@ -297,6 +299,90 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
       },
     };
 
+    // ── GPU Runtime Branch ──
+    if (app.runtime === 'gpu') {
+      if (app.gpu_status !== 'live') {
+        return json({ error: 'GPU function not ready', status: app.gpu_status }, 503);
+      }
+
+      let gpuSlot;
+      try {
+        gpuSlot = await acquireGpuSlot(app.gpu_endpoint_id!, app.gpu_concurrency_limit || 5);
+      } catch {
+        return json({ error: 'GPU function at capacity' }, 429);
+      }
+
+      try {
+        const gpuResult = await executeGpuFunction({
+          app,
+          functionName,
+          args: { request: ultralightRequest },
+          executionId: crypto.randomUUID(),
+        });
+        const gpuDurationMs = Date.now() - startTime;
+
+        // Log (fire-and-forget, no billing for HTTP)
+        const { logMcpCall: logHttpGpuCall } = await import('../services/call-logger.ts');
+        logHttpGpuCall({
+          userId: app.owner_id,
+          appId: app.id,
+          appName: app.name || app.slug,
+          functionName,
+          method: 'http',
+          success: gpuResult.success,
+          durationMs: gpuDurationMs,
+          errorMessage: gpuResult.success ? undefined : (gpuResult.error?.message || 'GPU execution failed'),
+          outputResult: gpuResult.success ? gpuResult.result : gpuResult.error,
+          userTier: user?.tier,
+          appVersion: app.current_version || undefined,
+          // GPU telemetry
+          gpuType: gpuResult.gpuType,
+          gpuExitCode: gpuResult.exitCode,
+          gpuDurationMs: gpuResult.durationMs,
+          gpuCostCents: gpuResult.gpuCostCents,
+          gpuPeakVramGb: gpuResult.peakVramGb,
+        });
+
+        console.log(`[HTTP-GPU] ${request.method} /http/${appId}/${functionName} - ${gpuResult.success ? 'OK' : gpuResult.exitCode} - ${gpuDurationMs}ms`);
+
+        if (!gpuResult.success) {
+          return json({
+            error: gpuResult.error?.message || 'GPU execution failed',
+            type: gpuResult.error?.type,
+            logs: gpuResult.logs,
+          }, 500);
+        }
+
+        // Handle the response (same formatting as Deno path below)
+        const gpuFnResult = gpuResult.result;
+
+        if (gpuFnResult instanceof Response) {
+          return gpuFnResult;
+        }
+
+        if (gpuFnResult && typeof gpuFnResult === 'object') {
+          const resConfig = gpuFnResult as Record<string, unknown>;
+          if ('statusCode' in resConfig || 'status' in resConfig) {
+            const status = (resConfig.statusCode || resConfig.status || 200) as number;
+            const headers = new Headers(resConfig.headers as Record<string, string> || {});
+            const body = resConfig.body;
+            if (!headers.has('Content-Type')) {
+              headers.set('Content-Type', 'application/json');
+            }
+            return new Response(
+              typeof body === 'string' ? body : JSON.stringify(body),
+              { status, headers },
+            );
+          }
+        }
+
+        return json(gpuFnResult);
+      } finally {
+        gpuSlot.release();
+      }
+    }
+
+    // ── Deno Sandbox Path (existing, unchanged) ──
     // Execute the function in sandbox
     const result = await executeInSandbox(
       {

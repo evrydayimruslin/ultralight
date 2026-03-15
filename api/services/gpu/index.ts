@@ -95,3 +95,15 @@ export { triggerGpuBuild, generateDockerfile } from './builder.ts';
 
 // Benchmark pipeline (Phase 2E)
 export { startGpuBuildProcessorJob, computeBenchmarkStats } from './benchmark.ts';
+
+// Executor (Phase 3A)
+export { executeGpuFunction } from './executor.ts';
+export type { GpuExecuteParams, GpuExecuteResult } from './executor.ts';
+
+// Concurrency tracker (Phase 3B)
+export { acquireGpuSlot, releaseGpuSlot, getGpuConcurrency, GpuConcurrencyError } from './concurrency.ts';
+export type { GpuSlot } from './concurrency.ts';
+
+// Billing (Phase 3C)
+export { computeGpuCallCost, settleGpuExecution, estimateMaxGpuCost, extractUnitCount } from './billing.ts';
+export type { GpuCostBreakdown, GpuSettlementResult } from './billing.ts';

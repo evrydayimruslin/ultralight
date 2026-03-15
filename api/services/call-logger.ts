@@ -35,6 +35,14 @@ export interface McpCallLogEntry {
   executionCostEstimateCents?: number;
   // Per-call pricing: amount charged to caller and transferred to owner
   callChargeCents?: number;
+  // GPU metering fields — populated for gpu runtime calls
+  gpuType?: string;
+  gpuExitCode?: string;
+  gpuDurationMs?: number;
+  gpuCostCents?: number;
+  gpuPeakVramGb?: number;
+  gpuDeveloperFeeCents?: number;
+  gpuFailurePolicy?: string;
 }
 
 /**
@@ -100,6 +108,14 @@ async function _insertLog(entry: McpCallLogEntry): Promise<void> {
         response_size_bytes: entry.responseSizeBytes ?? null,
         execution_cost_estimate_cents: entry.executionCostEstimateCents ?? null,
         call_charge_cents: entry.callChargeCents ?? null,
+        // GPU metering
+        gpu_type: entry.gpuType ?? null,
+        gpu_exit_code: entry.gpuExitCode ?? null,
+        gpu_duration_ms: entry.gpuDurationMs ?? null,
+        gpu_cost_cents: entry.gpuCostCents ?? null,
+        gpu_peak_vram_gb: entry.gpuPeakVramGb ?? null,
+        gpu_developer_fee_cents: entry.gpuDeveloperFeeCents ?? null,
+        gpu_failure_policy: entry.gpuFailurePolicy ?? null,
       }),
     }
   );

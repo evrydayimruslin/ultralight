@@ -8,6 +8,7 @@ import { createR2Service } from '../services/storage.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createAppDataService } from '../services/appdata.ts';
 import { decryptEnvVars, decryptEnvVar } from '../services/envvars.ts';
+import { executeGpuFunction } from '../services/gpu/executor.ts';
 
 // Decode JWT payload without verification (verification done by Supabase)
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
@@ -166,6 +167,35 @@ export async function handleRun(request: Request, appId: string): Promise<Respon
       }
     }
 
+    // ── GPU Runtime Branch ──
+    if (app.runtime === 'gpu') {
+      if (app.gpu_status !== 'live') {
+        return json(
+          { success: false, error: { message: `GPU function not ready (status: ${app.gpu_status})` } } as RunResponse,
+          503,
+        );
+      }
+
+      const gpuResult = await executeGpuFunction({
+        app,
+        functionName,
+        args: typeof args === 'object' && !Array.isArray(args)
+          ? args as Record<string, unknown>
+          : { _args: args },
+        executionId: crypto.randomUUID(),
+      });
+
+      const gpuResponse: RunResponse = {
+        success: gpuResult.success,
+        result: gpuResult.result,
+        logs: gpuResult.logs,
+        duration_ms: gpuResult.durationMs,
+        error: gpuResult.error,
+      };
+      return json(gpuResponse);
+    }
+
+    // ── Deno Sandbox Path (existing, unchanged) ──
     // Execute in sandbox
     const result = await executeInSandbox(
       {

@@ -21,6 +21,9 @@ import { decryptEnvVars, decryptEnvVar } from '../services/envvars.ts';
 import { getCodeCache } from '../services/codecache.ts';
 import { getPermissionCache } from '../services/permission-cache.ts';
 import { createMemoryService, type MemoryService as MemoryServiceImpl } from '../services/memory.ts';
+import { executeGpuFunction, type GpuExecuteResult } from '../services/gpu/executor.ts';
+import { acquireGpuSlot } from '../services/gpu/concurrency.ts';
+import { settleGpuExecution } from '../services/gpu/billing.ts';
 import type {
   MCPTool,
   MCPJsonSchema,
@@ -1664,6 +1667,120 @@ async function executeAppFunction(
       }
     }
 
+    // ── GPU Runtime Branch ──
+    // If the app is a GPU function, dispatch to RunPod instead of Deno sandbox.
+    // Self-contained early return — existing Deno path is untouched below.
+    if (app.runtime === 'gpu') {
+      if (app.gpu_status !== 'live') {
+        return jsonRpcErrorResponse(
+          id,
+          -32603,
+          `GPU function is not ready (status: ${app.gpu_status ?? 'null'}). Try again later.`,
+        );
+      }
+
+      // Acquire concurrency slot (429 if full after 5s wait)
+      let gpuSlot;
+      try {
+        gpuSlot = await acquireGpuSlot(
+          app.gpu_endpoint_id!,
+          app.gpu_concurrency_limit || 5,
+        );
+      } catch (_concurrencyErr) {
+        return jsonRpcErrorResponse(
+          id,
+          -32000,
+          'GPU function is at capacity. Please try again in a few seconds.',
+          { type: 'GPU_CONCURRENCY_LIMIT' },
+        );
+      }
+
+      try {
+        // Execute on GPU
+        const gpuExecStart = Date.now();
+        const gpuResult = await executeGpuFunction({
+          app,
+          functionName,
+          args: argsArray.length === 1 && typeof argsArray[0] === 'object'
+            ? argsArray[0] as Record<string, unknown>
+            : { _args: argsArray },
+          executionId: crypto.randomUUID(),
+        });
+        const gpuExecDuration = Date.now() - gpuExecStart;
+
+        // Settle billing (if caller !== owner and result is chargeable)
+        let gpuCallChargeCents = 0;
+        let gpuSettlement;
+        if (userId !== app.owner_id) {
+          gpuSettlement = await settleGpuExecution(
+            userId,
+            app,
+            functionName,
+            (argsArray[0] as Record<string, unknown>) || {},
+            gpuResult,
+          );
+
+          if (gpuSettlement.insufficientBalance) {
+            return jsonRpcResponse(id, {
+              isError: true,
+              content: [{
+                type: 'text',
+                text: gpuSettlement.insufficientBalanceMessage!,
+              }],
+            });
+          }
+          gpuCallChargeCents = gpuSettlement.chargedCents;
+        }
+
+        // Log the call (fire-and-forget, with GPU telemetry)
+        const gpuResultJson = JSON.stringify(
+          gpuResult.success ? gpuResult.result : gpuResult.error,
+        );
+        const gpuResponseSizeBytes = new TextEncoder().encode(gpuResultJson).byteLength;
+        const gpuCallSource = user?.provisional ? 'onboarding_template' : undefined;
+
+        const { logMcpCall: logGpuMcpCall } = await import('../services/call-logger.ts');
+        logGpuMcpCall({
+          userId,
+          appId: app.id,
+          appName: app.name || app.slug,
+          functionName,
+          method: 'tools/call',
+          success: gpuResult.success,
+          durationMs: gpuExecDuration,
+          errorMessage: gpuResult.success ? undefined : gpuResult.error?.message,
+          source: gpuCallSource,
+          inputArgs: argsArray[0] as Record<string, unknown>,
+          outputResult: gpuResult.success ? gpuResult.result : gpuResult.error,
+          userTier: user?.tier,
+          appVersion: app.current_version || undefined,
+          responseSizeBytes: gpuResponseSizeBytes,
+          callChargeCents: gpuCallChargeCents,
+          sessionId: meta?.sessionId,
+          sequenceNumber: nextSequenceNumber(meta?.sessionId),
+          userQuery: meta?.userQuery,
+          // GPU-specific telemetry
+          gpuType: gpuResult.gpuType,
+          gpuExitCode: gpuResult.exitCode,
+          gpuDurationMs: gpuResult.durationMs,
+          gpuCostCents: gpuResult.gpuCostCents,
+          gpuPeakVramGb: gpuResult.peakVramGb,
+          gpuDeveloperFeeCents: gpuSettlement?.breakdown.developerFeeCents || 0,
+          gpuFailurePolicy: gpuSettlement?.failurePolicy,
+        });
+
+        // Return result (same format as Deno sandbox)
+        if (gpuResult.success) {
+          return jsonRpcResponse(id, formatToolResult(gpuResult.result, gpuResult.logs));
+        } else {
+          return jsonRpcResponse(id, formatToolError(gpuResult.error));
+        }
+      } finally {
+        gpuSlot.release();
+      }
+    }
+
+    // ── Deno Sandbox Path (existing, unchanged) ──
     // Execute in sandbox (local — Worker handles data layer only)
     const baseUrl = _Deno?.env?.get('BASE_URL') || undefined;
 
