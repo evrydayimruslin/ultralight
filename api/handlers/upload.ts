@@ -25,6 +25,8 @@ import {
   rebuildUserLibrary,
 } from '../services/library.ts';
 import { checkStorageQuota, recordUploadStorage, formatBytes } from '../services/storage-quota.ts';
+import { detectGpuConfig, parseGpuConfig } from '../services/gpu/config.ts';
+import type { GpuConfig } from '../services/gpu/types.ts';
 
 // Export file type for programmatic uploads
 export interface UploadFile {
@@ -139,6 +141,168 @@ export async function handleUpload(request: Request): Promise<Response> {
         return error(`Failed to parse manifest.json: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`, 400);
       }
     }
+
+    // GPU runtime detection — check for ultralight.gpu.yaml
+    const gpuYamlContent = detectGpuConfig(validatedFiles);
+    let gpuConfig: GpuConfig | null = null;
+
+    if (gpuYamlContent) {
+      const gpuValidation = parseGpuConfig(gpuYamlContent);
+      if (!gpuValidation.valid) {
+        return error(
+          `Invalid ultralight.gpu.yaml: ${gpuValidation.errors.join(', ')}`,
+          400,
+        );
+      }
+      gpuConfig = gpuValidation.config!;
+      console.log('GPU config detected:', gpuConfig.gpu_type, 'python:', gpuConfig.python);
+    }
+
+    // --- GPU UPLOAD BRANCH ---
+    // If ultralight.gpu.yaml is present, handle as GPU function.
+    // Skips JS bundling and safety scan. Returns early.
+    if (gpuConfig) {
+      // Require main.py as entry point
+      const mainPy = validatedFiles.find((f) => {
+        const fileName = f.name.split('/').pop() || f.name;
+        return fileName === 'main.py';
+      });
+      if (!mainPy) {
+        return error('GPU functions require a main.py file', 400);
+      }
+
+      // Extract function names from test_fixture.json if available
+      const testFixtureFile = validatedFiles.find((f) => {
+        const fileName = f.name.split('/').pop() || f.name;
+        return fileName === 'test_fixture.json';
+      });
+      let gpuExports: string[] = ['main'];
+      if (testFixtureFile) {
+        try {
+          const fixture = JSON.parse(testFixtureFile.content);
+          if (typeof fixture === 'object' && fixture !== null) {
+            gpuExports = Object.keys(fixture);
+          }
+        } catch {
+          // Invalid test fixture JSON is non-fatal — use default
+        }
+      }
+
+      // Build logs
+      const buildLogs: BuildLogEntry[] = [];
+      const log = (level: BuildLogEntry['level'], message: string) => {
+        buildLogs.push({ time: new Date().toISOString(), level, message });
+      };
+
+      log('info', `GPU function detected: ${gpuConfig.gpu_type}`);
+      log('info', `Python version: ${gpuConfig.python || '3.11'}`);
+      log('info', `Files: ${validatedFiles.length}`);
+
+      // Generate app ID and version
+      const appId = crypto.randomUUID();
+      const version = '1.0.0';
+      const slug = generateSlug(validatedFiles.find((f) => f.name === 'package.json')?.content);
+      const appName = providedName || slug;
+      const appDescription = providedDescription || null;
+
+      // Initialize services
+      const r2Service = createR2Service();
+      const appsService = createAppsService();
+
+      // Normalize file names (reuse existing logic)
+      const normalizeFileName = (name: string): string => {
+        const parts = name.split('/');
+        if (parts.length > 1) {
+          const firstPart = validatedFiles[0]?.name.split('/')[0];
+          const allSameRoot = validatedFiles.every(f => f.name.startsWith(firstPart + '/'));
+          if (allSameRoot && parts[0] === firstPart) {
+            return parts.slice(1).join('/');
+          }
+        }
+        return name;
+      };
+
+      // Prepare files for upload (raw, no bundling)
+      const filesToUpload = validatedFiles.map(f => ({
+        name: normalizeFileName(f.name),
+        content: new TextEncoder().encode(f.content),
+        contentType: getContentType(f.name),
+      }));
+
+      // Check app count limit
+      const appLimitErr = await checkAppLimit(userId);
+      if (appLimitErr) {
+        throw new Error(appLimitErr);
+      }
+
+      // Check storage quota
+      const totalUploadBytes = filesToUpload.reduce((sum, f) => sum + f.content.byteLength, 0);
+      const quotaCheck = await checkStorageQuota(userId, totalUploadBytes);
+      if (!quotaCheck.allowed) {
+        throw new Error(
+          `Storage limit exceeded. Using ${formatBytes(quotaCheck.used_bytes)} of ${formatBytes(quotaCheck.limit_bytes)}. ` +
+          `This upload requires ${formatBytes(totalUploadBytes)}, but only ${formatBytes(quotaCheck.remaining_bytes)} remaining.`
+        );
+      }
+
+      // Upload raw files to R2 (no bundling for GPU functions)
+      log('info', 'Uploading GPU function files to storage...');
+      const storageKey = `apps/${appId}/${version}/`;
+      await r2Service.uploadFiles(storageKey, filesToUpload);
+      log('success', 'Upload complete');
+
+      // Create app record with GPU fields
+      log('info', 'Creating app record...');
+      await appsService.create({
+        id: appId,
+        owner_id: userId,
+        slug,
+        name: appName,
+        description: appDescription,
+        storage_key: storageKey,
+        exports: gpuExports,
+        manifest: manifest ? JSON.stringify(manifest) : null,
+        app_type: null,
+        // GPU-specific fields
+        runtime: 'gpu',
+        gpu_type: gpuConfig.gpu_type,
+        gpu_status: 'building',
+        gpu_config: gpuConfig as unknown as Record<string, unknown>,
+        gpu_max_duration_ms: gpuConfig.max_duration_ms || null,
+        gpu_concurrency_limit: 5,
+      });
+      log('success', 'App record created with gpu_status: building');
+
+      // Fire-and-forget: trigger async container build
+      import('../services/gpu/builder.ts').then(({ triggerGpuBuild }) => {
+        triggerGpuBuild(appId, version, validatedFiles.map(f => ({
+          name: normalizeFileName(f.name),
+          content: f.content,
+        })), gpuConfig!).catch(err =>
+          console.error(`[GPU-BUILD] Build failed for ${appId}:`, err)
+        );
+      }).catch(err => console.error('[GPU-BUILD] Import failed:', err));
+
+      // Record storage usage (fire-and-forget)
+      recordUploadStorage(userId, appId, version, totalUploadBytes).catch(err =>
+        console.error('[STORAGE] recordUploadStorage failed:', err)
+      );
+
+      log('success', 'GPU build triggered in background');
+
+      const response: UploadResponse = {
+        app_id: appId,
+        slug,
+        version,
+        url: `/a/${appId}`,
+        exports: gpuExports,
+        build_success: true,
+        build_logs: buildLogs,
+      };
+
+      return json(response, 201);
+    }
+    // --- END GPU UPLOAD BRANCH ---
 
     // Override manifest with form fields if provided (form fields take precedence)
     // This allows users to specify entry points without creating a manifest.json

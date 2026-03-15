@@ -85,3 +85,13 @@ export type {
 
 // RunPod implementation (for direct access / testing)
 export { RunPodProvider } from './runpod.ts';
+
+// Config parser (Phase 2A)
+export { detectGpuConfig, parseGpuConfig } from './config.ts';
+export type { GpuConfigValidation } from './config.ts';
+
+// Container builder (Phase 2C)
+export { triggerGpuBuild, generateDockerfile } from './builder.ts';
+
+// Benchmark pipeline (Phase 2E)
+export { startGpuBuildProcessorJob, computeBenchmarkStats } from './benchmark.ts';
