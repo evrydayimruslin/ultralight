@@ -5266,6 +5266,7 @@ async function executeDiscoverInspect(
   });
 
   // ── 8. App metadata ──
+  const appRuntime = (app as Record<string, unknown>).runtime as string | null;
   const metadata = {
     app_id: app.id,
     name: app.name,
@@ -5283,7 +5284,31 @@ async function executeDiscoverInspect(
     health_status: app.health_status,
     created_at: app.created_at,
     updated_at: app.updated_at,
+    // GPU runtime metadata
+    runtime: appRuntime || 'deno',
+    ...(appRuntime === 'gpu' ? {
+      gpu_type: (app as Record<string, unknown>).gpu_type,
+      gpu_status: (app as Record<string, unknown>).gpu_status,
+      gpu_benchmark: (app as Record<string, unknown>).gpu_benchmark,
+      gpu_pricing_config: (app as Record<string, unknown>).gpu_pricing_config,
+      gpu_max_duration_ms: (app as Record<string, unknown>).gpu_max_duration_ms,
+      gpu_concurrency_limit: (app as Record<string, unknown>).gpu_concurrency_limit,
+    } : {}),
   };
+
+  // ── 9. GPU pricing & reliability (GPU apps only) ──
+  let gpuPricing: Record<string, unknown> | null = null;
+  let gpuReliability: Record<string, unknown> | null = null;
+  if (appRuntime === 'gpu') {
+    try {
+      const { formatGpuPricing } = await import('../services/gpu/pricing-display.ts');
+      gpuPricing = formatGpuPricing(app) as unknown as Record<string, unknown>;
+    } catch { /* GPU module not available */ }
+    try {
+      const { getGpuReliability } = await import('../services/gpu/reliability.ts');
+      gpuReliability = await getGpuReliability(app.id) as unknown as Record<string, unknown>;
+    } catch { /* GPU module not available */ }
+  }
 
   return {
     metadata: metadata,
@@ -5298,11 +5323,14 @@ async function executeDiscoverInspect(
     skills_md: skillsMd,
     cached_summary: cachedSummary,
     suggested_queries: suggestedQueries,
+    gpu_pricing: gpuPricing,
+    gpu_reliability: gpuReliability,
     tips: [
       `Call functions via: ul.call({ app_id: "${app.id}", function_name: "...", args: {...} })`,
       cachedSummary ? 'This app has a cached summary from a previous agent session — review it for context.' : null,
       storageBackend === 'kv' ? 'KV storage detected. Use the app\'s query/get functions to load data.' : null,
       isOwner ? 'You own this app. You can upload new versions, set permissions, and view all caller logs.' : null,
+      appRuntime === 'gpu' ? `GPU function running on ${(app as Record<string, unknown>).gpu_type}. Calls are billed per-execution.` : null,
     ].filter(Boolean),
   };
 }

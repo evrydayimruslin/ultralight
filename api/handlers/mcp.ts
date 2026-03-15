@@ -1047,6 +1047,32 @@ async function handleToolsList(
   // Add SDK tools (always included)
   tools.push(...SDK_TOOLS);
 
+  // ── GPU tool enrichment ──
+  // If this is a GPU app, annotate tools with cost + latency hints
+  if ((app as Record<string, unknown>).runtime === 'gpu') {
+    const gpuType = (app as Record<string, unknown>).gpu_type as string || 'GPU';
+    const benchmark = (app as Record<string, unknown>).gpu_benchmark as Record<string, unknown> | null;
+
+    for (const tool of tools) {
+      // Skip SDK tools
+      if (tool.name.startsWith('ultralight.')) continue;
+
+      // Add GPU context to description
+      const avgMs = benchmark?.mean_ms as number | undefined;
+      const avgDisplay = avgMs ? `~${(avgMs / 1000).toFixed(1)}s` : 'variable';
+      const gpuSuffix = `\n\n⚡ GPU function (${gpuType}, ${avgDisplay})`;
+      tool.description = (tool.description || '') + gpuSuffix;
+
+      // Set annotations: GPU tools are never read-only, not idempotent, open-world
+      tool.annotations = {
+        ...tool.annotations,
+        readOnlyHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      };
+    }
+  }
+
   const result: MCPToolsListResponse = {
     tools,
     // No pagination for now

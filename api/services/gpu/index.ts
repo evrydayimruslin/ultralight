@@ -107,3 +107,11 @@ export type { GpuSlot } from './concurrency.ts';
 // Billing (Phase 3C)
 export { computeGpuCallCost, settleGpuExecution, estimateMaxGpuCost, extractUnitCount } from './billing.ts';
 export type { GpuCostBreakdown, GpuSettlementResult } from './billing.ts';
+
+// Pricing display (Phase 4A)
+export { formatGpuPricing, formatGpuCostEstimate } from './pricing-display.ts';
+export type { GpuPricingDisplay } from './pricing-display.ts';
+
+// Reliability (Phase 4B)
+export { getGpuReliability, refreshGpuReliabilityView } from './reliability.ts';
+export type { GpuReliabilityStats } from './reliability.ts';

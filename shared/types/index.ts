@@ -529,6 +529,47 @@ export function getFreeCallsScope(
 }
 
 // ============================================
+// GPU PRICING HELPERS
+// ============================================
+
+/**
+ * Get the GPU pricing display mode for an app.
+ * Returns null if no GPU pricing is configured.
+ */
+export function getGpuPricingMode(
+  gpuPricingConfig: Record<string, unknown> | null | undefined,
+): 'per_call' | 'per_unit' | 'per_duration' | null {
+  if (!gpuPricingConfig) return null;
+  const mode = gpuPricingConfig.mode;
+  if (mode === 'per_call' || mode === 'per_unit' || mode === 'per_duration') {
+    return mode;
+  }
+  return null;
+}
+
+/**
+ * Get a human-readable label for the GPU pricing unit.
+ * Returns "call" for per_call, the unit_label for per_unit, "second" for per_duration.
+ */
+export function getGpuPricingUnitLabel(
+  gpuPricingConfig: Record<string, unknown> | null | undefined,
+): string {
+  if (!gpuPricingConfig) return 'call';
+  switch (gpuPricingConfig.mode) {
+    case 'per_call':
+      return 'call';
+    case 'per_unit':
+      return (typeof gpuPricingConfig.unit_label === 'string'
+        ? gpuPricingConfig.unit_label
+        : 'unit');
+    case 'per_duration':
+      return 'second';
+    default:
+      return 'call';
+  }
+}
+
+// ============================================
 // CONTENT LAYER (unified content index)
 // ============================================
 

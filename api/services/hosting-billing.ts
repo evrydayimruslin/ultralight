@@ -13,6 +13,7 @@
 const Deno = globalThis.Deno;
 
 import { HOSTING_RATE_CENTS_PER_MB_PER_HOUR, DATA_RATE_CENTS_PER_MB_PER_HOUR, COMBINED_FREE_TIER_BYTES } from '../../shared/types/index.ts';
+import { refreshGpuReliabilityView } from './gpu/reliability.ts';
 
 const RATE_CENTS_PER_MB_PER_HOUR = HOSTING_RATE_CENTS_PER_MB_PER_HOUR;
 const DATA_RATE = DATA_RATE_CENTS_PER_MB_PER_HOUR;
@@ -594,6 +595,13 @@ export function startHostingBillingJob(): void {
       await processHostingBilling();
     } catch (err) {
       console.error('[BILLING] Scheduled billing failed:', err);
+    }
+
+    // Refresh GPU reliability materialized view (fire-and-forget)
+    try {
+      await refreshGpuReliabilityView();
+    } catch (err) {
+      console.error('[GPU-RELIABILITY] Hourly refresh failed:', err);
     }
   }, INTERVAL_MS);
 }

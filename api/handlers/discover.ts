@@ -52,6 +52,10 @@ interface AppRow {
   hosting_suspended?: boolean;
   category?: string | null;
   featured_at?: string | null;
+  // GPU fields
+  runtime?: string | null;
+  gpu_type?: string | null;
+  gpu_status?: string | null;
 }
 
 interface ScoredApp {
@@ -69,6 +73,9 @@ interface ScoredApp {
   runs_30d: number;
   fully_native: boolean;
   is_owner?: boolean;
+  // GPU metadata
+  runtime?: string;
+  gpu_type?: string | null;
 }
 
 const DISCOVER_VERSION = '1.1.0';
@@ -353,6 +360,7 @@ async function handleFeatured(request: Request, url: URL): Promise<Response> {
 async function handleMarketplace(request: Request, url: URL): Promise<Response> {
   const query = url.searchParams.get('q') || '';
   const typeFilter = url.searchParams.get('type') || 'all'; // all | apps | skills
+  const runtimeFilter = url.searchParams.get('runtime') || 'all'; // all | gpu | deno
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '20', 10), 50);
 
   if (query && query.length < 2) {
@@ -438,6 +446,8 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
         runs_30d: a.runs_30d ?? 0,
         fully_native: perUserEntries.length === 0,
         had_external_db: !!a.had_external_db,
+        runtime: a.runtime || 'deno',
+        gpu_type: a.gpu_type || null,
       };
     }
 
@@ -446,16 +456,25 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
     if (includeApps) {
       try {
         const overFetchLimit = limit * 5 + blockedAppIds.size + 10;
-        const topRes = await fetch(
+        let browseQuery =
           `${supabaseUrl}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&hosting_suspended=eq.false` +
-          `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,runs_30d,category,featured_at,had_external_db` +
+          `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,runs_30d,category,featured_at,had_external_db,runtime,gpu_type,gpu_status` +
           `&order=weighted_likes.desc,likes.desc,runs_30d.desc` +
-          `&limit=${overFetchLimit}`,
-          { headers: dbHeaders }
-        );
+          `&limit=${overFetchLimit}`;
+        // Runtime filter
+        if (runtimeFilter === 'gpu') {
+          browseQuery += `&runtime=eq.gpu&gpu_status=eq.live`;
+        } else if (runtimeFilter === 'deno') {
+          browseQuery += `&or=(runtime.is.null,runtime.eq.deno)`;
+        }
+        const topRes = await fetch(browseQuery, { headers: dbHeaders });
         if (topRes.ok) {
           const raw = await topRes.json() as AppRow[];
-          allApps = raw.filter(a => !blockedAppIds.has(a.id));
+          allApps = raw.filter(a =>
+            !blockedAppIds.has(a.id) &&
+            // Exclude non-live GPU apps from marketplace
+            !(a.runtime === 'gpu' && a.gpu_status !== 'live')
+          );
         } else {
           console.error('[MARKETPLACE] Apps query failed:', topRes.status, await topRes.text());
         }
@@ -584,6 +603,9 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
       fully_native?: boolean;
       had_external_db?: boolean;
       tags?: string[];
+      // GPU metadata
+      runtime?: string;
+      gpu_type?: string | null;
     }
 
     const scored: MarketplaceResult[] = [];
@@ -620,12 +642,12 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
           // Fetch env schemas + metadata
           const appIds = filteredApps.map(r => r.id);
           let envSchemas = new Map<string, Record<string, EnvSchemaEntry>>();
-          let appMeta = new Map<string, { weighted_likes: number; weighted_dislikes: number; runs_30d: number; had_external_db: boolean }>();
+          let appMeta = new Map<string, { weighted_likes: number; weighted_dislikes: number; runs_30d: number; had_external_db: boolean; runtime?: string | null; gpu_type?: string | null; gpu_status?: string | null }>();
 
           if (appIds.length > 0) {
             try {
               const metaRes = await fetch(
-                `${supabaseUrl}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,env_schema,weighted_likes,weighted_dislikes,runs_30d,likes,dislikes,had_external_db`,
+                `${supabaseUrl}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,env_schema,weighted_likes,weighted_dislikes,runs_30d,likes,dislikes,had_external_db,runtime,gpu_type,gpu_status`,
                 { headers: dbHeaders }
               );
               if (metaRes.ok) {
@@ -637,6 +659,9 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
                     weighted_dislikes: row.weighted_dislikes ?? 0,
                     runs_30d: row.runs_30d ?? 0,
                     had_external_db: !!row.had_external_db,
+                    runtime: row.runtime,
+                    gpu_type: row.gpu_type,
+                    gpu_status: row.gpu_status,
                   });
                 }
               }
@@ -645,6 +670,16 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
 
           for (const r of filteredApps) {
             const rr = r as AppRow & { similarity: number };
+            const meta = appMeta.get(rr.id);
+
+            // Exclude non-live GPU apps from search results
+            if (meta?.runtime === 'gpu' && meta?.gpu_status !== 'live') continue;
+
+            // Apply runtime filter
+            const appRuntime = meta?.runtime || 'deno';
+            if (runtimeFilter === 'gpu' && appRuntime !== 'gpu') continue;
+            if (runtimeFilter === 'deno' && appRuntime === 'gpu') continue;
+
             const schema = envSchemas.get(rr.id) || {};
             const perUserEntries = Object.entries(schema).filter(([, v]) => v.scope === 'per_user');
             const requiredPerUser = perUserEntries.filter(([, v]) => v.required);
@@ -658,7 +693,6 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
               nativeBoost = 0.0;
             }
 
-            const meta = appMeta.get(rr.id);
             const wLikes = meta?.weighted_likes ?? 0;
             const wDislikes = meta?.weighted_dislikes ?? 0;
             const likeSignal = wLikes / (wLikes + wDislikes + 1);
@@ -677,6 +711,8 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
               runs_30d: meta?.runs_30d ?? 0,
               fully_native: perUserEntries.length === 0,
               had_external_db: meta?.had_external_db ?? false,
+              runtime: appRuntime,
+              gpu_type: meta?.gpu_type || null,
             });
           }
         } catch { /* best effort */ }
@@ -743,18 +779,24 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
       try {
         // Use ilike for keyword matching on name and description
         const escapedQuery = query.replace(/%/g, '\\%').replace(/_/g, '\\_');
-        const keywordRes = await fetch(
+        let keywordQuery =
           `${supabaseUrl}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&hosting_suspended=eq.false` +
           `&or=(name.ilike.*${encodeURIComponent(escapedQuery)}*,description.ilike.*${encodeURIComponent(escapedQuery)}*)` +
-          `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,runs_30d,had_external_db` +
+          `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,runs_30d,had_external_db,runtime,gpu_type,gpu_status` +
           `&order=weighted_likes.desc,likes.desc` +
-          `&limit=${overFetchLimit}`,
-          { headers: dbHeaders }
-        );
+          `&limit=${overFetchLimit}`;
+        if (runtimeFilter === 'gpu') {
+          keywordQuery += `&runtime=eq.gpu&gpu_status=eq.live`;
+        } else if (runtimeFilter === 'deno') {
+          keywordQuery += `&or=(runtime.is.null,runtime.eq.deno)`;
+        }
+        const keywordRes = await fetch(keywordQuery, { headers: dbHeaders });
         if (keywordRes.ok) {
           const rows = await keywordRes.json() as AppRow[];
           for (const a of rows) {
             if (blockedAppIds.has(a.id) || scoredAppIds.has(a.id)) continue;
+            // Exclude non-live GPU apps
+            if (a.runtime === 'gpu' && a.gpu_status !== 'live') continue;
             const schema = a.env_schema || {};
             const perUserEntries = Object.entries(schema).filter(([, v]) => v.scope === 'per_user');
             scored.push({
@@ -770,6 +812,8 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
               runs_30d: a.runs_30d ?? 0,
               fully_native: perUserEntries.length === 0,
               had_external_db: !!a.had_external_db,
+              runtime: a.runtime || 'deno',
+              gpu_type: a.gpu_type || null,
             });
           }
         }
