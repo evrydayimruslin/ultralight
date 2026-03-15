@@ -63,15 +63,25 @@ export function computeGpuCallCost(
   args: Record<string, unknown>,
   gpuResult: GpuExecuteResult,
 ): GpuCostBreakdown {
-  const computeCostCents = gpuResult.gpuCostCents;
+  const pricingConfig = app.gpu_pricing_config as GpuPricingConfig | null;
   const developerFeeCents = computeDeveloperFee(app, functionName, args, gpuResult);
+
+  // For per_duration mode, compute cost is embedded in the developer fee
+  // (the developer passes through compute to the caller as their fee).
+  // For per_call/per_unit, compute is a separate platform cost.
+  const isPassThrough = pricingConfig?.mode === 'per_duration';
+  const computeCostCents = isPassThrough ? 0 : gpuResult.gpuCostCents;
   const totalCostCents = computeCostCents + developerFeeCents;
 
   return {
     computeCostCents,
     developerFeeCents,
     totalCostCents,
-    ownerRevenueCents: developerFeeCents, // Platform keeps compute, owner gets dev fee
+    // MVP billing: full total is transferred to owner via transfer_balance.
+    // Platform recoups compute portion at Stripe payout time (same model as
+    // delivery-app marketplaces where restaurant receives full order value
+    // and platform takes commission at settlement).
+    ownerRevenueCents: totalCostCents,
   };
 }
 
@@ -114,9 +124,10 @@ export function estimateMaxGpuCost(
         break;
       }
       case 'per_duration':
-        // Worst case: max duration compute + markup
+        // Per-duration: compute is passed through as the developer fee.
+        // maxDevFee = compute pass-through + markup (compute NOT added again below).
         maxDevFee = maxComputeCents + (pricingConfig.duration_markup_cents ?? 0);
-        break;
+        return maxDevFee; // Return directly — compute is already in the dev fee
     }
   }
 
@@ -157,9 +168,17 @@ export async function settleGpuExecution(
         failurePolicy = 'full_charge';
         chargeableCents = breakdown.totalCostCents;
       } else {
-        // oom, timeout, exception — compute only, no developer fee
+        // oom, timeout, exception — developer earns nothing on failure.
+        // Compute cost is absorbed by platform for MVP (we lack a platform
+        // revenue account for the second transfer_balance call). This is
+        // acceptable because the 10-13× markup on GPU rates means the
+        // platform's cost is ~8-10% of the displayed compute rate.
         failurePolicy = 'compute_only';
-        chargeableCents = breakdown.computeCostCents;
+        chargeableCents = 0;
+        console.log(
+          `[GPU-BILLING] Absorbed compute cost ${breakdown.computeCostCents.toFixed(4)}¢ ` +
+            `for failed ${gpuResult.exitCode} on ${app.id}.${functionName}`,
+        );
       }
       break;
     case 'non_chargeable':
@@ -167,9 +186,9 @@ export async function settleGpuExecution(
       chargeableCents = 0;
       break;
     case 'partial':
-      // Not currently used but handle gracefully
+      // Not currently used — treat same as compute_only (absorb)
       failurePolicy = 'compute_only';
-      chargeableCents = breakdown.computeCostCents;
+      chargeableCents = 0;
       break;
   }
 

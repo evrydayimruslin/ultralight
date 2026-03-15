@@ -12,6 +12,7 @@ import { executeInSandbox, type UserContext } from '../runtime/sandbox.ts';
 import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
 import { executeGpuFunction } from '../services/gpu/executor.ts';
 import { acquireGpuSlot } from '../services/gpu/concurrency.ts';
+import { settleGpuExecution } from '../services/gpu/billing.ts';
 import { getUserTier } from '../services/tier-enforcement.ts';
 
 // @ts-ignore - Deno is available in Deno Deploy
@@ -321,7 +322,21 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
         });
         const gpuDurationMs = Date.now() - startTime;
 
-        // Log (fire-and-forget, no billing for HTTP)
+        // Settle billing (if authenticated caller !== owner)
+        let gpuCallChargeCents = 0;
+        if (user && user.id !== app.owner_id) {
+          const settlement = await settleGpuExecution(
+            user.id, app, functionName,
+            { request: ultralightRequest },
+            gpuResult,
+          );
+          if (settlement.insufficientBalance) {
+            return json({ error: settlement.insufficientBalanceMessage }, 402);
+          }
+          gpuCallChargeCents = settlement.chargedCents;
+        }
+
+        // Log (fire-and-forget)
         const { logMcpCall: logHttpGpuCall } = await import('../services/call-logger.ts');
         logHttpGpuCall({
           userId: app.owner_id,

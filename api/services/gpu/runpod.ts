@@ -170,7 +170,7 @@ export class RunPodProvider implements GPUProvider {
       scalerType: 'QUEUE_DELAY',
       scalerValue: 4,
       workersMin: 0,
-      workersMax: config.max_duration_ms ? 5 : 5, // Default concurrency, configurable later
+      workersMax: 5, // Default concurrency, configurable later
       idleTimeout: 5,
       executionTimeoutMs: (config.max_duration_ms || 60_000) + COLD_START_BUFFER_MS,
     });
@@ -255,9 +255,9 @@ export class RunPodProvider implements GPUProvider {
           workers: endpoint.workers?.length || 0,
           queueDepth: 0,
         };
-      } catch {
+      } catch (innerErr) {
         // Both failed — endpoint probably doesn't exist
-        const errMsg = err instanceof Error ? err.message : String(err);
+        const errMsg = innerErr instanceof Error ? innerErr.message : String(innerErr);
         if (errMsg.includes('404') || errMsg.includes('Not Found')) {
           return { status: 'not_found', workers: 0, queueDepth: 0 };
         }
@@ -452,13 +452,22 @@ export class RunPodProvider implements GPUProvider {
     if (!error) return 'exception';
 
     const lower = error.toLowerCase();
-    if (lower.includes('out of memory') || lower.includes('oom') || lower.includes('cuda')) {
+    // OOM: match CUDA memory errors specifically, not all CUDA errors
+    if (
+      lower.includes('out of memory') ||
+      lower.includes('oom') ||
+      (lower.includes('cuda') && (lower.includes('memory') || lower.includes('alloc')))
+    ) {
       return 'oom';
     }
     if (lower.includes('timeout') || lower.includes('timed out')) {
       return 'timeout';
     }
+    // CUDA non-memory errors are infrastructure issues (driver, init, etc.)
     if (
+      lower.includes('cuda error') ||
+      lower.includes('cuda driver') ||
+      lower.includes('cuda init') ||
       lower.includes('container') ||
       lower.includes('worker') ||
       lower.includes('network') ||
@@ -544,8 +553,8 @@ export class RunPodProvider implements GPUProvider {
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
 
-        // Only retry on 5xx
-        const is5xx = lastError.message.includes('(5');
+        // Only retry on 5xx (match status codes like "(500)", "(502)", etc.)
+        const is5xx = /\(5\d{2}\)/.test(lastError.message);
         if (!is5xx || attempt === MAX_RETRIES) {
           throw lastError;
         }

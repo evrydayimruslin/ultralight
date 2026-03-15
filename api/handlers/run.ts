@@ -9,6 +9,8 @@ import { createAppsService } from '../services/apps.ts';
 import { createAppDataService } from '../services/appdata.ts';
 import { decryptEnvVars, decryptEnvVar } from '../services/envvars.ts';
 import { executeGpuFunction } from '../services/gpu/executor.ts';
+import { acquireGpuSlot } from '../services/gpu/concurrency.ts';
+import { settleGpuExecution } from '../services/gpu/billing.ts';
 
 // Decode JWT payload without verification (verification done by Supabase)
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
@@ -176,23 +178,53 @@ export async function handleRun(request: Request, appId: string): Promise<Respon
         );
       }
 
-      const gpuResult = await executeGpuFunction({
-        app,
-        functionName,
-        args: typeof args === 'object' && !Array.isArray(args)
-          ? args as Record<string, unknown>
-          : { _args: args },
-        executionId: crypto.randomUUID(),
-      });
+      // Acquire concurrency slot (429 if full after 5s wait)
+      let gpuSlot;
+      try {
+        gpuSlot = await acquireGpuSlot(app.gpu_endpoint_id!, app.gpu_concurrency_limit || 5);
+      } catch {
+        return json(
+          { success: false, error: { message: 'GPU function at capacity. Try again shortly.' } } as RunResponse,
+          429,
+        );
+      }
 
-      const gpuResponse: RunResponse = {
-        success: gpuResult.success,
-        result: gpuResult.result,
-        logs: gpuResult.logs,
-        duration_ms: gpuResult.durationMs,
-        error: gpuResult.error,
-      };
-      return json(gpuResponse);
+      try {
+        const gpuResult = await executeGpuFunction({
+          app,
+          functionName,
+          args: typeof args === 'object' && !Array.isArray(args)
+            ? args as Record<string, unknown>
+            : { _args: args },
+          executionId: crypto.randomUUID(),
+        });
+
+        // Settle billing (if caller !== owner)
+        if (userId !== app.owner_id) {
+          const settlement = await settleGpuExecution(
+            userId, app, functionName,
+            (typeof args === 'object' && !Array.isArray(args) ? args as Record<string, unknown> : {}),
+            gpuResult,
+          );
+          if (settlement.insufficientBalance) {
+            return json(
+              { success: false, error: { message: settlement.insufficientBalanceMessage! } } as RunResponse,
+              402,
+            );
+          }
+        }
+
+        const gpuResponse: RunResponse = {
+          success: gpuResult.success,
+          result: gpuResult.result,
+          logs: gpuResult.logs,
+          duration_ms: gpuResult.durationMs,
+          error: gpuResult.error,
+        };
+        return json(gpuResponse);
+      } finally {
+        gpuSlot.release();
+      }
     }
 
     // ── Deno Sandbox Path (existing, unchanged) ──

@@ -102,7 +102,7 @@ export function formatGpuPricing(app: App): GpuPricingDisplay {
 
     case 'per_duration': {
       const markup = pricingConfig.duration_markup_cents ?? 0;
-      const totalEstimate = estimatedComputeCents * 2 + markup; // 2× compute for safety margin
+      const totalEstimate = estimatedComputeCents + markup; // compute (pass-through) + markup
       return {
         mode_label: 'Per Duration',
         developer_fee: markup > 0
