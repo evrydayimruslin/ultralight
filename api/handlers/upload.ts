@@ -651,7 +651,7 @@ function extractExports(code: string): string[] {
 /**
  * Generate slug from package.json or fallback
  */
-function generateSlug(packageJson?: string): string {
+export function generateSlug(packageJson?: string): string {
   if (packageJson) {
     try {
       const pkg = JSON.parse(packageJson);

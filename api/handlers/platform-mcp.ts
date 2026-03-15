@@ -2064,6 +2064,10 @@ async function executeUpload(
     return { name: f.path, content, size: content.length };
   });
 
+  // ── GPU runtime detection ──
+  const { detectGpuConfig, parseGpuConfig } = await import('../services/gpu/config.ts');
+  const gpuYamlContent = detectGpuConfig(uploadFiles.map(f => ({ name: f.name, content: f.content })));
+
   if (appIdOrSlug) {
     // ── Existing app: new version (NOT live) ──
     const app = await resolveApp(userId, appIdOrSlug);
@@ -2074,6 +2078,90 @@ async function executeUpload(
       throw new ToolError(VALIDATION_ERROR, `Version ${newVersion} already exists. Use a different version.`);
     }
 
+    // ── GPU existing app version ──
+    if ((app as Record<string, unknown>).runtime === 'gpu' || gpuYamlContent) {
+      // Validate GPU config if present (new config overrides existing)
+      let gpuConfig: { gpu_type: string; python?: string; max_duration_ms?: number } | null = null;
+      if (gpuYamlContent) {
+        const gpuValidation = parseGpuConfig(gpuYamlContent);
+        if (!gpuValidation.valid) {
+          throw new ToolError(VALIDATION_ERROR, `Invalid ultralight.gpu.yaml: ${gpuValidation.errors.join(', ')}`);
+        }
+        gpuConfig = gpuValidation.config!;
+      }
+
+      // Require main.py for GPU apps
+      const hasMainPy = uploadFiles.some(f => {
+        const fileName = f.name.split('/').pop() || f.name;
+        return fileName === 'main.py';
+      });
+      if (!hasMainPy) {
+        throw new ToolError(VALIDATION_ERROR, 'GPU functions require a main.py file');
+      }
+
+      // Extract exports from test_fixture.json if available
+      let gpuExports: string[] = ['main'];
+      const testFixtureFile = uploadFiles.find(f => {
+        const fileName = f.name.split('/').pop() || f.name;
+        return fileName === 'test_fixture.json';
+      });
+      if (testFixtureFile) {
+        try {
+          const fixture = JSON.parse(testFixtureFile.content);
+          if (typeof fixture === 'object' && fixture !== null) {
+            gpuExports = Object.keys(fixture);
+          }
+        } catch { /* non-fatal */ }
+      }
+
+      // Upload raw files to R2 (no bundling for GPU)
+      const r2Service = createR2Service();
+      const storageKey = `apps/${app.id}/${newVersion}/`;
+      const validatedFiles = uploadFiles.map(f => ({ name: f.name, content: f.content }));
+      const filesToUpload = validatedFiles.map(f => ({
+        name: f.name,
+        content: new TextEncoder().encode(f.content),
+        contentType: f.name.endsWith('.py') ? 'text/x-python' : 'text/plain',
+      }));
+      await r2Service.uploadFiles(storageKey, filesToUpload);
+
+      // Update app: add version, optionally update GPU config
+      const appsService = createAppsService();
+      const versions = [...(app.versions || []), newVersion];
+      const updatePayload: Record<string, unknown> = { versions };
+      if (gpuConfig) {
+        updatePayload.gpu_type = gpuConfig.gpu_type;
+        updatePayload.gpu_config = gpuConfig;
+        updatePayload.gpu_status = 'building';
+        if (gpuConfig.max_duration_ms) updatePayload.gpu_max_duration_ms = gpuConfig.max_duration_ms;
+      } else {
+        updatePayload.gpu_status = 'building';
+      }
+      await appsService.update(app.id, updatePayload as Partial<App>);
+
+      // Fire-and-forget: trigger GPU build for new version
+      const buildConfig = gpuConfig || (app as Record<string, unknown>).gpu_config as { gpu_type: string; python?: string; max_duration_ms?: number; runtime: string };
+      import('../services/gpu/builder.ts').then(({ triggerGpuBuild }) => {
+        triggerGpuBuild(app.id, newVersion, validatedFiles, buildConfig as import('../services/gpu/types.ts').GpuConfig).catch(err =>
+          console.error(`[GPU-BUILD] Build failed for ${app.id}:`, err)
+        );
+      }).catch(err => console.error('[GPU-BUILD] Import failed:', err));
+
+      return {
+        app_id: app.id,
+        slug: app.slug,
+        version: newVersion,
+        live_version: app.current_version,
+        is_live: false,
+        exports: gpuExports,
+        runtime: 'gpu',
+        gpu_status: 'building',
+        gpu_type: gpuConfig?.gpu_type || (app as Record<string, unknown>).gpu_type,
+        message: `GPU version ${newVersion} uploaded. Container build started — gpu_status will transition to 'live' when ready. Use ul.set.version to make it live.`,
+      };
+    }
+
+    // ── Deno existing app version (original path) ──
     // Validate entry file
     const entryFiles = ['index.ts', 'index.tsx', 'index.js', 'index.jsx'];
     const hasEntry = uploadFiles.some(f => entryFiles.includes(f.name.split('/').pop() || f.name));
@@ -2156,7 +2244,123 @@ async function executeUpload(
       message: `Version ${newVersion} uploaded.${gapId ? ' Gap submission created for assessment.' : ''} Use ul.set.version to make it live.`,
     };
   } else {
-    // ── New app: create + v1.0.0 live ──
+    // ── New app ──
+
+    // ── GPU new app branch ──
+    if (gpuYamlContent) {
+      const gpuValidation = parseGpuConfig(gpuYamlContent);
+      if (!gpuValidation.valid) {
+        throw new ToolError(VALIDATION_ERROR, `Invalid ultralight.gpu.yaml: ${gpuValidation.errors.join(', ')}`);
+      }
+      const gpuConfig = gpuValidation.config!;
+
+      // Require main.py
+      const hasMainPy = uploadFiles.some(f => {
+        const fileName = f.name.split('/').pop() || f.name;
+        return fileName === 'main.py';
+      });
+      if (!hasMainPy) {
+        throw new ToolError(VALIDATION_ERROR, 'GPU functions require a main.py file');
+      }
+
+      // Extract exports from test_fixture.json
+      let gpuExports: string[] = ['main'];
+      const testFixtureFile = uploadFiles.find(f => {
+        const fileName = f.name.split('/').pop() || f.name;
+        return fileName === 'test_fixture.json';
+      });
+      if (testFixtureFile) {
+        try {
+          const fixture = JSON.parse(testFixtureFile.content);
+          if (typeof fixture === 'object' && fixture !== null) {
+            gpuExports = Object.keys(fixture);
+          }
+        } catch { /* non-fatal */ }
+      }
+
+      // Generate app identity
+      const appId = crypto.randomUUID();
+      const version = '1.0.0';
+      const { generateSlug } = await import('./upload.ts');
+      const slug = generateSlug();
+      const appName = (args.name as string) || slug;
+      const appDescription = (args.description as string) || null;
+
+      // Check limits
+      const { checkAppLimit } = await import('../services/tier-enforcement.ts');
+      const appLimitErr = await checkAppLimit(userId);
+      if (appLimitErr) throw new ToolError(VALIDATION_ERROR, appLimitErr);
+
+      const { checkStorageQuota, recordUploadStorage } = await import('../services/storage-quota.ts');
+      const validatedFiles = uploadFiles.map(f => ({ name: f.name, content: f.content }));
+      const totalUploadBytes = validatedFiles.reduce((sum, f) => sum + new TextEncoder().encode(f.content).byteLength, 0);
+      const quotaCheck = await checkStorageQuota(userId, totalUploadBytes);
+      if (!quotaCheck.allowed) {
+        throw new ToolError(VALIDATION_ERROR, `Storage limit exceeded. This upload requires ${totalUploadBytes} bytes but only ${quotaCheck.remaining_bytes} remaining.`);
+      }
+
+      // Upload raw files to R2 (no bundling)
+      const r2Service = createR2Service();
+      const storageKey = `apps/${appId}/${version}/`;
+      const filesToUpload = validatedFiles.map(f => ({
+        name: f.name,
+        content: new TextEncoder().encode(f.content),
+        contentType: f.name.endsWith('.py') ? 'text/x-python' : 'text/plain',
+      }));
+      await r2Service.uploadFiles(storageKey, filesToUpload);
+
+      // Create app record with GPU fields
+      const appsService = createAppsService();
+      await appsService.create({
+        id: appId,
+        owner_id: userId,
+        slug,
+        name: appName,
+        description: appDescription,
+        storage_key: storageKey,
+        exports: gpuExports,
+        manifest: null,
+        app_type: null,
+        runtime: 'gpu',
+        gpu_type: gpuConfig.gpu_type,
+        gpu_status: 'building',
+        gpu_config: gpuConfig as unknown as Record<string, unknown>,
+        gpu_max_duration_ms: gpuConfig.max_duration_ms || null,
+        gpu_concurrency_limit: 5,
+      });
+
+      // Fire-and-forget: trigger GPU build
+      import('../services/gpu/builder.ts').then(({ triggerGpuBuild }) => {
+        triggerGpuBuild(appId, version, validatedFiles, gpuConfig as import('../services/gpu/types.ts').GpuConfig).catch(err =>
+          console.error(`[GPU-BUILD] Build failed for ${appId}:`, err)
+        );
+      }).catch(err => console.error('[GPU-BUILD] Import failed:', err));
+
+      // Record storage usage (fire-and-forget)
+      recordUploadStorage(userId, appId, version, totalUploadBytes).catch(err =>
+        console.error('[STORAGE] recordUploadStorage failed:', err)
+      );
+
+      // Rebuild library for new app
+      rebuildUserLibrary(userId).catch(err => console.error('Library rebuild failed:', err));
+
+      return {
+        app_id: appId,
+        slug,
+        version,
+        live_version: version,
+        is_live: false,
+        exports: gpuExports,
+        runtime: 'gpu',
+        gpu_status: 'building',
+        gpu_type: gpuConfig.gpu_type,
+        url: `/a/${appId}`,
+        mcp_endpoint: `/mcp/${appId}`,
+        message: `GPU app created. Container build started on ${gpuConfig.gpu_type} — gpu_status will transition to 'live' when ready. The app is not callable until the build completes.`,
+      };
+    }
+
+    // ── Deno new app (original path) ──
     const gapId = args.gap_id as string | undefined;
     const result = await handleUploadFiles(userId, uploadFiles, {
       name: args.name as string,
@@ -5499,6 +5703,7 @@ async function executeDiscoverLibrary(
   let appResults: Array<{
     id: string; name: string; slug: string; description: string | null;
     similarity: number; source: string; type: string; mcp_endpoint: string;
+    runtime?: string; gpu_type?: string | null;
   }> = [];
 
   if (searchApps) {
@@ -5526,6 +5731,8 @@ async function executeDiscoverLibrary(
       source: r.owner_id === userId ? 'owned' : 'saved',
       type: 'app',
       mcp_endpoint: `/mcp/${r.id}`,
+      runtime: r.runtime || 'deno',
+      gpu_type: r.runtime === 'gpu' ? (r as Record<string, unknown>).gpu_type as string : undefined,
     }));
   }
 
@@ -5608,6 +5815,8 @@ async function executeDiscoverLibrary(
             source: 'appstore' as string,
             type: r.type,
             ...(r.mcp_endpoint ? { mcp_endpoint: r.mcp_endpoint } : {}),
+            ...((r as Record<string, unknown>).runtime ? { runtime: (r as Record<string, unknown>).runtime as string } : {}),
+            ...((r as Record<string, unknown>).gpu_type ? { gpu_type: (r as Record<string, unknown>).gpu_type as string } : {}),
             ...(r.url ? { url: r.url } : {}),
             ...(r.tags ? { tags: r.tags } : {}),
           }));
@@ -5634,6 +5843,8 @@ async function executeDiscoverLibrary(
       source: r.source,
       type: r.type,
       ...(r.type === 'app' && 'mcp_endpoint' in r ? { mcp_endpoint: (r as typeof appResults[0]).mcp_endpoint } : {}),
+      ...(r.type === 'app' && 'runtime' in r ? { runtime: (r as typeof appResults[0]).runtime } : {}),
+      ...(r.type === 'app' && 'gpu_type' in r && (r as typeof appResults[0]).gpu_type ? { gpu_type: (r as typeof appResults[0]).gpu_type } : {}),
       ...(r.type === 'page' && 'owner_id' in r && (r as { owner_id?: string }).owner_id ? { url: `/p/${(r as { owner_id: string }).owner_id}/${r.slug}` } : {}),
       ...('url' in r && r.url ? { url: r.url } : {}),
       ...('tags' in r && r.tags ? { tags: r.tags } : {}),
@@ -5692,7 +5903,7 @@ async function executeDiscoverAppstore(
     const overFetchLimit = limit + blockedAppIds.size + 5; // over-fetch to cover filtered-out blocks
     const topRes = await fetch(
       `${SUPABASE_URL}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&hosting_suspended=eq.false` +
-      `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,runs_30d` +
+      `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,runs_30d,runtime,gpu_type,gpu_status` +
       `&order=weighted_likes.desc,likes.desc,runs_30d.desc` +
       `&limit=${overFetchLimit}`,
       { headers }
@@ -5702,8 +5913,11 @@ async function executeDiscoverAppstore(
     }
     const topApps = await topRes.json() as Array<App & { weighted_likes: number; weighted_dislikes: number; env_schema: Record<string, EnvSchemaEntry> | null }>;
 
-    // Filter blocked, truncate to limit
-    const filtered = topApps.filter(a => !blockedAppIds.has(a.id)).slice(0, limit);
+    // Filter blocked + non-live GPU apps, truncate to limit
+    const filtered = topApps.filter(a =>
+      !blockedAppIds.has(a.id) &&
+      !(a.runtime === 'gpu' && (a as Record<string, unknown>).gpu_status !== 'live')
+    ).slice(0, limit);
 
     // Fetch user connections for these apps
     const appIds = filtered.map(a => a.id);
@@ -5743,6 +5957,8 @@ async function executeDiscoverAppstore(
         mcp_endpoint: `/mcp/${a.id}`,
         likes: a.likes ?? 0,
         dislikes: a.dislikes ?? 0,
+        runtime: a.runtime || 'deno',
+        gpu_type: a.runtime === 'gpu' ? (a as Record<string, unknown>).gpu_type as string : undefined,
         required_secrets: requiredSecrets.length > 0 ? requiredSecrets : undefined,
         connected: connectedKeys.length > 0,
         fully_connected: requiredSecrets.length === 0 || missingRequired.length === 0,
@@ -5777,6 +5993,7 @@ async function executeDiscoverAppstore(
     finalScore: number; type: string;
     requiredSecrets?: Array<{ key: string; description: string | null; required: boolean }>;
     connected?: boolean; fullyConnected?: boolean; tags?: string[];
+    runtime?: string; gpu_type?: string | null;
   };
 
   let scored: ScoredResult[] = [];
@@ -5792,7 +6009,9 @@ async function executeDiscoverAppstore(
     );
 
     const filteredResults = results.filter(r =>
-      !blockedAppIds.has(r.id) && !(r as Record<string, unknown>).hosting_suspended
+      !blockedAppIds.has(r.id) &&
+      !(r as Record<string, unknown>).hosting_suspended &&
+      !(r.runtime === 'gpu' && (r as Record<string, unknown>).gpu_status !== 'live')
     );
 
     // Fetch env_schema and user connection status for re-ranking
@@ -5874,6 +6093,8 @@ async function executeDiscoverAppstore(
         dislikes: rr.dislikes ?? 0,
         finalScore: finalScore,
         type: 'app',
+        runtime: rr.runtime || 'deno',
+        gpu_type: rr.runtime === 'gpu' ? (rr as Record<string, unknown>).gpu_type as string : undefined,
         requiredSecrets: requiredSecrets,
         connected: connectedKeys.length > 0,
         fullyConnected: requiredSecrets.length === 0 || missingRequired.length === 0,
@@ -6054,6 +6275,8 @@ async function executeDiscoverAppstore(
       } : {}),
       likes: r.likes,
       dislikes: r.dislikes,
+      ...(r.runtime ? { runtime: r.runtime } : {}),
+      ...(r.gpu_type ? { gpu_type: r.gpu_type } : {}),
       ...(r.requiredSecrets && r.requiredSecrets.length > 0 ? { required_secrets: r.requiredSecrets } : {}),
       ...(r.connected !== undefined ? { connected: r.connected } : {}),
       ...(r.fullyConnected !== undefined ? { fully_connected: r.fullyConnected } : {}),
