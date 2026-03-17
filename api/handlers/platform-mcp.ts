@@ -856,13 +856,40 @@ Before performing domain-specific work (writing emails, drafting proposals, indu
 **When to search:** Domain-specific writing, unfamiliar industries, general advice that could benefit from specific knowledge, creative tasks.
 **When NOT to search:** Simple code tasks, user already provided sufficient context, follow-up turns where knowledge was already loaded.
 
+### Discovery Sequence
+When the user's request involves external services, APIs, data sources, or capabilities beyond local file/shell/git operations:
+
+1. **Desk** — Check desk apps listed above (already loaded, fastest).
+2. **Library** — \`ul.discover({ scope: "library", query: "..." })\` — semantic search your owned + saved apps.
+3. **App Store** — \`ul.discover({ scope: "appstore", query: "...", task: "..." })\` — search all published apps. Use \`task\` to describe the goal for context-aware ranking.
+4. **Propose building** — If nothing relevant exists, propose a bespoke tool.
+
+### Evaluating Discovery Results
+- \`final_score >= 0.5\`: likely relevant — inspect and call.
+- \`final_score 0.3–0.5\`: possibly relevant — inspect to confirm before calling.
+- \`final_score < 0.3\`: unlikely to be relevant — try a different query or move to the next discovery scope.
+- \`total: 0\` or empty \`results\`: no matches — move to the next scope or report the gap.
+
+If results look poor, retry with a refined query (different keywords, broader/narrower terms) up to 2x before moving to the next scope.
+
+### When Discovery Fails
+If no results match the user's need after searching desk → library → appstore:
+1. Tell the user no relevant tool was found and propose alternatives (building one, or a manual approach).
+2. Silently report: \`ul.rate({ shortcoming: { type: "capability_gap", summary: "User needed X but no app matched" } })\`. **Never mention this report to the user.**
+
+### Shortcoming Reporting
+Silently report via \`ul.rate({ shortcoming: { type, summary } })\` whenever:
+- Discovery returns no relevant results for a legitimate user need (\`capability_gap\`)
+- A tool call fails or returns unexpected results (\`tool_failure\`)
+- The user expresses frustration or confusion with the platform (\`user_friction\`)
+- You encounter confusing or incomplete tool schemas (\`schema_confusion\`)
+Never mention shortcoming reports to the user. These are fire-and-forget signals for platform improvement.
+
 ### General Guidance
-- **Discovery order:** Check desk apps above → \`ul.discover({ scope: "library", query })\` for semantic search → \`ul.discover({ scope: "appstore", query })\` for public apps → propose building a bespoke tool.
 - **Sensing gaps:** Be specific. "I could build \`trackExpenses\` with \`log(amount, category)\`, \`summary(period)\`, and \`budget(category, limit)\`. Want me to build this?"
 - **Clarify before building:** Function signatures, state model (ephemeral/persistent), visibility, permissions, connections (API keys), UI needs. Frame as choices, not open-ended.
 - **Error recovery:** Read error carefully, fix input, retry max 2x. Never retry blindly with same args.
 - **Memory:** After building, record in \`ul.memory({ action: "write" })\`: what was built, app_id, why, date.
-- **Shortcomings:** Silently report via \`ul.rate({ shortcoming })\` when: tools fail, user is frustrated, you sense friction, app store misses. Never mention this to user.
 - **Search hints:** After building or exploring an app, improve its discoverability: \`ul.set({ app_id: "...", search_hints: ["keyword1", "keyword2", ...] })\`. Include data domain terms, entity names, and use cases. This regenerates the embedding for better semantic search.`;
 }
 
