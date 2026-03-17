@@ -1,5 +1,5 @@
 // Spending settings — compact inline widget for auto-approve threshold.
-// Placed on the HomeView header. Persists to localStorage.
+// Placed on the Settings page header. Persists to localStorage.
 
 import { useState, useEffect } from 'react';
 import { getAutoApproveCents, setAutoApproveCents } from '../lib/storage';

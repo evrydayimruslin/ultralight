@@ -322,13 +322,13 @@ export default function NavSidebar({
         />
         <NavItem
           icon={DashboardIcon}
-          label="Dashboard"
+          label="Command"
           active={activeView.kind === 'home'}
           onClick={onNavigateHome}
         />
         <NavItem
           icon={CapabilitiesIcon}
-          label="Capabilities"
+          label="Tools"
           active={activeView.kind === 'capabilities'}
           onClick={onNavigateToCapabilities}
         />

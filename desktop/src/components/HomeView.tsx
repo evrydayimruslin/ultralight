@@ -1,4 +1,4 @@
-// Dashboard — tabbed view with Project (kanban), Agents (fleet), and Activity (event feed).
+// Command — tabbed view with Project (kanban), Agents (fleet), and Activity (event feed).
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
@@ -14,7 +14,6 @@ import ProjectDropdown from './ProjectDropdown';
 import KanbanBoard from './KanbanBoard';
 import CardDetailModal from './CardDetailModal';
 import CreateAgentModal from './CreateAgentModal';
-import SpendingSettings from './SpendingSettings';
 import SpendingApprovalModal from './SpendingApprovalModal';
 
 // ── Types ──
@@ -371,10 +370,9 @@ export default function HomeView({
       {/* Header */}
       <div className="flex items-center justify-between px-4 h-nav border-b border-ul-border flex-shrink-0">
         <div className="flex items-center gap-3">
-          <h1 className="text-h3 text-ul-text tracking-tight">Dashboard</h1>
+          <h1 className="text-h3 text-ul-text tracking-tight">Command</h1>
         </div>
         <div className="flex items-center gap-3">
-          <SpendingSettings />
           <ProjectDropdown
             selectedDir={selectedProjectDir}
             onSelect={onSelectProjectDir}

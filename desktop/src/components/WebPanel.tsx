@@ -9,9 +9,11 @@ interface WebPanelProps {
   path: string;
   /** Title shown in the header bar */
   title: string;
+  /** Optional extra content rendered in the header bar */
+  headerExtra?: React.ReactNode;
 }
 
-export default function WebPanel({ path, title }: WebPanelProps) {
+export default function WebPanel({ path, title, headerExtra }: WebPanelProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
@@ -39,6 +41,7 @@ export default function WebPanel({ path, title }: WebPanelProps) {
         <div className="flex items-center gap-3">
           <h1 className="text-h3 text-ul-text tracking-tight">{title}</h1>
         </div>
+        {headerExtra && <div className="flex items-center gap-3">{headerExtra}</div>}
       </div>
 
       {/* Content */}

@@ -10,6 +10,7 @@ import HomeView from './components/HomeView';
 import NavSidebar from './components/NavSidebar';
 import TopToolbar from './components/TopToolbar';
 import WebPanel from './components/WebPanel';
+import SpendingSettings from './components/SpendingSettings';
 
 /**
  * Pre-provision the user's OpenRouter key in the background.
@@ -152,7 +153,7 @@ export default function App() {
       );
       break;
     case 'capabilities':
-      content = <WebPanel path="/capabilities" title="Capabilities" />;
+      content = <WebPanel path="/capabilities" title="Tools" />;
       break;
     case 'profile':
       content = <WebPanel path="/my-profile" title="Profile" />;
@@ -161,7 +162,7 @@ export default function App() {
       content = <WebPanel path="/settings/billing" title="Wallet" />;
       break;
     case 'settings':
-      content = <WebPanel path="/settings" title="Settings" />;
+      content = <WebPanel path="/settings" title="Settings" headerExtra={<SpendingSettings />} />;
       break;
   }
 
