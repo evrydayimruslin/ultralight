@@ -1031,8 +1031,12 @@ async function handleToolsList(
   }
 
   // GPU apps: generate tools from exports (Python function names)
-  if (tools.length === 0 && app.runtime === 'gpu' && app.exports?.length) {
-    for (const exportName of app.exports) {
+  const appAny = app as Record<string, unknown>;
+  if (appAny.runtime === 'gpu') {
+    console.log(`[GPU-TOOLS] App ${app.id} runtime=${appAny.runtime} exports=${JSON.stringify(appAny.exports)} tools.length=${tools.length}`);
+  }
+  if (tools.length === 0 && appAny.runtime === 'gpu' && Array.isArray(appAny.exports) && (appAny.exports as string[]).length > 0) {
+    for (const exportName of appAny.exports as string[]) {
       tools.push({
         name: exportName,
         description: `GPU function: ${exportName}`,
