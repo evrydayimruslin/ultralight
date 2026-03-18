@@ -6,6 +6,7 @@ import type {
   AIResponse,
   LogEntry,
 } from '../../shared/types/index.ts';
+import { formatLight } from '../../shared/types/index.ts';
 
 
 // User context passed to apps (subset of full user, safe to expose)
@@ -85,7 +86,7 @@ export interface ExecutionResult {
   result: unknown;
   logs: LogEntry[];
   durationMs: number;
-  aiCostCents: number;
+  aiCostLight: number;
   error?: {
     type: string;
     message: string;
@@ -1274,7 +1275,7 @@ export async function executeInSandbox(
 ): Promise<ExecutionResult> {
   const startTime = Date.now();
   const logs: LogEntry[] = [];
-  let aiCostCents = 0;
+  let aiCostLight = 0;
 
   const capturedConsole = {
     log: (...items: unknown[]) => {
@@ -1526,18 +1527,18 @@ export async function executeInSandbox(
 
       // PAYMENTS - In-app purchases via internal ledger transfers
       // Charges the calling user and credits the app owner. Feeless.
-      charge: async (amountCents: number, reason?: string): Promise<{ success: boolean; from_balance: number; to_balance: number }> => {
+      charge: async (amountLight: number, reason?: string): Promise<{ success: boolean; from_balance: number; to_balance: number }> => {
         if (!config.user) {
           throw new Error('Authentication required. User must be signed in to make purchases.');
         }
-        if (typeof amountCents !== 'number' || amountCents < 1 || amountCents > 100000) {
-          throw new Error('amountCents must be between 1 and 100000');
+        if (typeof amountLight !== 'number' || amountLight < 1 || amountLight > 800000) {
+          throw new Error('amountLight must be between 1 and 800000');
         }
         if (config.userId === config.ownerId) {
           throw new Error('Cannot charge yourself');
         }
 
-        capturedConsole.log(`[SDK] charge(${amountCents}, "${reason || 'in_app_purchase'}")`);
+        capturedConsole.log(`[SDK] charge(${amountLight}, "${reason || 'in_app_purchase'}")`);
 
         // @ts-ignore
         const _Deno = globalThis.Deno;
@@ -1559,7 +1560,7 @@ export async function executeInSandbox(
           body: JSON.stringify({
             p_from_user: config.userId,
             p_to_user: config.ownerId,
-            p_amount_cents: Math.round(amountCents),
+            p_amount_light: Math.round(amountLight),
           }),
         });
 
@@ -1569,7 +1570,7 @@ export async function executeInSandbox(
 
         const rows = await transferRes.json() as Array<{ from_new_balance: number; to_new_balance: number }>;
         if (!rows || rows.length === 0) {
-          throw new Error(`Insufficient balance. This purchase costs ${amountCents}¢. Top up your hosting balance to continue.`);
+          throw new Error(`Insufficient balance. This purchase costs ${formatLight(amountLight)}. Top up your balance to continue.`);
         }
 
         // Log to transfers table (fire-and-forget)
@@ -1584,7 +1585,7 @@ export async function executeInSandbox(
           body: JSON.stringify({
             from_user_id: config.userId,
             to_user_id: config.ownerId,
-            amount_cents: Math.round(amountCents),
+            amount_light: Math.round(amountLight),
             reason: reason || 'in_app_purchase',
             app_id: config.appId,
           }),
@@ -1889,7 +1890,7 @@ export async function executeInSandbox(
         result: null,
         logs,
         durationMs,
-        aiCostCents,
+        aiCostLight,
         error: {
           type: 'ResultTooLarge',
           message: `Result size (${(serialized.length / 1024 / 1024).toFixed(1)} MB) exceeds limit (${MAX_RESULT_BYTES / 1024 / 1024} MB)`,
@@ -1902,7 +1903,7 @@ export async function executeInSandbox(
       result,
       logs,
       durationMs,
-      aiCostCents,
+      aiCostLight,
     };
 
   } catch (error) {
@@ -1914,7 +1915,7 @@ export async function executeInSandbox(
       result: null,
       logs,
       durationMs,
-      aiCostCents,
+      aiCostLight,
       error: {
         type: error instanceof Error ? error.constructor.name : 'UnknownError',
         message: error instanceof Error ? error.message : String(error),

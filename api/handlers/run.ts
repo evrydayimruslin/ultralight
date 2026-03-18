@@ -248,7 +248,7 @@ export async function handleRun(request: Request, appId: string): Promise<Respon
           call: async (request, apiKey) => ({
             content: 'AI placeholder - configure BYOK',
             model: request.model || 'gpt-4',
-            usage: { input_tokens: 0, output_tokens: 0, cost_cents: 0 },
+            usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
           }),
         },
         envVars,

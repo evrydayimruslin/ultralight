@@ -21,7 +21,7 @@ export interface LoopMessage {
     total_tokens: number;
     total_cost?: number;
   };
-  cost_cents?: number;
+  cost_light?: number;
   created_at: number;
 }
 
@@ -127,10 +127,10 @@ export async function runAgentLoop(
 
     if (!streamResult || isAborted()) break;
 
-    // Calculate cost
-    let costCents: number | undefined;
+    // Calculate cost in Light (USD × 800 × 1.2 markup)
+    let costLight: number | undefined;
     if (streamResult.usage?.total_cost !== undefined) {
-      costCents = streamResult.usage.total_cost * 100 * 1.2;
+      costLight = streamResult.usage.total_cost * 800 * 1.2;
     }
 
     // Finalize assistant message
@@ -140,7 +140,7 @@ export async function runAgentLoop(
       content: streamResult.content,
       tool_calls: streamResult.toolCalls.length > 0 ? streamResult.toolCalls : undefined,
       usage: streamResult.usage,
-      cost_cents: costCents,
+      cost_light: costLight,
       created_at: Date.now(),
     };
 

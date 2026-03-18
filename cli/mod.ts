@@ -1415,7 +1415,7 @@ async function setCmd(args: string[], client: ApiClient, _config: Config) {
         throw new Error('Usage: ultralight set pricing <app-id> --default <cents>');
       }
       const toolArgs: Record<string, unknown> = { app_id: appId };
-      if (parsed.default !== undefined) toolArgs.default_price_cents = parsed.default;
+      if (parsed.default !== undefined) toolArgs.default_price_light = parsed.default;
       await client.callTool('ul.set.pricing', toolArgs);
       console.log(colors.green('✓ Pricing updated'));
       break;

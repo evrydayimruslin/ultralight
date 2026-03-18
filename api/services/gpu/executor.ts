@@ -4,7 +4,7 @@
 // Pure execution — no billing, no concurrency. Those are handled by callers.
 
 import type { GpuType, GpuExitCode, GpuExecutionResult } from './types.ts';
-import { computeGpuCostCents, isValidGpuType } from './types.ts';
+import { computeGpuCostLight, isValidGpuType } from './types.ts';
 import { getGPUProvider } from './index.ts';
 import type { App } from '../../../shared/types/index.ts';
 
@@ -53,8 +53,8 @@ export interface GpuExecuteResult {
   peakVramGb: number;
   /** GPU type used for this execution. */
   gpuType: GpuType;
-  /** Platform compute cost in cents (rate_per_ms × duration_ms × 100). */
-  gpuCostCents: number;
+  /** Platform compute cost in Light (rate_per_ms × duration_ms). */
+  gpuCostLight: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,23 +149,23 @@ export async function executeGpuFunction(
       exitCode: 'infra_error',
       peakVramGb: 0,
       gpuType,
-      gpuCostCents: 0, // infra errors are not billed
+      gpuCostLight: 0, // infra errors are not billed
     };
   }
 
   const wallDuration = Date.now() - wallStart;
 
   // ── Map provider result → handler-compatible shape ──
-  const gpuCostCents = providerResult.success
-    ? computeGpuCostCents(gpuType, providerResult.duration_ms)
+  const gpuCostLight = providerResult.success
+    ? computeGpuCostLight(gpuType, providerResult.duration_ms)
     : providerResult.exit_code !== 'infra_error'
-      ? computeGpuCostCents(gpuType, providerResult.duration_ms)
+      ? computeGpuCostLight(gpuType, providerResult.duration_ms)
       : 0;
 
   console.log(
     `[GPU-EXEC] ${executionId} ${app.id}.${functionName}: ` +
       `${providerResult.exit_code} ${providerResult.duration_ms.toFixed(1)}ms ` +
-      `gpu=${gpuType} cost=${gpuCostCents.toFixed(4)}¢ vram=${providerResult.peak_vram_gb}GB`,
+      `gpu=${gpuType} cost=${gpuCostLight.toFixed(4)}✦ vram=${providerResult.peak_vram_gb}GB`,
   );
 
   return {
@@ -177,7 +177,7 @@ export async function executeGpuFunction(
     exitCode: providerResult.exit_code,
     peakVramGb: providerResult.peak_vram_gb,
     gpuType,
-    gpuCostCents,
+    gpuCostLight,
   };
 }
 
@@ -207,6 +207,6 @@ function makeError(
     exitCode,
     peakVramGb: 0,
     gpuType,
-    gpuCostCents: 0,
+    gpuCostLight: 0,
   };
 }

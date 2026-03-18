@@ -55,7 +55,7 @@ const OPENROUTER_CONFIG: ProviderConfig = {
       usage: {
         input_tokens: d.usage?.prompt_tokens || 0,
         output_tokens: d.usage?.completion_tokens || 0,
-        cost_cents: 0,
+        cost_light: 0,
       },
     };
   },

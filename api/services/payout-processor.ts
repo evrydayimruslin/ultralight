@@ -5,10 +5,12 @@
 // Flow per payout:
 //   1. Query get_releasable_payouts() RPC for mature held payouts
 //   2. For each: mark_payout_releasing() to atomically transition held → pending
-//   3. Execute Stripe Transfer (platform → connected account) for amount minus platform fee
+//   3. Execute Stripe Transfer (platform → connected account) — amount in USD = Light / 800
 //   4. Execute Stripe Payout (connected account → bank)
 //   5. Update payout record with Stripe IDs and status
 //   6. On failure: call fail_payout_refund() to restore developer balance
+//
+// No platform fee on withdrawal — the 10% fee is already taken on every transfer_balance() call.
 
 // @ts-ignore - Deno is available in production
 const Deno = globalThis.Deno;
@@ -17,14 +19,12 @@ import {
   createTransfer,
   createPayout,
 } from './stripe-connect.ts';
+import { LIGHT_PER_DOLLAR_PAYOUT, formatLight } from '../../shared/types/index.ts';
 
 interface ReleasablePayout {
   id: string;
   user_id: string;
-  amount_cents: number;
-  stripe_fee_cents: number;
-  net_cents: number;
-  platform_fee_cents: number;
+  amount_light: number;
   created_at: string;
   release_at: string;
 }
@@ -34,6 +34,11 @@ export interface PayoutProcessorResult {
   succeeded: number;
   failed: number;
   errors: string[];
+}
+
+/** Convert a Light amount to USD cents at the payout rate (800 Light/$1). */
+function lightToUsdCents(amountLight: number): number {
+  return Math.round((amountLight / LIGHT_PER_DOLLAR_PAYOUT) * 100);
 }
 
 /**
@@ -140,13 +145,12 @@ export async function processHeldPayouts(): Promise<PayoutProcessorResult> {
           continue;
         }
 
-        // 2c. Calculate transfer amount (gross minus platform fee)
-        const platformFeeCents = payout.platform_fee_cents || 0;
-        const transferAmount = Math.round(payout.amount_cents - platformFeeCents);
+        // 2c. Convert Light to USD cents — no platform fee on withdrawal
+        const transferAmountCents = lightToUsdCents(payout.amount_light);
 
-        if (transferAmount <= 0) {
-          await failPayout(SUPABASE_URL, sbWriteHeaders, payout.id, 'transfer_amount_zero_after_fees');
-          result.errors.push(`Transfer amount zero after fees for payout ${payout.id}`);
+        if (transferAmountCents <= 0) {
+          await failPayout(SUPABASE_URL, sbWriteHeaders, payout.id, 'transfer_amount_zero');
+          result.errors.push(`Transfer amount zero for payout ${payout.id}`);
           result.failed++;
           continue;
         }
@@ -155,12 +159,12 @@ export async function processHeldPayouts(): Promise<PayoutProcessorResult> {
         let transferResult;
         try {
           transferResult = await createTransfer(
-            transferAmount,
+            transferAmountCents,
             userData.stripe_connect_account_id,
             {
               payout_id: payout.id,
               user_id: payout.user_id,
-              platform_fee_cents: String(Math.round(platformFeeCents)),
+              amount_light: String(payout.amount_light),
             }
           );
         } catch (transferErr) {
@@ -185,7 +189,7 @@ export async function processHeldPayouts(): Promise<PayoutProcessorResult> {
         // Fire-and-forget style — Stripe webhook confirms final status
         try {
           const payoutResult = await createPayout(
-            transferAmount,
+            transferAmountCents,
             userData.stripe_connect_account_id
           );
 
@@ -205,9 +209,7 @@ export async function processHeldPayouts(): Promise<PayoutProcessorResult> {
         result.succeeded++;
         console.log(
           `[PAYOUT-PROC] Released payout ${payout.id}: ` +
-          `$${(payout.amount_cents / 100).toFixed(2)} gross, ` +
-          `$${(platformFeeCents / 100).toFixed(2)} platform fee, ` +
-          `$${(transferAmount / 100).toFixed(2)} transferred`
+          `${formatLight(payout.amount_light)} → $${(transferAmountCents / 100).toFixed(2)} transferred`
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

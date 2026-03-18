@@ -2,11 +2,18 @@
 // Placed on the Settings page header. Persists to localStorage.
 
 import { useState, useEffect } from 'react';
-import { getAutoApproveCents, setAutoApproveCents } from '../lib/storage';
+import { getAutoApproveLight, setAutoApproveLight } from '../lib/storage';
 import { fetchBalance } from '../lib/api';
 
+function formatLight(amount: number): string {
+  const abs = Math.abs(amount);
+  if (abs >= 1e6) return '✦' + (abs / 1e6).toFixed(2) + 'M';
+  if (abs >= 5000) return '✦' + (abs / 1000).toFixed(1) + 'K';
+  return '✦' + (abs % 1 === 0 ? String(abs) : abs.toFixed(2));
+}
+
 export default function SpendingSettings() {
-  const [threshold, setThreshold] = useState(getAutoApproveCents());
+  const [threshold, setThreshold] = useState(getAutoApproveLight());
   const [balance, setBalance] = useState<number | null>(null);
 
   useEffect(() => {
@@ -14,10 +21,10 @@ export default function SpendingSettings() {
   }, []);
 
   const handleChange = (value: number) => {
-    const maxCents = balance ? Math.min(balance, 1000) : 1000;
-    const clamped = Math.max(0, Math.min(value, maxCents));
+    const maxLight = balance ? Math.min(balance, 8000) : 8000;
+    const clamped = Math.max(0, Math.min(value, maxLight));
     setThreshold(clamped);
-    setAutoApproveCents(clamped);
+    setAutoApproveLight(clamped);
   };
 
   return (
@@ -26,20 +33,20 @@ export default function SpendingSettings() {
         Auto-approve under
       </label>
       <div className="flex items-center gap-0.5">
-        <span className="text-caption text-ul-text-muted">$</span>
+        <span className="text-caption text-ul-text-muted">✦</span>
         <input
           type="number"
-          step="0.05"
+          step="1"
           min="0"
-          max={balance ? (balance / 100) : 10}
-          value={(threshold / 100).toFixed(2)}
-          onChange={e => handleChange(Math.round(parseFloat(e.target.value || '0') * 100))}
+          max={balance ? balance : 8000}
+          value={threshold}
+          onChange={e => handleChange(parseFloat(e.target.value || '0'))}
           className="w-16 text-caption text-center rounded border border-ul-border px-1 py-0.5 bg-white focus:outline-none focus:border-ul-border-focus"
         />
       </div>
       {balance !== null && (
         <span className="text-caption text-ul-text-muted">
-          bal: ${(balance / 100).toFixed(2)}
+          bal: {formatLight(balance)}
         </span>
       )}
     </div>

@@ -1,30 +1,30 @@
 // Hosting Billing Service
 // Per-app billing: each published app/page has its own billing clock (hosting_last_billed_at).
-// Charges $0.025/MB/hour for each published app/page from the moment it was published.
-// Charges $0.0005/MB/hour for user data storage exceeding the 100MB free tier (user-level clock).
-// Both charges debit from the same hosting_balance_cents pool.
+// Charges ✦18/MB/hour for each published app/page from the moment it was published.
+// Charges ✦0.36/MB/hour for user data storage exceeding the 100MB free tier (user-level clock).
+// Both charges debit from the same balance_light pool.
 // No free tier for hosting — every published MB costs from the first byte.
 // 100MB free tier for user data — overage billed hourly.
-// Users hold a hosting_balance_cents that drains continuously.
+// Users hold a balance_light that drains continuously.
 // Balance → 0 = published content goes offline (hosting_suspended = true).
 // Runs hourly via setInterval (same pattern as subscription-expiry.ts).
 
 // @ts-ignore
 const Deno = globalThis.Deno;
 
-import { HOSTING_RATE_CENTS_PER_MB_PER_HOUR, DATA_RATE_CENTS_PER_MB_PER_HOUR, COMBINED_FREE_TIER_BYTES } from '../../shared/types/index.ts';
+import { HOSTING_RATE_LIGHT_PER_MB_PER_HOUR, DATA_RATE_LIGHT_PER_MB_PER_HOUR, COMBINED_FREE_TIER_BYTES, LIGHT_PER_DOLLAR_DESKTOP } from '../../shared/types/index.ts';
 import { refreshGpuReliabilityView } from './gpu/reliability.ts';
 
-const RATE_CENTS_PER_MB_PER_HOUR = HOSTING_RATE_CENTS_PER_MB_PER_HOUR;
-const DATA_RATE = DATA_RATE_CENTS_PER_MB_PER_HOUR;
+const RATE_LIGHT_PER_MB_PER_HOUR = HOSTING_RATE_LIGHT_PER_MB_PER_HOUR;
+const DATA_RATE_LIGHT = DATA_RATE_LIGHT_PER_MB_PER_HOUR;
 
 interface BillingUser {
   id: string;
-  hosting_balance_cents: number;
+  balance_light: number;
   hosting_last_billed_at: string;
   auto_topup_enabled: boolean;
-  auto_topup_threshold_cents: number;
-  auto_topup_amount_cents: number;
+  auto_topup_threshold_light: number;
+  auto_topup_amount_light: number;
   stripe_customer_id: string | null;
   // Data storage metering fields
   data_storage_used_bytes: number;
@@ -40,15 +40,15 @@ interface UserStorage {
 export interface BillingResult {
   usersProcessed: number;
   usersSuspended: number;
-  totalChargedCents: number;
+  totalChargedLight: number;
   errors: string[];
   details: {
     userId: string;
     storageMb: number;
-    hostingChargedCents: number;
+    hostingChargedLight: number;
     dataOverageMb: number;
-    dataOverageCents: number;
-    totalChargedCents: number;
+    dataOverageLight: number;
+    totalChargedLight: number;
     newBalance: number;
     suspended: boolean;
   }[];
@@ -69,7 +69,7 @@ export async function processHostingBilling(): Promise<BillingResult> {
   const result: BillingResult = {
     usersProcessed: 0,
     usersSuspended: 0,
-    totalChargedCents: 0,
+    totalChargedLight: 0,
     errors: [],
     details: [],
   };
@@ -91,11 +91,11 @@ export async function processHostingBilling(): Promise<BillingResult> {
 
   try {
     // 1. Find users who need billing:
-    //    - hosting_balance_cents > 0 (have balance for publisher hosting), OR
+    //    - balance_light > 0 (have balance for publisher hosting), OR
     //    - data_storage_used_bytes > 0 (have user data that may need overage billing)
     const usersRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?or=(hosting_balance_cents.gt.0,data_storage_used_bytes.gt.0)` +
-      `&select=id,hosting_balance_cents,hosting_last_billed_at,auto_topup_enabled,auto_topup_threshold_cents,auto_topup_amount_cents,stripe_customer_id,data_storage_used_bytes,storage_used_bytes,storage_limit_bytes`,
+      `${SUPABASE_URL}/rest/v1/users?or=(balance_light.gt.0,data_storage_used_bytes.gt.0)` +
+      `&select=id,balance_light,hosting_last_billed_at,auto_topup_enabled,auto_topup_threshold_light,auto_topup_amount_light,stripe_customer_id,data_storage_used_bytes,storage_used_bytes,storage_limit_bytes`,
       { headers }
     );
 
@@ -126,8 +126,8 @@ export async function processHostingBilling(): Promise<BillingResult> {
 
         let totalAppBytes = 0;
         let publishedAppCount = 0;
-        let hostingCostCents = 0;
-        const appCharges: Array<{ id: string; name: string; mb: number; hours: number; cents: number }> = [];
+        let hostingCostLight = 0;
+        const appCharges: Array<{ id: string; name: string; mb: number; hours: number; light: number }> = [];
         const now = new Date();
 
         if (appStorageRes.ok) {
@@ -143,10 +143,10 @@ export async function processHostingBilling(): Promise<BillingResult> {
             const lastBilled = app.hosting_last_billed_at ? new Date(app.hosting_last_billed_at) : now;
             const hours = Math.max((now.getTime() - lastBilled.getTime()) / (1000 * 60 * 60), 0);
             if (hours < 1 / 60) continue; // < 1 minute — skip
-            const cents = mb * RATE_CENTS_PER_MB_PER_HOUR * hours;
-            if (cents > 0) {
-              hostingCostCents += cents;
-              appCharges.push({ id: app.id, name: app.name, mb, hours, cents });
+            const light = mb * RATE_LIGHT_PER_MB_PER_HOUR * hours;
+            if (light > 0) {
+              hostingCostLight += light;
+              appCharges.push({ id: app.id, name: app.name, mb, hours, light });
             }
           }
         }
@@ -159,7 +159,7 @@ export async function processHostingBilling(): Promise<BillingResult> {
         );
 
         let totalContentBytes = 0;
-        const pageCharges: Array<{ id: string; name: string; mb: number; hours: number; cents: number }> = [];
+        const pageCharges: Array<{ id: string; name: string; mb: number; hours: number; light: number }> = [];
 
         if (contentStorageRes.ok) {
           const pages = await contentStorageRes.json() as Array<{
@@ -172,10 +172,10 @@ export async function processHostingBilling(): Promise<BillingResult> {
             const lastBilled = page.hosting_last_billed_at ? new Date(page.hosting_last_billed_at) : now;
             const hours = Math.max((now.getTime() - lastBilled.getTime()) / (1000 * 60 * 60), 0);
             if (hours < 1 / 60) continue;
-            const cents = mb * RATE_CENTS_PER_MB_PER_HOUR * hours;
-            if (cents > 0) {
-              hostingCostCents += cents;
-              pageCharges.push({ id: page.id, name: page.title || 'Untitled page', mb, hours, cents });
+            const light = mb * RATE_LIGHT_PER_MB_PER_HOUR * hours;
+            if (light > 0) {
+              hostingCostLight += light;
+              pageCharges.push({ id: page.id, name: page.title || 'Untitled page', mb, hours, light });
             }
           }
         }
@@ -192,21 +192,21 @@ export async function processHostingBilling(): Promise<BillingResult> {
         // Data overage uses user-level billing clock
         const userLastBilled = new Date(user.hosting_last_billed_at);
         const userHours = Math.max((now.getTime() - userLastBilled.getTime()) / (1000 * 60 * 60), 0);
-        const dataOverageCostCents = (userHours >= 1 / 60 && dataOverageMb > 0)
-          ? dataOverageMb * DATA_RATE * userHours
+        const dataOverageCostLight = (userHours >= 1 / 60 && dataOverageMb > 0)
+          ? dataOverageMb * DATA_RATE_LIGHT * userHours
           : 0;
 
         // Skip users with nothing to bill
-        if (hostingCostCents === 0 && dataOverageCostCents === 0) continue;
+        if (hostingCostLight === 0 && dataOverageCostLight === 0) continue;
 
-        const totalCostCents = hostingCostCents + dataOverageCostCents;
+        const totalCostLight = hostingCostLight + dataOverageCostLight;
 
-        // Round to 2 decimal places (sub-cent precision for fractional rates)
-        const chargedCents = Math.max(Math.round(totalCostCents * 100) / 100, totalCostCents > 0 ? 0.01 : 0);
+        // Round to 2 decimal places (sub-Light precision for fractional rates)
+        const chargedLight = Math.max(Math.round(totalCostLight * 100) / 100, totalCostLight > 0 ? 0.01 : 0);
 
         // 2d. Atomic debit via Postgres RPC — prevents race with concurrent webhook credits
         const debitRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/rpc/debit_hosting_balance`,
+          `${SUPABASE_URL}/rest/v1/rpc/debit_balance`,
           {
             method: 'POST',
             headers: {
@@ -215,7 +215,7 @@ export async function processHostingBilling(): Promise<BillingResult> {
             },
             body: JSON.stringify({
               p_user_id: user.id,
-              p_amount: chargedCents,
+              p_amount: chargedLight,
               p_update_billed_at: true,
             }),
           }
@@ -260,31 +260,31 @@ export async function processHostingBilling(): Promise<BillingResult> {
         // Log billing transaction(s) — separate line items for hosting vs data overage
         try {
           const txRows: Array<Record<string, unknown>> = [];
-          if (hostingCostCents > 0) {
+          if (hostingCostLight > 0) {
             txRows.push({
               user_id: user.id,
               type: 'charge',
               category: 'hosting',
               description: `Hosting: ${publishedAppCount} app(s), ${totalMb.toFixed(2)} MB`,
-              amount_cents: -Math.max(Math.round(hostingCostCents * 100) / 100, 0.01),
-              balance_after: newBalance + (dataOverageCostCents > 0 ? Math.max(Math.round(dataOverageCostCents * 100) / 100, 0.01) : 0),
+              amount_light: -Math.max(Math.round(hostingCostLight * 100) / 100, 0.01),
+              balance_after_light: newBalance + (dataOverageCostLight > 0 ? Math.max(Math.round(dataOverageCostLight * 100) / 100, 0.01) : 0),
               metadata: {
                 hosting_mb: totalMb,
-                rate: RATE_CENTS_PER_MB_PER_HOUR,
-                apps: appCharges.map(a => ({ id: a.id, name: a.name, mb: +a.mb.toFixed(4), hours: +a.hours.toFixed(2), cents: +a.cents.toFixed(4) })),
-                pages: pageCharges.length > 0 ? pageCharges.map(p => ({ id: p.id, name: p.name, mb: +p.mb.toFixed(4), hours: +p.hours.toFixed(2), cents: +p.cents.toFixed(4) })) : undefined,
+                rate: RATE_LIGHT_PER_MB_PER_HOUR,
+                apps: appCharges.map(a => ({ id: a.id, name: a.name, mb: +a.mb.toFixed(4), hours: +a.hours.toFixed(2), light: +a.light.toFixed(4) })),
+                pages: pageCharges.length > 0 ? pageCharges.map(p => ({ id: p.id, name: p.name, mb: +p.mb.toFixed(4), hours: +p.hours.toFixed(2), light: +p.light.toFixed(4) })) : undefined,
               },
             });
           }
-          if (dataOverageCostCents > 0) {
+          if (dataOverageCostLight > 0) {
             txRows.push({
               user_id: user.id,
               type: 'charge',
               category: 'data_storage',
               description: `Data storage overage: ${dataOverageMb.toFixed(2)} MB over ${(freeBytes / (1024 * 1024)).toFixed(0)} MB free`,
-              amount_cents: -Math.max(Math.round(dataOverageCostCents * 100) / 100, 0.01),
-              balance_after: newBalance,
-              metadata: { overage_mb: dataOverageMb, hours: userHours, rate: DATA_RATE },
+              amount_light: -Math.max(Math.round(dataOverageCostLight * 100) / 100, 0.01),
+              balance_after_light: newBalance,
+              metadata: { overage_mb: dataOverageMb, hours: userHours, rate: DATA_RATE_LIGHT },
             });
           }
           if (txRows.length > 0) {
@@ -300,13 +300,13 @@ export async function processHostingBilling(): Promise<BillingResult> {
         if (
           user.auto_topup_enabled &&
           user.stripe_customer_id &&
-          newBalance < (user.auto_topup_threshold_cents || 0)
+          newBalance < (user.auto_topup_threshold_light || 0)
         ) {
           // Fire-and-forget — don't block the billing loop for other users
           triggerAutoTopup(
             user.id,
             user.stripe_customer_id,
-            user.auto_topup_amount_cents || 1000,
+            user.auto_topup_amount_light || 1000,
             SUPABASE_URL,
             SUPABASE_SERVICE_ROLE_KEY
           ).catch(err => {
@@ -342,21 +342,21 @@ export async function processHostingBilling(): Promise<BillingResult> {
           result.usersSuspended++;
           console.log(
             `[BILLING] User ${user.id}: SUSPENDED — balance depleted ` +
-            `(hosting: ${totalMb.toFixed(2)} MB, data overage: ${dataOverageMb.toFixed(2)} MB, charged ${chargedCents.toFixed(2)}¢)`
+            `(hosting: ${totalMb.toFixed(2)} MB, data overage: ${dataOverageMb.toFixed(2)} MB, charged ✦${chargedLight.toFixed(2)})`
           );
         }
 
         result.usersProcessed++;
-        result.totalChargedCents += chargedCents;
-        const hostingRounded = Math.max(Math.round(hostingCostCents * 100) / 100, hostingCostCents > 0 ? 0.01 : 0);
-        const dataOverageRounded = Math.round(dataOverageCostCents * 100) / 100;
+        result.totalChargedLight += chargedLight;
+        const hostingRounded = Math.max(Math.round(hostingCostLight * 100) / 100, hostingCostLight > 0 ? 0.01 : 0);
+        const dataOverageRounded = Math.round(dataOverageCostLight * 100) / 100;
         result.details.push({
           userId: user.id,
           storageMb: totalMb,
-          hostingChargedCents: hostingRounded,
+          hostingChargedLight: hostingRounded,
           dataOverageMb,
-          dataOverageCents: dataOverageRounded,
-          totalChargedCents: chargedCents,
+          dataOverageLight: dataOverageRounded,
+          totalChargedLight: chargedLight,
           newBalance,
           suspended,
         });
@@ -371,7 +371,7 @@ export async function processHostingBilling(): Promise<BillingResult> {
       console.log(
         `[BILLING] Complete: ${result.usersProcessed} user(s) billed, ` +
         `${result.usersSuspended} suspended, ` +
-        `${result.totalChargedCents.toFixed(2)}¢ total charged, ` +
+        `✦${result.totalChargedLight.toFixed(2)} total charged, ` +
         `${result.errors.length} error(s)`
       );
     }
@@ -438,7 +438,7 @@ export async function unsuspendContent(userId: string): Promise<{ apps: number; 
 async function triggerAutoTopup(
   userId: string,
   stripeCustomerId: string,
-  amountCents: number,
+  amountLight: number,
   supabaseUrl: string,
   supabaseKey: string
 ): Promise<void> {
@@ -449,7 +449,7 @@ async function triggerAutoTopup(
     return;
   }
 
-  console.log(`[BILLING] Triggering auto top-up for user ${userId}: ${amountCents} cents`);
+  console.log(`[BILLING] Triggering auto top-up for user ${userId}: ✦${amountLight}`);
 
   // Step 1: Get the customer's default payment method
   const custRes = await fetch(
@@ -509,9 +509,9 @@ async function triggerAutoTopup(
   }
 
   // Step 2: Create PaymentIntent (off-session, confirm immediately)
-  // Charge exactly the deposit amount — platform absorbs Stripe fees.
-  // metadata.amount_cents is the deposit credited to the user's balance.
-  const chargeCents = amountCents;
+  // Convert Light to USD cents for Stripe: amount_light / LIGHT_PER_DOLLAR_DESKTOP * 100
+  // metadata.amount_light is the deposit credited to the user's balance.
+  const chargeCents = Math.round(amountLight / LIGHT_PER_DOLLAR_DESKTOP * 100);
 
   const intentRes = await fetch('https://api.stripe.com/v1/payment_intents', {
     method: 'POST',
@@ -527,9 +527,9 @@ async function triggerAutoTopup(
       'off_session': 'true',
       'confirm': 'true',
       'metadata[user_id]': userId,
-      'metadata[amount_cents]': String(amountCents),
+      'metadata[amount_light]': String(amountLight),
       'metadata[type]': 'auto_topup',
-      'description': `Ultralight auto top-up: $${(amountCents / 100).toFixed(2)} balance credit`,
+      'description': `Ultralight auto top-up: ✦${amountLight} balance credit`,
     }).toString(),
   });
 

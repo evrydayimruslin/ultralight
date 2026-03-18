@@ -35,8 +35,8 @@ export interface ModelInfo {
 export interface ApiError {
   error: string;
   detail?: string;
-  balance_cents?: number;
-  minimum_cents?: number;
+  balance_light?: number;
+  minimum_light?: number;
   topup_url?: string;
   allowed_models?: string[];
   resetAt?: string;
@@ -214,10 +214,9 @@ export async function fetchBalance(): Promise<number | null> {
   try {
     const result = await executeMcpTool('ul.wallet', {});
     const text = result.content?.[0]?.text || '';
-    const match = text.match(/(\d+\.?\d*)\s*cents?/i) || text.match(/balance[:\s]*\$?(\d+\.?\d*)/i);
+    const match = text.match(/(\d+\.?\d*)\s*light/i) || text.match(/balance[:\s]*✦?(\d+\.?\d*)/i);
     if (match) {
-      const val = parseFloat(match[1]);
-      return text.toLowerCase().includes('cent') ? val : val * 100;
+      return parseFloat(match[1]);
     }
     return null;
   } catch {
@@ -227,6 +226,13 @@ export async function fetchBalance(): Promise<number | null> {
 
 // ── Helpers ──
 
+function formatLight(amount: number): string {
+  const abs = Math.abs(amount);
+  if (abs >= 1e6) return '✦' + (abs / 1e6).toFixed(2) + 'M';
+  if (abs >= 5000) return '✦' + (abs / 1000).toFixed(1) + 'K';
+  return '✦' + (abs % 1 === 0 ? String(abs) : abs.toFixed(2));
+}
+
 function formatApiError(err: ApiError, status: number): string {
   // Include server detail if available
   const detail = err.detail ? ` (${err.detail})` : '';
@@ -235,7 +241,7 @@ function formatApiError(err: ApiError, status: number): string {
     case 401:
       return `Authentication failed${detail}`;
     case 402:
-      return `Insufficient balance ($${((err.balance_cents || 0) / 100).toFixed(2)} remaining). Top up at Settings > Billing.`;
+      return `Insufficient balance (${formatLight(err.balance_light || 0)} remaining). Top up at Settings > Billing.`;
     case 403:
       return err.error || 'Access denied. A full account is required for chat.';
     case 429:

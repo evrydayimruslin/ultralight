@@ -20,27 +20,27 @@ export type GpuType =
 
 /** Per-GPU rate and spec entry. */
 export interface GpuRateEntry {
-  /** Platform rate charged to callers, in dollars per millisecond. Includes 10-13x markup over provider cost. */
+  /** Platform rate charged to callers, in Light (✦) per millisecond. Includes 10-13x markup over provider cost. */
   rate_per_ms: number;
   /** Available VRAM in gigabytes. */
   vram_gb: number;
 }
 
 /**
- * Platform rate table. All-in per-ms rate (cold starts, egress, VRAM absorbed).
- * Derived from RunPod community cloud rates with consistent 10-13x markup.
+ * Platform rate table. All-in per-ms rate in Light (cold starts, egress, VRAM absorbed).
+ * Derived from RunPod community cloud rates with consistent 10-13x markup, at 800 Light/$1.
  */
 export const GPU_RATE_TABLE: Record<GpuType, GpuRateEntry> = {
-  'A40':            { rate_per_ms: 0.000001,  vram_gb: 48 },
-  'L40':            { rate_per_ms: 0.000002,  vram_gb: 48 },
-  'L40S':           { rate_per_ms: 0.0000022, vram_gb: 48 },
-  'A100-80GB-PCIe': { rate_per_ms: 0.000004,  vram_gb: 80 },
-  'A100-80GB-SXM':  { rate_per_ms: 0.000005,  vram_gb: 80 },
-  'H100-PCIe':      { rate_per_ms: 0.000007,  vram_gb: 80 },
-  'H100-SXM':       { rate_per_ms: 0.000009,  vram_gb: 80 },
-  'H100-NVL':       { rate_per_ms: 0.000009,  vram_gb: 94 },
-  'H200':           { rate_per_ms: 0.000012,  vram_gb: 141 },
-  'B200':           { rate_per_ms: 0.000020,  vram_gb: 180 },
+  'A40':            { rate_per_ms: 0.00080000,  vram_gb: 48 },
+  'L40':            { rate_per_ms: 0.00160000,  vram_gb: 48 },
+  'L40S':           { rate_per_ms: 0.00176000,  vram_gb: 48 },
+  'A100-80GB-PCIe': { rate_per_ms: 0.00320000,  vram_gb: 80 },
+  'A100-80GB-SXM':  { rate_per_ms: 0.00400000,  vram_gb: 80 },
+  'H100-PCIe':      { rate_per_ms: 0.00560000,  vram_gb: 80 },
+  'H100-SXM':       { rate_per_ms: 0.00720000,  vram_gb: 80 },
+  'H100-NVL':       { rate_per_ms: 0.00720000,  vram_gb: 94 },
+  'H200':           { rate_per_ms: 0.00960000,  vram_gb: 141 },
+  'B200':           { rate_per_ms: 0.01600000,  vram_gb: 180 },
 };
 
 /** All valid GPU type strings. */
@@ -65,10 +65,10 @@ export function getGpuVram(gpuType: GpuType): number {
   return GPU_RATE_TABLE[gpuType].vram_gb;
 }
 
-/** Compute GPU cost in cents for a given GPU type and duration. */
-export function computeGpuCostCents(gpuType: GpuType, durationMs: number): number {
-  // rate_per_ms is in dollars, multiply by 100 for cents
-  return getGpuRate(gpuType) * durationMs * 100;
+/** Compute GPU cost in Light for a given GPU type and duration. */
+export function computeGpuCostLight(gpuType: GpuType, durationMs: number): number {
+  // rate_per_ms is already in Light
+  return getGpuRate(gpuType) * durationMs;
 }
 
 // ---------------------------------------------------------------------------
@@ -187,16 +187,16 @@ export type GpuPricingMode = 'per_call' | 'per_unit' | 'per_duration';
 /** GPU-specific pricing configuration set by the developer. */
 export interface GpuPricingConfig {
   mode: GpuPricingMode;
-  /** Flat fee in cents per call. Used in per_call mode. */
-  flat_fee_cents?: number;
-  /** Price in cents per unit. Used in per_unit mode. */
-  unit_price_cents?: number;
+  /** Flat fee in Light per call. Used in per_call mode. */
+  flat_fee_light?: number;
+  /** Price in Light per unit. Used in per_unit mode. */
+  unit_price_light?: number;
   /** Dot-path into the input args to extract unit count (e.g. "images.length"). Used in per_unit mode. */
   unit_count_from?: string;
   /** Human-readable unit label for marketplace display (e.g. "image", "frame"). */
   unit_label?: string;
-  /** Optional markup in cents added on top of compute cost. Used in per_duration mode. */
-  duration_markup_cents?: number;
+  /** Optional markup in Light added on top of compute cost. Used in per_duration mode. */
+  duration_markup_light?: number;
 }
 
 // ---------------------------------------------------------------------------

@@ -2793,7 +2793,7 @@ export function getLayoutHTML(options: {
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-4);">
                   <div>
                     <div style="font-size:12px;color:var(--text-muted);margin-bottom:var(--space-1);">Available Balance</div>
-                    <div id="accountBalance" style="font-size:28px;font-weight:700;color:var(--text-primary);">$0.00</div>
+                    <div id="accountBalance" style="font-size:28px;font-weight:700;color:var(--text-primary);">\\u27260</div>
                   </div>
                   <div style="display:flex;gap:var(--space-2);">
                     <button id="addFundsBtn" class="btn btn-primary btn-sm" style="border-radius:0;">Add Funds</button>
@@ -2811,12 +2811,12 @@ export function getLayoutHTML(options: {
                 <div id="autoTopupFields" style="display:none;">
                   <div style="display:flex;gap:var(--space-3);margin-bottom:var(--space-3);">
                     <div style="flex:1;">
-                      <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Threshold (cents)</label>
-                      <input type="number" id="autoTopupThreshold" value="100" style="width:100%;padding:6px 8px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">
+                      <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Threshold (Light)</label>
+                      <input type="number" id="autoTopupThreshold" value="800" style="width:100%;padding:6px 8px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">
                     </div>
                     <div style="flex:1;">
-                      <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Amount (cents)</label>
-                      <input type="number" id="autoTopupAmount" value="1000" style="width:100%;padding:6px 8px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">
+                      <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Amount (Light)</label>
+                      <input type="number" id="autoTopupAmount" value="8000" style="width:100%;padding:6px 8px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">
                     </div>
                   </div>
                   <button class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);" onclick="saveAutoTopup()">Save</button>
@@ -3902,12 +3902,18 @@ export function getLayoutHTML(options: {
       });
     }
 
-    // Format currency helper
-    function formatEarnings(cents) {
-      if (cents >= 100000000) return '$' + (cents / 100000000).toFixed(2) + 'M';
-      if (cents >= 100000) return '$' + Math.round(cents / 100000) + 'K';
-      if (cents >= 100) return '$' + (cents / 100).toFixed(0);
-      return '$' + (cents / 100).toFixed(2);
+    // Format Light currency helper
+    function formatLight(amount) {
+      var abs = Math.abs(amount);
+      var sign = amount < 0 ? '-' : '';
+      var formatted;
+      if (abs >= 1e12) formatted = (abs / 1e12).toFixed(2) + 'T';
+      else if (abs >= 1e9) formatted = (abs / 1e9).toFixed(2) + 'B';
+      else if (abs >= 1e6) formatted = (abs / 1e6).toFixed(2) + 'M';
+      else if (abs >= 5000) formatted = (abs / 1000).toFixed(1) + 'K';
+      else if (abs % 1 === 0) formatted = String(abs);
+      else formatted = abs.toFixed(2);
+      return sign + '\\u2726' + formatted;
     }
 
     // Load platform ticker stats
@@ -3917,7 +3923,7 @@ export function getLayoutHTML(options: {
         .then(function(data) {
           var tickerEl = document.getElementById('marketTicker');
           if (!tickerEl) return;
-          var gmv = formatEarnings(data.gmv_30d_cents || 0);
+          var gmv = formatLight(data.gmv_30d_light || 0);
           var changePct = (data.gmv_change_pct || 0).toFixed(1);
           var changeSign = data.gmv_change_pct >= 0 ? '+' : '';
           var items = [
@@ -3973,9 +3979,9 @@ export function getLayoutHTML(options: {
           }
           el.innerHTML = '<div style="border:1px solid var(--border);background:var(--bg-base);">' + sales.map(function(sale, i) {
             var border = i > 0 ? 'border-top:1px solid var(--border);' : '';
-            var price = formatEarnings(sale.sale_price_cents || 0);
+            var price = formatLight(sale.sale_price_light || 0);
             var timeAgo = formatTimeAgo(sale.created_at);
-            var color = sale.sale_price_cents >= 3000000 ? '#ef4444' : sale.sale_price_cents >= 1000000 ? '#3b82f6' : '#22c55e';
+            var color = sale.sale_price_light >= 3000000 ? '#ef4444' : sale.sale_price_light >= 1000000 ? '#3b82f6' : '#22c55e';
             return '<div class="market-list-link" style="cursor:pointer;' + border + '" onclick="navigateToApp(\\\'' + (sale.app_id || '') + '\\\')">'
               + '<div style="display:flex;align-items:center;gap:var(--space-2);">'
               + '<span style="width:6px;height:6px;border-radius:50%;background:' + color + ';"></span>'
@@ -4016,7 +4022,7 @@ export function getLayoutHTML(options: {
             return '<tr style="border-bottom:1px solid var(--border);">'
               + '<td style="padding:var(--space-2) var(--space-1);color:var(--text-muted);font-weight:500;">' + (i + 1) + '</td>'
               + '<td style="padding:var(--space-2) var(--space-1);"><a href="' + profileLink + '" style="color:var(--text-primary);font-weight:500;text-decoration:none;">' + escapeHtml(e.display_name || 'Anon profile') + '</a></td>'
-              + '<td style="padding:var(--space-2) var(--space-1);font-weight:600;">' + formatEarnings(e.earnings_cents || 0) + '</td>'
+              + '<td style="padding:var(--space-2) var(--space-1);font-weight:600;">' + formatLight(e.earnings_light || 0) + '</td>'
               + '<td style="padding:var(--space-2) var(--space-1);">' + flag + '</td>'
               + '<td style="padding:var(--space-2) var(--space-1);">' + (featured ? '<span style="' + featuredStyle + '">' + featured + '</span>' : '') + '</td>'
               + '</tr>';
@@ -4129,7 +4135,7 @@ export function getLayoutHTML(options: {
         + '</div>'
         // Stats row
         + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);">'
-        + '<div style="background:var(--bg-raised);padding:var(--space-3) var(--space-4);"><div style="font-size:11px;color:var(--text-muted);">Lifetime gross</div><div style="font-size:18px;font-weight:700;font-family:monospace;">' + formatEarnings(stats.lifetime_gross_cents || 0) + '</div></div>'
+        + '<div style="background:var(--bg-raised);padding:var(--space-3) var(--space-4);"><div style="font-size:11px;color:var(--text-muted);">Lifetime gross</div><div style="font-size:18px;font-weight:700;font-family:monospace;">' + formatLight(stats.lifetime_gross_light || 0) + '</div></div>'
         + '<div style="background:var(--bg-raised);padding:var(--space-3) var(--space-4);"><div style="font-size:11px;color:var(--text-muted);">Published</div><div style="font-size:18px;font-weight:700;">' + (stats.published_count || 0) + '</div></div>'
         + '<div style="background:var(--bg-raised);padding:var(--space-3) var(--space-4);"><div style="font-size:11px;color:var(--text-muted);">Acquired</div><div style="font-size:18px;font-weight:700;">' + (stats.acquired_count || 0) + '</div></div>'
         + '<div style="background:var(--bg-raised);padding:var(--space-3) var(--space-4);"><div style="font-size:11px;color:var(--text-muted);">Featured</div><div style="font-size:14px;font-weight:600;">' + (profile.featured_app ? escapeHtml(profile.featured_app.name) : '-') + '</div></div>'
@@ -4180,18 +4186,18 @@ export function getLayoutHTML(options: {
               + (a.app_slug ? '<div style="font-size:12px;color:var(--text-muted);">' + escapeHtml(a.app_slug) + '</div>' : '')
               + '</div>'
               + '<div style="text-align:right;">'
-              + '<div style="font-size:14px;font-weight:600;">' + formatEarnings(a.price_cents || 0) + '</div>'
+              + '<div style="font-size:14px;font-weight:600;">' + formatLight(a.price_light || 0) + '</div>'
               + '<div style="font-size:12px;color:var(--text-muted);">' + date + '</div>'
               + '</div>'
               + '</div>';
           }).join('')
           + '</div>';
         // Summary stats
-        var totalSpend = profile.acquisitions.reduce(function(s, a) { return s + (a.price_cents || 0); }, 0);
+        var totalSpend = profile.acquisitions.reduce(function(s, a) { return s + (a.price_light || 0); }, 0);
         var avgDeal = Math.round(totalSpend / profile.acquisitions.length);
         html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);margin-top:var(--space-4);">'
-          + '<div style="background:var(--bg-raised);padding:var(--space-3) var(--space-4);"><div style="font-size:11px;color:var(--text-muted);">Total acquisition spend</div><div style="font-size:18px;font-weight:700;font-family:monospace;">' + formatEarnings(totalSpend) + '</div></div>'
-          + '<div style="background:var(--bg-raised);padding:var(--space-3) var(--space-4);"><div style="font-size:11px;color:var(--text-muted);">Avg deal size</div><div style="font-size:18px;font-weight:700;font-family:monospace;">' + formatEarnings(avgDeal) + '</div></div>'
+          + '<div style="background:var(--bg-raised);padding:var(--space-3) var(--space-4);"><div style="font-size:11px;color:var(--text-muted);">Total acquisition spend</div><div style="font-size:18px;font-weight:700;font-family:monospace;">' + formatLight(totalSpend) + '</div></div>'
+          + '<div style="background:var(--bg-raised);padding:var(--space-3) var(--space-4);"><div style="font-size:11px;color:var(--text-muted);">Avg deal size</div><div style="font-size:18px;font-weight:700;font-family:monospace;">' + formatLight(avgDeal) + '</div></div>'
           + '</div>';
       } else {
         html += '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">No acquisitions yet.</div>';
@@ -4637,7 +4643,7 @@ export function getLayoutHTML(options: {
                 return '<tr style="border-bottom:1px solid var(--border)">' +
                   '<td style="padding:8px 12px"><a href="/a/' + bid.app_id + '/market" style="color:var(--accent)">' + escapeHtml(bid.app_name || 'Unknown') + '</a></td>' +
                   '<td style="padding:8px 12px">' + escapeHtml(bid.bidder_email || 'Unknown') + '</td>' +
-                  '<td style="padding:8px 12px;font-weight:600;color:var(--success)">$' + (bid.amount_cents / 100).toFixed(2) + '</td>' +
+                  '<td style="padding:8px 12px;font-weight:600;color:var(--success)">' + formatLight(bid.amount_light) + '</td>' +
                   '<td style="padding:8px 12px;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(bid.message || '-') + '</td>' +
                   '<td style="padding:8px 12px;color:var(--text-muted)">' + relTime(bid.created_at) + '</td>' +
                   '<td style="padding:8px 12px">' +
@@ -4673,7 +4679,7 @@ export function getLayoutHTML(options: {
                   : '';
                 return '<tr style="border-bottom:1px solid var(--border)">' +
                   '<td style="padding:8px 12px"><a href="/a/' + bid.app_id + '/market" style="color:var(--accent)">' + escapeHtml(bid.app_name || 'Unknown') + '</a></td>' +
-                  '<td style="padding:8px 12px;font-weight:600">$' + (bid.amount_cents / 100).toFixed(2) + '</td>' +
+                  '<td style="padding:8px 12px;font-weight:600">' + formatLight(bid.amount_light) + '</td>' +
                   '<td style="padding:8px 12px"><span style="color:' + statusColor + '">' + bid.status + '</span></td>' +
                   '<td style="padding:8px 12px;color:var(--text-muted)">' + bid.escrow_status + '</td>' +
                   '<td style="padding:8px 12px;color:var(--text-muted)">' + relTime(bid.created_at) + '</td>' +
@@ -5414,7 +5420,7 @@ export function getLayoutHTML(options: {
       const pricingEl = document.getElementById('appPricingSection');
       if (pricingEl) {
         const pricingConfig = app.pricing_config || {};
-        const defaultPrice = pricingConfig.default_price_cents || 0;
+        const defaultPrice = pricingConfig.default_price_light || 0;
         const defaultFreeCalls = pricingConfig.default_free_calls || 0;
         const freeCallsScope = pricingConfig.free_calls_scope || 'function';
         const fnOverrides = pricingConfig.functions || {};
@@ -5445,7 +5451,7 @@ export function getLayoutHTML(options: {
               if (typeof override === 'number') {
                 fnPrice = override;
               } else if (typeof override === 'object' && override !== null) {
-                fnPrice = override.price_cents !== undefined ? override.price_cents : defaultPrice;
+                fnPrice = override.price_light !== undefined ? override.price_light : defaultPrice;
                 fnFree = override.free_calls !== undefined ? override.free_calls : defaultFreeCalls;
               }
             }
@@ -5468,7 +5474,7 @@ export function getLayoutHTML(options: {
           '<div class="section-card">' +
             '<h3 class="section-title">Pricing</h3>' +
             '<div style="display:flex;gap:var(--space-4);flex-wrap:wrap;">' +
-              '<div class="form-group" style="flex:1;min-width:120px;"><label class="form-label">Default price per call (cents)</label>' +
+              '<div class="form-group" style="flex:1;min-width:120px;"><label class="form-label">Default price per call (Light)</label>' +
                 '<input type="number" id="pricingDefault" class="form-input form-input-sm" value="' + defaultPrice + '" min="0" step="0.1" style="width:120px"></div>' +
               '<div class="form-group" style="flex:1;min-width:120px;"><label class="form-label">Default free calls per user</label>' +
                 '<input type="number" id="pricingFreeCalls" class="form-input form-input-sm" value="' + defaultFreeCalls + '" min="0" step="1" style="width:120px"></div>' +
@@ -5553,9 +5559,9 @@ export function getLayoutHTML(options: {
           '</div>';
 
           // Revenue (only show if > 0)
-          if (metrics.revenue_30d_cents > 0) {
+          if (metrics.revenue_30d_light > 0) {
             html += '<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:var(--space-3);text-align:center">' +
-              '<div style="font-size:22px;font-weight:700;color:var(--success)">$' + (metrics.revenue_30d_cents / 100).toFixed(2) + '</div>' +
+              '<div style="font-size:22px;font-weight:700;color:var(--success)">' + formatLight(metrics.revenue_30d_light) + '</div>' +
               '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">Revenue (30d)</div>' +
             '</div>';
           }
@@ -5640,8 +5646,8 @@ export function getLayoutHTML(options: {
         // ── Listing / Ask Price Section ──
         if (isOwner) {
           // Owner: show ask price form + incoming bids
-          var askVal = listing && listing.ask_price_cents ? (listing.ask_price_cents / 100).toFixed(2) : '';
-          var floorVal = listing && listing.floor_price_cents ? (listing.floor_price_cents / 100).toFixed(2) : '';
+          var askVal = listing && listing.ask_price_light ? String(listing.ask_price_light) : '';
+          var floorVal = listing && listing.floor_price_light ? String(listing.floor_price_light) : '';
           var instantBuy = listing ? listing.instant_buy : false;
           var noteVal = listing && listing.listing_note ? listing.listing_note : '';
 
@@ -5651,12 +5657,12 @@ export function getLayoutHTML(options: {
               '<p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4)">Set an ask price to list this app for sale on the marketplace. Buyers can also place bids without an ask price.</p>' +
               '<div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3);margin-bottom:var(--space-3)">' +
                 '<div>' +
-                  '<label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">Ask Price ($)</label>' +
-                  '<input id="mktAskPrice" type="number" step="0.01" min="0" placeholder="e.g. 50.00" value="' + askVal + '" class="input-field" style="width:100%">' +
+                  '<label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">Ask Price (\\u2726)</label>' +
+                  '<input id="mktAskPrice" type="number" step="1" min="0" placeholder="e.g. 50000" value="' + askVal + '" class="input-field" style="width:100%">' +
                 '</div>' +
                 '<div>' +
-                  '<label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">Floor Price ($)</label>' +
-                  '<input id="mktFloorPrice" type="number" step="0.01" min="0" placeholder="Min bid" value="' + floorVal + '" class="input-field" style="width:100%">' +
+                  '<label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">Floor Price (\\u2726)</label>' +
+                  '<input id="mktFloorPrice" type="number" step="1" min="0" placeholder="Min bid" value="' + floorVal + '" class="input-field" style="width:100%">' +
                 '</div>' +
               '</div>' +
               '<div style="margin-bottom:var(--space-3)">' +
@@ -5702,7 +5708,7 @@ export function getLayoutHTML(options: {
                     bids.map(function(bid) {
                       return '<tr style="border-bottom:1px solid var(--border)">' +
                         '<td style="padding:8px 12px">' + escapeHtml(bid.bidder_email || bid.bidder_id.slice(0, 8)) + '</td>' +
-                        '<td style="padding:8px 12px;font-weight:600;color:var(--success)">$' + (bid.amount_cents / 100).toFixed(2) + '</td>' +
+                        '<td style="padding:8px 12px;font-weight:600;color:var(--success)">' + formatLight(bid.amount_light) + '</td>' +
                         '<td style="padding:8px 12px;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(bid.message || '-') + '</td>' +
                         '<td style="padding:8px 12px;color:var(--text-muted)">' + relTime(bid.created_at) + '</td>' +
                         '<td style="padding:8px 12px">' +
@@ -5717,16 +5723,16 @@ export function getLayoutHTML(options: {
           }
         } else {
           // Non-owner: show ask price info + bid form
-          var askDisplay = listing && listing.ask_price_cents
-            ? '<span style="font-size:24px;font-weight:700;color:var(--success)">$' + (listing.ask_price_cents / 100).toFixed(2) + '</span>'
+          var askDisplay = listing && listing.ask_price_light
+            ? '<span style="font-size:24px;font-weight:700;color:var(--success)">' + formatLight(listing.ask_price_light) + '</span>'
             : '<span style="font-size:14px;color:var(--text-muted)">Open to offers</span>';
 
-          var floorDisplay = listing && listing.floor_price_cents
-            ? '<span style="font-size:12px;color:var(--text-muted);margin-left:var(--space-2)">Floor: $' + (listing.floor_price_cents / 100).toFixed(2) + '</span>'
+          var floorDisplay = listing && listing.floor_price_light
+            ? '<span style="font-size:12px;color:var(--text-muted);margin-left:var(--space-2)">Floor: ' + formatLight(listing.floor_price_light) + '</span>'
             : '';
 
-          var instantBuyBtn = listing && listing.instant_buy && listing.ask_price_cents
-            ? '<button class="btn btn-primary" style="margin-top:var(--space-3)" onclick="buyNow(\\\'' + appId + '\\\')">Buy Now — $' + (listing.ask_price_cents / 100).toFixed(2) + '</button>'
+          var instantBuyBtn = listing && listing.instant_buy && listing.ask_price_light
+            ? '<button class="btn btn-primary" style="margin-top:var(--space-3)" onclick="buyNow(\\\'' + appId + '\\\')">Buy Now — ' + formatLight(listing.ask_price_light) + '</button>'
             : '';
 
           var noteDisplay = listing && listing.listing_note
@@ -5765,7 +5771,7 @@ export function getLayoutHTML(options: {
                       '<div style="font-size:11px;color:var(--text-muted)">Unique Callers (30d)</div>' +
                     '</div>' +
                     '<div style="text-align:center;padding:var(--space-2)">' +
-                      '<div style="font-size:20px;font-weight:700;color:var(--success)">$' + ((m.revenue_30d_cents || 0) / 100).toFixed(2) + '</div>' +
+                      '<div style="font-size:20px;font-weight:700;color:var(--success)">' + formatLight((m.revenue_30d_light || 0)) + '</div>' +
                       '<div style="font-size:11px;color:var(--text-muted)">Revenue (30d)</div>' +
                     '</div>' +
                   '</div>';
@@ -5790,15 +5796,15 @@ export function getLayoutHTML(options: {
               '</div>' +
               (myBid
                 ? '<div style="padding:var(--space-3);background:var(--bg-secondary);border-radius:var(--radius);margin-bottom:var(--space-3)">' +
-                    '<p style="font-size:13px;font-weight:500">Your active bid: <span style="color:var(--success)">$' + (myBid.amount_cents / 100).toFixed(2) + '</span></p>' +
+                    '<p style="font-size:13px;font-weight:500">Your active bid: <span style="color:var(--success)">' + formatLight(myBid.amount_light) + '</span></p>' +
                     '<button class="btn btn-secondary btn-sm" style="margin-top:var(--space-2)" onclick="cancelBidFromUI(\\\'' + myBid.id + '\\\',\\\'' + appId + '\\\')">Cancel Bid</button>' +
                   '</div>'
                 : '<div style="border-top:1px solid var(--border);padding-top:var(--space-4)">' +
                     '<h4 style="font-size:14px;font-weight:500;margin-bottom:var(--space-3)">Place a Bid</h4>' +
                     '<div style="display:grid;grid-template-columns:1fr 2fr;gap:var(--space-3);margin-bottom:var(--space-3)">' +
                       '<div>' +
-                        '<label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">Amount ($)</label>' +
-                        '<input id="mktBidAmount" type="number" step="0.01" min="0.01" placeholder="50.00" class="input-field" style="width:100%">' +
+                        '<label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">Amount (\\u2726)</label>' +
+                        '<input id="mktBidAmount" type="number" step="1" min="1" placeholder="50000" class="input-field" style="width:100%">' +
                       '</div>' +
                       '<div>' +
                         '<label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">Message (optional)</label>' +
@@ -5824,7 +5830,7 @@ export function getLayoutHTML(options: {
                       '<div style="width:20px;height:20px;border-radius:50%;background:var(--bg-secondary);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--text-muted)">' + (i + 1) + '</div>' +
                       '<div>' +
                         '<span style="color:var(--text-primary)">' + escapeHtml(p.email || p.owner_id.slice(0, 8)) + '</span>' +
-                        (p.price_cents ? ' <span style="color:var(--text-muted)">— $' + (p.price_cents / 100).toFixed(2) + '</span>' : '') +
+                        (p.price_light ? ' <span style="color:var(--text-muted)">— ' + formatLight(p.price_light) + '</span>' : '') +
                         ' <span style="color:var(--text-muted);font-size:11px">' + (p.acquired_at ? relTime(p.acquired_at) : '') + '</span>' +
                       '</div>' +
                     '</div>';
@@ -5850,8 +5856,8 @@ export function getLayoutHTML(options: {
         headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           app_id: appId,
-          price_cents: price > 0 ? Math.round(price * 100) : null,
-          floor_cents: floor > 0 ? Math.round(floor * 100) : null,
+          price_light: price > 0 ? Math.round(price) : null,
+          floor_light: floor > 0 ? Math.round(floor) : null,
           instant_buy: instantBuy,
           note: note || null,
         }),
@@ -5868,7 +5874,7 @@ export function getLayoutHTML(options: {
       fetch('/api/marketplace/ask', {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ app_id: appId, price_cents: null }),
+        body: JSON.stringify({ app_id: appId, price_light: null }),
       }).then(function(res) {
         if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
         showToast('Ask price removed');
@@ -5892,7 +5898,7 @@ export function getLayoutHTML(options: {
     };
 
     window.acceptBid = function(bidId, appId) {
-      if (!confirm('Accept this bid? This will transfer ownership of the app. You will receive 90% of the bid amount.')) return;
+      if (!confirm('Accept this bid? This will transfer ownership of the app.')) return;
       fetch('/api/marketplace/accept', {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
@@ -5901,7 +5907,7 @@ export function getLayoutHTML(options: {
         if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
         return res.json();
       }).then(function(data) {
-        showToast('App sold for $' + (data.sale_price_cents / 100).toFixed(2) + '! You received $' + (data.seller_payout_cents / 100).toFixed(2) + '.');
+        showToast('App sold for ' + formatLight(data.sale_price_light) + '! You received ' + formatLight(data.seller_payout_light) + '.');
         // Reload — ownership changed
         setTimeout(function() { window.location.reload(); }, 1500);
       }).catch(function(err) {
@@ -5934,12 +5940,12 @@ export function getLayoutHTML(options: {
         headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           app_id: appId,
-          amount_cents: Math.round(amount * 100),
+          amount_light: Math.round(amount),
           message: message || null,
         }),
       }).then(function(res) {
         if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
-        showToast('Bid placed! $' + amount.toFixed(2) + ' escrowed from your balance.');
+        showToast('Bid placed! ' + formatLight(amount) + ' escrowed from your balance.');
         loadAppMarket(appId, window._currentApp);
       }).catch(function(err) {
         showToast(err.message || 'Failed to place bid', 'error');
@@ -6045,8 +6051,8 @@ export function getLayoutHTML(options: {
       html += '<div class="offers-price-row">';
       html += '<div class="offers-price-col">';
       html += '<div class="offers-ask-label">Ask</div>';
-      if (listing && listing.ask_price_cents) {
-        html += '<div class="offers-ask-price">$' + (listing.ask_price_cents / 100).toFixed(2) + '</div>';
+      if (listing && listing.ask_price_light) {
+        html += '<div class="offers-ask-price">' + formatLight(listing.ask_price_light) + '</div>';
       } else {
         html += '<div class="offers-ask-price" style="font-size:16px">Open</div>';
       }
@@ -6054,7 +6060,7 @@ export function getLayoutHTML(options: {
       html += '<div class="offers-price-col" style="text-align:right">';
       html += '<div class="offers-ask-label">Highest Bid</div>';
       if (highestBid) {
-        html += '<div class="offers-ask-price">$' + (highestBid.amount_cents / 100).toFixed(2) + '</div>';
+        html += '<div class="offers-ask-price">' + formatLight(highestBid.amount_light) + '</div>';
       } else {
         html += '<div class="offers-ask-price" style="font-size:16px">&mdash;</div>';
       }
@@ -6065,14 +6071,14 @@ export function getLayoutHTML(options: {
       if (listing && listing.listing_note) {
         html += '<div class="offers-ask-note">' + escapeHtml(listing.listing_note) + '</div>';
       }
-      if (!isOwner && listing && listing.instant_buy && listing.ask_price_cents) {
-        html += '<button class="offers-buynow-btn" onclick="popupBuyNow(\\\'' + appId + '\\\')">Buy Now &mdash; $' + (listing.ask_price_cents / 100).toFixed(2) + '</button>';
+      if (!isOwner && listing && listing.instant_buy && listing.ask_price_light) {
+        html += '<button class="offers-buynow-btn" onclick="popupBuyNow(\\\'' + appId + '\\\')">Buy Now &mdash; ' + formatLight(listing.ask_price_light) + '</button>';
       }
 
       // ── Your Bid (if exists) ──
       if (myBid && !isOwner) {
         html += '<div class="offers-your-bid">' +
-          '<span>Your bid: <strong>$' + (myBid.amount_cents / 100).toFixed(2) + '</strong></span>' +
+          '<span>Your bid: <strong>' + formatLight(myBid.amount_light) + '</strong></span>' +
           '<button class="offers-bid-cancel" onclick="popupCancelBid(\\\'' + myBid.id + '\\\',\\\'' + appId + '\\\')">Cancel</button>' +
         '</div>';
       }
@@ -6084,8 +6090,8 @@ export function getLayoutHTML(options: {
         } else {
           html += '<div class="offers-bid-form">';
           html += '<div class="offers-bid-amount-row">' +
-            '<span class="offers-bid-currency">$</span>' +
-            '<input class="offers-bid-input" id="popupBidAmount" type="number" step="0.01" min="0.01" placeholder="0.00">' +
+            '<span class="offers-bid-currency">\\u2726</span>' +
+            '<input class="offers-bid-input" id="popupBidAmount" type="number" step="1" min="1" placeholder="0">' +
           '</div>';
           html += '<input class="offers-bid-input-msg" id="popupBidMessage" type="text" placeholder="Message (optional)">';
           html += '<div class="offers-bid-balance" id="popupBidBalance"></div>';
@@ -6101,7 +6107,7 @@ export function getLayoutHTML(options: {
         bids.forEach(function(bid) {
           var isMyBid = bid.bidder_id === window._currentUserId;
           html += '<div class="offers-bid-row">';
-          html += '<span class="offers-bid-amount">$' + (bid.amount_cents / 100).toFixed(2) + '</span>';
+          html += '<span class="offers-bid-amount">' + formatLight(bid.amount_light) + '</span>';
           html += '<span class="offers-bid-info">' +
             (bid.message ? escapeHtml(bid.message) : (bid.bidder_email ? escapeHtml(bid.bidder_email) : bid.bidder_id.slice(0, 8))) +
             (isMyBid ? ' <strong>(you)</strong>' : '') +
@@ -6125,8 +6131,8 @@ export function getLayoutHTML(options: {
           .then(function(r) { return r.ok ? r.json() : null; })
           .then(function(d) {
             if (d && balDiv) {
-              var avail = (d.hosting_balance_cents || 0) - (d.escrow_held_cents || 0);
-              balDiv.innerHTML = 'Available balance: <span>$' + (avail / 100).toFixed(2) + '</span>';
+              var avail = (d.balance_light || 0) - (d.escrow_light || 0);
+              balDiv.innerHTML = 'Available balance: <span>' + formatLight(avail) + '</span>';
             }
           }).catch(function() {});
       }
@@ -6150,10 +6156,10 @@ export function getLayoutHTML(options: {
       fetch('/api/marketplace/bid', {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ app_id: appId, amount_cents: Math.round(amount * 100), message: message || null }),
+        body: JSON.stringify({ app_id: appId, amount_light: Math.round(amount), message: message || null }),
       }).then(function(res) {
         if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
-        showToast('Bid placed! $' + amount.toFixed(2) + ' escrowed from your balance.');
+        showToast('Bid placed! ' + formatLight(amount) + ' escrowed from your balance.');
         // Refresh wallet balance display
         var balEl = document.getElementById('accountBalance');
         if (balEl && typeof loadHostingData === 'function') {
@@ -6200,7 +6206,7 @@ export function getLayoutHTML(options: {
     };
 
     window.popupAcceptBid = function(bidId, appId) {
-      if (!confirm('Accept this bid? Ownership will transfer and you receive 90% of the bid amount.')) return;
+      if (!confirm('Accept this bid? Ownership will transfer.')) return;
       fetch('/api/marketplace/accept', {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
@@ -6210,7 +6216,7 @@ export function getLayoutHTML(options: {
         return res.json();
       }).then(function(data) {
         closeOffersPopup();
-        showToast('App sold for $' + (data.sale_price_cents / 100).toFixed(2) + '!');
+        showToast('App sold for ' + formatLight(data.sale_price_light) + '!');
         setTimeout(function() { window.location.reload(); }, 1500);
       }).catch(function(err) {
         showToast(err.message || 'Failed to accept bid', 'error');
@@ -6955,12 +6961,12 @@ export function getLayoutHTML(options: {
 
     window.savePricing = async function() {
       if (!currentAppId) return;
-      var defaultCents = parseFloat(document.getElementById('pricingDefault')?.value || '0');
+      var defaultLight = parseFloat(document.getElementById('pricingDefault')?.value || '0');
       var defaultFreeCalls = parseInt(document.getElementById('pricingFreeCalls')?.value || '0', 10);
       var scope = document.querySelector('input[name="freeCallsScope"]:checked')?.value || 'function';
 
       var pricingConfig = {
-        default_price_cents: defaultCents
+        default_price_light: defaultLight
       };
       if (defaultFreeCalls > 0) pricingConfig.default_free_calls = defaultFreeCalls;
       if (scope !== 'function') pricingConfig.free_calls_scope = scope;
@@ -6979,7 +6985,7 @@ export function getLayoutHTML(options: {
 
         // Use object format if free_calls differs from default, otherwise plain number for compat
         if (freeCalls > 0 && freeCalls !== defaultFreeCalls) {
-          fnFunctions[fnName] = { price_cents: price, free_calls: freeCalls };
+          fnFunctions[fnName] = { price_light: price, free_calls: freeCalls };
         } else {
           fnFunctions[fnName] = price;
         }
@@ -7010,8 +7016,8 @@ export function getLayoutHTML(options: {
 
         let html = '<h3 class="section-title">Revenue</h3>';
         html += '<div style="display:flex;gap:24px;margin-bottom:16px">' +
-          '<div><div style="font-size:12px;color:var(--text-muted)">Lifetime</div><div style="font-size:20px;font-weight:600">$' + ((data.total_earned_cents || 0) / 100).toFixed(2) + '</div></div>' +
-          '<div><div style="font-size:12px;color:var(--text-muted)">Last 30 days</div><div style="font-size:20px;font-weight:600">$' + ((data.period_earned_cents || 0) / 100).toFixed(2) + '</div></div>' +
+          '<div><div style="font-size:12px;color:var(--text-muted)">Lifetime</div><div style="font-size:20px;font-weight:600">' + formatLight((data.total_earned_light || 0)) + '</div></div>' +
+          '<div><div style="font-size:12px;color:var(--text-muted)">Last 30 days</div><div style="font-size:20px;font-weight:600">' + formatLight((data.period_earned_light || 0)) + '</div></div>' +
           '<div><div style="font-size:12px;color:var(--text-muted)">Calls</div><div style="font-size:20px;font-weight:600">' + (data.period_transfers || 0) + '</div></div>' +
         '</div>';
 
@@ -7020,7 +7026,7 @@ export function getLayoutHTML(options: {
           html += data.by_function.slice(0, 8).map(function(f) {
             return '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid var(--border)">' +
               '<code>' + escapeHtml(f.function_name) + '</code>' +
-              '<span style="color:var(--text-muted)">' + f.call_count + ' calls · $' + ((f.earned_cents || 0) / 100).toFixed(2) + '</span>' +
+              '<span style="color:var(--text-muted)">' + f.call_count + ' calls · ' + formatLight((f.earned_light || 0)) + '</span>' +
             '</div>';
           }).join('');
         }
@@ -7189,8 +7195,8 @@ export function getLayoutHTML(options: {
 
         // Render charge rate summary card with expandable storage history
         if (summaryEl && txOffset === 0) {
-          var dailyCents = rate.estimated_daily_cents || 0;
-          var monthlyCents = rate.estimated_monthly_cents || 0;
+          var dailyLight = rate.estimated_daily_light || 0;
+          var monthlyLight = rate.estimated_monthly_light || 0;
           var storageHtml = '';
           if (storageTxs.length > 0) {
             storageHtml = '<div id="storageChargesDetail" style="display:none;margin-top:var(--space-3);padding-top:var(--space-3);border-top:1px solid var(--border);">';
@@ -7198,7 +7204,7 @@ export function getLayoutHTML(options: {
               var stx = storageTxs[si];
               var sDate = relTime(stx.created_at);
               var sFullDate = new Date(stx.created_at).toLocaleString();
-              var sAmt = '$' + (Math.abs(stx.amount_cents) / 100).toFixed(4);
+              var sAmt = formatLight(Math.abs(stx.amount_light));
               var sMeta = stx.metadata || {};
               storageHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px;">'
                 + '<div style="color:var(--text-secondary);">'
@@ -7217,12 +7223,12 @@ export function getLayoutHTML(options: {
             + '<span id="storageToggleArrow" style="font-size:10px;color:var(--text-muted);">\\u25B6</span>'
             + '</div>'
             + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-3);font-size:13px;margin-top:var(--space-3);">'
-            + '<div><div style="color:var(--text-muted);font-size:11px;margin-bottom:2px;">Hourly Rate</div><div style="font-weight:600;">$' + ((rate.hosting_cents_per_hour || 0) / 100).toFixed(4) + '</div></div>'
-            + '<div><div style="color:var(--text-muted);font-size:11px;margin-bottom:2px;">Est. Daily</div><div style="font-weight:600;">$' + (dailyCents / 100).toFixed(4) + '</div></div>'
-            + '<div><div style="color:var(--text-muted);font-size:11px;margin-bottom:2px;">Est. Monthly</div><div style="font-weight:600;">$' + (monthlyCents / 100).toFixed(2) + '</div></div>'
+            + '<div><div style="color:var(--text-muted);font-size:11px;margin-bottom:2px;">Hourly Rate</div><div style="font-weight:600;">' + formatLight((rate.hosting_light_per_hour || 0)) + '</div></div>'
+            + '<div><div style="color:var(--text-muted);font-size:11px;margin-bottom:2px;">Est. Daily</div><div style="font-weight:600;">' + formatLight(dailyLight) + '</div></div>'
+            + '<div><div style="color:var(--text-muted);font-size:11px;margin-bottom:2px;">Est. Monthly</div><div style="font-weight:600;">' + formatLight(monthlyLight) + '</div></div>'
             + '</div>'
             + '<div style="font-size:11px;color:var(--text-muted);margin-top:var(--space-3);">'
-            + (rate.hosting_apps || 0) + ' published app(s) \\u00B7 ' + (rate.hosting_mb || 0).toFixed(2) + ' MB \\u00B7 $0.025/MB/hr'
+            + (rate.hosting_apps || 0) + ' published app(s) \\u00B7 ' + (rate.hosting_mb || 0).toFixed(2) + ' MB \\u00B7 \\u272618/MB/hr'
             + (rate.data_overage_mb > 0 ? ' \\u00B7 ' + rate.data_overage_mb.toFixed(2) + ' MB data overage' : '')
             + '</div>'
             + storageHtml
@@ -7240,8 +7246,8 @@ export function getLayoutHTML(options: {
         var html = '';
         for (var ti = 0; ti < generalTxs.length; ti++) {
           var tx = generalTxs[ti];
-          var isCredit = tx.amount_cents > 0;
-          var amtStr = (isCredit ? '+' : '') + '$' + (Math.abs(tx.amount_cents) / 100).toFixed(4);
+          var isCredit = tx.amount_light > 0;
+          var amtStr = (isCredit ? '+' : '') + formatLight(Math.abs(tx.amount_light));
           var amtColor = isCredit ? 'var(--success)' : 'var(--text-primary)';
           var dateStr = relTime(tx.created_at);
           var fullDate = new Date(tx.created_at).toLocaleString();
@@ -7285,14 +7291,14 @@ export function getLayoutHTML(options: {
         if (!res.ok) return;
         const data = await res.json();
 
-        const cents = data.hosting_balance_cents || 0;
-        balanceEl.textContent = '$' + (cents / 100).toFixed(2);
-        balanceEl.style.color = cents <= 0 ? 'var(--error)' : 'var(--text-primary)';
+        const light = data.balance_light || 0;
+        balanceEl.textContent = formatLight(light);
+        balanceEl.style.color = light <= 0 ? 'var(--error)' : 'var(--text-primary)';
 
         if (statusEl) {
-          statusEl.textContent = cents > 0 ? 'Active' : 'No Balance';
-          statusEl.style.background = cents > 0 ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)';
-          statusEl.style.color = cents > 0 ? 'var(--success)' : 'var(--error)';
+          statusEl.textContent = light > 0 ? 'Active' : 'No Balance';
+          statusEl.style.background = light > 0 ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)';
+          statusEl.style.color = light > 0 ? 'var(--success)' : 'var(--error)';
         }
 
         // Auto top-up
@@ -7305,13 +7311,15 @@ export function getLayoutHTML(options: {
 
         const thresholdEl = document.getElementById('autoTopupThreshold');
         const amountEl = document.getElementById('autoTopupAmount');
-        if (thresholdEl) thresholdEl.value = String(autoTopup.threshold_cents || 100);
-        if (amountEl) amountEl.value = String(autoTopup.amount_cents || 1000);
+        if (thresholdEl) thresholdEl.value = String(autoTopup.threshold_light || 800);
+        if (amountEl) amountEl.value = String(autoTopup.amount_light || 8000);
       } catch {}
     }
 
     window.startDeposit = async function() {
       const amountCents = parseInt(document.getElementById('depositAmount')?.value || '2500', 10);
+      var lightReceived = Math.round(amountCents / 100 * 720);
+      if (!confirm('Deposit $' + (amountCents / 100).toFixed(2) + ' \\u2192 \\u2726' + lightReceived.toLocaleString() + ' (720 Light per $1)\\n\\nProceed?')) return;
       try {
         const res = await fetch('/api/user/hosting/checkout', {
           method: 'POST',
@@ -7322,20 +7330,20 @@ export function getLayoutHTML(options: {
         if (!res.ok) { showToast(data.error || 'Failed to start checkout', 'error'); return; }
         if (data.checkout_url) {
           window.open(data.checkout_url, '_blank');
-          showToast('Checkout opened. Balance updates after payment.');
+          showToast('Checkout opened. You will receive \\u2726' + lightReceived.toLocaleString() + ' after payment.');
         }
       } catch { showToast('Failed to start deposit', 'error'); }
     };
 
     window.saveAutoTopup = async function() {
       const enabled = document.getElementById('autoTopupEnabled')?.checked || false;
-      const thresholdCents = parseInt(document.getElementById('autoTopupThreshold')?.value || '100', 10);
-      const amountCents = parseInt(document.getElementById('autoTopupAmount')?.value || '1000', 10);
+      const thresholdLight = parseInt(document.getElementById('autoTopupThreshold')?.value || '800', 10);
+      const amountLight = parseInt(document.getElementById('autoTopupAmount')?.value || '8000', 10);
       try {
         const res = await fetch('/api/user/hosting/auto-topup', {
           method: 'PATCH',
           headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled: enabled, threshold_cents: thresholdCents, amount_cents: amountCents }),
+          body: JSON.stringify({ enabled: enabled, threshold_light: thresholdLight, amount_light: amountLight }),
         });
         if (res.ok) { showToast('Auto top-up saved'); loadHostingData(); }
         else showToast('Failed to save', 'error');
@@ -7352,16 +7360,16 @@ export function getLayoutHTML(options: {
         });
         if (!res.ok) { el.textContent = 'Failed to load earnings'; return; }
         var data = await res.json();
-        var total = (data.total_earned_cents / 100).toFixed(2);
-        var period = (data.period_earned_cents / 100).toFixed(2);
-        var withdrawn = (data.total_withdrawn_cents / 100).toFixed(2);
-        var withdrawable = (data.withdrawable_cents / 100).toFixed(2);
+        var total = formatLight(data.total_earned_light || 0);
+        var period = formatLight(data.period_earned_light || 0);
+        var withdrawn = formatLight(data.total_withdrawn_light || 0);
+        var withdrawable = formatLight(data.withdrawable_light || 0);
         el.innerHTML =
           '<div style="display:flex;gap:var(--space-6);margin-bottom:var(--space-2);flex-wrap:wrap;">' +
-            '<div><div style="font-size:11px;color:var(--text-muted);">Lifetime Earned</div><div style="font-size:18px;font-weight:600;">$' + total + '</div></div>' +
-            '<div><div style="font-size:11px;color:var(--text-muted);">Last 30 days</div><div style="font-size:18px;font-weight:600;">$' + period + '</div></div>' +
-            '<div><div style="font-size:11px;color:var(--text-muted);">Withdrawn</div><div style="font-size:18px;font-weight:600;">$' + withdrawn + '</div></div>' +
-            '<div><div style="font-size:11px;color:var(--success);">Withdrawable</div><div style="font-size:18px;font-weight:600;color:var(--success);">$' + withdrawable + '</div></div>' +
+            '<div><div style="font-size:11px;color:var(--text-muted);">Lifetime Earned</div><div style="font-size:18px;font-weight:600;">' + total + '</div></div>' +
+            '<div><div style="font-size:11px;color:var(--text-muted);">Last 30 days</div><div style="font-size:18px;font-weight:600;">' + period + '</div></div>' +
+            '<div><div style="font-size:11px;color:var(--text-muted);">Withdrawn</div><div style="font-size:18px;font-weight:600;">' + withdrawn + '</div></div>' +
+            '<div><div style="font-size:11px;color:var(--success);">Withdrawable</div><div style="font-size:18px;font-weight:600;color:var(--success);">' + withdrawable + '</div></div>' +
           '</div>' +
           '<div style="font-size:11px;color:var(--text-muted);margin-top:var(--space-2);">Only earned funds can be withdrawn. Deposits are for hosting costs only.</div>';
       } catch { el.textContent = 'Failed to load earnings'; }
@@ -7385,7 +7393,7 @@ export function getLayoutHTML(options: {
           var countryInfo = '';
           if (data.country && data.country !== 'US') {
             var currency = (data.default_currency || '').toUpperCase();
-            countryInfo = '<div style="font-size:11px;color:var(--text-muted);margin-top:var(--space-2);">Payout country: ' + data.country + (currency ? ' (' + currency + ')' : '') + '. Withdrawals will be converted from USD at Stripe\\'s exchange rate (+ 2% FX fee).</div>';
+            countryInfo = '<div style="font-size:11px;color:var(--text-muted);margin-top:var(--space-2);">Payout country: ' + data.country + (currency ? ' (' + currency + ')' : '') + '. Withdrawals convert Light to USD at 800:1, then to local currency at Stripe\\'s exchange rate (+ 2% FX fee).</div>';
           }
           if (badge) { badge.textContent = 'Connected'; badge.style.background = 'rgba(34,197,94,0.15)'; badge.style.color = 'var(--success)'; }
           if (section) section.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Your bank account is connected and ready for withdrawals.</p>' + countryInfo;
@@ -7429,44 +7437,42 @@ export function getLayoutHTML(options: {
     // --- Withdraw ---
     window.showWithdrawModal = async function() {
       // Show withdrawable earnings context
-      var withdrawable = _connectData && _connectData.withdrawable_earnings_cents ? _connectData.withdrawable_earnings_cents : 0;
-      var withdrawableDollars = (withdrawable / 100).toFixed(2);
+      var withdrawable = _connectData && _connectData.withdrawable_earnings_light ? _connectData.withdrawable_earnings_light : 0;
       var isCrossBorder = _connectData && _connectData.is_cross_border;
 
-      var promptMsg = 'Enter withdrawal amount in dollars (minimum $10.00):' +
-        '\\n\\nWithdrawable earnings: $' + withdrawableDollars +
-        '\\n\\nFees: 10% platform fee + Stripe payout fee (0.25% + $0.25)';
+      var promptMsg = 'Enter withdrawal amount in Light (minimum \\u272640,000):' +
+        '\\n\\nWithdrawable earnings: ' + formatLight(withdrawable) +
+        '\\n\\nConversion rate: 800 Light = $1 USD' +
+        '\\nFees: Stripe payout fee (0.25% + $0.25)';
       if (isCrossBorder) promptMsg += ' + 2% FX conversion';
       promptMsg += '\\nHold period: 14 days before payout is released to your bank.' +
         '\\n\\nOnly earned funds can be withdrawn (deposits cannot be cashed out).';
 
       var input = prompt(promptMsg);
       if (!input) return;
-      var dollars = parseFloat(input);
-      if (isNaN(dollars) || dollars < 10) { showToast('Minimum withdrawal is $10.00', 'error'); return; }
-      var cents = Math.round(dollars * 100);
+      var lightAmount = parseInt(input, 10);
+      if (isNaN(lightAmount) || lightAmount < 40000) { showToast('Minimum withdrawal is \\u272640,000', 'error'); return; }
 
-      if (cents > withdrawable) {
-        showToast('Amount exceeds withdrawable earnings ($' + withdrawableDollars + '). Only earned funds can be withdrawn.', 'error');
+      if (lightAmount > withdrawable) {
+        showToast('Amount exceeds withdrawable earnings (' + formatLight(withdrawable) + '). Only earned funds can be withdrawn.', 'error');
         return;
       }
 
-      // Calculate platform fee (10%)
-      var platformFee = Math.ceil(cents * 0.10);
-      var afterPlatform = cents - platformFee;
-      // Calculate Stripe fee on amount after platform fee
-      var stripeFee = Math.ceil(afterPlatform * 0.0025 + 25);
-      if (isCrossBorder) stripeFee += Math.ceil(afterPlatform * 0.02);
-      var net = afterPlatform - stripeFee;
+      // Convert Light to USD at 800:1
+      var usdAmount = lightAmount / 800;
+      // Calculate Stripe fee
+      var stripeFee = Math.ceil(usdAmount * 100 * 0.0025 + 25) / 100;
+      if (isCrossBorder) stripeFee += Math.ceil(usdAmount * 100 * 0.02) / 100;
+      var netUsd = usdAmount - stripeFee;
 
       var releaseDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
       var releaseDateStr = releaseDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
-      var confirmMsg = 'Withdraw $' + (cents / 100).toFixed(2) + '?' +
-        '\\n\\nPlatform fee (10%): $' + (platformFee / 100).toFixed(2) +
-        '\\nStripe fee: $' + (stripeFee / 100).toFixed(2);
+      var confirmMsg = 'Withdraw ' + formatLight(lightAmount) + '?' +
+        '\\n\\nUSD conversion (800:1): $' + usdAmount.toFixed(2) +
+        '\\nStripe fee: $' + stripeFee.toFixed(2);
       if (isCrossBorder) confirmMsg += ' (incl. 2% FX)';
-      confirmMsg += '\\nEstimated bank deposit: ~$' + (net / 100).toFixed(2) +
+      confirmMsg += '\\nEstimated bank deposit: ~$' + netUsd.toFixed(2) +
         '\\n\\nPayout releases on ' + releaseDateStr + ' (14-day hold).' +
         '\\n\\nProceed?';
 
@@ -7476,7 +7482,7 @@ export function getLayoutHTML(options: {
         var res = await fetch('/api/user/connect/withdraw', {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ amount_cents: cents }),
+          body: JSON.stringify({ amount_light: lightAmount }),
         });
         var data = await res.json();
         if (!res.ok) { showToast(data.error || 'Withdrawal failed', 'error'); return; }
@@ -7510,9 +7516,9 @@ export function getLayoutHTML(options: {
             var daysLeft = Math.max(0, Math.ceil((releaseDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
             statusText = 'held (' + daysLeft + 'd)';
           }
-          var platformFee = p.platform_fee_cents ? ' (fee: $' + (p.platform_fee_cents / 100).toFixed(2) + ')' : '';
+          var platformFee = p.platform_fee_light ? ' (fee: ' + formatLight(p.platform_fee_light) + ')' : '';
           return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;">' +
-            '<span style="font-weight:500;">$' + (p.amount_cents / 100).toFixed(2) + '<span style="font-weight:400;color:var(--text-muted);">' + platformFee + '</span></span>' +
+            '<span style="font-weight:500;">' + formatLight(p.amount_light) + '<span style="font-weight:400;color:var(--text-muted);">' + platformFee + '</span></span>' +
             '<span style="color:' + statusColor + ';font-weight:500;">' + statusText + '</span>' +
             '<span style="color:var(--text-muted);">' + new Date(p.created_at).toLocaleDateString() + '</span>' +
           '</div>';
@@ -7626,8 +7632,9 @@ export function getLayoutHTML(options: {
       var topup = params.get('topup');
       if (topup === 'success') {
         var amountCents = parseInt(params.get('amount') || '0', 10);
-        var dollars = amountCents > 0 ? ' ($' + (amountCents / 100).toFixed(2) + ')' : '';
-        showToast('Deposit successful' + dollars + '! Balance will update shortly.');
+        var lightReceived = Math.round(amountCents / 100 * 720);
+        var lightStr = amountCents > 0 ? ' (\\u2726' + lightReceived.toLocaleString() + ')' : '';
+        showToast('Deposit successful' + lightStr + '! Balance will update shortly.');
         history.replaceState({}, '', window.location.pathname);
         setTimeout(function() { loadHostingData(); }, 2000);
         setTimeout(function() { loadHostingData(); }, 5000);

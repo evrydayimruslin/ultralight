@@ -23,8 +23,8 @@ export interface Message {
     total_tokens: number;
     total_cost?: number;
   };
-  /** Cost in cents for this message */
-  cost_cents?: number;
+  /** Cost in Light for this message */
+  cost_light?: number;
   /** Timestamp */
   created_at: number;
 }

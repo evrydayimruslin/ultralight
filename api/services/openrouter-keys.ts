@@ -65,7 +65,7 @@ export async function createOpenRouterKey(userId: string, userEmail: string): Pr
     },
     body: JSON.stringify({
       name: keyName,
-      // No limit — we handle billing ourselves via hosting_balance_cents
+      // No limit — we handle billing ourselves via balance_light
       limit: null,
       limit_reset: null,
     }),

@@ -2,7 +2,7 @@
 // Shared utility for checking tier-based restrictions.
 // Enforces: visibility checks, storage quotas, publish deposit gate.
 
-import { type Tier, TIER_LIMITS, MIN_PUBLISH_DEPOSIT_CENTS } from '../../shared/types/index.ts';
+import { type Tier, TIER_LIMITS, MIN_PUBLISH_DEPOSIT_LIGHT, formatLight } from '../../shared/types/index.ts';
 
 type Visibility = 'private' | 'unlisted' | 'public';
 
@@ -39,7 +39,7 @@ export async function checkPublishDeposit(
 
   try {
     const response = await fetch(
-      `${supabaseUrl}/rest/v1/users?id=eq.${userId}&select=hosting_balance_cents`,
+      `${supabaseUrl}/rest/v1/users?id=eq.${userId}&select=balance_light`,
       {
         headers: {
           'apikey': supabaseKey,
@@ -54,15 +54,13 @@ export async function checkPublishDeposit(
       return null;
     }
 
-    const rows = await response.json() as Array<{ hosting_balance_cents: number | null }>;
-    const balance = rows[0]?.hosting_balance_cents ?? 0;
+    const rows = await response.json() as Array<{ balance_light: number | null }>;
+    const balance = rows[0]?.balance_light ?? 0;
 
-    if (balance < MIN_PUBLISH_DEPOSIT_CENTS) {
-      const requiredDollars = (MIN_PUBLISH_DEPOSIT_CENTS / 100).toFixed(2);
-      const currentDollars = (balance / 100).toFixed(2);
+    if (balance < MIN_PUBLISH_DEPOSIT_LIGHT) {
       return (
-        `Publishing requires a minimum $${requiredDollars} hosting deposit. ` +
-        `Your current balance is $${currentDollars}. ` +
+        `Publishing requires a minimum ${formatLight(MIN_PUBLISH_DEPOSIT_LIGHT)} deposit. ` +
+        `Your current balance is ${formatLight(balance)}. ` +
         `Top up your hosting balance to go live.`
       );
     }

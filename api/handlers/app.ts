@@ -359,19 +359,19 @@ export function createApp() {
           const user = await authenticate(request);
           const { createClient } = await import('npm:@supabase/supabase-js@2');
           const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-          // Add 500 cents ($5.00)
-          const { error: dbErr } = await supabase.rpc('debit_hosting_balance', {
+          // Add ✦4,000 Light (= $5.00)
+          const { error: dbErr } = await supabase.rpc('debit_balance', {
             p_user_id: user.id,
-            p_amount: -500, // Negative = credit
+            p_amount: -4000, // Negative = credit
             p_update_billed_at: false,
           });
           if (dbErr) {
             // Fallback: direct update
-            await supabase.from('users').update({ hosting_balance_cents: 500 }).eq('id', user.id);
+            await supabase.from('users').update({ balance_light: 4000 }).eq('id', user.id);
           }
           // Check new balance
-          const { data: userData } = await supabase.from('users').select('hosting_balance_cents').eq('id', user.id).single();
-          return json({ ok: true, message: 'Added $5.00 dev credits', balance_cents: userData?.hosting_balance_cents ?? 'unknown' });
+          const { data: userData } = await supabase.from('users').select('balance_light').eq('id', user.id).single();
+          return json({ ok: true, message: 'Added ✦4,000 dev credits', balance_light: userData?.balance_light ?? 'unknown' });
         } catch (err) {
           return json({ ok: false, error: err instanceof Error ? err.message : 'failed' }, 401);
         }
@@ -401,11 +401,11 @@ export function createApp() {
 
         // 2. Balance
         const { checkChatBalance } = await import('../services/chat-billing.ts');
-        const { CHAT_MIN_BALANCE_CENTS: minBalance } = await import('../../shared/types/index.ts');
+        const { CHAT_MIN_BALANCE_LIGHT: minBalance } = await import('../../shared/types/index.ts');
         try {
           const balance = await checkChatBalance(userId!);
           const ok = balance >= minBalance;
-          checks.push({ check: 'balance', result: `${(balance / 100).toFixed(2)} (min: $${(minBalance / 100).toFixed(2)})`, ok });
+          checks.push({ check: 'balance', result: `✦${balance} (min: ✦${minBalance})`, ok });
         } catch (err) {
           checks.push({ check: 'balance', result: `Failed: ${err instanceof Error ? err.message : 'unknown'}`, ok: false });
         }
@@ -2000,10 +2000,10 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
     'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
   };
 
-  let contentRow: { id: string; visibility: string; access_token: string | null; title: string | null; tags: string[] | null; updated_at: string | null; hosting_suspended: boolean | null; price_cents: number | null } | null = null;
+  let contentRow: { id: string; visibility: string; access_token: string | null; title: string | null; tags: string[] | null; updated_at: string | null; hosting_suspended: boolean | null; price_light: number | null } | null = null;
   try {
     const contentRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${userId}&type=eq.page&slug=eq.${encodeURIComponent(slug)}&select=id,visibility,access_token,title,tags,updated_at,hosting_suspended,price_cents&limit=1`,
+      `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${userId}&type=eq.page&slug=eq.${encodeURIComponent(slug)}&select=id,visibility,access_token,title,tags,updated_at,hosting_suspended,price_light&limit=1`,
       { headers: dbHeaders }
     );
     if (contentRes.ok) {
@@ -2021,8 +2021,8 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
         { status: 402, headers: { 'Content-Type': 'text/html' } }
       );
     }
-    // Check paid page access: if price_cents > 0, charge the viewer
-    if (contentRow.price_cents && contentRow.price_cents > 0) {
+    // Check paid page access: if price_light > 0, charge the viewer
+    if (contentRow.price_light && contentRow.price_light > 0) {
       let viewerUserId: string | null = null;
       try {
         const { authenticate } = await import('./auth.ts');
@@ -2031,7 +2031,7 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
       } catch {
         // Not authenticated — show a paywall message
         return new Response(
-          `<!DOCTYPE html><html><head><title>Paid Content</title><style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}div{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#666;line-height:1.6}.price{font-size:1.25rem;font-weight:600;color:#333;margin:1rem 0}</style></head><body><div><div class="icon">&#128176;</div><h1>Paid Page</h1><p class="price">${contentRow.price_cents}¢ per view</p><p>Sign in and have a hosting balance to view this page. The fee is transferred directly to the page owner.</p></div></body></html>`,
+          `<!DOCTYPE html><html><head><title>Paid Content</title><style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}div{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#666;line-height:1.6}.price{font-size:1.25rem;font-weight:600;color:#333;margin:1rem 0}</style></head><body><div><div class="icon">&#128176;</div><h1>Paid Page</h1><p class="price">✦${contentRow.price_light} per view</p><p>Sign in and have a hosting balance to view this page. The fee is transferred directly to the page owner.</p></div></body></html>`,
           { status: 402, headers: { 'Content-Type': 'text/html' } }
         );
       }
@@ -2047,7 +2047,7 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
               body: JSON.stringify({
                 p_from_user: viewerUserId,
                 p_to_user: userId,
-                p_amount_cents: contentRow.price_cents,
+                p_amount_light: contentRow.price_light,
               }),
             }
           );
@@ -2057,7 +2057,7 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
             if (!rows || rows.length === 0) {
               // Insufficient balance
               return new Response(
-                `<!DOCTYPE html><html><head><title>Insufficient Balance</title><style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}div{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#666;line-height:1.6}.price{font-size:1.25rem;font-weight:600;color:#333;margin:1rem 0}</style></head><body><div><div class="icon">&#9888;</div><h1>Insufficient Balance</h1><p class="price">This page costs ${contentRow.price_cents}¢</p><p>Top up your hosting balance to view this page.</p></div></body></html>`,
+                `<!DOCTYPE html><html><head><title>Insufficient Balance</title><style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}div{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#666;line-height:1.6}.price{font-size:1.25rem;font-weight:600;color:#333;margin:1rem 0}</style></head><body><div><div class="icon">&#9888;</div><h1>Insufficient Balance</h1><p class="price">This page costs ✦${contentRow.price_light}</p><p>Top up your hosting balance to view this page.</p></div></body></html>`,
                 { status: 402, headers: { 'Content-Type': 'text/html' } }
               );
             }
@@ -2068,7 +2068,7 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
               body: JSON.stringify({
                 from_user_id: viewerUserId,
                 to_user_id: userId,
-                amount_cents: contentRow.price_cents,
+                amount_light: contentRow.price_light,
                 reason: 'page_view',
                 content_id: contentRow.id,
               }),

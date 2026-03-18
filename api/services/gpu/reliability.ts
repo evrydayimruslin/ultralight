@@ -23,7 +23,7 @@ export interface GpuReliabilityStats {
   /** Average GPU execution duration in ms (null if no duration data). */
   avg_duration_ms: number | null;
   /** Total compute cost in cents over 7 days. */
-  total_compute_cents: number | null;
+  total_compute_light: number | null;
   /** Color indicator: green (≥99%), yellow (≥95%), red (<95%). */
   color: 'green' | 'yellow' | 'red';
   /** Human-readable display, e.g. "99.2% reliable (847 calls, 7d)". */
@@ -51,7 +51,7 @@ export async function getGpuReliability(
     const url =
       `${SUPABASE_URL}/rest/v1/gpu_reliability_7d` +
       `?app_id=eq.${appId}` +
-      `&select=total_calls,successful_calls,success_rate,avg_duration_ms,total_compute_cents` +
+      `&select=total_calls,successful_calls,success_rate,avg_duration_ms,total_compute_light` +
       `&limit=1`;
 
     const res = await fetch(url, {
@@ -71,7 +71,7 @@ export async function getGpuReliability(
       successful_calls: number;
       success_rate: number;
       avg_duration_ms: number | null;
-      total_compute_cents: number | null;
+      total_compute_light: number | null;
     }>;
 
     if (!rows || rows.length === 0) {
@@ -91,7 +91,7 @@ export async function getGpuReliability(
       successful_calls: row.successful_calls,
       success_rate: successRate,
       avg_duration_ms: row.avg_duration_ms,
-      total_compute_cents: row.total_compute_cents,
+      total_compute_light: row.total_compute_light,
       color,
       display,
     };

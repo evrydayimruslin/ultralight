@@ -47,7 +47,7 @@ interface DigestRunRow {
   duration_ms: number | null;
   ai_input_tokens: number;
   ai_output_tokens: number;
-  ai_cost_cents: number;
+  ai_cost_light: number;
   started_at: string;
   completed_at: string | null;
 }
@@ -95,7 +95,7 @@ async function logDigestRun(step: string, status: string, metrics: {
   duration_ms?: number;
   ai_input_tokens?: number;
   ai_output_tokens?: number;
-  ai_cost_cents?: number;
+  ai_cost_light?: number;
 }): Promise<string> {
   const runId = uuid.v4();
   const now = new Date().toISOString();
@@ -110,7 +110,7 @@ async function logDigestRun(step: string, status: string, metrics: {
     duration_ms: metrics.duration_ms || null,
     ai_input_tokens: metrics.ai_input_tokens || 0,
     ai_output_tokens: metrics.ai_output_tokens || 0,
-    ai_cost_cents: metrics.ai_cost_cents || 0,
+    ai_cost_light: metrics.ai_cost_light || 0,
     started_at: now,
     completed_at: status === 'running' ? null : now,
   });
@@ -346,7 +346,7 @@ export async function synthesize(args: {
     duration_ms: durationMs,
     ai_input_tokens: aiResponse.usage?.input_tokens || 0,
     ai_output_tokens: aiResponse.usage?.output_tokens || 0,
-    ai_cost_cents: aiResponse.usage?.cost_cents || 0,
+    ai_cost_light: aiResponse.usage?.cost_light || 0,
   });
 
   return {
@@ -796,7 +796,7 @@ export async function status(args?: Record<string, never>): Promise<{
   ai_usage: {
     total_input_tokens: number;
     total_output_tokens: number;
-    total_cost_cents: number;
+    total_cost_light: number;
   };
 }> {
   let supabaseOk = false;
@@ -837,16 +837,16 @@ export async function status(args?: Record<string, never>): Promise<{
   // AI usage totals
   const { data: aiUsage } = await supabase
     .from('digest_runs')
-    .select('ai_input_tokens, ai_output_tokens, ai_cost_cents');
+    .select('ai_input_tokens, ai_output_tokens, ai_cost_light');
 
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
-  let totalCostCents = 0;
+  let totalCostLight = 0;
   if (aiUsage) {
     for (const run of aiUsage) {
       totalInputTokens = totalInputTokens + (run.ai_input_tokens || 0);
       totalOutputTokens = totalOutputTokens + (run.ai_output_tokens || 0);
-      totalCostCents = totalCostCents + (Number(run.ai_cost_cents) || 0);
+      totalCostLight = totalCostLight + (Number(run.ai_cost_light) || 0);
     }
   }
 
@@ -865,7 +865,7 @@ export async function status(args?: Record<string, never>): Promise<{
     ai_usage: {
       total_input_tokens: totalInputTokens,
       total_output_tokens: totalOutputTokens,
-      total_cost_cents: totalCostCents,
+      total_cost_light: totalCostLight,
     },
   };
 }

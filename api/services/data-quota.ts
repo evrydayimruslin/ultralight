@@ -1,7 +1,7 @@
 // Data Storage Quota Service
 // Tracks user-generated data storage (via ultralight.store/batchStore) per user.
 // Combined with storage_used_bytes (app source code) to enforce a 100MB free tier.
-// Overage billed at DATA_RATE_CENTS_PER_MB_PER_HOUR from hosting_balance_cents.
+// Overage billed at DATA_RATE_LIGHT_PER_MB_PER_HOUR from balance_light.
 
 // @ts-ignore
 const Deno = globalThis.Deno;

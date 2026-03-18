@@ -26,22 +26,22 @@ export interface McpCallLogEntry {
   outputResult?: unknown;
   userTier?: string;
   appVersion?: string;
-  aiCostCents?: number;
+  aiCostLight?: number;
   sessionId?: string;
   sequenceNumber?: number;
   userQuery?: string;
   // Cost telemetry fields — for per-call pricing calibration
   responseSizeBytes?: number;
-  executionCostEstimateCents?: number;
+  executionCostEstimateLight?: number;
   // Per-call pricing: amount charged to caller and transferred to owner
-  callChargeCents?: number;
+  callChargeLight?: number;
   // GPU metering fields — populated for gpu runtime calls
   gpuType?: string;
   gpuExitCode?: string;
   gpuDurationMs?: number;
-  gpuCostCents?: number;
+  gpuCostLight?: number;
   gpuPeakVramGb?: number;
-  gpuDeveloperFeeCents?: number;
+  gpuDeveloperFeeLight?: number;
   gpuFailurePolicy?: string;
 }
 
@@ -100,21 +100,21 @@ async function _insertLog(entry: McpCallLogEntry): Promise<void> {
         output_result: truncateForStorage(entry.outputResult),
         user_tier: entry.userTier || null,
         app_version: entry.appVersion || null,
-        ai_cost_cents: entry.aiCostCents || 0,
+        ai_cost_light: entry.aiCostLight || 0,
         session_id: entry.sessionId || null,
         sequence_number: entry.sequenceNumber ?? null,
         user_query: entry.userQuery || null,
         // Cost telemetry
         response_size_bytes: entry.responseSizeBytes ?? null,
-        execution_cost_estimate_cents: entry.executionCostEstimateCents ?? null,
-        call_charge_cents: entry.callChargeCents ?? null,
+        execution_cost_estimate_light: entry.executionCostEstimateLight ?? null,
+        call_charge_light: entry.callChargeLight ?? null,
         // GPU metering
         gpu_type: entry.gpuType ?? null,
         gpu_exit_code: entry.gpuExitCode ?? null,
         gpu_duration_ms: entry.gpuDurationMs ?? null,
-        gpu_cost_cents: entry.gpuCostCents ?? null,
+        gpu_cost_light: entry.gpuCostLight ?? null,
         gpu_peak_vram_gb: entry.gpuPeakVramGb ?? null,
-        gpu_developer_fee_cents: entry.gpuDeveloperFeeCents ?? null,
+        gpu_developer_fee_light: entry.gpuDeveloperFeeLight ?? null,
         gpu_failure_policy: entry.gpuFailurePolicy ?? null,
       }),
     }

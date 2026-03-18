@@ -2,9 +2,12 @@
 // Handles Express account lifecycle, transfers, and payouts.
 // All Stripe API calls use raw fetch — no SDK dependency.
 // Gracefully handles missing API keys (throws 503 with descriptive message).
+// Internal ledger is in Light (✦); Stripe boundary uses USD cents.
 
 // @ts-ignore - Deno is available in production
 const Deno = globalThis.Deno;
+
+import { MIN_WITHDRAWAL_LIGHT, LIGHT_PER_DOLLAR_PAYOUT, formatLight } from '../../shared/types/index.ts';
 
 // ============================================
 // TYPES
@@ -21,9 +24,10 @@ export interface ConnectAccountStatus {
 }
 
 export interface PayoutEstimate {
-  gross_cents: number;        // what gets deducted from balance
-  stripe_fee_cents: number;   // estimated Stripe payout fee
-  net_cents: number;          // estimated bank deposit
+  gross_light: number;        // Light deducted from balance
+  gross_usd_cents: number;    // USD cents equivalent (light / 800 * 100)
+  stripe_fee_cents: number;   // estimated Stripe payout fee (in USD cents)
+  net_cents: number;          // estimated bank deposit (in USD cents)
 }
 
 export interface TransferResult {
@@ -47,14 +51,6 @@ export const PAYOUT_FEE_FIXED_CENTS = 25;
 // Cross-border FX fee: 2% on transfers to non-USD connected accounts
 export const CROSS_BORDER_FX_PERCENT = 0.02;
 
-// Minimum withdrawal: must exceed the fixed fee meaningfully
-export const MIN_WITHDRAWAL_CENTS = 1000; // $10.00
-
-// Platform withdrawal fee: 10% deducted from every withdrawal
-// We absorb the Stripe deposit fee (~2.9%+30¢) so users get $10=$10 balance.
-// The 10% withdrawal fee recovers this and funds platform operations.
-export const PLATFORM_FEE_PERCENT = 0.10;
-
 // Payout hold period: 14 days before Stripe transfer is executed
 export const PAYOUT_HOLD_DAYS = 14;
 
@@ -77,20 +73,27 @@ function ensureStripeKey(): string {
   return key;
 }
 
+/** Convert a Light amount to USD cents at the payout rate (800 Light/$1). */
+function lightToUsdCents(amountLight: number): number {
+  return Math.round((amountLight / LIGHT_PER_DOLLAR_PAYOUT) * 100);
+}
+
 /**
- * Estimate the Stripe payout fee for a given withdrawal amount.
- * Developer pays all fees — platform absorbs nothing.
+ * Estimate the Stripe payout fee for a given withdrawal in Light.
+ * Converts Light to USD at payout rate, then calculates Stripe fees in USD cents.
  * Cross-border payouts (non-US connected accounts) incur an additional 2% FX fee.
  */
-export function estimatePayoutFee(amountCents: number, isCrossBorder = false): PayoutEstimate {
-  let feeCents = Math.ceil(amountCents * PAYOUT_FEE_PERCENT + PAYOUT_FEE_FIXED_CENTS);
+export function estimatePayoutFee(amountLight: number, isCrossBorder = false): PayoutEstimate {
+  const grossCents = lightToUsdCents(amountLight);
+  let feeCents = Math.ceil(grossCents * PAYOUT_FEE_PERCENT + PAYOUT_FEE_FIXED_CENTS);
   if (isCrossBorder) {
-    feeCents += Math.ceil(amountCents * CROSS_BORDER_FX_PERCENT);
+    feeCents += Math.ceil(grossCents * CROSS_BORDER_FX_PERCENT);
   }
   return {
-    gross_cents: amountCents,
+    gross_light: amountLight,
+    gross_usd_cents: grossCents,
     stripe_fee_cents: feeCents,
-    net_cents: amountCents - feeCents,
+    net_cents: grossCents - feeCents,
   };
 }
 

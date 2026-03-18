@@ -1,9 +1,12 @@
 // Marketplace Service
 // Handles bid/ask, escrow, ownership transfer, and provenance for app trading.
 // All financial operations use atomic Supabase RPCs — no double-spend possible.
+// All amounts are in Light (✦).
 
 // @ts-ignore - Deno is available
 const Deno = globalThis.Deno;
+
+import { formatLight } from '../../shared/types/index.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
@@ -15,15 +18,15 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '
 export interface BidResult {
   bid_id: string;
   app_id: string;
-  amount_cents: number;
+  amount_light: number;
   message: string;
 }
 
 export interface ListingResult {
   listing_id: string;
   app_id: string;
-  ask_price_cents: number | null;
-  floor_price_cents: number | null;
+  ask_price_light: number | null;
+  floor_price_light: number | null;
   instant_buy: boolean;
 }
 
@@ -32,9 +35,9 @@ export interface SaleResult {
   app_id: string;
   seller_id: string;
   buyer_id: string;
-  sale_price_cents: number;
-  platform_fee_cents: number;
-  seller_payout_cents: number;
+  sale_price_light: number;
+  platform_fee_light: number;
+  seller_payout_light: number;
 }
 
 export interface ListingDetails {
@@ -42,19 +45,19 @@ export interface ListingDetails {
     id: string;
     app_id: string;
     owner_id: string;
-    ask_price_cents: number | null;
-    floor_price_cents: number | null;
+    ask_price_light: number | null;
+    floor_price_light: number | null;
     instant_buy: boolean;
     status: string;
     listing_note: string | null;
-    provenance: Array<{ owner_id: string; email: string; acquired_at: string; price_cents: number; method: string }>;
+    provenance: Array<{ owner_id: string; email: string; acquired_at: string; price_light: number; method: string }>;
     created_at: string;
   } | null;
   bids: Array<{
     id: string;
     bidder_id: string;
     bidder_email?: string;
-    amount_cents: number;
+    amount_light: number;
     message: string | null;
     status: string;
     created_at: string;
@@ -77,7 +80,7 @@ export interface OffersSummary {
     app_id: string;
     app_name: string;
     bidder_email: string;
-    amount_cents: number;
+    amount_light: number;
     message: string | null;
     created_at: string;
   }>;
@@ -85,7 +88,7 @@ export interface OffersSummary {
     bid_id: string;
     app_id: string;
     app_name: string;
-    amount_cents: number;
+    amount_light: number;
     status: string;
     escrow_status: string;
     created_at: string;
@@ -96,7 +99,7 @@ export interface AppMetrics {
   total_calls: number;
   calls_30d: number;
   unique_callers_30d: number;
-  revenue_30d_cents: number;
+  revenue_30d_light: number;
   success_rate_30d: number;  // 0.0 to 1.0
 }
 
@@ -106,9 +109,9 @@ export interface SaleHistory {
   app_name?: string;
   seller_id: string;
   buyer_id: string;
-  sale_price_cents: number;
-  platform_fee_cents: number;
-  seller_payout_cents: number;
+  sale_price_light: number;
+  platform_fee_light: number;
+  seller_payout_light: number;
   created_at: string;
 }
 
@@ -148,11 +151,11 @@ function rpcHeaders() {
 export async function placeBid(
   bidderId: string,
   appId: string,
-  amountCents: number,
+  amountLight: number,
   message?: string,
   expiresInHours?: number
 ): Promise<BidResult> {
-  if (amountCents <= 0) throw createError('Bid amount must be positive', 400);
+  if (amountLight <= 0) throw createError('Bid amount must be positive', 400);
 
   // Apps that have ever used an external database are permanently ineligible
   const appCheck = await fetch(
@@ -174,7 +177,7 @@ export async function placeBid(
     body: JSON.stringify({
       p_bidder_id: bidderId,
       p_app_id: appId,
-      p_amount_cents: amountCents,
+      p_amount_light: amountLight,
       p_message: message || null,
       p_expires_at: expiresAt,
     }),
@@ -196,25 +199,25 @@ export async function placeBid(
 
   const bidId = await res.json();
 
-  console.log(`[MARKETPLACE] Bid placed: ${bidId} by ${bidderId} on ${appId} for ${amountCents}c`);
+  console.log(`[MARKETPLACE] Bid placed: ${bidId} by ${bidderId} on ${appId} for ${formatLight(amountLight)}`);
 
   return {
     bid_id: bidId,
     app_id: appId,
-    amount_cents: amountCents,
-    message: `Bid of $${(amountCents / 100).toFixed(2)} placed successfully. Funds are escrowed until accepted, rejected, or cancelled.`,
+    amount_light: amountLight,
+    message: `Bid of ${formatLight(amountLight)} placed successfully. Funds are escrowed until accepted, rejected, or cancelled.`,
   };
 }
 
 /**
  * Set or update ask price for an app (owner only).
- * Pass priceCents = null to remove ask price (keep open to offers).
+ * Pass priceLight = null to remove ask price (keep open to offers).
  */
 export async function setAskPrice(
   ownerId: string,
   appId: string,
-  priceCents: number | null,
-  floorCents?: number | null,
+  priceLight: number | null,
+  floorLight?: number | null,
   instantBuy?: boolean,
   note?: string
 ): Promise<ListingResult> {
@@ -235,8 +238,8 @@ export async function setAskPrice(
   const listingData: Record<string, unknown> = {
     app_id: appId,
     owner_id: ownerId,
-    ask_price_cents: priceCents,
-    floor_price_cents: floorCents ?? null,
+    ask_price_light: priceLight,
+    floor_price_light: floorLight ?? null,
     instant_buy: instantBuy ?? false,
     listing_note: note ?? null,
     updated_at: new Date().toISOString(),
@@ -263,13 +266,13 @@ export async function setAskPrice(
   const rows = await upsertRes.json();
   const listing = Array.isArray(rows) ? rows[0] : rows;
 
-  console.log(`[MARKETPLACE] Ask price set: ${appId} = ${priceCents}c (instant_buy: ${instantBuy})`);
+  console.log(`[MARKETPLACE] Ask price set: ${appId} = ${priceLight !== null ? formatLight(priceLight) : 'open'} (instant_buy: ${instantBuy})`);
 
   return {
     listing_id: listing.id,
     app_id: appId,
-    ask_price_cents: priceCents,
-    floor_price_cents: floorCents ?? null,
+    ask_price_light: priceLight,
+    floor_price_light: floorLight ?? null,
     instant_buy: instantBuy ?? false,
   };
 }
@@ -297,7 +300,7 @@ export async function acceptBid(ownerId: string, bidId: string): Promise<SaleRes
 
   const result = await res.json();
 
-  console.log(`[MARKETPLACE] Sale completed: ${result.sale_id} — ${result.seller_id} → ${result.buyer_id} for ${result.sale_price_cents}c`);
+  console.log(`[MARKETPLACE] Sale completed: ${result.sale_id} — ${result.seller_id} → ${result.buyer_id} for ${formatLight(result.sale_price_light)}`);
 
   // Record source fingerprint for seller-relist detection (fire-and-forget)
   import('./originality.ts').then(({ recordSaleFingerprint }) => {
@@ -310,9 +313,9 @@ export async function acceptBid(ownerId: string, bidId: string): Promise<SaleRes
     app_id: result.app_id,
     seller_id: result.seller_id,
     buyer_id: result.buyer_id,
-    sale_price_cents: result.sale_price_cents,
-    platform_fee_cents: result.platform_fee_cents,
-    seller_payout_cents: result.seller_payout_cents,
+    sale_price_light: result.sale_price_light,
+    platform_fee_light: result.platform_fee_light,
+    seller_payout_light: result.seller_payout_light,
   };
 }
 
@@ -379,10 +382,10 @@ export async function buyNow(buyerId: string, appId: string): Promise<SaleResult
 
   if (!listing) throw createError('No listing found for this app', 404);
   if (!listing.instant_buy) throw createError('This listing does not allow instant buy', 400);
-  if (!listing.ask_price_cents) throw createError('No ask price set', 400);
+  if (!listing.ask_price_light) throw createError('No ask price set', 400);
 
   // Place bid at ask price
-  const bidResult = await placeBid(buyerId, appId, listing.ask_price_cents);
+  const bidResult = await placeBid(buyerId, appId, listing.ask_price_light);
 
   // Immediately accept (as the owner) — if this fails, auto-cancel to refund escrow
   try {
@@ -404,11 +407,11 @@ export async function buyNow(buyerId: string, appId: string): Promise<SaleResult
  */
 export async function getOffers(userId: string, appId?: string): Promise<OffersSummary> {
   // Incoming: bids on user's apps
-  let incomingUrl = `${SUPABASE_URL}/rest/v1/app_bids?status=eq.active&select=id,app_id,bidder_id,amount_cents,message,created_at,apps!inner(name,owner_id)&apps.owner_id=eq.${userId}&order=amount_cents.desc`;
+  let incomingUrl = `${SUPABASE_URL}/rest/v1/app_bids?status=eq.active&select=id,app_id,bidder_id,amount_light,message,created_at,apps!inner(name,owner_id)&apps.owner_id=eq.${userId}&order=amount_light.desc`;
   if (appId) incomingUrl += `&app_id=eq.${appId}`;
 
   // Outgoing: user's own bids
-  let outgoingUrl = `${SUPABASE_URL}/rest/v1/app_bids?bidder_id=eq.${userId}&select=id,app_id,amount_cents,status,escrow_status,created_at,apps(name)&order=created_at.desc&limit=50`;
+  let outgoingUrl = `${SUPABASE_URL}/rest/v1/app_bids?bidder_id=eq.${userId}&select=id,app_id,amount_light,status,escrow_status,created_at,apps(name)&order=created_at.desc&limit=50`;
 
   const [incomingRes, outgoingRes] = await Promise.all([
     fetch(incomingUrl, { headers: dbHeaders() }),
@@ -424,7 +427,7 @@ export async function getOffers(userId: string, appId?: string): Promise<OffersS
       app_id: b.app_id as string,
       app_name: (b.apps as Record<string, unknown>)?.name as string || 'Unknown',
       bidder_email: '',
-      amount_cents: b.amount_cents as number,
+      amount_light: b.amount_light as number,
       message: b.message as string | null,
       created_at: b.created_at as string,
     }));
@@ -441,7 +444,7 @@ export async function getOffers(userId: string, appId?: string): Promise<OffersS
       myApps.forEach((a: { id: string; name: string }) => { appNameMap[a.id] = a.name; });
 
       const bidsRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/app_bids?status=eq.active&app_id=in.(${appIds.join(',')})&select=id,app_id,bidder_id,amount_cents,message,created_at&order=amount_cents.desc`,
+        `${SUPABASE_URL}/rest/v1/app_bids?status=eq.active&app_id=in.(${appIds.join(',')})&select=id,app_id,bidder_id,amount_light,message,created_at&order=amount_light.desc`,
         { headers: dbHeaders() }
       );
       const bidsData = bidsRes.ok ? await bidsRes.json() : [];
@@ -463,7 +466,7 @@ export async function getOffers(userId: string, appId?: string): Promise<OffersS
         app_id: b.app_id as string,
         app_name: appNameMap[b.app_id as string] || 'Unknown',
         bidder_email: emailMap[b.bidder_id as string] || 'Unknown',
-        amount_cents: b.amount_cents as number,
+        amount_light: b.amount_light as number,
         message: b.message as string | null,
         created_at: b.created_at as string,
       }));
@@ -478,7 +481,7 @@ export async function getOffers(userId: string, appId?: string): Promise<OffersS
       bid_id: b.id as string,
       app_id: b.app_id as string,
       app_name: (b.apps as Record<string, unknown>)?.name as string || 'Unknown',
-      amount_cents: b.amount_cents as number,
+      amount_light: b.amount_light as number,
       status: b.status as string,
       escrow_status: b.escrow_status as string,
       created_at: b.created_at as string,
@@ -512,7 +515,7 @@ export async function getListing(appId: string): Promise<ListingDetails> {
       { headers: dbHeaders() }
     ),
     fetch(
-      `${SUPABASE_URL}/rest/v1/app_bids?app_id=eq.${appId}&status=eq.active&select=id,bidder_id,amount_cents,message,status,created_at,expires_at&order=amount_cents.desc`,
+      `${SUPABASE_URL}/rest/v1/app_bids?app_id=eq.${appId}&status=eq.active&select=id,bidder_id,amount_light,message,status,created_at,expires_at&order=amount_light.desc`,
       { headers: dbHeaders() }
     ),
     fetch(
@@ -565,7 +568,7 @@ export async function getAppMetrics(appId: string): Promise<AppMetrics> {
     ),
     // 30d calls + sum revenue + success flag
     fetch(
-      `${SUPABASE_URL}/rest/v1/mcp_call_logs?app_id=eq.${appId}&created_at=gte.${thirtyDaysAgo}&select=call_charge_cents,success`,
+      `${SUPABASE_URL}/rest/v1/mcp_call_logs?app_id=eq.${appId}&created_at=gte.${thirtyDaysAgo}&select=call_charge_light,success`,
       { headers: dbHeaders() }
     ),
     // 30d unique callers
@@ -581,9 +584,9 @@ export async function getAppMetrics(appId: string): Promise<AppMetrics> {
   const totalCalls = totalMatch ? parseInt(totalMatch[1], 10) : 0;
 
   // Parse 30d calls + revenue + success rate
-  const recentRows = recentRes.ok ? await recentRes.json() as Array<{ call_charge_cents: number | null; success: boolean | null }> : [];
+  const recentRows = recentRes.ok ? await recentRes.json() as Array<{ call_charge_light: number | null; success: boolean | null }> : [];
   const calls30d = recentRows.length;
-  const revenue30dCents = recentRows.reduce((sum, r) => sum + (r.call_charge_cents || 0), 0);
+  const revenue30dLight = recentRows.reduce((sum, r) => sum + (r.call_charge_light || 0), 0);
   const successCount = recentRows.filter(r => r.success !== false).length;
   const successRate30d = calls30d > 0 ? Math.round((successCount / calls30d) * 10000) / 10000 : 1.0;
 
@@ -595,7 +598,7 @@ export async function getAppMetrics(appId: string): Promise<AppMetrics> {
     total_calls: totalCalls,
     calls_30d: calls30d,
     unique_callers_30d: uniqueCallers30d,
-    revenue_30d_cents: Math.round(revenue30dCents * 100) / 100,
+    revenue_30d_light: Math.round(revenue30dLight * 100) / 100,
     success_rate_30d: successRate30d,
   };
 }

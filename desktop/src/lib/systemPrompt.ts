@@ -135,7 +135,7 @@ Do NOT ask questions — make reasonable decisions and proceed. Be thorough and 
 const SUBAGENT_TOOLS = `
 
 ### Subagent Management
-- **spawn_agent(name, role, task, custom_instructions?, template?, context_files?, discover_skills?, skill_budget_cents?)** — Create a new autonomous subagent. \`template\`: filename from .ultralight/agents/ (applies config + body). \`context_files\`: filenames from .ultralight/knowledge/ to inject. \`discover_skills\`: search marketplace for relevant paid knowledge.
+- **spawn_agent(name, role, task, custom_instructions?, template?, context_files?, discover_skills?, skill_budget_light?)** — Create a new autonomous subagent. \`template\`: filename from .ultralight/agents/ (applies config + body). \`context_files\`: filenames from .ultralight/knowledge/ to inject. \`discover_skills\`: search marketplace for relevant paid knowledge.
 - **check_agent(agent_id, include_messages?)** — Get detailed status of a subagent including recent messages and progress.`;
 
 // ── Card Reporting Tools ──

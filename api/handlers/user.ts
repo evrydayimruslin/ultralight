@@ -5,7 +5,7 @@ import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
 import { createUserService } from '../services/user.ts';
 import { validateAPIKey } from '../services/ai.ts';
-import { BYOK_PROVIDERS, type BYOKProvider } from '../../shared/types/index.ts';
+import { BYOK_PROVIDERS, type BYOKProvider, formatLight, MIN_WITHDRAWAL_LIGHT, LIGHT_PER_DOLLAR_WEB, LIGHT_PER_DOLLAR_DESKTOP, LIGHT_PER_DOLLAR_PAYOUT, HOSTING_RATE_LIGHT_PER_MB_PER_HOUR, DATA_RATE_LIGHT_PER_MB_PER_HOUR } from '../../shared/types/index.ts';
 import {
   createToken,
   listTokens,
@@ -64,7 +64,7 @@ export async function handleUser(request: Request): Promise<Response> {
         type: string;
         data: {
           object: {
-            metadata?: { user_id?: string; amount_cents?: string; type?: string };
+            metadata?: { user_id?: string; amount_cents?: string; light_amount?: string; type?: string };
             payment_status?: string;
           };
         };
@@ -81,12 +81,12 @@ export async function handleUser(request: Request): Promise<Response> {
       if (event.type === 'checkout.session.completed') {
         const session = event.data.object;
         const eventUserId = session.metadata?.user_id;
-        const amountCents = parseInt(session.metadata?.amount_cents || '0', 10);
+        const lightAmount = parseInt(session.metadata?.light_amount || '0', 10);
         const depositType = session.metadata?.type;
 
-        if (eventUserId && amountCents > 0 && depositType === 'hosting_deposit' && session.payment_status === 'paid') {
-          console.log(`[STRIPE] Crediting ${amountCents} cents to user ${eventUserId} (event: ${event.id})`);
-          const creditResult = await creditHostingBalance(eventUserId, amountCents);
+        if (eventUserId && lightAmount > 0 && depositType === 'hosting_deposit' && session.payment_status === 'paid') {
+          console.log(`[STRIPE] Crediting ${formatLight(lightAmount)} to user ${eventUserId} (event: ${event.id})`);
+          const creditResult = await creditBalance(eventUserId, lightAmount);
           // Log billing transaction
           try {
             const { SUPABASE_URL: sUrl, SUPABASE_SERVICE_ROLE_KEY: sKey } = getSupabaseEnv();
@@ -95,8 +95,8 @@ export async function handleUser(request: Request): Promise<Response> {
               headers: { 'apikey': sKey, 'Authorization': `Bearer ${sKey}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
               body: JSON.stringify({
                 user_id: eventUserId, type: 'credit', category: 'deposit',
-                description: `Deposit: $${(amountCents / 100).toFixed(2)}`,
-                amount_cents: amountCents, balance_after: creditResult.new_balance_cents,
+                description: `Deposit: ${formatLight(lightAmount)}`,
+                amount_light: lightAmount, balance_after_light: creditResult.new_balance_light,
                 metadata: { stripe_event_id: event.id },
               }),
             });
@@ -108,12 +108,12 @@ export async function handleUser(request: Request): Promise<Response> {
       if (event.type === 'payment_intent.succeeded') {
         const intent = event.data.object;
         const eventUserId = intent.metadata?.user_id;
-        const amountCents = parseInt(intent.metadata?.amount_cents || '0', 10);
+        const lightAmount = parseInt(intent.metadata?.light_amount || '0', 10);
         const intentType = intent.metadata?.type;
 
-        if (eventUserId && amountCents > 0 && intentType === 'auto_topup') {
-          console.log(`[STRIPE] Auto top-up succeeded: crediting ${amountCents} cents to user ${eventUserId} (event: ${event.id})`);
-          const topupResult = await creditHostingBalance(eventUserId, amountCents);
+        if (eventUserId && lightAmount > 0 && intentType === 'auto_topup') {
+          console.log(`[STRIPE] Auto top-up succeeded: crediting ${formatLight(lightAmount)} to user ${eventUserId} (event: ${event.id})`);
+          const topupResult = await creditBalance(eventUserId, lightAmount);
           // Log billing transaction
           try {
             const { SUPABASE_URL: sUrl, SUPABASE_SERVICE_ROLE_KEY: sKey } = getSupabaseEnv();
@@ -122,8 +122,8 @@ export async function handleUser(request: Request): Promise<Response> {
               headers: { 'apikey': sKey, 'Authorization': `Bearer ${sKey}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
               body: JSON.stringify({
                 user_id: eventUserId, type: 'credit', category: 'auto_topup',
-                description: `Auto top-up: $${(amountCents / 100).toFixed(2)}`,
-                amount_cents: amountCents, balance_after: topupResult.new_balance_cents,
+                description: `Auto top-up: ${formatLight(lightAmount)}`,
+                amount_light: lightAmount, balance_after_light: topupResult.new_balance_light,
                 metadata: { stripe_event_id: event.id },
               }),
             });
@@ -401,7 +401,7 @@ export async function handleUser(request: Request): Promise<Response> {
           { headers }
         ),
         fetch(
-          `${sbUrl}/rest/v1/app_sales?buyer_id=eq.${profile.id}&select=id,sale_price_cents,created_at,apps(name,slug)` +
+          `${sbUrl}/rest/v1/app_sales?buyer_id=eq.${profile.id}&select=id,sale_price_light,created_at,apps(name,slug)` +
           `&order=created_at.desc&limit=50`,
           { headers }
         ),
@@ -410,7 +410,7 @@ export async function handleUser(request: Request): Promise<Response> {
           : Promise.resolve(null),
       ]);
 
-      const stats = statsRes.ok ? await statsRes.json() : { lifetime_gross_cents: 0, published_count: 0, acquired_count: 0 };
+      const stats = statsRes.ok ? await statsRes.json() : { lifetime_gross_light: 0, published_count: 0, acquired_count: 0 };
       const published = publishedRes.ok ? await publishedRes.json() : [];
       const acquisitionsRaw = acquisitionsRes.ok ? await acquisitionsRes.json() : [];
       let featuredApp = null;
@@ -424,7 +424,7 @@ export async function handleUser(request: Request): Promise<Response> {
         return {
           app_name: app?.name || 'Unknown',
           app_slug: app?.slug || '',
-          price_cents: a.sale_price_cents,
+          price_light: a.sale_price_light,
           acquired_at: a.created_at,
         };
       });
@@ -1603,8 +1603,8 @@ export async function handleUser(request: Request): Promise<Response> {
         }
       }
 
-      const hostingCentsPerHour = hostingMb * 2.5; // HOSTING_RATE_CENTS_PER_MB_PER_HOUR
-      const dataOverageCentsPerHour = dataOverageMb * 0.05; // DATA_RATE_CENTS_PER_MB_PER_HOUR
+      const hostingLightPerHour = hostingMb * HOSTING_RATE_LIGHT_PER_MB_PER_HOUR;
+      const dataOverageLightPerHour = dataOverageMb * DATA_RATE_LIGHT_PER_MB_PER_HOUR;
 
       return json({
         transactions,
@@ -1612,11 +1612,11 @@ export async function handleUser(request: Request): Promise<Response> {
         current_rate: {
           hosting_mb: Math.round(hostingMb * 100) / 100,
           hosting_apps: appCount,
-          hosting_cents_per_hour: Math.round(hostingCentsPerHour * 10000) / 10000,
+          hosting_light_per_hour: Math.round(hostingLightPerHour * 10000) / 10000,
           data_overage_mb: Math.round(dataOverageMb * 100) / 100,
-          data_overage_cents_per_hour: Math.round(dataOverageCentsPerHour * 10000) / 10000,
-          estimated_daily_cents: Math.round((hostingCentsPerHour + dataOverageCentsPerHour) * 24 * 100) / 100,
-          estimated_monthly_cents: Math.round((hostingCentsPerHour + dataOverageCentsPerHour) * 24 * 30 * 100) / 100,
+          data_overage_light_per_hour: Math.round(dataOverageLightPerHour * 10000) / 10000,
+          estimated_daily_light: Math.round((hostingLightPerHour + dataOverageLightPerHour) * 24 * 100) / 100,
+          estimated_monthly_light: Math.round((hostingLightPerHour + dataOverageLightPerHour) * 24 * 30 * 100) / 100,
         },
       });
     } catch (err) {
@@ -1635,7 +1635,7 @@ export async function handleUser(request: Request): Promise<Response> {
       const user = await authenticate(request);
       const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
       const userRes = await fetch(
-        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=hosting_balance_cents,escrow_held_cents,hosting_last_billed_at,auto_topup_enabled,auto_topup_threshold_cents,auto_topup_amount_cents,auto_topup_last_failed_at,stripe_customer_id`,
+        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=balance_light,escrow_light,hosting_last_billed_at,auto_topup_enabled,auto_topup_threshold_light,auto_topup_amount_light,auto_topup_last_failed_at,stripe_customer_id`,
         {
           headers: {
             'apikey': sbKey,
@@ -1649,13 +1649,13 @@ export async function handleUser(request: Request): Promise<Response> {
       const ud = rows[0];
 
       return json({
-        hosting_balance_cents: ud.hosting_balance_cents ?? 0,
-        escrow_held_cents: ud.escrow_held_cents ?? 0,
+        balance_light: ud.balance_light ?? 0,
+        escrow_light: ud.escrow_light ?? 0,
         hosting_last_billed_at: ud.hosting_last_billed_at ?? null,
         auto_topup: {
           enabled: ud.auto_topup_enabled ?? false,
-          threshold_cents: ud.auto_topup_threshold_cents ?? 100,
-          amount_cents: ud.auto_topup_amount_cents ?? 1000,
+          threshold_light: ud.auto_topup_threshold_light ?? 720,
+          amount_light: ud.auto_topup_amount_light ?? 7200,
           last_failed_at: ud.auto_topup_last_failed_at ?? null,
         },
         has_payment_method: !!ud.stripe_customer_id,
@@ -1666,14 +1666,14 @@ export async function handleUser(request: Request): Promise<Response> {
   }
 
   // PATCH /api/user/hosting/auto-topup — configure auto top-up settings
-  // Body: { enabled?: boolean, threshold_cents?: number, amount_cents?: number }
+  // Body: { enabled?: boolean, threshold_light?: number, amount_light?: number }
   if (path === '/api/user/hosting/auto-topup' && method === 'PATCH') {
     try {
       const user = await authenticate(request);
       const body = await request.json() as {
         enabled?: boolean;
-        threshold_cents?: number;
-        amount_cents?: number;
+        threshold_light?: number;
+        amount_light?: number;
       };
 
       const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
@@ -1699,27 +1699,27 @@ export async function handleUser(request: Request): Promise<Response> {
       }
 
       // Validate thresholds
-      if (body.threshold_cents !== undefined) {
-        if (typeof body.threshold_cents !== 'number' || body.threshold_cents < 0 || body.threshold_cents > 100_000) {
-          return error('threshold_cents must be between 0 and 100000', 400);
+      if (body.threshold_light !== undefined) {
+        if (typeof body.threshold_light !== 'number' || body.threshold_light < 0 || body.threshold_light > 720_000) {
+          return error('threshold_light must be between 0 and 720000', 400);
         }
       }
-      if (body.amount_cents !== undefined) {
-        if (typeof body.amount_cents !== 'number' || body.amount_cents < 500 || body.amount_cents > 100_000) {
-          return error('amount_cents must be between 500 ($5.00) and 100000 ($1000.00)', 400);
+      if (body.amount_light !== undefined) {
+        if (typeof body.amount_light !== 'number' || body.amount_light < 4000 || body.amount_light > 720_000) {
+          return error('amount_light must be between 4000 and 720000', 400);
         }
       }
 
       // Build update payload
       const update: Record<string, unknown> = {};
       if (body.enabled !== undefined) update.auto_topup_enabled = body.enabled;
-      if (body.threshold_cents !== undefined) update.auto_topup_threshold_cents = body.threshold_cents;
-      if (body.amount_cents !== undefined) update.auto_topup_amount_cents = body.amount_cents;
+      if (body.threshold_light !== undefined) update.auto_topup_threshold_light = body.threshold_light;
+      if (body.amount_light !== undefined) update.auto_topup_amount_light = body.amount_light;
       // If re-enabling, clear the last failure timestamp
       if (body.enabled === true) update.auto_topup_last_failed_at = null;
 
       if (Object.keys(update).length === 0) {
-        return error('No fields to update. Provide enabled, threshold_cents, or amount_cents.', 400);
+        return error('No fields to update. Provide enabled, threshold_light, or amount_light.', 400);
       }
 
       const updateRes = await fetch(
@@ -1746,13 +1746,14 @@ export async function handleUser(request: Request): Promise<Response> {
   }
 
   // POST /api/user/hosting/checkout — create a Stripe Checkout session for hosting deposit
-  // Body: { amount_cents: number } (minimum 500 = $5.00)
-  // Returns: { checkout_url: string } or error if Stripe not configured
+  // Body: { amount_cents: number, source?: 'web' | 'desktop' } (minimum 500 = $5.00)
+  // Returns: { checkout_url: string, light_amount: number } or error if Stripe not configured
   if (path === '/api/user/hosting/checkout' && method === 'POST') {
     try {
       const user = await authenticate(request);
-      const body = await request.json() as { amount_cents?: number };
+      const body = await request.json() as { amount_cents?: number; source?: 'web' | 'desktop' };
       const amountCents = body.amount_cents;
+      const source = body.source || 'web';
 
       if (!amountCents || typeof amountCents !== 'number' || amountCents < 500) {
         return error('amount_cents must be at least 500 ($5.00 minimum deposit)', 400);
@@ -1827,15 +1828,19 @@ export async function handleUser(request: Request): Promise<Response> {
 
       // Charge exactly what the user deposits — platform absorbs Stripe fees.
       // $10 deposit = $10 balance. No fee pass-through.
-      // Platform recovers via 10% withdrawal fee on earnings cashout.
+      // Platform recovers via 10% fee on every transfer_balance() call.
       const chargeCents = amountCents;
+
+      // Calculate Light to credit based on source
+      const lightPerDollar = source === 'desktop' ? LIGHT_PER_DOLLAR_DESKTOP : LIGHT_PER_DOLLAR_WEB;
+      const lightAmount = Math.round(amountCents / 100 * lightPerDollar);
 
       // Create Stripe Checkout Session with card + ACH + Link
       // - Cards: setup_future_usage saves for off-session auto top-ups
       // - ACH (us_bank_account): lower fees (0.8% capped $5), Plaid bank-linking handled by Stripe
       // - Link: one-click checkout, remembers payment methods across Stripe merchants
       // - No tax at deposit — tax applies at service consumption (hosting/calls)
-      // - metadata.amount_cents is the deposit credited to the user's balance
+      // - metadata.light_amount is the Light credited to the user's balance
       const checkoutParams: Record<string, string> = {
         'mode': 'payment',
         'customer': stripeCustomerId,
@@ -1849,11 +1854,11 @@ export async function handleUser(request: Request): Promise<Response> {
         'line_items[0][price_data][currency]': 'usd',
         'line_items[0][price_data][product_data][name]': 'Ultralight Balance',
         'line_items[0][price_data][product_data][description]':
-          `$${(amountCents / 100).toFixed(2)} platform credit`,
+          `$${(amountCents / 100).toFixed(2)} platform credit (${formatLight(lightAmount)})`,
         'line_items[0][price_data][unit_amount]': String(chargeCents),
         'line_items[0][quantity]': '1',
         'metadata[user_id]': user.id,
-        'metadata[amount_cents]': String(amountCents),
+        'metadata[light_amount]': String(lightAmount),
         'metadata[type]': 'hosting_deposit',
         'success_url': `${BASE_URL}/dash?topup=success&amount=${amountCents}`,
         'cancel_url': `${BASE_URL}/dash?topup=cancelled`,
@@ -1880,8 +1885,7 @@ export async function handleUser(request: Request): Promise<Response> {
         checkout_url: session.url,
         session_id: session.id,
         deposit_cents: amountCents,
-        processing_fee_cents: feeCents,
-        charge_cents: grossCents,
+        light_amount: lightAmount,
       });
     } catch (err) {
       if (err instanceof SyntaxError) return error('Invalid JSON body', 400);
@@ -1890,7 +1894,7 @@ export async function handleUser(request: Request): Promise<Response> {
   }
 
   // GET /api/user/earnings — aggregate earnings across all owned apps
-  // Returns: { total_earned_cents, period_earned_cents, total_withdrawn_cents, withdrawable_cents, by_app: [...], recent: [...] }
+  // Returns: { total_earned_light, period_earned_light, total_withdrawn_light, withdrawable_light, by_app: [...], recent: [...] }
   if (path === '/api/user/earnings' && method === 'GET') {
     try {
       const user = await authenticate(request);
@@ -1911,20 +1915,20 @@ export async function handleUser(request: Request): Promise<Response> {
 
       const [periodRes, lifetimeRes, recentRes, payoutsRes] = await Promise.all([
         fetch(
-          `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&created_at=gte.${cutoff}&select=amount_cents,app_id,function_name,reason,created_at&order=created_at.asc&limit=10000`,
+          `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&created_at=gte.${cutoff}&select=amount_light,app_id,function_name,reason,created_at&order=created_at.asc&limit=10000`,
           { headers }
         ),
         fetch(
-          `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&select=amount_cents`,
+          `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&select=amount_light`,
           { headers: { ...headers, 'Prefer': 'count=exact' } }
         ),
         fetch(
-          `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&select=amount_cents,app_id,function_name,reason,created_at&order=created_at.desc&limit=10`,
+          `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&select=amount_light,app_id,function_name,reason,created_at&order=created_at.desc&limit=10`,
           { headers }
         ),
         // Total withdrawals including held (for withdrawable calculation)
         fetch(
-          `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(held,pending,processing,paid)&select=amount_cents`,
+          `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(held,pending,processing,paid)&select=amount_light`,
           { headers }
         ),
       ]);
@@ -1934,47 +1938,47 @@ export async function handleUser(request: Request): Promise<Response> {
       }
 
       const periodTransfers = await periodRes.json() as Array<{
-        amount_cents: number; app_id: string | null; function_name: string | null; reason: string; created_at: string;
+        amount_light: number; app_id: string | null; function_name: string | null; reason: string; created_at: string;
       }>;
-      const lifetimeTransfers = await lifetimeRes.json() as Array<{ amount_cents: number }>;
+      const lifetimeTransfers = await lifetimeRes.json() as Array<{ amount_light: number }>;
       const recentTransfers = await recentRes.json() as Array<{
-        amount_cents: number; app_id: string | null; function_name: string | null; reason: string; created_at: string;
+        amount_light: number; app_id: string | null; function_name: string | null; reason: string; created_at: string;
       }>;
 
-      const totalEarnedCents = lifetimeTransfers.reduce((sum, t) => sum + t.amount_cents, 0);
-      const periodEarnedCents = periodTransfers.reduce((sum, t) => sum + t.amount_cents, 0);
+      const totalEarnedLight = lifetimeTransfers.reduce((sum, t) => sum + t.amount_light, 0);
+      const periodEarnedLight = periodTransfers.reduce((sum, t) => sum + t.amount_light, 0);
 
       // Calculate total withdrawn and withdrawable
-      let totalWithdrawnCents = 0;
+      let totalWithdrawnLight = 0;
       if (payoutsRes.ok) {
-        const payouts = await payoutsRes.json() as Array<{ amount_cents: number }>;
-        totalWithdrawnCents = payouts.reduce((sum, p) => sum + p.amount_cents, 0);
+        const payouts = await payoutsRes.json() as Array<{ amount_light: number }>;
+        totalWithdrawnLight = payouts.reduce((sum, p) => sum + p.amount_light, 0);
       }
-      const withdrawableCents = Math.max(0, totalEarnedCents - totalWithdrawnCents);
+      const withdrawableLight = Math.max(0, totalEarnedLight - totalWithdrawnLight);
 
       // By-app breakdown
-      const appMap = new Map<string, { earned_cents: number; call_count: number }>();
+      const appMap = new Map<string, { earned_light: number; call_count: number }>();
       for (const t of periodTransfers) {
         const key = t.app_id || 'unknown';
-        const entry = appMap.get(key) || { earned_cents: 0, call_count: 0 };
-        entry.earned_cents += t.amount_cents;
+        const entry = appMap.get(key) || { earned_light: 0, call_count: 0 };
+        entry.earned_light += t.amount_light;
         entry.call_count += 1;
         appMap.set(key, entry);
       }
       const byApp = Array.from(appMap.entries())
         .map(([app_id, data]) => ({ app_id, ...data }))
-        .sort((a, b) => b.earned_cents - a.earned_cents);
+        .sort((a, b) => b.earned_light - a.earned_light);
 
       return json({
-        total_earned_cents: totalEarnedCents,
-        total_withdrawn_cents: totalWithdrawnCents,
-        withdrawable_cents: withdrawableCents,
+        total_earned_light: totalEarnedLight,
+        total_withdrawn_light: totalWithdrawnLight,
+        withdrawable_light: withdrawableLight,
         period,
-        period_earned_cents: periodEarnedCents,
+        period_earned_light: periodEarnedLight,
         period_transfers: periodTransfers.length,
         by_app: byApp,
         recent: recentTransfers.map(t => ({
-          amount_cents: t.amount_cents,
+          amount_light: t.amount_light,
           app_id: t.app_id,
           function_name: t.function_name,
           reason: t.reason,
@@ -2062,7 +2066,7 @@ export async function handleUser(request: Request): Promise<Response> {
   }
 
   // GET /api/user/connect/status — check Stripe Connect onboarding status
-  // Returns: { connected, onboarded, payouts_enabled, account_id, country, default_currency, withdrawable_earnings_cents }
+  // Returns: { connected, onboarded, payouts_enabled, account_id, country, default_currency, withdrawable_earnings_light }
   if (path === '/api/user/connect/status' && method === 'GET') {
     try {
       const user = await authenticate(request);
@@ -2070,7 +2074,7 @@ export async function handleUser(request: Request): Promise<Response> {
       const sbHeaders = { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` };
 
       const userRes = await fetch(
-        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled,total_earned_cents`,
+        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled,total_earned_light`,
         { headers: sbHeaders }
       );
       if (!userRes.ok) throw new Error('Failed to read user');
@@ -2078,7 +2082,7 @@ export async function handleUser(request: Request): Promise<Response> {
         stripe_connect_account_id: string | null;
         stripe_connect_onboarded: boolean;
         stripe_connect_payouts_enabled: boolean;
-        total_earned_cents: number;
+        total_earned_light: number;
       };
 
       if (!userData?.stripe_connect_account_id) {
@@ -2089,21 +2093,21 @@ export async function handleUser(request: Request): Promise<Response> {
           account_id: null,
           country: null,
           default_currency: null,
-          withdrawable_earnings_cents: 0,
+          withdrawable_earnings_light: 0,
         });
       }
 
       // Calculate withdrawable earnings = total earned - total withdrawn (incl. held)
       const payoutsRes = await fetch(
-        `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(held,pending,processing,paid)&select=amount_cents`,
+        `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(held,pending,processing,paid)&select=amount_light`,
         { headers: sbHeaders }
       );
       let totalWithdrawn = 0;
       if (payoutsRes.ok) {
-        const payouts = await payoutsRes.json() as Array<{ amount_cents: number }>;
-        totalWithdrawn = payouts.reduce((sum, p) => sum + p.amount_cents, 0);
+        const payouts = await payoutsRes.json() as Array<{ amount_light: number }>;
+        totalWithdrawn = payouts.reduce((sum, p) => sum + p.amount_light, 0);
       }
-      const withdrawableEarnings = Math.max(0, (userData.total_earned_cents || 0) - totalWithdrawn);
+      const withdrawableEarnings = Math.max(0, (userData.total_earned_light || 0) - totalWithdrawn);
 
       // If already fully set up, return cached values + earnings
       if (userData.stripe_connect_onboarded && userData.stripe_connect_payouts_enabled) {
@@ -2125,7 +2129,7 @@ export async function handleUser(request: Request): Promise<Response> {
           country: country,
           default_currency: defaultCurrency,
           is_cross_border: country !== null && country !== 'US',
-          withdrawable_earnings_cents: withdrawableEarnings,
+          withdrawable_earnings_light: withdrawableEarnings,
         });
       }
 
@@ -2162,7 +2166,7 @@ export async function handleUser(request: Request): Promise<Response> {
           country: connectStatus.country || null,
           default_currency: connectStatus.default_currency || null,
           is_cross_border: connectStatus.country !== undefined && connectStatus.country !== 'US',
-          withdrawable_earnings_cents: withdrawableEarnings,
+          withdrawable_earnings_light: withdrawableEarnings,
         });
       } catch (stripeErr) {
         // Stripe unavailable — return cached values
@@ -2173,7 +2177,7 @@ export async function handleUser(request: Request): Promise<Response> {
           account_id: userData.stripe_connect_account_id,
           country: null,
           default_currency: null,
-          withdrawable_earnings_cents: withdrawableEarnings,
+          withdrawable_earnings_light: withdrawableEarnings,
         });
       }
     } catch (err) {
@@ -2183,24 +2187,24 @@ export async function handleUser(request: Request): Promise<Response> {
   }
 
   // POST /api/user/connect/withdraw — request a withdrawal to connected bank
-  // Body: { amount_cents: number } (minimum 1000 = $10.00)
+  // Body: { amount_light: number } (minimum MIN_WITHDRAWAL_LIGHT)
   // Only earned funds (tool_call, page_view, marketplace_sale) can be withdrawn — deposits cannot.
   // Withdrawals are held for 14 days before Stripe transfer is executed.
-  // A 10% platform fee is deducted from the withdrawal amount.
+  // Platform fee is already taken on every transfer_balance() call, not on withdrawal.
   if (path === '/api/user/connect/withdraw' && method === 'POST') {
     try {
       const user = await authenticate(request);
-      const body = await request.json() as { amount_cents?: number };
-      const amountCents = body.amount_cents;
+      const body = await request.json() as { amount_light?: number };
+      const amountLight = body.amount_light;
 
       const {
-        MIN_WITHDRAWAL_CENTS, estimatePayoutFee, getAccountStatus,
-        PLATFORM_FEE_PERCENT, PAYOUT_HOLD_DAYS,
+        estimatePayoutFee, getAccountStatus,
+        PAYOUT_HOLD_DAYS,
       } = await import('../services/stripe-connect.ts');
 
-      if (!amountCents || typeof amountCents !== 'number' || amountCents < MIN_WITHDRAWAL_CENTS) {
+      if (!amountLight || typeof amountLight !== 'number' || amountLight < MIN_WITHDRAWAL_LIGHT) {
         return error(
-          `amount_cents must be at least ${MIN_WITHDRAWAL_CENTS} ($${(MIN_WITHDRAWAL_CENTS / 100).toFixed(2)} minimum withdrawal)`,
+          `amount_light must be at least ${MIN_WITHDRAWAL_LIGHT} (${formatLight(MIN_WITHDRAWAL_LIGHT)} minimum withdrawal)`,
           400
         );
       }
@@ -2210,7 +2214,7 @@ export async function handleUser(request: Request): Promise<Response> {
 
       // Verify user has a connected, onboarded account with payouts enabled
       const userRes = await fetch(
-        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled,hosting_balance_cents,escrow_held_cents,total_earned_cents`,
+        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled,balance_light,escrow_light,total_earned_light`,
         { headers: sbHeaders }
       );
       if (!userRes.ok) throw new Error('Failed to read user');
@@ -2218,9 +2222,9 @@ export async function handleUser(request: Request): Promise<Response> {
         stripe_connect_account_id: string | null;
         stripe_connect_onboarded: boolean;
         stripe_connect_payouts_enabled: boolean;
-        hosting_balance_cents: number;
-        escrow_held_cents: number;
-        total_earned_cents: number;
+        balance_light: number;
+        escrow_light: number;
+        total_earned_light: number;
       };
 
       if (!userData?.stripe_connect_account_id || !userData?.stripe_connect_payouts_enabled) {
@@ -2231,37 +2235,33 @@ export async function handleUser(request: Request): Promise<Response> {
       }
 
       // Check available balance (balance minus escrowed)
-      const available = (userData.hosting_balance_cents || 0) - (userData.escrow_held_cents || 0);
-      if (available < amountCents) {
+      const available = (userData.balance_light || 0) - (userData.escrow_light || 0);
+      if (available < amountLight) {
         return error(
-          `Insufficient available balance. You have $${(available / 100).toFixed(2)} available (after escrow holds).`,
+          `Insufficient available balance. You have ${formatLight(available)} available (after escrow holds).`,
           400
         );
       }
 
       // Earnings-only withdrawal check (defense-in-depth — RPC also validates)
       const payoutsRes = await fetch(
-        `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(held,pending,processing,paid)&select=amount_cents`,
+        `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(held,pending,processing,paid)&select=amount_light`,
         { headers: sbHeaders }
       );
       let totalWithdrawn = 0;
       if (payoutsRes.ok) {
-        const payouts = await payoutsRes.json() as Array<{ amount_cents: number }>;
-        totalWithdrawn = payouts.reduce((sum, p) => sum + p.amount_cents, 0);
+        const payouts = await payoutsRes.json() as Array<{ amount_light: number }>;
+        totalWithdrawn = payouts.reduce((sum, p) => sum + p.amount_light, 0);
       }
-      const withdrawableEarnings = Math.max(0, (userData.total_earned_cents || 0) - totalWithdrawn);
+      const withdrawableEarnings = Math.max(0, (userData.total_earned_light || 0) - totalWithdrawn);
 
-      if (withdrawableEarnings < amountCents) {
+      if (withdrawableEarnings < amountLight) {
         return error(
           `Only earned funds can be withdrawn (deposits cannot be cashed out). ` +
-          `You have $${(withdrawableEarnings / 100).toFixed(2)} in withdrawable earnings.`,
+          `You have ${formatLight(withdrawableEarnings)} in withdrawable earnings.`,
           400
         );
       }
-
-      // Calculate platform fee (10% of withdrawal)
-      const platformFeeCents = Math.ceil(amountCents * PLATFORM_FEE_PERCENT);
-      const amountAfterPlatformFee = amountCents - platformFeeCents;
 
       // Detect cross-border for Stripe fee estimation
       let isCrossBorder = false;
@@ -2270,8 +2270,8 @@ export async function handleUser(request: Request): Promise<Response> {
         isCrossBorder = connectStatus.country !== undefined && connectStatus.country !== 'US';
       } catch { /* Stripe unavailable — assume domestic */ }
 
-      // Calculate Stripe fee estimate on the amount after platform fee
-      const estimate = estimatePayoutFee(amountAfterPlatformFee, isCrossBorder);
+      // Calculate Stripe fee estimate (Stripe fees are in USD cents)
+      const estimate = estimatePayoutFee(amountLight, isCrossBorder);
 
       // Atomic debit + held payout record creation + earnings validation
       // Balance is debited immediately; Stripe transfer happens after 14-day hold
@@ -2283,10 +2283,9 @@ export async function handleUser(request: Request): Promise<Response> {
         },
         body: JSON.stringify({
           p_user_id: user.id,
-          p_amount_cents: amountCents,
+          p_amount_light: amountLight,
           p_stripe_fee_cents: estimate.stripe_fee_cents,
           p_net_cents: estimate.net_cents,
-          p_platform_fee_cents: platformFeeCents,
         }),
       });
 
@@ -2305,22 +2304,20 @@ export async function handleUser(request: Request): Promise<Response> {
       const releaseDateStr = releaseDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
       const feeBreakdown = isCrossBorder
-        ? `Platform fee: $${(platformFeeCents / 100).toFixed(2)} (10%) + Stripe fee: $${(estimate.stripe_fee_cents / 100).toFixed(2)} (incl. 2% FX)`
-        : `Platform fee: $${(platformFeeCents / 100).toFixed(2)} (10%) + Stripe fee: $${(estimate.stripe_fee_cents / 100).toFixed(2)}`;
+        ? `Stripe fee: $${(estimate.stripe_fee_cents / 100).toFixed(2)} (incl. 2% FX)`
+        : `Stripe fee: $${(estimate.stripe_fee_cents / 100).toFixed(2)}`;
 
       return json({
         success: true,
         payout_id: payoutId,
-        amount_cents: amountCents,
-        platform_fee_cents: platformFeeCents,
-        amount_after_platform_fee_cents: amountAfterPlatformFee,
+        amount_light: amountLight,
         estimated_stripe_fee_cents: estimate.stripe_fee_cents,
         estimated_net_cents: estimate.net_cents,
         is_cross_border: isCrossBorder,
         status: 'held',
         release_at: releaseDate.toISOString(),
         hold_days: PAYOUT_HOLD_DAYS,
-        message: `Withdrawal of $${(amountCents / 100).toFixed(2)} submitted. ` +
+        message: `Withdrawal of ${formatLight(amountLight)} submitted. ` +
           `${feeBreakdown}. ` +
           `Estimated bank deposit: ~$${(estimate.net_cents / 100).toFixed(2)}. ` +
           `Payout will be released on ${releaseDateStr}.`,
@@ -2344,46 +2341,46 @@ export async function handleUser(request: Request): Promise<Response> {
       const [earningsRes, paidRes, heldRes, processingRes, pendingRes] = await Promise.all([
         // Total earned across ALL users
         fetch(
-          `${sbUrl}/rest/v1/users?total_earned_cents=gt.0&select=total_earned_cents`,
+          `${sbUrl}/rest/v1/users?total_earned_light=gt.0&select=total_earned_light`,
           { headers: sbHeaders }
         ),
         // Total successfully paid out
         fetch(
-          `${sbUrl}/rest/v1/payouts?status=eq.paid&select=amount_cents`,
+          `${sbUrl}/rest/v1/payouts?status=eq.paid&select=amount_light`,
           { headers: sbHeaders }
         ),
         // Currently held (14-day wait)
         fetch(
-          `${sbUrl}/rest/v1/payouts?status=eq.held&select=amount_cents,platform_fee_cents,release_at`,
+          `${sbUrl}/rest/v1/payouts?status=eq.held&select=amount_light,platform_fee_light,release_at`,
           { headers: sbHeaders }
         ),
         // Currently processing (Stripe transfer in flight)
         fetch(
-          `${sbUrl}/rest/v1/payouts?status=eq.processing&select=amount_cents,platform_fee_cents`,
+          `${sbUrl}/rest/v1/payouts?status=eq.processing&select=amount_light,platform_fee_light`,
           { headers: sbHeaders }
         ),
         // Pending (marked for release, not yet transferred)
         fetch(
-          `${sbUrl}/rest/v1/payouts?status=eq.pending&select=amount_cents,platform_fee_cents`,
+          `${sbUrl}/rest/v1/payouts?status=eq.pending&select=amount_light,platform_fee_light`,
           { headers: sbHeaders }
         ),
       ]);
 
       const totalEarned = earningsRes.ok
-        ? (await earningsRes.json() as Array<{ total_earned_cents: number }>)
-            .reduce((sum, u) => sum + (u.total_earned_cents || 0), 0)
+        ? (await earningsRes.json() as Array<{ total_earned_light: number }>)
+            .reduce((sum, u) => sum + (u.total_earned_light || 0), 0)
         : 0;
 
       const totalPaid = paidRes.ok
-        ? (await paidRes.json() as Array<{ amount_cents: number }>)
-            .reduce((sum, p) => sum + p.amount_cents, 0)
+        ? (await paidRes.json() as Array<{ amount_light: number }>)
+            .reduce((sum, p) => sum + p.amount_light, 0)
         : 0;
 
       const heldPayouts = heldRes.ok
-        ? (await heldRes.json() as Array<{ amount_cents: number; platform_fee_cents: number; release_at: string }>)
+        ? (await heldRes.json() as Array<{ amount_light: number; platform_fee_light: number; release_at: string }>)
         : [];
-      const heldTotal = heldPayouts.reduce((sum, p) => sum + p.amount_cents, 0);
-      const heldPlatformFees = heldPayouts.reduce((sum, p) => sum + (p.platform_fee_cents || 0), 0);
+      const heldTotal = heldPayouts.reduce((sum, p) => sum + p.amount_light, 0);
+      const heldPlatformFees = heldPayouts.reduce((sum, p) => sum + (p.platform_fee_light || 0), 0);
 
       // Next payout release date
       const nextRelease = heldPayouts.length > 0
@@ -2391,13 +2388,13 @@ export async function handleUser(request: Request): Promise<Response> {
         : null;
 
       const processingTotal = processingRes.ok
-        ? (await processingRes.json() as Array<{ amount_cents: number }>)
-            .reduce((sum, p) => sum + p.amount_cents, 0)
+        ? (await processingRes.json() as Array<{ amount_light: number }>)
+            .reduce((sum, p) => sum + p.amount_light, 0)
         : 0;
 
       const pendingTotal = pendingRes.ok
-        ? (await pendingRes.json() as Array<{ amount_cents: number }>)
-            .reduce((sum, p) => sum + p.amount_cents, 0)
+        ? (await pendingRes.json() as Array<{ amount_light: number }>)
+            .reduce((sum, p) => sum + p.amount_light, 0)
         : 0;
 
       // Liability = total earned - total paid out = unpaid developer earnings
@@ -2408,19 +2405,19 @@ export async function handleUser(request: Request): Promise<Response> {
       const sweepable = totalLiability - inFlight;
 
       return json({
-        total_earned_cents: totalEarned,
-        total_paid_cents: totalPaid,
-        total_liability_cents: totalLiability,
-        held_payouts_cents: heldTotal,
+        total_earned_light: totalEarned,
+        total_paid_light: totalPaid,
+        total_liability_light: totalLiability,
+        held_payouts_light: heldTotal,
         held_payouts_count: heldPayouts.length,
-        held_platform_fees_cents: heldPlatformFees,
+        held_platform_fees_light: heldPlatformFees,
         next_release_at: nextRelease,
-        processing_cents: processingTotal,
-        pending_cents: pendingTotal,
-        in_flight_cents: inFlight,
-        sweepable_cents: sweepable,
-        liability_dollars: '$' + (totalLiability / 100).toFixed(2),
-        sweepable_dollars: '$' + (sweepable / 100).toFixed(2),
+        processing_light: processingTotal,
+        pending_light: pendingTotal,
+        in_flight_light: inFlight,
+        sweepable_light: sweepable,
+        liability_display: formatLight(totalLiability),
+        sweepable_display: formatLight(sweepable),
       });
     } catch (err) {
       return error(err instanceof Error ? err.message : 'Failed to calculate liability', 500);
@@ -2470,10 +2467,10 @@ export async function handleUser(request: Request): Promise<Response> {
   if (path === '/api/marketplace/bid' && method === 'POST') {
     try {
       const body = await request.json();
-      const { app_id, amount_cents, message, expires_in_hours } = body;
-      if (!app_id || !amount_cents) return error('Missing app_id or amount_cents', 400);
+      const { app_id, amount_light, message, expires_in_hours } = body;
+      if (!app_id || !amount_light) return error('Missing app_id or amount_light', 400);
       const { placeBid } = await import('../services/marketplace.ts');
-      const result = await placeBid(userId, app_id, amount_cents, message, expires_in_hours);
+      const result = await placeBid(userId, app_id, amount_light, message, expires_in_hours);
       return json(result);
     } catch (err) {
       const status = (err as Error & { status?: number }).status || 500;
@@ -2485,10 +2482,10 @@ export async function handleUser(request: Request): Promise<Response> {
   if (path === '/api/marketplace/ask' && method === 'POST') {
     try {
       const body = await request.json();
-      const { app_id, price_cents, floor_cents, instant_buy, note } = body;
+      const { app_id, price_light, floor_light, instant_buy, note } = body;
       if (!app_id) return error('Missing app_id', 400);
       const { setAskPrice } = await import('../services/marketplace.ts');
-      const result = await setAskPrice(userId, app_id, price_cents ?? null, floor_cents, instant_buy, note);
+      const result = await setAskPrice(userId, app_id, price_light ?? null, floor_light, instant_buy, note);
       return json(result);
     } catch (err) {
       const status = (err as Error & { status?: number }).status || 500;
@@ -2684,17 +2681,17 @@ export async function handleUser(request: Request): Promise<Response> {
 // ============================================
 
 /**
- * Credit a user's hosting balance and unsuspend content if needed.
+ * Credit a user's balance (in Light) and unsuspend content if needed.
  * Uses atomic Postgres RPC to prevent race conditions between
  * concurrent webhook calls and the billing loop.
  */
-async function creditHostingBalance(
+async function creditBalance(
   userId: string,
-  amountCents: number
+  amountLight: number
 ): Promise<{
-  previous_balance_cents: number;
-  added_cents: number;
-  new_balance_cents: number;
+  previous_balance_light: number;
+  added_light: number;
+  new_balance_light: number;
   unsuspended_apps: number;
   unsuspended_pages: number;
 }> {
@@ -2702,7 +2699,7 @@ async function creditHostingBalance(
 
   // Atomic balance credit via Postgres function (no read-modify-write race)
   const rpcRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/rpc/credit_hosting_balance`,
+    `${SUPABASE_URL}/rest/v1/rpc/credit_balance`,
     {
       method: 'POST',
       headers: {
@@ -2712,7 +2709,7 @@ async function creditHostingBalance(
       },
       body: JSON.stringify({
         p_user_id: userId,
-        p_amount_cents: amountCents,
+        p_amount_light: amountLight,
       }),
     }
   );
@@ -2734,17 +2731,17 @@ async function creditHostingBalance(
   }
 
   console.log(
-    `[HOSTING] Credited ${amountCents}¢ to user ${userId}: ` +
-    `${old_balance}¢ → ${new_balance}¢` +
+    `[HOSTING] Credited ${formatLight(amountLight)} to user ${userId}: ` +
+    `${formatLight(old_balance)} → ${formatLight(new_balance)}` +
     (unsuspended.apps + unsuspended.pages > 0
       ? `, unsuspended ${unsuspended.apps} app(s) + ${unsuspended.pages} page(s)`
       : '')
   );
 
   return {
-    previous_balance_cents: old_balance,
-    added_cents: amountCents,
-    new_balance_cents: new_balance,
+    previous_balance_light: old_balance,
+    added_light: amountLight,
+    new_balance_light: new_balance,
     unsuspended_apps: unsuspended.apps,
     unsuspended_pages: unsuspended.pages,
   };

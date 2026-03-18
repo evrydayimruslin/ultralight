@@ -14,7 +14,7 @@ import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
 import { isProvisionalUser, mergeProvisionalUser } from '../services/provisional.ts';
 import { getPermissionsForUser } from './user.ts';
 import { getPermissionCache } from '../services/permission-cache.ts';
-import { type Tier, MIN_PUBLISH_DEPOSIT_CENTS } from '../../shared/types/index.ts';
+import { type Tier, MIN_PUBLISH_DEPOSIT_CENTS, formatLight, LIGHT_PER_DOLLAR_PAYOUT, MIN_WITHDRAWAL_LIGHT, PLATFORM_FEE_RATE } from '../../shared/types/index.ts';
 import { checkPublishDeposit } from '../services/tier-enforcement.ts';
 import { handleUploadFiles, type UploadFile } from './upload.ts';
 import { validateAndParseSkillsMd } from '../services/docgen.ts';
@@ -281,10 +281,10 @@ const PLATFORM_TOOLS: MCPTool[] = [
         supabase_server: { description: 'Supabase config name. null to unassign.' },
         calls_per_minute: { description: 'Rate limit per minute. null = default.' },
         calls_per_day: { description: 'Rate limit per day. null = unlimited.' },
-        default_price_cents: { description: 'Price in cents per call. Supports fractions (e.g. 0.5 = $0.005). null = free.' },
+        default_price_light: { description: 'Price in Light (✦) per call. Supports fractions. null = free.' },
         default_free_calls: { type: 'integer', description: 'Default free calls per user before charging begins. 0 = charge from first call.' },
         free_calls_scope: { type: 'string', enum: ['app', 'function'], description: 'Whether free calls are counted per-app (shared) or per-function (separate). Default: function.' },
-        function_prices: { description: 'Per-function prices: { "fn": cents } or { "fn": { price_cents: cents, free_calls?: N } }. null = remove.' },
+        function_prices: { description: 'Per-function prices: { "fn": light } or { "fn": { price_light: light, free_calls?: N } }. null = remove.' },
         search_hints: { type: 'array', items: { type: 'string' }, description: 'Search keywords for app discovery. Improves semantic search accuracy. Include data domain terms, entity names, use cases.' },
         show_metrics: { type: 'boolean', description: 'Show usage metrics (calls, revenue, unique callers) on marketplace listing to potential bidders.' },
       },
@@ -470,9 +470,9 @@ const PLATFORM_TOOLS: MCPTool[] = [
         },
         app_id: { type: 'string', description: 'App ID or slug. Required for: bid, ask, buy_now, listing. Optional for: offers, history.' },
         bid_id: { type: 'string', description: 'Bid ID. Required for: accept, reject, cancel.' },
-        amount_cents: { type: 'number', description: 'Bid amount in cents. Required for: bid.' },
-        price_cents: { type: 'number', description: 'Ask price in cents. For: ask. Use null to remove ask price.' },
-        floor_cents: { type: 'number', description: 'Minimum acceptable bid in cents. For: ask.' },
+        amount_light: { type: 'number', description: 'Bid amount in Light (✦). Required for: bid.' },
+        price_light: { type: 'number', description: 'Ask price in Light (✦). For: ask. Use null to remove ask price.' },
+        floor_light: { type: 'number', description: 'Minimum acceptable bid in Light (✦). For: ask.' },
         instant_buy: { type: 'boolean', description: 'Allow instant purchase at ask price. For: ask.' },
         message: { type: 'string', description: 'Message to seller. For: bid.' },
         expires_in_hours: { type: 'number', description: 'Bid expiry in hours. For: bid.' },
@@ -488,9 +488,9 @@ const PLATFORM_TOOLS: MCPTool[] = [
       'Manage your wallet: check balance, view earnings, withdraw to bank, view payout history. ' +
       'action="status": balance + earnings summary + connect status. ' +
       'action="earnings": detailed earnings breakdown by app (period: 7d/30d/90d/all). ' +
-      'action="withdraw": request withdrawal to connected bank (amount_cents required, min 1000). 10% platform fee applies. 14-day hold before payout. ' +
+      'action="withdraw": request withdrawal to connected bank (amount_light required, min 40000). 14-day hold before payout. ' +
       'action="payouts": payout history with hold/release dates. ' +
-      'action="estimate_fee": preview withdrawal fee before committing (amount_cents required).',
+      'action="estimate_fee": preview withdrawal fee before committing (amount_light required).',
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
@@ -500,7 +500,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
           enum: ['status', 'earnings', 'withdraw', 'payouts', 'estimate_fee'],
           description: 'Wallet action to perform.',
         },
-        amount_cents: { type: 'number', description: 'Withdrawal amount in cents. Required for: withdraw, estimate_fee. Minimum: 1000 ($10).' },
+        amount_light: { type: 'number', description: 'Withdrawal amount in Light (✦). Required for: withdraw, estimate_fee. Minimum: 40000 (✦40,000).' },
         period: { type: 'string', enum: ['7d', '30d', '90d', 'all'], description: 'Earnings period. For: earnings. Default: 30d.' },
       },
       required: ['action'],
@@ -727,13 +727,13 @@ Test code in sandbox without deploying.
 - Returns: \`{ success, result?, error?, duration_ms, exports, logs?, lint? }\`.
 - Always test before \`ul.upload\`.
 
-### ul.set({ app_id, version?, visibility?, download_access?, supabase_server?, calls_per_minute?, calls_per_day?, default_price_cents?, default_free_calls?, free_calls_scope?, function_prices?, search_hints?, show_metrics? })
+### ul.set({ app_id, version?, visibility?, download_access?, supabase_server?, calls_per_minute?, calls_per_day?, default_price_light?, default_free_calls?, free_calls_scope?, function_prices?, search_hints?, show_metrics? })
 Batch configure app settings. Each field is optional — only provided fields are updated.
 - \`version\`: set which version is live
 - \`visibility\`: "private" | "unlisted" | "published" (published = app store)
 - \`supabase_server\`: assign Bring Your Own Supabase server (or null to unassign)
 - Rate limits: \`calls_per_minute\`, \`calls_per_day\` (null = platform defaults)
-- Pricing: \`default_price_cents\`, \`function_prices: { "fn_name": cents }\` or \`{ "fn_name": { price_cents, free_calls? } }\`
+- Pricing: \`default_price_light\`, \`function_prices: { "fn_name": light }\` or \`{ "fn_name": { price_light, free_calls? } }\`
 - Free preview: \`default_free_calls\` (number of free calls per user before charging), \`free_calls_scope\`: "function" (each function counted separately) or "app" (shared counter across all functions)
 - \`search_hints\`: array of keywords for better semantic search discovery. Regenerates embedding.
 - \`show_metrics\`: true/false — show usage metrics (calls, revenue, unique callers) on marketplace listing to bidders.
@@ -831,8 +831,8 @@ max_duration_ms: 30000     # Optional: execution timeout
 
 ### GPU Pricing Modes
 Set via app settings (not yet in \`ul.set\` — use dashboard):
-- **per_call** — Flat fee per invocation (e.g., 10¢/call)
-- **per_unit** — Fee per output unit extracted from result (e.g., 5¢/image)
+- **per_call** — Flat fee per invocation (e.g., 10✦/call)
+- **per_unit** — Fee per output unit extracted from result (e.g., 5✦/image)
 - **per_duration** — Compute pass-through + markup
 
 ## Agent Guidance
@@ -1369,7 +1369,7 @@ async function handleToolsCall(
         if (toolArgs.download_access !== undefined) { setResults.download_access = await executeSetDownload(userId, { app_id: toolArgs.app_id, access: toolArgs.download_access }); setCount++; }
         if (toolArgs.supabase_server !== undefined) { setResults.supabase_server = await executeSetSupabase(userId, { app_id: toolArgs.app_id, server_name: toolArgs.supabase_server }); setCount++; }
         if (toolArgs.calls_per_minute !== undefined || toolArgs.calls_per_day !== undefined) { setResults.ratelimit = await executeSetRateLimit(userId, { app_id: toolArgs.app_id, calls_per_minute: toolArgs.calls_per_minute, calls_per_day: toolArgs.calls_per_day }); setCount++; }
-        if (toolArgs.default_price_cents !== undefined || toolArgs.function_prices !== undefined || toolArgs.default_free_calls !== undefined || toolArgs.free_calls_scope !== undefined) { setResults.pricing = await executeSetPricing(userId, { app_id: toolArgs.app_id, default_price_cents: toolArgs.default_price_cents, functions: toolArgs.function_prices, default_free_calls: toolArgs.default_free_calls, free_calls_scope: toolArgs.free_calls_scope }); setCount++; }
+        if (toolArgs.default_price_light !== undefined || toolArgs.function_prices !== undefined || toolArgs.default_free_calls !== undefined || toolArgs.free_calls_scope !== undefined) { setResults.pricing = await executeSetPricing(userId, { app_id: toolArgs.app_id, default_price_light: toolArgs.default_price_light, functions: toolArgs.function_prices, default_free_calls: toolArgs.default_free_calls, free_calls_scope: toolArgs.free_calls_scope }); setCount++; }
         if (toolArgs.search_hints !== undefined) { setResults.search_hints = await executeSetSearchHints(userId, { app_id: toolArgs.app_id, search_hints: toolArgs.search_hints }); setCount++; }
         if (toolArgs.show_metrics !== undefined) { setResults.show_metrics = await executeSetShowMetrics(userId, { app_id: toolArgs.app_id, show_metrics: toolArgs.show_metrics }); setCount++; }
         if (setCount === 0) throw new ToolError(INVALID_PARAMS, 'No settings provided.');
@@ -1637,11 +1637,11 @@ async function handleToolsCall(
           case 'bid': {
             const appIdOrSlug = toolArgs.app_id as string;
             if (!appIdOrSlug) throw new ToolError(INVALID_PARAMS, 'Missing required parameter: app_id');
-            const amountCents = toolArgs.amount_cents as number;
-            if (!amountCents || amountCents <= 0) throw new ToolError(INVALID_PARAMS, 'Missing or invalid amount_cents (must be > 0)');
+            const amountLight = toolArgs.amount_light as number;
+            if (!amountLight || amountLight <= 0) throw new ToolError(INVALID_PARAMS, 'Missing or invalid amount_light (must be > 0)');
             // Resolve app ID from slug if needed
             const resolvedAppId = await resolveAppIdForMarketplace(appIdOrSlug);
-            result = await placeBid(userId, resolvedAppId, amountCents, toolArgs.message as string | undefined, toolArgs.expires_in_hours as number | undefined);
+            result = await placeBid(userId, resolvedAppId, amountLight, toolArgs.message as string | undefined, toolArgs.expires_in_hours as number | undefined);
             break;
           }
           case 'ask': {
@@ -1651,8 +1651,8 @@ async function handleToolsCall(
             result = await setAskPrice(
               userId,
               resolvedAppId,
-              toolArgs.price_cents as number | null ?? null,
-              toolArgs.floor_cents as number | null ?? null,
+              toolArgs.price_light as number | null ?? null,
+              toolArgs.floor_light as number | null ?? null,
               toolArgs.instant_buy as boolean | undefined,
               toolArgs.note as string | undefined
             );
@@ -1731,20 +1731,20 @@ async function handleToolsCall(
           case 'status': {
             const [userRes, earningsRes] = await Promise.all([
               fetch(
-                `${wSbUrl}/rest/v1/users?id=eq.${userId}&select=hosting_balance_cents,escrow_held_cents,stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled,storage_used_bytes,data_storage_used_bytes,storage_limit_bytes`,
+                `${wSbUrl}/rest/v1/users?id=eq.${userId}&select=balance_light,escrow_light,stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled,storage_used_bytes,data_storage_used_bytes,storage_limit_bytes`,
                 { headers: wHeaders }
               ),
               fetch(
-                `${wSbUrl}/rest/v1/transfers?to_user_id=eq.${userId}&select=amount_cents`,
+                `${wSbUrl}/rest/v1/transfers?to_user_id=eq.${userId}&select=amount_light`,
                 { headers: wHeaders }
               ),
             ]);
 
             const wUserData = userRes.ok ? ((await userRes.json()) as Array<Record<string, unknown>>)[0] : null;
-            const wTransfers = earningsRes.ok ? (await earningsRes.json()) as Array<{ amount_cents: number }> : [];
-            const totalEarned = wTransfers.reduce((s: number, t: { amount_cents: number }) => s + t.amount_cents, 0);
-            const balance = (wUserData?.hosting_balance_cents as number) || 0;
-            const escrow = (wUserData?.escrow_held_cents as number) || 0;
+            const wTransfers = earningsRes.ok ? (await earningsRes.json()) as Array<{ amount_light: number }> : [];
+            const totalEarned = wTransfers.reduce((s: number, t: { amount_light: number }) => s + t.amount_light, 0);
+            const balance = (wUserData?.balance_light as number) || 0;
+            const escrow = (wUserData?.escrow_light as number) || 0;
 
             // Storage breakdown
             const sourceBytes = (wUserData?.storage_used_bytes as number) || 0;
@@ -1754,13 +1754,13 @@ async function handleToolsCall(
             const toMb = (b: number) => (b / (1024 * 1024)).toFixed(2);
 
             result = {
-              balance_cents: balance,
-              balance_dollars: '$' + (balance / 100).toFixed(2),
-              escrow_held_cents: escrow,
-              available_cents: balance - escrow,
-              available_dollars: '$' + ((balance - escrow) / 100).toFixed(2),
-              total_earned_cents: totalEarned,
-              total_earned_dollars: '$' + (totalEarned / 100).toFixed(2),
+              balance_light: balance,
+              balance_display: formatLight(balance),
+              escrow_light: escrow,
+              available_light: balance - escrow,
+              available_display: formatLight(balance - escrow),
+              total_earned_light: totalEarned,
+              total_earned_display: formatLight(totalEarned),
               storage: {
                 source_code_bytes: sourceBytes,
                 source_code_mb: toMb(sourceBytes) + ' MB',
@@ -1779,7 +1779,7 @@ async function handleToolsCall(
                 onboarded: (wUserData?.stripe_connect_onboarded as boolean) || false,
                 payouts_enabled: (wUserData?.stripe_connect_payouts_enabled as boolean) || false,
               },
-              can_withdraw: ((wUserData?.stripe_connect_payouts_enabled as boolean) || false) && (balance - escrow) >= 1000,
+              can_withdraw: ((wUserData?.stripe_connect_payouts_enabled as boolean) || false) && (balance - escrow) >= MIN_WITHDRAWAL_LIGHT,
             };
             break;
           }
@@ -1794,70 +1794,66 @@ async function handleToolsCall(
 
             const [ePeriodRes, eRecentRes] = await Promise.all([
               fetch(
-                `${wSbUrl}/rest/v1/transfers?to_user_id=eq.${userId}&created_at=gte.${eCutoff}&select=amount_cents,app_id,function_name,reason,created_at&order=created_at.asc&limit=10000`,
+                `${wSbUrl}/rest/v1/transfers?to_user_id=eq.${userId}&created_at=gte.${eCutoff}&select=amount_light,app_id,function_name,reason,created_at&order=created_at.asc&limit=10000`,
                 { headers: wHeaders }
               ),
               fetch(
-                `${wSbUrl}/rest/v1/transfers?to_user_id=eq.${userId}&select=amount_cents,app_id,function_name,reason,created_at&order=created_at.desc&limit=10`,
+                `${wSbUrl}/rest/v1/transfers?to_user_id=eq.${userId}&select=amount_light,app_id,function_name,reason,created_at&order=created_at.desc&limit=10`,
                 { headers: wHeaders }
               ),
             ]);
 
-            const ePeriodTransfers = ePeriodRes.ok ? (await ePeriodRes.json()) as Array<{ amount_cents: number; app_id: string | null; function_name: string | null; reason: string; created_at: string }> : [];
-            const eRecentTransfers = eRecentRes.ok ? (await eRecentRes.json()) as Array<{ amount_cents: number; app_id: string | null; function_name: string | null; reason: string; created_at: string }> : [];
-            const ePeriodEarned = ePeriodTransfers.reduce((s: number, t: { amount_cents: number }) => s + t.amount_cents, 0);
+            const ePeriodTransfers = ePeriodRes.ok ? (await ePeriodRes.json()) as Array<{ amount_light: number; app_id: string | null; function_name: string | null; reason: string; created_at: string }> : [];
+            const eRecentTransfers = eRecentRes.ok ? (await eRecentRes.json()) as Array<{ amount_light: number; app_id: string | null; function_name: string | null; reason: string; created_at: string }> : [];
+            const ePeriodEarned = ePeriodTransfers.reduce((s: number, t: { amount_light: number }) => s + t.amount_light, 0);
 
-            const eAppMap = new Map<string, { earned_cents: number; call_count: number }>();
+            const eAppMap = new Map<string, { earned_light: number; call_count: number }>();
             for (const t of ePeriodTransfers) {
               const key = t.app_id || 'unknown';
-              const entry = eAppMap.get(key) || { earned_cents: 0, call_count: 0 };
-              entry.earned_cents += t.amount_cents;
+              const entry = eAppMap.get(key) || { earned_light: 0, call_count: 0 };
+              entry.earned_light += t.amount_light;
               entry.call_count += 1;
               eAppMap.set(key, entry);
             }
 
             result = {
               period: ePeriod,
-              period_earned_cents: ePeriodEarned,
-              period_earned_dollars: '$' + (ePeriodEarned / 100).toFixed(2),
+              period_earned_light: ePeriodEarned,
+              period_earned_display: formatLight(ePeriodEarned),
               by_app: Array.from(eAppMap.entries())
-                .map(([app_id, data]) => ({ app_id, earned_cents: data.earned_cents, call_count: data.call_count }))
-                .sort((a, b) => b.earned_cents - a.earned_cents),
+                .map(([app_id, data]) => ({ app_id, earned_light: data.earned_light, call_count: data.call_count }))
+                .sort((a, b) => b.earned_light - a.earned_light),
               recent: eRecentTransfers.slice(0, 5),
             };
             break;
           }
 
           case 'estimate_fee': {
-            const estAmount = toolArgs.amount_cents as number;
-            if (!estAmount || estAmount < 1000) throw new ToolError(INVALID_PARAMS, 'amount_cents must be at least 1000 ($10 minimum)');
-            const { estimatePayoutFee, PLATFORM_FEE_PERCENT: estPlatformRate, PAYOUT_HOLD_DAYS: estHoldDays } = await import('../services/stripe-connect.ts');
-            const estPlatformFee = Math.ceil(estAmount * estPlatformRate);
-            const estAfterPlatform = estAmount - estPlatformFee;
-            const estimate = estimatePayoutFee(estAfterPlatform);
+            const estAmount = toolArgs.amount_light as number;
+            if (!estAmount || estAmount < MIN_WITHDRAWAL_LIGHT) throw new ToolError(INVALID_PARAMS, `amount_light must be at least ${MIN_WITHDRAWAL_LIGHT} (${formatLight(MIN_WITHDRAWAL_LIGHT)} minimum)`);
+            const { estimatePayoutFee, PAYOUT_HOLD_DAYS: estHoldDays } = await import('../services/stripe-connect.ts');
+            const estimate = estimatePayoutFee(estAmount);
             result = {
-              gross_cents: estAmount,
-              gross_dollars: '$' + (estAmount / 100).toFixed(2),
-              platform_fee_cents: estPlatformFee,
-              platform_fee_dollars: '$' + (estPlatformFee / 100).toFixed(2) + ' (10%)',
-              amount_after_platform_fee_cents: estAfterPlatform,
+              gross_light: estAmount,
+              gross_display: formatLight(estAmount),
+              gross_usd_cents: estimate.gross_usd_cents,
               stripe_fee_cents: estimate.stripe_fee_cents,
               stripe_fee_dollars: '$' + (estimate.stripe_fee_cents / 100).toFixed(2),
               net_cents: estimate.net_cents,
               net_dollars: '$' + (estimate.net_cents / 100).toFixed(2),
               hold_days: estHoldDays,
-              note: '10% platform fee + Stripe payout fee (0.25% + $0.25). Payouts held ' + estHoldDays + ' days before release.',
+              note: 'Stripe payout fee (0.25% + $0.25). Payouts held ' + estHoldDays + ' days before release.',
             };
             break;
           }
 
           case 'withdraw': {
-            const wdAmount = toolArgs.amount_cents as number;
-            if (!wdAmount || wdAmount < 1000) throw new ToolError(INVALID_PARAMS, 'amount_cents must be at least 1000 ($10 minimum)');
+            const wdAmount = toolArgs.amount_light as number;
+            if (!wdAmount || wdAmount < MIN_WITHDRAWAL_LIGHT) throw new ToolError(INVALID_PARAMS, `amount_light must be at least ${MIN_WITHDRAWAL_LIGHT} (${formatLight(MIN_WITHDRAWAL_LIGHT)} minimum)`);
 
             // Validate connect status and balance
             const wdUserRes = await fetch(
-              `${wSbUrl}/rest/v1/users?id=eq.${userId}&select=stripe_connect_account_id,stripe_connect_payouts_enabled,hosting_balance_cents,escrow_held_cents,total_earned_cents`,
+              `${wSbUrl}/rest/v1/users?id=eq.${userId}&select=stripe_connect_account_id,stripe_connect_payouts_enabled,balance_light,escrow_light,total_earned_light`,
               { headers: wHeaders }
             );
             const wdUserData = wdUserRes.ok ? ((await wdUserRes.json()) as Array<Record<string, unknown>>)[0] : null;
@@ -1866,29 +1862,29 @@ async function handleToolsCall(
               throw new ToolError(INVALID_PARAMS, 'Bank account not connected. Visit the Wallet page in your dashboard to complete Stripe onboarding first.');
             }
 
-            const wdAvailable = ((wdUserData.hosting_balance_cents as number) || 0) - ((wdUserData.escrow_held_cents as number) || 0);
+            const wdAvailable = ((wdUserData.balance_light as number) || 0) - ((wdUserData.escrow_light as number) || 0);
             if (wdAvailable < wdAmount) {
-              throw new ToolError(INVALID_PARAMS, `Insufficient available balance: $${(wdAvailable / 100).toFixed(2)} available, $${(wdAmount / 100).toFixed(2)} requested.`);
+              throw new ToolError(INVALID_PARAMS, `Insufficient available balance: ${formatLight(wdAvailable)} available, ${formatLight(wdAmount)} requested.`);
             }
 
             // Earnings-only check
             const wdPayoutsRes = await fetch(
-              `${wSbUrl}/rest/v1/payouts?user_id=eq.${userId}&status=in.(held,pending,processing,paid)&select=amount_cents`,
+              `${wSbUrl}/rest/v1/payouts?user_id=eq.${userId}&status=in.(held,pending,processing,paid)&select=amount_light`,
               { headers: wHeaders }
             );
             let wdTotalWithdrawn = 0;
             if (wdPayoutsRes.ok) {
-              const wdPayoutsArr = (await wdPayoutsRes.json()) as Array<{ amount_cents: number }>;
-              wdTotalWithdrawn = wdPayoutsArr.reduce((s: number, p: { amount_cents: number }) => s + p.amount_cents, 0);
+              const wdPayoutsArr = (await wdPayoutsRes.json()) as Array<{ amount_light: number }>;
+              wdTotalWithdrawn = wdPayoutsArr.reduce((s: number, p: { amount_light: number }) => s + p.amount_light, 0);
             }
-            const wdWithdrawable = Math.max(0, ((wdUserData.total_earned_cents as number) || 0) - wdTotalWithdrawn);
+            const wdWithdrawable = Math.max(0, ((wdUserData.total_earned_light as number) || 0) - wdTotalWithdrawn);
             if (wdWithdrawable < wdAmount) {
-              throw new ToolError(INVALID_PARAMS, `Only earned funds can be withdrawn. Withdrawable: $${(wdWithdrawable / 100).toFixed(2)}, requested: $${(wdAmount / 100).toFixed(2)}.`);
+              throw new ToolError(INVALID_PARAMS, `Only earned funds can be withdrawn. Withdrawable: ${formatLight(wdWithdrawable)}, requested: ${formatLight(wdAmount)}.`);
             }
 
             const {
               estimatePayoutFee: estFee, getAccountStatus: wdGetStatus,
-              PLATFORM_FEE_PERCENT: wdPlatformRate, PAYOUT_HOLD_DAYS: wdHoldDays,
+              PAYOUT_HOLD_DAYS: wdHoldDays,
             } = await import('../services/stripe-connect.ts');
 
             // Detect cross-border for accurate Stripe fee estimation
@@ -1898,10 +1894,7 @@ async function handleToolsCall(
               wdIsCrossBorder = wdConnectStatus.country !== undefined && wdConnectStatus.country !== 'US';
             } catch { /* Stripe unavailable — assume domestic */ }
 
-            // Calculate platform fee (10%)
-            const wdPlatformFee = Math.ceil(wdAmount * wdPlatformRate);
-            const wdAmountAfterPlatformFee = wdAmount - wdPlatformFee;
-            const wdEstimate = estFee(wdAmountAfterPlatformFee, wdIsCrossBorder);
+            const wdEstimate = estFee(wdAmount, wdIsCrossBorder);
 
             // Atomic debit + held record (no immediate Stripe transfer)
             const wdRpcRes = await fetch(`${wSbUrl}/rest/v1/rpc/create_payout_record`, {
@@ -1909,10 +1902,9 @@ async function handleToolsCall(
               headers: { ...wHeaders, 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 p_user_id: userId,
-                p_amount_cents: wdAmount,
+                p_amount_light: wdAmount,
                 p_stripe_fee_cents: wdEstimate.stripe_fee_cents,
                 p_net_cents: wdEstimate.net_cents,
-                p_platform_fee_cents: wdPlatformFee,
               }),
             });
 
@@ -1928,15 +1920,14 @@ async function handleToolsCall(
             result = {
               success: true,
               payout_id: wdPayoutId,
-              amount_dollars: '$' + (wdAmount / 100).toFixed(2),
-              platform_fee_dollars: '$' + (wdPlatformFee / 100).toFixed(2) + ' (10%)',
+              amount_light: wdAmount,
+              amount_display: formatLight(wdAmount),
               estimated_stripe_fee_dollars: '$' + (wdEstimate.stripe_fee_cents / 100).toFixed(2),
               estimated_net_dollars: '$' + (wdEstimate.net_cents / 100).toFixed(2),
               status: 'held',
               release_at: wdReleaseDate.toISOString(),
               hold_days: wdHoldDays,
-              message: `Withdrawal of $${(wdAmount / 100).toFixed(2)} submitted. ` +
-                `Platform fee: $${(wdPlatformFee / 100).toFixed(2)} (10%). ` +
+              message: `Withdrawal of ${formatLight(wdAmount)} submitted. ` +
                 `Estimated bank deposit: ~$${(wdEstimate.net_cents / 100).toFixed(2)}. ` +
                 `Payout releases on ${wdReleaseDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}.`,
             };
@@ -1952,8 +1943,9 @@ async function handleToolsCall(
             result = {
               payouts: pRows.map((p: Record<string, unknown>) => ({
                 id: p.id,
-                amount_dollars: '$' + ((p.amount_cents as number) / 100).toFixed(2),
-                platform_fee_dollars: '$' + (((p.platform_fee_cents as number) || 0) / 100).toFixed(2),
+                amount_light: p.amount_light as number,
+                amount_display: formatLight((p.amount_light as number) || 0),
+                platform_fee_light: p.platform_fee_light as number,
                 stripe_fee_dollars: '$' + ((p.stripe_fee_cents as number) / 100).toFixed(2),
                 net_dollars: '$' + ((p.net_cents as number) / 100).toFixed(2),
                 status: p.status,
@@ -2607,7 +2599,7 @@ async function executeTest(
     call: async () => ({
       content: '[AI calls are stubbed in ul.test mode]',
       model: 'test-stub',
-      usage: { input_tokens: 0, output_tokens: 0, cost_cents: 0 },
+      usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
     }),
   };
 
@@ -4227,7 +4219,7 @@ async function executeSetPricing(
   const app = await resolveApp(userId, appIdOrSlug);
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
-  const defaultPrice = args.default_price_cents as number | null | undefined;
+  const defaultPrice = args.default_price_light as number | null | undefined;
   const defaultFreeCalls = args.default_free_calls as number | null | undefined;
   const freeCallsScope = args.free_calls_scope as string | null | undefined;
   const functions = args.functions as Record<string, unknown> | null | undefined;
@@ -4265,11 +4257,11 @@ async function executeSetPricing(
   const config: Record<string, unknown> = {};
   if (defaultPrice !== undefined && defaultPrice !== null) {
     if (defaultPrice < 0 || defaultPrice > 10000) {
-      throw new ToolError(INVALID_PARAMS, 'default_price_cents must be 0-10000 (max $100 per call)');
+      throw new ToolError(INVALID_PARAMS, 'default_price_light must be 0-10000 (max ✦10,000 per call)');
     }
-    config.default_price_cents = defaultPrice;
+    config.default_price_light = defaultPrice;
   } else {
-    config.default_price_cents = 0;
+    config.default_price_light = 0;
   }
 
   if (defaultFreeCalls !== undefined && defaultFreeCalls !== null) {
@@ -4288,23 +4280,23 @@ async function executeSetPricing(
 
   if (functions !== undefined && functions !== null) {
     if (typeof functions !== 'object' || Array.isArray(functions)) {
-      throw new ToolError(INVALID_PARAMS, 'functions must be an object { fnName: cents } or { fnName: { price_cents, free_calls? } }');
+      throw new ToolError(INVALID_PARAMS, 'functions must be an object { fnName: light } or { fnName: { price_light, free_calls? } }');
     }
     for (const [fn, val] of Object.entries(functions)) {
       if (typeof val === 'number') {
         if (val < 0 || val > 10000) {
-          throw new ToolError(INVALID_PARAMS, `Price for "${fn}" must be 0-10000 cents`);
+          throw new ToolError(INVALID_PARAMS, `Price for "${fn}" must be 0-10000 Light`);
         }
       } else if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
         const fp = val as Record<string, unknown>;
-        if (typeof fp.price_cents !== 'number' || fp.price_cents < 0 || fp.price_cents > 10000) {
-          throw new ToolError(INVALID_PARAMS, `price_cents for "${fn}" must be 0-10000 cents`);
+        if (typeof fp.price_light !== 'number' || fp.price_light < 0 || fp.price_light > 10000) {
+          throw new ToolError(INVALID_PARAMS, `price_light for "${fn}" must be 0-10000 Light`);
         }
         if (fp.free_calls !== undefined && (typeof fp.free_calls !== 'number' || fp.free_calls < 0 || !Number.isInteger(fp.free_calls))) {
           throw new ToolError(INVALID_PARAMS, `free_calls for "${fn}" must be a non-negative integer`);
         }
       } else {
-        throw new ToolError(INVALID_PARAMS, `Price for "${fn}" must be a number or { price_cents, free_calls? }`);
+        throw new ToolError(INVALID_PARAMS, `Price for "${fn}" must be a number or { price_light, free_calls? }`);
       }
     }
     config.functions = functions;
@@ -4329,8 +4321,8 @@ async function executeSetPricing(
 
   // Build a human-readable summary
   const parts: string[] = [];
-  if (config.default_price_cents) {
-    parts.push(`default: ${config.default_price_cents}¢/call`);
+  if (config.default_price_light) {
+    parts.push(`default: ${config.default_price_light}✦/call`);
   }
   if (config.default_free_calls) {
     parts.push(`${config.default_free_calls} free calls per user`);
@@ -4341,10 +4333,10 @@ async function executeSetPricing(
   if (config.functions && typeof config.functions === 'object') {
     for (const [fn, val] of Object.entries(config.functions as Record<string, unknown>)) {
       if (typeof val === 'number') {
-        parts.push(`${fn}: ${val}¢/call`);
+        parts.push(`${fn}: ${val}✦/call`);
       } else if (typeof val === 'object' && val !== null) {
-        const fp = val as { price_cents: number; free_calls?: number };
-        const fpParts = [`${fp.price_cents}¢/call`];
+        const fp = val as { price_light: number; free_calls?: number };
+        const fpParts = [`${fp.price_light}✦/call`];
         if (fp.free_calls) fpParts.push(`${fp.free_calls} free`);
         parts.push(`${fn}: ${fpParts.join(', ')}`);
       }

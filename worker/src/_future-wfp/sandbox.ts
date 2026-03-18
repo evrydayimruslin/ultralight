@@ -38,7 +38,7 @@ export async function executeInWorkerSandbox(
 ): Promise<ExecutionResult> {
   const startTime = Date.now();
   const logs: LogEntry[] = [];
-  let aiCostCents = 0;
+  let aiCostLight = 0;
 
   const capturedConsole = {
     log: (...items: unknown[]) => {
@@ -217,7 +217,7 @@ export async function executeInWorkerSandbox(
           usage: {
             input_tokens: data.usage?.prompt_tokens || 0,
             output_tokens: data.usage?.completion_tokens || 0,
-            cost_cents: 0, // TODO: compute from model pricing
+            cost_light: 0, // TODO: compute from model pricing
           },
         };
       },
@@ -477,7 +477,7 @@ export async function executeInWorkerSandbox(
         result: null,
         logs: logs,
         durationMs: durationMs,
-        aiCostCents: aiCostCents,
+        aiCostLight: aiCostLight,
         error: {
           type: 'ResultTooLarge',
           message: `Result size (${(serialized.length / 1024 / 1024).toFixed(1)} MB) exceeds limit (${MAX_RESULT_BYTES / 1024 / 1024} MB)`,
@@ -490,7 +490,7 @@ export async function executeInWorkerSandbox(
       result: result,
       logs: logs,
       durationMs: durationMs,
-      aiCostCents: aiCostCents,
+      aiCostLight: aiCostLight,
     };
 
   } catch (error) {
@@ -500,7 +500,7 @@ export async function executeInWorkerSandbox(
       result: null,
       logs: logs,
       durationMs: durationMs,
-      aiCostCents: aiCostCents,
+      aiCostLight: aiCostLight,
       error: {
         type: error instanceof Error ? error.constructor.name : 'UnknownError',
         message: error instanceof Error ? error.message : String(error),

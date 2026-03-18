@@ -76,7 +76,7 @@ export async function checkAndIncrementWeeklyCalls(
     const isOverage = currentCount > limit;
 
     // Hard cap for free and fun tiers
-    if (isOverage && tierLimits.overage_cost_per_100k_cents === 0) {
+    if (isOverage && tierLimits.overage_cost_per_100k_light === 0) {
       return { allowed: false, count: currentCount, limit, isOverage: true };
     }
 

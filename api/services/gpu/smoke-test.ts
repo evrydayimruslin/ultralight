@@ -26,7 +26,7 @@ import {
   isValidGpuType,
   getGpuRate,
   getGpuVram,
-  computeGpuCostCents,
+  computeGpuCostLight,
   GPU_TYPES,
   GPU_RATE_TABLE,
 } from './types.ts';
@@ -88,12 +88,12 @@ function testTypeSystem(): void {
   assert(getGpuVram('H200') === 141, 'getGpuVram("H200") → 141');
   assert(getGpuVram('B200') === 180, 'getGpuVram("B200") → 180');
 
-  // computeGpuCostCents
-  // 1000ms on A100-80GB-SXM: $0.000005/ms * 1000ms * 100 = 0.5 cents
-  const cost = computeGpuCostCents('A100-80GB-SXM', 1000);
+  // computeGpuCostLight
+  // 1000ms on A100-80GB-SXM: 0.00400000 Light/ms * 1000ms = 4.0 Light
+  const cost = computeGpuCostLight('A100-80GB-SXM', 1000);
   assert(
-    Math.abs(cost - 0.5) < 0.001,
-    `computeGpuCostCents("A100-80GB-SXM", 1000) → ${cost} (expected ~0.5)`,
+    Math.abs(cost - 4.0) < 0.001,
+    `computeGpuCostLight("A100-80GB-SXM", 1000) → ${cost} (expected ~4.0)`,
   );
 
   // Rate table completeness

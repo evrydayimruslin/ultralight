@@ -259,7 +259,7 @@ export default function HomeView({
     templateBody?: string;
     templateMcps?: string[];
     selectedContextPaths?: string[];
-    selectedSkillIds?: Array<{ id: string; name: string; priceCents: number }>;
+    selectedSkillIds?: Array<{ id: string; name: string; priceLight: number }>;
   }) => {
     const baseCtx = await loadBaseContext(selectedProjectDir);
     const knowledgeCtx: Array<{ name: string; content: string }> = [];
@@ -276,7 +276,7 @@ export default function HomeView({
     const skillCtx: Array<{ name: string; content: string }> = [];
     if (params.selectedSkillIds?.length) {
       for (const skill of params.selectedSkillIds) {
-        const approved = await checkSpending(skill.name, skill.priceCents);
+        const approved = await checkSpending(skill.name, skill.priceLight);
         if (!approved) continue;
         try {
           const result = await executeMcpTool('ul_call', {

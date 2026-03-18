@@ -896,9 +896,9 @@ async function handleUpdateApp(request: Request, appId: string): Promise<Respons
         if (typeof cfg !== 'object' || Array.isArray(cfg)) {
           return error('pricing_config must be an object or null', 400);
         }
-        if (cfg.default_price_cents !== undefined) {
-          if (typeof cfg.default_price_cents !== 'number' || cfg.default_price_cents < 0 || cfg.default_price_cents > 10000) {
-            return error('default_price_cents must be 0-10000 (max $100 per call)', 400);
+        if (cfg.default_price_light !== undefined) {
+          if (typeof cfg.default_price_light !== 'number' || cfg.default_price_light < 0 || cfg.default_price_light > 80000) {
+            return error('default_price_light must be 0-80000 (max ✦80000 per call)', 400);
           }
         }
         if (cfg.default_free_calls !== undefined) {
@@ -917,15 +917,15 @@ async function handleUpdateApp(request: Request, appId: string): Promise<Respons
           }
           for (const [fn, val] of Object.entries(cfg.functions as Record<string, unknown>)) {
             if (typeof val === 'number') {
-              // Legacy format: plain number (cents)
-              if (val < 0 || val > 10000) {
-                return error(`Price for "${fn}" must be 0-10000 cents`, 400);
+              // Legacy format: plain number (Light)
+              if (val < 0 || val > 80000) {
+                return error(`Price for "${fn}" must be 0-80000 Light`, 400);
               }
             } else if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
               // New format: FunctionPricing object
               const fp = val as Record<string, unknown>;
-              if (typeof fp.price_cents !== 'number' || fp.price_cents < 0 || fp.price_cents > 10000) {
-                return error(`price_cents for "${fn}" must be 0-10000 cents`, 400);
+              if (typeof fp.price_light !== 'number' || fp.price_light < 0 || fp.price_light > 80000) {
+                return error(`price_light for "${fn}" must be 0-80000 Light`, 400);
               }
               if (fp.free_calls !== undefined) {
                 if (typeof fp.free_calls !== 'number' || fp.free_calls < 0 || !Number.isInteger(fp.free_calls) || fp.free_calls > 1000000) {
@@ -933,7 +933,7 @@ async function handleUpdateApp(request: Request, appId: string): Promise<Respons
                 }
               }
             } else {
-              return error(`Price for "${fn}" must be a number or { price_cents, free_calls? }`, 400);
+              return error(`Price for "${fn}" must be a number or { price_light, free_calls? }`, 400);
             }
           }
         }
@@ -2536,11 +2536,11 @@ async function handleDeleteSupabaseConfig(request: Request, appId: string): Prom
  * GET /api/apps/:appId/earnings?period=7d|30d|90d|all
  *
  * Returns:
- * - total_earned_cents: lifetime earnings
- * - period_earned_cents: earnings in the requested period
+ * - total_earned_light: lifetime earnings
+ * - period_earned_light: earnings in the requested period
  * - total_transfers: count of paid calls
- * - daily: array of { date, earned_cents, transfer_count } for charting
- * - by_function: array of { function_name, earned_cents, call_count } breakdown
+ * - daily: array of { date, earned_light, transfer_count } for charting
+ * - by_function: array of { function_name, earned_light, call_count } breakdown
  * - recent: last 20 transfers
  */
 async function handleGetEarnings(request: Request, appId: string): Promise<Response> {
@@ -2577,17 +2577,17 @@ async function handleGetEarnings(request: Request, appId: string): Promise<Respo
     const [periodRes, lifetimeRes, recentRes] = await Promise.all([
       // Period transfers (for daily chart + by-function breakdown)
       fetch(
-        `${SUPABASE_URL}/rest/v1/transfers?app_id=eq.${app.id}&to_user_id=eq.${user.id}&created_at=gte.${cutoff}&select=amount_cents,function_name,reason,created_at&order=created_at.asc&limit=10000`,
+        `${SUPABASE_URL}/rest/v1/transfers?app_id=eq.${app.id}&to_user_id=eq.${user.id}&created_at=gte.${cutoff}&select=amount_light,function_name,reason,created_at&order=created_at.asc&limit=10000`,
         { headers }
       ),
       // Lifetime aggregate: just count and sum
       fetch(
-        `${SUPABASE_URL}/rest/v1/transfers?app_id=eq.${app.id}&to_user_id=eq.${user.id}&select=amount_cents`,
+        `${SUPABASE_URL}/rest/v1/transfers?app_id=eq.${app.id}&to_user_id=eq.${user.id}&select=amount_light`,
         { headers: { ...headers, 'Prefer': 'count=exact' } }
       ),
       // Recent transfers (last 20)
       fetch(
-        `${SUPABASE_URL}/rest/v1/transfers?app_id=eq.${app.id}&to_user_id=eq.${user.id}&select=amount_cents,function_name,reason,from_user_id,created_at&order=created_at.desc&limit=20`,
+        `${SUPABASE_URL}/rest/v1/transfers?app_id=eq.${app.id}&to_user_id=eq.${user.id}&select=amount_light,function_name,reason,from_user_id,created_at&order=created_at.desc&limit=20`,
         { headers }
       ),
     ]);
@@ -2597,17 +2597,17 @@ async function handleGetEarnings(request: Request, appId: string): Promise<Respo
     }
 
     const periodTransfers = await periodRes.json() as Array<{
-      amount_cents: number;
+      amount_light: number;
       function_name: string | null;
       reason: string;
       created_at: string;
     }>;
 
-    const lifetimeTransfers = await lifetimeRes.json() as Array<{ amount_cents: number }>;
+    const lifetimeTransfers = await lifetimeRes.json() as Array<{ amount_light: number }>;
     const lifetimeCount = parseInt(lifetimeRes.headers.get('content-range')?.split('/')[1] || '0', 10);
 
     const recentTransfers = await recentRes.json() as Array<{
-      amount_cents: number;
+      amount_light: number;
       function_name: string | null;
       reason: string;
       from_user_id: string;
@@ -2615,23 +2615,23 @@ async function handleGetEarnings(request: Request, appId: string): Promise<Respo
     }>;
 
     // Calculate lifetime total
-    const totalEarnedCents = lifetimeTransfers.reduce((sum, t) => sum + t.amount_cents, 0);
+    const totalEarnedLight = lifetimeTransfers.reduce((sum, t) => sum + t.amount_light, 0);
 
     // Calculate period total
-    const periodEarnedCents = periodTransfers.reduce((sum, t) => sum + t.amount_cents, 0);
+    const periodEarnedLight = periodTransfers.reduce((sum, t) => sum + t.amount_light, 0);
 
     // Build daily aggregation for charting
-    const dailyMap = new Map<string, { earned_cents: number; transfer_count: number }>();
+    const dailyMap = new Map<string, { earned_light: number; transfer_count: number }>();
     for (const t of periodTransfers) {
       const date = t.created_at.slice(0, 10); // YYYY-MM-DD
-      const entry = dailyMap.get(date) || { earned_cents: 0, transfer_count: 0 };
-      entry.earned_cents += t.amount_cents;
+      const entry = dailyMap.get(date) || { earned_light: 0, transfer_count: 0 };
+      entry.earned_light += t.amount_light;
       entry.transfer_count += 1;
       dailyMap.set(date, entry);
     }
 
     // Fill in missing days with zeros for a complete chart
-    const daily: Array<{ date: string; earned_cents: number; transfer_count: number }> = [];
+    const daily: Array<{ date: string; earned_light: number; transfer_count: number }> = [];
     const startDate = new Date(cutoff);
     const endDate = new Date();
     for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
@@ -2639,34 +2639,34 @@ async function handleGetEarnings(request: Request, appId: string): Promise<Respo
       const entry = dailyMap.get(dateStr);
       daily.push({
         date: dateStr,
-        earned_cents: entry?.earned_cents || 0,
+        earned_light: entry?.earned_light || 0,
         transfer_count: entry?.transfer_count || 0,
       });
     }
 
     // Build by-function breakdown
-    const fnMap = new Map<string, { earned_cents: number; call_count: number }>();
+    const fnMap = new Map<string, { earned_light: number; call_count: number }>();
     for (const t of periodTransfers) {
       const fn = t.function_name || t.reason || 'unknown';
-      const entry = fnMap.get(fn) || { earned_cents: 0, call_count: 0 };
-      entry.earned_cents += t.amount_cents;
+      const entry = fnMap.get(fn) || { earned_light: 0, call_count: 0 };
+      entry.earned_light += t.amount_light;
       entry.call_count += 1;
       fnMap.set(fn, entry);
     }
     const byFunction = Array.from(fnMap.entries())
       .map(([function_name, data]) => ({ function_name, ...data }))
-      .sort((a, b) => b.earned_cents - a.earned_cents);
+      .sort((a, b) => b.earned_light - a.earned_light);
 
     return json({
-      total_earned_cents: totalEarnedCents,
+      total_earned_light: totalEarnedLight,
       total_transfers: lifetimeCount,
       period,
-      period_earned_cents: periodEarnedCents,
+      period_earned_light: periodEarnedLight,
       period_transfers: periodTransfers.length,
       daily,
       by_function: byFunction,
       recent: recentTransfers.map(t => ({
-        amount_cents: t.amount_cents,
+        amount_light: t.amount_light,
         function_name: t.function_name,
         reason: t.reason,
         created_at: t.created_at,

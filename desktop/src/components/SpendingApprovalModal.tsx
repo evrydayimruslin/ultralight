@@ -2,7 +2,14 @@
 // Follows the PermissionModal pattern: centered overlay, backdrop blur, action buttons.
 
 import type { SpendingRequest } from '../hooks/usePermissions';
-import { getAutoApproveCents } from '../lib/storage';
+import { getAutoApproveLight } from '../lib/storage';
+
+function formatLight(amount: number): string {
+  const abs = Math.abs(amount);
+  if (abs >= 1e6) return '✦' + (abs / 1e6).toFixed(2) + 'M';
+  if (abs >= 5000) return '✦' + (abs / 1000).toFixed(1) + 'K';
+  return '✦' + (abs % 1 === 0 ? String(abs) : abs.toFixed(2));
+}
 
 interface SpendingApprovalModalProps {
   request: SpendingRequest;
@@ -15,7 +22,7 @@ export default function SpendingApprovalModal({
   onApprove,
   onDeny,
 }: SpendingApprovalModalProps) {
-  const threshold = getAutoApproveCents();
+  const threshold = getAutoApproveLight();
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -30,20 +37,8 @@ export default function SpendingApprovalModal({
         {/* Header */}
         <div className="px-5 pt-5 pb-3">
           <div className="flex items-center gap-2 mb-1">
-            {/* Coin icon */}
-            <svg
-              className="w-5 h-5 text-amber-500"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
+            {/* Light icon */}
+            <span className="text-amber-500 text-lg font-bold">✦</span>
             <h2 className="text-body font-semibold text-ul-text">
               Purchase Approval
             </h2>
@@ -56,12 +51,12 @@ export default function SpendingApprovalModal({
           <div className="mt-3 flex items-center justify-between text-small">
             <span className="text-ul-text-muted">Cost:</span>
             <span className="font-mono font-semibold text-amber-600">
-              ${(request.priceCents / 100).toFixed(2)}
+              {formatLight(request.priceLight)}
             </span>
           </div>
 
           <p className="text-caption text-ul-text-muted mt-2">
-            Your auto-approve threshold is ${(threshold / 100).toFixed(2)}.
+            Your auto-approve threshold is {formatLight(threshold)}.
           </p>
         </div>
 

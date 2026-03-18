@@ -24,15 +24,15 @@ export interface User {
   avatar_url: string | null;
   tier: Tier;
   tier_expires_at: string | null;
-  ai_credit_balance: number; // cents
+  ai_credit_balance: number; // Light
   ai_credit_resets_at: string | null;
-  hosting_balance_cents: number; // hosting balance (FLOAT), drains based on published content storage
+  balance_light: number; // Light balance (FLOAT), drains based on published content storage
   hosting_last_billed_at: string | null;
   // Stripe & auto top-up
   stripe_customer_id: string | null;
   auto_topup_enabled: boolean;
-  auto_topup_threshold_cents: number;
-  auto_topup_amount_cents: number;
+  auto_topup_threshold_light: number;
+  auto_topup_amount_light: number;
   auto_topup_last_failed_at: string | null;
   byok_enabled: boolean;
   byok_provider: BYOKProvider | null; // Primary provider
@@ -264,7 +264,7 @@ export interface Execution {
   ai_model: string | null;
   ai_tokens_input: number | null;
   ai_tokens_output: number | null;
-  ai_cost_cents: number | null;
+  ai_cost_light: number | null;
   success: boolean;
   result: unknown;
   error_type: string | null;
@@ -289,7 +289,7 @@ export interface SDKContext {
   appId: string;
   executionId: string;
   permissions: string[];
-  aiBudgetRemaining: number | null; // cents, null if unlimited (BYOK)
+  aiBudgetRemaining: number | null; // Light, null if unlimited (BYOK)
 }
 
 export interface AIRequest {
@@ -310,7 +310,7 @@ export interface AIResponse {
   usage: {
     input_tokens: number;
     output_tokens: number;
-    cost_cents: number;
+    cost_light: number;
   };
 }
 
@@ -443,16 +443,16 @@ export interface AppRateLimitConfig {
 /**
  * Per-app pricing config — set by app owner.
  * Enables agent-to-agent micropayments: caller's balance → owner's balance per call.
- * Zero-fee internal ledger transfer.
+ * 10% platform fee on every transfer (compounding).
  */
 export interface AppPricingConfig {
-  /** Default price in cents per tool call. Applies to any function not in `functions`. 0 = free. */
-  default_price_cents: number;
+  /** Default price in Light per tool call. Applies to any function not in `functions`. 0 = free. */
+  default_price_light: number;
   /** Default number of free calls per user before pricing kicks in. 0 = charge from first call. */
   default_free_calls?: number;
   /** Whether free call quota is counted per-app (shared) or per-function (separate). Default: 'function'. */
   free_calls_scope?: 'app' | 'function';
-  /** Per-function price overrides. Value is cents (legacy) or FunctionPricing object. */
+  /** Per-function price overrides. Value is Light (legacy number) or FunctionPricing object. */
   functions?: Record<string, number | FunctionPricing>;
   /** Product catalog for in-app purchases via ultralight.charge(). */
   products?: AppProduct[];
@@ -460,8 +460,8 @@ export interface AppPricingConfig {
 
 /** Per-function pricing override with optional free calls. */
 export interface FunctionPricing {
-  /** Price in cents per call. */
-  price_cents: number;
+  /** Price in Light per call. */
+  price_light: number;
   /** Number of free calls for this function per user. Overrides app-level default_free_calls. */
   free_calls?: number;
 }
@@ -472,17 +472,17 @@ export interface AppProduct {
   id: string;
   /** Human-readable name */
   name: string;
-  /** Price in cents */
-  price_cents: number;
+  /** Price in Light */
+  price_light: number;
   /** Optional description */
   description?: string;
 }
 
 /**
- * Get the price in cents for a specific function call on an app.
+ * Get the price in Light for a specific function call on an app.
  * Returns 0 if no pricing is configured.
  */
-export function getCallPriceCents(
+export function getCallPriceLight(
   pricingConfig: AppPricingConfig | null | undefined,
   functionName: string
 ): number {
@@ -491,9 +491,9 @@ export function getCallPriceCents(
   if (pricingConfig.functions && functionName in pricingConfig.functions) {
     const val = pricingConfig.functions[functionName];
     if (typeof val === 'number') return val; // legacy format
-    return val.price_cents; // FunctionPricing format
+    return val.price_light; // FunctionPricing format
   }
-  return pricingConfig.default_price_cents || 0;
+  return pricingConfig.default_price_light || 0;
 }
 
 /**
@@ -592,7 +592,7 @@ export interface ContentRow {
   published: boolean;
   // Billing fields
   hosting_suspended: boolean;
-  price_cents: number;
+  price_light: number;
   created_at: string;
   updated_at: string;
 }
@@ -627,61 +627,105 @@ export interface MemoryShare {
 // Platform Limits & Billing Constants
 //
 // No tiers. Everyone gets the same generous limits for development.
-// Publishing (going live) is the only gate: deposit $5, then pay-as-you-go.
-// All published content costs $0.025/MB/hr from the first byte.
+// Publishing (going live) requires ✦400 deposit, then pay-as-you-go.
+// All published content costs ✦18/MB/hr from the first byte.
 // The Tier type is retained for backward compatibility with the DB column
 // but all values map to the same PLATFORM_LIMITS.
+//
+// Light (✦) is the platform's virtual currency.
+//   - Web purchase: 720 Light per $1 USD
+//   - Desktop purchase: 800 Light per $1 USD
+//   - Publisher payout: $1 USD per 800 Light
+//   - 10% platform fee on every transfer (compounding)
+//   - Light is divisible to 8 decimal places
 
 export type Tier = 'free' | 'fun' | 'pro' | 'scale' | 'enterprise';
 
-/** Minimum hosting balance (in cents) required to publish an app. */
-export const MIN_PUBLISH_DEPOSIT_CENTS = 500; // $5.00
+// ── Light Currency Constants ──
 
-/** Hosting rate for published content (publisher pays). */
-export const HOSTING_RATE_CENTS_PER_MB_PER_HOUR = 2.5;
+/** Light symbol character for display. */
+export const LIGHT_SYMBOL = '✦';
 
-/** Data storage overage rate for user-generated data (user pays).
+/** Exchange rate: Light credited per $1 USD when purchasing on web. */
+export const LIGHT_PER_DOLLAR_WEB = 720;
+
+/** Exchange rate: Light credited per $1 USD when purchasing on desktop app. */
+export const LIGHT_PER_DOLLAR_DESKTOP = 800;
+
+/** Exchange rate: $1 USD per this many Light when publishers withdraw. */
+export const LIGHT_PER_DOLLAR_PAYOUT = 800;
+
+/** Platform fee rate applied on every transfer_balance (10%). */
+export const PLATFORM_FEE_RATE = 0.10;
+
+// ── Billing Constants (in Light) ──
+
+/** Minimum Light balance required to publish an app. */
+export const MIN_PUBLISH_DEPOSIT_LIGHT = 400; // ✦400
+
+/** Hosting rate for published content in Light per MB per hour (publisher pays). */
+export const HOSTING_RATE_LIGHT_PER_MB_PER_HOUR = 18.0; // ✦18/MB/hr
+
+/** Data storage overage rate in Light per MB per hour (user pays).
  *  Charged hourly for combined storage exceeding the free tier (100MB).
- *  $0.0005/MB/hr = 0.05 cents/MB/hr ≈ $0.36/MB/month.
- *  50x cheaper than publisher hosting rate (no compute/routing overhead). */
-export const DATA_RATE_CENTS_PER_MB_PER_HOUR = 0.05;
+ *  ✦0.36/MB/hr — 50x cheaper than publisher hosting rate. */
+export const DATA_RATE_LIGHT_PER_MB_PER_HOUR = 0.36;
 
 /** Combined free tier storage limit (source code + user data). 100MB. */
 export const COMBINED_FREE_TIER_BYTES = 104_857_600;
 
-/** Default auto top-up threshold (cents). When balance drops below this, auto-charge triggers. */
-export const AUTO_TOPUP_DEFAULT_THRESHOLD_CENTS = 100; // $1.00
+/** Default auto top-up threshold (Light). When balance drops below this, auto-charge triggers. */
+export const AUTO_TOPUP_DEFAULT_THRESHOLD_LIGHT = 800; // ✦800
 
-/** Default auto top-up charge amount (cents). */
-export const AUTO_TOPUP_DEFAULT_AMOUNT_CENTS = 1000; // $10.00
+/** Default auto top-up charge amount (Light). */
+export const AUTO_TOPUP_DEFAULT_AMOUNT_LIGHT = 8_000; // ✦8,000
 
-/** Minimum auto top-up amount (cents). Same as minimum deposit. */
-export const AUTO_TOPUP_MIN_AMOUNT_CENTS = 500; // $5.00
+/** Minimum auto top-up amount (Light). */
+export const AUTO_TOPUP_MIN_AMOUNT_LIGHT = 4_000; // ✦4,000
+
+/** Minimum withdrawal amount (Light). */
+export const MIN_WITHDRAWAL_LIGHT = 40_000; // ✦40,000
 
 /**
- * Stripe processing fee pass-through.
+ * Stripe processing fee pass-through (still in USD cents — Stripe boundary only).
  * Standard Stripe rate: 2.9% + 30¢ per successful charge.
- * We pass this through to the user so we net the exact deposit amount.
- *
- * Formula: grossCents = Math.ceil((desiredCents + 30) / (1 - 0.029))
- * This ensures: grossCents - (grossCents * 0.029 + 30) ≈ desiredCents
  */
 export const STRIPE_FEE_PERCENT = 0.029;  // 2.9%
 export const STRIPE_FEE_FIXED_CENTS = 30; // 30¢
 
-/** Calculate the gross charge amount that nets the desired deposit after Stripe fees. */
+/** Calculate the gross USD cents charge that nets the desired deposit after Stripe fees. */
 export function calcGrossWithStripeFee(desiredCents: number): number {
   return Math.ceil((desiredCents + STRIPE_FEE_FIXED_CENTS) / (1 - STRIPE_FEE_PERCENT));
+}
+
+/**
+ * Format a Light amount for display using Instagram-style abbreviations.
+ * Amounts >= 5,000 are abbreviated (K, M, B, T).
+ * Symbol ✦ is always prepended.
+ *
+ * Examples: ✦42, ✦2,500, ✦14.5K, ✦2.05M, ✦1.30B
+ */
+export function formatLight(amount: number): string {
+  const abs = Math.abs(amount);
+  const sign = amount < 0 ? '-' : '';
+  let formatted: string;
+  if (abs >= 1_000_000_000_000) formatted = (abs / 1_000_000_000_000).toFixed(2) + 'T';
+  else if (abs >= 1_000_000_000) formatted = (abs / 1_000_000_000).toFixed(2) + 'B';
+  else if (abs >= 1_000_000) formatted = (abs / 1_000_000).toFixed(2) + 'M';
+  else if (abs >= 5_000) formatted = (abs / 1_000).toFixed(1) + 'K';
+  else if (abs % 1 === 0) formatted = String(abs);
+  else formatted = abs.toFixed(2);
+  return sign + '\u2726' + formatted;
 }
 
 const PLATFORM_LIMITS = {
   max_apps: 10,
   weekly_call_limit: 50_000,
-  overage_cost_per_100k_cents: 0,
+  overage_cost_per_100k_light: 0,
   can_publish: true,                     // gated by deposit, not tier
-  price_cents_monthly: 0,
-  daily_ai_credit_cents: 200,
-  monthly_ai_credit_cents: 6_000,
+  price_light_monthly: 0,
+  daily_ai_credit_light: 1_600,          // ✦1,600 (was $2.00 × 800)
+  monthly_ai_credit_light: 48_000,       // ✦48,000 (was $60.00 × 800)
   max_file_size_mb: 10,
   max_files_per_app: 50,
   max_storage_bytes: 104_857_600,        // 100 MB (combined: source code + user data)
@@ -1315,13 +1359,13 @@ export interface ChatUsage {
 
 /** Result of a chat billing deduction */
 export interface ChatBillingResult {
-  cost_cents: number;
+  cost_light: number;
   balance_after: number;
   was_depleted: boolean;
 }
 
-/** Minimum balance in cents required to start a chat stream */
-export const CHAT_MIN_BALANCE_CENTS = 50; // $0.50
+/** Minimum balance in Light required to start a chat stream */
+export const CHAT_MIN_BALANCE_LIGHT = 400; // ✦400
 
 /** Platform markup multiplier on OpenRouter costs */
 export const CHAT_PLATFORM_MARKUP = 1.2; // 20% margin

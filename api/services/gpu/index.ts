@@ -70,7 +70,7 @@ export {
   isValidGpuType,
   getGpuRate,
   getGpuVram,
-  computeGpuCostCents,
+  computeGpuCostLight,
   classifyFailure,
 } from './types.ts';
 

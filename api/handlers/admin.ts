@@ -436,52 +436,50 @@ async function rejectAssessment(assessmentId: string): Promise<Response> {
 async function topUpBalance(request: Request, userId: string): Promise<Response> {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getEnv();
 
-  let body: { amount_cents: number };
+  let body: { amount_light: number };
   try {
     body = await request.json();
   } catch {
     return error('Invalid JSON body', 400);
   }
 
-  if (!body.amount_cents || typeof body.amount_cents !== 'number' || body.amount_cents <= 0) {
-    return error('amount_cents must be a positive number', 400);
+  if (!body.amount_light || typeof body.amount_light !== 'number' || body.amount_light <= 0) {
+    return error('amount_light must be a positive number', 400);
   }
 
-  // Get current balance
-  const getRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=hosting_balance_cents`,
-    { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
-  );
-  if (!getRes.ok) return error('Failed to read user', 500);
-  const rows = await getRes.json() as Array<{ hosting_balance_cents: number }>;
-  if (rows.length === 0) return error('User not found', 404);
+  // Credit balance via RPC
+  const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/credit_balance`, {
+    method: 'POST',
+    headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
+    body: JSON.stringify({
+      p_user_id: userId,
+      p_amount_light: body.amount_light,
+    }),
+  });
 
-  const currentBalance = rows[0].hosting_balance_cents ?? 0;
-  const newBalance = currentBalance + body.amount_cents;
+  if (!rpcRes.ok) {
+    const err = await rpcRes.text();
+    if (err.includes('no rows')) return error('User not found', 404);
+    return error('Failed to update balance', 500);
+  }
 
-  // Update balance
-  const updateRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`,
-    {
-      method: 'PATCH',
-      headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
-      body: JSON.stringify({ hosting_balance_cents: newBalance }),
-    }
-  );
-  if (!updateRes.ok) return error('Failed to update balance', 500);
+  const result = await rpcRes.json();
+  const row = Array.isArray(result) ? result[0] : result;
+  const oldBalance = row?.old_balance ?? 0;
+  const newBalance = row?.new_balance ?? 0;
 
   // If was at zero, unsuspend content
   let unsuspended = { apps: 0, pages: 0 };
-  if (currentBalance <= 0) {
+  if (oldBalance <= 0) {
     unsuspended = await unsuspendContent(userId);
   }
 
   return json({
     success: true,
     user_id: userId,
-    previous_balance_cents: currentBalance,
-    added_cents: body.amount_cents,
-    new_balance_cents: newBalance,
+    previous_balance_light: oldBalance,
+    added_light: body.amount_light,
+    new_balance_light: newBalance,
     unsuspended_apps: unsuspended.apps,
     unsuspended_pages: unsuspended.pages,
   });

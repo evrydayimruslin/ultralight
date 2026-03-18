@@ -64,11 +64,11 @@ export default function MessageBubble({ message, toolResults, toolsExecuting }: 
             )}
 
             {/* Cost display */}
-            {message.cost_cents !== undefined && message.cost_cents > 0 && (
+            {message.cost_light !== undefined && message.cost_light > 0 && (
               <p className="text-caption text-ul-text-muted mt-1">
-                {message.cost_cents < 1
-                  ? `${(message.cost_cents * 10).toFixed(1)}‰¢`
-                  : `${message.cost_cents.toFixed(2)}¢`
+                {message.cost_light < 1
+                  ? `✦${message.cost_light.toFixed(3)}`
+                  : `✦${message.cost_light.toFixed(2)}`
                 }
                 {message.usage && (
                   <span className="ml-2">

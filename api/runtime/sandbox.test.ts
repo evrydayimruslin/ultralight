@@ -52,7 +52,7 @@ function mockAIService(): AIService {
     call: async () => ({
       content: 'AI response',
       model: 'test-model',
-      usage: { input_tokens: 10, output_tokens: 20, cost_cents: 0.1 },
+      usage: { input_tokens: 10, output_tokens: 20, cost_light: 0.8 },
     }),
   };
 }

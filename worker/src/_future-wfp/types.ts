@@ -51,7 +51,7 @@ export interface ExecutionResult {
   result: unknown;
   logs: LogEntry[];
   durationMs: number;
-  aiCostCents: number;
+  aiCostLight: number;
   error?: {
     type: string;
     message: string;
@@ -106,6 +106,6 @@ export interface AIResponse {
   usage: {
     input_tokens: number;
     output_tokens: number;
-    cost_cents: number;
+    cost_light: number;
   };
 }

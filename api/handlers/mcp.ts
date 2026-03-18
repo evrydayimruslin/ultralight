@@ -12,7 +12,7 @@ import { checkRateLimit } from '../services/ratelimit.ts';
 import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
 import { checkProvisionalDailyLimit, updateLastActive } from '../services/provisional.ts';
 import { getPermissionsForUser } from './user.ts';
-import { type Tier, type AppPricingConfig, getCallPriceCents, getFreeCalls, getFreeCallsScope } from '../../shared/types/index.ts';
+import { type Tier, type AppPricingConfig, getCallPriceLight, getFreeCalls, getFreeCallsScope, formatLight } from '../../shared/types/index.ts';
 import { executeInSandbox, type UserContext } from '../runtime/sandbox.ts';
 import { createR2Service } from '../services/storage.ts';
 import { createUserService } from '../services/user.ts';
@@ -476,7 +476,7 @@ const SDK_TOOLS: MCPTool[] = [
           properties: {
             input_tokens: { type: 'number' },
             output_tokens: { type: 'number' },
-            cost_cents: { type: 'number' },
+            cost_light: { type: 'number' },
           },
         },
       },
@@ -1364,7 +1364,7 @@ async function executeSDKTool(
           result = {
             content: '',
             model: 'none',
-            usage: { input_tokens: 0, output_tokens: 0, cost_cents: 0 },
+            usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
             error: 'BYOK not configured. Please add your API key in Settings.',
           };
           break;
@@ -1376,7 +1376,7 @@ async function executeSDKTool(
           result = {
             content: '',
             model: 'none',
-            usage: { input_tokens: 0, output_tokens: 0, cost_cents: 0 },
+            usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
             error: 'API key not found. Please re-add your API key in Settings.',
           };
           break;
@@ -1398,7 +1398,7 @@ async function executeSDKTool(
           result = {
             content: '',
             model: args.model || 'unknown',
-            usage: { input_tokens: 0, output_tokens: 0, cost_cents: 0 },
+            usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
             error: aiError instanceof Error ? aiError.message : 'AI call failed',
           };
         }
@@ -1642,7 +1642,7 @@ async function executeAppFunction(
           call: async () => ({
             content: '',
             model: 'none',
-            usage: { input_tokens: 0, output_tokens: 0, cost_cents: 0 },
+            usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
             error: 'API key not found. Please re-add your API key in Settings.',
           }),
         };
@@ -1652,7 +1652,7 @@ async function executeAppFunction(
         call: async () => ({
           content: '',
           model: 'none',
-          usage: { input_tokens: 0, output_tokens: 0, cost_cents: 0 },
+          usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
           error: 'BYOK not configured. Please add your API key in Settings.',
         }),
       };
@@ -1735,7 +1735,7 @@ async function executeAppFunction(
         const gpuExecDuration = Date.now() - gpuExecStart;
 
         // Settle billing (if caller !== owner and result is chargeable)
-        let gpuCallChargeCents = 0;
+        let gpuCallChargeLight = 0;
         let gpuSettlement;
         if (userId !== app.owner_id) {
           gpuSettlement = await settleGpuExecution(
@@ -1755,7 +1755,7 @@ async function executeAppFunction(
               }],
             });
           }
-          gpuCallChargeCents = gpuSettlement.chargedCents;
+          gpuCallChargeLight = gpuSettlement.chargedLight;
         }
 
         // Log the call (fire-and-forget, with GPU telemetry)
@@ -1781,7 +1781,7 @@ async function executeAppFunction(
           userTier: user?.tier,
           appVersion: app.current_version || undefined,
           responseSizeBytes: gpuResponseSizeBytes,
-          callChargeCents: gpuCallChargeCents,
+          callChargeLight: gpuCallChargeLight,
           sessionId: meta?.sessionId,
           sequenceNumber: nextSequenceNumber(meta?.sessionId),
           userQuery: meta?.userQuery,
@@ -1789,9 +1789,9 @@ async function executeAppFunction(
           gpuType: gpuResult.gpuType,
           gpuExitCode: gpuResult.exitCode,
           gpuDurationMs: gpuResult.durationMs,
-          gpuCostCents: gpuResult.gpuCostCents,
+          gpuCostLight: gpuResult.gpuCostLight,
           gpuPeakVramGb: gpuResult.peakVramGb,
-          gpuDeveloperFeeCents: gpuSettlement?.breakdown.developerFeeCents || 0,
+          gpuDeveloperFeeLight: gpuSettlement?.breakdown.developerFeeLight || 0,
           gpuFailurePolicy: gpuSettlement?.failurePolicy,
         });
 
@@ -1846,13 +1846,13 @@ async function executeAppFunction(
 
     // ── Per-call pricing: charge caller → app owner ──
     // Only charge if: call succeeded, caller is not the owner, price > 0
-    let callChargeCents = 0;
+    let callChargeLight = 0;
     if (result.success && userId !== app.owner_id) {
       const pricingConfig = (app as Record<string, unknown>).pricing_config as AppPricingConfig | null;
-      callChargeCents = getCallPriceCents(pricingConfig, functionName);
+      callChargeLight = getCallPriceLight(pricingConfig, functionName);
 
       // ── Free calls check: skip charge if within free quota ──
-      if (callChargeCents > 0) {
+      if (callChargeLight > 0) {
         const freeCalls = getFreeCalls(pricingConfig, functionName);
         if (freeCalls > 0) {
           const scope = getFreeCallsScope(pricingConfig);
@@ -1881,7 +1881,7 @@ async function executeAppFunction(
             if (usageRes.ok) {
               const callCount = await usageRes.json();
               if (callCount <= freeCalls) {
-                callChargeCents = 0; // Within free quota — no charge
+                callChargeLight = 0; // Within free quota — no charge
               }
             }
             // If RPC fails, fall through and charge normally (fail-closed for billing)
@@ -1891,7 +1891,7 @@ async function executeAppFunction(
         }
       }
 
-      if (callChargeCents > 0) {
+      if (callChargeLight > 0) {
         try {
           // @ts-ignore
           const Deno = globalThis.Deno;
@@ -1911,7 +1911,7 @@ async function executeAppFunction(
               body: JSON.stringify({
                 p_from_user: userId,
                 p_to_user: app.owner_id,
-                p_amount_cents: callChargeCents,
+                p_amount_light: callChargeLight,
               }),
             }
           );
@@ -1920,16 +1920,16 @@ async function executeAppFunction(
             const rows = await transferRes.json() as Array<{ from_new_balance: number; to_new_balance: number }>;
             if (!rows || rows.length === 0) {
               // Empty result = insufficient balance. Return payment-required error.
-              const costDisplay = callChargeCents < 1 ? callChargeCents.toFixed(3) : callChargeCents;
+              const costDisplay = formatLight(callChargeLight);
               let insufficientMsg: string;
               if (user?.provisional) {
                 insufficientMsg =
-                  `Insufficient balance. This tool costs ${costDisplay}¢ per call. ` +
+                  `Insufficient balance. This tool costs ${costDisplay} per call. ` +
                   `You're using a provisional account — sign in at https://ultralight-api-iikqz.ondigitalocean.app/dash ` +
                   `to add funds to your wallet and continue using paid tools.`;
               } else {
                 insufficientMsg =
-                  `Insufficient balance. This tool costs ${costDisplay}¢ per call. ` +
+                  `Insufficient balance. This tool costs ${costDisplay} per call. ` +
                   `Add funds to your wallet at https://ultralight-api-iikqz.ondigitalocean.app/settings/billing ` +
                   `or enable auto top-up to avoid interruptions.`;
               }
@@ -1955,7 +1955,7 @@ async function executeAppFunction(
               body: JSON.stringify({
                 from_user_id: userId,
                 to_user_id: app.owner_id,
-                amount_cents: callChargeCents,
+                amount_light: callChargeLight,
                 reason: transferReason,
                 app_id: app.id,
                 function_name: functionName,
@@ -1981,11 +1981,11 @@ async function executeAppFunction(
           } else {
             // Transfer RPC failed — don't block the call, just log it
             console.error(`[PRICING] Transfer failed for ${userId} → ${app.owner_id}:`, await transferRes.text());
-            callChargeCents = 0; // Reset so telemetry doesn't show a charge that didn't happen
+            callChargeLight = 0; // Reset so telemetry doesn't show a charge that didn't happen
           }
         } catch (chargeErr) {
           console.error(`[PRICING] Charge error:`, chargeErr);
-          callChargeCents = 0;
+          callChargeLight = 0;
         }
       }
     }
@@ -1998,7 +1998,7 @@ async function executeAppFunction(
     // This is a rough estimate — actual WfP costs will be measured post-migration
     const requestCost = 0.0000003;        // $0.30 per million requests
     const cpuCost = execDuration * 0.00000002; // $0.02 per million CPU-ms
-    const executionCostEstimateCents = (requestCost + cpuCost) * 100;
+    const executionCostEstimateLight = (requestCost + cpuCost) * 800;
 
     // Log the call (fire-and-forget)
     // Provisional users always come from the onboarding template CTA
@@ -2019,13 +2019,13 @@ async function executeAppFunction(
       outputResult: result.success ? result.result : result.error,
       userTier: user?.tier,
       appVersion: app.current_version || undefined,
-      aiCostCents: result.aiCostCents || 0,
+      aiCostLight: result.aiCostLight || 0,
       sessionId: meta?.sessionId,
       sequenceNumber: nextSequenceNumber(meta?.sessionId),
       userQuery: meta?.userQuery,
       responseSizeBytes,
-      executionCostEstimateCents,
-      callChargeCents,
+      executionCostEstimateLight,
+      callChargeLight,
     });
 
     if (result.success) {

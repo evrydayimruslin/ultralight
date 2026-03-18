@@ -261,7 +261,7 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
         call: async () => ({
           content: '',
           model: 'none',
-          usage: { input_tokens: 0, output_tokens: 0, cost_cents: 0 },
+          usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
           error: 'BYOK not configured',
         }),
       };
@@ -323,7 +323,7 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
         const gpuDurationMs = Date.now() - startTime;
 
         // Settle billing (if authenticated caller !== owner)
-        let gpuCallChargeCents = 0;
+        let gpuCallChargeLight = 0;
         if (user && user.id !== app.owner_id) {
           const settlement = await settleGpuExecution(
             user.id, app, functionName,
@@ -333,7 +333,7 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
           if (settlement.insufficientBalance) {
             return json({ error: settlement.insufficientBalanceMessage }, 402);
           }
-          gpuCallChargeCents = settlement.chargedCents;
+          gpuCallChargeLight = settlement.chargedLight;
         }
 
         // Log (fire-and-forget)
@@ -354,7 +354,7 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
           gpuType: gpuResult.gpuType,
           gpuExitCode: gpuResult.exitCode,
           gpuDurationMs: gpuResult.durationMs,
-          gpuCostCents: gpuResult.gpuCostCents,
+          gpuCostLight: gpuResult.gpuCostLight,
           gpuPeakVramGb: gpuResult.peakVramGb,
         });
 
@@ -434,7 +434,7 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
       outputResult: result.success ? result.result : result.error,
       userTier: user?.tier,
       appVersion: app.current_version || undefined,
-      aiCostCents: result.aiCostCents || 0,
+      aiCostLight: result.aiCostLight || 0,
     });
 
     console.log(`[HTTP] ${request.method} /http/${appId}/${functionName} - ${result.success ? 'OK' : 'ERROR'} - ${durationMs}ms`);

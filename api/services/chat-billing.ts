@@ -1,12 +1,12 @@
 // Chat Billing Service
 // Handles balance checks and post-stream cost deduction for /chat/stream.
-// Reuses hosting_balance_cents wallet and billing_transactions audit trail.
-// Uses debit_hosting_balance RPC with p_update_billed_at=false (chat doesn't affect hosting clock).
+// Reuses balance_light wallet and billing_transactions audit trail.
+// Uses debit_balance RPC with p_update_billed_at=false (chat doesn't affect hosting clock).
 
 // @ts-ignore
 const Deno = globalThis.Deno;
 
-import { CHAT_MIN_BALANCE_CENTS, CHAT_PLATFORM_MARKUP } from '../../shared/types/index.ts';
+import { CHAT_MIN_BALANCE_LIGHT, CHAT_PLATFORM_MARKUP, LIGHT_PER_DOLLAR_DESKTOP, formatLight } from '../../shared/types/index.ts';
 import type { ChatUsage, ChatBillingResult } from '../../shared/types/index.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
@@ -29,17 +29,17 @@ const writeHeaders: Record<string, string> = {
 
 /**
  * Check if user has sufficient balance for chat.
- * Returns the current balance in cents.
+ * Returns the current balance in Light.
  */
 export async function checkChatBalance(userId: string): Promise<number> {
   const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=hosting_balance_cents`,
+    `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=balance_light`,
     { headers }
   );
   if (!res.ok) throw new Error('Failed to query user balance');
   const rows = await res.json();
   if (!rows || rows.length === 0) throw new Error('User not found');
-  return rows[0].hosting_balance_cents ?? 0;
+  return rows[0].balance_light ?? 0;
 }
 
 // ============================================
@@ -61,34 +61,35 @@ const MODEL_RATES: Record<string, { inputPerMillion: number; outputPerMillion: n
 const DEFAULT_RATES = { inputPerMillion: 5, outputPerMillion: 15 };
 
 /**
- * Calculate cost in cents from usage data.
+ * Calculate cost in Light from usage data.
  * Prefers OpenRouter's reported total_cost (USD) if available.
  * Falls back to static per-model rate table.
  * Applies platform markup (1.2x = 20%).
  */
-export function calculateCostCents(
+export function calculateCostLight(
   usage: ChatUsage,
   model: string,
   openRouterTotalCostUsd?: number,
 ): number {
-  let baseCostCents: number;
+  let baseCostLight: number;
 
   if (openRouterTotalCostUsd !== undefined && openRouterTotalCostUsd > 0) {
-    // OpenRouter reports cost in USD; convert to cents
-    baseCostCents = openRouterTotalCostUsd * 100;
+    // OpenRouter reports cost in USD; convert to Light
+    baseCostLight = openRouterTotalCostUsd * LIGHT_PER_DOLLAR_DESKTOP;
   } else {
-    // Fallback: estimate from token counts
+    // Fallback: estimate from token counts (USD cost then convert to Light)
     const rates = MODEL_RATES[model] || DEFAULT_RATES;
-    baseCostCents =
-      (usage.prompt_tokens / 1_000_000) * rates.inputPerMillion * 100 +
-      (usage.completion_tokens / 1_000_000) * rates.outputPerMillion * 100;
+    const baseCostUsd =
+      (usage.prompt_tokens / 1_000_000) * rates.inputPerMillion +
+      (usage.completion_tokens / 1_000_000) * rates.outputPerMillion;
+    baseCostLight = baseCostUsd * LIGHT_PER_DOLLAR_DESKTOP;
   }
 
   // Apply platform markup
-  const totalCents = baseCostCents * CHAT_PLATFORM_MARKUP;
+  const totalLight = baseCostLight * CHAT_PLATFORM_MARKUP;
 
-  // Round to 4 decimal places (sub-cent precision, same as hosting billing)
-  return Math.round(totalCents * 10000) / 10000;
+  // Round to 4 decimal places (sub-Light precision, same as hosting billing)
+  return Math.round(totalLight * 10000) / 10000;
 }
 
 // ============================================
@@ -97,7 +98,7 @@ export function calculateCostCents(
 
 /**
  * Deduct chat cost from user balance after stream completes.
- * Uses atomic debit_hosting_balance RPC (clamps at 0, never goes negative).
+ * Uses atomic debit_balance RPC (clamps at 0, never goes negative).
  * Logs transaction to billing_transactions (fire-and-forget).
  */
 export async function deductChatCost(
@@ -106,22 +107,22 @@ export async function deductChatCost(
   model: string,
   openRouterTotalCostUsd?: number,
 ): Promise<ChatBillingResult> {
-  const costCents = calculateCostCents(usage, model, openRouterTotalCostUsd);
+  const costLight = calculateCostLight(usage, model, openRouterTotalCostUsd);
 
   // Skip deduction for zero-cost (e.g., empty response)
-  if (costCents <= 0) {
-    return { cost_cents: 0, balance_after: 0, was_depleted: false };
+  if (costLight <= 0) {
+    return { cost_light: 0, balance_after: 0, was_depleted: false };
   }
 
   // Atomic debit — p_update_billed_at=false to not touch hosting billing clock
   const debitRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/rpc/debit_hosting_balance`,
+    `${SUPABASE_URL}/rest/v1/rpc/debit_balance`,
     {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         p_user_id: userId,
-        p_amount: costCents,
+        p_amount: costLight,
         p_update_billed_at: false,
       }),
     }
@@ -147,10 +148,10 @@ export async function deductChatCost(
   const { new_balance, was_depleted } = debitResult[0];
 
   // Log transaction (fire-and-forget — never break billing for logging)
-  logChatTransaction(userId, costCents, new_balance, usage, model).catch(() => {});
+  logChatTransaction(userId, costLight, new_balance, usage, model).catch(() => {});
 
   return {
-    cost_cents: costCents,
+    cost_light: costLight,
     balance_after: new_balance,
     was_depleted,
   };
@@ -163,8 +164,8 @@ export async function deductChatCost(
 /** Fire-and-forget billing transaction log. Matches hosting-billing.ts pattern. */
 async function logChatTransaction(
   userId: string,
-  costCents: number,
-  balanceAfter: number,
+  costLight: number,
+  balanceAfterLight: number,
   usage: ChatUsage,
   model: string,
 ): Promise<void> {
@@ -175,15 +176,15 @@ async function logChatTransaction(
       user_id: userId,
       type: 'charge',
       category: 'chat_inference',
-      description: `Chat: ${model} (${usage.prompt_tokens}+${usage.completion_tokens} tokens)`,
-      amount_cents: -costCents, // negative = charge (same convention as hosting)
-      balance_after: balanceAfter,
+      description: `Chat: ${model} (${usage.prompt_tokens}+${usage.completion_tokens} tokens, ${formatLight(costLight)})`,
+      amount_light: -costLight, // negative = charge (same convention as hosting)
+      balance_after_light: balanceAfterLight,
       metadata: {
         model,
         prompt_tokens: usage.prompt_tokens,
         completion_tokens: usage.completion_tokens,
         total_tokens: usage.total_tokens,
-        cost_cents: costCents,
+        cost_light: costLight,
         markup: CHAT_PLATFORM_MARKUP,
       },
     }),
@@ -194,4 +195,4 @@ async function logChatTransaction(
 // EXPORTS (for testing)
 // ============================================
 
-export { CHAT_MIN_BALANCE_CENTS };
+export { CHAT_MIN_BALANCE_LIGHT };

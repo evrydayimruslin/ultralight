@@ -8,7 +8,7 @@ import {
   buildDescription,
   getRiskLevel,
 } from '../lib/permissions';
-import { getAutoApproveCents } from '../lib/storage';
+import { getAutoApproveLight } from '../lib/storage';
 
 // ── Types ──
 
@@ -26,8 +26,8 @@ export interface PermissionRequest {
 export interface SpendingRequest {
   /** Human-readable description of the purchase */
   description: string;
-  /** Cost in cents */
-  priceCents: number;
+  /** Cost in Light (✦) */
+  priceLight: number;
 }
 
 export interface UsePermissionsReturn {
@@ -48,7 +48,7 @@ export interface UsePermissionsReturn {
   /** Current pending spending request (null if none) */
   pendingSpending: SpendingRequest | null;
   /** Check if spending should be auto-approved or needs user confirmation */
-  checkSpending: (description: string, priceCents: number) => Promise<boolean>;
+  checkSpending: (description: string, priceLight: number) => Promise<boolean>;
   /** User approved spending */
   approveSpending: () => void;
   /** User denied spending */
@@ -123,17 +123,17 @@ export function usePermissions(): UsePermissionsReturn {
 
   const checkSpending = useCallback(async (
     description: string,
-    priceCents: number,
+    priceLight: number,
   ): Promise<boolean> => {
-    const threshold = getAutoApproveCents();
-    if (priceCents <= threshold) {
+    const threshold = getAutoApproveLight();
+    if (priceLight <= threshold) {
       return true; // Auto-approve below threshold
     }
 
     // Show spending approval modal and wait for response
     return new Promise<boolean>((resolve) => {
       spendingResolverRef.current = resolve;
-      setPendingSpending({ description, priceCents });
+      setPendingSpending({ description, priceLight });
     });
   }, []);
 

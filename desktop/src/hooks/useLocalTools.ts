@@ -249,7 +249,7 @@ const LOCAL_TOOLS: ChatTool[] = [
             type: 'boolean',
             description: 'Search marketplace for relevant skills and inject into context.',
           },
-          skill_budget_cents: {
+          skill_budget_light: {
             type: 'number',
             description: 'Max cents to spend on marketplace skills (default: user auto-approve setting).',
           },
@@ -427,7 +427,7 @@ import type { Agent, CreateAgentParams } from './useAgentFleet';
 import type { AgentRunConfig } from '../lib/agentRunner';
 import { agentRunner } from '../lib/agentRunner';
 import { buildAgentSystemPrompt, inspectAndBuildMcpSchemas } from '../lib/systemPrompt';
-import { getModel, getAutoApproveCents } from '../lib/storage';
+import { getModel, getAutoApproveLight } from '../lib/storage';
 import { loadTemplates, loadBaseContext, readAbsoluteFile, fileNameWithoutExt } from '../lib/templates';
 
 /** Context passed from ChatView for JS-handled agent tools */
@@ -468,10 +468,10 @@ export function useLocalTools(): UseLocalToolsReturn {
       try {
         const {
           name: agentName, role, task, custom_instructions,
-          template, context_files, discover_skills, skill_budget_cents,
+          template, context_files, discover_skills, skill_budget_light,
         } = args as {
           name: string; role: string; task: string; custom_instructions?: string;
-          template?: string; context_files?: string[]; discover_skills?: boolean; skill_budget_cents?: number;
+          template?: string; context_files?: string[]; discover_skills?: boolean; skill_budget_light?: number;
         };
 
         // 1. Load template if specified
@@ -512,9 +512,9 @@ export function useLocalTools(): UseLocalToolsReturn {
               scope: 'appstore', task, types: ['memory_md', 'library_md'], limit: 3,
             });
             const parsed = JSON.parse(discoverResult);
-            const budget = skill_budget_cents ?? getAutoApproveCents();
+            const budget = skill_budget_light ?? getAutoApproveLight();
             for (const skill of (parsed.results || []).slice(0, 2)) {
-              const price = skill.pricing_config?.default_price_cents ?? 0;
+              const price = skill.pricing_config?.default_price_light ?? 0;
               if (price > budget) continue;
               try {
                 const content = await agentCtx.onToolCall('ul_call', {

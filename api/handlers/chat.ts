@@ -12,7 +12,7 @@ import { checkRateLimit } from '../services/ratelimit.ts';
 import { checkChatBalance, deductChatCost } from '../services/chat-billing.ts';
 import { getOrCreateOpenRouterKey } from '../services/openrouter-keys.ts';
 import {
-  CHAT_MIN_BALANCE_CENTS,
+  CHAT_MIN_BALANCE_LIGHT,
   type ChatStreamRequest,
   type ChatUsage,
 } from '../../shared/types/index.ts';
@@ -104,14 +104,14 @@ export async function handleChatStream(request: Request): Promise<Response> {
   let balance: number;
   try {
     balance = await checkChatBalance(user.id);
-    console.log(`[CHAT] Balance for ${user.id}: ${balance} cents (min: ${CHAT_MIN_BALANCE_CENTS})`);
+    console.log(`[CHAT] Balance for ${user.id}: ${balance} cents (min: ${CHAT_MIN_BALANCE_LIGHT})`);
   } catch (err) {
     console.error('[CHAT] Balance check failed:', err);
     balance = 0; // Don't block on balance check failure during dev
   }
   // TODO: Re-enable balance gate after billing is wired up
-  // if (balance < CHAT_MIN_BALANCE_CENTS) {
-  //   return json({ error: 'Insufficient balance', balance_cents: balance, minimum_cents: CHAT_MIN_BALANCE_CENTS, topup_url: '/settings/billing' }, 402);
+  // if (balance < CHAT_MIN_BALANCE_LIGHT) {
+  //   return json({ error: 'Insufficient balance', balance_light: balance, minimum_light: CHAT_MIN_BALANCE_LIGHT, topup_url: '/settings/billing' }, 402);
   // }
 
   // ── 5. Get or create per-user OpenRouter API key ──
@@ -230,7 +230,7 @@ export async function handleChatStream(request: Request): Promise<Response> {
         deductChatCost(userId, capturedUsage, model, capturedTotalCost)
           .then(result => {
             console.log(
-              `[CHAT] Billed ${userId}: ${result.cost_cents.toFixed(4)}c ` +
+              `[CHAT] Billed ${userId}: ${result.cost_light.toFixed(4)}✦ ` +
               `(${capturedUsage!.prompt_tokens}+${capturedUsage!.completion_tokens} tokens, ${model})` +
               `${result.was_depleted ? ' [BALANCE DEPLETED]' : ''}`
             );

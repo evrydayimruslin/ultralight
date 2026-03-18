@@ -5,14 +5,21 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { KanbanCard } from '../hooks/useKanban';
 import { loadTemplates, loadBaseContext, type AgentTemplate, type ContextFile } from '../lib/templates';
 import { suggestContext, type KnowledgeSuggestion } from '../lib/suggestions';
-import { getAutoApproveCents } from '../lib/storage';
+import { getAutoApproveLight } from '../lib/storage';
+
+function formatLight(amount: number): string {
+  const abs = Math.abs(amount);
+  if (abs >= 1e6) return '✦' + (abs / 1e6).toFixed(2) + 'M';
+  if (abs >= 5000) return '✦' + (abs / 1000).toFixed(1) + 'K';
+  return '✦' + (abs % 1 === 0 ? String(abs) : abs.toFixed(2));
+}
 
 // ── Types ──
 
 interface MarketplaceSkill {
   id: string;
   name: string;
-  priceCents: number;
+  priceLight: number;
 }
 
 interface CreateAgentModalProps {
@@ -31,7 +38,7 @@ interface CreateAgentModalProps {
     templateBody?: string;
     templateMcps?: string[];
     selectedContextPaths?: string[];
-    selectedSkillIds?: Array<{ id: string; name: string; priceCents: number }>;
+    selectedSkillIds?: Array<{ id: string; name: string; priceLight: number }>;
   }) => Promise<void>;
   onClose: () => void;
 }
@@ -79,7 +86,7 @@ export default function CreateAgentModal({
   // Marketplace state
   const [marketplaceSkills, setMarketplaceSkills] = useState<MarketplaceSkill[]>([]);
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(new Set());
-  const [skillBudgetCents, setSkillBudgetCents] = useState(() => Math.min(getAutoApproveCents() * 4, 1000));
+  const [skillBudgetLight, setSkillBudgetLight] = useState(() => Math.min(getAutoApproveLight() * 4, 8000));
   const [searchingSkills, setSearchingSkills] = useState(false);
 
   // Debounce ref
@@ -141,14 +148,14 @@ export default function CreateAgentModal({
           });
           const parsed = JSON.parse(result);
           const skills: MarketplaceSkill[] = (parsed.results || [])
-            .filter((s: { pricing_config?: { default_price_cents?: number } }) => {
-              const price = s.pricing_config?.default_price_cents ?? 0;
-              return price <= skillBudgetCents;
+            .filter((s: { pricing_config?: { default_price_light?: number } }) => {
+              const price = s.pricing_config?.default_price_light ?? 0;
+              return price <= skillBudgetLight;
             })
-            .map((s: { id: string; name: string; pricing_config?: { default_price_cents?: number } }) => ({
+            .map((s: { id: string; name: string; pricing_config?: { default_price_light?: number } }) => ({
               id: s.id,
               name: s.name,
-              priceCents: s.pricing_config?.default_price_cents ?? 0,
+              priceLight: s.pricing_config?.default_price_light ?? 0,
             }));
           setMarketplaceSkills(skills);
         } catch {
@@ -162,7 +169,7 @@ export default function CreateAgentModal({
     return () => {
       if (taskDebounceRef.current) clearTimeout(taskDebounceRef.current);
     };
-  }, [task, projectDir, executeMcpTool, skillBudgetCents]);
+  }, [task, projectDir, executeMcpTool, skillBudgetLight]);
 
   // Close on Escape
   useEffect(() => {
@@ -243,7 +250,7 @@ export default function CreateAgentModal({
         selectedContextPaths: Array.from(selectedContextPaths),
         selectedSkillIds: marketplaceSkills
           .filter(s => selectedSkillIds.has(s.id))
-          .map(s => ({ id: s.id, name: s.name, priceCents: s.priceCents })),
+          .map(s => ({ id: s.id, name: s.name, priceLight: s.priceLight })),
       });
       onClose();
     } catch (err) {
@@ -464,14 +471,14 @@ export default function CreateAgentModal({
                 <div className="flex items-center gap-1">
                   <span className="text-[10px] text-ul-text-muted">Budget:</span>
                   <div className="flex items-center gap-0.5">
-                    <span className="text-[10px] text-ul-text-muted">$</span>
+                    <span className="text-[10px] text-ul-text-muted">✦</span>
                     <input
                       type="number"
-                      step="0.25"
+                      step="1"
                       min="0"
-                      max="10"
-                      value={(skillBudgetCents / 100).toFixed(2)}
-                      onChange={e => setSkillBudgetCents(Math.round(parseFloat(e.target.value || '0') * 100))}
+                      max="8000"
+                      value={skillBudgetLight}
+                      onChange={e => setSkillBudgetLight(parseFloat(e.target.value || '0'))}
                       className="w-14 text-[10px] text-center rounded border border-ul-border px-1 py-0.5 bg-white focus:outline-none focus:border-ul-border-focus"
                     />
                   </div>
@@ -493,7 +500,7 @@ export default function CreateAgentModal({
                       {skill.name}
                     </span>
                     <span className="text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded shrink-0">
-                      ${(skill.priceCents / 100).toFixed(2)}
+                      {formatLight(skill.priceLight)}
                     </span>
                   </label>
                 ))}

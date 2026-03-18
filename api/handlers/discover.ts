@@ -1565,7 +1565,7 @@ async function handleNewlyAcquired(url: URL): Promise<Response> {
   try {
     // Join app_sales with apps to get names
     const res = await fetch(
-      `${supabaseUrl}/rest/v1/app_sales?select=id,app_id,sale_price_cents,created_at,apps(name,slug)` +
+      `${supabaseUrl}/rest/v1/app_sales?select=id,app_id,sale_price_light,created_at,apps(name,slug)` +
       `&order=created_at.desc` +
       `&limit=${limit}`,
       { headers: dbHeaders }
@@ -1579,7 +1579,7 @@ async function handleNewlyAcquired(url: URL): Promise<Response> {
         app_id: r.app_id || '',
         app_name: app?.name || 'Unknown',
         app_slug: app?.slug || '',
-        sale_price_cents: r.sale_price_cents,
+        sale_price_light: r.sale_price_light,
         created_at: r.created_at,
       };
     });
@@ -1638,7 +1638,7 @@ async function handleLeaderboard(url: URL): Promise<Response> {
       profile_slug: r.profile_slug,
       avatar_url: r.avatar_url,
       country: r.country,
-      earnings_cents: r.earnings_cents,
+      earnings_light: r.earnings_light,
       featured_app: r.featured_app_name ? {
         name: r.featured_app_name,
         slug: r.featured_app_slug,
