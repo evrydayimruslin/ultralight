@@ -9,7 +9,7 @@ import { authenticate } from './auth.ts';
 import { isApiToken, validateToken } from '../services/tokens.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
-import { checkRateLimit } from '../services/ratelimit.ts';
+import { checkRateLimit, checkInMemoryLimit } from '../services/ratelimit.ts';
 import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
 import { isProvisionalUser, mergeProvisionalUser } from '../services/provisional.ts';
 import { getPermissionsForUser } from './user.ts';
@@ -606,9 +606,10 @@ export async function handlePlatformMcp(request: Request): Promise<Response> {
     });
   }
 
-  // Rate limit
+  // Rate limit — use in-memory limiter for platform MCP to avoid
+  // Supabase RPC counter issues. 200 calls/minute is generous for dev tools.
   const rateLimitEndpoint = `platform:${rpcRequest.method}`;
-  const rateResult = await checkRateLimit(userId, rateLimitEndpoint);
+  const rateResult = checkInMemoryLimit(userId, rateLimitEndpoint, 200, 60_000);
   if (!rateResult.allowed) {
     return jsonRpcErrorResponse(
       rpcRequest.id,
