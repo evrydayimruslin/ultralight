@@ -1032,9 +1032,6 @@ async function handleToolsList(
 
   // GPU apps: generate tools from exports (Python function names)
   const appAny = app as Record<string, unknown>;
-  if (appAny.runtime === 'gpu') {
-    console.log(`[GPU-TOOLS] App ${app.id} runtime=${appAny.runtime} exports=${JSON.stringify(appAny.exports)} tools.length=${tools.length}`);
-  }
   if (tools.length === 0 && appAny.runtime === 'gpu' && Array.isArray(appAny.exports) && (appAny.exports as string[]).length > 0) {
     for (const exportName of appAny.exports as string[]) {
       tools.push({
@@ -1245,7 +1242,8 @@ async function handleToolsCall(
   if (!isManifestFunction) {
     const appFunction = app.skills_parsed?.functions.find(f => f.name === name);
     // GPU apps: allow any exported function name
-    const isGpuExport = app.runtime === 'gpu' && (app.exports || []).includes(name);
+    const appR = app as Record<string, unknown>;
+    const isGpuExport = appR.runtime === 'gpu' && Array.isArray(appR.exports) && (appR.exports as string[]).includes(name);
     if (!appFunction && !isGpuExport) {
       return jsonRpcErrorResponse(id, INVALID_PARAMS, `Unknown tool: ${name}`);
     }
