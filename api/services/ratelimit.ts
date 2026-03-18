@@ -84,11 +84,12 @@ export class RateLimitService {
       });
 
       if (!response.ok) {
-        // Fail-closed: deny the request when rate limit service is unavailable
-        console.warn('Rate limit check failed, denying request:', await response.text());
+        // Fail-open: allow the request when rate limit service is unavailable
+        // (prevents blocking all requests when Supabase RPC has issues)
+        console.warn('Rate limit check failed, allowing request (fail-open):', await response.text());
         return {
-          allowed: false,
-          remaining: 0,
+          allowed: true,
+          remaining: effectiveLimit,
           resetAt: new Date(Date.now() + effectiveWindow * 60 * 1000),
         };
       }
@@ -107,11 +108,11 @@ export class RateLimitService {
       };
 
     } catch (err) {
-      // Fail-closed: deny the request when rate limit service errors
-      console.error('Rate limit error, denying request:', err);
+      // Fail-open: allow the request when rate limit service errors
+      console.error('Rate limit error, allowing request (fail-open):', err);
       return {
-        allowed: false,
-        remaining: 0,
+        allowed: true,
+        remaining: effectiveLimit,
         resetAt: new Date(Date.now() + effectiveWindow * 60 * 1000),
       };
     }
