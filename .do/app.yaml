@@ -41,6 +41,12 @@ services:
         type: SECRET
       - key: RUNPOD_TEMPLATE_ID
         type: SECRET
+      - key: RUNPOD_BASE_IMAGE
+        type: SECRET
+      - key: GPU_INTERNAL_SECRET
+        type: SECRET
+      - key: PLATFORM_URL
+        type: SECRET
     health_check:
       http_path: /health
       port: 8000

@@ -34,7 +34,28 @@ export async function triggerGpuBuild(
     buildLogs.push(`[build] Python: ${config.python || '3.11'}`);
     buildLogs.push(`[build] Files: ${files.length}`);
 
-    // Step 1: Generate reference Dockerfile (stored for debugging)
+    // Step 1: Create code bundle in R2 (downloaded by harness at container startup)
+    const bundle = {
+      files: Object.fromEntries(
+        files.map((f) => {
+          const fileName = f.name.split('/').pop() || f.name;
+          return [fileName, f.content];
+        }),
+      ),
+      version,
+      created_at: new Date().toISOString(),
+    };
+    const r2 = createR2Service();
+    const bundleKey = `apps/${appId}/${version}/_bundle.json`;
+    const bundleBytes = new TextEncoder().encode(JSON.stringify(bundle));
+    await r2.uploadFile(bundleKey, {
+      name: '_bundle.json',
+      content: bundleBytes,
+      contentType: 'application/json',
+    });
+    buildLogs.push(`[build] Code bundle uploaded to R2: ${bundleKey} (${bundleBytes.length} bytes)`);
+
+    // Step 2: Generate reference Dockerfile (stored for debugging)
     const hasRequirements = files.some((f) => {
       const fileName = f.name.split('/').pop() || f.name;
       return fileName === 'requirements.txt';
@@ -42,7 +63,7 @@ export async function triggerGpuBuild(
     const dockerfile = generateDockerfile(config, hasRequirements);
     buildLogs.push('[build] Reference Dockerfile generated');
 
-    // Step 2: Create RunPod endpoint via provider
+    // Step 3: Create RunPod template + endpoint via provider
     const provider = getGPUProvider();
     const buildResult = await provider.buildContainer({
       appId,
@@ -58,17 +79,17 @@ export async function triggerGpuBuild(
     buildLogs.push(`[build] RunPod endpoint created: ${buildResult.endpointId}`);
     buildLogs.push(...buildResult.buildLogs);
 
-    // Step 3: Store build artifacts to R2
+    // Step 4: Store build artifacts to R2
     await storeBuildArtifacts(appId, version, dockerfile, buildLogs);
     buildLogs.push('[build] Build artifacts stored to R2');
 
-    // Step 4: Update app record with endpoint ID
+    // Step 5: Update app record with endpoint ID
     await appsService.update(appId, {
       gpu_endpoint_id: buildResult.endpointId,
     } as Partial<App>);
     buildLogs.push('[build] App record updated with endpoint ID');
 
-    // Step 5: Insert gpu_endpoints tracking row
+    // Step 6: Insert gpu_endpoints tracking row
     await insertGpuEndpoint(
       appId,
       version,

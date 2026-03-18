@@ -83,6 +83,54 @@ function addCacheHeaders(headers: Record<string, string>, etag: string, immutabl
   };
 }
 
+// @ts-ignore - Deno is available in Deno Deploy
+const DenoEnv = globalThis.Deno?.env;
+
+/**
+ * GPU Code Proxy — serves developer code bundles to RunPod workers.
+ *
+ * Route: GET /internal/gpu/code/:appId/:version
+ * Auth: X-GPU-Secret header must match GPU_INTERNAL_SECRET env var.
+ * Returns: JSON code bundle { files: { "main.py": "...", ... }, version: "..." }
+ *
+ * This avoids exposing R2 credentials to RunPod workers and has no URL expiry.
+ */
+async function handleGpuCodeProxy(request: Request, path: string): Promise<Response> {
+  // Authenticate via shared secret
+  const expectedSecret = DenoEnv?.get('GPU_INTERNAL_SECRET') || '';
+  const providedSecret = request.headers.get('X-GPU-Secret') || '';
+
+  if (!expectedSecret || providedSecret !== expectedSecret) {
+    console.error('[GPU-CODE-PROXY] Auth failed — invalid or missing X-GPU-Secret');
+    return json({ error: 'Unauthorized' }, 401);
+  }
+
+  // Parse path: /internal/gpu/code/{appId}/{version}
+  const parts = path.replace('/internal/gpu/code/', '').split('/');
+  const appId = parts[0];
+  const version = parts[1];
+
+  if (!appId || !version) {
+    return json({ error: 'Missing appId or version' }, 400);
+  }
+
+  try {
+    const r2 = createR2Service();
+    const bundleKey = `apps/${appId}/${version}/_bundle.json`;
+    const content = await r2.fetchTextFile(bundleKey);
+    return new Response(content, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'private, max-age=3600',
+      },
+    });
+  } catch (err) {
+    console.error(`[GPU-CODE-PROXY] Failed to fetch bundle for ${appId}@${version}:`, err);
+    return json({ error: 'Code bundle not found' }, 404);
+  }
+}
+
 export function createApp() {
   return {
     async handle(request: Request): Promise<Response> {
@@ -256,6 +304,12 @@ export function createApp() {
       // Platform Skills.md — plain HTTP access for any agent
       if (path === '/api/skills' && method === 'GET') {
         return handleSkills();
+      }
+
+      // GPU code proxy — serves developer code bundles to RunPod workers
+      // Authenticated via shared secret (machine-to-machine, no user auth)
+      if (path.startsWith('/internal/gpu/code/') && method === 'GET') {
+        return handleGpuCodeProxy(request, path);
       }
 
       // Chat stream endpoint — metered OpenRouter proxy with SSE streaming

@@ -286,38 +286,100 @@ export class RunPodProvider implements GPUProvider {
   }
 
   // -----------------------------------------------------------------------
-  // Private: Template Management (Phase 2 will expand this)
+  // Private: Template Management
   // -----------------------------------------------------------------------
 
   /**
-   * Get or create a RunPod template for the given code.
+   * Create a per-app RunPod template with env vars pointing to the app's code.
    *
-   * Phase 1: This is a placeholder — returns a template ID that will be
-   * provided by the builder service in Phase 2.
+   * Uses the shared base Docker image (RUNPOD_BASE_IMAGE) but creates a unique
+   * template per app+version with environment variables that tell the harness
+   * where to download the developer's code from R2.
    *
-   * Phase 2 will:
-   * 1. Generate Dockerfile: base image (python+cuda+torch) + developer code + harness
-   * 2. Build image via Docker/Kaniko
-   * 3. Push to container registry (RunPod Docker Hub or private)
-   * 4. Create RunPod template from pushed image
+   * Falls back to RUNPOD_TEMPLATE_ID (shared template) if per-app creation fails.
    */
   private async getOrCreateTemplate(
-    _params: BuildContainerParams,
+    params: BuildContainerParams,
     buildLogs: string[],
   ): Promise<string> {
-    // Phase 2 replaces this with actual Docker build + template creation.
-    // For Phase 1, we need a valid template ID to test the endpoint creation flow.
-    // The smoke test will use a pre-existing template.
+    const baseImage = globalThis.Deno?.env?.get('RUNPOD_BASE_IMAGE') || '';
+    const platformUrl = globalThis.Deno?.env?.get('PLATFORM_URL') || globalThis.Deno?.env?.get('APP_URL') || '';
+    const gpuSecret = globalThis.Deno?.env?.get('GPU_INTERNAL_SECRET') || '';
+
+    // If we have the base image configured, create a per-app template
+    if (baseImage && platformUrl) {
+      try {
+        const codeUrl = `${platformUrl}/internal/gpu/code/${params.appId}/${params.version}`;
+        buildLogs.push(`[build] Creating per-app template for ${params.appId}@${params.version}`);
+        buildLogs.push(`[build] Base image: ${baseImage}`);
+        buildLogs.push(`[build] Code URL: ${codeUrl}`);
+
+        const templateName = `ul-${params.appId.slice(0, 8)}-${params.version}`.slice(0, 191);
+        const template = await this.createTemplate({
+          name: templateName,
+          imageName: baseImage,
+          isServerless: true,
+          env: {
+            ULTRALIGHT_CODE_URL: codeUrl,
+            ULTRALIGHT_PLATFORM_SECRET: gpuSecret,
+            ULTRALIGHT_APP_ID: params.appId,
+            ULTRALIGHT_VERSION: params.version,
+          },
+          containerDiskInGb: 20,
+        });
+
+        buildLogs.push(`[build] Per-app template created: ${template.id}`);
+        return template.id;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        buildLogs.push(`[build] WARNING: Per-app template creation failed: ${msg}`);
+        buildLogs.push('[build] Falling back to shared template...');
+        // Fall through to shared template
+      }
+    }
+
+    // Fallback: use shared RUNPOD_TEMPLATE_ID (Phase 1 behavior)
     const templateId = globalThis.Deno?.env?.get('RUNPOD_TEMPLATE_ID') || '';
     if (!templateId) {
-      buildLogs.push('[build] WARNING: RUNPOD_TEMPLATE_ID not set. Template creation deferred to Phase 2.');
+      buildLogs.push('[build] ERROR: No RUNPOD_BASE_IMAGE or RUNPOD_TEMPLATE_ID configured.');
       throw new Error(
-        'RUNPOD_TEMPLATE_ID environment variable required for Phase 1. ' +
-        'Full Docker build pipeline comes in Phase 2.',
+        'GPU build requires either RUNPOD_BASE_IMAGE (for per-app templates) ' +
+        'or RUNPOD_TEMPLATE_ID (shared template fallback). Neither is set.',
       );
     }
-    buildLogs.push(`[build] Using template: ${templateId}`);
+    buildLogs.push(`[build] Using shared template (fallback): ${templateId}`);
     return templateId;
+  }
+
+  /**
+   * Create a RunPod template via REST API.
+   * Templates hold the Docker image reference + env vars.
+   * Each app+version gets its own template.
+   */
+  private async createTemplate(config: {
+    name: string;
+    imageName: string;
+    isServerless: boolean;
+    env: Record<string, string>;
+    containerDiskInGb: number;
+  }): Promise<{ id: string; name: string }> {
+    return this.fetchRunPod<{ id: string; name: string }>(
+      `${RUNPOD_REST_BASE}/templates`,
+      {
+        method: 'POST',
+        body: JSON.stringify(config),
+      },
+    );
+  }
+
+  /**
+   * Delete a RunPod template. Called when cleaning up old app versions.
+   */
+  async deleteTemplate(templateId: string): Promise<void> {
+    await this.fetchRunPod<void>(
+      `${RUNPOD_REST_BASE}/templates/${templateId}`,
+      { method: 'DELETE' },
+    );
   }
 
   // -----------------------------------------------------------------------
