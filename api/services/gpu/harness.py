@@ -180,6 +180,12 @@ def handler(event):
         else:
             exit_code = "exception"
 
+        tb = ""
+        try:
+            tb = traceback.format_exc()
+        except Exception:
+            tb = "(traceback unavailable)"
+
         return {
             "success": False,
             "exit_code": exit_code,
@@ -188,9 +194,9 @@ def handler(event):
             "peak_vram_gb": get_peak_vram_gb(),
             "logs": captured.getvalue().splitlines(),
             "error": {
-                "type": type(e).__name__,
-                "message": str(e),
-                "traceback": traceback.format_exc(),
+                "type": str(type(e).__name__),
+                "message": str(e)[:1000],
+                "traceback": tb[:2000],
             },
         }
 

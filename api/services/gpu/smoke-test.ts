@@ -78,10 +78,10 @@ function testTypeSystem(): void {
   assert(isValidGpuType('fake-gpu') === false, 'isValidGpuType("fake-gpu") → false');
   assert(isValidGpuType('') === false, 'isValidGpuType("") → false');
 
-  // getGpuRate
-  assert(getGpuRate('H100-SXM') === 0.000009, 'getGpuRate("H100-SXM") → 0.000009');
-  assert(getGpuRate('A40') === 0.000001, 'getGpuRate("A40") → 0.000001');
-  assert(getGpuRate('B200') === 0.000020, 'getGpuRate("B200") → 0.000020');
+  // getGpuRate (Light per ms — rates are 800× the old cent rates)
+  assert(getGpuRate('H100-SXM') === 0.00720000, 'getGpuRate("H100-SXM") → 0.00720000');
+  assert(getGpuRate('A40') === 0.00080000, 'getGpuRate("A40") → 0.00080000');
+  assert(getGpuRate('B200') === 0.01600000, 'getGpuRate("B200") → 0.01600000');
 
   // getGpuVram
   assert(getGpuVram('A100-80GB-SXM') === 80, 'getGpuVram("A100-80GB-SXM") → 80');

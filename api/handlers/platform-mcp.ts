@@ -3544,6 +3544,22 @@ async function executeSetVisibility(
   const previousVisibility = app.visibility;
   const appsService = createAppsService();
 
+  // Gate: GPU apps must be 'live' before publishing
+  if (dbVisibility !== 'private' && (app as Record<string, unknown>).runtime === 'gpu') {
+    const gpuStatus = (app as Record<string, unknown>).gpu_status as string | null;
+    if (gpuStatus !== 'live') {
+      const statusMsg = gpuStatus === 'building' ? 'Container is still building.'
+        : gpuStatus === 'benchmarking' ? 'Benchmark is in progress.'
+        : gpuStatus === 'build_failed' ? 'Build failed — re-upload to retry.'
+        : gpuStatus === 'benchmark_failed' ? 'Benchmark failed — re-upload to retry.'
+        : 'GPU function has not been built yet.';
+      throw new ToolError(
+        INVALID_PARAMS,
+        `Cannot publish GPU app until gpu_status is 'live' (current: ${gpuStatus || 'null'}). ${statusMsg} Use ul.discover.inspect to check status.`
+      );
+    }
+  }
+
   // Layer 2: Originality gate when transitioning from private to non-private
   if (dbVisibility !== 'private' && previousVisibility === 'private') {
     try {
@@ -5259,7 +5275,7 @@ async function executeDiscoverDesk(userId: string): Promise<unknown> {
   // Fetch enriched app details — include skills_md and manifest for Option B
   const appIds = recentAppIds.map(r => r.app_id);
   const appsRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/apps?id=in.(${appIds.join(',')})&deleted_at=is.null&select=id,name,slug,description,owner_id,visibility,skills_md,manifest,exports`,
+    `${SUPABASE_URL}/rest/v1/apps?id=in.(${appIds.join(',')})&deleted_at=is.null&select=id,name,slug,description,owner_id,visibility,skills_md,manifest,exports,runtime,gpu_status`,
     { headers }
   );
 
@@ -5271,6 +5287,7 @@ async function executeDiscoverDesk(userId: string): Promise<unknown> {
     id: string; name: string; slug: string; description: string | null;
     owner_id: string; visibility: string; skills_md: string | null;
     manifest: any; exports: string[];
+    runtime: string | null; gpu_status: string | null;
   }>;
   const appMap = new Map(apps.map(a => [a.id, a]));
 
@@ -5304,6 +5321,11 @@ async function executeDiscoverDesk(userId: string): Promise<unknown> {
         functions: functions,
         skills_summary: skillsSummary,
         recent_calls: recentCallsPerApp.get(r.app_id) || [],
+        // GPU status (so developers can track build progress)
+        ...(app.runtime === 'gpu' ? {
+          runtime: 'gpu' as const,
+          gpu_status: app.gpu_status,
+        } : {}),
       };
     })
     .filter(Boolean);
