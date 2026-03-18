@@ -24,6 +24,9 @@ import type {
 /** RunPod REST API for endpoint management (CRUD). */
 const RUNPOD_REST_BASE = 'https://rest.runpod.io/v1';
 
+/** RunPod GraphQL API for template management. */
+const RUNPOD_GRAPHQL_BASE = 'https://api.runpod.io/graphql';
+
 /** RunPod Serverless API for job execution. */
 const RUNPOD_API_BASE = 'https://api.runpod.ai/v2';
 
@@ -352,9 +355,11 @@ export class RunPodProvider implements GPUProvider {
   }
 
   /**
-   * Create a RunPod template via REST API.
-   * Templates hold the Docker image reference + env vars.
-   * Each app+version gets its own template.
+   * Create a RunPod template via GraphQL API.
+   *
+   * Uses GraphQL instead of REST because RunPod's REST API has a bug where
+   * serverless templates reject volumeInGb even when not specified (defaults to 20).
+   * The GraphQL API requires explicit volumeInGb: 0 for serverless templates, which works.
    */
   private async createTemplate(config: {
     name: string;
@@ -363,23 +368,43 @@ export class RunPodProvider implements GPUProvider {
     env: Record<string, string>;
     containerDiskInGb: number;
   }): Promise<{ id: string; name: string }> {
-    return this.fetchRunPod<{ id: string; name: string }>(
-      `${RUNPOD_REST_BASE}/templates`,
-      {
-        method: 'POST',
-        body: JSON.stringify(config),
-      },
-    );
+    const envArray = Object.entries(config.env).map(([key, value]) =>
+      `{key: "${key}", value: "${value.replace(/"/g, '\\"')}"}`
+    ).join(', ');
+
+    const mutation = `mutation {
+      saveTemplate(input: {
+        name: "${config.name.replace(/"/g, '\\"')}",
+        imageName: "${config.imageName.replace(/"/g, '\\"')}",
+        isServerless: ${config.isServerless},
+        containerDiskInGb: ${config.containerDiskInGb},
+        volumeInGb: 0,
+        dockerArgs: "",
+        env: [${envArray}]
+      }) {
+        id
+        name
+        imageName
+        isServerless
+      }
+    }`;
+
+    const response = await this.fetchGraphQL<{
+      saveTemplate: { id: string; name: string; imageName: string; isServerless: boolean };
+    }>(mutation);
+
+    return response.saveTemplate;
   }
 
   /**
-   * Delete a RunPod template. Called when cleaning up old app versions.
+   * Delete a RunPod template via GraphQL API.
+   * Template must not be in use by any endpoints.
    */
-  async deleteTemplate(templateId: string): Promise<void> {
-    await this.fetchRunPod<void>(
-      `${RUNPOD_REST_BASE}/templates/${templateId}`,
-      { method: 'DELETE' },
-    );
+  async deleteTemplate(templateName: string): Promise<void> {
+    const mutation = `mutation {
+      deleteTemplate(templateName: "${templateName.replace(/"/g, '\\"')}")
+    }`;
+    await this.fetchGraphQL(mutation);
   }
 
   // -----------------------------------------------------------------------
@@ -543,6 +568,36 @@ export class RunPodProvider implements GPUProvider {
   // -----------------------------------------------------------------------
   // Private: HTTP Helpers
   // -----------------------------------------------------------------------
+
+  /**
+   * Make an authenticated request to RunPod's GraphQL API.
+   * Used for template management (create/delete).
+   */
+  private async fetchGraphQL<T>(query: string): Promise<T> {
+    const url = `${RUNPOD_GRAPHQL_BASE}?api_key=${this.apiKey}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+        signal: controller.signal,
+      });
+
+      const json = await response.json();
+
+      if (json.errors && json.errors.length > 0) {
+        const messages = json.errors.map((e: { message: string }) => e.message).join('; ');
+        throw new Error(`RunPod GraphQL error: ${messages}`);
+      }
+
+      return json.data as T;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   /**
    * Make an authenticated request to RunPod API.
