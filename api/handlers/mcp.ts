@@ -1004,7 +1004,7 @@ async function handleResourcesRead(
  */
 async function handleToolsList(
   id: string | number,
-  app: { id: string; slug: string; owner_id: string; visibility: string; skills_parsed: ParsedSkills | null; manifest?: string | null },
+  app: { id: string; slug: string; owner_id: string; visibility: string; skills_parsed: ParsedSkills | null; manifest?: string | null; runtime?: string; exports?: string[] },
   params?: { cursor?: string },
   callerUserId?: string
 ): Promise<Response> {
@@ -1027,6 +1027,21 @@ async function handleToolsList(
   if (tools.length === 0 && app.skills_parsed?.functions) {
     for (const fn of app.skills_parsed.functions) {
       tools.push(skillFunctionToMCPTool(fn));
+    }
+  }
+
+  // GPU apps: generate tools from exports (Python function names)
+  if (tools.length === 0 && app.runtime === 'gpu' && app.exports?.length) {
+    for (const exportName of app.exports) {
+      tools.push({
+        name: exportName,
+        description: `GPU function: ${exportName}`,
+        inputSchema: {
+          type: 'object' as const,
+          properties: {},
+          additionalProperties: true,
+        },
+      });
     }
   }
 
@@ -1225,7 +1240,9 @@ async function handleToolsCall(
   // Fall back to skills_parsed check (legacy behavior)
   if (!isManifestFunction) {
     const appFunction = app.skills_parsed?.functions.find(f => f.name === name);
-    if (!appFunction) {
+    // GPU apps: allow any exported function name
+    const isGpuExport = app.runtime === 'gpu' && (app.exports || []).includes(name);
+    if (!appFunction && !isGpuExport) {
       return jsonRpcErrorResponse(id, INVALID_PARAMS, `Unknown tool: ${name}`);
     }
   }
