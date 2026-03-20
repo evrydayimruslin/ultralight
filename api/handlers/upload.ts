@@ -390,25 +390,20 @@ export async function handleUpload(request: Request): Promise<Response> {
     let entryFile: { name: string; content: string } | undefined;
     let functionsFile: { name: string; content: string } | undefined;
 
-    if (manifest) {
+    if (manifest && manifest.entry.functions) {
       // Use manifest-specified entry points
-      if (manifest.entry.functions) {
-        functionsFile = validatedFiles.find((f) => {
-          const fileName = f.name.split('/').pop() || f.name;
-          return fileName === manifest!.entry.functions;
-        });
-        if (!functionsFile) {
-          return error(`Functions entry file not found: ${manifest.entry.functions}`);
-        }
+      functionsFile = validatedFiles.find((f) => {
+        const fileName = f.name.split('/').pop() || f.name;
+        return fileName === manifest!.entry.functions;
+      });
+      if (!functionsFile) {
+        return error(`Functions entry file not found: ${manifest.entry.functions}`);
       }
-
-      // For bundling, use the functions file as primary entry
       entryFile = functionsFile;
-    } else {
-      // Legacy: auto-detect entry file
-      // Check for entry file - handle both flat files and folder uploads
-      // When uploading a folder, file.name includes path like "myapp/index.ts"
-      // Support: index.ts, index.tsx, index.js, index.jsx
+    }
+
+    // Auto-detect entry file if not resolved from manifest
+    if (!entryFile) {
       const entryFileNames = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
       entryFile = validatedFiles.find((f) => {
         const fileName = f.name.split('/').pop() || f.name;
@@ -1095,20 +1090,19 @@ export async function handleUploadFiles(
   let entryFile: { name: string; content: string } | undefined;
   let functionsFile: { name: string; content: string } | undefined;
 
-  if (manifest) {
-    if (manifest.entry.functions) {
-      functionsFile = validatedFiles.find((f) => {
-        const fileName = f.name.split('/').pop() || f.name;
-        return fileName === manifest!.entry.functions;
-      });
-      if (!functionsFile) {
-        throw new Error(`Functions entry file not found: ${manifest.entry.functions}`);
-      }
+  if (manifest && manifest.entry.functions) {
+    functionsFile = validatedFiles.find((f) => {
+      const fileName = f.name.split('/').pop() || f.name;
+      return fileName === manifest!.entry.functions;
+    });
+    if (!functionsFile) {
+      throw new Error(`Functions entry file not found: ${manifest.entry.functions}`);
     }
-
     entryFile = functionsFile;
-  } else {
-    // Legacy: auto-detect entry file
+  }
+
+  // Auto-detect entry file if not resolved from manifest
+  if (!entryFile) {
     const entryFileNames = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
     entryFile = validatedFiles.find((f) => {
       const fileName = f.name.split('/').pop() || f.name;
