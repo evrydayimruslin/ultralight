@@ -339,6 +339,14 @@ export interface UploadResponse {
   exports: string[];
   build_success: boolean;
   build_logs: BuildLogEntry[];
+  d1?: {
+    provisioned: boolean;
+    status: 'ready' | 'failed' | 'skipped';
+    database_id?: string;
+    migrations_applied: number;
+    migrations_skipped: number;
+    error?: string;
+  };
 }
 
 export interface RunRequest {

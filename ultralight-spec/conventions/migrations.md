@@ -13,6 +13,17 @@ migrations/
   003_create_tags_table.sql
 ```
 
+## Provisioning and execution
+
+When you deploy an app with a `migrations/` folder:
+
+1. The platform **provisions a D1 database** for your app (if not already provisioned)
+2. Migrations are **validated** (schema conventions, forbidden operations)
+3. Migrations are **run synchronously** during the upload — before the response is returned
+4. The upload response includes D1 status confirming tables were created
+
+This means your database is ready to use **immediately after deploy** — there is no lazy provisioning delay.
+
 ## Ordering
 
 Migrations are sorted and applied by version number (the `NNN` prefix). They are tracked in the `_migrations` system table — the platform knows which have been applied.

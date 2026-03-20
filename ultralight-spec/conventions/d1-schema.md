@@ -37,6 +37,16 @@ This is SQLite. Use only these types:
 
 **Forbidden**: `VARCHAR`, `SERIAL`, arrays, JSON columns for queryable data.
 
+## D1 constraints
+
+Ultralight uses Cloudflare D1 (SQLite) via the REST API. Be aware of these constraints:
+
+- **No transactions in app code.** `BEGIN TRANSACTION`, `COMMIT`, and `SAVEPOINT` are not supported. Use idempotent patterns instead (see api-surface.md).
+- **`batch()` is sequential, not atomic.** Each statement runs independently. Design for partial failure tolerance.
+- **`exec()` is blocked at runtime.** Only available during migration execution by the platform.
+- **10GB per database.** Each app gets its own isolated D1 database.
+- **All queries must include `user_id`.** The SDK validates this automatically.
+
 ## Example
 
 ```sql

@@ -2209,107 +2209,43 @@ async function executeUpload(
       };
     }
 
-    // ── Deno existing app version (original path) ──
-    // Validate entry file
-    const entryFiles = ['index.ts', 'index.tsx', 'index.js', 'index.jsx'];
-    const hasEntry = uploadFiles.some(f => entryFiles.includes(f.name.split('/').pop() || f.name));
-    if (!hasEntry) throw new ToolError(VALIDATION_ERROR, 'Must include an entry file (index.ts/tsx/js/jsx)');
-
-    // Bundle and upload to R2 at versioned path
-    const { bundleCode } = await import('../services/bundler.ts');
+    // ── Deno existing app version — uses shared pipeline ──
+    const { processUploadPipeline, provisionAndMigrate } = await import('../services/upload-pipeline.ts');
     const validatedFiles = uploadFiles.map(f => ({ name: f.name, content: f.content }));
-    const entryFile = validatedFiles.find(f => entryFiles.includes(f.name.split('/').pop() || f.name))!;
 
-    let bundledCode = entryFile.content;
-    try {
-      const bundleResult = await bundleCode(validatedFiles, entryFile.name);
-      if (bundleResult.success && bundleResult.code !== entryFile.content) {
-        bundledCode = bundleResult.code;
-      }
-    } catch { /* use unbundled */ }
-
-    // Extract exports
-    const exportRegex = /export\s+(?:async\s+)?function\s+(\w+)/g;
-    const constRegex = /export\s+(?:const|let|var)\s+(\w+)\s*=/g;
-    const exports: string[] = [];
-    let match;
-    while ((match = exportRegex.exec(entryFile.content)) !== null) exports.push(match[1]);
-    while ((match = constRegex.exec(entryFile.content)) !== null) exports.push(match[1]);
+    const pipeline = await processUploadPipeline(validatedFiles);
 
     const r2Service = createR2Service();
     const storageKey = `apps/${app.id}/${newVersion}/`;
+    await r2Service.uploadFiles(storageKey, pipeline.filesToUpload);
 
-    // Upload bundled + source
-    const filesToUpload = [
-      { name: entryFile.name, content: new TextEncoder().encode(bundledCode), contentType: 'text/typescript' },
-      { name: `_source_${entryFile.name}`, content: new TextEncoder().encode(entryFile.content), contentType: 'text/typescript' },
-      ...validatedFiles
-        .filter(f => f.name !== entryFile.name)
-        .map(f => ({ name: f.name, content: new TextEncoder().encode(f.content), contentType: 'text/plain' })),
-    ];
-    await r2Service.uploadFiles(storageKey, filesToUpload);
-
-    // Update app: add version but do NOT change current_version
+    // Update app: add version, manifest, exports — do NOT change current_version
     const appsService = createAppsService();
     const versions = [...(app.versions || []), newVersion];
     const gapId = args.gap_id as string | undefined;
-    const updatePayload: Partial<App> = { versions } as Partial<App>;
-    if (gapId) (updatePayload as Record<string, unknown>).gap_id = gapId;
+    const updatePayload: Record<string, unknown> = { versions };
+    if (gapId) updatePayload.gap_id = gapId;
+    if (pipeline.manifest) {
+      updatePayload.manifest = JSON.stringify(pipeline.manifest);
+    }
+    updatePayload.exports = pipeline.exports;
+    await appsService.update(app.id, updatePayload as Partial<App>);
 
-    // Update manifest if present in uploaded files
-    const manifestFile = validatedFiles.find(f => (f.name.split('/').pop() || f.name) === 'manifest.json');
-    if (manifestFile) {
-      try {
-        const { validateManifest } = await import('../../shared/types/index.ts');
-        const manifestJson = JSON.parse(manifestFile.content);
-        const validation = validateManifest(manifestJson);
-        if (validation.valid) {
-          (updatePayload as Record<string, unknown>).manifest = JSON.stringify(validation.manifest);
-        }
-      } catch { /* ignore parse errors */ }
+    // ── D1 provisioning — SYNCHRONOUS, eager ──
+    let d1Status: { provisioned: boolean; status: string; database_id?: string; migrations_applied: number; migrations_skipped: number; error?: string } | undefined;
+    if (pipeline.hasMigrations) {
+      const d1Result = await provisionAndMigrate(app.id, pipeline.migrations);
+      d1Status = {
+        provisioned: d1Result.provisioned,
+        status: d1Result.status,
+        database_id: d1Result.database_id,
+        migrations_applied: d1Result.migrations_applied,
+        migrations_skipped: d1Result.migrations_skipped,
+        error: d1Result.error,
+      };
     }
 
-    await appsService.update(app.id, updatePayload);
-
-    // D1 migrations — extract and provision if migrations/ files are present
-    {
-      const migrationFileMap: Record<string, string> = {};
-      for (const f of validatedFiles) {
-        const pathParts = f.name.split('/');
-        const migrationsIdx = pathParts.indexOf('migrations');
-        if (migrationsIdx !== -1 && pathParts.length > migrationsIdx + 1) {
-          const migrationFilename = pathParts.slice(migrationsIdx + 1).join('/');
-          if (migrationFilename.endsWith('.sql')) {
-            migrationFileMap[migrationFilename] = f.content;
-          }
-        }
-      }
-      if (Object.keys(migrationFileMap).length > 0) {
-        (async () => {
-          try {
-            const { parseMigrationFiles, runMigrations, updateMigrationVersion } = await import('../services/d1-migrations.ts');
-            const { provisionD1ForApp } = await import('../services/d1-provisioning.ts');
-            const parsedMigrations = parseMigrationFiles(migrationFileMap);
-            const provision = await provisionD1ForApp(app.id);
-            if (provision.status === 'ready' && provision.databaseId) {
-              const migrationResult = await runMigrations(provision.databaseId, parsedMigrations);
-              if (migrationResult.errors.length > 0) {
-                console.error(`[D1-MIGRATIONS] Errors for app ${app.id}:`, migrationResult.errors);
-              } else {
-                await updateMigrationVersion(app.id, migrationResult.lastVersion);
-                console.log(`[D1-MIGRATIONS] App ${app.id}: ${migrationResult.applied} applied, ${migrationResult.skipped} skipped`);
-              }
-            } else {
-              console.error(`[D1-MIGRATIONS] D1 provisioning failed for app ${app.id}:`, provision.error);
-            }
-          } catch (err) {
-            console.error(`[D1-MIGRATIONS] Migration error for app ${app.id}:`, err);
-          }
-        })().catch(err => console.error('[D1-MIGRATIONS] Unhandled migration error:', err));
-      }
-    }
-
-    // If gap_id provided, fire-and-forget: create pending assessment
+    // Gap submission (fire-and-forget)
     if (gapId) {
       const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
       fetch(`${SUPABASE_URL}/rest/v1/gap_assessments`, {
@@ -2320,16 +2256,11 @@ async function executeUpload(
           'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
           'Prefer': 'return=minimal',
         },
-        body: JSON.stringify({
-          gap_id: gapId,
-          app_id: app.id,
-          user_id: userId,
-          status: 'pending',
-        }),
+        body: JSON.stringify({ gap_id: gapId, app_id: app.id, user_id: userId, status: 'pending' }),
       }).catch(() => {});
     }
 
-    // Auto-generate Skills.md + embedding for this version
+    // Skills generation
     const skills = await generateSkillsForVersion(app, storageKey, newVersion);
 
     return {
@@ -2338,9 +2269,10 @@ async function executeUpload(
       version: newVersion,
       live_version: app.current_version,
       is_live: false,
-      exports,
+      exports: pipeline.exports,
       skills_generated: !!skills.skillsMd,
       gap_id: gapId || undefined,
+      d1: d1Status,
       message: `Version ${newVersion} uploaded.${gapId ? ' Gap submission created for assessment.' : ''} Use ul.set.version to make it live.`,
     };
   } else {

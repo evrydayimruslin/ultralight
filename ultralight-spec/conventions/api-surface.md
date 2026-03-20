@@ -42,7 +42,12 @@ const task = await ultralight.db.first<Task>(
 
 ### ultralight.db.batch(statements)
 
-Execute multiple statements atomically.
+Execute multiple statements sequentially.
+
+> **Important**: Batch is currently executed as sequential individual queries via the
+> D1 REST API. Statements are **not** wrapped in a database transaction — if statement
+> 3 of 5 fails, statements 1-2 are already committed. Design your batch operations
+> to be **idempotent** (see patterns below).
 
 ```ts
 const results = await ultralight.db.batch([
@@ -52,9 +57,43 @@ const results = await ultralight.db.batch([
 // returns: D1RunResult[]
 ```
 
+**Idempotent batch patterns** (safe for partial failures):
+
+```ts
+// ✅ INSERT OR IGNORE — safe to re-run
+{ sql: "INSERT OR IGNORE INTO items (id, user_id, name) VALUES (?, ?, ?)", params: [...] }
+
+// ✅ Check-before-write — verify state before mutating
+const existing = await ultralight.db.first("SELECT status FROM orders WHERE id = ? AND user_id = ?", [id, uid]);
+if (existing?.status !== 'completed') {
+  await ultralight.db.run("UPDATE orders SET status = 'completed' WHERE id = ? AND user_id = ?", [id, uid]);
+}
+
+// ✅ Upsert — ON CONFLICT handles re-runs
+{ sql: "INSERT INTO counters (id, user_id, count) VALUES (?, ?, 1) ON CONFLICT(id) DO UPDATE SET count = count + 1", params: [...] }
+```
+
 ### ultralight.db.exec(sql)
 
 **BLOCKED at runtime.** Only available during migrations. Attempting to call `exec()` in app code will throw.
+
+## Function signature conventions
+
+All exported functions receive a single `args` object. Always default it to `{}` to handle
+cases where the MCP handler passes no arguments:
+
+```ts
+export async function my_function(args: {
+  name?: string;
+  count?: number;
+} = {}): Promise<unknown> {
+  const { name, count } = args;
+  // ...
+}
+```
+
+> **Why**: The platform always passes an args object, but defaulting to `{}` provides
+> defense-in-depth against destructuring errors.
 
 ## Rules
 
@@ -62,3 +101,4 @@ const results = await ultralight.db.batch([
 2. **Always include user_id.** Every query must filter by `user_id` (see user-isolation.md).
 3. **Use `crypto.randomUUID()` for IDs.** Generate IDs client-side, not with autoincrement.
 4. **Use `ultralight.user.id`** to get the current authenticated user's ID.
+5. **Design batch operations for idempotency.** Use `INSERT OR IGNORE`, `ON CONFLICT`, or check-before-write patterns since batch is not transactional.
