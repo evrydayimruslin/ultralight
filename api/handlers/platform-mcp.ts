@@ -2255,6 +2255,20 @@ async function executeUpload(
     const gapId = args.gap_id as string | undefined;
     const updatePayload: Partial<App> = { versions } as Partial<App>;
     if (gapId) (updatePayload as Record<string, unknown>).gap_id = gapId;
+
+    // Update manifest if present in uploaded files
+    const manifestFile = validatedFiles.find(f => (f.name.split('/').pop() || f.name) === 'manifest.json');
+    if (manifestFile) {
+      try {
+        const { validateManifest } = await import('../../shared/types/index.ts');
+        const manifestJson = JSON.parse(manifestFile.content);
+        const validation = validateManifest(manifestJson);
+        if (validation.valid) {
+          (updatePayload as Record<string, unknown>).manifest = JSON.stringify(validation.manifest);
+        }
+      } catch { /* ignore parse errors */ }
+    }
+
     await appsService.update(app.id, updatePayload);
 
     // If gap_id provided, fire-and-forget: create pending assessment
