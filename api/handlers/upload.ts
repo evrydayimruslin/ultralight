@@ -1329,6 +1329,40 @@ export async function handleUploadFiles(
   await appsService.create(createPayload as Parameters<typeof appsService.create>[0]);
   log('success', 'App record created');
 
+  // D1 migrations — extract and provision if migrations/ files are present
+  {
+    const migrationFileMap: Record<string, string> = {};
+    for (const f of validatedFiles) {
+      const pathParts = f.name.split('/');
+      const migrationsIdx = pathParts.indexOf('migrations');
+      if (migrationsIdx !== -1 && pathParts.length > migrationsIdx + 1) {
+        const migrationFilename = pathParts.slice(migrationsIdx + 1).join('/');
+        if (migrationFilename.endsWith('.sql')) {
+          migrationFileMap[migrationFilename] = f.content;
+        }
+      }
+    }
+    if (Object.keys(migrationFileMap).length > 0) {
+      try {
+        const pm = parseMigrationFiles(migrationFileMap);
+        const provision = await provisionD1ForApp(appId);
+        if (provision.status === 'ready' && provision.databaseId) {
+          const migrationResult = await runMigrations(provision.databaseId, pm);
+          if (migrationResult.errors.length > 0) {
+            log('error', `D1 migration errors: ${migrationResult.errors.join('; ')}`);
+          } else {
+            await updateMigrationVersion(appId, migrationResult.lastVersion);
+            log('success', `D1: ${migrationResult.applied} migration(s) applied, ${migrationResult.skipped} skipped`);
+          }
+        } else {
+          log('error', `D1 provisioning failed: ${provision.error || 'unknown error'}`);
+        }
+      } catch (err) {
+        log('error', `D1 migration error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
   // Store source fingerprint and safety status (fire-and-forget)
   storeIntegrityResults(appId, {
     source_fingerprint: sourceFingerprint,

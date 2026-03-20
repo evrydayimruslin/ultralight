@@ -2271,6 +2271,44 @@ async function executeUpload(
 
     await appsService.update(app.id, updatePayload);
 
+    // D1 migrations — extract and provision if migrations/ files are present
+    {
+      const migrationFileMap: Record<string, string> = {};
+      for (const f of validatedFiles) {
+        const pathParts = f.name.split('/');
+        const migrationsIdx = pathParts.indexOf('migrations');
+        if (migrationsIdx !== -1 && pathParts.length > migrationsIdx + 1) {
+          const migrationFilename = pathParts.slice(migrationsIdx + 1).join('/');
+          if (migrationFilename.endsWith('.sql')) {
+            migrationFileMap[migrationFilename] = f.content;
+          }
+        }
+      }
+      if (Object.keys(migrationFileMap).length > 0) {
+        (async () => {
+          try {
+            const { parseMigrationFiles, runMigrations, updateMigrationVersion } = await import('../services/d1-migrations.ts');
+            const { provisionD1ForApp } = await import('../services/d1-provisioning.ts');
+            const parsedMigrations = parseMigrationFiles(migrationFileMap);
+            const provision = await provisionD1ForApp(app.id);
+            if (provision.status === 'ready' && provision.databaseId) {
+              const migrationResult = await runMigrations(provision.databaseId, parsedMigrations);
+              if (migrationResult.errors.length > 0) {
+                console.error(`[D1-MIGRATIONS] Errors for app ${app.id}:`, migrationResult.errors);
+              } else {
+                await updateMigrationVersion(app.id, migrationResult.lastVersion);
+                console.log(`[D1-MIGRATIONS] App ${app.id}: ${migrationResult.applied} applied, ${migrationResult.skipped} skipped`);
+              }
+            } else {
+              console.error(`[D1-MIGRATIONS] D1 provisioning failed for app ${app.id}:`, provision.error);
+            }
+          } catch (err) {
+            console.error(`[D1-MIGRATIONS] Migration error for app ${app.id}:`, err);
+          }
+        })().catch(err => console.error('[D1-MIGRATIONS] Unhandled migration error:', err));
+      }
+    }
+
     // If gap_id provided, fire-and-forget: create pending assessment
     if (gapId) {
       const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
