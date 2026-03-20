@@ -184,44 +184,24 @@ export function createD1DataService(
     async batch(statements: Array<{ sql: string; params?: unknown[] }>): Promise<D1RunResult[]> {
       // Execute statements sequentially via the single-query endpoint.
       // D1 REST API /query expects a single {sql, params} object, not an array.
-      // For atomicity we wrap in BEGIN/COMMIT when there are multiple statements.
+      // Note: D1 REST API does not support BEGIN/COMMIT transactions.
       const results: D1RunResult[] = [];
 
-      if (statements.length === 0) return results;
-
-      const wrappedStatements = statements.length > 1
-        ? [
-            { sql: 'BEGIN TRANSACTION', params: [] as unknown[] },
-            ...statements,
-            { sql: 'COMMIT', params: [] as unknown[] },
-          ]
-        : statements;
-
-      try {
-        for (const stmt of wrappedStatements) {
-          const data = await queryD1(stmt.sql, stmt.params || []);
-          const r = data.result?.[0];
-          results.push({
-            success: r?.success ?? true,
-            meta: {
-              changes: r?.meta?.changes ?? 0,
-              last_row_id: r?.meta?.last_row_id ?? 0,
-              duration: r?.meta?.duration ?? 0,
-              rows_read: r?.meta?.rows_read ?? 0,
-              rows_written: r?.meta?.rows_written ?? 0,
-            },
-          });
-        }
-      } catch (err) {
-        // Attempt rollback on error
-        try { await queryD1('ROLLBACK', []); } catch { /* ignore rollback errors */ }
-        throw err;
+      for (const stmt of statements) {
+        const data = await queryD1(stmt.sql, stmt.params || []);
+        const r = data.result?.[0];
+        results.push({
+          success: r?.success ?? true,
+          meta: {
+            changes: r?.meta?.changes ?? 0,
+            last_row_id: r?.meta?.last_row_id ?? 0,
+            duration: r?.meta?.duration ?? 0,
+            rows_read: r?.meta?.rows_read ?? 0,
+            rows_written: r?.meta?.rows_written ?? 0,
+          },
+        });
       }
 
-      // Strip BEGIN/COMMIT results from the return
-      if (statements.length > 1) {
-        return results.slice(1, -1);
-      }
       return results;
     },
   };
