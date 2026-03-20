@@ -1,29 +1,34 @@
 // Ultralight Data Layer Worker
-// Cloudflare Worker providing native R2 data access for MCP app storage
+// Cloudflare Worker providing native R2 data access + D1 query proxy for MCP app storage
 //
 // Architecture:
 //   DO API Server (control plane + execution) → Worker (data layer)
 //   - DO handles: auth, rate limiting, permissions, routing, code execution
-//   - Worker handles: R2 storage ops with native bindings (~10x faster than HTTP-signed S3)
+//   - Worker handles: R2 storage ops with native bindings, D1 query proxy via CF HTTP API
 //
 // Auth: shared secret in X-Worker-Secret header
 //
 // Endpoints:
 //   GET  /health                → health check
-//   POST /data/store            → store a value
-//   POST /data/load             → load a value
-//   POST /data/remove           → remove a value
-//   POST /data/list             → list keys
-//   POST /data/batch-store      → store multiple values
-//   POST /data/batch-load       → load multiple values
-//   POST /data/batch-remove     → remove multiple values
-//   GET  /code/:storageKey/*    → fetch app code (with KV cache)
+//   POST /data/store            → store a value (R2)
+//   POST /data/load             → load a value (R2)
+//   POST /data/remove           → remove a value (R2)
+//   POST /data/list             → list keys (R2)
+//   POST /data/batch-store      → store multiple values (R2)
+//   POST /data/batch-load       → load multiple values (R2)
+//   POST /data/batch-remove     → remove multiple values (R2)
+//   POST /code/fetch            → fetch app code (with KV cache)
+//   POST /code/invalidate       → invalidate code cache
+//   POST /d1/query              → execute SQL against an app's D1 database
+//   POST /d1/batch              → execute multiple SQL statements atomically
 
 interface Env {
   R2_BUCKET: R2Bucket;
   CODE_CACHE: KVNamespace;
   WORKER_SECRET: string;
   ENVIRONMENT: string;
+  CF_ACCOUNT_ID: string;
+  CF_API_TOKEN: string;
 }
 
 export default {
@@ -216,6 +221,60 @@ export default {
         }
       }
 
+      // ============================================
+      // D1 QUERY PROXY
+      // ============================================
+      if (request.method === 'POST' && url.pathname === '/d1/query') {
+        const body = await request.json() as {
+          databaseId: string;
+          sql: string;
+          params?: unknown[];
+          userId?: string;
+        };
+
+        if (!body.databaseId || !body.sql) {
+          return json({ error: 'Missing databaseId or sql' }, 400);
+        }
+
+        const d1Result = await queryD1(env, body.databaseId, body.sql, body.params || []);
+
+        // Track usage if userId provided
+        if (body.userId && d1Result.success && d1Result.result?.[0]?.meta) {
+          const meta = d1Result.result[0].meta;
+          // Fire-and-forget usage tracking within the same D1
+          trackUsage(env, body.databaseId, body.userId, meta.rows_read, meta.rows_written).catch(() => {});
+        }
+
+        return json(d1Result);
+      }
+
+      if (request.method === 'POST' && url.pathname === '/d1/batch') {
+        const body = await request.json() as {
+          databaseId: string;
+          statements: Array<{ sql: string; params?: unknown[] }>;
+          userId?: string;
+        };
+
+        if (!body.databaseId || !body.statements?.length) {
+          return json({ error: 'Missing databaseId or statements' }, 400);
+        }
+
+        const d1Result = await batchD1(env, body.databaseId, body.statements);
+
+        // Track aggregate usage
+        if (body.userId && d1Result.success) {
+          let totalRead = 0;
+          let totalWritten = 0;
+          for (const r of d1Result.result || []) {
+            totalRead += r.meta?.rows_read ?? 0;
+            totalWritten += r.meta?.rows_written ?? 0;
+          }
+          trackUsage(env, body.databaseId, body.userId, totalRead, totalWritten).catch(() => {});
+        }
+
+        return json(d1Result);
+      }
+
       return json({ error: 'Not found' }, 404);
 
     } catch (err) {
@@ -225,6 +284,109 @@ export default {
     }
   },
 };
+
+// ============================================
+// D1 HTTP API HELPERS
+// ============================================
+
+interface D1ApiResponse {
+  success: boolean;
+  errors: Array<{ code: number; message: string }>;
+  result: Array<{
+    success: boolean;
+    results: Record<string, unknown>[];
+    meta: {
+      changes: number;
+      last_row_id: number;
+      duration: number;
+      rows_read: number;
+      rows_written: number;
+    };
+  }>;
+}
+
+async function queryD1(
+  env: Env,
+  databaseId: string,
+  sql: string,
+  params: unknown[],
+): Promise<D1ApiResponse> {
+  const res = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/d1/database/${databaseId}/query`,
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${env.CF_API_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ sql, params }),
+    }
+  );
+
+  if (!res.ok) {
+    const errText = await res.text();
+    return {
+      success: false,
+      errors: [{ code: res.status, message: errText }],
+      result: [],
+    };
+  }
+
+  return await res.json() as D1ApiResponse;
+}
+
+async function batchD1(
+  env: Env,
+  databaseId: string,
+  statements: Array<{ sql: string; params?: unknown[] }>,
+): Promise<D1ApiResponse> {
+  const res = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/d1/database/${databaseId}/query`,
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${env.CF_API_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(statements.map(s => ({ sql: s.sql, params: s.params || [] }))),
+    }
+  );
+
+  if (!res.ok) {
+    const errText = await res.text();
+    return {
+      success: false,
+      errors: [{ code: res.status, message: errText }],
+      result: [],
+    };
+  }
+
+  return await res.json() as D1ApiResponse;
+}
+
+/**
+ * Track per-user D1 usage within the app's D1 database.
+ * Fire-and-forget — errors are silently ignored.
+ */
+async function trackUsage(
+  env: Env,
+  databaseId: string,
+  userId: string,
+  rowsRead: number,
+  rowsWritten: number,
+): Promise<void> {
+  if (rowsRead === 0 && rowsWritten === 0) return;
+
+  await queryD1(env, databaseId,
+    `INSERT INTO _usage (user_id, rows_read_total, rows_written_total, last_updated)
+     VALUES (?, ?, ?, datetime('now'))
+     ON CONFLICT(user_id) DO UPDATE SET
+       rows_read_total = rows_read_total + excluded.rows_read_total,
+       rows_written_total = rows_written_total + excluded.rows_written_total,
+       last_updated = datetime('now')`,
+    [userId, rowsRead, rowsWritten],
+  );
+}
 
 // ============================================
 // HELPERS

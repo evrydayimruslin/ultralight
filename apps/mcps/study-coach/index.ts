@@ -1,6 +1,6 @@
 // Study Coach — Ultralight MCP App
 // Personalized learning paths with spaced repetition for any subject.
-// Storage: Ultralight KV | Permissions: ai:call
+// Storage: Ultralight D1 | Permissions: ai:call
 
 const ultralight = (globalThis as any).ultralight;
 
@@ -14,44 +14,30 @@ export async function add_concept(args: {
 }): Promise<unknown> {
   const { name, parent_id, description, subject } = args;
   const id = crypto.randomUUID();
+  const now = new Date().toISOString();
 
   // Ensure subject exists
   let subjectId = null;
   if (subject) {
-    const subjectKeys = await ultralight.list('subjects/');
-    let found = false;
-    if (subjectKeys.length > 0) {
-      const subjects = await ultralight.batchLoad(subjectKeys);
-      for (const s of subjects) {
-        const sub = s.value as any;
-        if (sub.name.toLowerCase() === subject.toLowerCase()) {
-          subjectId = sub.id;
-          found = true;
-          break;
-        }
-      }
-    }
-    if (!found) {
+    const existing = await ultralight.db.first(
+      'SELECT id FROM subjects WHERE user_id = ? AND LOWER(name) = ?',
+      [ultralight.user.id, subject.toLowerCase()]
+    );
+    if (existing) {
+      subjectId = existing.id;
+    } else {
       subjectId = crypto.randomUUID();
-      await ultralight.store('subjects/' + subjectId, {
-        id: subjectId,
-        name: subject,
-        description: '',
-        created_at: new Date().toISOString(),
-      });
+      await ultralight.db.run(
+        'INSERT INTO subjects (id, user_id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+        [subjectId, ultralight.user.id, subject, '', now, now]
+      );
     }
   }
 
-  const concept = {
-    id: id,
-    name: name,
-    parent_id: parent_id || null,
-    description: description || '',
-    subject_id: subjectId,
-    created_at: new Date().toISOString(),
-  };
-
-  await ultralight.store('concepts/' + id, concept);
+  await ultralight.db.run(
+    'INSERT INTO concepts (id, user_id, name, parent_id, description, subject_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [id, ultralight.user.id, name, parent_id || null, description || '', subjectId, now, now]
+  );
 
   return {
     success: true,
@@ -71,27 +57,29 @@ export async function rate(args: {
 }): Promise<unknown> {
   const { concept_id, understanding, notes } = args;
 
-  const concept = await ultralight.load('concepts/' + concept_id) as any;
+  const concept = await ultralight.db.first(
+    'SELECT * FROM concepts WHERE id = ? AND user_id = ?',
+    [concept_id, ultralight.user.id]
+  );
   if (!concept) {
     return { success: false, error: 'Concept not found: ' + concept_id };
   }
 
   const rating = Math.min(5, Math.max(1, Math.round(understanding)));
-  const today = new Date().toISOString().split('T')[0];
+  const todayStr = new Date().toISOString().split('T')[0];
+  const now = new Date().toISOString();
+  const ratingId = crypto.randomUUID();
 
-  await ultralight.store('ratings/' + concept_id + '/' + today, {
-    concept_id: concept_id,
-    understanding: rating,
-    date: today,
-    notes: notes || '',
-    created_at: new Date().toISOString(),
-  });
+  await ultralight.db.run(
+    'INSERT INTO ratings (id, user_id, concept_id, understanding, date, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [ratingId, ultralight.user.id, concept_id, rating, todayStr, notes || '', now, now]
+  );
 
   return {
     success: true,
     concept: concept.name,
     understanding: rating,
-    date: today,
+    date: todayStr,
   };
 }
 
@@ -102,16 +90,17 @@ export async function study(args: {
   limit?: number;
 }): Promise<unknown> {
   const { subject_id, limit } = args;
-  const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
+  const todayDate = new Date();
+  const todayStr = todayDate.toISOString().split('T')[0];
 
   // Load all concepts
-  const conceptResults = await ultralight.query('concepts/', {
-    filter: (item: any) => {
-      if (subject_id && item.subject_id !== subject_id) return false;
-      return true;
-    },
-  });
+  let sql = 'SELECT * FROM concepts WHERE user_id = ?';
+  const params: any[] = [ultralight.user.id];
+  if (subject_id) {
+    sql += ' AND subject_id = ?';
+    params.push(subject_id);
+  }
+  const concepts = await ultralight.db.all(sql, params);
 
   const studyItems: Array<{
     concept_id: string;
@@ -122,38 +111,22 @@ export async function study(args: {
     priority: number;
   }> = [];
 
-  for (const cr of conceptResults) {
-    const concept = cr.value as any;
-
+  for (const concept of concepts) {
     // Find most recent rating
-    const ratingKeys = await ultralight.list('ratings/' + concept.id + '/');
+    const lastRatingRow = await ultralight.db.first(
+      'SELECT understanding, date FROM ratings WHERE user_id = ? AND concept_id = ? ORDER BY date DESC LIMIT 1',
+      [ultralight.user.id, concept.id]
+    );
+
     let lastRating: number | null = null;
-    let lastDate: string | null = null;
-
-    if (ratingKeys.length > 0) {
-      // Keys are sorted, last one is most recent
-      const ratings = await ultralight.batchLoad(ratingKeys);
-      const sorted = ratings
-        .map((r: any) => r.value)
-        .sort((a: any, b: any) => b.date.localeCompare(a.date));
-      if (sorted.length > 0) {
-        lastRating = sorted[0].understanding;
-        lastDate = sorted[0].date;
-      }
-    }
-
-    // Spaced repetition priority:
-    // - Never rated = highest priority (100)
-    // - Low understanding + stale = high priority
-    // - High understanding + recent = low priority
-    let priority = 100;
     let daysSince: number | null = null;
+    let priority = 100;
 
-    if (lastRating !== null && lastDate) {
-      daysSince = Math.floor((today.getTime() - new Date(lastDate).getTime()) / 86400000);
-      // Interval: understanding 1 = review daily, 5 = review after 30 days
-      const idealInterval = Math.pow(2, (lastRating - 1)) ; // 1, 2, 4, 8, 16 days
-      priority = Math.max(0, (daysSince / idealInterval) * (6 - lastRating) * 10);
+    if (lastRatingRow) {
+      lastRating = lastRatingRow.understanding;
+      daysSince = Math.floor((todayDate.getTime() - new Date(lastRatingRow.date).getTime()) / 86400000);
+      const idealInterval = Math.pow(2, (lastRating! - 1)); // 1, 2, 4, 8, 16 days
+      priority = Math.max(0, (daysSince / idealInterval) * (6 - lastRating!) * 10);
     }
 
     studyItems.push({
@@ -172,7 +145,7 @@ export async function study(args: {
 
   return {
     to_study: toStudy,
-    total_concepts: conceptResults.length,
+    total_concepts: concepts.length,
     concepts_needing_review: studyItems.filter((s) => s.priority > 20).length,
   };
 }
@@ -184,14 +157,15 @@ export async function tree(args: {
 }): Promise<unknown> {
   const { subject_id } = args;
 
-  const conceptResults = await ultralight.query('concepts/', {
-    filter: (item: any) => {
-      if (subject_id && item.subject_id !== subject_id) return false;
-      return true;
-    },
-  });
+  let sql = 'SELECT * FROM concepts WHERE user_id = ?';
+  const params: any[] = [ultralight.user.id];
+  if (subject_id) {
+    sql += ' AND subject_id = ?';
+    params.push(subject_id);
+  }
 
-  const concepts = conceptResults.map((r: any) => r.value);
+  const concepts = await ultralight.db.all(sql, params);
+
   const byId: Record<string, any> = {};
   for (const c of concepts) {
     byId[c.id] = { ...c, children: [] };
@@ -225,17 +199,19 @@ export async function quiz(args: {
   // Gather concepts to quiz on
   let concepts: any[] = [];
   if (concept_ids && concept_ids.length > 0) {
-    const keys = concept_ids.map((id) => 'concepts/' + id);
-    const loaded = await ultralight.batchLoad(keys);
-    concepts = loaded.filter((l: any) => l.value).map((l: any) => l.value);
+    const placeholders = concept_ids.map(() => '?').join(',');
+    concepts = await ultralight.db.all(
+      'SELECT * FROM concepts WHERE user_id = ? AND id IN (' + placeholders + ')',
+      [ultralight.user.id, ...concept_ids]
+    );
   } else {
-    const results = await ultralight.query('concepts/', {
-      filter: (item: any) => {
-        if (subject_id && item.subject_id !== subject_id) return false;
-        return true;
-      },
-    });
-    concepts = results.map((r: any) => r.value);
+    let sql = 'SELECT * FROM concepts WHERE user_id = ?';
+    const params: any[] = [ultralight.user.id];
+    if (subject_id) {
+      sql += ' AND subject_id = ?';
+      params.push(subject_id);
+    }
+    concepts = await ultralight.db.all(sql, params);
   }
 
   if (concepts.length === 0) {
@@ -274,30 +250,26 @@ export async function quiz(args: {
 // ── STATUS ──
 
 export async function status(args?: {}): Promise<unknown> {
-  const conceptKeys = await ultralight.list('concepts/');
-  const subjectKeys = await ultralight.list('subjects/');
+  const conceptCount = await ultralight.db.first(
+    'SELECT COUNT(*) as count FROM concepts WHERE user_id = ?',
+    [ultralight.user.id]
+  );
 
-  // Get average understanding across most recent ratings
-  let totalRating = 0;
-  let ratedCount = 0;
+  const subjectCount = await ultralight.db.first(
+    'SELECT COUNT(*) as count FROM subjects WHERE user_id = ?',
+    [ultralight.user.id]
+  );
 
-  for (const key of conceptKeys.slice(0, 50)) {
-    const conceptId = key.replace('concepts/', '');
-    const ratingKeys = await ultralight.list('ratings/' + conceptId + '/');
-    if (ratingKeys.length > 0) {
-      const lastKey = ratingKeys[ratingKeys.length - 1];
-      const rating = await ultralight.load(lastKey) as any;
-      if (rating) {
-        totalRating += rating.understanding;
-        ratedCount++;
-      }
-    }
-  }
+  // Get average understanding across most recent ratings per concept
+  const avgRating = await ultralight.db.first(
+    'SELECT COUNT(*) as rated_count, AVG(understanding) as avg_understanding FROM (SELECT concept_id, understanding FROM ratings WHERE user_id = ? GROUP BY concept_id HAVING date = MAX(date))',
+    [ultralight.user.id]
+  );
 
   return {
-    total_subjects: subjectKeys.length,
-    total_concepts: conceptKeys.length,
-    concepts_rated: ratedCount,
-    average_understanding: ratedCount > 0 ? Math.round((totalRating / ratedCount) * 10) / 10 : null,
+    total_subjects: subjectCount?.count || 0,
+    total_concepts: conceptCount?.count || 0,
+    concepts_rated: avgRating?.rated_count || 0,
+    average_understanding: avgRating?.rated_count > 0 ? Math.round((avgRating.avg_understanding) * 10) / 10 : null,
   };
 }

@@ -1,6 +1,6 @@
 // Home Inventory — Ultralight MCP App
 // Catalog belongings for insurance, moving, or organization.
-// Storage: Ultralight KV (items, locations, categories)
+// Storage: Ultralight D1 (items)
 
 const ultralight = (globalThis as any).ultralight;
 
@@ -19,38 +19,12 @@ export async function add(args: {
   const id = crypto.randomUUID();
   const loc = location.toLowerCase().trim();
   const cat = category ? category.toLowerCase().trim() : 'uncategorized';
+  const now = new Date().toISOString();
 
-  const item = {
-    id: id,
-    name: name,
-    location: loc,
-    value: value || 0,
-    category: cat,
-    notes: notes || '',
-    purchase_date: purchase_date || null,
-    warranty_expires: warranty_expires || null,
-    created_at: new Date().toISOString(),
-  };
-
-  await ultralight.store('items/' + id, item);
-
-  // Update location index
-  const locData = await ultralight.load('locations/' + loc) as any;
-  if (locData) {
-    locData.item_count = (locData.item_count || 0) + 1;
-    await ultralight.store('locations/' + loc, locData);
-  } else {
-    await ultralight.store('locations/' + loc, { name: loc, description: '', item_count: 1 });
-  }
-
-  // Update category index
-  const catData = await ultralight.load('categories/' + cat) as any;
-  if (catData) {
-    catData.item_count = (catData.item_count || 0) + 1;
-    await ultralight.store('categories/' + cat, catData);
-  } else {
-    await ultralight.store('categories/' + cat, { name: cat, item_count: 1 });
-  }
+  await ultralight.db.run(
+    'INSERT INTO items (id, user_id, name, location, category, value, notes, purchase_date, warranty_expires, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [id, ultralight.user.id, name, loc, cat, value || 0, notes || '', purchase_date || null, warranty_expires || null, now, now]
+  );
 
   return {
     success: true,
@@ -71,17 +45,22 @@ export async function list(args: {
 }): Promise<unknown> {
   const { location, category, limit } = args;
 
-  const results = await ultralight.query('items/', {
-    filter: (item: any) => {
-      if (location && item.location !== location.toLowerCase().trim()) return false;
-      if (category && item.category !== category.toLowerCase().trim()) return false;
-      return true;
-    },
-    sort: { field: 'name', order: 'asc' },
-    limit: limit || 100,
-  });
+  let sql = 'SELECT * FROM items WHERE user_id = ?';
+  const params: any[] = [ultralight.user.id];
 
-  const items = results.map((r: any) => r.value);
+  if (location) {
+    sql += ' AND location = ?';
+    params.push(location.toLowerCase().trim());
+  }
+  if (category) {
+    sql += ' AND category = ?';
+    params.push(category.toLowerCase().trim());
+  }
+
+  sql += ' ORDER BY name ASC LIMIT ?';
+  params.push(limit || 100);
+
+  const items = await ultralight.db.all(sql, params);
   const totalValue = items.reduce((sum: number, item: any) => sum + (item.value || 0), 0);
 
   return {
@@ -97,23 +76,16 @@ export async function search(args: {
   query: string;
 }): Promise<unknown> {
   const { query } = args;
-  const q = query.toLowerCase();
+  const q = '%' + query.toLowerCase() + '%';
 
-  const results = await ultralight.query('items/', {
-    filter: (item: any) => {
-      return (
-        item.name.toLowerCase().includes(q) ||
-        (item.notes && item.notes.toLowerCase().includes(q)) ||
-        item.location.toLowerCase().includes(q) ||
-        item.category.toLowerCase().includes(q)
-      );
-    },
-    sort: { field: 'name', order: 'asc' },
-  });
+  const results = await ultralight.db.all(
+    'SELECT * FROM items WHERE user_id = ? AND (LOWER(name) LIKE ? OR LOWER(notes) LIKE ? OR LOWER(location) LIKE ? OR LOWER(category) LIKE ?) ORDER BY name ASC',
+    [ultralight.user.id, q, q, q, q]
+  );
 
   return {
     query: query,
-    results: results.map((r: any) => r.value),
+    results: results,
     count: results.length,
   };
 }
@@ -126,34 +98,38 @@ export async function value(args: {
 }): Promise<unknown> {
   const { location, category } = args;
 
-  const results = await ultralight.query('items/', {
-    filter: (item: any) => {
-      if (location && item.location !== location.toLowerCase().trim()) return false;
-      if (category && item.category !== category.toLowerCase().trim()) return false;
-      return true;
-    },
-  });
+  let filterSql = 'WHERE user_id = ?';
+  const params: any[] = [ultralight.user.id];
 
-  const items = results.map((r: any) => r.value);
-
-  // Group by the requested dimension
-  const groupBy = location ? 'category' : 'location';
-  const grouped: Record<string, { count: number; total_value: number }> = {};
-
-  for (const item of items) {
-    const key = item[groupBy];
-    if (!grouped[key]) {
-      grouped[key] = { count: 0, total_value: 0 };
-    }
-    grouped[key].count += 1;
-    grouped[key].total_value += item.value || 0;
+  if (location) {
+    filterSql += ' AND location = ?';
+    params.push(location.toLowerCase().trim());
+  }
+  if (category) {
+    filterSql += ' AND category = ?';
+    params.push(category.toLowerCase().trim());
   }
 
-  const grandTotal = items.reduce((sum: number, item: any) => sum + (item.value || 0), 0);
+  const groupBy = location ? 'category' : 'location';
+
+  const breakdown = await ultralight.db.all(
+    'SELECT ' + groupBy + ' as group_key, COUNT(*) as count, SUM(value) as total_value FROM items ' + filterSql + ' GROUP BY ' + groupBy,
+    params
+  );
+
+  const grouped: Record<string, { count: number; total_value: number }> = {};
+  let grandTotal = 0;
+  let itemCount = 0;
+
+  for (const row of breakdown) {
+    grouped[row.group_key] = { count: row.count, total_value: row.total_value };
+    grandTotal += row.total_value || 0;
+    itemCount += row.count;
+  }
 
   return {
     total_value: grandTotal,
-    item_count: items.length,
+    item_count: itemCount,
     grouped_by: groupBy,
     breakdown: grouped,
   };
@@ -164,11 +140,10 @@ export async function value(args: {
 export async function export_summary(args: {
   format?: string;
 }): Promise<unknown> {
-  const results = await ultralight.query('items/', {
-    sort: { field: 'location', order: 'asc' },
-  });
-
-  const items = results.map((r: any) => r.value);
+  const items = await ultralight.db.all(
+    'SELECT * FROM items WHERE user_id = ? ORDER BY location ASC, name ASC',
+    [ultralight.user.id]
+  );
 
   // Group by location
   const byLocation: Record<string, any[]> = {};
@@ -201,22 +176,15 @@ export async function export_summary(args: {
 // ── STATUS ──
 
 export async function status(args?: {}): Promise<unknown> {
-  const itemKeys = await ultralight.list('items/');
-  const locationKeys = await ultralight.list('locations/');
-  const categoryKeys = await ultralight.list('categories/');
-
-  let totalValue = 0;
-  if (itemKeys.length > 0) {
-    const items = await ultralight.batchLoad(itemKeys);
-    for (const i of items) {
-      totalValue += ((i.value as any)?.value) || 0;
-    }
-  }
+  const stats = await ultralight.db.first(
+    'SELECT COUNT(*) as total_items, COUNT(DISTINCT location) as total_locations, COUNT(DISTINCT category) as total_categories, COALESCE(SUM(value), 0) as total_value FROM items WHERE user_id = ?',
+    [ultralight.user.id]
+  );
 
   return {
-    total_items: itemKeys.length,
-    total_locations: locationKeys.length,
-    total_categories: categoryKeys.length,
-    total_value: totalValue,
+    total_items: stats?.total_items || 0,
+    total_locations: stats?.total_locations || 0,
+    total_categories: stats?.total_categories || 0,
+    total_value: stats?.total_value || 0,
   };
 }

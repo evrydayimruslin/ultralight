@@ -27,6 +27,14 @@ import {
 import { checkStorageQuota, recordUploadStorage, formatBytes } from '../services/storage-quota.ts';
 import { detectGpuConfig, parseGpuConfig } from '../services/gpu/config.ts';
 import type { GpuConfig } from '../services/gpu/types.ts';
+import {
+  parseMigrationFiles,
+  validateMigrationSchema,
+  runMigrations,
+  updateMigrationVersion,
+  type MigrationFile,
+} from '../services/d1-migrations.ts';
+import { provisionD1ForApp, getD1DatabaseId } from '../services/d1-provisioning.ts';
 
 // Export file type for programmatic uploads
 export interface UploadFile {
@@ -140,6 +148,55 @@ export async function handleUpload(request: Request): Promise<Response> {
       } catch (parseErr) {
         return error(`Failed to parse manifest.json: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`, 400);
       }
+    }
+
+    // D1 migrations — extract and validate migrations/ folder
+    const migrationFileMap: Record<string, string> = {};
+    let parsedMigrations: MigrationFile[] = [];
+
+    for (const file of validatedFiles) {
+      // Match files like "migrations/001_initial.sql" (with or without leading path)
+      const pathParts = file.name.split('/');
+      const migrationsIdx = pathParts.indexOf('migrations');
+      if (migrationsIdx !== -1 && pathParts.length > migrationsIdx + 1) {
+        const migrationFilename = pathParts.slice(migrationsIdx + 1).join('/');
+        if (migrationFilename.endsWith('.sql')) {
+          migrationFileMap[migrationFilename] = file.content;
+        }
+      }
+    }
+
+    if (Object.keys(migrationFileMap).length > 0) {
+      try {
+        parsedMigrations = parseMigrationFiles(migrationFileMap);
+      } catch (parseErr) {
+        return error(
+          `Invalid migration files: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`,
+          400,
+        );
+      }
+
+      // Validate each migration for Ultralight conventions (user_id, no DROP, etc.)
+      for (const migration of parsedMigrations) {
+        const validation = validateMigrationSchema(migration.sql);
+        if (!validation.valid) {
+          return error(
+            `Migration ${migration.filename} validation failed: ${validation.errors.join('; ')}`,
+            400,
+          );
+        }
+        if (validation.warnings.length > 0) {
+          for (const warning of validation.warnings) {
+            buildLogs.push({ time: new Date().toISOString(), level: 'warn', message: `[Migration] ${warning}` });
+          }
+        }
+      }
+
+      buildLogs.push({
+        time: new Date().toISOString(),
+        level: 'info',
+        message: `Found ${parsedMigrations.length} migration(s): ${parsedMigrations.map(m => m.filename).join(', ')}`,
+      });
     }
 
     // GPU runtime detection — check for ultralight.gpu.yaml
@@ -566,6 +623,29 @@ export async function handleUpload(request: Request): Promise<Response> {
     recordUploadStorage(userId, appId, version, totalSizeBytes).catch(err =>
       console.error('[STORAGE] recordUploadStorage failed:', err)
     );
+
+    // Run D1 migrations if any exist (fire-and-forget)
+    if (parsedMigrations.length > 0) {
+      (async () => {
+        try {
+          // Provision D1 if needed (lazy), then run migrations
+          const provision = await provisionD1ForApp(appId);
+          if (provision.status === 'ready' && provision.databaseId) {
+            const migrationResult = await runMigrations(provision.databaseId, parsedMigrations);
+            if (migrationResult.errors.length > 0) {
+              console.error(`[D1-MIGRATIONS] Errors for app ${appId}:`, migrationResult.errors);
+            } else {
+              await updateMigrationVersion(appId, migrationResult.lastVersion);
+              console.log(`[D1-MIGRATIONS] App ${appId}: ${migrationResult.applied} applied, ${migrationResult.skipped} skipped`);
+            }
+          } else {
+            console.error(`[D1-MIGRATIONS] D1 provisioning failed for app ${appId}:`, provision.error);
+          }
+        } catch (err) {
+          console.error(`[D1-MIGRATIONS] Migration error for app ${appId}:`, err);
+        }
+      })().catch(err => console.error('[D1-MIGRATIONS] Unhandled migration error:', err));
+    }
 
     // Compute + store source fingerprint and safety status (fire-and-forget)
     import('../services/originality.ts').then(async ({ computeFingerprint, storeIntegrityResults }) => {

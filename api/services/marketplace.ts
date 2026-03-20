@@ -50,7 +50,7 @@ export interface ListingDetails {
     instant_buy: boolean;
     status: string;
     listing_note: string | null;
-    provenance: Array<{ owner_id: string; email: string; acquired_at: string; price_light: number; method: string }>;
+    provenance: Array<{ owner_id: string; email: string; acquired_at: string; price_light: number; method: string; d1_database_id?: string }>;
     created_at: string;
   } | null;
   bids: Array<{

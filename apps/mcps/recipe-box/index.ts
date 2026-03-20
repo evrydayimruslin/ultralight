@@ -1,6 +1,6 @@
 // Recipe Box — Ultralight MCP App
 // Save recipes, plan meals, generate grocery lists, and get AI recipe suggestions.
-// Storage: Ultralight KV | Permissions: ai:call
+// Storage: Ultralight D1 | Permissions: ai:call
 
 const ultralight = (globalThis as any).ultralight;
 
@@ -18,21 +18,12 @@ export async function add_recipe(args: {
 }): Promise<unknown> {
   const { name, ingredients, steps, prep_time, cook_time, servings, tags, source } = args;
   const id = crypto.randomUUID();
+  const now = new Date().toISOString();
 
-  const recipe = {
-    id: id,
-    name: name,
-    ingredients: ingredients,
-    steps: steps,
-    prep_time: prep_time || null,
-    cook_time: cook_time || null,
-    servings: servings || null,
-    tags: tags || [],
-    source: source || null,
-    created_at: new Date().toISOString(),
-  };
-
-  await ultralight.store('recipes/' + id, recipe);
+  await ultralight.db.run(
+    'INSERT INTO recipes (id, user_id, name, ingredients, steps, prep_time, cook_time, servings, tags, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [id, ultralight.user.id, name, JSON.stringify(ingredients), JSON.stringify(steps), prep_time || null, cook_time || null, servings || null, JSON.stringify(tags || []), source || null, now, now]
+  );
 
   return {
     success: true,
@@ -52,14 +43,19 @@ export async function grocery_list(args: {
 }): Promise<unknown> {
   const { recipe_ids, items, name } = args;
   const id = crypto.randomUUID();
+  const now = new Date().toISOString();
   const allItems: string[] = items ? [...items] : [];
 
   // Aggregate ingredients from recipes
   if (recipe_ids && recipe_ids.length > 0) {
     for (const recipeId of recipe_ids) {
-      const recipe = await ultralight.load('recipes/' + recipeId) as any;
-      if (recipe && recipe.ingredients) {
-        for (const ing of recipe.ingredients) {
+      const recipe = await ultralight.db.first(
+        'SELECT * FROM recipes WHERE id = ? AND user_id = ?',
+        [recipeId, ultralight.user.id]
+      );
+      if (recipe) {
+        const recipeIngredients = JSON.parse(recipe.ingredients);
+        for (const ing of recipeIngredients) {
           if (!allItems.includes(ing)) {
             allItems.push(ing);
           }
@@ -68,21 +64,17 @@ export async function grocery_list(args: {
     }
   }
 
-  const groceryList = {
-    id: id,
-    name: name || 'Grocery List ' + new Date().toISOString().split('T')[0],
-    items: allItems,
-    checked_items: [],
-    recipe_ids: recipe_ids || [],
-    created_at: new Date().toISOString(),
-  };
+  const listName = name || 'Grocery List ' + new Date().toISOString().split('T')[0];
 
-  await ultralight.store('grocery_lists/' + id, groceryList);
+  await ultralight.db.run(
+    'INSERT INTO grocery_lists (id, user_id, name, items, checked_items, recipe_ids, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [id, ultralight.user.id, listName, JSON.stringify(allItems), JSON.stringify([]), JSON.stringify(recipe_ids || []), now, now]
+  );
 
   return {
     success: true,
     list_id: id,
-    name: groceryList.name,
+    name: listName,
     items: allItems,
     item_count: allItems.length,
   };
@@ -98,42 +90,27 @@ export async function meal_plan(args: {
   description?: string;
 }): Promise<unknown> {
   const { week_start, day, meal_type, recipe_id, description } = args;
-
-  // Determine week key
   const weekKey = week_start || getWeekStart();
-  const planKey = 'meal_plans/' + weekKey;
-
-  // Load existing plan or create new
-  let plan = await ultralight.load(planKey) as any;
-  if (!plan) {
-    plan = {
-      week_start: weekKey,
-      days: {},
-      created_at: new Date().toISOString(),
-    };
-  }
-
   const dayLower = day.toLowerCase();
-  if (!plan.days[dayLower]) {
-    plan.days[dayLower] = { meals: [] };
-  }
+  const now = new Date().toISOString();
 
   // Get recipe name if recipe_id provided
   let recipeName = description || '';
   if (recipe_id) {
-    const recipe = await ultralight.load('recipes/' + recipe_id) as any;
+    const recipe = await ultralight.db.first(
+      'SELECT name FROM recipes WHERE id = ? AND user_id = ?',
+      [recipe_id, ultralight.user.id]
+    );
     if (recipe) {
       recipeName = recipe.name;
     }
   }
 
-  plan.days[dayLower].meals.push({
-    meal_type: meal_type,
-    recipe_id: recipe_id || null,
-    description: recipeName || description || '',
-  });
-
-  await ultralight.store(planKey, plan);
+  const id = crypto.randomUUID();
+  await ultralight.db.run(
+    'INSERT INTO meal_plans (id, user_id, week_start, day, meal_type, recipe_id, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [id, ultralight.user.id, weekKey, dayLower, meal_type, recipe_id || null, recipeName || description || '', now, now]
+  );
 
   return {
     success: true,
@@ -197,16 +174,22 @@ export async function walkthrough(args: {
 }): Promise<unknown> {
   const { recipe_id, step_number } = args;
 
-  const recipe = await ultralight.load('recipes/' + recipe_id) as any;
+  const recipe = await ultralight.db.first(
+    'SELECT * FROM recipes WHERE id = ? AND user_id = ?',
+    [recipe_id, ultralight.user.id]
+  );
   if (!recipe) {
     return { success: false, error: 'Recipe not found: ' + recipe_id };
   }
 
+  const recipeIngredients = JSON.parse(recipe.ingredients);
+  const recipeSteps = JSON.parse(recipe.steps);
+
   let prompt = '';
-  if (step_number !== undefined && step_number >= 0 && step_number < recipe.steps.length) {
-    prompt = 'Recipe: ' + recipe.name + '\nCurrent step (' + (step_number + 1) + ' of ' + recipe.steps.length + '): ' + recipe.steps[step_number] + '\n\nProvide detailed guidance for this step: timing tips, technique details, common mistakes to avoid, and how to know when it\'s done right.';
+  if (step_number !== undefined && step_number >= 0 && step_number < recipeSteps.length) {
+    prompt = 'Recipe: ' + recipe.name + '\nCurrent step (' + (step_number + 1) + ' of ' + recipeSteps.length + '): ' + recipeSteps[step_number] + '\n\nProvide detailed guidance for this step: timing tips, technique details, common mistakes to avoid, and how to know when it\'s done right.';
   } else {
-    prompt = 'Recipe: ' + recipe.name + '\nIngredients: ' + recipe.ingredients.join(', ') + '\nSteps:\n' + recipe.steps.map((s: string, i: number) => (i + 1) + '. ' + s).join('\n') + '\n\nProvide a complete walkthrough with timing tips, technique details, and helpful hints for each step.';
+    prompt = 'Recipe: ' + recipe.name + '\nIngredients: ' + recipeIngredients.join(', ') + '\nSteps:\n' + recipeSteps.map((s: string, i: number) => (i + 1) + '. ' + s).join('\n') + '\n\nProvide a complete walkthrough with timing tips, technique details, and helpful hints for each step.';
   }
 
   try {
@@ -221,7 +204,7 @@ export async function walkthrough(args: {
     return {
       recipe_name: recipe.name,
       step_number: step_number !== undefined ? step_number + 1 : null,
-      total_steps: recipe.steps.length,
+      total_steps: recipeSteps.length,
       guidance: response.content,
     };
   } catch (e) {
@@ -232,21 +215,32 @@ export async function walkthrough(args: {
 // ── STATUS ──
 
 export async function status(args?: {}): Promise<unknown> {
-  const recipeKeys = await ultralight.list('recipes/');
-  const groceryKeys = await ultralight.list('grocery_lists/');
-  const planKeys = await ultralight.list('meal_plans/');
+  const recipeCount = await ultralight.db.first(
+    'SELECT COUNT(*) as count FROM recipes WHERE user_id = ?',
+    [ultralight.user.id]
+  );
+
+  const groceryCount = await ultralight.db.first(
+    'SELECT COUNT(*) as count FROM grocery_lists WHERE user_id = ?',
+    [ultralight.user.id]
+  );
+
+  const planCount = await ultralight.db.first(
+    'SELECT COUNT(DISTINCT week_start) as count FROM meal_plans WHERE user_id = ?',
+    [ultralight.user.id]
+  );
 
   // Check this week's meal plan
   const weekKey = getWeekStart();
-  const currentPlan = await ultralight.load('meal_plans/' + weekKey) as any;
-  const mealsThisWeek = currentPlan
-    ? Object.values(currentPlan.days || {}).reduce((sum: number, day: any) => sum + (day.meals?.length || 0), 0)
-    : 0;
+  const mealsThisWeek = await ultralight.db.first(
+    'SELECT COUNT(*) as count FROM meal_plans WHERE user_id = ? AND week_start = ?',
+    [ultralight.user.id, weekKey]
+  );
 
   return {
-    total_recipes: recipeKeys.length,
-    grocery_lists: groceryKeys.length,
-    meal_plans: planKeys.length,
-    meals_planned_this_week: mealsThisWeek,
+    total_recipes: recipeCount?.count || 0,
+    grocery_lists: groceryCount?.count || 0,
+    meal_plans: planCount?.count || 0,
+    meals_planned_this_week: mealsThisWeek?.count || 0,
   };
 }

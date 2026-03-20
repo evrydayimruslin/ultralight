@@ -778,14 +778,10 @@ View call logs and health events.
 ### SDK Globals Available in Sandbox
 | Global | Purpose |
 |--------|---------|
-| \`ultralight.store(key, value)\` | Per-app persistent storage (R2-backed) |
-| \`ultralight.load(key)\` | Read from per-app storage |
-| \`ultralight.list(prefix?)\` | List storage keys |
-| \`ultralight.query(prefix, options?)\` | Query with filter/sort/limit |
-| \`ultralight.remove(key)\` | Delete a storage key |
-| \`ultralight.batchStore(items)\` | Batch write \`[{ key, value }]\` |
-| \`ultralight.batchLoad(keys)\` | Batch read |
-| \`ultralight.batchRemove(keys)\` | Batch delete |
+| \`ultralight.db.run(sql, params?)\` | Execute INSERT/UPDATE/DELETE (returns { success, meta }) |
+| \`ultralight.db.all(sql, params?)\` | Execute SELECT, returns all rows |
+| \`ultralight.db.first(sql, params?)\` | Execute SELECT, returns first row or null |
+| \`ultralight.db.batch(statements)\` | Execute multiple statements atomically |
 | \`ultralight.remember(key, value)\` | Cross-app user memory (KV store) |
 | \`ultralight.recall(key)\` | Read from user memory |
 | \`ultralight.user\` | Auth context: \`{ id, email, displayName, avatarUrl, tier }\` (null if anon) |
@@ -3244,7 +3240,7 @@ function executeScaffold(args: Record<string, unknown>): unknown {
     description?: string;
     parameters?: Array<{ name: string; type: string; required?: boolean; description?: string }>;
   }> | undefined;
-  const storage = (args.storage as string) || 'kv';
+  const storage = (args.storage as string) || 'd1';
   const permissions = args.permissions as string[] | undefined;
 
   if (!name) throw new ToolError(INVALID_PARAMS, 'name is required');
@@ -3270,13 +3266,6 @@ function executeScaffold(args: Record<string, unknown>): unknown {
   // Globals based on storage type
   const globalsLines: string[] = [];
   globalsLines.push('const ultralight = (globalThis as any).ultralight;');
-  if (storage === 'supabase') {
-    globalsLines.push('const supabase = (globalThis as any).supabase;');
-  }
-  if (detectedPerms.includes('ai:call')) {
-    // No extra global needed — ultralight.ai() covers it
-  }
-  globalsLines.push('const uuid = (globalThis as any).uuid;');
 
   // Build index.ts
   const indexLines: string[] = [];
@@ -3284,7 +3273,8 @@ function executeScaffold(args: Record<string, unknown>): unknown {
   indexLines.push('//');
   indexLines.push(`// ${description}`);
   indexLines.push('//');
-  if (storage === 'kv') indexLines.push('// Storage: R2 key-value (ultralight.store/load/list)');
+  if (storage === 'd1') indexLines.push('// Storage: Cloudflare D1 (ultralight.db.run/all/first)');
+  if (storage === 'kv') indexLines.push('// Storage: R2 key-value (legacy)');
   if (storage === 'supabase') indexLines.push('// Storage: BYOS Supabase');
   if (detectedPerms.includes('ai:call')) indexLines.push('// AI: ultralight.ai() via OpenRouter');
   if (detectedPerms.includes('net:fetch')) indexLines.push('// Network: fetch() for external API calls');
@@ -3325,8 +3315,13 @@ function executeScaffold(args: Record<string, unknown>): unknown {
     indexLines.push(`  // TODO: Implement ${func.name}`);
     indexLines.push(`  // ${func.description || 'Add implementation here'}`);
     indexLines.push('');
-    if (storage === 'kv') {
-      indexLines.push('  // Example KV storage:');
+    if (storage === 'd1') {
+      indexLines.push('  // Example D1 queries:');
+      indexLines.push('  // await ultralight.db.run("INSERT INTO items (id, user_id, name) VALUES (?, ?, ?)", [crypto.randomUUID(), ultralight.user.id, name]);');
+      indexLines.push('  // const items = await ultralight.db.all("SELECT * FROM items WHERE user_id = ?", [ultralight.user.id]);');
+      indexLines.push('  // const item = await ultralight.db.first("SELECT * FROM items WHERE user_id = ? AND id = ?", [ultralight.user.id, id]);');
+    } else if (storage === 'kv') {
+      indexLines.push('  // Example KV storage (legacy):');
       indexLines.push('  // await ultralight.store("key", value);');
       indexLines.push('  // const data = await ultralight.load("key");');
     } else if (storage === 'supabase') {
@@ -3404,19 +3399,49 @@ function executeScaffold(args: Record<string, unknown>): unknown {
     name: name,
   };
 
+  // Generate D1 migration file if using D1 storage
+  const files: Array<{ path: string; content: string }> = [
+    { path: 'index.ts', content: indexLines.join('\n') },
+    { path: 'manifest.json', content: JSON.stringify(manifestObj, null, 2) },
+    { path: '.ultralightrc.json', content: JSON.stringify(rcObj, null, 2) },
+  ];
+
+  if (storage === 'd1') {
+    const tableName = name.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_') + '_items';
+    const migrationSql = [
+      `-- migrations/001_initial.sql`,
+      `-- ${name} — Initial schema`,
+      `-- Every table must have: id, user_id, created_at, updated_at`,
+      ``,
+      `CREATE TABLE ${tableName} (`,
+      `  id TEXT PRIMARY KEY,`,
+      `  user_id TEXT NOT NULL,`,
+      `  name TEXT NOT NULL,`,
+      `  description TEXT DEFAULT '',`,
+      `  status TEXT DEFAULT 'active',`,
+      `  created_at TEXT NOT NULL DEFAULT (datetime('now')),`,
+      `  updated_at TEXT NOT NULL DEFAULT (datetime('now'))`,
+      `);`,
+      ``,
+      `CREATE INDEX idx_${tableName}_user ON ${tableName}(user_id);`,
+      `CREATE INDEX idx_${tableName}_user_status ON ${tableName}(user_id, status);`,
+    ].join('\n');
+
+    files.push({ path: 'migrations/001_initial.sql', content: migrationSql });
+  }
+
   return {
-    files: [
-      { path: 'index.ts', content: indexLines.join('\n') },
-      { path: 'manifest.json', content: JSON.stringify(manifestObj, null, 2) },
-      { path: '.ultralightrc.json', content: JSON.stringify(rcObj, null, 2) },
-    ],
+    files,
     next_steps: [
+      storage === 'd1' ? 'Edit migrations/001_initial.sql to define your schema' : null,
       'Fill in the TODO implementations in index.ts',
       'Test each function: ul.test({ files: [...], function_name: "...", test_args: {...} })',
       'Validate: ul.lint({ files: [...] })',
       'Deploy: ul.upload({ files: [...], name: "' + name + '" })',
-    ],
-    tip: 'After ul.upload, read the generated Skills.md via resources/read to verify documentation.',
+    ].filter(Boolean),
+    tip: storage === 'd1'
+      ? 'Your app uses D1 SQL. See ultralight-spec/conventions/ for schema conventions. Every table needs user_id TEXT NOT NULL.'
+      : 'After ul.upload, read the generated Skills.md via resources/read to verify documentation.',
   };
 }
 

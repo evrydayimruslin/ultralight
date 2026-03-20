@@ -21,6 +21,8 @@ import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
 import { getCodeCache } from '../services/codecache.ts';
 import type { AppManifest } from '../../shared/types/index.ts';
+import { createD1DataService } from '../services/d1-data.ts';
+import { getD1DatabaseId } from '../services/d1-provisioning.ts';
 
 // ============================================
 // CACHE HELPERS
@@ -128,6 +130,59 @@ async function handleGpuCodeProxy(request: Request, path: string): Promise<Respo
   } catch (err) {
     console.error(`[GPU-CODE-PROXY] Failed to fetch bundle for ${appId}@${version}:`, err);
     return json({ error: 'Code bundle not found' }, 404);
+  }
+}
+
+/**
+ * Internal D1 Query Proxy — allows GPU workers to execute D1 queries.
+ *
+ * Route: POST /internal/d1/query
+ * Auth: X-GPU-Secret header must match GPU_INTERNAL_SECRET env var.
+ * Body: { appId, userId, sql, params?, mode?: 'all' | 'first' | 'run' }
+ * Returns: { results, meta } or { result, meta } or { row, meta }
+ */
+async function handleInternalD1Query(request: Request): Promise<Response> {
+  const expectedSecret = DenoEnv?.get('GPU_INTERNAL_SECRET') || '';
+  const providedSecret = request.headers.get('X-GPU-Secret') || '';
+
+  if (!expectedSecret || providedSecret !== expectedSecret) {
+    return json({ error: 'Unauthorized' }, 401);
+  }
+
+  try {
+    const body = await request.json() as {
+      appId: string;
+      userId: string;
+      sql: string;
+      params?: unknown[];
+      mode?: 'all' | 'first' | 'run';
+    };
+
+    if (!body.appId || !body.sql) {
+      return json({ error: 'Missing appId or sql' }, 400);
+    }
+
+    const databaseId = await getD1DatabaseId(body.appId);
+    if (!databaseId) {
+      return json({ error: 'D1 database not provisioned for this app' }, 404);
+    }
+
+    const d1 = createD1DataService(body.appId, databaseId);
+    const mode = body.mode || 'all';
+
+    if (mode === 'run') {
+      const result = await d1.run(body.sql, body.params);
+      return json({ result });
+    } else if (mode === 'first') {
+      const row = await d1.first(body.sql, body.params);
+      return json({ row });
+    } else {
+      const results = await d1.all(body.sql, body.params);
+      return json({ results });
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return json({ error: message }, 500);
   }
 }
 
@@ -310,6 +365,12 @@ export function createApp() {
       // Authenticated via shared secret (machine-to-machine, no user auth)
       if (path.startsWith('/internal/gpu/code/') && method === 'GET') {
         return handleGpuCodeProxy(request, path);
+      }
+
+      // D1 query proxy — allows GPU workers to execute D1 queries via the API server
+      // Authenticated via shared secret (same as GPU code proxy)
+      if (path === '/internal/d1/query' && method === 'POST') {
+        return handleInternalD1Query(request);
       }
 
       // Chat stream endpoint — metered OpenRouter proxy with SSE streaming

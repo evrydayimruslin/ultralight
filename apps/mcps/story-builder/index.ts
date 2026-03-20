@@ -1,6 +1,6 @@
 // Story Builder — Ultralight MCP App
 // Create fictional worlds, characters, and plotlines that persist across sessions.
-// Storage: Ultralight KV | Permissions: ai:call
+// Storage: Ultralight D1 | Permissions: ai:call
 
 const ultralight = (globalThis as any).ultralight;
 
@@ -13,16 +13,12 @@ export async function create_world(args: {
 }): Promise<unknown> {
   const { name, genre, description } = args;
   const id = crypto.randomUUID();
+  const now = new Date().toISOString();
 
-  const world = {
-    id: id,
-    name: name,
-    genre: genre,
-    description: description || '',
-    created_at: new Date().toISOString(),
-  };
-
-  await ultralight.store('worlds/' + id, world);
+  await ultralight.db.run(
+    'INSERT INTO worlds (id, user_id, name, genre, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [id, ultralight.user.id, name, genre, description || '', now, now]
+  );
 
   return {
     success: true,
@@ -43,24 +39,21 @@ export async function add_character(args: {
 }): Promise<unknown> {
   const { world_id, name, traits, backstory, role } = args;
 
-  const world = await ultralight.load('worlds/' + world_id) as any;
+  const world = await ultralight.db.first(
+    'SELECT id, name FROM worlds WHERE id = ? AND user_id = ?',
+    [world_id, ultralight.user.id]
+  );
   if (!world) {
     return { success: false, error: 'World not found: ' + world_id };
   }
 
   const id = crypto.randomUUID();
-  const character = {
-    id: id,
-    world_id: world_id,
-    name: name,
-    traits: traits || [],
-    backstory: backstory || '',
-    role: role || '',
-    relationships: [],
-    created_at: new Date().toISOString(),
-  };
+  const now = new Date().toISOString();
 
-  await ultralight.store('characters/' + world_id + '/' + id, character);
+  await ultralight.db.run(
+    'INSERT INTO characters (id, user_id, world_id, name, traits, backstory, role, relationships, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [id, ultralight.user.id, world_id, name, JSON.stringify(traits || []), backstory || '', role || '', '[]', now, now]
+  );
 
   return {
     success: true,
@@ -79,21 +72,21 @@ export async function add_setting(args: {
 }): Promise<unknown> {
   const { world_id, name, description } = args;
 
-  const world = await ultralight.load('worlds/' + world_id) as any;
+  const world = await ultralight.db.first(
+    'SELECT id, name FROM worlds WHERE id = ? AND user_id = ?',
+    [world_id, ultralight.user.id]
+  );
   if (!world) {
     return { success: false, error: 'World not found: ' + world_id };
   }
 
   const id = crypto.randomUUID();
-  const setting = {
-    id: id,
-    world_id: world_id,
-    name: name,
-    description: description,
-    created_at: new Date().toISOString(),
-  };
+  const now = new Date().toISOString();
 
-  await ultralight.store('settings/' + world_id + '/' + id, setting);
+  await ultralight.db.run(
+    'INSERT INTO locations (id, user_id, world_id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [id, ultralight.user.id, world_id, name, description, now, now]
+  );
 
   return {
     success: true,
@@ -112,21 +105,21 @@ export async function add_theme(args: {
 }): Promise<unknown> {
   const { world_id, name, description } = args;
 
-  const world = await ultralight.load('worlds/' + world_id) as any;
+  const world = await ultralight.db.first(
+    'SELECT id, name FROM worlds WHERE id = ? AND user_id = ?',
+    [world_id, ultralight.user.id]
+  );
   if (!world) {
     return { success: false, error: 'World not found: ' + world_id };
   }
 
   const id = crypto.randomUUID();
-  const theme = {
-    id: id,
-    world_id: world_id,
-    name: name,
-    description: description,
-    created_at: new Date().toISOString(),
-  };
+  const now = new Date().toISOString();
 
-  await ultralight.store('themes/' + world_id + '/' + id, theme);
+  await ultralight.db.run(
+    'INSERT INTO themes (id, user_id, world_id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [id, ultralight.user.id, world_id, name, description, now, now]
+  );
 
   return {
     success: true,
@@ -148,7 +141,10 @@ export async function generate(args: {
 }): Promise<unknown> {
   const { world_id, type, prompt, character_ids, setting_id, save } = args;
 
-  const world = await ultralight.load('worlds/' + world_id) as any;
+  const world = await ultralight.db.first(
+    'SELECT id, name, genre, description FROM worlds WHERE id = ? AND user_id = ?',
+    [world_id, ultralight.user.id]
+  );
   if (!world) {
     return { success: false, error: 'World not found: ' + world_id };
   }
@@ -158,64 +154,76 @@ export async function generate(args: {
   if (world.description) context += 'Description: ' + world.description + '\n';
 
   // Load characters
-  const charKeys = await ultralight.list('characters/' + world_id + '/');
-  if (charKeys.length > 0) {
-    const chars = await ultralight.batchLoad(charKeys);
+  const chars = await ultralight.db.all(
+    'SELECT id, name, role, traits, backstory FROM characters WHERE world_id = ? AND user_id = ?',
+    [world_id, ultralight.user.id]
+  );
+  if (chars.length > 0) {
     context += '\nCHARACTERS:\n';
-    for (const c of chars) {
-      const char = c.value as any;
+    for (const char of chars) {
+      const parsedTraits = JSON.parse(char.traits || '[]');
       context += '- ' + char.name;
       if (char.role) context += ' (' + char.role + ')';
-      if (char.traits && char.traits.length > 0) context += ': ' + char.traits.join(', ');
+      if (parsedTraits.length > 0) context += ': ' + parsedTraits.join(', ');
       if (char.backstory) context += '. ' + char.backstory;
       context += '\n';
     }
   }
 
-  // Load settings
-  const settingKeys = await ultralight.list('settings/' + world_id + '/');
-  if (settingKeys.length > 0) {
-    const settings = await ultralight.batchLoad(settingKeys);
+  // Load settings (locations)
+  const settings = await ultralight.db.all(
+    'SELECT id, name, description FROM locations WHERE world_id = ? AND user_id = ?',
+    [world_id, ultralight.user.id]
+  );
+  if (settings.length > 0) {
     context += '\nSETTINGS:\n';
-    for (const s of settings) {
-      const setting = s.value as any;
+    for (const setting of settings) {
       context += '- ' + setting.name + ': ' + setting.description + '\n';
     }
   }
 
   // Load themes
-  const themeKeys = await ultralight.list('themes/' + world_id + '/');
-  if (themeKeys.length > 0) {
-    const themes = await ultralight.batchLoad(themeKeys);
+  const storyThemes = await ultralight.db.all(
+    'SELECT id, name, description FROM themes WHERE world_id = ? AND user_id = ?',
+    [world_id, ultralight.user.id]
+  );
+  if (storyThemes.length > 0) {
     context += '\nTHEMES:\n';
-    for (const t of themes) {
-      const theme = t.value as any;
+    for (const theme of storyThemes) {
       context += '- ' + theme.name + ': ' + theme.description + '\n';
     }
   }
 
-  // Load recent scenes for continuity
-  const sceneKeys = await ultralight.list('scenes/' + world_id + '/');
-  if (sceneKeys.length > 0) {
-    const scenes = await ultralight.batchLoad(sceneKeys.slice(-3)); // last 3 scenes
+  // Load recent scenes for continuity (last 3)
+  const scenes = await ultralight.db.all(
+    'SELECT id, title, content FROM scenes WHERE world_id = ? AND user_id = ? ORDER BY scene_order DESC LIMIT 3',
+    [world_id, ultralight.user.id]
+  );
+  if (scenes.length > 0) {
     context += '\nRECENT SCENES:\n';
-    for (const s of scenes) {
-      const scene = s.value as any;
+    for (const scene of scenes) {
       context += '--- ' + scene.title + ' ---\n' + scene.content.slice(0, 500) + '\n\n';
     }
   }
 
   // Specific character focus
   if (character_ids && character_ids.length > 0) {
-    context += '\nFOCUS CHARACTERS: ';
-    const focusKeys = character_ids.map((id) => 'characters/' + world_id + '/' + id);
-    const focused = await ultralight.batchLoad(focusKeys);
-    context += focused.filter((f: any) => f.value).map((f: any) => (f.value as any).name).join(', ') + '\n';
+    const placeholders = character_ids.map(() => '?').join(', ');
+    const focused = await ultralight.db.all(
+      'SELECT id, name FROM characters WHERE id IN (' + placeholders + ') AND user_id = ?',
+      [...character_ids, ultralight.user.id]
+    );
+    if (focused.length > 0) {
+      context += '\nFOCUS CHARACTERS: ' + focused.map((f: any) => f.name).join(', ') + '\n';
+    }
   }
 
   // Specific setting
   if (setting_id) {
-    const setting = await ultralight.load('settings/' + world_id + '/' + setting_id) as any;
+    const setting = await ultralight.db.first(
+      'SELECT id, name, description FROM locations WHERE id = ? AND user_id = ?',
+      [setting_id, ultralight.user.id]
+    );
     if (setting) {
       context += '\nSCENE LOCATION: ' + setting.name + ' — ' + setting.description + '\n';
     }
@@ -223,6 +231,13 @@ export async function generate(args: {
 
   const genType = type || 'scene';
   const userPrompt = prompt || 'Write the next ' + genType + ' in this story.';
+
+  // Count existing scenes for ordering
+  const sceneCountRow = await ultralight.db.first(
+    'SELECT COUNT(*) as cnt FROM scenes WHERE world_id = ? AND user_id = ?',
+    [world_id, ultralight.user.id]
+  );
+  const sceneCount = sceneCountRow ? sceneCountRow.cnt : 0;
 
   try {
     const response = await ultralight.ai({
@@ -246,17 +261,11 @@ export async function generate(args: {
     let sceneId = null;
     if (save !== false) {
       sceneId = crypto.randomUUID();
-      await ultralight.store('scenes/' + world_id + '/' + sceneId, {
-        id: sceneId,
-        world_id: world_id,
-        title: genType + ' — ' + new Date().toISOString().split('T')[0],
-        content: content,
-        type: genType,
-        character_ids: character_ids || [],
-        setting_id: setting_id || null,
-        order: sceneKeys.length,
-        created_at: new Date().toISOString(),
-      });
+      const now = new Date().toISOString();
+      await ultralight.db.run(
+        'INSERT INTO scenes (id, user_id, world_id, title, content, type, character_ids, setting_id, scene_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [sceneId, ultralight.user.id, world_id, genType + ' — ' + now.split('T')[0], content, genType, JSON.stringify(character_ids || []), setting_id || null, sceneCount, now, now]
+      );
     }
 
     return {
@@ -274,29 +283,43 @@ export async function generate(args: {
 // ── STATUS ──
 
 export async function status(args?: {}): Promise<unknown> {
-  const worldKeys = await ultralight.list('worlds/');
-  const worlds: any[] = [];
+  const worlds = await ultralight.db.all(
+    'SELECT id, name, genre FROM worlds WHERE user_id = ?',
+    [ultralight.user.id]
+  );
 
-  for (const key of worldKeys) {
-    const world = await ultralight.load(key) as any;
-    const worldId = world.id;
-    const charCount = (await ultralight.list('characters/' + worldId + '/')).length;
-    const settingCount = (await ultralight.list('settings/' + worldId + '/')).length;
-    const themeCount = (await ultralight.list('themes/' + worldId + '/')).length;
-    const sceneCount = (await ultralight.list('scenes/' + worldId + '/')).length;
+  const worldList: any[] = [];
 
-    worlds.push({
+  for (const world of worlds) {
+    const charCount = await ultralight.db.first(
+      'SELECT COUNT(*) as cnt FROM characters WHERE world_id = ? AND user_id = ?',
+      [world.id, ultralight.user.id]
+    );
+    const settingCount = await ultralight.db.first(
+      'SELECT COUNT(*) as cnt FROM locations WHERE world_id = ? AND user_id = ?',
+      [world.id, ultralight.user.id]
+    );
+    const themeCount = await ultralight.db.first(
+      'SELECT COUNT(*) as cnt FROM themes WHERE world_id = ? AND user_id = ?',
+      [world.id, ultralight.user.id]
+    );
+    const sceneCount = await ultralight.db.first(
+      'SELECT COUNT(*) as cnt FROM scenes WHERE world_id = ? AND user_id = ?',
+      [world.id, ultralight.user.id]
+    );
+
+    worldList.push({
       name: world.name,
       genre: world.genre,
-      characters: charCount,
-      settings: settingCount,
-      themes: themeCount,
-      scenes: sceneCount,
+      characters: charCount ? charCount.cnt : 0,
+      settings: settingCount ? settingCount.cnt : 0,
+      themes: themeCount ? themeCount.cnt : 0,
+      scenes: sceneCount ? sceneCount.cnt : 0,
     });
   }
 
   return {
-    total_worlds: worldKeys.length,
-    worlds: worlds,
+    total_worlds: worlds.length,
+    worlds: worldList,
   };
 }

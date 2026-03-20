@@ -1,6 +1,6 @@
 // Smart Budget — Ultralight MCP App
 // Track spending, manage budgets, and get financial insights.
-// Storage: Ultralight KV (transactions, budgets, categories)
+// Storage: Ultralight D1 (transactions, budgets)
 
 const ultralight = (globalThis as any).ultralight;
 
@@ -15,35 +15,21 @@ export async function add(args: {
 }): Promise<unknown> {
   const { amount, category, description, date, type } = args;
   const txDate = date || new Date().toISOString().split('T')[0];
-  const yearMonth = txDate.slice(0, 7); // "2026-03"
   const id = crypto.randomUUID();
   const txType = type || 'expense';
+  const now = new Date().toISOString();
+  const cat = category.toLowerCase().trim();
 
-  const transaction = {
-    id: id,
-    amount: amount,
-    category: category.toLowerCase().trim(),
-    description: description || '',
-    date: txDate,
-    type: txType,
-    created_at: new Date().toISOString(),
-  };
-
-  await ultralight.store('transactions/' + yearMonth + '/' + id, transaction);
-
-  // Auto-add category if new
-  const catData = await ultralight.load('categories');
-  const categories: string[] = (catData && (catData as any).list) ? (catData as any).list : [];
-  if (!categories.includes(transaction.category)) {
-    categories.push(transaction.category);
-    await ultralight.store('categories', { list: categories });
-  }
+  await ultralight.db.run(
+    'INSERT INTO transactions (id, user_id, amount, category, description, date, type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [id, ultralight.user.id, amount, cat, description || '', txDate, txType, now, now]
+  );
 
   return {
     success: true,
     transaction_id: id,
     amount: amount,
-    category: transaction.category,
+    category: cat,
     type: txType,
     date: txDate,
   };
@@ -59,19 +45,26 @@ export async function list(args: {
 }): Promise<unknown> {
   const { category, month, type, limit } = args;
   const targetMonth = month || new Date().toISOString().slice(0, 7);
-  const prefix = 'transactions/' + targetMonth + '/';
+  const monthStart = targetMonth + '-01';
+  const monthEnd = targetMonth + '-31';
 
-  const results = await ultralight.query(prefix, {
-    filter: (item: any) => {
-      if (category && item.category !== category.toLowerCase().trim()) return false;
-      if (type && item.type !== type) return false;
-      return true;
-    },
-    sort: { field: 'date', order: 'desc' },
-    limit: limit || 50,
-  });
+  let sql = 'SELECT * FROM transactions WHERE user_id = ? AND date >= ? AND date <= ?';
+  const params: any[] = [ultralight.user.id, monthStart, monthEnd];
 
-  const transactions = results.map((r: any) => r.value);
+  if (category) {
+    sql += ' AND category = ?';
+    params.push(category.toLowerCase().trim());
+  }
+  if (type) {
+    sql += ' AND type = ?';
+    params.push(type);
+  }
+
+  sql += ' ORDER BY date DESC LIMIT ?';
+  params.push(limit || 50);
+
+  const transactions = await ultralight.db.all(sql, params);
+
   const total = transactions.reduce((sum: number, t: any) => {
     return t.type === 'income' ? sum + t.amount : sum - t.amount;
   }, 0);
@@ -91,41 +84,47 @@ export async function summary(args: {
 }): Promise<unknown> {
   const { month } = args;
   const targetMonth = month || new Date().toISOString().slice(0, 7);
-  const prefix = 'transactions/' + targetMonth + '/';
+  const monthStart = targetMonth + '-01';
+  const monthEnd = targetMonth + '-31';
 
-  const results = await ultralight.query(prefix, {});
-  const transactions = results.map((r: any) => r.value);
+  const byCategory = await ultralight.db.all(
+    'SELECT category, type, COUNT(*) as count, SUM(amount) as total FROM transactions WHERE user_id = ? AND date >= ? AND date <= ? GROUP BY category, type',
+    [ultralight.user.id, monthStart, monthEnd]
+  );
 
-  const byCategory: Record<string, { spent: number; income: number; count: number }> = {};
+  const categoryMap: Record<string, { spent: number; income: number; count: number }> = {};
   let totalSpent = 0;
   let totalIncome = 0;
+  let transactionCount = 0;
 
-  for (const tx of transactions) {
-    const cat = tx.category;
-    if (!byCategory[cat]) {
-      byCategory[cat] = { spent: 0, income: 0, count: 0 };
+  for (const row of byCategory) {
+    if (!categoryMap[row.category]) {
+      categoryMap[row.category] = { spent: 0, income: 0, count: 0 };
     }
-    byCategory[cat].count += 1;
-    if (tx.type === 'income') {
-      byCategory[cat].income += tx.amount;
-      totalIncome += tx.amount;
+    categoryMap[row.category].count += row.count;
+    transactionCount += row.count;
+    if (row.type === 'income') {
+      categoryMap[row.category].income += row.total;
+      totalIncome += row.total;
     } else {
-      byCategory[cat].spent += tx.amount;
-      totalSpent += tx.amount;
+      categoryMap[row.category].spent += row.total;
+      totalSpent += row.total;
     }
   }
 
   // Check budgets for warnings
   const budgetWarnings: Array<{ category: string; limit: number; spent: number }> = [];
-  for (const cat of Object.keys(byCategory)) {
-    const budgetData = await ultralight.load('budgets/' + cat);
-    if (budgetData && (budgetData as any).limit_amount) {
-      const limit = (budgetData as any).limit_amount;
-      if (byCategory[cat].spent > limit * 0.8) {
+  for (const cat of Object.keys(categoryMap)) {
+    const budgetData = await ultralight.db.first(
+      'SELECT * FROM budgets WHERE user_id = ? AND category = ?',
+      [ultralight.user.id, cat]
+    );
+    if (budgetData && budgetData.limit_amount) {
+      if (categoryMap[cat].spent > budgetData.limit_amount * 0.8) {
         budgetWarnings.push({
           category: cat,
-          limit: limit,
-          spent: byCategory[cat].spent,
+          limit: budgetData.limit_amount,
+          spent: categoryMap[cat].spent,
         });
       }
     }
@@ -136,8 +135,8 @@ export async function summary(args: {
     total_spent: totalSpent,
     total_income: totalIncome,
     net: totalIncome - totalSpent,
-    transaction_count: transactions.length,
-    by_category: byCategory,
+    transaction_count: transactionCount,
+    by_category: categoryMap,
     budget_warnings: budgetWarnings,
   };
 }
@@ -157,25 +156,43 @@ export async function budget(args: {
     if (!category) {
       return { success: false, error: 'category is required when setting a budget' };
     }
-    const budgetData = {
-      category: category.toLowerCase().trim(),
-      limit_amount: limit_amount || 0,
-      period: period || 'monthly',
-      updated_at: new Date().toISOString(),
-    };
-    await ultralight.store('budgets/' + budgetData.category, budgetData);
-    return { success: true, budget: budgetData };
+    const cat = category.toLowerCase().trim();
+    const now = new Date().toISOString();
+    const per = period || 'monthly';
+
+    const existing = await ultralight.db.first(
+      'SELECT id FROM budgets WHERE user_id = ? AND category = ?',
+      [ultralight.user.id, cat]
+    );
+
+    if (existing) {
+      await ultralight.db.run(
+        'UPDATE budgets SET limit_amount = ?, period = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+        [limit_amount || 0, per, now, existing.id, ultralight.user.id]
+      );
+    } else {
+      const id = crypto.randomUUID();
+      await ultralight.db.run(
+        'INSERT INTO budgets (id, user_id, category, limit_amount, period, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [id, ultralight.user.id, cat, limit_amount || 0, per, now, now]
+      );
+    }
+
+    return { success: true, budget: { category: cat, limit_amount: limit_amount || 0, period: per, updated_at: now } };
   }
 
   // Otherwise, view budgets
-  const keys = await ultralight.list('budgets/');
-  if (keys.length === 0) {
+  const budgets = await ultralight.db.all(
+    'SELECT * FROM budgets WHERE user_id = ?',
+    [ultralight.user.id]
+  );
+
+  if (budgets.length === 0) {
     return { budgets: [], message: 'No budgets set yet. Use budget with category and limit_amount to set one.' };
   }
 
-  const budgets = await ultralight.batchLoad(keys);
   return {
-    budgets: budgets.map((b: any) => b.value),
+    budgets: budgets,
   };
 }
 
@@ -183,32 +200,26 @@ export async function budget(args: {
 
 export async function status(args?: {}): Promise<unknown> {
   const currentMonth = new Date().toISOString().slice(0, 7);
-  const prefix = 'transactions/' + currentMonth + '/';
-  const results = await ultralight.query(prefix, {});
-  const transactions = results.map((r: any) => r.value);
+  const monthStart = currentMonth + '-01';
+  const monthEnd = currentMonth + '-31';
 
-  let totalSpent = 0;
-  let totalIncome = 0;
-  const categories = new Set<string>();
+  const txSummary = await ultralight.db.first(
+    'SELECT COUNT(*) as count, COALESCE(SUM(CASE WHEN type = \'expense\' THEN amount ELSE 0 END), 0) as total_spent, COALESCE(SUM(CASE WHEN type = \'income\' THEN amount ELSE 0 END), 0) as total_income, COUNT(DISTINCT category) as categories_used FROM transactions WHERE user_id = ? AND date >= ? AND date <= ?',
+    [ultralight.user.id, monthStart, monthEnd]
+  );
 
-  for (const tx of transactions) {
-    categories.add(tx.category);
-    if (tx.type === 'income') {
-      totalIncome += tx.amount;
-    } else {
-      totalSpent += tx.amount;
-    }
-  }
-
-  const budgetKeys = await ultralight.list('budgets/');
+  const budgetCount = await ultralight.db.first(
+    'SELECT COUNT(*) as count FROM budgets WHERE user_id = ?',
+    [ultralight.user.id]
+  );
 
   return {
     current_month: currentMonth,
-    transaction_count: transactions.length,
-    total_spent: totalSpent,
-    total_income: totalIncome,
-    net: totalIncome - totalSpent,
-    categories_used: categories.size,
-    budgets_set: budgetKeys.length,
+    transaction_count: txSummary?.count || 0,
+    total_spent: txSummary?.total_spent || 0,
+    total_income: txSummary?.total_income || 0,
+    net: (txSummary?.total_income || 0) - (txSummary?.total_spent || 0),
+    categories_used: txSummary?.categories_used || 0,
+    budgets_set: budgetCount?.count || 0,
   };
 }

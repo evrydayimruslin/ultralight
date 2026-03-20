@@ -1187,16 +1187,16 @@ async function scaffold(args: string[], client: ApiClient, _config: Config) {
 ${colors.bold('ultralight scaffold')} <name>
 
 Generate a properly structured app skeleton following all Ultralight conventions (ul.scaffold).
-Returns index.ts + manifest.json with correct patterns.
+Returns index.ts + manifest.json + migrations/001_initial.sql with correct patterns.
 
 ${colors.dim('OPTIONS')}
   --description, -d <text>       App description (used to generate function stubs)
-  --storage <none|kv|supabase>   Storage type (default: kv)
+  --storage <none|d1|kv|supabase>  Storage type (default: d1)
 
 ${colors.dim('EXAMPLES')}
   ultralight scaffold my-app
   ultralight scaffold weather-api -d "Get weather data" --storage none
-  ultralight scaffold my-db-app --storage supabase
+  ultralight scaffold my-db-app --storage d1
 `);
     return;
   }
@@ -1222,7 +1222,7 @@ ${colors.dim('EXAMPLES')}
   const result = await client.callTool('ul.scaffold', {
     name: name,
     description: parsed.description || `${name} — an Ultralight MCP app`,
-    storage: parsed.storage || 'kv',
+    storage: parsed.storage || 'd1',
   });
 
   const generatedFiles = result.files as Array<{ path: string; content: string }>;
@@ -1236,6 +1236,9 @@ ${colors.dim('EXAMPLES')}
 
   for (const file of generatedFiles) {
     const filePath = `${name}/${file.path}`;
+    // Ensure subdirectories exist (e.g., migrations/)
+    const dir = filePath.substring(0, filePath.lastIndexOf('/'));
+    if (dir) await Deno.mkdir(dir, { recursive: true });
     await Deno.writeTextFile(filePath, file.content);
     console.log(colors.dim(`  Created ${filePath}`));
   }

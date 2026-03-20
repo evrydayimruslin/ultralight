@@ -9,6 +9,7 @@ import { startAutoHealingJob } from './services/auto-healing.ts';
 import { startPayoutProcessorJob } from './services/payout-processor.ts';
 import { startEmbeddingProcessorJob } from './services/embedding-processor.ts';
 import { startGpuBuildProcessorJob } from './services/gpu/benchmark.ts';
+import { startD1BillingJob } from './services/d1-billing.ts';
 
 // Get port from environment or default to 8000
 // @ts-ignore
@@ -43,6 +44,7 @@ startAutoHealingJob();
 startPayoutProcessorJob();
 startEmbeddingProcessorJob();
 startGpuBuildProcessorJob();
+startD1BillingJob();
 
 // Serve the API
 Deno.serve({ port, hostname: '0.0.0.0' }, async (request: Request) => {

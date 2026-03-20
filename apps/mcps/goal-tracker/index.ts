@@ -1,6 +1,6 @@
 // Goal Tracker — Ultralight MCP App
 // Set goals, break them into milestones, and track progress over time.
-// Storage: Ultralight KV (goals, milestones, progress)
+// Storage: Ultralight D1 (goals, milestones, progress_logs)
 
 const ultralight = (globalThis as any).ultralight;
 
@@ -14,44 +14,32 @@ export async function add_goal(args: {
 }): Promise<unknown> {
   const { name, description, target_date, milestones } = args;
   const id = crypto.randomUUID();
+  const now = new Date().toISOString();
 
-  const goal = {
-    id: id,
-    name: name,
-    description: description || '',
-    target_date: target_date || null,
-    status: 'active',
-    created_at: new Date().toISOString(),
-  };
-
-  await ultralight.store('goals/' + id, goal);
+  await ultralight.db.run(
+    'INSERT INTO goals (id, user_id, name, description, target_date, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [id, ultralight.user.id, name, description || '', target_date || null, 'active', now, now]
+  );
 
   // Create milestones if provided
-  const createdMilestones: any[] = [];
+  let milestonesCreated = 0;
   if (milestones && milestones.length > 0) {
-    const items = milestones.map((m, idx) => {
+    for (let idx = 0; idx < milestones.length; idx++) {
+      const m = milestones[idx];
       const mId = crypto.randomUUID();
-      const milestone = {
-        id: mId,
-        goal_id: id,
-        name: m.name,
-        target_date: m.target_date || null,
-        completed: false,
-        completed_at: null,
-        order: idx,
-        created_at: new Date().toISOString(),
-      };
-      createdMilestones.push(milestone);
-      return { key: 'milestones/' + id + '/' + mId, value: milestone };
-    });
-    await ultralight.batchStore(items);
+      await ultralight.db.run(
+        'INSERT INTO milestones (id, user_id, goal_id, name, target_date, completed, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [mId, ultralight.user.id, id, m.name, m.target_date || null, 0, idx, now, now]
+      );
+      milestonesCreated++;
+    }
   }
 
   return {
     success: true,
     goal_id: id,
     name: name,
-    milestones_created: createdMilestones.length,
+    milestones_created: milestonesCreated,
   };
 }
 
@@ -64,27 +52,27 @@ export async function add_milestone(args: {
 }): Promise<unknown> {
   const { goal_id, name, target_date } = args;
 
-  const goal = await ultralight.load('goals/' + goal_id);
+  const goal = await ultralight.db.first(
+    'SELECT * FROM goals WHERE id = ? AND user_id = ?',
+    [goal_id, ultralight.user.id]
+  );
   if (!goal) {
     return { success: false, error: 'Goal not found: ' + goal_id };
   }
 
   // Get existing milestones count for ordering
-  const existingKeys = await ultralight.list('milestones/' + goal_id + '/');
+  const countRow = await ultralight.db.first(
+    'SELECT COUNT(*) as count FROM milestones WHERE user_id = ? AND goal_id = ?',
+    [ultralight.user.id, goal_id]
+  );
+
   const id = crypto.randomUUID();
+  const now = new Date().toISOString();
 
-  const milestone = {
-    id: id,
-    goal_id: goal_id,
-    name: name,
-    target_date: target_date || null,
-    completed: false,
-    completed_at: null,
-    order: existingKeys.length,
-    created_at: new Date().toISOString(),
-  };
-
-  await ultralight.store('milestones/' + goal_id + '/' + id, milestone);
+  await ultralight.db.run(
+    'INSERT INTO milestones (id, user_id, goal_id, name, target_date, completed, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [id, ultralight.user.id, goal_id, name, target_date || null, 0, countRow?.count || 0, now, now]
+  );
 
   return {
     success: true,
@@ -108,41 +96,57 @@ export async function update(args: {
 
   // Update a milestone
   if (milestone_id && goal_id) {
-    const milestone = await ultralight.load('milestones/' + goal_id + '/' + milestone_id) as any;
+    const milestone = await ultralight.db.first(
+      'SELECT * FROM milestones WHERE id = ? AND user_id = ? AND goal_id = ?',
+      [milestone_id, ultralight.user.id, goal_id]
+    );
     if (!milestone) {
       return { success: false, error: 'Milestone not found' };
     }
-    if (completed !== undefined) {
-      milestone.completed = completed;
-      milestone.completed_at = completed ? new Date().toISOString() : null;
-    }
-    await ultralight.store('milestones/' + goal_id + '/' + milestone_id, milestone);
-    return { success: true, milestone: milestone };
+
+    const now = new Date().toISOString();
+    const newCompleted = completed !== undefined ? (completed ? 1 : 0) : milestone.completed;
+    const newCompletedAt = completed ? now : (completed === false ? null : milestone.completed_at);
+
+    await ultralight.db.run(
+      'UPDATE milestones SET completed = ?, completed_at = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+      [newCompleted, newCompletedAt, now, milestone_id, ultralight.user.id]
+    );
+
+    return { success: true, milestone: { ...milestone, completed: newCompleted, completed_at: newCompletedAt } };
   }
 
   // Update a goal
   if (goal_id) {
-    const goal = await ultralight.load('goals/' + goal_id) as any;
+    const goal = await ultralight.db.first(
+      'SELECT * FROM goals WHERE id = ? AND user_id = ?',
+      [goal_id, ultralight.user.id]
+    );
     if (!goal) {
       return { success: false, error: 'Goal not found' };
     }
-    if (status) goal.status = status;
-    if (completed) goal.status = 'completed';
-    await ultralight.store('goals/' + goal_id, goal);
+
+    const now = new Date().toISOString();
+    let newStatus = goal.status;
+    if (status) newStatus = status;
+    if (completed) newStatus = 'completed';
+
+    await ultralight.db.run(
+      'UPDATE goals SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+      [newStatus, now, goal_id, ultralight.user.id]
+    );
 
     // Log progress entry
     if (notes || percent_complete !== undefined) {
       const today = new Date().toISOString().split('T')[0];
-      await ultralight.store('progress/' + goal_id + '/' + today, {
-        goal_id: goal_id,
-        date: today,
-        notes: notes || '',
-        percent_complete: percent_complete !== undefined ? percent_complete : null,
-        created_at: new Date().toISOString(),
-      });
+      const progressId = crypto.randomUUID();
+      await ultralight.db.run(
+        'INSERT INTO progress_logs (id, user_id, goal_id, date, notes, percent_complete, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [progressId, ultralight.user.id, goal_id, today, notes || '', percent_complete !== undefined ? percent_complete : null, now, now]
+      );
     }
 
-    return { success: true, goal: goal };
+    return { success: true, goal: { ...goal, status: newStatus } };
   }
 
   return { success: false, error: 'Provide goal_id (and optionally milestone_id) to update' };
@@ -156,24 +160,26 @@ export async function list(args: {
 }): Promise<unknown> {
   const { status: filterStatus, limit } = args;
 
-  const goalResults = await ultralight.query('goals/', {
-    filter: (item: any) => {
-      if (filterStatus && filterStatus !== 'all' && item.status !== filterStatus) return false;
-      return true;
-    },
-    sort: { field: 'created_at', order: 'desc' },
-    limit: limit || 20,
-  });
+  let sql = 'SELECT * FROM goals WHERE user_id = ?';
+  const params: any[] = [ultralight.user.id];
+
+  if (filterStatus && filterStatus !== 'all') {
+    sql += ' AND status = ?';
+    params.push(filterStatus);
+  }
+
+  sql += ' ORDER BY created_at DESC LIMIT ?';
+  params.push(limit || 20);
+
+  const goalRows = await ultralight.db.all(sql, params);
 
   const goals = [];
-  for (const gr of goalResults) {
-    const goal = gr.value as any;
-    const milestoneKeys = await ultralight.list('milestones/' + goal.id + '/');
-    let milestones: any[] = [];
-    if (milestoneKeys.length > 0) {
-      const loaded = await ultralight.batchLoad(milestoneKeys);
-      milestones = loaded.map((m: any) => m.value).sort((a: any, b: any) => a.order - b.order);
-    }
+  for (const goal of goalRows) {
+    const milestones = await ultralight.db.all(
+      'SELECT * FROM milestones WHERE user_id = ? AND goal_id = ? ORDER BY sort_order ASC',
+      [ultralight.user.id, goal.id]
+    );
+
     const completedCount = milestones.filter((m: any) => m.completed).length;
     const progress = milestones.length > 0
       ? Math.round((completedCount / milestones.length) * 100)
@@ -198,23 +204,21 @@ export async function list(args: {
 // ── REVIEW ──
 
 export async function review(args?: {}): Promise<unknown> {
-  const goalResults = await ultralight.query('goals/', {
-    filter: (item: any) => item.status === 'active',
-  });
+  const goalRows = await ultralight.db.all(
+    'SELECT * FROM goals WHERE user_id = ? AND status = ?',
+    [ultralight.user.id, 'active']
+  );
 
   const today = new Date().toISOString().split('T')[0];
   const overdue: any[] = [];
   const upcoming: any[] = [];
   const summaries: any[] = [];
 
-  for (const gr of goalResults) {
-    const goal = gr.value as any;
-    const milestoneKeys = await ultralight.list('milestones/' + goal.id + '/');
-    let milestones: any[] = [];
-    if (milestoneKeys.length > 0) {
-      const loaded = await ultralight.batchLoad(milestoneKeys);
-      milestones = loaded.map((m: any) => m.value);
-    }
+  for (const goal of goalRows) {
+    const milestones = await ultralight.db.all(
+      'SELECT * FROM milestones WHERE user_id = ? AND goal_id = ?',
+      [ultralight.user.id, goal.id]
+    );
 
     const completedCount = milestones.filter((m: any) => m.completed).length;
     const progress = milestones.length > 0
@@ -232,8 +236,9 @@ export async function review(args?: {}): Promise<unknown> {
     }
 
     // Check upcoming milestones (within 7 days)
+    const sevenDaysLater = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
     for (const m of milestones) {
-      if (!m.completed && m.target_date && m.target_date >= today && m.target_date <= new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0]) {
+      if (!m.completed && m.target_date && m.target_date >= today && m.target_date <= sevenDaysLater) {
         upcoming.push({ goal: goal.name, milestone: m.name, target_date: m.target_date });
       }
     }
@@ -250,22 +255,14 @@ export async function review(args?: {}): Promise<unknown> {
 // ── STATUS ──
 
 export async function status(args?: {}): Promise<unknown> {
-  const goalKeys = await ultralight.list('goals/');
-  let active = 0;
-  let completed = 0;
-
-  if (goalKeys.length > 0) {
-    const goals = await ultralight.batchLoad(goalKeys);
-    for (const g of goals) {
-      const goal = g.value as any;
-      if (goal.status === 'active') active++;
-      if (goal.status === 'completed') completed++;
-    }
-  }
+  const stats = await ultralight.db.first(
+    'SELECT COUNT(*) as total, SUM(CASE WHEN status = \'active\' THEN 1 ELSE 0 END) as active, SUM(CASE WHEN status = \'completed\' THEN 1 ELSE 0 END) as completed FROM goals WHERE user_id = ?',
+    [ultralight.user.id]
+  );
 
   return {
-    total_goals: goalKeys.length,
-    active: active,
-    completed: completed,
+    total_goals: stats?.total || 0,
+    active: stats?.active || 0,
+    completed: stats?.completed || 0,
   };
 }

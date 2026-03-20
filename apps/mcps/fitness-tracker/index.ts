@@ -1,6 +1,6 @@
 // Fitness Tracker — Ultralight MCP App
 // Log meals, workouts, sleep, and body metrics. AI-powered calorie estimation.
-// Storage: Ultralight KV | Permissions: ai:call
+// Storage: Ultralight D1 | Permissions: ai:call
 
 const ultralight = (globalThis as any).ultralight;
 
@@ -18,6 +18,7 @@ export async function log_meal(args: {
   const { description, meal_type, date } = args;
   const mealDate = date || today();
   const id = crypto.randomUUID();
+  const now = new Date().toISOString();
 
   // AI calorie estimation
   let nutrition = { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 };
@@ -41,19 +42,10 @@ export async function log_meal(args: {
     // If AI fails, store with zero values — user can update later
   }
 
-  const meal = {
-    id: id,
-    description: description,
-    meal_type: meal_type || 'meal',
-    date: mealDate,
-    calories: nutrition.calories,
-    protein_g: nutrition.protein_g,
-    carbs_g: nutrition.carbs_g,
-    fat_g: nutrition.fat_g,
-    created_at: new Date().toISOString(),
-  };
-
-  await ultralight.store('meals/' + mealDate + '/' + id, meal);
+  await ultralight.db.run(
+    'INSERT INTO meals (id, user_id, description, meal_type, date, calories, protein_g, carbs_g, fat_g, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [id, ultralight.user.id, description, meal_type || 'meal', mealDate, nutrition.calories, nutrition.protein_g, nutrition.carbs_g, nutrition.fat_g, now, now]
+  );
 
   return {
     success: true,
@@ -78,18 +70,12 @@ export async function log_workout(args: {
   const { type, duration_min, calories_burned, notes, date } = args;
   const workoutDate = date || today();
   const id = crypto.randomUUID();
+  const now = new Date().toISOString();
 
-  const workout = {
-    id: id,
-    type: type,
-    duration_min: duration_min,
-    calories_burned: calories_burned || 0,
-    notes: notes || '',
-    date: workoutDate,
-    created_at: new Date().toISOString(),
-  };
-
-  await ultralight.store('workouts/' + workoutDate + '/' + id, workout);
+  await ultralight.db.run(
+    'INSERT INTO workouts (id, user_id, type, duration_min, calories_burned, notes, date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [id, ultralight.user.id, type, duration_min, calories_burned || 0, notes || '', workoutDate, now, now]
+  );
 
   return {
     success: true,
@@ -110,22 +96,33 @@ export async function log_sleep(args: {
 }): Promise<unknown> {
   const { hours, quality, notes, date } = args;
   const sleepDate = date || today();
+  const now = new Date().toISOString();
+  const qualityVal = quality !== undefined ? Math.min(5, Math.max(1, quality)) : null;
 
-  const entry = {
-    hours: hours,
-    quality: quality !== undefined ? Math.min(5, Math.max(1, quality)) : null,
-    notes: notes || '',
-    date: sleepDate,
-    created_at: new Date().toISOString(),
-  };
+  // Upsert: replace if already logged for this date
+  const existing = await ultralight.db.first(
+    'SELECT id FROM sleep_logs WHERE user_id = ? AND date = ?',
+    [ultralight.user.id, sleepDate]
+  );
 
-  await ultralight.store('sleep/' + sleepDate, entry);
+  if (existing) {
+    await ultralight.db.run(
+      'UPDATE sleep_logs SET hours = ?, quality = ?, notes = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+      [hours, qualityVal, notes || '', now, existing.id, ultralight.user.id]
+    );
+  } else {
+    const id = crypto.randomUUID();
+    await ultralight.db.run(
+      'INSERT INTO sleep_logs (id, user_id, hours, quality, notes, date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, ultralight.user.id, hours, qualityVal, notes || '', sleepDate, now, now]
+    );
+  }
 
   return {
     success: true,
     date: sleepDate,
     hours: hours,
-    quality: entry.quality,
+    quality: qualityVal,
   };
 }
 
@@ -138,21 +135,19 @@ export async function log_weight(args: {
 }): Promise<unknown> {
   const { value, unit, date } = args;
   const weightDate = date || today();
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
 
-  const entry = {
-    value: value,
-    unit: unit || 'lbs',
-    date: weightDate,
-    created_at: new Date().toISOString(),
-  };
-
-  await ultralight.store('weight/' + weightDate, entry);
+  await ultralight.db.run(
+    'INSERT INTO weight_logs (id, user_id, value, unit, date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [id, ultralight.user.id, value, unit || 'lbs', weightDate, now, now]
+  );
 
   return {
     success: true,
     date: weightDate,
     value: value,
-    unit: entry.unit,
+    unit: unit || 'lbs',
   };
 }
 
@@ -173,80 +168,85 @@ export async function summary(args: {
       d.setDate(d.getDate() - i);
       days.push(d.toISOString().split('T')[0]);
     }
+    const startDate = days[days.length - 1];
+    const endDate = days[0];
 
-    let totalCalories = 0;
-    let totalProtein = 0;
-    let totalCarbs = 0;
-    let totalFat = 0;
-    let mealCount = 0;
-    let workoutCount = 0;
-    let totalWorkoutMin = 0;
-    let totalCaloriesBurned = 0;
-    let sleepTotal = 0;
-    let sleepDays = 0;
+    const mealStats = await ultralight.db.first(
+      'SELECT COUNT(*) as count, COALESCE(SUM(calories), 0) as total_calories, COALESCE(SUM(protein_g), 0) as protein_g, COALESCE(SUM(carbs_g), 0) as carbs_g, COALESCE(SUM(fat_g), 0) as fat_g FROM meals WHERE user_id = ? AND date >= ? AND date <= ?',
+      [ultralight.user.id, startDate, endDate]
+    );
 
-    for (const day of days) {
-      const meals = await ultralight.query('meals/' + day + '/', {});
-      for (const m of meals) {
-        const meal = m.value as any;
-        totalCalories += meal.calories || 0;
-        totalProtein += meal.protein_g || 0;
-        totalCarbs += meal.carbs_g || 0;
-        totalFat += meal.fat_g || 0;
-        mealCount++;
-      }
+    const workoutStats = await ultralight.db.first(
+      'SELECT COUNT(*) as count, COALESCE(SUM(duration_min), 0) as total_minutes, COALESCE(SUM(calories_burned), 0) as total_calories_burned FROM workouts WHERE user_id = ? AND date >= ? AND date <= ?',
+      [ultralight.user.id, startDate, endDate]
+    );
 
-      const workouts = await ultralight.query('workouts/' + day + '/', {});
-      for (const w of workouts) {
-        const workout = w.value as any;
-        workoutCount++;
-        totalWorkoutMin += workout.duration_min || 0;
-        totalCaloriesBurned += workout.calories_burned || 0;
-      }
-
-      const sleep = await ultralight.load('sleep/' + day) as any;
-      if (sleep) {
-        sleepTotal += sleep.hours;
-        sleepDays++;
-      }
-    }
+    const sleepStats = await ultralight.db.first(
+      'SELECT COUNT(*) as days_logged, COALESCE(AVG(hours), 0) as avg_hours FROM sleep_logs WHERE user_id = ? AND date >= ? AND date <= ?',
+      [ultralight.user.id, startDate, endDate]
+    );
 
     return {
       period: 'weekly',
       days: 7,
-      meals: { count: mealCount, total_calories: totalCalories, avg_daily_calories: Math.round(totalCalories / 7), protein_g: totalProtein, carbs_g: totalCarbs, fat_g: totalFat },
-      workouts: { count: workoutCount, total_minutes: totalWorkoutMin, total_calories_burned: totalCaloriesBurned },
-      sleep: { days_logged: sleepDays, avg_hours: sleepDays > 0 ? Math.round((sleepTotal / sleepDays) * 10) / 10 : 0 },
+      meals: {
+        count: mealStats?.count || 0,
+        total_calories: mealStats?.total_calories || 0,
+        avg_daily_calories: Math.round((mealStats?.total_calories || 0) / 7),
+        protein_g: mealStats?.protein_g || 0,
+        carbs_g: mealStats?.carbs_g || 0,
+        fat_g: mealStats?.fat_g || 0,
+      },
+      workouts: {
+        count: workoutStats?.count || 0,
+        total_minutes: workoutStats?.total_minutes || 0,
+        total_calories_burned: workoutStats?.total_calories_burned || 0,
+      },
+      sleep: {
+        days_logged: sleepStats?.days_logged || 0,
+        avg_hours: sleepStats?.days_logged > 0 ? Math.round(sleepStats.avg_hours * 10) / 10 : 0,
+      },
     };
   }
 
   // Default: daily summary
-  const dayMeals = await ultralight.query('meals/' + targetDate + '/', {});
-  const dayWorkouts = await ultralight.query('workouts/' + targetDate + '/', {});
-  const daySleep = await ultralight.load('sleep/' + targetDate) as any;
-  const dayWeight = await ultralight.load('weight/' + targetDate) as any;
+  const meals = await ultralight.db.all(
+    'SELECT * FROM meals WHERE user_id = ? AND date = ?',
+    [ultralight.user.id, targetDate]
+  );
+
+  const workouts = await ultralight.db.all(
+    'SELECT * FROM workouts WHERE user_id = ? AND date = ?',
+    [ultralight.user.id, targetDate]
+  );
+
+  const daySleep = await ultralight.db.first(
+    'SELECT * FROM sleep_logs WHERE user_id = ? AND date = ?',
+    [ultralight.user.id, targetDate]
+  );
+
+  const dayWeight = await ultralight.db.first(
+    'SELECT * FROM weight_logs WHERE user_id = ? AND date = ? ORDER BY created_at DESC',
+    [ultralight.user.id, targetDate]
+  );
 
   let totalCal = 0;
   let totalProt = 0;
   let totalCarb = 0;
   let totalFatD = 0;
-  const meals = dayMeals.map((m: any) => {
-    const meal = m.value;
+  for (const meal of meals) {
     totalCal += meal.calories || 0;
     totalProt += meal.protein_g || 0;
     totalCarb += meal.carbs_g || 0;
     totalFatD += meal.fat_g || 0;
-    return meal;
-  });
+  }
 
   let workoutMin = 0;
   let calBurned = 0;
-  const workouts = dayWorkouts.map((w: any) => {
-    const workout = w.value;
+  for (const workout of workouts) {
     workoutMin += workout.duration_min || 0;
     calBurned += workout.calories_burned || 0;
-    return workout;
-  });
+  }
 
   return {
     period: 'daily',
@@ -263,15 +263,31 @@ export async function summary(args: {
 
 export async function status(args?: {}): Promise<unknown> {
   const todayStr = today();
-  const todayMeals = await ultralight.list('meals/' + todayStr + '/');
-  const todayWorkouts = await ultralight.list('workouts/' + todayStr + '/');
-  const todaySleep = await ultralight.load('sleep/' + todayStr);
-  const todayWeight = await ultralight.load('weight/' + todayStr);
+
+  const mealCount = await ultralight.db.first(
+    'SELECT COUNT(*) as count FROM meals WHERE user_id = ? AND date = ?',
+    [ultralight.user.id, todayStr]
+  );
+
+  const workoutCount = await ultralight.db.first(
+    'SELECT COUNT(*) as count FROM workouts WHERE user_id = ? AND date = ?',
+    [ultralight.user.id, todayStr]
+  );
+
+  const todaySleep = await ultralight.db.first(
+    'SELECT id FROM sleep_logs WHERE user_id = ? AND date = ?',
+    [ultralight.user.id, todayStr]
+  );
+
+  const todayWeight = await ultralight.db.first(
+    'SELECT id FROM weight_logs WHERE user_id = ? AND date = ?',
+    [ultralight.user.id, todayStr]
+  );
 
   return {
     date: todayStr,
-    meals_logged_today: todayMeals.length,
-    workouts_logged_today: todayWorkouts.length,
+    meals_logged_today: mealCount?.count || 0,
+    workouts_logged_today: workoutCount?.count || 0,
     sleep_logged_today: todaySleep ? true : false,
     weight_logged_today: todayWeight ? true : false,
   };

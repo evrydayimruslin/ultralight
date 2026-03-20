@@ -5,8 +5,11 @@ import type {
   AIRequest,
   AIResponse,
   LogEntry,
+  D1RunResult,
+  D1ExecResult,
 } from '../../shared/types/index.ts';
 import { formatLight } from '../../shared/types/index.ts';
+import type { D1DataService } from '../services/d1-data.ts';
 
 
 // User context passed to apps (subset of full user, safe to expose)
@@ -29,8 +32,10 @@ export interface RuntimeConfig {
   userApiKey: string | null;
   // Authenticated user context (null if anonymous)
   user: UserContext | null;
-  // App data storage (R2-based, zero config)
+  // App data storage (R2-based, zero config) — LEGACY, kept for internal R2 ops
   appDataService: AppDataService;
+  // D1 relational data service (per-app, lazy-provisioned)
+  d1DataService: D1DataService | null;
   // User memory (for unified Memory.md - optional, can be null)
   memoryService: MemoryService | null;
   aiService: AIService;
@@ -1344,7 +1349,38 @@ export async function executeInSandbox(
       }
     };
 
-    // Create SDK with both app data (R2) and user memory (Supabase)
+    // User ID validation for D1 queries — ensures data isolation between users.
+    // Every SELECT/UPDATE/DELETE must reference user_id in a WHERE clause.
+    // Every INSERT must include user_id in the column list.
+    function _validateUserIdInQuery(sql: string, context: string): void {
+      const normalized = sql.toLowerCase().replace(/\s+/g, ' ').trim();
+
+      // Skip system table queries (internal use)
+      if (normalized.includes('_migrations') || normalized.includes('_usage')) return;
+
+      // For INSERT/REPLACE: must reference user_id column
+      if (/^(insert|replace)\s/i.test(normalized)) {
+        if (!normalized.includes('user_id')) {
+          throw new Error(
+            `[Ultralight] db.${context}(): INSERT statements must include user_id. ` +
+            `Add user_id to your column list and pass ultralight.user.id as the value.`
+          );
+        }
+        return;
+      }
+
+      // For SELECT/UPDATE/DELETE: must have user_id in WHERE
+      if (/^(select|update|delete)\s/i.test(normalized)) {
+        if (!normalized.includes('user_id')) {
+          throw new Error(
+            `[Ultralight] db.${context}(): Queries must filter by user_id. ` +
+            `Add WHERE user_id = ? to your query and pass ultralight.user.id.`
+          );
+        }
+      }
+    }
+
+    // Create SDK with D1 relational database and user memory (Supabase)
     const sdk = {
       // ENVIRONMENT VARIABLES - Decrypted, read-only
       env: Object.freeze({ ...config.envVars }),
@@ -1363,68 +1399,72 @@ export async function executeInSandbox(
         return config.user;
       },
 
-      // APP DATA - R2-based, zero config
-      // Support both direct functions (store, load, remove, list) and
-      // object notation (store.set, store.get, store.list, store.remove)
-      // for backwards compatibility with different app implementations
-      store: Object.assign(
-        async (key: string, value: unknown) => {
-          await config.appDataService.store(key, value);
-          capturedConsole.log(`[SDK] store("${key}")`);
+      // D1 RELATIONAL DATABASE - SQL-based, per-app
+      // Every query must include user_id for data isolation.
+      // Schema managed via migrations/ folder in the app bundle.
+      db: {
+        /**
+         * Execute INSERT/UPDATE/DELETE. Returns { success, meta }.
+         * SQL must reference user_id column.
+         */
+        run: async (sql: string, params?: unknown[]): Promise<D1RunResult> => {
+          if (!config.d1DataService) {
+            throw new Error('D1 database not available. Ensure your app has a migrations/ folder.');
+          }
+          _validateUserIdInQuery(sql, 'run');
+          const result = await config.d1DataService.run(sql, params);
+          capturedConsole.log(`[SDK] db.run(${sql.slice(0, 80)}${sql.length > 80 ? '...' : ''})`);
+          return result;
         },
-        {
-          // Object notation: ultralight.store.set(), ultralight.store.get(), etc.
-          set: async (key: string, value: unknown) => {
-            await config.appDataService.store(key, value);
-            capturedConsole.log(`[SDK] store.set("${key}")`);
-          },
-          get: async (key: string) => {
-            const value = await config.appDataService.load(key);
-            capturedConsole.log(`[SDK] store.get("${key}")`);
-            return value;
-          },
-          remove: async (key: string) => {
-            await config.appDataService.remove(key);
-            capturedConsole.log(`[SDK] store.remove("${key}")`);
-          },
-          list: async (prefix?: string) => {
-            const keys = await config.appDataService.list(prefix);
-            capturedConsole.log(`[SDK] store.list(${prefix ? `"${prefix}"` : ''})`);
-            return keys;
-          },
-        }
-      ),
-      load: async (key: string) => {
-        const value = await config.appDataService.load(key);
-        capturedConsole.log(`[SDK] load("${key}")`);
-        return value;
-      },
-      remove: async (key: string) => {
-        await config.appDataService.remove(key);
-        capturedConsole.log(`[SDK] remove("${key}")`);
-      },
-      list: async (prefix?: string) => {
-        const keys = await config.appDataService.list(prefix);
-        capturedConsole.log(`[SDK] list(${prefix ? `"${prefix}"` : ''})`);
-        return keys;
-      },
 
-      // QUERY HELPERS - Advanced data operations
-      query: async (prefix: string, options?: QueryOptions) => {
-        capturedConsole.log(`[SDK] query("${prefix}", ${JSON.stringify(options || {})})`);
-        return await config.appDataService.query(prefix, options);
-      },
-      batchStore: async (items: Array<{ key: string; value: unknown }>) => {
-        capturedConsole.log(`[SDK] batchStore(${items.length} items)`);
-        return await config.appDataService.batchStore(items);
-      },
-      batchLoad: async (keys: string[]) => {
-        capturedConsole.log(`[SDK] batchLoad(${keys.length} keys)`);
-        return await config.appDataService.batchLoad(keys);
-      },
-      batchRemove: async (keys: string[]) => {
-        capturedConsole.log(`[SDK] batchRemove(${keys.length} keys)`);
-        return await config.appDataService.batchRemove(keys);
+        /**
+         * Execute SELECT. Returns all matching rows.
+         * SQL must filter by user_id.
+         */
+        all: async <T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> => {
+          if (!config.d1DataService) {
+            throw new Error('D1 database not available. Ensure your app has a migrations/ folder.');
+          }
+          _validateUserIdInQuery(sql, 'all');
+          const result = await config.d1DataService.all<T>(sql, params);
+          capturedConsole.log(`[SDK] db.all(${sql.slice(0, 80)}${sql.length > 80 ? '...' : ''}) → ${result.length} rows`);
+          return result;
+        },
+
+        /**
+         * Execute SELECT. Returns first row or null.
+         */
+        first: async <T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T | null> => {
+          if (!config.d1DataService) {
+            throw new Error('D1 database not available. Ensure your app has a migrations/ folder.');
+          }
+          _validateUserIdInQuery(sql, 'first');
+          const result = await config.d1DataService.first<T>(sql, params);
+          capturedConsole.log(`[SDK] db.first(${sql.slice(0, 80)}${sql.length > 80 ? '...' : ''})`);
+          return result;
+        },
+
+        /**
+         * Execute raw DDL — blocked at runtime. Use migrations/ for schema changes.
+         */
+        exec: async (_sql: string): Promise<D1ExecResult> => {
+          throw new Error('ultralight.db.exec() is not available at runtime. Use migrations/ for schema changes.');
+        },
+
+        /**
+         * Execute multiple statements atomically (transaction).
+         */
+        batch: async (statements: Array<{ sql: string; params?: unknown[] }>): Promise<D1RunResult[]> => {
+          if (!config.d1DataService) {
+            throw new Error('D1 database not available. Ensure your app has a migrations/ folder.');
+          }
+          for (const stmt of statements) {
+            _validateUserIdInQuery(stmt.sql, 'batch');
+          }
+          const result = await config.d1DataService.batch(statements);
+          capturedConsole.log(`[SDK] db.batch(${statements.length} statements)`);
+          return result;
+        },
       },
 
       // USER MEMORY - For unified Memory.md

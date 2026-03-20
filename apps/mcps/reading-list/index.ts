@@ -1,6 +1,6 @@
 // Reading List — Ultralight MCP App
 // Track books, articles, tweets, and papers. Save highlights, notes, and search semantically.
-// Storage: Ultralight KV | Permissions: ai:call, net:fetch
+// Storage: Ultralight D1 | Permissions: ai:call, net:fetch
 
 const ultralight = (globalThis as any).ultralight;
 
@@ -76,7 +76,7 @@ export async function save(args: {
   }
 
   // Generate embedding for semantic search
-  let embedding: number[] | null = null;
+  let embedding: string | null = null;
   const embeddingText = (itemTitle + ' ' + contentSnippet + ' ' + (tags || []).join(' ')).trim();
   if (embeddingText) {
     try {
@@ -85,33 +85,25 @@ export async function save(args: {
         input: embeddingText,
       });
       if (response && response.embedding) {
-        embedding = response.embedding;
+        embedding = JSON.stringify(response.embedding);
       }
     } catch (e) {
       // Embedding failed — save without it
     }
   }
 
-  const item = {
-    id: id,
-    url: url || null,
-    title: itemTitle || url || 'Untitled',
-    type: itemType,
-    content_snippet: contentSnippet,
-    tags: tags || [],
-    highlights: [],
-    notes: notes || '',
-    embedding: embedding,
-    read_status: 'unread',
-    saved_at: new Date().toISOString(),
-  };
+  const now = new Date().toISOString();
+  const finalTitle = itemTitle || url || 'Untitled';
 
-  await ultralight.store('items/' + id, item);
+  await ultralight.db.run(
+    'INSERT INTO books (id, user_id, url, title, type, content_snippet, tags, notes, embedding, read_status, saved_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [id, ultralight.user.id, url || null, finalTitle, itemType, contentSnippet, JSON.stringify(tags || []), notes || '', embedding, 'unread', now, now, now]
+  );
 
   return {
     success: true,
     item_id: id,
-    title: item.title,
+    title: finalTitle,
     type: itemType,
     has_content: contentSnippet.length > 0,
     has_embedding: embedding !== null,
@@ -128,23 +120,44 @@ export async function list(args: {
 }): Promise<unknown> {
   const { tags, type, status, limit } = args;
 
-  const results = await ultralight.query('items/', {
-    filter: (item: any) => {
-      if (type && item.type !== type) return false;
-      if (status && item.read_status !== status) return false;
-      if (tags && tags.length > 0) {
-        const itemTags = item.tags || [];
-        if (!tags.some((t: string) => itemTags.includes(t))) return false;
-      }
-      return true;
-    },
-    sort: { field: 'saved_at', order: 'desc' },
-    limit: limit || 20,
-  });
+  let query = 'SELECT id, title, url, type, tags, read_status, saved_at FROM books WHERE user_id = ?';
+  const params: any[] = [ultralight.user.id];
 
-  const items = results.map((r: any) => {
-    const item = r.value as any;
-    return {
+  if (type) {
+    query += ' AND type = ?';
+    params.push(type);
+  }
+  if (status) {
+    query += ' AND read_status = ?';
+    params.push(status);
+  }
+
+  query += ' ORDER BY saved_at DESC LIMIT ?';
+  params.push(limit || 20);
+
+  let items = await ultralight.db.all(query, params);
+
+  // Parse tags JSON and filter by tags in app layer if needed
+  items = items.map((item: any) => ({
+    ...item,
+    tags: JSON.parse(item.tags || '[]'),
+  }));
+
+  if (tags && tags.length > 0) {
+    items = items.filter((item: any) => {
+      const itemTags = item.tags || [];
+      return tags.some((t: string) => itemTags.includes(t));
+    });
+  }
+
+  // Count highlights per item
+  const result = [];
+  for (const item of items) {
+    const hCount = await ultralight.db.first(
+      'SELECT COUNT(*) as cnt FROM highlights WHERE book_id = ? AND user_id = ?',
+      [item.id, ultralight.user.id]
+    );
+    result.push({
       id: item.id,
       title: item.title,
       url: item.url,
@@ -152,13 +165,13 @@ export async function list(args: {
       tags: item.tags,
       read_status: item.read_status,
       saved_at: item.saved_at,
-      highlights_count: (item.highlights || []).length,
-    };
-  });
+      highlights_count: hCount ? hCount.cnt : 0,
+    });
+  }
 
   return {
-    items: items,
-    count: items.length,
+    items: result,
+    count: result.length,
   };
 }
 
@@ -184,16 +197,19 @@ export async function search(args: {
     // Fall back to text search
   }
 
-  const results = await ultralight.query('items/', {});
-  const items = results.map((r: any) => r.value);
+  const items = await ultralight.db.all(
+    'SELECT id, title, url, type, tags, content_snippet, notes, embedding, read_status FROM books WHERE user_id = ?',
+    [ultralight.user.id]
+  );
 
   let scored: Array<{ item: any; score: number }> = [];
 
   if (queryEmbedding) {
     // Semantic search via cosine similarity
     for (const item of items) {
-      if (item.embedding && item.embedding.length > 0) {
-        const score = cosineSimilarity(queryEmbedding, item.embedding);
+      const itemEmbedding = item.embedding ? JSON.parse(item.embedding) : null;
+      if (itemEmbedding && itemEmbedding.length > 0) {
+        const score = cosineSimilarity(queryEmbedding, itemEmbedding);
         scored.push({ item: item, score: score });
       } else {
         // Text fallback for items without embeddings
@@ -223,7 +239,7 @@ export async function search(args: {
       title: s.item.title,
       url: s.item.url,
       type: s.item.type,
-      tags: s.item.tags,
+      tags: JSON.parse(s.item.tags || '[]'),
       score: Math.round(s.score * 100) / 100,
       snippet: s.item.content_snippet ? s.item.content_snippet.slice(0, 200) : '',
     })),
@@ -252,7 +268,8 @@ function textMatch(query: string, item: any): number {
   if (item.title && item.title.toLowerCase().includes(q)) score += 1;
   if (item.content_snippet && item.content_snippet.toLowerCase().includes(q)) score += 0.5;
   if (item.notes && item.notes.toLowerCase().includes(q)) score += 0.3;
-  if (item.tags && item.tags.some((t: string) => t.toLowerCase().includes(q))) score += 0.3;
+  const parsedTags = JSON.parse(item.tags || '[]');
+  if (parsedTags.some((t: string) => t.toLowerCase().includes(q))) score += 0.3;
   return score;
 }
 
@@ -265,55 +282,67 @@ export async function highlight(args: {
 }): Promise<unknown> {
   const { item_id, text, note } = args;
 
-  const item = await ultralight.load('items/' + item_id) as any;
+  const item = await ultralight.db.first(
+    'SELECT id, title, read_status FROM books WHERE id = ? AND user_id = ?',
+    [item_id, ultralight.user.id]
+  );
   if (!item) {
     return { success: false, error: 'Item not found: ' + item_id };
   }
 
-  if (!item.highlights) {
-    item.highlights = [];
-  }
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
 
-  item.highlights.push({
-    text: text,
-    note: note || '',
-    created_at: new Date().toISOString(),
-  });
+  await ultralight.db.run(
+    'INSERT INTO highlights (id, user_id, book_id, text, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [id, ultralight.user.id, item_id, text, note || '', now, now]
+  );
 
-  // Mark as read if adding highlights
+  // Mark as reading if unread
   if (item.read_status === 'unread') {
-    item.read_status = 'reading';
+    await ultralight.db.run(
+      'UPDATE books SET read_status = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+      ['reading', now, item_id, ultralight.user.id]
+    );
   }
 
-  await ultralight.store('items/' + item_id, item);
+  const hCount = await ultralight.db.first(
+    'SELECT COUNT(*) as cnt FROM highlights WHERE book_id = ? AND user_id = ?',
+    [item_id, ultralight.user.id]
+  );
 
   return {
     success: true,
     item_title: item.title,
-    highlights_count: item.highlights.length,
+    highlights_count: hCount ? hCount.cnt : 0,
   };
 }
 
 // ── STATUS ──
 
 export async function status(args?: {}): Promise<unknown> {
-  const results = await ultralight.query('items/', {});
-  const items = results.map((r: any) => r.value);
+  const items = await ultralight.db.all(
+    'SELECT id, type, read_status FROM books WHERE user_id = ?',
+    [ultralight.user.id]
+  );
 
   const byType: Record<string, number> = {};
   const byStatus: Record<string, number> = {};
-  let totalHighlights = 0;
 
   for (const item of items) {
     byType[item.type] = (byType[item.type] || 0) + 1;
     byStatus[item.read_status] = (byStatus[item.read_status] || 0) + 1;
-    totalHighlights += (item.highlights || []).length;
   }
+
+  const totalHighlightsRow = await ultralight.db.first(
+    'SELECT COUNT(*) as cnt FROM highlights WHERE user_id = ?',
+    [ultralight.user.id]
+  );
 
   return {
     total_items: items.length,
     by_type: byType,
     by_status: byStatus,
-    total_highlights: totalHighlights,
+    total_highlights: totalHighlightsRow ? totalHighlightsRow.cnt : 0,
   };
 }

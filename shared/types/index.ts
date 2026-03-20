@@ -131,6 +131,11 @@ export interface App {
   health_status: string;         // 'healthy' | 'unhealthy'
   last_healed_at: string | null; // kept for migration compat
   auto_heal_enabled: boolean;    // opt-out of health monitoring
+  // D1 relational database (per-app, lazy-provisioned)
+  d1_database_id: string | null;          // Cloudflare D1 database UUID
+  d1_status: 'pending' | 'provisioning' | 'ready' | 'error' | null;
+  d1_provisioned_at: string | null;
+  d1_last_migration_version: number;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -1356,6 +1361,53 @@ export interface ChatUsage {
   completion_tokens: number;
   total_tokens: number;
 }
+
+// ============================================
+// D1 (Cloudflare D1 Relational Data Layer)
+// ============================================
+
+/** Result from ultralight.db.run() — INSERT/UPDATE/DELETE */
+export interface D1RunResult {
+  success: boolean;
+  meta: D1QueryMeta;
+}
+
+/** Result from ultralight.db.exec() — raw DDL (migrations only) */
+export interface D1ExecResult {
+  success: boolean;
+  count: number;
+}
+
+/** Metadata returned with every D1 query */
+export interface D1QueryMeta {
+  changes: number;
+  last_row_id: number;
+  duration: number;
+  rows_read: number;
+  rows_written: number;
+}
+
+/** D1 free tier thresholds (per user per month) */
+export const D1_FREE_TIER = {
+  ROWS_READ: 50_000,
+  ROWS_WRITTEN: 10_000,
+  STORAGE_BYTES: 50 * 1024 * 1024, // 50 MB
+} as const;
+
+/** D1 rate limits by tier (per minute) */
+export const D1_RATE_LIMITS: Record<string, { reads: number; writes: number; concurrent: number }> = {
+  free: { reads: 100, writes: 20, concurrent: 3 },
+  pro: { reads: 500, writes: 100, concurrent: 10 },
+  scale: { reads: 2000, writes: 500, concurrent: 25 },
+  enterprise: { reads: 10000, writes: 2000, concurrent: 100 },
+};
+
+/** D1 overage billing rates (in Light ✦) */
+export const D1_BILLING_RATES = {
+  RATE_PER_1K_READS: 0.01,      // 0.01 Light per 1,000 reads
+  RATE_PER_1K_WRITES: 0.05,     // 0.05 Light per 1,000 writes
+  RATE_PER_MB_PER_HOUR: 0.36,   // 0.36 Light per MB per hour (matches R2 data overage)
+} as const;
 
 /** Result of a chat billing deduction */
 export interface ChatBillingResult {

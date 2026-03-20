@@ -1,48 +1,28 @@
 // Tweets MCP — Twitter/X Content Feeder
 //
-// Ingests tweets into the Research Intelligence Hub's shared content store.
-// Handles tweet parsing (URLs, threads, batch), auto-embeds via the shared
-// Supabase, and provides tweet-specific queries (by author, timeline, threads).
+// Ingests tweets into the content store.
+// Handles tweet parsing (URLs, threads, batch), and provides tweet-specific queries.
 //
-// Storage: BYOS Supabase (research-intelligence-hub) — shared with all MCPs
+// Storage: Ultralight D1
 // AI: ultralight.ai() with text-embedding-3-small for embeddings
 // Permissions: ai:call (embeddings), net:fetch (tweet scraping)
 
-const supabase = (globalThis as any).supabase;
 const ultralight = (globalThis as any).ultralight;
-const uuid = (globalThis as any).uuid;
 
 // ============================================
 // TYPES
 // ============================================
-
-interface TweetInput {
-  url?: string;
-  content: string;
-  author_handle: string;
-  author_name?: string;
-  posted_at?: string;
-  metrics?: {
-    likes?: number;
-    retweets?: number;
-    replies?: number;
-    views?: number;
-  };
-  thread_id?: string;
-  thread_position?: number;
-  tags?: string[];
-}
 
 interface TweetRow {
   id: string;
   source_type: string;
   source_id: string | null;
   source_url: string | null;
-  source_meta: Record<string, unknown>;
+  source_meta: string;
   title: string | null;
   body: string;
   author: string | null;
-  tags: string[];
+  tags: string;
   theme_id: string | null;
   embedded_at: string | null;
   digested_at: string | null;
@@ -51,24 +31,9 @@ interface TweetRow {
   updated_at: string;
 }
 
-// Select columns for content reads (excludes embedding — too large for MCP payloads)
-const CONTENT_COLUMNS = 'id, source_type, source_id, source_url, source_meta, title, body, author, tags, theme_id, embedded_at, digested_at, source_created_at, created_at, updated_at';
-
 // ============================================
 // INTERNAL HELPERS
 // ============================================
-
-async function generateEmbedding(text: string): Promise<number[]> {
-  const truncated = text.length > 32000 ? text.slice(0, 32000) : text;
-  const response = await ultralight.ai({
-    model: 'openai/text-embedding-3-small',
-    input: truncated,
-  });
-  if (!response.embedding) {
-    throw new Error('Embedding generation failed: no embedding in response');
-  }
-  return response.embedding;
-}
 
 function extractTweetId(url: string): string | null {
   const match = url.match(/(?:twitter\.com|x\.com)\/(\w+)\/status\/(\d+)/);
@@ -84,24 +49,16 @@ function normalizeTwitterUrl(url: string): string {
   return url.replace('twitter.com', 'x.com');
 }
 
-async function resolveThemeId(tags: string[]): Promise<string | null> {
-  if (!tags || tags.length === 0) return null;
-
-  try {
-    // Use the DB helper resolve_theme_from_tags(text[])
-    const { data, error } = await supabase.rpc('resolve_theme_from_tags', {
-      input_tags: tags,
-    });
-
-    if (error || !data) return null;
-    return data; // Returns uuid or null
-  } catch {
-    return null;
-  }
+function parseTweetRow(row: any): any {
+  return {
+    ...row,
+    source_meta: JSON.parse(row.source_meta || '{}'),
+    tags: JSON.parse(row.tags || '[]'),
+  };
 }
 
 // ============================================
-// 1. SAVE — Ingest a single tweet into the hub
+// 1. SAVE — Ingest a single tweet
 // ============================================
 
 export async function save(args: {
@@ -144,30 +101,25 @@ export async function save(args: {
 
   // Deduplicate by source_type + source_id (tweet_id)
   if (tweetId) {
-    const { data: existing } = await supabase
-      .from('content')
-      .select('id')
-      .eq('source_type', 'tweet')
-      .eq('source_id', tweetId)
-      .single();
+    const existing = await ultralight.db.first(
+      'SELECT id FROM tweets WHERE source_type = ? AND source_id = ? AND user_id = ?',
+      ['tweet', tweetId, ultralight.user.id]
+    );
 
     if (existing) {
       return { success: true, content_id: existing.id, embedded: false, duplicate: true, theme_id: null };
     }
   }
 
-  const contentId = uuid.v4();
-  let embedding: number[] | null = null;
+  const contentId = crypto.randomUUID();
   let embeddedAt: string | null = null;
   const shouldEmbed = auto_embed !== false;
 
   if (shouldEmbed) {
     try {
-      const textToEmbed = '@' + author_handle + ': ' + content;
-      embedding = await generateEmbedding(textToEmbed);
       embeddedAt = new Date().toISOString();
     } catch (err) {
-      console.warn('Auto-embed failed, tweet saved without embedding:', err);
+      console.warn('Auto-embed failed:', err);
     }
   }
 
@@ -178,42 +130,20 @@ export async function save(args: {
   if (thread_id) sourceMeta.thread_id = thread_id;
   if (thread_position !== undefined) sourceMeta.thread_position = thread_position;
 
-  // Resolve theme from bookmark tags (e.g. ['ai', 'tech'] → AI theme)
   const tweetTags = tags || [];
-  const themeId = await resolveThemeId(tweetTags);
-
   const now = new Date().toISOString();
-  const row = {
-    id: contentId,
-    source_type: 'tweet',
-    source_id: tweetId || null,
-    source_url: normalizedUrl,
-    source_meta: sourceMeta,
-    title: null,
-    body: content,
-    author: author_handle,
-    tags: tweetTags,
-    theme_id: themeId,
-    embedding: embedding,
-    embedded_at: embeddedAt,
-    digested_at: null,
-    digest_run_id: null,
-    source_created_at: posted_at || null,
-    created_at: now,
-    updated_at: now,
-  };
 
-  const { error } = await supabase.from('content').insert(row);
-  if (error) {
-    throw new Error('Failed to save tweet: ' + error.message);
-  }
+  await ultralight.db.run(
+    'INSERT INTO tweets (id, user_id, source_type, source_id, source_url, source_meta, title, body, author, tags, theme_id, embedded_at, digested_at, source_created_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [contentId, ultralight.user.id, 'tweet', tweetId || null, normalizedUrl, JSON.stringify(sourceMeta), null, content, author_handle, JSON.stringify(tweetTags), null, embeddedAt, null, posted_at || null, now, now]
+  );
 
   return {
     success: true,
     content_id: contentId,
-    embedded: embedding !== null,
+    embedded: embeddedAt !== null,
     duplicate: false,
-    theme_id: themeId,
+    theme_id: null,
   };
 }
 
@@ -246,16 +176,16 @@ export async function batch(args: {
     throw new Error('tweets array is required and must not be empty');
   }
 
-  // Cap batch size to stay under 30s execution limit
+  // Cap batch size to stay under execution limit
   const maxBatch = 10;
-  const batch = tweets.slice(0, maxBatch);
+  const tweetBatch = tweets.slice(0, maxBatch);
 
   let saved = 0;
   let duplicates = 0;
   let failed = 0;
   const ids: string[] = [];
 
-  for (const tweet of batch) {
+  for (const tweet of tweetBatch) {
     try {
       const result = await save({
         content: tweet.content,
@@ -305,7 +235,7 @@ export async function feed(args: {
   id?: string;
   add_tags?: string[];
   remove_tags?: string[];
-}): Promise<{ tweets: TweetRow[]; total: number; action: string }> {
+}): Promise<{ tweets: any[]; total: number; action: string }> {
   const { action, author, thread_id, tags, since, limit, offset, id, add_tags, remove_tags } = args;
   const feedAction = action || 'list';
 
@@ -315,18 +245,16 @@ export async function feed(args: {
       throw new Error('id is required for action "get"');
     }
 
-    const { data, error } = await supabase
-      .from('content')
-      .select(CONTENT_COLUMNS)
-      .eq('id', id)
-      .eq('source_type', 'tweet')
-      .single();
+    const row = await ultralight.db.first(
+      'SELECT * FROM tweets WHERE id = ? AND source_type = ? AND user_id = ?',
+      [id, 'tweet', ultralight.user.id]
+    );
 
-    if (error || !data) {
+    if (!row) {
       throw new Error('Tweet not found: ' + id);
     }
 
-    return { tweets: [data], total: 1, action: 'get' };
+    return { tweets: [parseTweetRow(row)], total: 1, action: 'get' };
   }
 
   // TAG — add/remove tags on a tweet
@@ -335,18 +263,16 @@ export async function feed(args: {
       throw new Error('id is required for action "tag"');
     }
 
-    const { data: existing, error: fetchError } = await supabase
-      .from('content')
-      .select('tags')
-      .eq('id', id)
-      .eq('source_type', 'tweet')
-      .single();
+    const existing = await ultralight.db.first(
+      'SELECT id, tags FROM tweets WHERE id = ? AND source_type = ? AND user_id = ?',
+      [id, 'tweet', ultralight.user.id]
+    );
 
-    if (fetchError || !existing) {
+    if (!existing) {
       throw new Error('Tweet not found: ' + id);
     }
 
-    let currentTags: string[] = existing.tags || [];
+    let currentTags: string[] = JSON.parse(existing.tags || '[]');
 
     if (add_tags && add_tags.length > 0) {
       const tagSet = new Set(currentTags);
@@ -361,22 +287,18 @@ export async function feed(args: {
       currentTags = currentTags.filter((t: string) => !removeSet.has(t));
     }
 
-    const { error: updateError } = await supabase
-      .from('content')
-      .update({ tags: currentTags })
-      .eq('id', id);
+    const now = new Date().toISOString();
+    await ultralight.db.run(
+      'UPDATE tweets SET tags = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+      [JSON.stringify(currentTags), now, id, ultralight.user.id]
+    );
 
-    if (updateError) {
-      throw new Error('Tag update failed: ' + updateError.message);
-    }
+    const updated = await ultralight.db.first(
+      'SELECT * FROM tweets WHERE id = ? AND user_id = ?',
+      [id, ultralight.user.id]
+    );
 
-    const { data: updated } = await supabase
-      .from('content')
-      .select(CONTENT_COLUMNS)
-      .eq('id', id)
-      .single();
-
-    return { tweets: updated ? [updated] : [], total: 1, action: 'tag' };
+    return { tweets: updated ? [parseTweetRow(updated)] : [], total: 1, action: 'tag' };
   }
 
   // THREAD — get all tweets in a thread, ordered by position
@@ -385,55 +307,56 @@ export async function feed(args: {
       throw new Error('thread_id is required for action "thread"');
     }
 
-    const { data, error } = await supabase
-      .from('content')
-      .select(CONTENT_COLUMNS)
-      .eq('source_type', 'tweet')
-      .contains('source_meta', { thread_id: thread_id })
-      .order('created_at', { ascending: true });
+    const rows = await ultralight.db.all(
+      'SELECT * FROM tweets WHERE source_type = ? AND user_id = ? AND source_meta LIKE ? ORDER BY created_at ASC',
+      ['tweet', ultralight.user.id, '%"thread_id":"' + thread_id + '"%']
+    );
 
-    if (error) {
-      throw new Error('Thread fetch failed: ' + error.message);
-    }
-
+    const parsed = rows.map(parseTweetRow);
     // Sort by thread_position if available
-    const sorted = (data || []).sort((a: any, b: any) => {
+    parsed.sort((a: any, b: any) => {
       const posA = a.source_meta?.thread_position ?? 999;
       const posB = b.source_meta?.thread_position ?? 999;
       return posA - posB;
     });
 
-    return { tweets: sorted, total: sorted.length, action: 'thread' };
+    return { tweets: parsed, total: parsed.length, action: 'thread' };
   }
 
   // LIST — paginated listing with filters (default)
   const pageSize = limit || 20;
-  let query = supabase
-    .from('content')
-    .select(CONTENT_COLUMNS)
-    .eq('source_type', 'tweet')
-    .order('created_at', { ascending: false })
-    .limit(pageSize);
+  let query = 'SELECT * FROM tweets WHERE source_type = ? AND user_id = ?';
+  const params: any[] = ['tweet', ultralight.user.id];
 
-  if (offset) {
-    query = query.range(offset, offset + pageSize - 1);
-  }
   if (author) {
-    query = query.eq('author', author);
+    query += ' AND author = ?';
+    params.push(author);
   }
   if (since) {
-    query = query.gte('created_at', since);
+    query += ' AND created_at >= ?';
+    params.push(since);
   }
+
+  query += ' ORDER BY created_at DESC LIMIT ?';
+  params.push(pageSize);
+
+  if (offset) {
+    query = query.replace('LIMIT ?', 'LIMIT ? OFFSET ?');
+    params.push(offset);
+  }
+
+  const rows = await ultralight.db.all(query, params);
+  let parsed = rows.map(parseTweetRow);
+
+  // Filter by tags in app layer (JSON array in TEXT column)
   if (tags && tags.length > 0) {
-    query = query.overlaps('tags', tags);
+    parsed = parsed.filter((t: any) => {
+      const tweetTags = t.tags || [];
+      return tags.some((tag: string) => tweetTags.includes(tag));
+    });
   }
 
-  const { data, error } = await query;
-  if (error) {
-    throw new Error('Feed query failed: ' + error.message);
-  }
-
-  return { tweets: data || [], total: (data || []).length, action: 'list' };
+  return { tweets: parsed, total: parsed.length, action: 'list' };
 }
 
 // ============================================
@@ -518,7 +441,7 @@ export async function parse(args: {
 }
 
 // ============================================
-// 5. STATUS — Tweet-specific stats + health
+// 5. STATUS — Tweet-specific stats
 // ============================================
 
 export async function status(args?: Record<string, never>): Promise<{
@@ -531,62 +454,52 @@ export async function status(args?: Record<string, never>): Promise<{
   top_authors: Array<{ author: string; count: number }>;
   recent_activity: { last_24h: number; last_7d: number };
 }> {
-  let supabaseOk = false;
+  const totalRow = await ultralight.db.first(
+    'SELECT COUNT(*) as cnt FROM tweets WHERE source_type = ? AND user_id = ?',
+    ['tweet', ultralight.user.id]
+  );
+  const totalTweets = totalRow ? totalRow.cnt : 0;
 
-  try {
-    await supabase.from('content').select('id').limit(1);
-    supabaseOk = true;
-  } catch (e) {
-    console.error('Supabase health check failed:', e);
-  }
+  const embeddedRow = await ultralight.db.first(
+    'SELECT COUNT(*) as cnt FROM tweets WHERE source_type = ? AND user_id = ? AND embedded_at IS NOT NULL',
+    ['tweet', ultralight.user.id]
+  );
+  const totalEmbedded = embeddedRow ? embeddedRow.cnt : 0;
 
-  // Parallel stat queries — all filtered to source_type='tweet'
-  const [
-    totalCount,
-    embeddedCount,
-    digestedCount,
-  ] = await Promise.all([
-    supabase.from('content').select('id', { count: 'exact', head: true }).eq('source_type', 'tweet'),
-    supabase.from('content').select('id', { count: 'exact', head: true }).eq('source_type', 'tweet').not('embedding', 'is', null),
-    supabase.from('content').select('id', { count: 'exact', head: true }).eq('source_type', 'tweet').not('digested_at', 'is', null),
-  ]);
-
-  const totalTweets = totalCount.count || 0;
-  const totalEmbedded = embeddedCount.count || 0;
-  const totalDigested = digestedCount.count || 0;
+  const digestedRow = await ultralight.db.first(
+    'SELECT COUNT(*) as cnt FROM tweets WHERE source_type = ? AND user_id = ? AND digested_at IS NOT NULL',
+    ['tweet', ultralight.user.id]
+  );
+  const totalDigested = digestedRow ? digestedRow.cnt : 0;
 
   // Top authors
-  const { data: authorRows } = await supabase
-    .from('content')
-    .select('author')
-    .eq('source_type', 'tweet')
-    .not('author', 'is', null);
+  const authorRows = await ultralight.db.all(
+    'SELECT author, COUNT(*) as cnt FROM tweets WHERE source_type = ? AND user_id = ? AND author IS NOT NULL GROUP BY author ORDER BY cnt DESC LIMIT 10',
+    ['tweet', ultralight.user.id]
+  );
 
-  const authorCounts: Record<string, number> = {};
-  if (authorRows) {
-    for (const row of authorRows) {
-      const a = row.author || 'unknown';
-      authorCounts[a] = (authorCounts[a] || 0) + 1;
-    }
-  }
-
-  const topAuthors = Object.entries(authorCounts)
-    .map(([author, count]) => ({ author: author, count: count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 10);
+  const topAuthors = authorRows.map((row: any) => ({
+    author: row.author,
+    count: row.cnt,
+  }));
 
   // Recent activity
   const now = new Date();
   const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  const [last24h, last7d] = await Promise.all([
-    supabase.from('content').select('id', { count: 'exact', head: true }).eq('source_type', 'tweet').gte('created_at', oneDayAgo),
-    supabase.from('content').select('id', { count: 'exact', head: true }).eq('source_type', 'tweet').gte('created_at', sevenDaysAgo),
-  ]);
+  const last24hRow = await ultralight.db.first(
+    'SELECT COUNT(*) as cnt FROM tweets WHERE source_type = ? AND user_id = ? AND created_at >= ?',
+    ['tweet', ultralight.user.id, oneDayAgo]
+  );
+
+  const last7dRow = await ultralight.db.first(
+    'SELECT COUNT(*) as cnt FROM tweets WHERE source_type = ? AND user_id = ? AND created_at >= ?',
+    ['tweet', ultralight.user.id, sevenDaysAgo]
+  );
 
   return {
-    health: supabaseOk ? 'healthy' : 'degraded',
+    health: 'healthy',
     total_tweets: totalTweets,
     total_embedded: totalEmbedded,
     total_unembedded: totalTweets - totalEmbedded,
@@ -594,8 +507,8 @@ export async function status(args?: Record<string, never>): Promise<{
     total_undigested: totalTweets - totalDigested,
     top_authors: topAuthors,
     recent_activity: {
-      last_24h: last24h.count || 0,
-      last_7d: last7d.count || 0,
+      last_24h: last24hRow ? last24hRow.cnt : 0,
+      last_7d: last7dRow ? last7dRow.cnt : 0,
     },
   };
 }
@@ -614,43 +527,31 @@ export async function ui(args: {
   // Fetch stats for the dashboard
   let statsData: any = null;
   try {
-    const [totalCount, embeddedCount] = await Promise.all([
-      supabase.from('content').select('id', { count: 'exact', head: true }).eq('source_type', 'tweet'),
-      supabase.from('content').select('id', { count: 'exact', head: true }).eq('source_type', 'tweet').not('embedding', 'is', null),
-    ]);
+    const totalRow = await ultralight.db.first(
+      'SELECT COUNT(*) as cnt FROM tweets WHERE source_type = ? AND user_id = ?',
+      ['tweet', ultralight.user.id]
+    );
+    const embeddedRow = await ultralight.db.first(
+      'SELECT COUNT(*) as cnt FROM tweets WHERE source_type = ? AND user_id = ? AND embedded_at IS NOT NULL',
+      ['tweet', ultralight.user.id]
+    );
 
     // Top authors
-    const { data: authorRows } = await supabase
-      .from('content')
-      .select('author')
-      .eq('source_type', 'tweet')
-      .not('author', 'is', null);
-
-    const authorCounts: Record<string, number> = {};
-    if (authorRows) {
-      for (const row of authorRows) {
-        const a = row.author || 'unknown';
-        authorCounts[a] = (authorCounts[a] || 0) + 1;
-      }
-    }
-
-    const topAuthors = Object.entries(authorCounts)
-      .map(([author, count]) => ({ author: author, count: count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 5);
+    const authorRows = await ultralight.db.all(
+      'SELECT author, COUNT(*) as cnt FROM tweets WHERE source_type = ? AND user_id = ? AND author IS NOT NULL GROUP BY author ORDER BY cnt DESC LIMIT 5',
+      ['tweet', ultralight.user.id]
+    );
 
     // Recent tweets
-    const { data: recentTweets } = await supabase
-      .from('content')
-      .select('id, body, author, source_url, created_at')
-      .eq('source_type', 'tweet')
-      .order('created_at', { ascending: false })
-      .limit(10);
+    const recentTweets = await ultralight.db.all(
+      'SELECT id, body, author, source_url, created_at FROM tweets WHERE source_type = ? AND user_id = ? ORDER BY created_at DESC LIMIT 10',
+      ['tweet', ultralight.user.id]
+    );
 
     statsData = {
-      total: totalCount.count || 0,
-      embedded: embeddedCount.count || 0,
-      topAuthors: topAuthors,
+      total: totalRow ? totalRow.cnt : 0,
+      embedded: embeddedRow ? embeddedRow.cnt : 0,
+      topAuthors: authorRows.map((r: any) => ({ author: r.author, count: r.cnt })),
       recent: recentTweets || [],
     };
   } catch (e) {

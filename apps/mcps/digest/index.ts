@@ -1,76 +1,16 @@
 // Digest MCP — Synthesis Engine
 //
-// Processes undigested content from the shared store, clusters related items,
+// Processes undigested content, clusters related items,
 // synthesizes insights using AI, and manages the newsletter pipeline.
 // Designed for micro-step execution (each function <30s) driven by cron.
 //
-// Pipeline: collect → synthesize → review → compose → approve
+// Pipeline: collect -> synthesize -> review -> compose -> approve
 //
-// Storage: BYOS Supabase (research-intelligence-hub) — shared with all MCPs
+// Storage: Ultralight D1
 // AI: ultralight.ai() for LLM synthesis + embeddings
 // Permissions: ai:call (synthesis + embeddings), net:fetch (external APIs)
 
-const supabase = (globalThis as any).supabase;
 const ultralight = (globalThis as any).ultralight;
-const uuid = (globalThis as any).uuid;
-
-// ============================================
-// TYPES
-// ============================================
-
-interface InsightRow {
-  id: string;
-  digest_run_id: string | null;
-  source_content_ids: string[];
-  title: string;
-  body: string;
-  themes: string[];
-  tags: string[];
-  newsletter_section: string | null;
-  newsletter_id: string | null;
-  approved: boolean;
-  approved_at: string | null;
-  rejected: boolean;
-  revision_notes: string | null;
-  codebase_relevance: Record<string, unknown> | null;
-  created_at: string;
-  updated_at: string;
-}
-
-interface DigestRunRow {
-  id: string;
-  step: string;
-  status: string;
-  items_processed: number;
-  items_created: number;
-  error_message: string | null;
-  duration_ms: number | null;
-  ai_input_tokens: number;
-  ai_output_tokens: number;
-  ai_cost_light: number;
-  started_at: string;
-  completed_at: string | null;
-}
-
-interface NewsletterRow {
-  id: string;
-  title: string;
-  slug: string | null;
-  sections: Array<{
-    section: string;
-    insight_id: string;
-    content: string;
-    order: number;
-  }>;
-  status: string;
-  published_url: string | null;
-  email_sent_at: string | null;
-  email_send_count: number;
-  created_at: string;
-}
-
-// Insight columns — excludes embedding for payload size
-const INSIGHT_COLUMNS = 'id, digest_run_id, source_content_ids, title, body, themes, tags, newsletter_section, newsletter_id, approved, approved_at, rejected, revision_notes, codebase_relevance, created_at, updated_at';
 
 // ============================================
 // INTERNAL HELPERS
@@ -97,26 +37,31 @@ async function logDigestRun(step: string, status: string, metrics: {
   ai_output_tokens?: number;
   ai_cost_light?: number;
 }): Promise<string> {
-  const runId = uuid.v4();
+  const runId = crypto.randomUUID();
   const now = new Date().toISOString();
 
-  await supabase.from('digest_runs').insert({
-    id: runId,
-    step: step,
-    status: status,
-    items_processed: metrics.items_processed || 0,
-    items_created: metrics.items_created || 0,
-    error_message: metrics.error_message || null,
-    duration_ms: metrics.duration_ms || null,
-    ai_input_tokens: metrics.ai_input_tokens || 0,
-    ai_output_tokens: metrics.ai_output_tokens || 0,
-    ai_cost_light: metrics.ai_cost_light || 0,
-    started_at: now,
-    completed_at: status === 'running' ? null : now,
-  });
+  await ultralight.db.run(
+    'INSERT INTO digest_runs (id, user_id, step, status, items_processed, items_created, error_message, duration_ms, ai_input_tokens, ai_output_tokens, ai_cost_light, started_at, completed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [runId, ultralight.user.id, step, status, metrics.items_processed || 0, metrics.items_created || 0, metrics.error_message || null, metrics.duration_ms || null, metrics.ai_input_tokens || 0, metrics.ai_output_tokens || 0, metrics.ai_cost_light || 0, now, status === 'running' ? null : now, now, now]
+  );
 
   return runId;
 }
+
+function parseInsightRow(row: any): any {
+  return {
+    ...row,
+    source_content_ids: JSON.parse(row.source_content_ids || '[]'),
+    themes: JSON.parse(row.themes || '[]'),
+    tags: JSON.parse(row.tags || '[]'),
+    codebase_relevance: row.codebase_relevance ? JSON.parse(row.codebase_relevance) : null,
+    approved: !!row.approved,
+    rejected: !!row.rejected,
+  };
+}
+
+// Insight columns — excludes embedding for payload size
+const INSIGHT_SELECT = 'id, digest_run_id, source_content_ids, title, body, themes, tags, theme_id, newsletter_section, newsletter_id, approved, approved_at, rejected, revision_notes, codebase_relevance, created_at, updated_at';
 
 // ============================================
 // 1. SYNTHESIZE — Process undigested content into insights
@@ -138,14 +83,31 @@ export async function synthesize(args: {
 
   const startTime = Date.now();
 
-  // Fetch undigested content
-  const { data: undigested, error: fetchError } = await supabase.rpc('get_undigested', {
-    batch_limit: batchSize,
-    source_filter: sourceFilter,
-  });
+  // Fetch undigested content from the embeds table (shared store)
+  // Note: This assumes the embeds MCP is also using D1 and the table is accessible
+  // In practice, this would query the embeds table or a local content mirror
+  let undigestedQuery = 'SELECT id, source_type, title, body, author, theme_id FROM embeds WHERE digested_at IS NULL AND embedded_at IS NOT NULL AND user_id = ?';
+  const params: any[] = [ultralight.user.id];
 
-  if (fetchError) {
-    throw new Error('Failed to fetch undigested content: ' + fetchError.message);
+  if (sourceFilter) {
+    undigestedQuery += ' AND source_type = ?';
+    params.push(sourceFilter);
+  }
+
+  undigestedQuery += ' ORDER BY created_at DESC LIMIT ?';
+  params.push(batchSize);
+
+  let undigested: any[];
+  try {
+    undigested = await ultralight.db.all(undigestedQuery, params);
+  } catch (e) {
+    // If embeds table doesn't exist in this DB, return empty
+    const runId = await logDigestRun('synthesize', 'completed', {
+      items_processed: 0,
+      items_created: 0,
+      duration_ms: Date.now() - startTime,
+    });
+    return { success: true, insights_created: 0, content_digested: 0, run_id: runId };
   }
 
   if (!undigested || undigested.length === 0) {
@@ -157,47 +119,23 @@ export async function synthesize(args: {
     return { success: true, insights_created: 0, content_digested: 0, run_id: runId };
   }
 
-  // Load available themes for AI routing
-  const { data: allThemes } = await supabase
-    .from('themes')
-    .select('id, slug, name, hemisphere, cluster, room_name')
-    .eq('hemisphere', 'digest')
-    .order('sort_order', { ascending: true });
-
-  const themeMap: Record<string, string> = {}; // slug → id
-  const themeSlugs: string[] = [];
-  if (allThemes) {
-    for (const t of allThemes) {
-      themeMap[t.slug] = t.id;
-      themeSlugs.push(t.slug);
-    }
-  }
-
-  const themeList = (allThemes || [])
-    .map((t: any) => '  - "' + t.slug + '" (' + t.name + ' → #' + t.room_name + ')')
-    .join('\n');
-
   // Prepare content summaries for AI
   const contentSummaries = undigested.map((item: any, idx: number) => {
     const source = item.source_type || 'unknown';
     const author = item.author ? ' by @' + item.author : '';
     const title = item.title ? ' — ' + item.title : '';
     const body = (item.body || '').slice(0, 500);
-    const themeTag = item.theme_id ? ' [theme:pre-assigned]' : '';
-    return (idx + 1) + '. [' + source + author + title + themeTag + '] ' + body;
+    return (idx + 1) + '. [' + source + author + title + '] ' + body;
   }).join('\n\n');
 
   // Synthesize with AI
   const systemPrompt = 'You are a research intelligence analyst. Given a batch of content (tweets, notes, articles), identify 1-5 key insights. Each insight should synthesize multiple pieces of content into a coherent observation, trend, or actionable takeaway.\n\n'
-    + 'Each insight MUST be assigned to exactly one theme_slug from this list:\n'
-    + themeList + '\n\n'
     + 'Output ONLY valid JSON in this exact format:\n'
     + '{\n'
     + '  "insights": [\n'
     + '    {\n'
     + '      "title": "Concise insight title",\n'
     + '      "body": "2-4 sentences explaining the insight, connecting the sources, and why it matters",\n'
-    + '      "theme_slug": "ai",\n'
     + '      "themes": ["theme1", "theme2"],\n'
     + '      "source_indices": [1, 3, 5],\n'
     + '      "newsletter_section": "lead" | "analysis" | "links" | "coda" | null\n'
@@ -220,7 +158,7 @@ export async function synthesize(args: {
       ],
     });
   } catch (err) {
-    const runId = await logDigestRun('synthesize', 'failed', {
+    await logDigestRun('synthesize', 'failed', {
       items_processed: undigested.length,
       error_message: 'AI synthesis failed: ' + (err instanceof Error ? err.message : String(err)),
       duration_ms: Date.now() - startTime,
@@ -229,14 +167,13 @@ export async function synthesize(args: {
   }
 
   // Parse AI response
-  let parsed: { insights: Array<{ title: string; body: string; theme_slug?: string; themes: string[]; source_indices: number[]; newsletter_section: string | null }> };
+  let parsed: { insights: Array<{ title: string; body: string; themes: string[]; source_indices: number[]; newsletter_section: string | null }> };
   try {
     const content = aiResponse.content || aiResponse.text || '';
-    // Extract JSON from possible markdown code blocks
     const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, content];
     parsed = JSON.parse(jsonMatch[1] || content);
   } catch (err) {
-    const runId = await logDigestRun('synthesize', 'failed', {
+    await logDigestRun('synthesize', 'failed', {
       items_processed: undigested.length,
       error_message: 'Failed to parse AI response as JSON',
       duration_ms: Date.now() - startTime,
@@ -245,7 +182,7 @@ export async function synthesize(args: {
   }
 
   if (!parsed.insights || !Array.isArray(parsed.insights)) {
-    const runId = await logDigestRun('synthesize', 'failed', {
+    await logDigestRun('synthesize', 'failed', {
       items_processed: undigested.length,
       error_message: 'AI response missing insights array',
       duration_ms: Date.now() - startTime,
@@ -253,93 +190,54 @@ export async function synthesize(args: {
     throw new Error('AI response missing insights array');
   }
 
-  const digestRunId = uuid.v4();
+  const digestRunId = crypto.randomUUID();
   let insightsCreated = 0;
 
   // Insert insights
   for (const insight of parsed.insights) {
     try {
-      // Map source_indices to content IDs
       const sourceIds = (insight.source_indices || [])
         .filter((i: number) => i >= 1 && i <= undigested.length)
         .map((i: number) => undigested[i - 1].id);
 
       // Generate embedding for the insight
-      let embedding: number[] | null = null;
+      let embedding: string | null = null;
       try {
-        embedding = await generateEmbedding(insight.title + '\n\n' + insight.body);
+        const embeddingArr = await generateEmbedding(insight.title + '\n\n' + insight.body);
+        embedding = JSON.stringify(embeddingArr);
       } catch (e) {
         console.warn('Insight embedding failed:', e);
       }
 
-      // Resolve theme_id from AI-assigned slug, or inherit from majority source content
-      let resolvedThemeId: string | null = null;
-      if (insight.theme_slug && themeMap[insight.theme_slug]) {
-        resolvedThemeId = themeMap[insight.theme_slug];
-      } else {
-        // Fallback: use the most common theme_id from source content
-        const sourceThemes = sourceIds
-          .map((sid: string) => {
-            const item = undigested.find((u: any) => u.id === sid);
-            return item?.theme_id || null;
-          })
-          .filter(Boolean);
-        if (sourceThemes.length > 0) {
-          // Pick the most frequent theme_id
-          const freq: Record<string, number> = {};
-          for (const tid of sourceThemes) {
-            freq[tid] = (freq[tid] || 0) + 1;
-          }
-          resolvedThemeId = Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0];
-        }
-      }
-
-      const insightId = uuid.v4();
+      const insightId = crypto.randomUUID();
       const now = new Date().toISOString();
 
-      const { error: insertError } = await supabase.from('insights').insert({
-        id: insightId,
-        digest_run_id: digestRunId,
-        source_content_ids: sourceIds,
-        title: insight.title,
-        body: insight.body,
-        themes: insight.themes || [],
-        tags: [],
-        theme_id: resolvedThemeId,
-        embedding: embedding,
-        newsletter_section: insight.newsletter_section || null,
-        newsletter_id: null,
-        approved: false,
-        rejected: false,
-        created_at: now,
-        updated_at: now,
-      });
+      await ultralight.db.run(
+        'INSERT INTO insights (id, user_id, digest_run_id, source_content_ids, title, body, themes, tags, theme_id, embedding, newsletter_section, newsletter_id, approved, approved_at, rejected, revision_notes, codebase_relevance, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [insightId, ultralight.user.id, digestRunId, JSON.stringify(sourceIds), insight.title, insight.body, JSON.stringify(insight.themes || []), '[]', null, embedding, insight.newsletter_section || null, null, 0, null, 0, null, null, now, now]
+      );
 
-      if (insertError) {
-        console.error('Failed to insert insight:', insertError.message);
-      } else {
-        insightsCreated = insightsCreated + 1;
-      }
+      insightsCreated = insightsCreated + 1;
     } catch (err) {
       console.error('Error processing insight:', err);
     }
   }
 
-  // Mark content as digested
+  // Mark content as digested in the embeds table
   const contentIds = undigested.map((item: any) => item.id);
   const now = new Date().toISOString();
-  const { error: updateError } = await supabase
-    .from('content')
-    .update({ digested_at: now, digest_run_id: digestRunId })
-    .in('id', contentIds);
-
-  if (updateError) {
-    console.error('Failed to mark content as digested:', updateError.message);
+  const placeholders = contentIds.map(() => '?').join(', ');
+  try {
+    await ultralight.db.run(
+      'UPDATE embeds SET digested_at = ?, digest_run_id = ?, updated_at = ? WHERE id IN (' + placeholders + ') AND user_id = ?',
+      [now, digestRunId, now, ...contentIds, ultralight.user.id]
+    );
+  } catch (e) {
+    console.error('Failed to mark content as digested:', e);
   }
 
   const durationMs = Date.now() - startTime;
 
-  // Log the run
   await logDigestRun('synthesize', 'completed', {
     items_processed: undigested.length,
     items_created: insightsCreated,
@@ -367,63 +265,44 @@ export async function review(args: {
   revision_notes?: string;
   newsletter_section?: string;
   limit?: number;
-}): Promise<{ insights: InsightRow[]; total: number; action: string }> {
+}): Promise<{ insights: any[]; total: number; action: string }> {
   const { action, insight_id, revision_notes, newsletter_section, limit } = args;
 
   if (!action) {
     throw new Error('action is required: "pending", "approve", "reject", "revise", "approved", "rejected"');
   }
 
-  // LIST PENDING — insights awaiting review
+  // LIST PENDING
   if (action === 'pending') {
     const pageSize = limit || 20;
-    const { data, error } = await supabase
-      .from('insights')
-      .select(INSIGHT_COLUMNS)
-      .eq('approved', false)
-      .eq('rejected', false)
-      .order('created_at', { ascending: false })
-      .limit(pageSize);
-
-    if (error) {
-      throw new Error('Failed to fetch pending insights: ' + error.message);
-    }
-
-    return { insights: data || [], total: (data || []).length, action: 'pending' };
+    const rows = await ultralight.db.all(
+      'SELECT ' + INSIGHT_SELECT + ' FROM insights WHERE approved = 0 AND rejected = 0 AND user_id = ? ORDER BY created_at DESC LIMIT ?',
+      [ultralight.user.id, pageSize]
+    );
+    const parsed = rows.map(parseInsightRow);
+    return { insights: parsed, total: parsed.length, action: 'pending' };
   }
 
   // LIST APPROVED
   if (action === 'approved') {
     const pageSize = limit || 20;
-    const { data, error } = await supabase
-      .from('insights')
-      .select(INSIGHT_COLUMNS)
-      .eq('approved', true)
-      .order('approved_at', { ascending: false })
-      .limit(pageSize);
-
-    if (error) {
-      throw new Error('Failed to fetch approved insights: ' + error.message);
-    }
-
-    return { insights: data || [], total: (data || []).length, action: 'approved' };
+    const rows = await ultralight.db.all(
+      'SELECT ' + INSIGHT_SELECT + ' FROM insights WHERE approved = 1 AND user_id = ? ORDER BY approved_at DESC LIMIT ?',
+      [ultralight.user.id, pageSize]
+    );
+    const parsed = rows.map(parseInsightRow);
+    return { insights: parsed, total: parsed.length, action: 'approved' };
   }
 
   // LIST REJECTED
   if (action === 'rejected') {
     const pageSize = limit || 20;
-    const { data, error } = await supabase
-      .from('insights')
-      .select(INSIGHT_COLUMNS)
-      .eq('rejected', true)
-      .order('updated_at', { ascending: false })
-      .limit(pageSize);
-
-    if (error) {
-      throw new Error('Failed to fetch rejected insights: ' + error.message);
-    }
-
-    return { insights: data || [], total: (data || []).length, action: 'rejected' };
+    const rows = await ultralight.db.all(
+      'SELECT ' + INSIGHT_SELECT + ' FROM insights WHERE rejected = 1 AND user_id = ? ORDER BY updated_at DESC LIMIT ?',
+      [ultralight.user.id, pageSize]
+    );
+    const parsed = rows.map(parseInsightRow);
+    return { insights: parsed, total: parsed.length, action: 'rejected' };
   }
 
   // APPROVE
@@ -433,31 +312,25 @@ export async function review(args: {
     }
 
     const now = new Date().toISOString();
-    const updates: Record<string, unknown> = {
-      approved: true,
-      approved_at: now,
-      rejected: false,
-    };
+    let sql = 'UPDATE insights SET approved = 1, approved_at = ?, rejected = 0, updated_at = ?';
+    const params: any[] = [now, now];
+
     if (newsletter_section) {
-      updates.newsletter_section = newsletter_section;
+      sql += ', newsletter_section = ?';
+      params.push(newsletter_section);
     }
 
-    const { error } = await supabase
-      .from('insights')
-      .update(updates)
-      .eq('id', insight_id);
+    sql += ' WHERE id = ? AND user_id = ?';
+    params.push(insight_id, ultralight.user.id);
 
-    if (error) {
-      throw new Error('Failed to approve insight: ' + error.message);
-    }
+    await ultralight.db.run(sql, params);
 
-    const { data: updated } = await supabase
-      .from('insights')
-      .select(INSIGHT_COLUMNS)
-      .eq('id', insight_id)
-      .single();
+    const updated = await ultralight.db.first(
+      'SELECT ' + INSIGHT_SELECT + ' FROM insights WHERE id = ? AND user_id = ?',
+      [insight_id, ultralight.user.id]
+    );
 
-    return { insights: updated ? [updated] : [], total: 1, action: 'approve' };
+    return { insights: updated ? [parseInsightRow(updated)] : [], total: 1, action: 'approve' };
   }
 
   // REJECT
@@ -466,54 +339,38 @@ export async function review(args: {
       throw new Error('insight_id is required for action "reject"');
     }
 
-    const { error } = await supabase
-      .from('insights')
-      .update({
-        rejected: true,
-        approved: false,
-        revision_notes: revision_notes || null,
-      })
-      .eq('id', insight_id);
+    const now = new Date().toISOString();
+    await ultralight.db.run(
+      'UPDATE insights SET rejected = 1, approved = 0, revision_notes = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+      [revision_notes || null, now, insight_id, ultralight.user.id]
+    );
 
-    if (error) {
-      throw new Error('Failed to reject insight: ' + error.message);
-    }
+    const updated = await ultralight.db.first(
+      'SELECT ' + INSIGHT_SELECT + ' FROM insights WHERE id = ? AND user_id = ?',
+      [insight_id, ultralight.user.id]
+    );
 
-    const { data: updated } = await supabase
-      .from('insights')
-      .select(INSIGHT_COLUMNS)
-      .eq('id', insight_id)
-      .single();
-
-    return { insights: updated ? [updated] : [], total: 1, action: 'reject' };
+    return { insights: updated ? [parseInsightRow(updated)] : [], total: 1, action: 'reject' };
   }
 
-  // REVISE — Add notes for the next synthesis pass
+  // REVISE
   if (action === 'revise') {
     if (!insight_id || !revision_notes) {
       throw new Error('insight_id and revision_notes are required for action "revise"');
     }
 
-    const { error } = await supabase
-      .from('insights')
-      .update({
-        revision_notes: revision_notes,
-        approved: false,
-        rejected: false,
-      })
-      .eq('id', insight_id);
+    const now = new Date().toISOString();
+    await ultralight.db.run(
+      'UPDATE insights SET revision_notes = ?, approved = 0, rejected = 0, updated_at = ? WHERE id = ? AND user_id = ?',
+      [revision_notes, now, insight_id, ultralight.user.id]
+    );
 
-    if (error) {
-      throw new Error('Failed to add revision notes: ' + error.message);
-    }
+    const updated = await ultralight.db.first(
+      'SELECT ' + INSIGHT_SELECT + ' FROM insights WHERE id = ? AND user_id = ?',
+      [insight_id, ultralight.user.id]
+    );
 
-    const { data: updated } = await supabase
-      .from('insights')
-      .select(INSIGHT_COLUMNS)
-      .eq('id', insight_id)
-      .single();
-
-    return { insights: updated ? [updated] : [], total: 1, action: 'revise' };
+    return { insights: updated ? [parseInsightRow(updated)] : [], total: 1, action: 'revise' };
   }
 
   throw new Error('Unknown action: ' + action + '. Use "pending", "approve", "reject", "revise", "approved", or "rejected".');
@@ -542,36 +399,21 @@ export async function compose(args: {
   }
 
   const maxSections = max_sections || 8;
-  let selectedInsights: InsightRow[];
+  let selectedInsights: any[];
 
   if (insight_ids && insight_ids.length > 0) {
-    // Use specified insights
-    const { data, error } = await supabase
-      .from('insights')
-      .select(INSIGHT_COLUMNS)
-      .in('id', insight_ids)
-      .eq('approved', true);
-
-    if (error) {
-      throw new Error('Failed to fetch insights: ' + error.message);
-    }
-
-    selectedInsights = data || [];
+    const placeholders = insight_ids.map(() => '?').join(', ');
+    const rows = await ultralight.db.all(
+      'SELECT ' + INSIGHT_SELECT + ' FROM insights WHERE id IN (' + placeholders + ') AND approved = 1 AND user_id = ?',
+      [...insight_ids, ultralight.user.id]
+    );
+    selectedInsights = rows.map(parseInsightRow);
   } else if (auto_select !== false) {
-    // Auto-select approved insights not yet in a newsletter
-    const { data, error } = await supabase
-      .from('insights')
-      .select(INSIGHT_COLUMNS)
-      .eq('approved', true)
-      .is('newsletter_id', null)
-      .order('created_at', { ascending: false })
-      .limit(maxSections);
-
-    if (error) {
-      throw new Error('Failed to auto-select insights: ' + error.message);
-    }
-
-    selectedInsights = data || [];
+    const rows = await ultralight.db.all(
+      'SELECT ' + INSIGHT_SELECT + ' FROM insights WHERE approved = 1 AND newsletter_id IS NULL AND user_id = ? ORDER BY created_at DESC LIMIT ?',
+      [ultralight.user.id, maxSections]
+    );
+    selectedInsights = rows.map(parseInsightRow);
   } else {
     throw new Error('Either insight_ids or auto_select must be provided');
   }
@@ -581,48 +423,36 @@ export async function compose(args: {
   }
 
   // Create newsletter
-  const newsletterId = uuid.v4();
+  const newsletterId = crypto.randomUUID();
   const now = new Date().toISOString();
 
-  // Build sections — order by newsletter_section priority, then by creation date
+  // Build sections
   const sectionOrder: Record<string, number> = { lead: 1, analysis: 2, links: 3, coda: 4 };
   const sections = selectedInsights
-    .sort((a, b) => {
+    .sort((a: any, b: any) => {
       const orderA = sectionOrder[a.newsletter_section || ''] || 3;
       const orderB = sectionOrder[b.newsletter_section || ''] || 3;
       return orderA - orderB;
     })
-    .map((insight, idx) => ({
+    .map((insight: any, idx: number) => ({
       section: insight.newsletter_section || 'analysis',
       insight_id: insight.id,
       content: '## ' + insight.title + '\n\n' + insight.body,
       order: idx + 1,
     }));
 
-  const { error: insertError } = await supabase.from('newsletters').insert({
-    id: newsletterId,
-    title: title,
-    slug: null,
-    sections: sections,
-    status: 'draft',
-    created_at: now,
-    updated_at: now,
-  });
-
-  if (insertError) {
-    throw new Error('Failed to create newsletter: ' + insertError.message);
-  }
+  await ultralight.db.run(
+    'INSERT INTO newsletters (id, user_id, title, slug, sections, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [newsletterId, ultralight.user.id, title, null, JSON.stringify(sections), 'draft', now, now]
+  );
 
   // Link insights to this newsletter
-  const insightIdsToLink = selectedInsights.map((i) => i.id);
-  const { error: linkError } = await supabase
-    .from('insights')
-    .update({ newsletter_id: newsletterId })
-    .in('id', insightIdsToLink);
-
-  if (linkError) {
-    console.error('Failed to link insights to newsletter:', linkError.message);
-  }
+  const insightIdsToLink = selectedInsights.map((i: any) => i.id);
+  const placeholders = insightIdsToLink.map(() => '?').join(', ');
+  await ultralight.db.run(
+    'UPDATE insights SET newsletter_id = ?, updated_at = ? WHERE id IN (' + placeholders + ') AND user_id = ?',
+    [newsletterId, now, ...insightIdsToLink, ultralight.user.id]
+  );
 
   return {
     success: true,
@@ -644,123 +474,120 @@ export async function newsletter(args: {
   title?: string;
   sections?: Array<{ section: string; insight_id: string; content: string; order: number }>;
   limit?: number;
-}): Promise<{ newsletters: NewsletterRow[]; total: number; action: string }> {
+}): Promise<{ newsletters: any[]; total: number; action: string }> {
   const { action, newsletter_id, status_filter, title, sections, limit } = args;
 
   if (!action) {
     throw new Error('action is required: "list", "get", "update", "approve", or "render"');
   }
 
-  // LIST — filter by status
+  // LIST
   if (action === 'list') {
     const pageSize = limit || 20;
-    let query = supabase
-      .from('newsletters')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(pageSize);
+    let sql = 'SELECT * FROM newsletters WHERE user_id = ?';
+    const params: any[] = [ultralight.user.id];
 
     if (status_filter) {
-      query = query.eq('status', status_filter);
+      sql += ' AND status = ?';
+      params.push(status_filter);
     }
 
-    const { data, error } = await query;
-    if (error) {
-      throw new Error('Failed to fetch newsletters: ' + error.message);
-    }
+    sql += ' ORDER BY created_at DESC LIMIT ?';
+    params.push(pageSize);
 
-    return { newsletters: data || [], total: (data || []).length, action: 'list' };
+    const rows = await ultralight.db.all(sql, params);
+    const parsed = rows.map((r: any) => ({ ...r, sections: JSON.parse(r.sections || '[]') }));
+    return { newsletters: parsed, total: parsed.length, action: 'list' };
   }
 
-  // GET — single newsletter by ID
+  // GET
   if (action === 'get') {
     if (!newsletter_id) {
       throw new Error('newsletter_id is required for action "get"');
     }
 
-    const { data, error } = await supabase
-      .from('newsletters')
-      .select('*')
-      .eq('id', newsletter_id)
-      .single();
+    const row = await ultralight.db.first(
+      'SELECT * FROM newsletters WHERE id = ? AND user_id = ?',
+      [newsletter_id, ultralight.user.id]
+    );
 
-    if (error || !data) {
+    if (!row) {
       throw new Error('Newsletter not found: ' + newsletter_id);
     }
 
-    return { newsletters: [data], total: 1, action: 'get' };
+    const parsed = { ...row, sections: JSON.parse(row.sections || '[]') };
+    return { newsletters: [parsed], total: 1, action: 'get' };
   }
 
-  // UPDATE — edit title or sections
+  // UPDATE
   if (action === 'update') {
     if (!newsletter_id) {
       throw new Error('newsletter_id is required for action "update"');
     }
 
-    const updates: Record<string, unknown> = {};
-    if (title) updates.title = title;
-    if (sections) updates.sections = sections;
+    const now = new Date().toISOString();
+    const setClauses: string[] = ['updated_at = ?'];
+    const params: any[] = [now];
 
-    const { error } = await supabase
-      .from('newsletters')
-      .update(updates)
-      .eq('id', newsletter_id);
-
-    if (error) {
-      throw new Error('Failed to update newsletter: ' + error.message);
+    if (title) {
+      setClauses.push('title = ?');
+      params.push(title);
+    }
+    if (sections) {
+      setClauses.push('sections = ?');
+      params.push(JSON.stringify(sections));
     }
 
-    const { data: updated } = await supabase
-      .from('newsletters')
-      .select('*')
-      .eq('id', newsletter_id)
-      .single();
+    params.push(newsletter_id, ultralight.user.id);
+    await ultralight.db.run(
+      'UPDATE newsletters SET ' + setClauses.join(', ') + ' WHERE id = ? AND user_id = ?',
+      params
+    );
 
-    return { newsletters: updated ? [updated] : [], total: 1, action: 'update' };
+    const updated = await ultralight.db.first(
+      'SELECT * FROM newsletters WHERE id = ? AND user_id = ?',
+      [newsletter_id, ultralight.user.id]
+    );
+    const parsed = updated ? { ...updated, sections: JSON.parse(updated.sections || '[]') } : null;
+    return { newsletters: parsed ? [parsed] : [], total: 1, action: 'update' };
   }
 
-  // APPROVE — mark newsletter as approved (ready for sending)
+  // APPROVE
   if (action === 'approve') {
     if (!newsletter_id) {
       throw new Error('newsletter_id is required for action "approve"');
     }
 
-    const { error } = await supabase
-      .from('newsletters')
-      .update({ status: 'approved' })
-      .eq('id', newsletter_id)
-      .eq('status', 'draft');
+    const now = new Date().toISOString();
+    await ultralight.db.run(
+      'UPDATE newsletters SET status = ?, updated_at = ? WHERE id = ? AND status = ? AND user_id = ?',
+      ['approved', now, newsletter_id, 'draft', ultralight.user.id]
+    );
 
-    if (error) {
-      throw new Error('Failed to approve newsletter: ' + error.message);
-    }
-
-    const { data: updated } = await supabase
-      .from('newsletters')
-      .select('*')
-      .eq('id', newsletter_id)
-      .single();
-
-    return { newsletters: updated ? [updated] : [], total: 1, action: 'approve' };
+    const updated = await ultralight.db.first(
+      'SELECT * FROM newsletters WHERE id = ? AND user_id = ?',
+      [newsletter_id, ultralight.user.id]
+    );
+    const parsed = updated ? { ...updated, sections: JSON.parse(updated.sections || '[]') } : null;
+    return { newsletters: parsed ? [parsed] : [], total: 1, action: 'approve' };
   }
 
-  // RENDER — generate markdown for a newsletter
+  // RENDER
   if (action === 'render') {
     if (!newsletter_id) {
       throw new Error('newsletter_id is required for action "render"');
     }
 
-    const { data: nl, error } = await supabase
-      .from('newsletters')
-      .select('*')
-      .eq('id', newsletter_id)
-      .single();
+    const row = await ultralight.db.first(
+      'SELECT * FROM newsletters WHERE id = ? AND user_id = ?',
+      [newsletter_id, ultralight.user.id]
+    );
 
-    if (error || !nl) {
+    if (!row) {
       throw new Error('Newsletter not found: ' + newsletter_id);
     }
 
-    // Build markdown from sections
+    const nl = { ...row, sections: JSON.parse(row.sections || '[]') };
     const nlSections = nl.sections || [];
     const sortedSections = [...nlSections].sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
 
@@ -769,7 +596,6 @@ export async function newsletter(args: {
       markdown = markdown + section.content + '\n\n---\n\n';
     }
 
-    // Return as a virtual newsletter with the rendered markdown in a special field
     const rendered = { ...nl, rendered_markdown: markdown };
     return { newsletters: [rendered], total: 1, action: 'render' };
   }
@@ -792,76 +618,83 @@ export async function status(args?: Record<string, never>): Promise<{
     approved_newsletters: number;
     sent_newsletters: number;
   };
-  recent_runs: DigestRunRow[];
+  recent_runs: any[];
   ai_usage: {
     total_input_tokens: number;
     total_output_tokens: number;
     total_cost_light: number;
   };
 }> {
-  let supabaseOk = false;
-
+  // Pipeline stats
+  let undigestedCount = 0;
   try {
-    await supabase.from('content').select('id').limit(1);
-    supabaseOk = true;
+    const row = await ultralight.db.first(
+      'SELECT COUNT(*) as cnt FROM embeds WHERE digested_at IS NULL AND embedded_at IS NOT NULL AND user_id = ?',
+      [ultralight.user.id]
+    );
+    undigestedCount = row ? row.cnt : 0;
   } catch (e) {
-    console.error('Health check failed:', e);
+    // embeds table may not exist in this DB
   }
 
-  // Parallel pipeline stats
-  const [
-    undigestedCount,
-    pendingInsights,
-    approvedInsights,
-    rejectedInsights,
-    draftNewsletters,
-    approvedNewsletters,
-    sentNewsletters,
-  ] = await Promise.all([
-    supabase.from('content').select('id', { count: 'exact', head: true }).is('digested_at', null).not('embedding', 'is', null),
-    supabase.from('insights').select('id', { count: 'exact', head: true }).eq('approved', false).eq('rejected', false),
-    supabase.from('insights').select('id', { count: 'exact', head: true }).eq('approved', true),
-    supabase.from('insights').select('id', { count: 'exact', head: true }).eq('rejected', true),
-    supabase.from('newsletters').select('id', { count: 'exact', head: true }).eq('status', 'draft'),
-    supabase.from('newsletters').select('id', { count: 'exact', head: true }).eq('status', 'approved'),
-    supabase.from('newsletters').select('id', { count: 'exact', head: true }).eq('status', 'sent'),
-  ]);
+  const pendingRow = await ultralight.db.first(
+    'SELECT COUNT(*) as cnt FROM insights WHERE approved = 0 AND rejected = 0 AND user_id = ?',
+    [ultralight.user.id]
+  );
+  const approvedRow = await ultralight.db.first(
+    'SELECT COUNT(*) as cnt FROM insights WHERE approved = 1 AND user_id = ?',
+    [ultralight.user.id]
+  );
+  const rejectedRow = await ultralight.db.first(
+    'SELECT COUNT(*) as cnt FROM insights WHERE rejected = 1 AND user_id = ?',
+    [ultralight.user.id]
+  );
+  const draftRow = await ultralight.db.first(
+    'SELECT COUNT(*) as cnt FROM newsletters WHERE status = ? AND user_id = ?',
+    ['draft', ultralight.user.id]
+  );
+  const approvedNlRow = await ultralight.db.first(
+    'SELECT COUNT(*) as cnt FROM newsletters WHERE status = ? AND user_id = ?',
+    ['approved', ultralight.user.id]
+  );
+  const sentRow = await ultralight.db.first(
+    'SELECT COUNT(*) as cnt FROM newsletters WHERE status = ? AND user_id = ?',
+    ['sent', ultralight.user.id]
+  );
 
   // Recent digest runs
-  const { data: recentRuns } = await supabase
-    .from('digest_runs')
-    .select('*')
-    .order('started_at', { ascending: false })
-    .limit(10);
+  const recentRuns = await ultralight.db.all(
+    'SELECT * FROM digest_runs WHERE user_id = ? ORDER BY started_at DESC LIMIT 10',
+    [ultralight.user.id]
+  );
 
   // AI usage totals
-  const { data: aiUsage } = await supabase
-    .from('digest_runs')
-    .select('ai_input_tokens, ai_output_tokens, ai_cost_light');
+  const aiUsageRows = await ultralight.db.all(
+    'SELECT ai_input_tokens, ai_output_tokens, ai_cost_light FROM digest_runs WHERE user_id = ?',
+    [ultralight.user.id]
+  );
 
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   let totalCostLight = 0;
-  if (aiUsage) {
-    for (const run of aiUsage) {
-      totalInputTokens = totalInputTokens + (run.ai_input_tokens || 0);
-      totalOutputTokens = totalOutputTokens + (run.ai_output_tokens || 0);
-      totalCostLight = totalCostLight + (Number(run.ai_cost_light) || 0);
-    }
+  for (const run of aiUsageRows) {
+    totalInputTokens = totalInputTokens + (run.ai_input_tokens || 0);
+    totalOutputTokens = totalOutputTokens + (run.ai_output_tokens || 0);
+    totalCostLight = totalCostLight + (Number(run.ai_cost_light) || 0);
   }
 
   return {
-    health: supabaseOk ? 'healthy' : 'degraded',
+    health: 'healthy',
     pipeline: {
-      undigested_content: undigestedCount.count || 0,
-      pending_insights: pendingInsights.count || 0,
-      approved_insights: approvedInsights.count || 0,
-      rejected_insights: rejectedInsights.count || 0,
-      draft_newsletters: draftNewsletters.count || 0,
-      approved_newsletters: approvedNewsletters.count || 0,
-      sent_newsletters: sentNewsletters.count || 0,
+      undigested_content: undigestedCount,
+      pending_insights: pendingRow ? pendingRow.cnt : 0,
+      approved_insights: approvedRow ? approvedRow.cnt : 0,
+      rejected_insights: rejectedRow ? rejectedRow.cnt : 0,
+      draft_newsletters: draftRow ? draftRow.cnt : 0,
+      approved_newsletters: approvedNlRow ? approvedNlRow.cnt : 0,
+      sent_newsletters: sentRow ? sentRow.cnt : 0,
     },
-    recent_runs: recentRuns || [],
+    recent_runs: recentRuns,
     ai_usage: {
       total_input_tokens: totalInputTokens,
       total_output_tokens: totalOutputTokens,
@@ -883,34 +716,50 @@ export async function ui(args: {
 }): Promise<any> {
   let pipelineData: any = null;
   try {
-    const [
-      undigestedCount,
-      pendingCount,
-      approvedCount,
-      draftCount,
-      sentCount,
-    ] = await Promise.all([
-      supabase.from('content').select('id', { count: 'exact', head: true }).is('digested_at', null).not('embedding', 'is', null),
-      supabase.from('insights').select('id', { count: 'exact', head: true }).eq('approved', false).eq('rejected', false),
-      supabase.from('insights').select('id', { count: 'exact', head: true }).eq('approved', true),
-      supabase.from('newsletters').select('id', { count: 'exact', head: true }).eq('status', 'draft'),
-      supabase.from('newsletters').select('id', { count: 'exact', head: true }).eq('status', 'sent'),
-    ]);
+    let undigestedCount = 0;
+    try {
+      const row = await ultralight.db.first(
+        'SELECT COUNT(*) as cnt FROM embeds WHERE digested_at IS NULL AND embedded_at IS NOT NULL AND user_id = ?',
+        [ultralight.user.id]
+      );
+      undigestedCount = row ? row.cnt : 0;
+    } catch (e) { /* embeds table may not exist */ }
+
+    const pendingRow = await ultralight.db.first(
+      'SELECT COUNT(*) as cnt FROM insights WHERE approved = 0 AND rejected = 0 AND user_id = ?',
+      [ultralight.user.id]
+    );
+    const approvedRow = await ultralight.db.first(
+      'SELECT COUNT(*) as cnt FROM insights WHERE approved = 1 AND user_id = ?',
+      [ultralight.user.id]
+    );
+    const draftRow = await ultralight.db.first(
+      'SELECT COUNT(*) as cnt FROM newsletters WHERE status = ? AND user_id = ?',
+      ['draft', ultralight.user.id]
+    );
+    const sentRow = await ultralight.db.first(
+      'SELECT COUNT(*) as cnt FROM newsletters WHERE status = ? AND user_id = ?',
+      ['sent', ultralight.user.id]
+    );
 
     // Recent insights
-    const { data: recentInsights } = await supabase
-      .from('insights')
-      .select('id, title, themes, approved, rejected, created_at')
-      .order('created_at', { ascending: false })
-      .limit(10);
+    const recentInsights = await ultralight.db.all(
+      'SELECT id, title, themes, approved, rejected, created_at FROM insights WHERE user_id = ? ORDER BY created_at DESC LIMIT 10',
+      [ultralight.user.id]
+    );
 
     pipelineData = {
-      undigested: undigestedCount.count || 0,
-      pending: pendingCount.count || 0,
-      approved: approvedCount.count || 0,
-      drafts: draftCount.count || 0,
-      sent: sentCount.count || 0,
-      recentInsights: recentInsights || [],
+      undigested: undigestedCount,
+      pending: pendingRow ? pendingRow.cnt : 0,
+      approved: approvedRow ? approvedRow.cnt : 0,
+      drafts: draftRow ? draftRow.cnt : 0,
+      sent: sentRow ? sentRow.cnt : 0,
+      recentInsights: recentInsights.map((r: any) => ({
+        ...r,
+        themes: JSON.parse(r.themes || '[]'),
+        approved: !!r.approved,
+        rejected: !!r.rejected,
+      })),
     };
   } catch (e) {
     console.error('Dashboard data fetch failed:', e);

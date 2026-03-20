@@ -1,0 +1,232 @@
+// D1 Metering Service
+// Tracks per-user-per-app D1 usage for billing and rate limiting.
+// Usage is tracked in-database (_usage table within each app's D1).
+// Periodically synced to Supabase for billing via d1-billing.ts cron.
+
+// @ts-ignore
+const Deno = globalThis.Deno;
+
+import { D1_FREE_TIER, D1_RATE_LIMITS } from '../../shared/types/index.ts';
+
+// ============================================
+// TYPES
+// ============================================
+
+export interface D1UsageCheck {
+  allowed: boolean;
+  reason?: string;
+  withinFreeTier: boolean;
+  rowsReadTotal: number;
+  rowsWrittenTotal: number;
+  storageBytes: number;
+}
+
+// In-memory rate limiter (per-user-per-app, resets every minute)
+interface RateLimitBucket {
+  reads: number;
+  writes: number;
+  concurrent: number;
+  windowStart: number;
+}
+
+const rateLimitBuckets = new Map<string, RateLimitBucket>();
+const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+
+// ============================================
+// RATE LIMITING
+// ============================================
+
+/**
+ * Check and consume a rate limit slot for a D1 operation.
+ * Returns true if allowed, false if rate-limited.
+ */
+export function checkD1RateLimit(
+  userId: string,
+  appId: string,
+  tier: string,
+  isWrite: boolean,
+): { allowed: boolean; reason?: string } {
+  const key = `${userId}:${appId}`;
+  const limits = D1_RATE_LIMITS[tier] || D1_RATE_LIMITS['free'];
+  const now = Date.now();
+
+  let bucket = rateLimitBuckets.get(key);
+  if (!bucket || now - bucket.windowStart > RATE_LIMIT_WINDOW_MS) {
+    bucket = { reads: 0, writes: 0, concurrent: 0, windowStart: now };
+    rateLimitBuckets.set(key, bucket);
+  }
+
+  if (isWrite) {
+    if (bucket.writes >= limits.writes) {
+      return { allowed: false, reason: `Rate limit exceeded: ${limits.writes} writes/min for ${tier} tier` };
+    }
+    bucket.writes++;
+  } else {
+    if (bucket.reads >= limits.reads) {
+      return { allowed: false, reason: `Rate limit exceeded: ${limits.reads} reads/min for ${tier} tier` };
+    }
+    bucket.reads++;
+  }
+
+  return { allowed: true };
+}
+
+/**
+ * Track concurrent D1 operations (acquire/release pattern).
+ */
+export function acquireD1ConcurrencySlot(
+  userId: string,
+  appId: string,
+  tier: string,
+): { allowed: boolean; reason?: string } {
+  const key = `${userId}:${appId}`;
+  const limits = D1_RATE_LIMITS[tier] || D1_RATE_LIMITS['free'];
+  const now = Date.now();
+
+  let bucket = rateLimitBuckets.get(key);
+  if (!bucket || now - bucket.windowStart > RATE_LIMIT_WINDOW_MS) {
+    bucket = { reads: 0, writes: 0, concurrent: 0, windowStart: now };
+    rateLimitBuckets.set(key, bucket);
+  }
+
+  if (bucket.concurrent >= limits.concurrent) {
+    return { allowed: false, reason: `Concurrent limit exceeded: ${limits.concurrent} for ${tier} tier` };
+  }
+
+  bucket.concurrent++;
+  return { allowed: true };
+}
+
+export function releaseD1ConcurrencySlot(userId: string, appId: string): void {
+  const key = `${userId}:${appId}`;
+  const bucket = rateLimitBuckets.get(key);
+  if (bucket && bucket.concurrent > 0) {
+    bucket.concurrent--;
+  }
+}
+
+// ============================================
+// FREE TIER CHECKS
+// ============================================
+
+/**
+ * Check if a user is within D1 free tier via Supabase.
+ * Called before executing D1 queries to determine if billing applies.
+ */
+export async function checkD1FreeTier(userId: string): Promise<D1UsageCheck> {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
+  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+
+  if (!supabaseUrl || !supabaseKey) {
+    // Can't check — allow (fail open)
+    return { allowed: true, withinFreeTier: true, rowsReadTotal: 0, rowsWrittenTotal: 0, storageBytes: 0 };
+  }
+
+  try {
+    const res = await fetch(`${supabaseUrl}/rest/v1/rpc/check_d1_free_tier`, {
+      method: 'POST',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ p_user_id: userId }),
+    });
+
+    if (!res.ok) {
+      return { allowed: true, withinFreeTier: true, rowsReadTotal: 0, rowsWrittenTotal: 0, storageBytes: 0 };
+    }
+
+    const rows = await res.json() as Array<{
+      within_free_tier: boolean;
+      rows_read_total: number;
+      rows_written_total: number;
+      storage_bytes: number;
+    }>;
+
+    const row = rows?.[0];
+    if (!row) {
+      return { allowed: true, withinFreeTier: true, rowsReadTotal: 0, rowsWrittenTotal: 0, storageBytes: 0 };
+    }
+
+    return {
+      allowed: true, // Always allowed, but billing may apply
+      withinFreeTier: row.within_free_tier,
+      rowsReadTotal: row.rows_read_total,
+      rowsWrittenTotal: row.rows_written_total,
+      storageBytes: row.storage_bytes,
+    };
+  } catch (err) {
+    console.error('[D1-METERING] Error checking free tier:', err);
+    return { allowed: true, withinFreeTier: true, rowsReadTotal: 0, rowsWrittenTotal: 0, storageBytes: 0 };
+  }
+}
+
+/**
+ * Check if a user has sufficient balance for D1 operations.
+ * Returns false (with 402-style reason) if user has exhausted free tier and has zero balance.
+ */
+export async function checkD1Balance(userId: string): Promise<{ allowed: boolean; reason?: string }> {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
+  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+
+  if (!supabaseUrl || !supabaseKey) return { allowed: true };
+
+  try {
+    const res = await fetch(
+      `${supabaseUrl}/rest/v1/users?id=eq.${userId}&select=balance_light,d1_rows_read_total,d1_rows_written_total`,
+      {
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+        },
+      }
+    );
+
+    if (!res.ok) return { allowed: true };
+
+    const rows = await res.json() as Array<{
+      balance_light: number;
+      d1_rows_read_total: number;
+      d1_rows_written_total: number;
+    }>;
+
+    const user = rows?.[0];
+    if (!user) return { allowed: true };
+
+    // Within free tier — always allowed
+    if (user.d1_rows_read_total < D1_FREE_TIER.ROWS_READ &&
+        user.d1_rows_written_total < D1_FREE_TIER.ROWS_WRITTEN) {
+      return { allowed: true };
+    }
+
+    // Over free tier — need positive balance
+    if (user.balance_light <= 0) {
+      return {
+        allowed: false,
+        reason: 'Insufficient balance. D1 free tier exceeded. Top up at ultralight.cloud/settings',
+      };
+    }
+
+    return { allowed: true };
+  } catch {
+    return { allowed: true };
+  }
+}
+
+// ============================================
+// CLEANUP
+// ============================================
+
+/** Periodically clean up stale rate limit buckets (called from billing cron) */
+export function cleanupRateLimitBuckets(): number {
+  const now = Date.now();
+  let cleaned = 0;
+  for (const [key, bucket] of rateLimitBuckets) {
+    if (now - bucket.windowStart > RATE_LIMIT_WINDOW_MS * 5) {
+      rateLimitBuckets.delete(key);
+      cleaned++;
+    }
+  }
+  return cleaned;
+}

@@ -12,8 +12,10 @@ bucket_name = "ultralight-apps"
 binding = "CODE_CACHE"
 id = "d348ee797036460faf4b3e014921f0b0"
 
-# Only secret needed: WORKER_SECRET (shared secret for DO API → Worker auth)
-# Set via: wrangler secret put WORKER_SECRET
+# Secrets (set via: wrangler secret put <NAME>):
+#   WORKER_SECRET    — shared secret for DO API → Worker auth
+#   CF_ACCOUNT_ID    — Cloudflare account ID for D1 API access
+#   CF_API_TOKEN     — Cloudflare API token with D1 read/write permissions
 
 [vars]
 ENVIRONMENT = "production"

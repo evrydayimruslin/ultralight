@@ -1,16 +1,13 @@
 // Embeds MCP — Shared Embedding Backbone
 //
-// The central vector store for the Research Intelligence Hub.
-// All MCPs (tweets, digest, sending) write content here and
-// query it via semantic search. Backed by BYOS Supabase with pgvector.
+// The central vector store for the content hub.
+// All MCPs write content here and query it via semantic search.
 //
-// Storage: BYOS Supabase (research-intelligence-hub) + pgvector
+// Storage: Ultralight D1
 // AI: ultralight.ai() with text-embedding-3-small for embeddings
-// Permissions: ai:call (embeddings), supabase (BYOS)
+// Permissions: ai:call (embeddings)
 
-const supabase = (globalThis as any).supabase;
 const ultralight = (globalThis as any).ultralight;
-const uuid = (globalThis as any).uuid;
 
 // ============================================
 // TYPES
@@ -30,43 +27,11 @@ interface SearchResult {
   created_at: string;
 }
 
-interface InsightResult {
-  id: string;
-  title: string;
-  body: string;
-  themes: string[];
-  tags: string[];
-  theme_id: string | null;
-  approved: boolean;
-  newsletter_section: string | null;
-  similarity: number;
-  created_at: string;
-}
-
-interface ContentRow {
-  id: string;
-  source_type: string;
-  source_id: string | null;
-  source_url: string | null;
-  source_meta: Record<string, unknown>;
-  title: string | null;
-  body: string;
-  author: string | null;
-  tags: string[];
-  theme_id: string | null;
-  embedded_at: string | null;
-  digested_at: string | null;
-  source_created_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
 // ============================================
 // INTERNAL HELPERS
 // ============================================
 
 async function generateEmbedding(text: string): Promise<number[]> {
-  // Truncate to ~8000 tokens (~32000 chars) for embedding model limits
   const truncated = text.length > 32000 ? text.slice(0, 32000) : text;
 
   const response = await ultralight.ai({
@@ -80,8 +45,28 @@ async function generateEmbedding(text: string): Promise<number[]> {
   return response.embedding;
 }
 
-// Select columns for content reads (excludes embedding — too large for MCP payloads)
-const CONTENT_COLUMNS = 'id, source_type, source_id, source_url, source_meta, title, body, author, tags, theme_id, embedded_at, digested_at, source_created_at, created_at, updated_at';
+function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length !== b.length) return 0;
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dotProduct += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom === 0 ? 0 : dotProduct / denom;
+}
+
+function parseRow(row: any): any {
+  return {
+    ...row,
+    source_meta: JSON.parse(row.source_meta || '{}'),
+    tags: JSON.parse(row.tags || '[]'),
+    embedding: row.embedding ? JSON.parse(row.embedding) : null,
+  };
+}
 
 // ============================================
 // 1. INGEST — Add content to the shared store
@@ -118,58 +103,38 @@ export async function ingest(args: {
 
   // Deduplicate by source_type + source_id
   if (source_id) {
-    const { data: existing } = await supabase
-      .from('content')
-      .select('id')
-      .eq('source_type', source_type)
-      .eq('source_id', source_id)
-      .single();
+    const existing = await ultralight.db.first(
+      'SELECT id FROM embeds WHERE source_type = ? AND source_id = ? AND user_id = ?',
+      [source_type, source_id, ultralight.user.id]
+    );
 
     if (existing) {
       return { success: true, content_id: existing.id, embedded: false, duplicate: true };
     }
   }
 
-  const contentId = uuid.v4();
-  let embedding: number[] | null = null;
+  const contentId = crypto.randomUUID();
+  let embedding: string | null = null;
   let embeddedAt: string | null = null;
-  const shouldEmbed = auto_embed !== false; // Default: true
+  const shouldEmbed = auto_embed !== false;
 
   if (shouldEmbed) {
     try {
       const textToEmbed = title ? title + '\n\n' + body : body;
-      embedding = await generateEmbedding(textToEmbed);
+      const embeddingArr = await generateEmbedding(textToEmbed);
+      embedding = JSON.stringify(embeddingArr);
       embeddedAt = new Date().toISOString();
     } catch (err) {
-      // Embedding failed — ingest anyway, catch up via embedBatch
       console.warn('Auto-embed failed, content saved without embedding:', err);
     }
   }
 
   const now = new Date().toISOString();
-  const row = {
-    id: contentId,
-    source_type: source_type,
-    source_id: source_id || null,
-    source_url: source_url || null,
-    source_meta: source_meta || {},
-    title: title || null,
-    body: body,
-    author: author || null,
-    tags: tags || [],
-    embedding: embedding,
-    embedded_at: embeddedAt,
-    digested_at: null,
-    digest_run_id: null,
-    source_created_at: source_created_at || null,
-    created_at: now,
-    updated_at: now,
-  };
 
-  const { error } = await supabase.from('content').insert(row);
-  if (error) {
-    throw new Error('Failed to ingest content: ' + error.message);
-  }
+  await ultralight.db.run(
+    'INSERT INTO embeds (id, user_id, source_type, source_id, source_url, source_meta, title, body, author, tags, theme_id, embedding, embedded_at, digested_at, digest_run_id, source_created_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [contentId, ultralight.user.id, source_type, source_id || null, source_url || null, JSON.stringify(source_meta || {}), title || null, body, author || null, JSON.stringify(tags || []), null, embedding, embeddedAt, null, null, source_created_at || null, now, now]
+  );
 
   return {
     success: true,
@@ -180,7 +145,7 @@ export async function ingest(args: {
 }
 
 // ============================================
-// 2. SEARCH — Semantic search across content or insights
+// 2. SEARCH — Semantic search across content
 // ============================================
 
 export async function search(args: {
@@ -193,12 +158,12 @@ export async function search(args: {
   limit?: number;
   threshold?: number;
 }): Promise<{
-  results: Array<SearchResult | InsightResult>;
+  results: SearchResult[];
   query: string;
   scope: string;
   total: number;
 }> {
-  const { query, scope, source_type, tags, theme_id, theme_slug, limit, threshold } = args;
+  const { query, scope, source_type, tags, theme_id, limit, threshold } = args;
 
   if (!query) {
     throw new Error('query is required');
@@ -209,76 +174,59 @@ export async function search(args: {
   const matchThreshold = threshold || 0.3;
   const queryEmbedding = await generateEmbedding(query);
 
-  // Resolve theme_id from slug if needed
-  let resolvedThemeId: string | null = theme_id || null;
-  if (!resolvedThemeId && theme_slug) {
-    const { data: themeRow } = await supabase
-      .from('themes')
-      .select('id')
-      .eq('slug', theme_slug)
-      .single();
-    if (themeRow) {
-      resolvedThemeId = themeRow.id;
+  // Fetch all content with embeddings for this user
+  let sql = 'SELECT * FROM embeds WHERE user_id = ? AND embedding IS NOT NULL';
+  const params: any[] = [ultralight.user.id];
+
+  if (source_type) {
+    sql += ' AND source_type = ?';
+    params.push(source_type);
+  }
+  if (theme_id) {
+    sql += ' AND theme_id = ?';
+    params.push(theme_id);
+  }
+
+  const rows = await ultralight.db.all(sql, params);
+
+  // Compute similarities
+  let scored: Array<{ row: any; similarity: number }> = [];
+  for (const row of rows) {
+    const parsed = parseRow(row);
+    if (parsed.embedding && parsed.embedding.length > 0) {
+      const sim = cosineSimilarity(queryEmbedding, parsed.embedding);
+      if (sim >= matchThreshold) {
+        scored.push({ row: parsed, similarity: sim });
+      }
     }
   }
 
-  if (searchScope === 'insights') {
-    const { data, error } = await supabase.rpc('search_insights', {
-      query_embedding: queryEmbedding,
-      match_threshold: matchThreshold,
-      match_count: matchLimit,
-      filter_theme_id: resolvedThemeId,
+  // Filter by tags if needed
+  if (tags && tags.length > 0) {
+    scored = scored.filter((s) => {
+      const rowTags = s.row.tags || [];
+      return tags.some((t: string) => rowTags.includes(t));
     });
-
-    if (error) {
-      throw new Error('Insight search failed: ' + error.message);
-    }
-
-    const results: InsightResult[] = (data || []).map((row: any) => ({
-      id: row.id,
-      title: row.title,
-      body: row.body,
-      themes: row.themes,
-      tags: row.tags,
-      theme_id: row.theme_id || null,
-      approved: row.approved,
-      newsletter_section: row.newsletter_section,
-      similarity: row.similarity,
-      created_at: row.created_at,
-    }));
-
-    return { results: results, query: query, scope: 'insights', total: results.length };
   }
 
-  // Default: content search
-  const { data, error } = await supabase.rpc('search_content', {
-    query_embedding: queryEmbedding,
-    match_threshold: matchThreshold,
-    match_count: matchLimit,
-    filter_source_type: source_type || null,
-    filter_tags: tags || null,
-    filter_theme_id: resolvedThemeId,
-  });
+  scored.sort((a, b) => b.similarity - a.similarity);
+  const topResults = scored.slice(0, matchLimit);
 
-  if (error) {
-    throw new Error('Search failed: ' + error.message);
-  }
-
-  const results: SearchResult[] = (data || []).map((row: any) => ({
-    id: row.id,
-    source_type: row.source_type,
-    title: row.title,
-    body: row.body,
-    author: row.author,
-    tags: row.tags,
-    source_url: row.source_url,
-    source_meta: row.source_meta,
-    theme_id: row.theme_id || null,
-    similarity: row.similarity,
-    created_at: row.created_at,
+  const results: SearchResult[] = topResults.map((s) => ({
+    id: s.row.id,
+    source_type: s.row.source_type,
+    title: s.row.title,
+    body: s.row.body,
+    author: s.row.author,
+    tags: s.row.tags,
+    source_url: s.row.source_url,
+    source_meta: s.row.source_meta,
+    theme_id: s.row.theme_id || null,
+    similarity: Math.round(s.similarity * 1000) / 1000,
+    created_at: s.row.created_at,
   }));
 
-  return { results: results, query: query, scope: 'content', total: results.length };
+  return { results: results, query: query, scope: searchScope, total: results.length };
 }
 
 // ============================================
@@ -297,52 +245,60 @@ export async function getRelated(args: {
     throw new Error('content_id is required');
   }
 
-  const { data: source, error: sourceError } = await supabase
-    .from('content')
-    .select('id, embedding, source_type')
-    .eq('id', content_id)
-    .single();
+  const source = await ultralight.db.first(
+    'SELECT id, embedding, source_type FROM embeds WHERE id = ? AND user_id = ?',
+    [content_id, ultralight.user.id]
+  );
 
-  if (sourceError || !source) {
+  if (!source) {
     throw new Error('Content not found: ' + content_id);
   }
 
-  if (!source.embedding) {
+  const sourceEmbedding = source.embedding ? JSON.parse(source.embedding) : null;
+  if (!sourceEmbedding) {
     throw new Error('Content has no embedding. Run embedBatch first.');
   }
 
   const matchLimit = limit || 10;
   const matchThreshold = threshold || 0.3;
-  const filterType = cross_type === false ? source.source_type : null;
 
-  const { data, error } = await supabase.rpc('search_content', {
-    query_embedding: source.embedding,
-    match_threshold: matchThreshold,
-    match_count: matchLimit + 1,
-    filter_source_type: filterType,
-    filter_tags: null,
-  });
+  let sql = 'SELECT * FROM embeds WHERE user_id = ? AND embedding IS NOT NULL AND id != ?';
+  const params: any[] = [ultralight.user.id, content_id];
 
-  if (error) {
-    throw new Error('Related search failed: ' + error.message);
+  if (cross_type === false) {
+    sql += ' AND source_type = ?';
+    params.push(source.source_type);
   }
 
-  const results: SearchResult[] = (data || [])
-    .filter((row: any) => row.id !== content_id)
-    .slice(0, matchLimit)
-    .map((row: any) => ({
-      id: row.id,
-      source_type: row.source_type,
-      title: row.title,
-      body: row.body,
-      author: row.author,
-      tags: row.tags,
-      source_url: row.source_url,
-      source_meta: row.source_meta,
-      theme_id: row.theme_id || null,
-      similarity: row.similarity,
-      created_at: row.created_at,
-    }));
+  const rows = await ultralight.db.all(sql, params);
+
+  let scored: Array<{ row: any; similarity: number }> = [];
+  for (const row of rows) {
+    const parsed = parseRow(row);
+    if (parsed.embedding && parsed.embedding.length > 0) {
+      const sim = cosineSimilarity(sourceEmbedding, parsed.embedding);
+      if (sim >= matchThreshold) {
+        scored.push({ row: parsed, similarity: sim });
+      }
+    }
+  }
+
+  scored.sort((a, b) => b.similarity - a.similarity);
+  const topResults = scored.slice(0, matchLimit);
+
+  const results: SearchResult[] = topResults.map((s) => ({
+    id: s.row.id,
+    source_type: s.row.source_type,
+    title: s.row.title,
+    body: s.row.body,
+    author: s.row.author,
+    tags: s.row.tags,
+    source_url: s.row.source_url,
+    source_meta: s.row.source_meta,
+    theme_id: s.row.theme_id || null,
+    similarity: Math.round(s.similarity * 1000) / 1000,
+    created_at: s.row.created_at,
+  }));
 
   return { results: results, source_id: content_id, total: results.length };
 }
@@ -356,15 +312,12 @@ export async function embedBatch(args: {
 }): Promise<{ processed: number; failed: number; remaining: number }> {
   const batchSize = args.batch_size || 15;
 
-  const { data: unembedded, error: fetchError } = await supabase.rpc('get_unembedded', {
-    batch_limit: batchSize,
-  });
+  const unembedded = await ultralight.db.all(
+    'SELECT id, title, body FROM embeds WHERE embedding IS NULL AND user_id = ? LIMIT ?',
+    [ultralight.user.id, batchSize]
+  );
 
-  if (fetchError) {
-    throw new Error('Failed to fetch unembedded content: ' + fetchError.message);
-  }
-
-  if (!unembedded || unembedded.length === 0) {
+  if (unembedded.length === 0) {
     return { processed: 0, failed: 0, remaining: 0 };
   }
 
@@ -374,20 +327,14 @@ export async function embedBatch(args: {
   for (const item of unembedded) {
     try {
       const textToEmbed = item.title ? item.title + '\n\n' + item.body : item.body;
-      const embedding = await generateEmbedding(textToEmbed);
+      const embeddingArr = await generateEmbedding(textToEmbed);
       const now = new Date().toISOString();
 
-      const { error: updateError } = await supabase
-        .from('content')
-        .update({ embedding: embedding, embedded_at: now })
-        .eq('id', item.id);
-
-      if (updateError) {
-        console.error('Failed to update embedding for ' + item.id + ':', updateError.message);
-        failed = failed + 1;
-      } else {
-        processed = processed + 1;
-      }
+      await ultralight.db.run(
+        'UPDATE embeds SET embedding = ?, embedded_at = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+        [JSON.stringify(embeddingArr), now, now, item.id, ultralight.user.id]
+      );
+      processed = processed + 1;
     } catch (err) {
       console.error('Embedding failed for ' + item.id + ':', err);
       failed = failed + 1;
@@ -395,12 +342,12 @@ export async function embedBatch(args: {
   }
 
   // Count remaining unembedded
-  const { count: remainCount } = await supabase
-    .from('content')
-    .select('id', { count: 'exact', head: true })
-    .is('embedding', null);
+  const remainRow = await ultralight.db.first(
+    'SELECT COUNT(*) as cnt FROM embeds WHERE embedding IS NULL AND user_id = ?',
+    [ultralight.user.id]
+  );
 
-  return { processed: processed, failed: failed, remaining: remainCount || 0 };
+  return { processed: processed, failed: failed, remaining: remainRow ? remainRow.cnt : 0 };
 }
 
 // ============================================
@@ -417,7 +364,7 @@ export async function manage(args: {
   undigested_only?: boolean;
   add_tags?: string[];
   remove_tags?: string[];
-}): Promise<{ items: ContentRow[]; total: number; action: string }> {
+}): Promise<{ items: any[]; total: number; action: string }> {
   const { action, id, ids, source_type, limit, offset, undigested_only, add_tags, remove_tags } = args;
 
   if (!action) {
@@ -430,17 +377,17 @@ export async function manage(args: {
       throw new Error('id is required for action "get"');
     }
 
-    const { data, error } = await supabase
-      .from('content')
-      .select(CONTENT_COLUMNS)
-      .eq('id', id)
-      .single();
+    const row = await ultralight.db.first(
+      'SELECT id, source_type, source_id, source_url, source_meta, title, body, author, tags, theme_id, embedded_at, digested_at, source_created_at, created_at, updated_at FROM embeds WHERE id = ? AND user_id = ?',
+      [id, ultralight.user.id]
+    );
 
-    if (error || !data) {
+    if (!row) {
       throw new Error('Content not found: ' + id);
     }
 
-    return { items: [data], total: 1, action: 'get' };
+    const parsed = { ...row, source_meta: JSON.parse(row.source_meta || '{}'), tags: JSON.parse(row.tags || '[]') };
+    return { items: [parsed], total: 1, action: 'get' };
   }
 
   // TAG — add/remove tags on an item
@@ -449,17 +396,16 @@ export async function manage(args: {
       throw new Error('id is required for action "tag"');
     }
 
-    const { data: existing, error: fetchError } = await supabase
-      .from('content')
-      .select('tags')
-      .eq('id', id)
-      .single();
+    const existing = await ultralight.db.first(
+      'SELECT id, tags FROM embeds WHERE id = ? AND user_id = ?',
+      [id, ultralight.user.id]
+    );
 
-    if (fetchError || !existing) {
+    if (!existing) {
       throw new Error('Content not found: ' + id);
     }
 
-    let currentTags: string[] = existing.tags || [];
+    let currentTags: string[] = JSON.parse(existing.tags || '[]');
 
     if (add_tags && add_tags.length > 0) {
       const tagSet = new Set(currentTags);
@@ -474,59 +420,57 @@ export async function manage(args: {
       currentTags = currentTags.filter((t: string) => !removeSet.has(t));
     }
 
-    const { error: updateError } = await supabase
-      .from('content')
-      .update({ tags: currentTags })
-      .eq('id', id);
+    const now = new Date().toISOString();
+    await ultralight.db.run(
+      'UPDATE embeds SET tags = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+      [JSON.stringify(currentTags), now, id, ultralight.user.id]
+    );
 
-    if (updateError) {
-      throw new Error('Tag update failed: ' + updateError.message);
-    }
-
-    // Return the updated item
-    const { data: updated } = await supabase.from('content').select(CONTENT_COLUMNS).eq('id', id).single();
-    return { items: updated ? [updated] : [], total: 1, action: 'tag' };
+    const updated = await ultralight.db.first(
+      'SELECT id, source_type, source_id, source_url, source_meta, title, body, author, tags, theme_id, embedded_at, digested_at, source_created_at, created_at, updated_at FROM embeds WHERE id = ? AND user_id = ?',
+      [id, ultralight.user.id]
+    );
+    const parsed = updated ? { ...updated, source_meta: JSON.parse(updated.source_meta || '{}'), tags: JSON.parse(updated.tags || '[]') } : null;
+    return { items: parsed ? [parsed] : [], total: 1, action: 'tag' };
   }
 
   // LIST — paginated listing with filters
   if (action === 'list') {
     // Batch fetch by IDs
     if (ids && ids.length > 0) {
-      const { data, error } = await supabase
-        .from('content')
-        .select(CONTENT_COLUMNS)
-        .in('id', ids);
+      const placeholders = ids.map(() => '?').join(', ');
+      const rows = await ultralight.db.all(
+        'SELECT id, source_type, source_id, source_url, source_meta, title, body, author, tags, theme_id, embedded_at, digested_at, source_created_at, created_at, updated_at FROM embeds WHERE id IN (' + placeholders + ') AND user_id = ?',
+        [...ids, ultralight.user.id]
+      );
 
-      if (error) {
-        throw new Error('Batch fetch failed: ' + error.message);
-      }
-
-      return { items: data || [], total: (data || []).length, action: 'list' };
+      const parsed = rows.map((r: any) => ({ ...r, source_meta: JSON.parse(r.source_meta || '{}'), tags: JSON.parse(r.tags || '[]') }));
+      return { items: parsed, total: parsed.length, action: 'list' };
     }
 
     const pageSize = limit || 20;
-    let query = supabase
-      .from('content')
-      .select(CONTENT_COLUMNS)
-      .order('created_at', { ascending: false })
-      .limit(pageSize);
+    let sql = 'SELECT id, source_type, source_id, source_url, source_meta, title, body, author, tags, theme_id, embedded_at, digested_at, source_created_at, created_at, updated_at FROM embeds WHERE user_id = ?';
+    const params: any[] = [ultralight.user.id];
 
-    if (offset) {
-      query = query.range(offset, offset + pageSize - 1);
-    }
     if (source_type) {
-      query = query.eq('source_type', source_type);
+      sql += ' AND source_type = ?';
+      params.push(source_type);
     }
     if (undigested_only) {
-      query = query.is('digested_at', null);
+      sql += ' AND digested_at IS NULL';
     }
 
-    const { data, error } = await query;
-    if (error) {
-      throw new Error('List failed: ' + error.message);
+    sql += ' ORDER BY created_at DESC LIMIT ?';
+    params.push(pageSize);
+
+    if (offset) {
+      sql = sql.replace('LIMIT ?', 'LIMIT ? OFFSET ?');
+      params.push(offset);
     }
 
-    return { items: data || [], total: (data || []).length, action: 'list' };
+    const rows = await ultralight.db.all(sql, params);
+    const parsed = rows.map((r: any) => ({ ...r, source_meta: JSON.parse(r.source_meta || '{}'), tags: JSON.parse(r.tags || '[]') }));
+    return { items: parsed, total: parsed.length, action: 'list' };
   }
 
   throw new Error('Unknown action: ' + action + '. Use "get", "list", or "tag".');
@@ -538,30 +482,42 @@ export async function manage(args: {
 
 export async function status(args?: Record<string, never>): Promise<{
   health: string;
-  supabase_ok: boolean;
-  ai_ok: boolean;
   total_content: number;
   total_embedded: number;
   total_unembedded: number;
   total_digested: number;
   total_undigested: number;
-  total_insights: number;
-  total_approved_insights: number;
-  total_newsletters: number;
-  total_subscribers: number;
   by_source_type: Record<string, number>;
 }> {
-  let supabaseOk = false;
-  let aiOk = false;
+  const totalRow = await ultralight.db.first(
+    'SELECT COUNT(*) as cnt FROM embeds WHERE user_id = ?',
+    [ultralight.user.id]
+  );
+  const embeddedRow = await ultralight.db.first(
+    'SELECT COUNT(*) as cnt FROM embeds WHERE user_id = ? AND embedded_at IS NOT NULL',
+    [ultralight.user.id]
+  );
+  const digestedRow = await ultralight.db.first(
+    'SELECT COUNT(*) as cnt FROM embeds WHERE user_id = ? AND digested_at IS NOT NULL',
+    [ultralight.user.id]
+  );
 
-  // Health checks
-  try {
-    await supabase.from('content').select('id').limit(1);
-    supabaseOk = true;
-  } catch (e) {
-    console.error('Supabase health check failed:', e);
+  const totalContent = totalRow ? totalRow.cnt : 0;
+  const totalEmbedded = embeddedRow ? embeddedRow.cnt : 0;
+  const totalDigested = digestedRow ? digestedRow.cnt : 0;
+
+  // Source type breakdown
+  const sourceRows = await ultralight.db.all(
+    'SELECT source_type, COUNT(*) as cnt FROM embeds WHERE user_id = ? GROUP BY source_type',
+    [ultralight.user.id]
+  );
+  const bySourceType: Record<string, number> = {};
+  for (const row of sourceRows) {
+    bySourceType[row.source_type || 'unknown'] = row.cnt;
   }
 
+  // Test AI health
+  let aiOk = false;
   try {
     const testEmbed = await generateEmbedding('health check');
     aiOk = testEmbed.length > 0;
@@ -569,52 +525,13 @@ export async function status(args?: Record<string, never>): Promise<{
     console.error('AI health check failed:', e);
   }
 
-  // Stats — parallel queries
-  const [
-    contentCount,
-    embeddedCount,
-    digestedCount,
-    insightCount,
-    approvedInsightCount,
-    newsletterCount,
-    subscriberCount,
-  ] = await Promise.all([
-    supabase.from('content').select('id', { count: 'exact', head: true }),
-    supabase.from('content').select('id', { count: 'exact', head: true }).not('embedding', 'is', null),
-    supabase.from('content').select('id', { count: 'exact', head: true }).not('digested_at', 'is', null),
-    supabase.from('insights').select('id', { count: 'exact', head: true }),
-    supabase.from('insights').select('id', { count: 'exact', head: true }).eq('approved', true),
-    supabase.from('newsletters').select('id', { count: 'exact', head: true }),
-    supabase.from('subscribers').select('id', { count: 'exact', head: true }).eq('subscribed', true),
-  ]);
-
-  const totalContent = contentCount.count || 0;
-  const totalEmbedded = embeddedCount.count || 0;
-  const totalDigested = digestedCount.count || 0;
-
-  // Source type breakdown
-  const { data: sourceRows } = await supabase.from('content').select('source_type');
-  const bySourceType: Record<string, number> = {};
-  if (sourceRows) {
-    for (const row of sourceRows) {
-      const st = row.source_type || 'unknown';
-      bySourceType[st] = (bySourceType[st] || 0) + 1;
-    }
-  }
-
   return {
-    health: supabaseOk && aiOk ? 'healthy' : 'degraded',
-    supabase_ok: supabaseOk,
-    ai_ok: aiOk,
+    health: aiOk ? 'healthy' : 'degraded',
     total_content: totalContent,
     total_embedded: totalEmbedded,
     total_unembedded: totalContent - totalEmbedded,
     total_digested: totalDigested,
     total_undigested: totalContent - totalDigested,
-    total_insights: insightCount.count || 0,
-    total_approved_insights: approvedInsightCount.count || 0,
-    total_newsletters: newsletterCount.count || 0,
-    total_subscribers: subscriberCount.count || 0,
     by_source_type: bySourceType,
   };
 }
@@ -630,43 +547,41 @@ export async function ui(args: {
   query?: Record<string, string>;
   headers?: Record<string, string>;
 }): Promise<any> {
-  // Fetch stats for the dashboard
   let statsData: any = null;
   try {
-    const [
-      contentCount,
-      embeddedCount,
-      digestedCount,
-      insightCount,
-    ] = await Promise.all([
-      supabase.from('content').select('id', { count: 'exact', head: true }),
-      supabase.from('content').select('id', { count: 'exact', head: true }).not('embedding', 'is', null),
-      supabase.from('content').select('id', { count: 'exact', head: true }).not('digested_at', 'is', null),
-      supabase.from('insights').select('id', { count: 'exact', head: true }),
-    ]);
+    const totalRow = await ultralight.db.first(
+      'SELECT COUNT(*) as cnt FROM embeds WHERE user_id = ?',
+      [ultralight.user.id]
+    );
+    const embeddedRow = await ultralight.db.first(
+      'SELECT COUNT(*) as cnt FROM embeds WHERE user_id = ? AND embedded_at IS NOT NULL',
+      [ultralight.user.id]
+    );
+    const digestedRow = await ultralight.db.first(
+      'SELECT COUNT(*) as cnt FROM embeds WHERE user_id = ? AND digested_at IS NOT NULL',
+      [ultralight.user.id]
+    );
 
     // Source breakdown
-    const { data: sourceRows } = await supabase.from('content').select('source_type');
+    const sourceRows = await ultralight.db.all(
+      'SELECT source_type, COUNT(*) as cnt FROM embeds WHERE user_id = ? GROUP BY source_type',
+      [ultralight.user.id]
+    );
     const bySource: Record<string, number> = {};
-    if (sourceRows) {
-      for (const row of sourceRows) {
-        const st = row.source_type || 'unknown';
-        bySource[st] = (bySource[st] || 0) + 1;
-      }
+    for (const row of sourceRows) {
+      bySource[row.source_type || 'unknown'] = row.cnt;
     }
 
     // Recent items
-    const { data: recentItems } = await supabase
-      .from('content')
-      .select('id, source_type, title, author, created_at')
-      .order('created_at', { ascending: false })
-      .limit(10);
+    const recentItems = await ultralight.db.all(
+      'SELECT id, source_type, title, author, created_at FROM embeds WHERE user_id = ? ORDER BY created_at DESC LIMIT 10',
+      [ultralight.user.id]
+    );
 
     statsData = {
-      total: contentCount.count || 0,
-      embedded: embeddedCount.count || 0,
-      digested: digestedCount.count || 0,
-      insights: insightCount.count || 0,
+      total: totalRow ? totalRow.cnt : 0,
+      embedded: embeddedRow ? embeddedRow.cnt : 0,
+      digested: digestedRow ? digestedRow.cnt : 0,
       bySource: bySource,
       recent: recentItems || [],
     };
@@ -674,7 +589,7 @@ export async function ui(args: {
     console.error('Dashboard data fetch failed:', e);
   }
 
-  const s = statsData || { total: 0, embedded: 0, digested: 0, insights: 0, bySource: {}, recent: [] };
+  const s = statsData || { total: 0, embedded: 0, digested: 0, bySource: {}, recent: [] };
   const sourceChips = Object.entries(s.bySource)
     .map(([type, count]: [string, any]) => '<span class="chip">' + type + ' <b>' + count + '</b></span>')
     .join('');
@@ -695,7 +610,7 @@ export async function ui(args: {
     + '.card{background:#141414;border:1px solid #2a2a2a;border-radius:12px;padding:20px}'
     + '.card-value{font-size:28px;font-weight:700}'
     + '.card-label{font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-top:4px}'
-    + '.card-value.cyan{color:#06b6d4}.card-value.green{color:#22c55e}.card-value.purple{color:#8b5cf6}.card-value.yellow{color:#eab308}'
+    + '.card-value.cyan{color:#06b6d4}.card-value.green{color:#22c55e}.card-value.purple{color:#8b5cf6}'
     + '.section{margin-bottom:32px}'
     + '.section h2{font-size:16px;color:#ccc;margin-bottom:12px}'
     + '.chips{display:flex;gap:8px;flex-wrap:wrap}'
@@ -713,7 +628,6 @@ export async function ui(args: {
     + '<div class="card"><div class="card-value cyan">' + s.total + '</div><div class="card-label">Total Content</div></div>'
     + '<div class="card"><div class="card-value green">' + s.embedded + '</div><div class="card-label">Embedded</div></div>'
     + '<div class="card"><div class="card-value purple">' + s.digested + '</div><div class="card-label">Digested</div></div>'
-    + '<div class="card"><div class="card-value yellow">' + s.insights + '</div><div class="card-label">Insights</div></div>'
     + '</div>'
     + '<div class="section"><h2>Sources</h2><div class="chips">' + (sourceChips || '<span class="chip">No content yet</span>') + '</div></div>'
     + '<div class="section"><h2>Recent Content</h2>'

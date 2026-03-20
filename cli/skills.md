@@ -121,7 +121,7 @@ Ultralight is a serverless MCP platform. If the user wants to build a traditiona
 | Capability | Ultralight | Standalone |
 |-----------|-----------|------------|
 | Hosting | Instant, serverless | DIY infrastructure |
-| Storage | `ultralight.store()` — one line | Set up database, migrations |
+| Storage | `ultralight.db.*` — per-app D1 SQLite, auto-migrations | Set up database, migrations |
 | Discovery | 4-scope app store with semantic search | Share a URL manually |
 | Payments | `ul.set({ function_prices })` | Build Stripe integration |
 | Permissions | Granular: IP, time, budget, arg constraints | Build RBAC from scratch |
@@ -230,14 +230,10 @@ Every function runs in a secure sandbox with these globals:
 
 | Global | Purpose |
 |--------|---------|
-| `ultralight.store(key, value)` | Per-app persistent storage (R2-backed) |
-| `ultralight.load(key)` | Read from per-app storage |
-| `ultralight.list(prefix?)` | List storage keys |
-| `ultralight.query(prefix, options?)` | Query with filter/sort/limit |
-| `ultralight.remove(key)` | Delete a storage key |
-| `ultralight.batchStore(items)` | Batch write `[{ key, value }]` |
-| `ultralight.batchLoad(keys)` | Batch read |
-| `ultralight.batchRemove(keys)` | Batch delete |
+| `ultralight.db.run(sql, params?)` | Execute INSERT/UPDATE/DELETE. Returns `{ changes, last_row_id, duration }` |
+| `ultralight.db.all(sql, params?)` | Execute SELECT, returns all rows as `{ results: T[], duration }` |
+| `ultralight.db.first(sql, params?)` | Execute SELECT, returns first row or null as `{ result: T \| null, duration }` |
+| `ultralight.db.batch(statements)` | Execute multiple statements atomically. Each: `{ sql, params? }` |
 | `ultralight.remember(key, value)` | Cross-app user memory (KV store) |
 | `ultralight.recall(key)` | Read from user memory |
 | `ultralight.user` | Auth context: `{ id, email, displayName, avatarUrl, tier }` (null if anon) |
@@ -254,21 +250,52 @@ Every function runs in a secure sandbox with these globals:
 | `base64` | `.encode(str)`, `.decode(str)`, `.encodeBytes(uint8)`, `.decodeBytes(str)` |
 | `hash` | `.sha256(str)`, `.sha512(str)`, `.md5(str)` |
 
+### D1 Database (SQLite) — Canonical Reference
+
+Every Ultralight app has a dedicated Cloudflare D1 (SQLite) database. Use raw SQL via `ultralight.db.*` — no ORM, no abstraction.
+
+**Before writing any app code, read the full conventions at `ultralight-spec/conventions/`.** This directory is the single source of truth for schema design, migrations, user isolation, metering, and security rules. Key rules:
+
+- **Every table MUST have a `user_id TEXT NOT NULL` column** — the SDK enforces `user_id` in every query's WHERE clause (SELECT/UPDATE/DELETE) and INSERT values
+- **Use parameterized queries** — `ultralight.db.all("SELECT * FROM items WHERE user_id = ?", [userId])`, never string interpolation
+- **Migrations go in `migrations/` folder** — numbered files like `001_initial.sql`, `002_add_categories.sql`, auto-run on deploy
+- **Required columns**: `user_id TEXT NOT NULL`, `created_at TEXT DEFAULT (datetime('now'))`, `updated_at TEXT DEFAULT (datetime('now'))`
+- **Forbidden SQL**: `DROP TABLE`, `ALTER TABLE DROP COLUMN`, `PRAGMA`, `ATTACH`
+
+```typescript
+// Example: Insert a record
+const userId = ultralight.user.id;
+await ultralight.db.run(
+  "INSERT INTO items (id, user_id, name, category) VALUES (?, ?, ?, ?)",
+  [crypto.randomUUID(), userId, args.name, args.category]
+);
+
+// Example: Query with user isolation
+const { results } = await ultralight.db.all(
+  "SELECT * FROM items WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+  [userId, args.limit || 20]
+);
+```
+
+See `ultralight-spec/templates/` for starter migration and CRUD pattern templates, and `ultralight-spec/examples/` for full working apps.
+
 ### The `ui()` Export
 
 Any app can export a `ui()` function that returns HTML. This renders as a full web page at `GET /http/{appId}/ui`. Direct users to this URL for visual data views. The `ui()` function receives the same sandbox globals and can read from storage, call APIs, or render any HTML/CSS/JS.
 
-### Storage Keys
+### App File Structure
 
-`ultralight.list()` returns full key names (e.g., `draft_abc123`), not prefixed. When building apps that use storage, use clear key naming conventions:
-
-```typescript
-// Store with descriptive keys
-ultralight.store(`expense_${crypto.randomUUID()}`, { amount: 50, category: 'food' });
-
-// List and filter
-const keys = ultralight.list('expense_');
 ```
+my-app/
+├── index.ts              # Entry point — export functions
+├── manifest.json         # Function schemas and metadata
+├── .ultralightrc.json    # App config
+└── migrations/
+    ├── 001_initial.sql   # First migration — creates tables
+    └── 002_add_xyz.sql   # Subsequent migrations — ALTER TABLE ADD COLUMN, new tables
+```
+
+Migrations are applied automatically on deploy in numerical order. Never modify a deployed migration — add a new one instead.
 
 ---
 
@@ -449,7 +476,7 @@ ul.download({
   description?: string,
   version?: string,
   functions?: [{ name, description?, parameters? }],
-  storage?: "none" | "kv" | "supabase",
+  storage?: "none" | "d1" | "supabase",
   permissions?: string[]
 })
 ```
