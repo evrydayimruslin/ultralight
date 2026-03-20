@@ -24,6 +24,8 @@ import { createMemoryService, type MemoryService as MemoryServiceImpl } from '..
 import { executeGpuFunction, type GpuExecuteResult } from '../services/gpu/executor.ts';
 import { acquireGpuSlot } from '../services/gpu/concurrency.ts';
 import { settleGpuExecution } from '../services/gpu/billing.ts';
+import { createD1DataService } from '../services/d1-data.ts';
+import { getD1DatabaseId } from '../services/d1-provisioning.ts';
 import type {
   MCPTool,
   MCPJsonSchema,
@@ -1806,7 +1808,8 @@ async function executeAppFunction(
 
     // Convert args object to array (positional arguments)
     // For now, pass as single object argument
-    const argsArray = Object.keys(args).length > 0 ? [args] : [];
+    // Always pass args object so functions can destructure (even if empty)
+    const argsArray = [args];
 
     // Merge per-user secrets into envVars (per-user overrides universal)
     if (userSecrets.length > 0) {
@@ -1853,6 +1856,10 @@ async function executeAppFunction(
       },
     } : null;
 
+    // ── D1 Data Service (lazy-provisioned) ──
+    const d1DatabaseId = app.d1_database_id ? app.d1_database_id : await getD1DatabaseId(app.id);
+    const d1DataService = createD1DataService(app.id, d1DatabaseId);
+
     const execStart = Date.now();
     const result = await executeInSandbox(
       {
@@ -1865,6 +1872,7 @@ async function executeAppFunction(
         userApiKey,
         user,
         appDataService,
+        d1DataService,
         memoryService: memoryAdapter,
         aiService: aiServiceInstance as { call: (request: import('../../shared/types/index.ts').AIRequest, apiKey: string) => Promise<import('../../shared/types/index.ts').AIResponse> },
         envVars,
