@@ -22,6 +22,13 @@ interface MarketplaceSkill {
   priceLight: number;
 }
 
+interface ConnectedApp {
+  id: string;
+  name: string;
+  description: string | null;
+  functionCount: number;
+}
+
 interface CreateAgentModalProps {
   card?: KanbanCard | null;
   defaultModel: string;
@@ -39,6 +46,7 @@ interface CreateAgentModalProps {
     templateMcps?: string[];
     selectedContextPaths?: string[];
     selectedSkillIds?: Array<{ id: string; name: string; priceLight: number }>;
+    connectedAppIds?: string[];
   }) => Promise<void>;
   onClose: () => void;
 }
@@ -88,6 +96,13 @@ export default function CreateAgentModal({
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(new Set());
   const [skillBudgetLight, setSkillBudgetLight] = useState(() => Math.min(getAutoApproveLight() * 4, 8000));
   const [searchingSkills, setSearchingSkills] = useState(false);
+
+  // Connected apps state
+  const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>([]);
+  const [appSearchQuery, setAppSearchQuery] = useState('');
+  const [appSearchResults, setAppSearchResults] = useState<ConnectedApp[]>([]);
+  const [searchingApps, setSearchingApps] = useState(false);
+  const appSearchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Debounce ref
   const taskDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -227,6 +242,53 @@ export default function CreateAgentModal({
     });
   }, []);
 
+  // ── Connected Apps search ──
+
+  useEffect(() => {
+    if (appSearchRef.current) clearTimeout(appSearchRef.current);
+    const q = appSearchQuery.trim();
+    if (!q || q.length < 2 || !executeMcpTool) {
+      setAppSearchResults([]);
+      return;
+    }
+
+    appSearchRef.current = setTimeout(async () => {
+      setSearchingApps(true);
+      try {
+        const result = await executeMcpTool('ul_discover', {
+          scope: 'library',
+          query: q,
+        });
+        const parsed = JSON.parse(result);
+        const results: ConnectedApp[] = (parsed.results || [])
+          .filter((r: { id: string }) => !connectedApps.some(ca => ca.id === r.id))
+          .map((r: { id: string; name: string; description?: string; function_count?: number }) => ({
+            id: r.id,
+            name: r.name,
+            description: r.description || null,
+            functionCount: r.function_count || 0,
+          }));
+        setAppSearchResults(results);
+      } catch {
+        setAppSearchResults([]);
+      } finally {
+        setSearchingApps(false);
+      }
+    }, 400);
+
+    return () => { if (appSearchRef.current) clearTimeout(appSearchRef.current); };
+  }, [appSearchQuery, executeMcpTool, connectedApps]);
+
+  const addConnectedApp = useCallback((app: ConnectedApp) => {
+    setConnectedApps(prev => [...prev, app]);
+    setAppSearchResults(prev => prev.filter(r => r.id !== app.id));
+    setAppSearchQuery('');
+  }, []);
+
+  const removeConnectedApp = useCallback((id: string) => {
+    setConnectedApps(prev => prev.filter(a => a.id !== id));
+  }, []);
+
   // ── Submit ──
 
   const handleSubmit = useCallback(async () => {
@@ -251,13 +313,14 @@ export default function CreateAgentModal({
         selectedSkillIds: marketplaceSkills
           .filter(s => selectedSkillIds.has(s.id))
           .map(s => ({ id: s.id, name: s.name, priceLight: s.priceLight })),
+        connectedAppIds: connectedApps.length > 0 ? connectedApps.map(a => a.id) : undefined,
       });
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setCreating(false);
     }
-  }, [name, role, task, model, permissionLevel, launchMode, card, selectedTemplate, selectedContextPaths, selectedSkillIds, marketplaceSkills, onCreateAndStart, onClose]);
+  }, [name, role, task, model, permissionLevel, launchMode, card, selectedTemplate, selectedContextPaths, selectedSkillIds, marketplaceSkills, connectedApps, onCreateAndStart, onClose]);
 
   // ── Merge base context + suggestions for display ──
 
@@ -370,6 +433,81 @@ export default function CreateAgentModal({
                   Tool schemas will be inspected and injected into the agent.
                 </p>
               </div>
+            </div>
+          )}
+
+          {/* Connected Apps (MCPs) */}
+          {executeMcpTool && (
+            <div>
+              <label className="text-caption font-medium text-ul-text-secondary mb-1.5 block">
+                Connected Apps
+                {connectedApps.length > 0 && (
+                  <span className="ml-1.5 text-[10px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
+                    {connectedApps.length} connected
+                  </span>
+                )}
+              </label>
+
+              {/* Selected apps */}
+              {connectedApps.length > 0 && (
+                <div className="space-y-1 rounded border border-emerald-200 p-2 bg-emerald-50/30 mb-2">
+                  {connectedApps.map(app => (
+                    <div key={app.id} className="flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                      <span className="text-caption text-ul-text truncate flex-1">{app.name}</span>
+                      {app.functionCount > 0 && (
+                        <span className="text-[10px] text-ul-text-muted">{app.functionCount} fn</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => removeConnectedApp(app.id)}
+                        className="text-[10px] text-red-500 hover:text-red-700 px-1"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                  <p className="text-[10px] text-ul-text-muted mt-1">
+                    Full function schemas will be injected into the agent&apos;s prompt.
+                  </p>
+                </div>
+              )}
+
+              {/* Search input */}
+              <div className="relative">
+                <input
+                  type="text"
+                  value={appSearchQuery}
+                  onChange={e => setAppSearchQuery(e.target.value)}
+                  placeholder="Search your apps to connect..."
+                  className="w-full text-small rounded border border-ul-border px-3 py-1.5 bg-white focus:outline-none focus:border-ul-border-focus"
+                />
+                {searchingApps && (
+                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-ul-text-muted">
+                    searching...
+                  </span>
+                )}
+              </div>
+
+              {/* Search results dropdown */}
+              {appSearchResults.length > 0 && (
+                <div className="mt-1 rounded border border-ul-border bg-white shadow-sm">
+                  {appSearchResults.map(app => (
+                    <button
+                      key={app.id}
+                      type="button"
+                      onClick={() => addConnectedApp(app)}
+                      className="w-full text-left px-3 py-1.5 hover:bg-gray-50 flex items-center gap-2 border-b border-ul-border last:border-b-0"
+                    >
+                      <span className="text-caption text-ul-text truncate flex-1">{app.name}</span>
+                      {app.description && (
+                        <span className="text-[10px] text-ul-text-muted truncate max-w-[150px]">{app.description}</span>
+                      )}
+                      <span className="text-[10px] text-emerald-600 shrink-0">+ connect</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

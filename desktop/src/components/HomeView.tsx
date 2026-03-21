@@ -7,7 +7,7 @@ import type { Agent, CreateAgentParams } from '../hooks/useAgentFleet';
 import { useAgentFleet } from '../hooks/useAgentFleet';
 import { useMcp } from '../hooks/useMcp';
 import { usePermissions } from '../hooks/usePermissions';
-import { buildAgentSystemPrompt, inspectAndBuildMcpSchemas } from '../lib/systemPrompt';
+import { buildAgentSystemPrompt, inspectAndBuildMcpSchemas, generateConnectedAppsSchema } from '../lib/systemPrompt';
 import { loadBaseContext, readAbsoluteFile, fileNameWithoutExt } from '../lib/templates';
 import { agentRunner, type AgentEvent } from '../lib/agentRunner';
 import ProjectDropdown from './ProjectDropdown';
@@ -260,6 +260,7 @@ export default function HomeView({
     templateMcps?: string[];
     selectedContextPaths?: string[];
     selectedSkillIds?: Array<{ id: string; name: string; priceLight: number }>;
+    connectedAppIds?: string[];
   }) => {
     const baseCtx = await loadBaseContext(selectedProjectDir);
     const knowledgeCtx: Array<{ name: string; content: string }> = [];
@@ -295,6 +296,53 @@ export default function HomeView({
       mcpSchemas = await inspectAndBuildMcpSchemas(params.templateMcps, executeMcpTool);
     }
 
+    // Inspect connected apps and build schema blocks for the system prompt
+    if (params.connectedAppIds?.length) {
+      const connectedSchemas = [];
+      for (const appId of params.connectedAppIds) {
+        try {
+          const result = await executeMcpTool('ul_discover', { scope: 'inspect', app_id: appId });
+          const parsed = JSON.parse(result);
+          const manifest = parsed.manifest ? JSON.parse(parsed.manifest) : null;
+          const appName = parsed.metadata?.name || parsed.name || appId;
+          const appDesc = parsed.metadata?.description || parsed.description || null;
+
+          if (manifest?.functions) {
+            connectedSchemas.push({
+              app_id: appId,
+              name: appName,
+              description: appDesc,
+              permissions: manifest.permissions,
+              functions: manifest.functions,
+            });
+          } else {
+            // Fallback: build from inspect tools/functions
+            const fns = parsed.functions || parsed.tools || [];
+            const fnMap: Record<string, { description: string; parameters?: Record<string, { type: string; description?: string; required?: boolean }> }> = {};
+            for (const fn of fns) {
+              const params: Record<string, { type: string; description?: string; required?: boolean }> = {};
+              const props = fn.parameters?.properties || fn.inputSchema?.properties || {};
+              for (const [pName, pSchema] of Object.entries(props)) {
+                const s = pSchema as { type?: string; description?: string };
+                params[pName] = { type: s.type || 'any', description: s.description };
+              }
+              fnMap[fn.name] = { description: fn.description || '', parameters: Object.keys(params).length > 0 ? params : undefined };
+            }
+            if (Object.keys(fnMap).length > 0) {
+              connectedSchemas.push({ app_id: appId, name: appName, description: appDesc, functions: fnMap });
+            }
+          }
+        } catch (err) {
+          console.warn(`Failed to inspect connected app ${appId}:`, err);
+        }
+      }
+
+      if (connectedSchemas.length > 0) {
+        const connectedBlock = generateConnectedAppsSchema(connectedSchemas);
+        mcpSchemas = mcpSchemas ? `${mcpSchemas}\n\n${connectedBlock}` : connectedBlock;
+      }
+    }
+
     const allContext = [
       ...baseCtx.map(f => ({ name: f.name, content: f.content })),
       ...knowledgeCtx,
@@ -319,6 +367,7 @@ export default function HomeView({
       parentAgentId: null,
       permissionLevel: params.permissionLevel,
       launchMode: params.launchMode,
+      connectedAppIds: params.connectedAppIds?.length ? JSON.stringify(params.connectedAppIds) : undefined,
     });
 
     if (params.cardId) {
