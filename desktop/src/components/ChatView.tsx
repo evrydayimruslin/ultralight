@@ -72,6 +72,13 @@ export default function ChatView({
   const [diagnostics, setDiagnostics] = useState<string | null>(null);
   const [queuedMessages, setQueuedMessages] = useState<string[]>([]);
 
+  // Pre-chat connected apps (for new chat before agent is created)
+  const [preChatApps, setPreChatApps] = useState<Array<{ id: string; name: string; description: string | null; functionCount: number }>>([]);
+  const [preChatAppQuery, setPreChatAppQuery] = useState('');
+  const [preChatAppResults, setPreChatAppResults] = useState<Array<{ id: string; name: string; description: string | null; functionCount: number }>>([]);
+  const [preChatSearching, setPreChatSearching] = useState(false);
+  const preChatSearchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Build system prompt — full coding agent prompt when project dir is set
   const systemPrompt = useMemo(() => buildSystemPrompt(projectDir), [projectDir]);
 
@@ -212,6 +219,39 @@ export default function ChatView({
   // Composite loading state: useChat loading OR agentRunner running
   const isActive = isLoading || (activeAgent ? isAgentRunning(activeAgent.id) : false);
 
+  // Pre-chat connected apps search (debounced)
+  useEffect(() => {
+    if (preChatSearchRef.current) clearTimeout(preChatSearchRef.current);
+    const q = preChatAppQuery.trim();
+    if (!q || q.length < 2) {
+      setPreChatAppResults([]);
+      return;
+    }
+
+    preChatSearchRef.current = setTimeout(async () => {
+      setPreChatSearching(true);
+      try {
+        const result = await executeMcpTool('ul_discover', { scope: 'library', query: q });
+        const parsed = JSON.parse(result);
+        const results = (parsed.results || [])
+          .filter((r: { id: string }) => !preChatApps.some(a => a.id === r.id))
+          .map((r: { id: string; name: string; description?: string; function_count?: number }) => ({
+            id: r.id,
+            name: r.name,
+            description: r.description || null,
+            functionCount: r.function_count || 0,
+          }));
+        setPreChatAppResults(results);
+      } catch {
+        setPreChatAppResults([]);
+      } finally {
+        setPreChatSearching(false);
+      }
+    }, 400);
+
+    return () => { if (preChatSearchRef.current) clearTimeout(preChatSearchRef.current); };
+  }, [preChatAppQuery, executeMcpTool, preChatApps]);
+
   // Send message — routes through agentRunner for background agents, useChat for interactive
   const sendMessage = useCallback(async (content: string) => {
     // If there's an active agent managed by agentRunner, route through it
@@ -238,14 +278,19 @@ export default function ChatView({
         projectDir: projectDir,
         model: getModel(),
         parentAgentId: null,
+        connectedAppIds: preChatApps.length > 0 ? JSON.stringify(preChatApps.map(a => a.id)) : undefined,
       });
       setActiveAgent(agent);
       switchConversation(agent.conversation_id);
       convId = agent.conversation_id;
       if (onNavigateToAgent) onNavigateToAgent(agent.id);
+      // Clear pre-chat apps after agent creation
+      setPreChatApps([]);
+      setPreChatAppQuery('');
+      setPreChatAppResults([]);
     }
     await chatSendMessage(content);
-  }, [activeAgent, isRunnerManaged, activeId, createAgent, systemPrompt, projectDir, chatSendMessage, switchConversation, setActiveAgent, onNavigateToAgent]);
+  }, [activeAgent, isRunnerManaged, activeId, createAgent, systemPrompt, projectDir, chatSendMessage, switchConversation, setActiveAgent, onNavigateToAgent, preChatApps]);
 
   // New agent (from sidebar [+])
   const handleNewAgent = useCallback(() => {
@@ -253,6 +298,9 @@ export default function ChatView({
     switchConversation(null);
     setActiveAgent(null);
     prevMessageCountRef.current = 0;
+    setPreChatApps([]);
+    setPreChatAppQuery('');
+    setPreChatAppResults([]);
   }, [chatClearMessages, switchConversation, setActiveAgent]);
 
   // Select agent from sidebar
@@ -415,6 +463,83 @@ export default function ChatView({
                 </button>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Pre-chat Connected Apps picker (new chat only) */}
+      {!activeAgent && (
+        <div className="px-4 pb-2 border-t border-ul-border bg-gray-50">
+          <div className="max-w-narrow mx-auto">
+            <div className="flex items-center gap-2 pt-2 pb-1">
+              <label className="text-caption text-ul-text-muted">
+                Connected Apps
+              </label>
+              {preChatApps.length > 0 && (
+                <span className="text-[10px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
+                  {preChatApps.length} connected
+                </span>
+              )}
+            </div>
+
+            {/* Selected apps */}
+            {preChatApps.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {preChatApps.map(app => (
+                  <span key={app.id} className="inline-flex items-center gap-1 text-caption bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full px-2 py-0.5">
+                    {app.name}
+                    {app.functionCount > 0 && (
+                      <span className="text-[10px] text-emerald-500">{app.functionCount}fn</span>
+                    )}
+                    <button
+                      onClick={() => setPreChatApps(prev => prev.filter(a => a.id !== app.id))}
+                      className="text-emerald-400 hover:text-red-500 ml-0.5"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Search input */}
+            <div className="relative">
+              <input
+                type="text"
+                value={preChatAppQuery}
+                onChange={e => setPreChatAppQuery(e.target.value)}
+                placeholder="Search your apps to connect..."
+                className="w-full text-small rounded border border-ul-border px-2.5 py-1.5 bg-white focus:outline-none focus:border-ul-border-focus"
+              />
+              {preChatSearching && (
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-ul-text-muted">
+                  searching...
+                </span>
+              )}
+            </div>
+
+            {/* Search results */}
+            {preChatAppResults.length > 0 && (
+              <div className="mt-1 rounded border border-ul-border bg-white shadow-sm max-h-40 overflow-y-auto">
+                {preChatAppResults.map(app => (
+                  <button
+                    key={app.id}
+                    onClick={() => {
+                      setPreChatApps(prev => [...prev, app]);
+                      setPreChatAppResults(prev => prev.filter(r => r.id !== app.id));
+                      setPreChatAppQuery('');
+                    }}
+                    className="w-full text-left px-3 py-1.5 hover:bg-gray-50 flex items-center gap-2 border-b border-ul-border last:border-b-0"
+                  >
+                    <span className="text-caption text-ul-text truncate flex-1">{app.name}</span>
+                    {app.description && (
+                      <span className="text-[10px] text-ul-text-muted truncate max-w-[150px]">{app.description}</span>
+                    )}
+                    <span className="text-[10px] text-emerald-600 shrink-0">+ connect</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
