@@ -24,7 +24,7 @@ type DashboardTab = 'project' | 'agents' | 'activity';
 interface HomeViewProps {
   selectedProjectDir: string | null;
   onSelectProjectDir: (dir: string | null) => void;
-  onNavigateToAgent: (agentId: string) => void;
+  onNavigateToAgent: (agentId: string, initialMessage?: string) => void;
 }
 
 interface ActivityEntry {
@@ -103,6 +103,7 @@ export default function HomeView({
   const [activeTab, setActiveTab] = useState<DashboardTab>('project');
   const [quickInstructAgent, setQuickInstructAgent] = useState<string | null>(null);
   const [quickInstructText, setQuickInstructText] = useState('');
+  const [quickInstructNewSession, setQuickInstructNewSession] = useState(false);
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
   const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
   const instructInputRef = useRef<HTMLInputElement>(null);
@@ -208,9 +209,12 @@ export default function HomeView({
     if (!quickInstructAgent || !quickInstructText.trim()) return;
     const text = quickInstructText.trim();
     setQuickInstructText('');
-    setQuickInstructAgent(null);
 
-    if (agentRunner.isRunning(quickInstructAgent)) {
+    if (quickInstructNewSession) {
+      // Navigate to agent chat — the text will be sent as first message in new session
+      setQuickInstructAgent(null);
+      onNavigateToAgent(quickInstructAgent, text);
+    } else if (agentRunner.isRunning(quickInstructAgent)) {
       agentRunner.queueMessage(quickInstructAgent, text);
     } else if (agentRunner.hasRun(quickInstructAgent)) {
       await agentRunner.resume(quickInstructAgent, text);
@@ -218,7 +222,7 @@ export default function HomeView({
       // Not managed by agentRunner — navigate to it instead
       onNavigateToAgent(quickInstructAgent);
     }
-  }, [quickInstructAgent, quickInstructText, onNavigateToAgent]);
+  }, [quickInstructAgent, quickInstructText, quickInstructNewSession, onNavigateToAgent]);
 
   // Expand/collapse agent row in fleet table
   const handleExpandAgent = useCallback((agentId: string) => {
@@ -572,36 +576,49 @@ export default function HomeView({
         {activeTab === 'agents' && (
           <div className="px-6 py-4">
             {/* Quick Instruct bar */}
-            <div className="mb-4 flex items-center gap-2">
-              <select
-                value={quickInstructAgent || ''}
-                onChange={e => setQuickInstructAgent(e.target.value || null)}
-                className="input text-small h-9 w-48"
-              >
-                <option value="">Select agent...</option>
-                {projectAgents.map(a => (
-                  <option key={a.id} value={a.id}>
-                    {a.status === 'running' ? '\u25CF ' : ''}{a.name}
-                  </option>
-                ))}
-              </select>
-              <input
-                ref={instructInputRef}
-                type="text"
-                value={quickInstructText}
-                onChange={e => setQuickInstructText(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') handleQuickInstruct(); }}
-                placeholder={quickInstructAgent ? 'Send instruction...' : 'Pick an agent first'}
-                disabled={!quickInstructAgent}
-                className="input text-small h-9 flex-1"
-              />
-              <button
-                onClick={handleQuickInstruct}
-                disabled={!quickInstructAgent || !quickInstructText.trim()}
-                className="btn-primary btn-sm disabled:opacity-30"
-              >
-                Send
-              </button>
+            <div className="mb-4">
+              <div className="flex items-center gap-2">
+                <select
+                  value={quickInstructAgent || ''}
+                  onChange={e => setQuickInstructAgent(e.target.value || null)}
+                  className="input text-small h-9 w-48"
+                >
+                  <option value="">Select agent...</option>
+                  {projectAgents.map(a => (
+                    <option key={a.id} value={a.id}>
+                      {a.status === 'running' ? '\u25CF ' : ''}{a.name}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  ref={instructInputRef}
+                  type="text"
+                  value={quickInstructText}
+                  onChange={e => setQuickInstructText(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleQuickInstruct(); }}
+                  placeholder={quickInstructAgent ? 'Send instruction...' : 'Pick an agent first'}
+                  disabled={!quickInstructAgent}
+                  className="input text-small h-9 flex-1"
+                />
+                <button
+                  onClick={handleQuickInstruct}
+                  disabled={!quickInstructAgent || !quickInstructText.trim()}
+                  className="btn-primary btn-sm disabled:opacity-30"
+                >
+                  Send
+                </button>
+              </div>
+              {quickInstructAgent && (
+                <label className="flex items-center gap-1.5 mt-1.5 ml-[200px] cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={quickInstructNewSession}
+                    onChange={e => setQuickInstructNewSession(e.target.checked)}
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-[11px] text-ul-text-muted">Start new session</span>
+                </label>
+              )}
             </div>
 
             {/* Agent fleet table */}

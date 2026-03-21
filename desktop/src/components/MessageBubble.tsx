@@ -55,12 +55,11 @@ export default function MessageBubble({ message, toolResults, toolsExecuting }: 
               </div>
             )}
 
-            {/* Empty state — typing indicator */}
+            {/* Empty state — thinking indicator */}
             {!message.content && !message.tool_calls?.length && (
-              <div className="flex items-center gap-1 py-2 px-1">
-                <span className="typing-dot w-1.5 h-1.5 rounded-full bg-ul-text-muted" />
-                <span className="typing-dot w-1.5 h-1.5 rounded-full bg-ul-text-muted" />
-                <span className="typing-dot w-1.5 h-1.5 rounded-full bg-ul-text-muted" />
+              <div className="flex items-center gap-2 py-2 px-1">
+                <div className="w-4 h-4 rounded-full border-2 border-gray-200 border-t-gray-500 animate-spin" />
+                <span className="text-small text-ul-text-muted">Thinking...</span>
               </div>
             )}
 

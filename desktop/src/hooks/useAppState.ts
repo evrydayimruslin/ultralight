@@ -6,7 +6,7 @@ import { useState, useCallback, useRef } from 'react';
 
 export type AppView =
   | { kind: 'home' }
-  | { kind: 'agent'; agentId: string }
+  | { kind: 'agent'; agentId: string; initialMessage?: string }
   | { kind: 'new-chat' }
   | { kind: 'capabilities' }
   | { kind: 'profile' }
@@ -16,7 +16,7 @@ export type AppView =
 export interface UseAppStateReturn {
   view: AppView;
   navigateHome: () => void;
-  navigateToAgent: (agentId: string) => void;
+  navigateToAgent: (agentId: string, initialMessage?: string) => void;
   navigateToNewChat: () => void;
   navigateToCapabilities: () => void;
   navigateToProfile: () => void;
@@ -118,7 +118,7 @@ export function useAppState(): UseAppStateReturn {
   }, [syncState]);
 
   const navigateHome = useCallback(() => navigate({ kind: 'home' }), [navigate]);
-  const navigateToAgent = useCallback((agentId: string) => navigate({ kind: 'agent', agentId }), [navigate]);
+  const navigateToAgent = useCallback((agentId: string, initialMessage?: string) => navigate({ kind: 'agent', agentId, initialMessage }), [navigate]);
   const navigateToNewChat = useCallback(() => navigate({ kind: 'new-chat' }), [navigate]);
   const navigateToCapabilities = useCallback(() => navigate({ kind: 'capabilities' }), [navigate]);
   const navigateToProfile = useCallback(() => navigate({ kind: 'profile' }), [navigate]);

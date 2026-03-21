@@ -21,12 +21,15 @@ import { agentRunner } from '../lib/agentRunner';
 
 interface ChatViewProps {
   agentId?: string | null;
+  /** Initial message to send automatically when navigating with a new session instruction */
+  initialMessage?: string;
   onNavigateHome?: () => void;
   onNavigateToAgent?: (agentId: string) => void;
 }
 
 export default function ChatView({
   agentId,
+  initialMessage,
   onNavigateHome,
   onNavigateToAgent,
 }: ChatViewProps = {}) {
@@ -205,6 +208,20 @@ export default function ChatView({
       setQueuedMessages(agentRunner.getQueue(agentId));
     }
   }, [agentId, agents, setActiveAgent, loadConversation, loadMessages, switchConversation]);
+
+  // Auto-send initialMessage when navigating with new session instruction
+  const initialMessageSentRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (initialMessage && activeAgent && activeId && initialMessage !== initialMessageSentRef.current) {
+      initialMessageSentRef.current = initialMessage;
+      // Small delay to ensure conversation is loaded before sending
+      const timer = setTimeout(() => {
+        sendMessage(initialMessage);
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialMessage, activeAgent, activeId]);
 
   // Subscribe to agentRunner events for the active agent — live message updates
   useEffect(() => {

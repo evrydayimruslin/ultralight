@@ -139,6 +139,7 @@ export default function App() {
       content = (
         <ChatView
           agentId={view.agentId}
+          initialMessage={view.initialMessage}
           onNavigateHome={navigateHome}
           onNavigateToAgent={navigateToAgent}
         />
