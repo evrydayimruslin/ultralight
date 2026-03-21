@@ -8,6 +8,7 @@ import { createR2Service } from '../services/storage.ts';
 import { getCodeCache } from '../services/codecache.ts';
 import { bundleCode } from '../services/bundler.ts';
 import { parseTypeScript, toSkillsParsed } from '../services/parser.ts';
+import { generateManifestFromParseResult } from '../services/library.ts';
 import {
   generateSkillsMd,
   validateAndParseSkillsMd,
@@ -1524,11 +1525,13 @@ async function handleGenerateDocs(request: Request, appId: string): Promise<Resp
         warnings.push('Embedding service not available. Enable BYOK or contact admin to enable semantic search.');
       }
 
-      // Phase 7: Save to database
-      console.log('[GENERATE] Saving to database...');
+      // Phase 7: Generate manifest and save to database
+      console.log('[GENERATE] Generating manifest and saving to database...');
+      const manifest = generateManifestFromParseResult(app, parseResult, app.current_version || '1.0.0');
       await appsService.update(appId, {
         skills_md,
         skills_parsed,
+        manifest: JSON.stringify(manifest),
         docs_generated_at: new Date().toISOString(),
         generation_in_progress: false,
       });
@@ -1897,9 +1900,11 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
             }
           }
 
+          const manifest = generateManifestFromParseResult(app, parseResult, app.current_version || '1.0.0');
           await appsService.update(appId, {
             skills_md,
             skills_parsed,
+            manifest: JSON.stringify(manifest),
             docs_generated_at: new Date().toISOString(),
           });
 

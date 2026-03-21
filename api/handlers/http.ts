@@ -14,6 +14,8 @@ import { executeGpuFunction } from '../services/gpu/executor.ts';
 import { acquireGpuSlot } from '../services/gpu/concurrency.ts';
 import { settleGpuExecution } from '../services/gpu/billing.ts';
 import { getUserTier } from '../services/tier-enforcement.ts';
+import { createD1DataService } from '../services/d1-data.ts';
+import { getD1DatabaseId } from '../services/d1-provisioning.ts';
 
 // @ts-ignore - Deno is available in Deno Deploy
 const Deno = globalThis.Deno;
@@ -398,6 +400,10 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
     }
 
     // ── Deno Sandbox Path (existing, unchanged) ──
+    // D1 Data Service (lazy-provisioned)
+    const d1DatabaseId = (app as any).d1_database_id || await getD1DatabaseId(app.id);
+    const d1DataService = createD1DataService(app.id, d1DatabaseId);
+
     // Execute the function in sandbox
     const result = await executeInSandbox(
       {
@@ -409,6 +415,7 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
         userApiKey,
         user,
         appDataService,
+        d1DataService,
         memoryService: null,
         aiService: aiService as { call: (request: import('../../shared/types/index.ts').AIRequest, apiKey: string) => Promise<import('../../shared/types/index.ts').AIResponse> },
         envVars,

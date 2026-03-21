@@ -3,6 +3,7 @@
 // and bottom profile menu (Profile/Wallet/Settings).
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { CirclePlus, Compass, Package, Wallet, Settings, User } from 'lucide-react';
 import type { Agent } from '../hooks/useAgentFleet';
 import type { AppView } from '../hooks/useAppState';
 import { getToken, getApiBase } from '../lib/storage';
@@ -149,54 +150,13 @@ function CollapsibleSection({ title, expanded, onToggle, trailing, children }: {
   );
 }
 
-// ── Icons (inline SVGs) ──
+// ── Icons (Lucide) ── //
 
-const NewSessionIcon = (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-    <line x1="8" y1="3" x2="8" y2="13" />
-    <line x1="3" y1="8" x2="13" y2="8" />
-  </svg>
-);
+const iconProps = { size: 16, strokeWidth: 1.5 } as const;
+const NewSessionIcon = <CirclePlus {...iconProps} />;
+const CommandIcon = <Compass {...iconProps} />;
+const ToolsIcon = <Package {...iconProps} />;
 
-const DashboardIcon = (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="2" y="2" width="5" height="5" rx="1" />
-    <rect x="9" y="2" width="5" height="5" rx="1" />
-    <rect x="2" y="9" width="5" height="5" rx="1" />
-    <rect x="9" y="9" width="5" height="5" rx="1" />
-  </svg>
-);
-
-const CapabilitiesIcon = (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="2" y="2" width="5" height="5" rx="1" />
-    <rect x="9" y="2" width="5" height="5" rx="1" />
-    <rect x="2" y="9" width="5" height="5" rx="1" />
-    <rect x="9" y="9" width="5" height="5" rx="1" />
-  </svg>
-);
-
-const WalletIcon = (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="2" y="4" width="12" height="9" rx="1.5" />
-    <path d="M2 4V3.5A1.5 1.5 0 013.5 2h7" />
-    <circle cx="11.5" cy="8.5" r="1" />
-  </svg>
-);
-
-const SettingsIcon = (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="8" cy="8" r="2" />
-    <path d="M8 2v2M8 12v2M2 8h2M12 8h2M3.76 3.76l1.41 1.41M10.83 10.83l1.41 1.41M3.76 12.24l1.41-1.41M10.83 5.17l1.41-1.41" />
-  </svg>
-);
-
-const ProfileIcon = (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="8" cy="5" r="3" />
-    <path d="M2 14c0-2.8 2.7-5 6-5s6 2.2 6 5" />
-  </svg>
-);
 
 // ── Component ──
 
@@ -321,13 +281,13 @@ export default function NavSidebar({
           onClick={onNewAgent}
         />
         <NavItem
-          icon={DashboardIcon}
+          icon={CommandIcon}
           label="Command"
           active={activeView.kind === 'home'}
           onClick={onNavigateHome}
         />
         <NavItem
-          icon={CapabilitiesIcon}
+          icon={ToolsIcon}
           label="Tools"
           active={activeView.kind === 'capabilities'}
           onClick={onNavigateToCapabilities}
@@ -404,21 +364,21 @@ export default function NavSidebar({
               onClick={() => { setProfileMenuOpen(false); onNavigateToProfile(); }}
               className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100 flex items-center gap-2.5"
             >
-              {ProfileIcon}
+              <User {...iconProps} />
               Profile
             </button>
             <button
               onClick={() => { setProfileMenuOpen(false); onNavigateToWallet(); }}
               className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100 flex items-center gap-2.5"
             >
-              {WalletIcon}
+              <Wallet {...iconProps} />
               Wallet
             </button>
             <button
               onClick={() => { setProfileMenuOpen(false); onNavigateToSettings(); }}
               className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100 flex items-center gap-2.5"
             >
-              {SettingsIcon}
+              <Settings {...iconProps} />
               Settings
             </button>
           </div>

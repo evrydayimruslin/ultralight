@@ -316,3 +316,67 @@ export function buildAgentSystemPrompt(
 
   return sections.join('\n');
 }
+
+// ── Connected Apps → MCP Schema Block ──
+
+interface ConnectedAppManifest {
+  app_id: string;
+  name: string;
+  description?: string;
+  permissions?: string[];
+  functions?: Record<string, {
+    description: string;
+    parameters?: Record<string, {
+      type: string;
+      description?: string;
+      required?: boolean;
+    }>;
+    returns?: { type: string; description?: string };
+  }>;
+}
+
+/**
+ * Generate MCP schema blocks for connected apps.
+ * These go into the agent's system prompt so it can call functions
+ * with 100% accuracy on the first attempt — no discovery needed.
+ *
+ * @param apps Array of app manifests with their IDs
+ * @returns Formatted string for injection into mcpSchemas parameter
+ */
+export function generateConnectedAppsSchema(apps: ConnectedAppManifest[]): string {
+  if (apps.length === 0) return '';
+
+  const blocks = apps.map(app => {
+    const lines: string[] = [];
+
+    lines.push(`### ${app.name} (app_id: \`${app.app_id}\`)`);
+    if (app.description) {
+      lines.push(`> ${app.description}`);
+    }
+    if (app.permissions && app.permissions.length > 0) {
+      lines.push(`Permissions: ${app.permissions.join(', ')}`);
+    }
+    lines.push('');
+
+    if (app.functions && Object.keys(app.functions).length > 0) {
+      lines.push('**Functions:**');
+      for (const [fnName, fn] of Object.entries(app.functions)) {
+        const params = fn.parameters
+          ? Object.entries(fn.parameters).map(([pName, pSchema]) => {
+              const opt = pSchema.required === false ? '?' : '';
+              return `${pName}${opt}: ${pSchema.type}`;
+            }).join(', ')
+          : '';
+        const returnStr = fn.returns ? ` → ${fn.returns.type}` : '';
+        lines.push(`- \`${fnName}(${params})\`${returnStr} — ${fn.description}`);
+      }
+    }
+
+    lines.push('');
+    lines.push(`**Usage:** \`ul_call({ app_id: "${app.app_id}", function_name: "<fn>", args: { ... } })\``);
+
+    return lines.join('\n');
+  });
+
+  return blocks.join('\n\n---\n\n');
+}

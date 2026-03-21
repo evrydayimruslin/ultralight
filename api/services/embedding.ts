@@ -128,8 +128,15 @@ export class EmbeddingService {
 // ============================================
 
 /**
- * Create an embedding service using user's BYOK API key
- * Returns null if no API key is available
+ * Create an embedding service using the best available API key.
+ *
+ * Key priority:
+ *   1. User's BYOK key (direct OpenRouter API key)
+ *   2. OPENROUTER_EMBEDDING_KEY — dedicated platform embedding key (regular API key)
+ *   3. OPENROUTER_API_KEY — legacy fallback (may be a provisioning key, won't work for embeddings)
+ *
+ * Note: OPENROUTER_API_KEY is often a provisioning key (used to create per-user sub-keys)
+ * which cannot call the embeddings endpoint. Use OPENROUTER_EMBEDDING_KEY for platform operations.
  */
 export function createEmbeddingService(userApiKey?: string): EmbeddingService | null {
   // Try user's BYOK key first
@@ -137,7 +144,13 @@ export function createEmbeddingService(userApiKey?: string): EmbeddingService | 
     return new EmbeddingService({ apiKey: userApiKey });
   }
 
-  // Try system-level key as fallback (for discovery indexing)
+  // Try dedicated embedding key (regular API key, not provisioning key)
+  const embeddingKey = Deno?.env?.get('OPENROUTER_EMBEDDING_KEY');
+  if (embeddingKey) {
+    return new EmbeddingService({ apiKey: embeddingKey });
+  }
+
+  // Legacy fallback — may be a provisioning key that can't do embeddings
   const systemKey = Deno?.env?.get('OPENROUTER_API_KEY');
   if (systemKey) {
     return new EmbeddingService({ apiKey: systemKey });
@@ -151,7 +164,7 @@ export function createEmbeddingService(userApiKey?: string): EmbeddingService | 
  */
 export function isEmbeddingAvailable(userApiKey?: string): boolean {
   if (userApiKey) return true;
-  return !!Deno?.env?.get('OPENROUTER_API_KEY');
+  return !!(Deno?.env?.get('OPENROUTER_EMBEDDING_KEY') || Deno?.env?.get('OPENROUTER_API_KEY'));
 }
 
 // ============================================

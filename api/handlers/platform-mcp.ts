@@ -5755,9 +5755,20 @@ async function executeDiscoverLibrary(
     return { library: libraryMd, memory: memoryMd };
   }
 
-  // Semantic search against user's app embeddings
+  // Semantic search against user's app embeddings — with graceful fallback to text search
   const embeddingService = createEmbeddingService();
-  if (!embeddingService) {
+  let queryEmbedding: number[] | null = null;
+
+  if (embeddingService) {
+    try {
+      const queryResult = await embeddingService.embed(query);
+      queryEmbedding = queryResult.embedding;
+    } catch (embErr) {
+      console.error('[DISCOVER:library] Embedding failed, falling back to text search:', embErr);
+    }
+  }
+
+  if (!queryEmbedding) {
     // Fall back to text search across owned + saved
     const appsService = createAppsService();
     const ownedApps = await appsService.listByOwner(userId);
@@ -5779,9 +5790,6 @@ async function executeDiscoverLibrary(
     };
   }
 
-  // Generate query embedding
-  const queryResult = await embeddingService.embed(query);
-
   // Search apps (existing behavior)
   let appResults: Array<{
     id: string; name: string; slug: string; description: string | null;
@@ -5792,7 +5800,7 @@ async function executeDiscoverLibrary(
   if (searchApps) {
     const appsService = createAppsService();
     const results = await appsService.searchByEmbedding(
-      queryResult.embedding,
+      queryEmbedding,
       userId,
       true, // include private (own apps)
       20,
@@ -5832,7 +5840,7 @@ async function executeDiscoverLibrary(
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          p_query_embedding: JSON.stringify(queryResult.embedding),
+          p_query_embedding: JSON.stringify(queryEmbedding),
           p_query_text: query,
           p_user_id: userId,
           p_types: contentTypes,
@@ -6058,16 +6066,46 @@ async function executeDiscoverAppstore(
   // ── SEARCH MODE (with query) ──
   const overFetchLimit = limit * 3; // Over-fetch 3x for re-ranking pool
 
+  // Generate query embedding with graceful fallback
   const embeddingService = createEmbeddingService();
-  if (!embeddingService) {
-    throw new ToolError(INTERNAL_ERROR, 'Embedding service not available');
+  let queryEmbedding: number[] | null = null;
+
+  if (embeddingService) {
+    try {
+      const embeddingInput = task
+        ? `Task: ${task}${query ? '. ' + query : ''}`
+        : query;
+      const queryResult = await embeddingService.embed(embeddingInput);
+      queryEmbedding = queryResult.embedding;
+    } catch (embErr) {
+      console.error('[DISCOVER:appstore] Embedding failed, falling back to text search:', embErr);
+    }
   }
 
-  // When task is provided, enrich the embedding input for better knowledge matching
-  const embeddingInput = task
-    ? `Task: ${task}${query ? '. ' + query : ''}`
-    : query;
-  const queryResult = await embeddingService.embed(embeddingInput);
+  if (!queryEmbedding) {
+    // Fall back to text-based search when embedding is unavailable
+    const appsService = createAppsService();
+    const searchTerm = query || task || '';
+    const searchLower = searchTerm.toLowerCase();
+    const allPublicApps = await appsService.listPublic(limit);
+    const matches = allPublicApps.filter(a =>
+      !blockedAppIds.has(a.id) &&
+      !(a as unknown as Record<string, unknown>).hosting_suspended &&
+      (a.name.toLowerCase().includes(searchLower) ||
+       (a.description || '').toLowerCase().includes(searchLower) ||
+       (a.tags || []).some(t => t.toLowerCase().includes(searchLower)))
+    );
+    return {
+      mode: 'search' as const,
+      query: searchTerm,
+      results: matches.map(a => ({
+        id: a.id, name: a.name, slug: a.slug, description: a.description,
+        type: 'app' as const,
+        mcp_endpoint: `/mcp/${a.id}`,
+      })),
+      total: matches.length,
+    };
+  }
 
   // ── APP SEARCH ──
   type ScoredResult = {
@@ -6084,7 +6122,7 @@ async function executeDiscoverAppstore(
   if (searchApps) {
     const appsService = createAppsService();
     const results = await appsService.searchByEmbedding(
-      queryResult.embedding,
+      queryEmbedding,
       userId,
       false, // public only
       overFetchLimit,
@@ -6192,7 +6230,7 @@ async function executeDiscoverAppstore(
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          p_query_embedding: JSON.stringify(queryResult.embedding),
+          p_query_embedding: JSON.stringify(queryEmbedding),
           p_query_text: query || task,
           p_user_id: userId,
           p_types: ['page'],

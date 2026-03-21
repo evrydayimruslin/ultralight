@@ -24,6 +24,8 @@ export interface Agent {
   end_goal: string | null;
   context: string | null;
   launch_mode: string;
+  /** JSON array of app IDs this agent has pre-connected access to */
+  connected_app_ids: string | null;
   created_at: number;
   updated_at: number;
   // Enriched fields (from JOINs, only present in list queries)
@@ -44,6 +46,8 @@ export interface CreateAgentParams {
   endGoal?: string;
   context?: string;
   launchMode?: string;
+  /** JSON array of app IDs this agent should have pre-connected access to */
+  connectedAppIds?: string;
 }
 
 export interface UseAgentFleetReturn {
@@ -58,7 +62,7 @@ export interface UseAgentFleetReturn {
   /** Stop a running agent */
   stopAgent: (agentId: string) => void;
   /** Update agent fields (status, name, notes, etc.) */
-  updateAgent: (id: string, updates: Partial<Pick<Agent, 'status' | 'name' | 'admin_notes' | 'end_goal' | 'context' | 'permission_level' | 'model' | 'project_dir'>>) => Promise<void>;
+  updateAgent: (id: string, updates: Partial<Pick<Agent, 'status' | 'name' | 'admin_notes' | 'end_goal' | 'context' | 'permission_level' | 'model' | 'project_dir' | 'connected_app_ids'>>) => Promise<void>;
   /** Delete an agent and its conversation */
   deleteAgent: (id: string) => Promise<void>;
   /** Set which agent is currently being viewed */
@@ -139,6 +143,7 @@ export function useAgentFleet(): UseAgentFleetReturn {
       endGoal: params.endGoal ?? null,
       context: params.context ?? null,
       launchMode: params.launchMode ?? null,
+      connectedAppIds: params.connectedAppIds ?? null,
     });
 
     await refreshAgents();
@@ -158,7 +163,7 @@ export function useAgentFleet(): UseAgentFleetReturn {
   // Update agent fields
   const updateAgent = useCallback(async (
     id: string,
-    updates: Partial<Pick<Agent, 'status' | 'name' | 'admin_notes' | 'end_goal' | 'context' | 'permission_level' | 'model' | 'project_dir'>>,
+    updates: Partial<Pick<Agent, 'status' | 'name' | 'admin_notes' | 'end_goal' | 'context' | 'permission_level' | 'model' | 'project_dir' | 'connected_app_ids'>>,
   ) => {
     await invoke('db_update_agent', {
       id,
@@ -170,6 +175,7 @@ export function useAgentFleet(): UseAgentFleetReturn {
       permissionLevel: updates.permission_level ?? null,
       model: updates.model ?? null,
       projectDir: updates.project_dir ?? null,
+      connectedAppIds: updates.connected_app_ids ?? null,
     });
 
     // Optimistic update

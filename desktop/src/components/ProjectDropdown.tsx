@@ -101,35 +101,21 @@ export default function ProjectDropdown({ selectedDir, onSelect }: ProjectDropdo
       {/* Trigger button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 px-3 py-2 rounded-lg border border-ul-border bg-white hover:bg-gray-50 transition-colors min-w-[200px] max-w-[400px]"
+        className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-gray-100 transition-colors max-w-[300px]"
       >
-        {/* Folder icon */}
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-ul-text-secondary flex-shrink-0">
-          <path d="M2 4.5V12.5C2 13.0523 2.44772 13.5 3 13.5H13C13.5523 13.5 14 13.0523 14 12.5V6.5C14 5.94772 13.5523 5.5 13 5.5H8L6.5 3.5H3C2.44772 3.5 2 3.94772 2 4.5Z" />
-        </svg>
-
-        {selectedDir ? (
-          <div className="flex flex-col items-start min-w-0 flex-1">
-            <span className="text-small font-medium text-ul-text truncate w-full text-left">
-              {dirName(selectedDir)}
-            </span>
-            <span className="text-caption text-ul-text-muted truncate w-full text-left">
-              {shortenPath(selectedDir)}
-            </span>
-          </div>
-        ) : (
-          <span className="text-small text-ul-text-secondary">Select a project...</span>
-        )}
+        <span className="text-small text-ul-text-muted truncate">
+          {selectedDir ? shortenPath(selectedDir) : 'Select a project...'}
+        </span>
 
         {/* Chevron */}
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-ul-text-muted flex-shrink-0">
+        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-ul-text-muted flex-shrink-0">
           <path d="M3 4.5L6 7.5L9 4.5" />
         </svg>
       </button>
 
       {/* Dropdown menu */}
       {isOpen && (
-        <div className="absolute top-full left-0 mt-1 w-full min-w-[280px] bg-white border border-ul-border rounded-lg shadow-lg z-40 py-1">
+        <div className="absolute top-full right-0 mt-1 min-w-[280px] bg-white border border-ul-border rounded-lg shadow-lg z-40 py-1">
           {/* Recent projects */}
           {recentProjects.length > 0 && (
             <>

@@ -11,6 +11,8 @@ import { decryptEnvVars, decryptEnvVar } from '../services/envvars.ts';
 import { executeGpuFunction } from '../services/gpu/executor.ts';
 import { acquireGpuSlot } from '../services/gpu/concurrency.ts';
 import { settleGpuExecution } from '../services/gpu/billing.ts';
+import { createD1DataService } from '../services/d1-data.ts';
+import { getD1DatabaseId } from '../services/d1-provisioning.ts';
 
 // Decode JWT payload without verification (verification done by Supabase)
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
@@ -228,6 +230,10 @@ export async function handleRun(request: Request, appId: string): Promise<Respon
     }
 
     // ── Deno Sandbox Path (existing, unchanged) ──
+    // D1 Data Service (lazy-provisioned)
+    const d1DatabaseId = (app as any).d1_database_id || await getD1DatabaseId(appId);
+    const d1DataService = createD1DataService(appId, d1DatabaseId);
+
     // Execute in sandbox
     const result = await executeInSandbox(
       {
@@ -237,12 +243,9 @@ export async function handleRun(request: Request, appId: string): Promise<Respon
         code,
         permissions: ['memory:read', 'memory:write', 'ai:call', 'net:fetch'],
         userApiKey: null,
-        // Authenticated user context (null if anonymous)
         user,
-        // R2-based app data - works out of the box, no user config needed
         appDataService,
-        // User memory service - null for now (requires Supabase auth)
-        // Will be enabled when user is authenticated
+        d1DataService,
         memoryService: null,
         aiService: {
           call: async (request, apiKey) => ({

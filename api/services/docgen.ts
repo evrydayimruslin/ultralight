@@ -160,6 +160,28 @@ export function generateSkillsMd(
 }
 
 /**
+ * Collapse multi-line type annotations to a single line.
+ * Inline object types like `{ tier_map?: Record<string, string>;\n  price_map?: number; }`
+ * become `object` in the signature line. Detailed types go in the parameters table.
+ */
+function collapseType(typeStr: string): string {
+  // If the type contains newlines, it's a multi-line inline type — simplify it
+  if (typeStr.includes('\n')) {
+    // Wrap type: Promise<{ ... }> → Promise<object>
+    const promiseMatch = typeStr.match(/^Promise<[\s\S]+>$/);
+    if (promiseMatch) return 'Promise<object>';
+    return 'object';
+  }
+  // Very long single-line object types: collapse to `object` if over 60 chars
+  if (typeStr.length > 60 && typeStr.includes('{')) {
+    const promiseMatch = typeStr.match(/^Promise<\{[\s\S]+\}>$/);
+    if (promiseMatch) return 'Promise<object>';
+    if (typeStr.startsWith('{')) return 'object';
+  }
+  return typeStr;
+}
+
+/**
  * Generate documentation for a single function
  */
 function generateFunctionDoc(
@@ -168,14 +190,17 @@ function generateFunctionDoc(
 ): string {
   const lines: string[] = [];
 
-  // Function signature
+  // Function signature — collapse types to single line for parser round-trip
   const params = fn.parameters.map(p => {
     const optional = !p.required ? '?' : '';
-    return `${p.name}${optional}: ${p.type}`;
+    // Collapse multi-line types (inline objects, unions) to single line
+    const compactType = collapseType(p.type);
+    return `${p.name}${optional}: ${compactType}`;
   }).join(', ');
 
   const asyncPrefix = fn.isAsync ? 'async ' : '';
-  lines.push(`### \`${asyncPrefix}${fn.name}(${params}): ${fn.returns.type}\``);
+  const compactReturn = collapseType(fn.returns.type);
+  lines.push(`### \`${asyncPrefix}${fn.name}(${params}): ${compactReturn}\``);
   lines.push('');
 
   // Description

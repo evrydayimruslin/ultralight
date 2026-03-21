@@ -11,11 +11,10 @@ import { createAppsService } from './apps.ts';
 import { parseTypeScript, toSkillsParsed } from './parser.ts';
 import {
   generateSkillsMd,
-  validateAndParseSkillsMd,
   generateEmbeddingText,
 } from './docgen.ts';
 import { createEmbeddingService } from './embedding.ts';
-import type { App, AppWithDraft, ParsedSkills } from '../../shared/types/index.ts';
+import type { App, AppWithDraft, AppManifest, ManifestFunction, ManifestParameter, ManifestReturn, ParsedSkills } from '../../shared/types/index.ts';
 import type { ParseResult } from './parser.ts';
 
 // ============================================
@@ -380,9 +379,65 @@ export interface VersionArtifacts {
 }
 
 /**
- * Auto-generate Skills.md, library.txt, and embedding.json for a specific
+ * Convert a JSON Schema type to a ManifestParameter type string.
+ */
+function jsonSchemaToManifestType(schema: Record<string, unknown>): ManifestParameter['type'] {
+  const t = schema.type as string;
+  if (t === 'string' || t === 'number' || t === 'boolean' || t === 'object' || t === 'array') return t;
+  return 'object'; // fallback for complex/union types
+}
+
+/**
+ * Auto-generate an AppManifest from a ParseResult.
+ * This is the canonical source of truth — all other representations derive from it.
+ */
+export function generateManifestFromParseResult(
+  app: { name: string; slug: string; description?: string | null },
+  parseResult: ParseResult,
+  version: string
+): AppManifest {
+  const functions: Record<string, ManifestFunction> = {};
+
+  for (const fn of parseResult.functions) {
+    const parameters: Record<string, ManifestParameter> = {};
+    for (const p of fn.parameters) {
+      parameters[p.name] = {
+        type: jsonSchemaToManifestType(p.schema as Record<string, unknown>),
+        description: p.description || undefined,
+        required: p.required !== false,
+        ...(p.default !== undefined ? { default: p.default } : {}),
+        // Preserve nested object properties if present
+        ...(p.schema && (p.schema as Record<string, unknown>).properties
+          ? { properties: (p.schema as Record<string, unknown>).properties as Record<string, ManifestParameter> }
+          : {}),
+      };
+    }
+
+    functions[fn.name] = {
+      description: fn.description || `Function ${fn.name}`,
+      parameters: Object.keys(parameters).length > 0 ? parameters : undefined,
+      returns: fn.returns?.type
+        ? { type: jsonSchemaToManifestType({ type: fn.returns.type.replace(/^Promise<(.+)>$/, '$1') } as Record<string, unknown>), description: fn.returns.description || undefined } as ManifestReturn
+        : undefined,
+      examples: fn.examples.length > 0 ? fn.examples : undefined,
+    };
+  }
+
+  return {
+    name: app.name || app.slug,
+    version,
+    description: app.description || undefined,
+    type: 'mcp',
+    entry: { functions: 'index.ts' },
+    functions: Object.keys(functions).length > 0 ? functions : undefined,
+    permissions: parseResult.permissions.length > 0 ? parseResult.permissions : undefined,
+  };
+}
+
+/**
+ * Auto-generate Skills.md, library.txt, manifest.json, and embedding.json for a specific
  * version of an app. Stores artifacts in R2 at the version's storage key
- * and also updates the app DB record with the latest skills/embedding.
+ * and also updates the app DB record with the latest skills/embedding/manifest.
  *
  * @param app       The app record (needs .id, .name, .slug, .description, .exports)
  * @param storageKey  The R2 prefix for this version, e.g. "apps/{id}/{ver}/"
@@ -410,21 +465,29 @@ export async function generateSkillsForVersion(
 
   if (!code) return { skillsMd: null, libraryTxt: null, embeddingJson: null };
 
-  // Parse code → generate Skills.md
+  // Parse code → all artifacts derive from ParseResult
   const parseResult = parseTypeScript(code);
+
+  // Generate manifest (canonical source of truth)
+  const manifest = generateManifestFromParseResult(app, parseResult, _version);
+  const manifestJson = JSON.stringify(manifest, null, 2);
+
+  // Generate skills_parsed directly from parser (not from Skills.md round-trip)
+  const skillsParsed = toSkillsParsed(parseResult);
+
+  // Generate Skills.md (human-readable docs)
   const skillsMd = generateSkillsMd(app.name || app.slug, parseResult);
 
   // Generate compact library entry (header + functions summary)
   const libraryTxt = generateLibraryEntry(app, parseResult);
 
-  // Generate embedding from library entry
+  // Generate embedding from parsed skills
   let embeddingJson: number[] | null = null;
   try {
     const embeddingService = createEmbeddingService();
     if (embeddingService) {
-      const skills = toSkillsParsed(parseResult);
       const searchHints = Array.isArray(app.tags) ? app.tags as string[] : undefined;
-      const embeddingText = generateEmbeddingText(app.name, app.description, skills, searchHints);
+      const embeddingText = generateEmbeddingText(app.name, app.description, skillsParsed, searchHints);
       const result = await embeddingService.embed(embeddingText);
       embeddingJson = result.embedding;
     }
@@ -434,36 +497,44 @@ export async function generateSkillsForVersion(
 
   // Store per-version in R2
   try {
-    await r2Service.uploadFile(`${storageKey}skills.md`, {
-      name: 'skills.md',
-      content: new TextEncoder().encode(skillsMd),
-      contentType: 'text/markdown',
-    });
+    const uploads = [
+      r2Service.uploadFile(`${storageKey}skills.md`, {
+        name: 'skills.md',
+        content: new TextEncoder().encode(skillsMd),
+        contentType: 'text/markdown',
+      }),
+      r2Service.uploadFile(`${storageKey}manifest.json`, {
+        name: 'manifest.json',
+        content: new TextEncoder().encode(manifestJson),
+        contentType: 'application/json',
+      }),
+    ];
     if (libraryTxt) {
-      await r2Service.uploadFile(`${storageKey}library.txt`, {
+      uploads.push(r2Service.uploadFile(`${storageKey}library.txt`, {
         name: 'library.txt',
         content: new TextEncoder().encode(libraryTxt),
         contentType: 'text/plain',
-      });
+      }));
     }
     if (embeddingJson) {
-      await r2Service.uploadFile(`${storageKey}embedding.json`, {
+      uploads.push(r2Service.uploadFile(`${storageKey}embedding.json`, {
         name: 'embedding.json',
         content: new TextEncoder().encode(JSON.stringify(embeddingJson)),
         contentType: 'application/json',
-      });
+      }));
     }
+    await Promise.all(uploads);
   } catch (err) {
     console.error('Failed to store skills artifacts in R2:', err);
   }
 
-  // Also update the app record with skills_md and parsed skills
+  // Update the app record — skills_parsed from parser directly (no round-trip), manifest stored
   try {
-    const validation = validateAndParseSkillsMd(skillsMd);
     const appsService = createAppsService();
     await appsService.update(app.id, {
       skills_md: skillsMd,
-      skills_parsed: validation.skills_parsed,
+      skills_parsed: skillsParsed,
+      manifest: manifestJson,
       docs_generated_at: new Date().toISOString(),
     } as Partial<AppWithDraft>);
 
