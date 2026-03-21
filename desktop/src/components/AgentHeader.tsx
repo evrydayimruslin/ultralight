@@ -45,7 +45,6 @@ interface AgentHeaderProps {
   onUpdateAgent: (updates: Partial<Agent>) => Promise<void>;
   onStop: () => void;
   onNewSession: () => void;
-  onSignOut: () => void;
   onOpenSubagentChat?: (agentId: string) => void;
   onStopSubagent?: (agentId: string) => void;
   executeMcpTool?: (name: string, args: Record<string, unknown>) => Promise<string>;
@@ -126,7 +125,6 @@ export default function AgentHeader({
   onUpdateAgent,
   onStop,
   onNewSession,
-  onSignOut,
   onOpenSubagentChat,
   onStopSubagent,
   executeMcpTool,
@@ -504,9 +502,6 @@ export default function AgentHeader({
         <div className="flex items-center gap-2">
           <ContextIndicator tokenCount={tokenCount} contextWindow={contextWindow} />
           <BalanceIndicator />
-          <button onClick={onSignOut} className="btn-ghost btn-sm text-caption text-ul-text-muted" title="Sign out">
-            Sign Out
-          </button>
         </div>
       </header>
 

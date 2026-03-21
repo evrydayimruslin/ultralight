@@ -467,7 +467,7 @@ export default function ChatView({
         onUpdateAgent={handleUpdateAgent}
         onStop={() => activeAgent && stopAgent(activeAgent.id)}
         onNewSession={handleNewSession}
-        onSignOut={handleSignOut}
+
         onOpenSubagentChat={onNavigateToAgent}
         onStopSubagent={stopAgent}
         executeMcpTool={executeMcpTool}
