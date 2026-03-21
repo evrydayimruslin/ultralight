@@ -5790,7 +5790,7 @@ async function executeDiscoverLibrary(
     };
   }
 
-  // Search apps (existing behavior)
+  // Search apps (existing behavior) — with fallback to text search if RPC fails
   let appResults: Array<{
     id: string; name: string; slug: string; description: string | null;
     similarity: number; source: string; type: string; mcp_endpoint: string;
@@ -5799,26 +5799,41 @@ async function executeDiscoverLibrary(
 
   if (searchApps) {
     const appsService = createAppsService();
-    const results = await appsService.searchByEmbedding(
-      queryEmbedding,
-      userId,
-      true, // include private (own apps)
-      20,
-      0.3
-    );
+    let libraryResults: App[] = [];
 
-    // Filter to own apps + saved apps
-    const savedAppIdSet = new Set(savedAppIds);
-    const libraryResults = results.filter(r =>
-      r.owner_id === userId || savedAppIdSet.has(r.id)
-    );
+    try {
+      const results = await appsService.searchByEmbedding(
+        queryEmbedding,
+        userId,
+        true, // include private (own apps)
+        20,
+        0.3
+      );
+
+      // Filter to own apps + saved apps
+      const savedAppIdSet = new Set(savedAppIds);
+      libraryResults = results.filter(r =>
+        r.owner_id === userId || savedAppIdSet.has(r.id)
+      );
+    } catch (rpcErr) {
+      console.error('[DISCOVER:library] searchByEmbedding RPC failed, falling back to text search:', rpcErr);
+      // Fall back to text search when vector search RPC is broken
+      const ownedApps = await appsService.listByOwner(userId);
+      const allApps = [...ownedApps, ...savedApps.filter(sa => sa.owner_id !== userId)];
+      const queryLower = query.toLowerCase();
+      libraryResults = allApps.filter(a =>
+        a.name.toLowerCase().includes(queryLower) ||
+        (a.description || '').toLowerCase().includes(queryLower) ||
+        (a.tags || []).some(t => t.toLowerCase().includes(queryLower))
+      );
+    }
 
     appResults = libraryResults.map(r => ({
       id: r.id,
       name: r.name,
       slug: r.slug,
       description: r.description,
-      similarity: r.similarity,
+      similarity: (r as Record<string, unknown>).similarity as number || 0,
       source: r.owner_id === userId ? 'owned' : 'saved',
       type: 'app',
       mcp_endpoint: `/mcp/${r.id}`,
@@ -6121,19 +6136,35 @@ async function executeDiscoverAppstore(
 
   if (searchApps) {
     const appsService = createAppsService();
-    const results = await appsService.searchByEmbedding(
-      queryEmbedding,
-      userId,
-      false, // public only
-      overFetchLimit,
-      0.4
-    );
+    let filteredResults: App[] = [];
 
-    const filteredResults = results.filter(r =>
-      !blockedAppIds.has(r.id) &&
-      !(r as Record<string, unknown>).hosting_suspended &&
-      !(r.runtime === 'gpu' && (r as Record<string, unknown>).gpu_status !== 'live')
-    );
+    try {
+      const results = await appsService.searchByEmbedding(
+        queryEmbedding,
+        userId,
+        false, // public only
+        overFetchLimit,
+        0.4
+      );
+
+      filteredResults = results.filter(r =>
+        !blockedAppIds.has(r.id) &&
+        !(r as Record<string, unknown>).hosting_suspended &&
+        !(r.runtime === 'gpu' && (r as Record<string, unknown>).gpu_status !== 'live')
+      );
+    } catch (rpcErr) {
+      console.error('[DISCOVER:appstore] searchByEmbedding RPC failed, falling back to text search:', rpcErr);
+      const searchTerm = query || task || '';
+      const searchLower = searchTerm.toLowerCase();
+      const allPublicApps = await appsService.listPublic(overFetchLimit);
+      filteredResults = allPublicApps.filter(a =>
+        !blockedAppIds.has(a.id) &&
+        !(a as unknown as Record<string, unknown>).hosting_suspended &&
+        (a.name.toLowerCase().includes(searchLower) ||
+         (a.description || '').toLowerCase().includes(searchLower) ||
+         (a.tags || []).some(t => t.toLowerCase().includes(searchLower)))
+      );
+    }
 
     // Fetch env_schema and user connection status for re-ranking
     const appIds = filteredResults.map(r => r.id);
