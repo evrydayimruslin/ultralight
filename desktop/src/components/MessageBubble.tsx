@@ -1,6 +1,7 @@
 // Individual message bubble — renders user, assistant, and tool messages.
 
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { Message } from '../hooks/useChat';
 import ToolCallCard from './ToolCallCard';
 
@@ -50,7 +51,7 @@ export default function MessageBubble({ message, toolResults, toolsExecuting }: 
             {/* Text content */}
             {message.content && (
               <div className="markdown-body text-ul-text">
-                <ReactMarkdown>{message.content}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
               </div>
             )}
 
