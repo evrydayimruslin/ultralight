@@ -175,6 +175,16 @@ export default function ChatView({
     prevMessageCountRef.current = messages.length;
   }, [messages, activeId, saveMessages]);
 
+  // Re-save all messages when streaming completes to capture final content
+  // (streaming updates content in-place without changing array length)
+  const wasLoadingRef = useRef(false);
+  useEffect(() => {
+    if (wasLoadingRef.current && !isLoading && activeId && messages.length > 0) {
+      saveMessages(activeId, messages, true);
+    }
+    wasLoadingRef.current = isLoading;
+  }, [isLoading, activeId, messages, saveMessages]);
+
   // Reset message count tracking when conversation changes
   useEffect(() => {
     prevMessageCountRef.current = messages.length;

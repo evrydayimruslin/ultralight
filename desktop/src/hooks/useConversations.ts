@@ -37,7 +37,7 @@ export interface UseConversationsReturn {
   createConversation: (model: string, projectDir: string | null) => Promise<string>;
   loadConversation: (id: string) => Promise<Message[]>;
   switchConversation: (id: string | null) => void;
-  saveMessages: (conversationId: string, messages: Message[]) => Promise<void>;
+  saveMessages: (conversationId: string, messages: Message[], forceAll?: boolean) => Promise<void>;
   updateTitle: (id: string, title: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   refreshList: () => Promise<void>;
@@ -170,9 +170,10 @@ export function useConversations(): UseConversationsReturn {
   const saveMessages = useCallback(async (
     conversationId: string,
     messages: Message[],
+    forceAll = false,
   ) => {
-    // Only save messages we haven't saved yet
-    const unsaved = messages.filter(m => !savedMessageIds.current.has(m.id));
+    // When forceAll is true, re-save all messages (e.g. after streaming completes to capture final content)
+    const unsaved = forceAll ? messages : messages.filter(m => !savedMessageIds.current.has(m.id));
     if (unsaved.length === 0) return;
 
     // Calculate sort_order based on position in full array
