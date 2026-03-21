@@ -1,12 +1,19 @@
 // Agent header — collapsed shows name + status, expanded shows full config panel.
 // Replaces the old static header bar in ChatView.
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Agent } from '../hooks/useAgentFleet';
 import ModelSelector from './ModelSelector';
 import BalanceIndicator from './BalanceIndicator';
 import ContextIndicator from './ContextIndicator';
 import { openSubagentWindow } from '../lib/multiWindow';
+
+interface ConnectedApp {
+  id: string;
+  name: string;
+  description: string | null;
+  functionCount: number;
+}
 
 interface AgentHeaderProps {
   agent: Agent | null;
@@ -20,6 +27,7 @@ interface AgentHeaderProps {
   onSignOut: () => void;
   onOpenSubagentChat?: (agentId: string) => void;
   onStopSubagent?: (agentId: string) => void;
+  executeMcpTool?: (name: string, args: Record<string, unknown>) => Promise<string>;
 }
 
 // ── Helpers ──
@@ -59,9 +67,17 @@ export default function AgentHeader({
   onSignOut,
   onOpenSubagentChat,
   onStopSubagent,
+  executeMcpTool,
 }: AgentHeaderProps) {
   const [expanded, setExpanded] = useState(false);
   const [adminNotes, setAdminNotes] = useState(agent?.admin_notes ?? '');
+
+  // Connected apps state
+  const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>([]);
+  const [appSearchQuery, setAppSearchQuery] = useState('');
+  const [appSearchResults, setAppSearchResults] = useState<ConnectedApp[]>([]);
+  const [searchingApps, setSearchingApps] = useState(false);
+  const appSearchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Sync admin notes when agent changes
   const agentNotesKey = agent?.id ?? '';
@@ -69,6 +85,37 @@ export default function AgentHeader({
   if (agentNotesKey !== lastAgentId) {
     setLastAgentId(agentNotesKey);
     setAdminNotes(agent?.admin_notes ?? '');
+    // Load existing connected apps from agent record
+    if (agent?.connected_app_ids) {
+      try {
+        const ids: string[] = JSON.parse(agent.connected_app_ids);
+        // Populate with just IDs for now — names will resolve on inspect
+        setConnectedApps(ids.map(id => ({ id, name: id, description: null, functionCount: 0 })));
+        // Inspect each to get proper names
+        if (executeMcpTool && ids.length > 0) {
+          ids.forEach(async (appId) => {
+            try {
+              const result = await executeMcpTool('ul_discover', { scope: 'library', action: 'inspect', app_id: appId });
+              const parsed = JSON.parse(result);
+              if (parsed.app) {
+                setConnectedApps(prev => prev.map(a =>
+                  a.id === appId ? {
+                    ...a,
+                    name: parsed.app.name || appId,
+                    description: parsed.app.description || null,
+                    functionCount: parsed.app.manifest?.functions ? Object.keys(parsed.app.manifest.functions).length : 0,
+                  } : a
+                ));
+              }
+            } catch { /* keep placeholder */ }
+          });
+        }
+      } catch {
+        setConnectedApps([]);
+      }
+    } else {
+      setConnectedApps([]);
+    }
   }
 
   const handleNotesBlur = useCallback(async () => {
@@ -77,6 +124,63 @@ export default function AgentHeader({
       await onUpdateAgent({ admin_notes: adminNotes || null } as Partial<Agent>);
     }
   }, [agent, adminNotes, onUpdateAgent]);
+
+  // ── Connected Apps search (debounced) ──
+
+  useEffect(() => {
+    if (appSearchRef.current) clearTimeout(appSearchRef.current);
+    const q = appSearchQuery.trim();
+    if (!q || q.length < 2 || !executeMcpTool) {
+      setAppSearchResults([]);
+      return;
+    }
+
+    appSearchRef.current = setTimeout(async () => {
+      setSearchingApps(true);
+      try {
+        const result = await executeMcpTool('ul_discover', {
+          scope: 'library',
+          query: q,
+        });
+        const parsed = JSON.parse(result);
+        const results: ConnectedApp[] = (parsed.results || [])
+          .filter((r: { id: string }) => !connectedApps.some(ca => ca.id === r.id))
+          .map((r: { id: string; name: string; description?: string; function_count?: number }) => ({
+            id: r.id,
+            name: r.name,
+            description: r.description || null,
+            functionCount: r.function_count || 0,
+          }));
+        setAppSearchResults(results);
+      } catch {
+        setAppSearchResults([]);
+      } finally {
+        setSearchingApps(false);
+      }
+    }, 400);
+
+    return () => { if (appSearchRef.current) clearTimeout(appSearchRef.current); };
+  }, [appSearchQuery, executeMcpTool, connectedApps]);
+
+  const addConnectedApp = useCallback(async (app: ConnectedApp) => {
+    const next = [...connectedApps, app];
+    setConnectedApps(next);
+    setAppSearchResults(prev => prev.filter(r => r.id !== app.id));
+    setAppSearchQuery('');
+    // Persist to agent record
+    if (agent) {
+      await onUpdateAgent({ connected_app_ids: JSON.stringify(next.map(a => a.id)) } as Partial<Agent>);
+    }
+  }, [connectedApps, agent, onUpdateAgent]);
+
+  const removeConnectedApp = useCallback(async (id: string) => {
+    const next = connectedApps.filter(a => a.id !== id);
+    setConnectedApps(next);
+    // Persist to agent record
+    if (agent) {
+      await onUpdateAgent({ connected_app_ids: next.length > 0 ? JSON.stringify(next.map(a => a.id)) : null } as Partial<Agent>);
+    }
+  }, [connectedApps, agent, onUpdateAgent]);
 
   return (
     <div className="border-b border-ul-border bg-white flex-shrink-0">
@@ -157,6 +261,78 @@ export default function AgentHeader({
               rows={2}
             />
           </div>
+
+          {/* Connected Apps */}
+          {executeMcpTool && (
+            <div className="mt-3">
+              <label className="text-caption text-ul-text-muted block mb-1.5">
+                Connected Apps
+                {connectedApps.length > 0 && (
+                  <span className="ml-1.5 text-[10px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
+                    {connectedApps.length} connected
+                  </span>
+                )}
+              </label>
+
+              {/* Selected apps */}
+              {connectedApps.length > 0 && (
+                <div className="space-y-1 rounded border border-emerald-200 p-2 bg-emerald-50/30 mb-2">
+                  {connectedApps.map(app => (
+                    <div key={app.id} className="flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                      <span className="text-caption text-ul-text truncate flex-1">{app.name}</span>
+                      {app.functionCount > 0 && (
+                        <span className="text-[10px] text-ul-text-muted">{app.functionCount} fn</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => removeConnectedApp(app.id)}
+                        className="text-[10px] text-red-500 hover:text-red-700 px-1"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Search input */}
+              <div className="relative">
+                <input
+                  type="text"
+                  value={appSearchQuery}
+                  onChange={e => setAppSearchQuery(e.target.value)}
+                  placeholder="Search your apps to connect..."
+                  className="w-full text-small rounded border border-ul-border px-2 py-1.5 bg-white focus:outline-none focus:border-ul-border-focus"
+                />
+                {searchingApps && (
+                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-ul-text-muted">
+                    searching...
+                  </span>
+                )}
+              </div>
+
+              {/* Search results dropdown */}
+              {appSearchResults.length > 0 && (
+                <div className="mt-1 rounded border border-ul-border bg-white shadow-sm max-h-40 overflow-y-auto">
+                  {appSearchResults.map(app => (
+                    <button
+                      key={app.id}
+                      type="button"
+                      onClick={() => addConnectedApp(app)}
+                      className="w-full text-left px-3 py-1.5 hover:bg-gray-50 flex items-center gap-2 border-b border-ul-border last:border-b-0"
+                    >
+                      <span className="text-caption text-ul-text truncate flex-1">{app.name}</span>
+                      {app.description && (
+                        <span className="text-[10px] text-ul-text-muted truncate max-w-[150px]">{app.description}</span>
+                      )}
+                      <span className="text-[10px] text-emerald-600 shrink-0">+ connect</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Status + Actions */}
           <div className="flex items-center justify-between mt-3">

@@ -310,6 +310,7 @@ export default function ChatView({
       permissionLevel: updates.permission_level ?? null,
       model: updates.model ?? null,
       projectDir: updates.project_dir ?? null,
+      connectedAppIds: updates.connected_app_ids ?? null,
     });
     await refreshAgents();
   }, [activeAgent, refreshAgents]);
@@ -356,6 +357,7 @@ export default function ChatView({
         onSignOut={handleSignOut}
         onOpenSubagentChat={onNavigateToAgent}
         onStopSubagent={stopAgent}
+        executeMcpTool={executeMcpTool}
       />
 
       {/* Error banner */}
