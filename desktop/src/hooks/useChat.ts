@@ -74,6 +74,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     maxToolRounds = 25,
   } = options;
 
+  // Use a ref so sendMessage always reads the latest system prompt
+  const systemPromptRef = useRef(systemPrompt);
+  systemPromptRef.current = systemPrompt;
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -200,7 +204,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
           },
         },
         {
-          systemPrompt,
+          systemPrompt: systemPromptRef.current,
           tools,
           model,
           maxToolRounds,
@@ -220,7 +224,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       abortRef.current = null;
       onStreamEnd?.();
     }
-  }, [messages, isLoading, systemPrompt, tools, onToolCall, onStreamStart, onStreamEnd, maxToolRounds]);
+  }, [messages, isLoading, tools, onToolCall, onStreamStart, onStreamEnd, maxToolRounds]);
 
   return {
     messages,

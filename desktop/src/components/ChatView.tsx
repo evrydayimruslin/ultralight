@@ -16,7 +16,7 @@ import SpendingApprovalModal from './SpendingApprovalModal';
 import AgentHeader from './AgentHeader';
 import { clearToken, getToken, getApiBase, getModel } from '../lib/storage';
 import { getContextWindow } from '../lib/tokens';
-import { buildSystemPrompt } from '../lib/systemPrompt';
+import { buildSystemPrompt, generateConnectedAppsSchema } from '../lib/systemPrompt';
 import { agentRunner } from '../lib/agentRunner';
 
 interface ChatViewProps {
@@ -80,7 +80,14 @@ export default function ChatView({
   const preChatSearchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Build system prompt — full coding agent prompt when project dir is set
-  const systemPrompt = useMemo(() => buildSystemPrompt(projectDir), [projectDir]);
+  // Use state (not memo) so connected apps schema can be injected before first message
+  const baseSystemPrompt = useMemo(() => buildSystemPrompt(projectDir), [projectDir]);
+  const [systemPrompt, setSystemPrompt] = useState(baseSystemPrompt);
+
+  // Keep in sync when projectDir changes
+  useEffect(() => {
+    setSystemPrompt(buildSystemPrompt(projectDir));
+  }, [projectDir]);
 
   // Merge tool sets — only include local tools when project dir is set
   const allTools = useMemo(() => {
@@ -269,12 +276,65 @@ export default function ChatView({
     // Interactive path — useChat (first message or non-runner agent)
     let convId = activeId;
     if (!convId) {
+      // Build system prompt — if connected apps, inspect and inject schemas
+      let agentSystemPrompt = systemPrompt;
+      if (preChatApps.length > 0) {
+        const connectedSchemas = [];
+        for (const app of preChatApps) {
+          try {
+            const result = await executeMcpTool('ul_discover', { scope: 'inspect', app_id: app.id });
+            const parsed = JSON.parse(result);
+            const manifest = parsed.manifest ? (typeof parsed.manifest === 'string' ? JSON.parse(parsed.manifest) : parsed.manifest) : null;
+            const appName = parsed.metadata?.name || parsed.name || app.name;
+            const appDesc = parsed.metadata?.description || parsed.description || app.description;
+
+            if (manifest?.functions) {
+              connectedSchemas.push({
+                app_id: app.id,
+                name: appName,
+                description: appDesc,
+                permissions: manifest.permissions,
+                functions: manifest.functions,
+              });
+            } else {
+              // Fallback: build from inspect tools/functions
+              const fns = parsed.functions || parsed.tools || [];
+              const fnMap: Record<string, { description: string; parameters?: Record<string, { type: string; description?: string; required?: boolean }> }> = {};
+              for (const fn of fns) {
+                const params: Record<string, { type: string; description?: string; required?: boolean }> = {};
+                const props = fn.parameters?.properties || fn.inputSchema?.properties || {};
+                for (const [pName, pSchema] of Object.entries(props)) {
+                  const s = pSchema as { type?: string; description?: string };
+                  params[pName] = { type: s.type || 'any', description: s.description };
+                }
+                fnMap[fn.name] = { description: fn.description || '', parameters: Object.keys(params).length > 0 ? params : undefined };
+              }
+              if (Object.keys(fnMap).length > 0) {
+                connectedSchemas.push({ app_id: app.id, name: appName, description: appDesc, functions: fnMap });
+              }
+            }
+          } catch (err) {
+            console.warn(`Failed to inspect connected app ${app.id}:`, err);
+          }
+        }
+
+        if (connectedSchemas.length > 0) {
+          const schemaBlock = generateConnectedAppsSchema(connectedSchemas);
+          agentSystemPrompt += `\n\n## Your Connected Apps\nThe following apps are pre-connected. Call their functions directly with \`ul_call({ app_id, function_name, args })\`. No need to discover them first.\n\n${schemaBlock}`;
+        }
+      }
+
+      // Update the system prompt state so useChat picks it up for chatSendMessage
+      if (agentSystemPrompt !== systemPrompt) {
+        setSystemPrompt(agentSystemPrompt);
+      }
+
       // Create a general agent on first message
       const agent = await createAgent({
         name: content.slice(0, 40).replace(/\n/g, ' '),
         role: 'general',
         initialTask: content,
-        systemPrompt: systemPrompt,
+        systemPrompt: agentSystemPrompt,
         projectDir: projectDir,
         model: getModel(),
         parentAgentId: null,

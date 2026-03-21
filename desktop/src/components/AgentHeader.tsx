@@ -95,18 +95,15 @@ export default function AgentHeader({
         if (executeMcpTool && ids.length > 0) {
           ids.forEach(async (appId) => {
             try {
-              const result = await executeMcpTool('ul_discover', { scope: 'library', action: 'inspect', app_id: appId });
+              const result = await executeMcpTool('ul_discover', { scope: 'inspect', app_id: appId });
               const parsed = JSON.parse(result);
-              if (parsed.app) {
-                setConnectedApps(prev => prev.map(a =>
-                  a.id === appId ? {
-                    ...a,
-                    name: parsed.app.name || appId,
-                    description: parsed.app.description || null,
-                    functionCount: parsed.app.manifest?.functions ? Object.keys(parsed.app.manifest.functions).length : 0,
-                  } : a
-                ));
-              }
+              const appName = parsed.app?.name || parsed.metadata?.name || parsed.name || appId;
+              const appDesc = parsed.app?.description || parsed.metadata?.description || parsed.description || null;
+              const manifest = parsed.manifest ? (typeof parsed.manifest === 'string' ? JSON.parse(parsed.manifest) : parsed.manifest) : parsed.app?.manifest;
+              const fnCount = manifest?.functions ? Object.keys(manifest.functions).length : (parsed.functions?.length || parsed.tools?.length || 0);
+              setConnectedApps(prev => prev.map(a =>
+                a.id === appId ? { ...a, name: appName, description: appDesc, functionCount: fnCount } : a
+              ));
             } catch { /* keep placeholder */ }
           });
         }
