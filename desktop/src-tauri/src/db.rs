@@ -90,6 +90,9 @@ pub struct Agent {
     /// JSON array of app IDs this agent has pre-connected access to.
     /// e.g. `["c8952d58-...", "a1b2c3d4-..."]`
     pub connected_app_ids: Option<String>,
+    /// JSON object with per-app function selections and conventions.
+    /// Keys are app_ids, values have selected_functions and conventions.
+    pub connected_apps: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
     // Enriched fields (from JOINs, only present in list queries)
@@ -236,6 +239,10 @@ pub fn init_db(app_data_dir: &std::path::Path) -> Result<Connection, String> {
     );
     let _ = conn.execute(
         "ALTER TABLE agents ADD COLUMN connected_app_ids TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE agents ADD COLUMN connected_apps TEXT",
         [],
     );
 
@@ -491,7 +498,7 @@ pub fn db_save_messages_batch(
 const AGENT_SELECT_COLS: &str =
     "id, conversation_id, parent_agent_id, name, role, status, system_prompt, \
      initial_task, project_dir, model, permission_level, admin_notes, end_goal, \
-     context, launch_mode, connected_app_ids, created_at, updated_at";
+     context, launch_mode, connected_app_ids, connected_apps, created_at, updated_at";
 
 #[tauri::command]
 pub fn db_create_agent(
@@ -511,6 +518,7 @@ pub fn db_create_agent(
     context: Option<String>,
     launch_mode: Option<String>,
     connected_app_ids: Option<String>,
+    connected_apps: Option<String>,
 ) -> Result<Agent, String> {
     let conn = db.0.lock().map_err(|e| format!("DB lock error: {}", e))?;
     let now = chrono_now();
@@ -532,12 +540,12 @@ pub fn db_create_agent(
     tx.execute(
         "INSERT INTO agents (id, conversation_id, parent_agent_id, name, role, status, \
          system_prompt, initial_task, project_dir, model, permission_level, \
-         admin_notes, end_goal, context, launch_mode, connected_app_ids, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+         admin_notes, end_goal, context, launch_mode, connected_app_ids, connected_apps, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
         params![
             id, conversation_id, parent_agent_id, name, role, "pending",
             system_prompt, initial_task, project_dir, model, perm,
-            admin_notes, end_goal, context, lm, connected_app_ids, now, now,
+            admin_notes, end_goal, context, lm, connected_app_ids, connected_apps, now, now,
         ],
     ).map_err(|e| format!("Create agent error: {}", e))?;
 
@@ -560,6 +568,7 @@ pub fn db_create_agent(
         context,
         launch_mode: lm,
         connected_app_ids,
+        connected_apps,
         created_at: now,
         updated_at: now,
         last_message_preview: None,
@@ -570,7 +579,7 @@ pub fn db_create_agent(
 const AGENT_ENRICHED_SELECT: &str =
     "a.id, a.conversation_id, a.parent_agent_id, a.name, a.role, a.status, a.system_prompt, \
      a.initial_task, a.project_dir, a.model, a.permission_level, a.admin_notes, a.end_goal, \
-     a.context, a.launch_mode, a.connected_app_ids, a.created_at, a.updated_at, \
+     a.context, a.launch_mode, a.connected_app_ids, a.connected_apps, a.created_at, a.updated_at, \
      COUNT(m.id) as message_count, \
      (SELECT content FROM messages WHERE conversation_id = a.conversation_id ORDER BY sort_order DESC LIMIT 1) as last_message_preview";
 
@@ -693,6 +702,8 @@ pub fn db_update_agent(
     model: Option<String>,
     project_dir: Option<String>,
     connected_app_ids: Option<String>,
+    initial_task: Option<String>,
+    connected_apps: Option<String>,
 ) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| format!("DB lock error: {}", e))?;
     let now = chrono_now();
@@ -721,6 +732,8 @@ pub fn db_update_agent(
     maybe_set!(model, "model");
     maybe_set!(project_dir, "project_dir");
     maybe_set!(connected_app_ids, "connected_app_ids");
+    maybe_set!(initial_task, "initial_task");
+    maybe_set!(connected_apps, "connected_apps");
 
     // Always add the WHERE id = ?N
     let where_clause = format!("WHERE id = ?{}", param_index);
@@ -1225,8 +1238,9 @@ fn row_to_agent(row: &rusqlite::Row) -> rusqlite::Result<Agent> {
         context: row.get(13)?,
         launch_mode: row.get(14)?,
         connected_app_ids: row.get(15)?,
-        created_at: row.get(16)?,
-        updated_at: row.get(17)?,
+        connected_apps: row.get(16)?,
+        created_at: row.get(17)?,
+        updated_at: row.get(18)?,
         last_message_preview: None,
         message_count: None,
     })
@@ -1250,10 +1264,11 @@ fn row_to_agent_enriched(row: &rusqlite::Row) -> rusqlite::Result<Agent> {
         context: row.get(13)?,
         launch_mode: row.get(14)?,
         connected_app_ids: row.get(15)?,
-        created_at: row.get(16)?,
-        updated_at: row.get(17)?,
-        message_count: row.get(18)?,
-        last_message_preview: row.get::<_, Option<String>>(19)?.map(|s| truncate(&s, 100)),
+        connected_apps: row.get(16)?,
+        created_at: row.get(17)?,
+        updated_at: row.get(18)?,
+        message_count: row.get(19)?,
+        last_message_preview: row.get::<_, Option<String>>(20)?.map(|s| truncate(&s, 100)),
     })
 }
 

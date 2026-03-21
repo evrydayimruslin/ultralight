@@ -1,5 +1,6 @@
 // Agent header — collapsed shows name + status, expanded shows full config panel.
-// Replaces the old static header bar in ChatView.
+// Supports editable Task, Admin Notes, granular function selection per connected app,
+// per-function conventions, and fleet awareness.
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Agent } from '../hooks/useAgentFleet';
@@ -8,11 +9,30 @@ import BalanceIndicator from './BalanceIndicator';
 import ContextIndicator from './ContextIndicator';
 import { openSubagentWindow } from '../lib/multiWindow';
 
+// ── Types ──
+
+interface AppFunction {
+  name: string;
+  description: string;
+  selected: boolean;
+  convention: string;
+}
+
 interface ConnectedApp {
   id: string;
   name: string;
   description: string | null;
-  functionCount: number;
+  functions: AppFunction[];
+  expanded: boolean; // UI toggle for showing function list
+}
+
+/** Persisted shape in agent.connected_apps JSON */
+interface ConnectedAppsConfig {
+  [appId: string]: {
+    name: string;
+    selected_functions: string[];
+    conventions: Record<string, string>;
+  };
 }
 
 interface AgentHeaderProps {
@@ -21,6 +41,7 @@ interface AgentHeaderProps {
   tokenCount: number;
   contextWindow: number;
   childAgents: Agent[];
+  siblingAgents: Agent[];
   onUpdateAgent: (updates: Partial<Agent>) => Promise<void>;
   onStop: () => void;
   onNewSession: () => void;
@@ -53,6 +74,26 @@ function formatElapsed(createdAt: number): string {
   return `${hours}h ${minutes % 60}m`;
 }
 
+/** Build ConnectedAppsConfig from current UI state for persistence */
+function buildAppsConfig(apps: ConnectedApp[]): ConnectedAppsConfig {
+  const config: ConnectedAppsConfig = {};
+  for (const app of apps) {
+    const selectedFns = app.functions.filter(f => f.selected).map(f => f.name);
+    const conventions: Record<string, string> = {};
+    for (const fn of app.functions) {
+      if (fn.convention.trim()) {
+        conventions[fn.name] = fn.convention.trim();
+      }
+    }
+    config[app.id] = {
+      name: app.name,
+      selected_functions: selectedFns,
+      conventions,
+    };
+  }
+  return config;
+}
+
 // ── Component ──
 
 export default function AgentHeader({
@@ -61,6 +102,7 @@ export default function AgentHeader({
   tokenCount,
   contextWindow,
   childAgents,
+  siblingAgents,
   onUpdateAgent,
   onStop,
   onNewSession,
@@ -71,38 +113,117 @@ export default function AgentHeader({
 }: AgentHeaderProps) {
   const [expanded, setExpanded] = useState(false);
   const [adminNotes, setAdminNotes] = useState(agent?.admin_notes ?? '');
+  const [task, setTask] = useState(agent?.initial_task ?? '');
+  const [editingTask, setEditingTask] = useState(false);
 
   // Connected apps state
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>([]);
   const [appSearchQuery, setAppSearchQuery] = useState('');
-  const [appSearchResults, setAppSearchResults] = useState<ConnectedApp[]>([]);
+  const [appSearchResults, setAppSearchResults] = useState<Array<{ id: string; name: string; description: string | null }>>([]);
   const [searchingApps, setSearchingApps] = useState(false);
   const appSearchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Sync admin notes when agent changes
-  const agentNotesKey = agent?.id ?? '';
-  const [lastAgentId, setLastAgentId] = useState(agentNotesKey);
-  if (agentNotesKey !== lastAgentId) {
-    setLastAgentId(agentNotesKey);
+  // Sync state when agent changes
+  const agentKey = agent?.id ?? '';
+  const [lastAgentId, setLastAgentId] = useState(agentKey);
+  if (agentKey !== lastAgentId) {
+    setLastAgentId(agentKey);
     setAdminNotes(agent?.admin_notes ?? '');
-    // Load existing connected apps from agent record
-    if (agent?.connected_app_ids) {
+    setTask(agent?.initial_task ?? '');
+    setEditingTask(false);
+
+    // Load connected apps from agent record
+    if (agent?.connected_apps) {
+      try {
+        const config: ConnectedAppsConfig = JSON.parse(agent.connected_apps);
+        const apps: ConnectedApp[] = Object.entries(config).map(([appId, cfg]) => ({
+          id: appId,
+          name: cfg.name,
+          description: null,
+          functions: [], // Will be populated on inspect
+          expanded: false,
+        }));
+        setConnectedApps(apps);
+
+        // Inspect each app to get full function lists
+        if (executeMcpTool) {
+          Object.entries(config).forEach(async ([appId, cfg]) => {
+            try {
+              const result = await executeMcpTool('ul_discover', { scope: 'inspect', app_id: appId });
+              const parsed = JSON.parse(result);
+              const manifest = parsed.manifest
+                ? (typeof parsed.manifest === 'string' ? JSON.parse(parsed.manifest) : parsed.manifest)
+                : parsed.app?.manifest;
+              const appName = parsed.app?.name || parsed.metadata?.name || parsed.name || cfg.name;
+              const appDesc = parsed.app?.description || parsed.metadata?.description || parsed.description || null;
+
+              // Build function list from manifest or fallback
+              const fnList: AppFunction[] = [];
+              if (manifest?.functions) {
+                for (const [fnName, fn] of Object.entries(manifest.functions)) {
+                  fnList.push({
+                    name: fnName,
+                    description: (fn as { description?: string }).description || '',
+                    selected: cfg.selected_functions.includes(fnName),
+                    convention: cfg.conventions[fnName] || '',
+                  });
+                }
+              } else {
+                const fns = parsed.functions || parsed.tools || [];
+                for (const fn of fns) {
+                  fnList.push({
+                    name: fn.name,
+                    description: fn.description || '',
+                    selected: cfg.selected_functions.includes(fn.name),
+                    convention: cfg.conventions[fn.name] || '',
+                  });
+                }
+              }
+
+              setConnectedApps(prev => prev.map(a =>
+                a.id === appId ? { ...a, name: appName, description: appDesc, functions: fnList } : a
+              ));
+            } catch { /* keep placeholder */ }
+          });
+        }
+      } catch {
+        setConnectedApps([]);
+      }
+    } else if (agent?.connected_app_ids) {
+      // Legacy: just app IDs without granular config
       try {
         const ids: string[] = JSON.parse(agent.connected_app_ids);
-        // Populate with just IDs for now — names will resolve on inspect
-        setConnectedApps(ids.map(id => ({ id, name: id, description: null, functionCount: 0 })));
-        // Inspect each to get proper names
-        if (executeMcpTool && ids.length > 0) {
+        setConnectedApps(ids.map(id => ({ id, name: id, description: null, functions: [], expanded: false })));
+        if (executeMcpTool) {
           ids.forEach(async (appId) => {
             try {
               const result = await executeMcpTool('ul_discover', { scope: 'inspect', app_id: appId });
               const parsed = JSON.parse(result);
               const appName = parsed.app?.name || parsed.metadata?.name || parsed.name || appId;
               const appDesc = parsed.app?.description || parsed.metadata?.description || parsed.description || null;
-              const manifest = parsed.manifest ? (typeof parsed.manifest === 'string' ? JSON.parse(parsed.manifest) : parsed.manifest) : parsed.app?.manifest;
-              const fnCount = manifest?.functions ? Object.keys(manifest.functions).length : (parsed.functions?.length || parsed.tools?.length || 0);
+              const manifest = parsed.manifest
+                ? (typeof parsed.manifest === 'string' ? JSON.parse(parsed.manifest) : parsed.manifest)
+                : parsed.app?.manifest;
+
+              const fnList: AppFunction[] = [];
+              const fnSource = manifest?.functions || {};
+              for (const [fnName, fn] of Object.entries(fnSource)) {
+                fnList.push({
+                  name: fnName,
+                  description: (fn as { description?: string }).description || '',
+                  selected: true, // Legacy: all selected by default
+                  convention: '',
+                });
+              }
+              if (fnList.length === 0) {
+                const fns = parsed.functions || parsed.tools || [];
+                for (const fn of fns) {
+                  fnList.push({ name: fn.name, description: fn.description || '', selected: true, convention: '' });
+                }
+              }
+
               setConnectedApps(prev => prev.map(a =>
-                a.id === appId ? { ...a, name: appName, description: appDesc, functionCount: fnCount } : a
+                a.id === appId ? { ...a, name: appName, description: appDesc, functions: fnList } : a
               ));
             } catch { /* keep placeholder */ }
           });
@@ -115,12 +236,79 @@ export default function AgentHeader({
     }
   }
 
+  // ── Persist helpers ──
+
+  const persistApps = useCallback(async (apps: ConnectedApp[]) => {
+    if (!agent) return;
+    const config = buildAppsConfig(apps);
+    const ids = apps.map(a => a.id);
+    await onUpdateAgent({
+      connected_apps: JSON.stringify(config),
+      connected_app_ids: ids.length > 0 ? JSON.stringify(ids) : null,
+    } as Partial<Agent>);
+  }, [agent, onUpdateAgent]);
+
   const handleNotesBlur = useCallback(async () => {
     if (!agent) return;
     if (adminNotes !== (agent.admin_notes ?? '')) {
       await onUpdateAgent({ admin_notes: adminNotes || null } as Partial<Agent>);
     }
   }, [agent, adminNotes, onUpdateAgent]);
+
+  const handleTaskBlur = useCallback(async () => {
+    if (!agent) return;
+    setEditingTask(false);
+    if (task !== (agent.initial_task ?? '')) {
+      await onUpdateAgent({ initial_task: task || null } as Partial<Agent>);
+    }
+  }, [agent, task, onUpdateAgent]);
+
+  // ── Function toggle / convention ──
+
+  const toggleFunction = useCallback(async (appId: string, fnName: string) => {
+    const nextApps = connectedApps.map(a => {
+      if (a.id !== appId) return a;
+      return {
+        ...a,
+        functions: a.functions.map(f =>
+          f.name === fnName ? { ...f, selected: !f.selected } : f
+        ),
+      };
+    });
+    setConnectedApps(nextApps);
+    await persistApps(nextApps);
+  }, [connectedApps, persistApps]);
+
+  const toggleAllFunctions = useCallback(async (appId: string, selectAll: boolean) => {
+    const nextApps = connectedApps.map(a => {
+      if (a.id !== appId) return a;
+      return { ...a, functions: a.functions.map(f => ({ ...f, selected: selectAll })) };
+    });
+    setConnectedApps(nextApps);
+    await persistApps(nextApps);
+  }, [connectedApps, persistApps]);
+
+  const updateConvention = useCallback((appId: string, fnName: string, value: string) => {
+    setConnectedApps(prev => prev.map(a => {
+      if (a.id !== appId) return a;
+      return {
+        ...a,
+        functions: a.functions.map(f =>
+          f.name === fnName ? { ...f, convention: value } : f
+        ),
+      };
+    }));
+  }, []);
+
+  const saveConvention = useCallback(async (appId: string) => {
+    await persistApps(connectedApps);
+  }, [connectedApps, persistApps]);
+
+  const toggleAppExpanded = useCallback((appId: string) => {
+    setConnectedApps(prev => prev.map(a =>
+      a.id === appId ? { ...a, expanded: !a.expanded } : a
+    ));
+  }, []);
 
   // ── Connected Apps search (debounced) ──
 
@@ -135,18 +323,14 @@ export default function AgentHeader({
     appSearchRef.current = setTimeout(async () => {
       setSearchingApps(true);
       try {
-        const result = await executeMcpTool('ul_discover', {
-          scope: 'library',
-          query: q,
-        });
+        const result = await executeMcpTool('ul_discover', { scope: 'library', query: q });
         const parsed = JSON.parse(result);
-        const results: ConnectedApp[] = (parsed.results || [])
+        const results = (parsed.results || [])
           .filter((r: { id: string }) => !connectedApps.some(ca => ca.id === r.id))
-          .map((r: { id: string; name: string; description?: string; function_count?: number }) => ({
+          .map((r: { id: string; name: string; description?: string }) => ({
             id: r.id,
             name: r.name,
             description: r.description || null,
-            functionCount: r.function_count || 0,
           }));
         setAppSearchResults(results);
       } catch {
@@ -159,32 +343,76 @@ export default function AgentHeader({
     return () => { if (appSearchRef.current) clearTimeout(appSearchRef.current); };
   }, [appSearchQuery, executeMcpTool, connectedApps]);
 
-  const addConnectedApp = useCallback(async (app: ConnectedApp) => {
-    const next = [...connectedApps, app];
-    setConnectedApps(next);
-    setAppSearchResults(prev => prev.filter(r => r.id !== app.id));
+  const addConnectedApp = useCallback(async (searchResult: { id: string; name: string; description: string | null }) => {
+    // Add with all functions selected by default — inspect to get function list
+    const newApp: ConnectedApp = {
+      id: searchResult.id,
+      name: searchResult.name,
+      description: searchResult.description,
+      functions: [],
+      expanded: false,
+    };
+    const nextApps = [...connectedApps, newApp];
+    setConnectedApps(nextApps);
+    setAppSearchResults(prev => prev.filter(r => r.id !== searchResult.id));
     setAppSearchQuery('');
-    // Persist to agent record
-    if (agent) {
-      await onUpdateAgent({ connected_app_ids: JSON.stringify(next.map(a => a.id)) } as Partial<Agent>);
+
+    // Inspect to get functions
+    if (executeMcpTool) {
+      try {
+        const result = await executeMcpTool('ul_discover', { scope: 'inspect', app_id: searchResult.id });
+        const parsed = JSON.parse(result);
+        const manifest = parsed.manifest
+          ? (typeof parsed.manifest === 'string' ? JSON.parse(parsed.manifest) : parsed.manifest)
+          : parsed.app?.manifest;
+        const appName = parsed.app?.name || parsed.metadata?.name || parsed.name || searchResult.name;
+
+        const fnList: AppFunction[] = [];
+        if (manifest?.functions) {
+          for (const [fnName, fn] of Object.entries(manifest.functions)) {
+            fnList.push({
+              name: fnName,
+              description: (fn as { description?: string }).description || '',
+              selected: true,
+              convention: '',
+            });
+          }
+        } else {
+          const fns = parsed.functions || parsed.tools || [];
+          for (const fn of fns) {
+            fnList.push({ name: fn.name, description: fn.description || '', selected: true, convention: '' });
+          }
+        }
+
+        const updatedApp = { ...newApp, name: appName, functions: fnList };
+        const updatedApps = nextApps.map(a => a.id === searchResult.id ? updatedApp : a);
+        setConnectedApps(updatedApps);
+        await persistApps(updatedApps);
+      } catch {
+        // Still save even without functions
+        await persistApps(nextApps);
+      }
+    } else {
+      await persistApps(nextApps);
     }
-  }, [connectedApps, agent, onUpdateAgent]);
+  }, [connectedApps, executeMcpTool, persistApps]);
 
   const removeConnectedApp = useCallback(async (id: string) => {
     const next = connectedApps.filter(a => a.id !== id);
     setConnectedApps(next);
-    // Persist to agent record
-    if (agent) {
-      await onUpdateAgent({ connected_app_ids: next.length > 0 ? JSON.stringify(next.map(a => a.id)) : null } as Partial<Agent>);
-    }
-  }, [connectedApps, agent, onUpdateAgent]);
+    await persistApps(next);
+  }, [connectedApps, persistApps]);
+
+  // ── Fleet awareness ──
+  const activeTeammates = siblingAgents.filter(a =>
+    a.id !== agent?.id && !['completed', 'error', 'stopped'].includes(a.status)
+  );
 
   return (
     <div className="border-b border-ul-border bg-white flex-shrink-0">
       {/* Collapsed header — always visible */}
       <header className="flex items-center justify-between px-4 h-nav">
         <div className="flex items-center gap-3">
-          {/* Agent name + status */}
           {agent ? (
             <button
               onClick={() => setExpanded(!expanded)}
@@ -215,7 +443,7 @@ export default function AgentHeader({
 
       {/* Expanded config panel */}
       {expanded && agent && (
-        <div className="px-4 pb-4 border-t border-ul-border bg-gray-50">
+        <div className="px-4 pb-4 border-t border-ul-border bg-gray-50 max-h-[70vh] overflow-y-auto">
           {/* Config grid */}
           <div className="grid grid-cols-2 gap-3 mt-3">
             <div>
@@ -238,56 +466,153 @@ export default function AgentHeader({
             </div>
           </div>
 
-          {/* Task */}
-          {agent.initial_task && (
-            <div className="mt-3">
-              <label className="text-caption text-ul-text-muted block mb-1">Task</label>
-              <p className="text-small text-ul-text-secondary line-clamp-2">{agent.initial_task}</p>
-            </div>
-          )}
+          {/* Task — editable */}
+          <div className="mt-3">
+            <label className="text-caption text-ul-text-muted block mb-1">
+              Task
+              <span className="text-[10px] text-ul-text-muted ml-1">(agent's mission)</span>
+            </label>
+            {editingTask ? (
+              <input
+                type="text"
+                value={task}
+                onChange={e => setTask(e.target.value)}
+                onBlur={handleTaskBlur}
+                onKeyDown={e => { if (e.key === 'Enter') handleTaskBlur(); if (e.key === 'Escape') { setTask(agent.initial_task ?? ''); setEditingTask(false); } }}
+                autoFocus
+                className="w-full px-2 py-1.5 text-small rounded border border-blue-300 bg-white focus:outline-none focus:border-blue-500"
+                placeholder="e.g. Front desk concierge for guest services"
+              />
+            ) : (
+              <button
+                onClick={() => setEditingTask(true)}
+                className="w-full text-left px-2 py-1.5 text-small text-ul-text-secondary rounded border border-transparent hover:border-ul-border hover:bg-white transition-colors"
+              >
+                {task || <span className="text-ul-text-muted italic">Click to set agent's mission...</span>}
+              </button>
+            )}
+          </div>
 
           {/* Admin notes */}
           <div className="mt-3">
-            <label className="text-caption text-ul-text-muted block mb-1">Admin Notes</label>
+            <label className="text-caption text-ul-text-muted block mb-1">
+              Admin Notes
+              <span className="text-[10px] text-ul-text-muted ml-1">(behavioral instructions)</span>
+            </label>
             <textarea
               value={adminNotes}
               onChange={e => setAdminNotes(e.target.value)}
               onBlur={handleNotesBlur}
-              placeholder="Add guidance for this agent..."
+              placeholder="Add conventions, rules, and guidance for this agent..."
               className="w-full px-2 py-1.5 text-small rounded border border-ul-border bg-white focus:outline-none focus:border-ul-border-focus resize-none"
-              rows={2}
+              rows={3}
             />
           </div>
 
-          {/* Connected Apps */}
+          {/* Connected Apps — granular function selection */}
           {executeMcpTool && (
             <div className="mt-3">
               <label className="text-caption text-ul-text-muted block mb-1.5">
                 Connected Apps
                 {connectedApps.length > 0 && (
                   <span className="ml-1.5 text-[10px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
-                    {connectedApps.length} connected
+                    {connectedApps.length} app{connectedApps.length !== 1 ? 's' : ''}
+                    {' · '}
+                    {connectedApps.reduce((sum, a) => sum + a.functions.filter(f => f.selected).length, 0)} fn
                   </span>
                 )}
               </label>
 
-              {/* Selected apps */}
+              {/* Connected apps list */}
               {connectedApps.length > 0 && (
-                <div className="space-y-1 rounded border border-emerald-200 p-2 bg-emerald-50/30 mb-2">
+                <div className="space-y-2 mb-2">
                   {connectedApps.map(app => (
-                    <div key={app.id} className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
-                      <span className="text-caption text-ul-text truncate flex-1">{app.name}</span>
-                      {app.functionCount > 0 && (
-                        <span className="text-[10px] text-ul-text-muted">{app.functionCount} fn</span>
+                    <div key={app.id} className="rounded border border-emerald-200 bg-emerald-50/30 overflow-hidden">
+                      {/* App header */}
+                      <div className="flex items-center gap-2 px-2.5 py-1.5">
+                        <button
+                          onClick={() => toggleAppExpanded(app.id)}
+                          className="flex items-center gap-1.5 flex-1 min-w-0"
+                        >
+                          <svg
+                            width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
+                            className={`transition-transform flex-shrink-0 ${app.expanded ? 'rotate-90' : ''}`}
+                          >
+                            <path d="M3 1.5L7 5L3 8.5" />
+                          </svg>
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                          <span className="text-caption text-ul-text font-medium truncate">{app.name}</span>
+                        </button>
+                        <span className="text-[10px] text-ul-text-muted shrink-0">
+                          {app.functions.filter(f => f.selected).length}/{app.functions.length} fn
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removeConnectedApp(app.id)}
+                          className="text-[10px] text-red-400 hover:text-red-600 px-0.5 shrink-0"
+                        >
+                          ✕
+                        </button>
+                      </div>
+
+                      {/* Expanded function list */}
+                      {app.expanded && app.functions.length > 0 && (
+                        <div className="border-t border-emerald-200 bg-white px-2.5 py-1.5">
+                          {/* Select all / deselect all */}
+                          <div className="flex items-center gap-2 mb-1.5 pb-1.5 border-b border-gray-100">
+                            <button
+                              onClick={() => toggleAllFunctions(app.id, true)}
+                              className="text-[10px] text-blue-600 hover:underline"
+                            >
+                              Select All
+                            </button>
+                            <span className="text-[10px] text-ul-text-muted">·</span>
+                            <button
+                              onClick={() => toggleAllFunctions(app.id, false)}
+                              className="text-[10px] text-blue-600 hover:underline"
+                            >
+                              Deselect All
+                            </button>
+                          </div>
+
+                          {/* Function checkboxes */}
+                          <div className="space-y-1 max-h-60 overflow-y-auto">
+                            {app.functions.map(fn => (
+                              <div key={fn.name}>
+                                <label className="flex items-start gap-1.5 cursor-pointer group">
+                                  <input
+                                    type="checkbox"
+                                    checked={fn.selected}
+                                    onChange={() => toggleFunction(app.id, fn.name)}
+                                    className="mt-0.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                  />
+                                  <div className="flex-1 min-w-0">
+                                    <span className={`text-[11px] font-mono ${fn.selected ? 'text-ul-text' : 'text-ul-text-muted line-through'}`}>
+                                      {fn.name}
+                                    </span>
+                                    {fn.description && (
+                                      <span className="text-[10px] text-ul-text-muted ml-1.5">
+                                        — {fn.description.slice(0, 60)}{fn.description.length > 60 ? '...' : ''}
+                                      </span>
+                                    )}
+                                  </div>
+                                </label>
+                                {/* Convention input — only shown for selected functions */}
+                                {fn.selected && (
+                                  <input
+                                    type="text"
+                                    value={fn.convention}
+                                    onChange={e => updateConvention(app.id, fn.name, e.target.value)}
+                                    onBlur={() => saveConvention(app.id)}
+                                    placeholder="Convention: e.g. always confirm before executing..."
+                                    className="ml-5 mt-0.5 mb-1 w-[calc(100%-1.25rem)] text-[10px] px-1.5 py-0.5 rounded border border-gray-200 bg-gray-50 focus:outline-none focus:border-blue-300 focus:bg-white text-ul-text-secondary placeholder:text-gray-300"
+                                  />
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => removeConnectedApp(app.id)}
-                        className="text-[10px] text-red-500 hover:text-red-700 px-1"
-                      >
-                        ✕
-                      </button>
                     </div>
                   ))}
                 </div>
@@ -328,6 +653,33 @@ export default function AgentHeader({
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Fleet Awareness — sibling agents */}
+          {activeTeammates.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-ul-border">
+              <label className="text-caption text-ul-text-muted block mb-1.5">
+                Team
+                <span className="ml-1.5 text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
+                  {activeTeammates.length} active
+                </span>
+              </label>
+              <div className="space-y-1">
+                {activeTeammates.map(teammate => (
+                  <div key={teammate.id} className="flex items-center gap-2 px-2 py-1 bg-white rounded border border-ul-border">
+                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDotClass(teammate.status)}`} />
+                    <span className="text-caption text-ul-text flex-1 truncate">{teammate.name}</span>
+                    <span className="text-[10px] text-ul-text-muted capitalize">{teammate.role}</span>
+                    <button
+                      onClick={() => onOpenSubagentChat?.(teammate.id)}
+                      className="text-[10px] text-blue-500 hover:text-blue-700"
+                    >
+                      Open
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

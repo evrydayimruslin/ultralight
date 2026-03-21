@@ -405,6 +405,17 @@ export default function ChatView({
     return agents.filter(a => a.parent_agent_id === activeAgent.id);
   }, [agents, activeAgent]);
 
+  // Sibling agents (same parent or top-level agents for fleet awareness)
+  const siblingAgents = useMemo(() => {
+    if (!activeAgent) return [];
+    if (activeAgent.parent_agent_id) {
+      // Show siblings (same parent)
+      return agents.filter(a => a.parent_agent_id === activeAgent.parent_agent_id && a.id !== activeAgent.id);
+    }
+    // Top-level agent: show other top-level agents
+    return agents.filter(a => !a.parent_agent_id && a.id !== activeAgent.id);
+  }, [agents, activeAgent]);
+
   // Handle agent updates from header config panel
   const handleUpdateAgent = useCallback(async (updates: Partial<import('../hooks/useAgentFleet').Agent>) => {
     if (!activeAgent) return;
@@ -419,6 +430,8 @@ export default function ChatView({
       model: updates.model ?? null,
       projectDir: updates.project_dir ?? null,
       connectedAppIds: updates.connected_app_ids ?? null,
+      connectedApps: updates.connected_apps ?? null,
+      initialTask: updates.initial_task ?? null,
     });
     await refreshAgents();
   }, [activeAgent, refreshAgents]);
@@ -459,6 +472,7 @@ export default function ChatView({
         tokenCount={tokenCount}
         contextWindow={contextWindow}
         childAgents={childAgents}
+        siblingAgents={siblingAgents}
         onUpdateAgent={handleUpdateAgent}
         onStop={() => activeAgent && stopAgent(activeAgent.id)}
         onNewSession={handleNewSession}

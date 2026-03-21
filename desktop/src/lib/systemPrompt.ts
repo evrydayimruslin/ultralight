@@ -324,6 +324,10 @@ interface ConnectedAppManifest {
   name: string;
   description?: string;
   permissions?: string[];
+  /** When provided, only these functions are included in the schema */
+  selectedFunctions?: string[];
+  /** Per-function behavioral conventions */
+  conventions?: Record<string, string>;
   functions?: Record<string, {
     description: string;
     parameters?: Record<string, {
@@ -359,16 +363,28 @@ export function generateConnectedAppsSchema(apps: ConnectedAppManifest[]): strin
     lines.push('');
 
     if (app.functions && Object.keys(app.functions).length > 0) {
-      lines.push('**Functions:**');
-      for (const [fnName, fn] of Object.entries(app.functions)) {
-        const params = fn.parameters
-          ? Object.entries(fn.parameters).map(([pName, pSchema]) => {
-              const opt = pSchema.required === false ? '?' : '';
-              return `${pName}${opt}: ${pSchema.type}`;
-            }).join(', ')
-          : '';
-        const returnStr = fn.returns ? ` → ${fn.returns.type}` : '';
-        lines.push(`- \`${fnName}(${params})\`${returnStr} — ${fn.description}`);
+      // Filter to selected functions if specified
+      const fnEntries = Object.entries(app.functions).filter(([fnName]) => {
+        if (!app.selectedFunctions || app.selectedFunctions.length === 0) return true;
+        return app.selectedFunctions.includes(fnName);
+      });
+
+      if (fnEntries.length > 0) {
+        lines.push('**Functions:**');
+        for (const [fnName, fn] of fnEntries) {
+          const params = fn.parameters
+            ? Object.entries(fn.parameters).map(([pName, pSchema]) => {
+                const opt = pSchema.required === false ? '?' : '';
+                return `${pName}${opt}: ${pSchema.type}`;
+              }).join(', ')
+            : '';
+          const returnStr = fn.returns ? ` → ${fn.returns.type}` : '';
+          lines.push(`- \`${fnName}(${params})\`${returnStr} — ${fn.description}`);
+          // Append convention if exists
+          if (app.conventions?.[fnName]) {
+            lines.push(`  > **Convention:** ${app.conventions[fnName]}`);
+          }
+        }
       }
     }
 
@@ -379,4 +395,56 @@ export function generateConnectedAppsSchema(apps: ConnectedAppManifest[]): strin
   });
 
   return blocks.join('\n\n---\n\n');
+}
+
+/**
+ * Generate fleet awareness context for an agent's system prompt.
+ * Lists sibling agents with their roles, tasks, and connected apps
+ * so this agent knows who to hand off work to.
+ */
+export interface FleetMember {
+  id: string;
+  name: string;
+  role: string;
+  status: string;
+  task: string | null;
+  connectedApps?: Array<{
+    name: string;
+    app_id: string;
+    selectedFunctions?: string[];
+  }>;
+}
+
+export function generateFleetContext(currentAgentId: string, fleet: FleetMember[]): string {
+  // Exclude self and completed/error agents
+  const teammates = fleet.filter(a =>
+    a.id !== currentAgentId &&
+    !['completed', 'error', 'stopped'].includes(a.status)
+  );
+
+  if (teammates.length === 0) return '';
+
+  const lines: string[] = [];
+  lines.push('## Your Team');
+  lines.push('The following agents are available. You can hand off tasks to them using `ul_message({ agent_id, message })`.\n');
+
+  for (const agent of teammates) {
+    const roleBadge = agent.role !== 'general' ? ` [${agent.role}]` : '';
+    lines.push(`- **${agent.name}**${roleBadge} (agent_id: \`${agent.id}\`)`);
+    if (agent.task) {
+      lines.push(`  Task: ${agent.task}`);
+    }
+    if (agent.connectedApps && agent.connectedApps.length > 0) {
+      const appSummaries = agent.connectedApps.map(app => {
+        if (app.selectedFunctions && app.selectedFunctions.length > 0) {
+          return `${app.name} [${app.selectedFunctions.join(', ')}]`;
+        }
+        return app.name;
+      });
+      lines.push(`  Connected: ${appSummaries.join(', ')}`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
 }
