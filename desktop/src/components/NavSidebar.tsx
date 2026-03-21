@@ -1,5 +1,5 @@
 // NavSidebar — Claude Code-inspired navigation sidebar.
-// Sections: New Session, Dashboard, Capabilities, Agents (time-grouped list),
+// Sections: Command, Tools, New Chat, Agents (time-grouped list),
 // and bottom profile menu (Profile/Wallet/Settings).
 
 import { useState, useRef, useEffect, useCallback } from 'react';
@@ -275,12 +275,6 @@ export default function NavSidebar({
       {/* Primary nav */}
       <nav className="px-2 pt-2">
         <NavItem
-          icon={NewSessionIcon}
-          label="New Session"
-          active={activeView.kind === 'new-chat'}
-          onClick={onNewAgent}
-        />
-        <NavItem
           icon={CommandIcon}
           label="Command"
           active={activeView.kind === 'home'}
@@ -291,6 +285,12 @@ export default function NavSidebar({
           label="Tools"
           active={activeView.kind === 'capabilities'}
           onClick={onNavigateToCapabilities}
+        />
+        <NavItem
+          icon={NewSessionIcon}
+          label="New Chat"
+          active={activeView.kind === 'new-chat'}
+          onClick={onNewAgent}
         />
       </nav>
 
