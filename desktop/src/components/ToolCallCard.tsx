@@ -199,56 +199,46 @@ export default function ToolCallCard({ toolCall, result, executing }: ToolCallCa
         </svg>
       </button>
 
-      {/* Expanded: result + formatted details */}
+      {/* Expanded: details + result in single layer */}
       {expanded && (
-        <div className="border-t border-gray-100">
+        <div className="border-t border-gray-100 px-3 py-2 space-y-2">
+          {/* Formatted details — always visible when expanded */}
+          {isAppCall ? (
+            <div className="space-y-0.5">
+              {display.fnName && (
+                <div className="flex items-baseline gap-2">
+                  <span className="text-[10px] text-gray-400 w-16 shrink-0">Function</span>
+                  <span className="text-xs font-mono text-ul-text-secondary">{display.fnName}</span>
+                </div>
+              )}
+              {display.fnArgs && Object.keys(display.fnArgs).length > 0 && (
+                Object.entries(display.fnArgs).map(([k, v]) => (
+                  <div key={k} className="flex items-baseline gap-2">
+                    <span className="text-[10px] text-gray-400 w-16 shrink-0">{toTitleCase(k)}</span>
+                    <span className="text-xs text-ul-text-secondary">{typeof v === 'string' ? v : JSON.stringify(v)}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          ) : (
+            <pre className="text-xs font-mono bg-gray-50 rounded p-2 overflow-x-auto whitespace-pre-wrap text-ul-text-secondary">
+              {JSON.stringify(parsedArgs, null, 2)}
+            </pre>
+          )}
+
           {/* Result */}
           {result && richResult ? (
-            <div className="p-3">{richResult}</div>
+            <div className="pt-1">{richResult}</div>
           ) : result ? (
-            <div className="p-3">
-              <pre className="text-xs font-mono bg-gray-50 rounded-md p-3 overflow-x-auto whitespace-pre-wrap max-h-60 overflow-y-auto text-ul-text-secondary border border-gray-100">
-                {result.length > 3000 ? result.slice(0, 3000) + '\n... (truncated)' : result}
-              </pre>
-            </div>
+            <pre className="text-xs font-mono bg-gray-50 rounded-md p-2.5 overflow-x-auto whitespace-pre-wrap max-h-60 overflow-y-auto text-ul-text-secondary border border-gray-100">
+              {result.length > 3000 ? result.slice(0, 3000) + '\n... (truncated)' : result}
+            </pre>
           ) : executing ? (
-            <div className="px-3 py-3 flex items-center gap-2 text-caption text-blue-500">
+            <div className="flex items-center gap-2 text-caption text-blue-500 py-1">
               <div className="w-3 h-3 rounded-full border-2 border-blue-300 border-t-blue-600 animate-spin" />
               Working...
             </div>
           ) : null}
-
-          {/* Formatted details (not raw JSON) */}
-          <details className="border-t border-gray-100">
-            <summary className="px-3 py-1.5 text-[11px] text-gray-400 cursor-pointer hover:bg-gray-50 transition-colors select-none">
-              Details
-            </summary>
-            <div className="px-3 py-2 space-y-1">
-              {isAppCall && (
-                <>
-                  {display.fnName && (
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-[10px] text-gray-400 w-16 shrink-0">Function</span>
-                      <span className="text-xs font-mono text-ul-text-secondary">{display.fnName}</span>
-                    </div>
-                  )}
-                  {display.fnArgs && Object.keys(display.fnArgs).length > 0 && (
-                    Object.entries(display.fnArgs).map(([k, v]) => (
-                      <div key={k} className="flex items-baseline gap-2">
-                        <span className="text-[10px] text-gray-400 w-16 shrink-0">{toTitleCase(k)}</span>
-                        <span className="text-xs text-ul-text-secondary">{typeof v === 'string' ? v : JSON.stringify(v)}</span>
-                      </div>
-                    ))
-                  )}
-                </>
-              )}
-              {!isAppCall && (
-                <pre className="text-xs font-mono bg-gray-50 rounded p-2 overflow-x-auto whitespace-pre-wrap text-ul-text-secondary">
-                  {JSON.stringify(parsedArgs, null, 2)}
-                </pre>
-              )}
-            </div>
-          </details>
         </div>
       )}
     </div>

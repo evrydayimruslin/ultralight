@@ -7,6 +7,61 @@ import { accumulateToolCalls, type AccumulatedToolCall } from './sse';
 import { countAllTokens, shouldSummarize } from './tokens';
 import { summarizeMessages } from './summarizer';
 
+// ── Tool Result Truncation ──
+
+/** Maximum chars for tool results stored in conversation history.
+ *  Large results (e.g. 47k char JSON from rooms_list) bloat context
+ *  and cause 98k+ token requests. Truncate to keep conversations lean.
+ */
+const MAX_RESULT_CHARS = 4000;
+
+/** For JSON array results, keep at most this many items */
+const MAX_ARRAY_ITEMS = 10;
+
+/**
+ * Truncate a tool result to prevent context bloat.
+ * - JSON arrays: keep first N items + count summary
+ * - Large strings: keep first MAX_RESULT_CHARS + truncation notice
+ * - Small results: pass through unchanged
+ */
+function truncateToolResult(result: string, toolName: string): string {
+  if (result.length <= MAX_RESULT_CHARS) return result;
+
+  // Try to intelligently truncate JSON
+  try {
+    const parsed = JSON.parse(result);
+
+    // Handle arrays (most common bloat: list queries returning 100+ items)
+    if (Array.isArray(parsed)) {
+      const total = parsed.length;
+      const kept = parsed.slice(0, MAX_ARRAY_ITEMS);
+      const truncated = JSON.stringify(kept, null, 2);
+      return `${truncated}\n\n[Showing ${MAX_ARRAY_ITEMS} of ${total} results. Ask for specific items by ID or filter criteria if you need more.]`;
+    }
+
+    // Handle objects with array values (e.g. { rooms: [...], total: 186 })
+    if (typeof parsed === 'object' && parsed !== null) {
+      const compacted: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(parsed)) {
+        if (Array.isArray(value) && value.length > MAX_ARRAY_ITEMS) {
+          compacted[key] = value.slice(0, MAX_ARRAY_ITEMS);
+          compacted[`_${key}_total`] = value.length;
+          compacted[`_${key}_note`] = `Showing first ${MAX_ARRAY_ITEMS} of ${value.length}`;
+        } else {
+          compacted[key] = value;
+        }
+      }
+      const compactedStr = JSON.stringify(compacted, null, 2);
+      if (compactedStr.length <= MAX_RESULT_CHARS * 1.5) return compactedStr;
+    }
+  } catch {
+    // Not JSON — fall through to simple truncation
+  }
+
+  // Simple truncation for non-JSON or still-too-large JSON
+  return `${result.slice(0, MAX_RESULT_CHARS)}\n\n...(truncated from ${result.length} chars. The full result was processed but only a summary is kept in context. Ask specific follow-up questions to get details.)`;
+}
+
 // ── Types ──
 
 export interface LoopMessage {
@@ -169,7 +224,7 @@ export async function runAgentLoop(
         const toolMsg: LoopMessage = {
           id: crypto.randomUUID(),
           role: 'tool',
-          content: toolResult,
+          content: truncateToolResult(toolResult, tc.function.name),
           tool_call_id: tc.id,
           created_at: Date.now(),
         };

@@ -87,7 +87,7 @@ export function countAllTokens(messages: ChatMessage[]): number {
 // ── Context Thresholds ──
 
 /** Percentage of context window at which we trigger summarization */
-export const SUMMARIZE_THRESHOLD = 0.7;
+export const SUMMARIZE_THRESHOLD = 0.4;
 
 /** Minimum number of recent messages to keep verbatim (never summarize) */
 export const KEEP_RECENT = 10;
