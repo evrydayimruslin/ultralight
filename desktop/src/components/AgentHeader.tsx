@@ -41,7 +41,7 @@ interface AgentHeaderProps {
   tokenCount: number;
   contextWindow: number;
   childAgents: Agent[];
-  siblingAgents: Agent[];
+  allAgents: Agent[];
   onUpdateAgent: (updates: Partial<Agent>) => Promise<void>;
   onStop: () => void;
   onNewSession: () => void;
@@ -74,9 +74,15 @@ function formatElapsed(createdAt: number): string {
   return `${hours}h ${minutes % 60}m`;
 }
 
-/** Build ConnectedAppsConfig from current UI state for persistence */
-function buildAppsConfig(apps: ConnectedApp[]): ConnectedAppsConfig {
-  const config: ConnectedAppsConfig = {};
+/** Persisted shape includes apps config + team member IDs */
+interface PersistedConfig {
+  apps: ConnectedAppsConfig;
+  team?: string[];
+}
+
+/** Build persisted config from current UI state */
+function buildPersistedConfig(apps: ConnectedApp[], teamMemberIds: string[]): PersistedConfig {
+  const appsConfig: ConnectedAppsConfig = {};
   for (const app of apps) {
     const selectedFns = app.functions.filter(f => f.selected).map(f => f.name);
     const conventions: Record<string, string> = {};
@@ -85,13 +91,27 @@ function buildAppsConfig(apps: ConnectedApp[]): ConnectedAppsConfig {
         conventions[fn.name] = fn.convention.trim();
       }
     }
-    config[app.id] = {
+    appsConfig[app.id] = {
       name: app.name,
       selected_functions: selectedFns,
       conventions,
     };
   }
-  return config;
+  return {
+    apps: appsConfig,
+    team: teamMemberIds.length > 0 ? teamMemberIds : undefined,
+  };
+}
+
+/** Parse persisted config — handles both old format (flat app map) and new format (with team) */
+function parsePersistedConfig(json: string): PersistedConfig {
+  const raw = JSON.parse(json);
+  // New format: { apps: {...}, team: [...] }
+  if (raw.apps && typeof raw.apps === 'object' && !raw.apps.name) {
+    return { apps: raw.apps, team: raw.team };
+  }
+  // Old format: flat map of app_id -> config
+  return { apps: raw as ConnectedAppsConfig, team: undefined };
 }
 
 // ── Component ──
@@ -102,7 +122,7 @@ export default function AgentHeader({
   tokenCount,
   contextWindow,
   childAgents,
-  siblingAgents,
+  allAgents,
   onUpdateAgent,
   onStop,
   onNewSession,
@@ -123,6 +143,10 @@ export default function AgentHeader({
   const [searchingApps, setSearchingApps] = useState(false);
   const appSearchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Team members state
+  const [teamMembers, setTeamMembers] = useState<string[]>([]);
+  const [teamSearchQuery, setTeamSearchQuery] = useState('');
+
   // Sync state when agent changes
   const agentKey = agent?.id ?? '';
   const [lastAgentId, setLastAgentId] = useState(agentKey);
@@ -132,15 +156,17 @@ export default function AgentHeader({
     setTask(agent?.initial_task ?? '');
     setEditingTask(false);
 
-    // Load connected apps from agent record
+    // Load connected apps + team from agent record
     if (agent?.connected_apps) {
       try {
-        const config: ConnectedAppsConfig = JSON.parse(agent.connected_apps);
+        const persisted = parsePersistedConfig(agent.connected_apps);
+        setTeamMembers(persisted.team || []);
+        const config = persisted.apps;
         const apps: ConnectedApp[] = Object.entries(config).map(([appId, cfg]) => ({
           id: appId,
           name: cfg.name,
           description: null,
-          functions: [], // Will be populated on inspect
+          functions: [],
           expanded: false,
         }));
         setConnectedApps(apps);
@@ -157,7 +183,6 @@ export default function AgentHeader({
               const appName = parsed.app?.name || parsed.metadata?.name || parsed.name || cfg.name;
               const appDesc = parsed.app?.description || parsed.metadata?.description || parsed.description || null;
 
-              // Build function list from manifest or fallback
               const fnList: AppFunction[] = [];
               if (manifest?.functions) {
                 for (const [fnName, fn] of Object.entries(manifest.functions)) {
@@ -188,6 +213,7 @@ export default function AgentHeader({
         }
       } catch {
         setConnectedApps([]);
+        setTeamMembers([]);
       }
     } else if (agent?.connected_app_ids) {
       // Legacy: just app IDs without granular config
@@ -230,23 +256,39 @@ export default function AgentHeader({
         }
       } catch {
         setConnectedApps([]);
+        setTeamMembers([]);
       }
     } else {
       setConnectedApps([]);
+      setTeamMembers([]);
     }
   }
 
   // ── Persist helpers ──
 
-  const persistApps = useCallback(async (apps: ConnectedApp[]) => {
+  // Use ref for team so persistConfig always reads latest without re-creating
+  const teamMembersRef = useRef(teamMembers);
+  teamMembersRef.current = teamMembers;
+
+  const persistConfig = useCallback(async (apps: ConnectedApp[]) => {
     if (!agent) return;
-    const config = buildAppsConfig(apps);
+    const config = buildPersistedConfig(apps, teamMembersRef.current);
     const ids = apps.map(a => a.id);
     await onUpdateAgent({
       connected_apps: JSON.stringify(config),
       connected_app_ids: ids.length > 0 ? JSON.stringify(ids) : null,
     } as Partial<Agent>);
   }, [agent, onUpdateAgent]);
+
+  const persistTeam = useCallback(async (team: string[]) => {
+    if (!agent) return;
+    const config = buildPersistedConfig(connectedApps, team);
+    const ids = connectedApps.map(a => a.id);
+    await onUpdateAgent({
+      connected_apps: JSON.stringify(config),
+      connected_app_ids: ids.length > 0 ? JSON.stringify(ids) : null,
+    } as Partial<Agent>);
+  }, [agent, connectedApps, onUpdateAgent]);
 
   const handleNotesBlur = useCallback(async () => {
     if (!agent) return;
@@ -276,8 +318,8 @@ export default function AgentHeader({
       };
     });
     setConnectedApps(nextApps);
-    await persistApps(nextApps);
-  }, [connectedApps, persistApps]);
+    await persistConfig(nextApps);
+  }, [connectedApps, persistConfig]);
 
   const toggleAllFunctions = useCallback(async (appId: string, selectAll: boolean) => {
     const nextApps = connectedApps.map(a => {
@@ -285,8 +327,8 @@ export default function AgentHeader({
       return { ...a, functions: a.functions.map(f => ({ ...f, selected: selectAll })) };
     });
     setConnectedApps(nextApps);
-    await persistApps(nextApps);
-  }, [connectedApps, persistApps]);
+    await persistConfig(nextApps);
+  }, [connectedApps, persistConfig]);
 
   const updateConvention = useCallback((appId: string, fnName: string, value: string) => {
     setConnectedApps(prev => prev.map(a => {
@@ -301,8 +343,8 @@ export default function AgentHeader({
   }, []);
 
   const saveConvention = useCallback(async (appId: string) => {
-    await persistApps(connectedApps);
-  }, [connectedApps, persistApps]);
+    await persistConfig(connectedApps);
+  }, [connectedApps, persistConfig]);
 
   const toggleAppExpanded = useCallback((appId: string) => {
     setConnectedApps(prev => prev.map(a =>
@@ -387,26 +429,52 @@ export default function AgentHeader({
         const updatedApp = { ...newApp, name: appName, functions: fnList };
         const updatedApps = nextApps.map(a => a.id === searchResult.id ? updatedApp : a);
         setConnectedApps(updatedApps);
-        await persistApps(updatedApps);
+        await persistConfig(updatedApps);
       } catch {
         // Still save even without functions
-        await persistApps(nextApps);
+        await persistConfig(nextApps);
       }
     } else {
-      await persistApps(nextApps);
+      await persistConfig(nextApps);
     }
-  }, [connectedApps, executeMcpTool, persistApps]);
+  }, [connectedApps, executeMcpTool, persistConfig]);
 
   const removeConnectedApp = useCallback(async (id: string) => {
     const next = connectedApps.filter(a => a.id !== id);
     setConnectedApps(next);
-    await persistApps(next);
-  }, [connectedApps, persistApps]);
+    await persistConfig(next);
+  }, [connectedApps, persistConfig]);
 
-  // ── Fleet awareness ──
-  const activeTeammates = siblingAgents.filter(a =>
-    a.id !== agent?.id && !['completed', 'error', 'stopped'].includes(a.status)
-  );
+  // ── Team member management ──
+
+  // Resolved team member agents (from allAgents by ID)
+  const resolvedTeamMembers = teamMembers
+    .map(id => allAgents.find(a => a.id === id))
+    .filter((a): a is Agent => a != null);
+
+  // Search results: filter allAgents by query, exclude self + already-added
+  const teamSearchResults = teamSearchQuery.trim().length >= 2
+    ? allAgents.filter(a =>
+        a.id !== agent?.id &&
+        !teamMembers.includes(a.id) &&
+        (a.name.toLowerCase().includes(teamSearchQuery.toLowerCase()) ||
+         a.role.toLowerCase().includes(teamSearchQuery.toLowerCase()) ||
+         (a.initial_task || '').toLowerCase().includes(teamSearchQuery.toLowerCase()))
+      ).slice(0, 8)
+    : [];
+
+  const addTeamMember = useCallback(async (memberId: string) => {
+    const next = [...teamMembers, memberId];
+    setTeamMembers(next);
+    setTeamSearchQuery('');
+    await persistTeam(next);
+  }, [teamMembers, persistTeam]);
+
+  const removeTeamMember = useCallback(async (memberId: string) => {
+    const next = teamMembers.filter(id => id !== memberId);
+    setTeamMembers(next);
+    await persistTeam(next);
+  }, [teamMembers, persistTeam]);
 
   return (
     <div className="border-b border-ul-border bg-white flex-shrink-0">
@@ -656,32 +724,77 @@ export default function AgentHeader({
             </div>
           )}
 
-          {/* Fleet Awareness — sibling agents */}
-          {activeTeammates.length > 0 && (
-            <div className="mt-3 pt-3 border-t border-ul-border">
-              <label className="text-caption text-ul-text-muted block mb-1.5">
-                Team
+          {/* Team — search and connect sibling agents */}
+          <div className="mt-3">
+            <label className="text-caption text-ul-text-muted block mb-1.5">
+              Team
+              {resolvedTeamMembers.length > 0 && (
                 <span className="ml-1.5 text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
-                  {activeTeammates.length} active
+                  {resolvedTeamMembers.length} member{resolvedTeamMembers.length !== 1 ? 's' : ''}
                 </span>
-              </label>
-              <div className="space-y-1">
-                {activeTeammates.map(teammate => (
-                  <div key={teammate.id} className="flex items-center gap-2 px-2 py-1 bg-white rounded border border-ul-border">
-                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDotClass(teammate.status)}`} />
-                    <span className="text-caption text-ul-text flex-1 truncate">{teammate.name}</span>
-                    <span className="text-[10px] text-ul-text-muted capitalize">{teammate.role}</span>
+              )}
+            </label>
+
+            {/* Connected team members */}
+            {resolvedTeamMembers.length > 0 && (
+              <div className="space-y-1 rounded border border-blue-200 p-2 bg-blue-50/30 mb-2">
+                {resolvedTeamMembers.map(member => (
+                  <div key={member.id} className="flex items-center gap-2">
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDotClass(member.status)}`} />
+                    <span className="text-caption text-ul-text truncate flex-1">{member.name}</span>
+                    <span className="text-[10px] text-ul-text-muted capitalize">{member.role}</span>
+                    {member.initial_task && (
+                      <span className="text-[10px] text-ul-text-muted truncate max-w-[120px]" title={member.initial_task}>
+                        {member.initial_task.slice(0, 30)}{member.initial_task.length > 30 ? '...' : ''}
+                      </span>
+                    )}
                     <button
-                      onClick={() => onOpenSubagentChat?.(teammate.id)}
-                      className="text-[10px] text-blue-500 hover:text-blue-700"
+                      onClick={() => onOpenSubagentChat?.(member.id)}
+                      className="text-[10px] text-blue-500 hover:text-blue-700 shrink-0"
                     >
                       Open
+                    </button>
+                    <button
+                      onClick={() => removeTeamMember(member.id)}
+                      className="text-[10px] text-red-400 hover:text-red-600 px-0.5 shrink-0"
+                    >
+                      ✕
                     </button>
                   </div>
                 ))}
               </div>
+            )}
+
+            {/* Team search input */}
+            <div className="relative">
+              <input
+                type="text"
+                value={teamSearchQuery}
+                onChange={e => setTeamSearchQuery(e.target.value)}
+                placeholder="Search agents to add to team..."
+                className="w-full text-small rounded border border-ul-border px-2 py-1.5 bg-white focus:outline-none focus:border-ul-border-focus"
+              />
             </div>
-          )}
+
+            {/* Team search results */}
+            {teamSearchResults.length > 0 && (
+              <div className="mt-1 rounded border border-ul-border bg-white shadow-sm max-h-40 overflow-y-auto">
+                {teamSearchResults.map(a => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => addTeamMember(a.id)}
+                    className="w-full text-left px-3 py-1.5 hover:bg-gray-50 flex items-center gap-2 border-b border-ul-border last:border-b-0"
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDotClass(a.status)}`} />
+                    <span className="text-caption text-ul-text truncate flex-1">{a.name}</span>
+                    <span className="text-[10px] text-ul-text-muted capitalize">{a.role}</span>
+                    <span className="text-[10px] text-blue-600 shrink-0">+ add</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Status + Actions */}
           <div className="flex items-center justify-between mt-3">
