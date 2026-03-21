@@ -1915,6 +1915,7 @@ export function getLayoutHTML(options: {
     }
 
     .fn-param-type { color: var(--text-muted); }
+    .fn-param-optional { opacity: 0.7; }
 
     /* Code editor area */
     .code-editor-wrapper {
@@ -3133,14 +3134,34 @@ export function getLayoutHTML(options: {
     const escHtml = escapeHtml;
 
     // Resolve function list from best available source: manifest > skills_parsed > exports
+    // Returns: { functions: [{name, description?, parameters?}], source }
+    // Parameters are normalized to object-keyed format: { paramName: { type, description, required } }
     function getAppFunctions(app) {
       // 1. Manifest functions (richest: name, description, parameters)
-      if (app.manifest?.functions && app.manifest.functions.length > 0) {
-        return { functions: app.manifest.functions, source: 'manifest' };
+      var manifest = app.manifest;
+      if (typeof manifest === 'string') { try { manifest = JSON.parse(manifest); } catch(e) { manifest = null; } }
+      if (manifest && manifest.functions && typeof manifest.functions === 'object') {
+        var fnEntries = Object.entries(manifest.functions);
+        if (fnEntries.length > 0) {
+          var fns = fnEntries.map(function(entry) {
+            var fnName = entry[0], fnDef = entry[1];
+            // Normalize parameters: array [{name,type}] → object {name: {type}}
+            var params = fnDef.parameters;
+            if (Array.isArray(params)) {
+              var obj = {};
+              params.forEach(function(p) { if (p && p.name) { var rest = Object.assign({}, p); delete rest.name; obj[p.name] = rest; } });
+              params = obj;
+            }
+            return { name: fnName, description: fnDef.description || '', parameters: params || {} };
+          });
+          return { functions: fns, source: 'manifest' };
+        }
       }
       // 2. skills_parsed functions (name + description + parameter schemas)
-      if (app.skills_parsed?.functions && app.skills_parsed.functions.length > 0) {
-        return { functions: app.skills_parsed.functions, source: 'skills_parsed' };
+      var sp = app.skills_parsed;
+      if (typeof sp === 'string') { try { sp = JSON.parse(sp); } catch(e) { sp = null; } }
+      if (sp && sp.functions && sp.functions.length > 0) {
+        return { functions: sp.functions, source: 'skills_parsed' };
       }
       // 3. exports array (just names, always available after build)
       if (app.exports && app.exports.length > 0) {
@@ -5253,11 +5274,21 @@ export function getLayoutHTML(options: {
         const fnSource = fnResult.source;
         const functionsHtml = fns.length > 0
           ? '<div class="function-list">' + fns.map(function(fn) {
-              const params = (Array.isArray(fn.parameters) ? fn.parameters : []).map(function(p) {
-                var pName = typeof p === 'object' ? (p.name || '') : '';
-                var pType = typeof p === 'object' ? (p.type || 'any') : 'any';
-                var pReq = typeof p === 'object' ? p.required : true;
-                return '<span class="fn-param">' + escapeHtml(pName) + '<span class="fn-param-type">: ' + escapeHtml(pType) + '</span>' + (pReq ? '' : '?') + '</span>';
+              // Handle object-keyed params {name: {type, required}} or legacy array [{name, type}]
+              var paramEntries = [];
+              if (fn.parameters && typeof fn.parameters === 'object' && !Array.isArray(fn.parameters)) {
+                paramEntries = Object.entries(fn.parameters).map(function(e) {
+                  return { name: e[0], type: (e[1] && e[1].type) || 'any', required: e[1] ? e[1].required !== false : true, description: (e[1] && e[1].description) || '' };
+                });
+              } else if (Array.isArray(fn.parameters)) {
+                paramEntries = fn.parameters.map(function(p) {
+                  return { name: p.name || '', type: p.type || 'any', required: p.required !== false, description: p.description || '' };
+                });
+              }
+              const params = paramEntries.map(function(p) {
+                return '<span class="fn-param' + (p.required ? '' : ' fn-param-optional') + '" title="' + escapeHtml(p.description) + '">' +
+                  escapeHtml(p.name) + (p.required ? '' : '?') +
+                  '<span class="fn-param-type">: ' + escapeHtml(p.type) + '</span></span>';
               }).join(', ');
               return '<div class="function-item">' +
                 '<div class="function-name"><code>' + escapeHtml(fn.name) + '</code>' + (params ? '(' + params + ')' : '') + '</div>' +
