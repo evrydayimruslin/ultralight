@@ -23,19 +23,13 @@ const Deno = globalThis.Deno;
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
 // ============================================
-// MODEL WHITELIST
+// MODEL VALIDATION
 // ============================================
 
-/** Allowed models — prevents abuse and cost surprises. Easily extensible. */
-const ALLOWED_MODELS = new Set([
-  'anthropic/claude-sonnet-4-20250514',
-  'anthropic/claude-3.5-sonnet',
-  'anthropic/claude-3-opus',
-  'openai/gpt-4o',
-  'openai/gpt-4o-mini',
-  'google/gemini-pro-1.5',
-  'deepseek/deepseek-chat',
-]);
+/** Basic model ID format validation — must be provider/model-name */
+function isValidModelId(model: string): boolean {
+  return /^[a-z0-9_-]+\/[a-z0-9._-]+(:[a-z0-9_-]+)?$/i.test(model);
+}
 
 // ============================================
 // POST /chat/stream — Streaming proxy
@@ -75,11 +69,10 @@ export async function handleChatStream(request: Request): Promise<Response> {
     console.error('[CHAT] Missing model field');
     return error('model is required', 400);
   }
-  if (!ALLOWED_MODELS.has(body.model)) {
-    console.error(`[CHAT] Model not allowed: ${body.model}`);
+  if (!isValidModelId(body.model)) {
+    console.error(`[CHAT] Invalid model ID format: ${body.model}`);
     return json({
-      error: `Model not allowed: ${body.model}`,
-      allowed_models: Array.from(ALLOWED_MODELS),
+      error: `Invalid model ID format: ${body.model}. Expected format: provider/model-name`,
     }, 400);
   }
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
@@ -281,7 +274,18 @@ export async function handleChatModels(request: Request): Promise<Response> {
     return json({ error: 'Rate limit exceeded' }, 429);
   }
 
-  const models = Array.from(ALLOWED_MODELS).map(id => {
+  // Suggested models — not an allowlist, just popular options for the UI
+  const suggested = [
+    'anthropic/claude-sonnet-4-20250514',
+    'anthropic/claude-3.5-sonnet',
+    'openai/gpt-4o',
+    'openai/gpt-4o-mini',
+    'google/gemini-pro-1.5',
+    'deepseek/deepseek-chat',
+    'meta-llama/llama-3.1-405b-instruct',
+    'qwen/qwen3-235b-a22b',
+  ];
+  const models = suggested.map(id => {
     const [provider, name] = id.split('/');
     return { id, name, provider };
   });
