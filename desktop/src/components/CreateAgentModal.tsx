@@ -561,7 +561,7 @@ export default function CreateAgentModal({
 
           {/* Task */}
           <div>
-            <label className="text-caption font-medium text-ul-text-secondary mb-1 block">Task</label>
+            <label className="text-caption font-medium text-ul-text-secondary mb-1 block">Directive</label>
             <textarea
               value={task}
               onChange={e => setTask(e.target.value)}

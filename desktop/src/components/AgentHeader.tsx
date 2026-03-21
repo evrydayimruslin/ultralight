@@ -133,8 +133,8 @@ export default function AgentHeader({
 }: AgentHeaderProps) {
   const [expanded, setExpanded] = useState(false);
   const [adminNotes, setAdminNotes] = useState(agent?.admin_notes ?? '');
-  const [task, setTask] = useState(agent?.initial_task ?? '');
-  const [editingTask, setEditingTask] = useState(false);
+  const [directive, setDirective] = useState(agent?.initial_task || agent?.name || '');
+  const [editingDirective, setEditingDirective] = useState(false);
 
   // Connected apps state
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>([]);
@@ -153,8 +153,8 @@ export default function AgentHeader({
   if (agentKey !== lastAgentId) {
     setLastAgentId(agentKey);
     setAdminNotes(agent?.admin_notes ?? '');
-    setTask(agent?.initial_task ?? '');
-    setEditingTask(false);
+    setDirective(agent?.initial_task || agent?.name || '');
+    setEditingDirective(false);
 
     // Load connected apps + team from agent record
     if (agent?.connected_apps) {
@@ -297,13 +297,14 @@ export default function AgentHeader({
     }
   }, [agent, adminNotes, onUpdateAgent]);
 
-  const handleTaskBlur = useCallback(async () => {
+  const handleDirectiveBlur = useCallback(async () => {
     if (!agent) return;
-    setEditingTask(false);
-    if (task !== (agent.initial_task ?? '')) {
-      await onUpdateAgent({ initial_task: task || null } as Partial<Agent>);
+    setEditingDirective(false);
+    const currentDirective = agent.initial_task || agent.name || '';
+    if (directive !== currentDirective && directive.trim()) {
+      await onUpdateAgent({ initial_task: directive.trim(), name: directive.trim() } as Partial<Agent>);
     }
-  }, [agent, task, onUpdateAgent]);
+  }, [agent, directive, onUpdateAgent]);
 
   // ── Function toggle / convention ──
 
@@ -534,29 +535,26 @@ export default function AgentHeader({
             </div>
           </div>
 
-          {/* Task — editable */}
+          {/* Directive — editable title, syncs to agent name everywhere */}
           <div className="mt-3">
-            <label className="text-caption text-ul-text-muted block mb-1">
-              Task
-              <span className="text-[10px] text-ul-text-muted ml-1">(agent's mission)</span>
-            </label>
-            {editingTask ? (
+            <label className="text-caption text-ul-text-muted block mb-1">Directive</label>
+            {editingDirective ? (
               <input
                 type="text"
-                value={task}
-                onChange={e => setTask(e.target.value)}
-                onBlur={handleTaskBlur}
-                onKeyDown={e => { if (e.key === 'Enter') handleTaskBlur(); if (e.key === 'Escape') { setTask(agent.initial_task ?? ''); setEditingTask(false); } }}
+                value={directive}
+                onChange={e => setDirective(e.target.value)}
+                onBlur={handleDirectiveBlur}
+                onKeyDown={e => { if (e.key === 'Enter') handleDirectiveBlur(); if (e.key === 'Escape') { setDirective(agent.initial_task || agent.name || ''); setEditingDirective(false); } }}
                 autoFocus
                 className="w-full px-2 py-1.5 text-small rounded border border-blue-300 bg-white focus:outline-none focus:border-blue-500"
-                placeholder="e.g. Front desk concierge for guest services"
+                placeholder="e.g. Front Desk Concierge"
               />
             ) : (
               <button
-                onClick={() => setEditingTask(true)}
+                onClick={() => setEditingDirective(true)}
                 className="w-full text-left px-2 py-1.5 text-small text-ul-text-secondary rounded border border-transparent hover:border-ul-border hover:bg-white transition-colors"
               >
-                {task || <span className="text-ul-text-muted italic">Click to set agent's mission...</span>}
+                {directive || <span className="text-ul-text-muted italic">Click to name this agent...</span>}
               </button>
             )}
           </div>

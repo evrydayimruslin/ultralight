@@ -167,7 +167,7 @@ export default function SubagentWindow({ agentId }: SubagentWindowProps) {
       {agent.initial_task && (
         <div className="px-4 py-2 bg-gray-50 border-b border-ul-border">
           <p className="text-caption text-ul-text-muted">
-            <span className="font-medium">Task:</span> {agent.initial_task}
+            <span className="font-medium">Directive:</span> {agent.initial_task}
           </p>
         </div>
       )}
