@@ -74,6 +74,15 @@ export default function MessageList({ messages, isLoading }: MessageListProps) {
             toolsExecuting={isLoading}
           />
         ))}
+
+        {/* Persistent working indicator — visible entire time agent is active */}
+        {isLoading && (
+          <div className="flex items-center gap-2 py-3 px-1">
+            <div className="w-3.5 h-3.5 rounded-full border-2 border-gray-200 border-t-gray-500 animate-spin flex-shrink-0" />
+            <span className="text-caption text-ul-text-muted">Working...</span>
+          </div>
+        )}
+
         <div ref={bottomRef} />
       </div>
     </div>

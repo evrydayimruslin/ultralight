@@ -55,12 +55,9 @@ export default function MessageBubble({ message, toolResults, toolsExecuting }: 
               </div>
             )}
 
-            {/* Empty state — thinking indicator */}
+            {/* Empty state — placeholder for streaming message that hasn't started yet */}
             {!message.content && !message.tool_calls?.length && (
-              <div className="flex items-center gap-2 py-2 px-1">
-                <div className="w-4 h-4 rounded-full border-2 border-gray-200 border-t-gray-500 animate-spin" />
-                <span className="text-small text-ul-text-muted">Thinking...</span>
-              </div>
+              <div className="h-4" />
             )}
 
             {/* Cost display */}
