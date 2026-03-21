@@ -15,6 +15,7 @@ import KanbanBoard from './KanbanBoard';
 import CardDetailModal from './CardDetailModal';
 import CreateAgentModal from './CreateAgentModal';
 import SpendingApprovalModal from './SpendingApprovalModal';
+import AgentConfigPanel from './AgentConfigPanel';
 
 // ── Types ──
 
@@ -104,9 +105,7 @@ export default function HomeView({
   const [quickInstructText, setQuickInstructText] = useState('');
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
   const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
-  // Inline editing state for expanded agent rows
-  const [inlineDirective, setInlineDirective] = useState('');
-  const [inlineNotes, setInlineNotes] = useState('');
+  const instructInputRef = useRef<HTMLInputElement>(null);
 
   const {
     columns,
@@ -223,38 +222,31 @@ export default function HomeView({
 
   // Expand/collapse agent row in fleet table
   const handleExpandAgent = useCallback((agentId: string) => {
-    if (expandedAgentId === agentId) {
-      setExpandedAgentId(null);
-    } else {
-      const a = agents.find(a => a.id === agentId);
-      setExpandedAgentId(agentId);
-      setInlineDirective(a?.initial_task || a?.name || '');
-      setInlineNotes(a?.admin_notes || '');
-    }
-  }, [expandedAgentId, agents]);
+    setExpandedAgentId(prev => prev === agentId ? null : agentId);
+  }, []);
 
-  // Save inline agent edits
-  const handleSaveInlineAgent = useCallback(async (agentId: string) => {
+  // Update agent from inline config panel
+  const handleInlineUpdateAgent = useCallback(async (agentId: string, updates: Partial<Agent>) => {
     try {
       await invoke('db_update_agent', {
         id: agentId,
-        status: null,
-        name: inlineDirective.trim() || null,
-        adminNotes: inlineNotes || null,
-        endGoal: null,
-        context: null,
-        permissionLevel: null,
-        model: null,
-        projectDir: null,
-        connectedAppIds: null,
-        connectedApps: null,
-        initialTask: inlineDirective.trim() || null,
+        status: updates.status ?? null,
+        name: updates.name ?? null,
+        adminNotes: updates.admin_notes ?? null,
+        endGoal: updates.end_goal ?? null,
+        context: updates.context ?? null,
+        permissionLevel: updates.permission_level ?? null,
+        model: updates.model ?? null,
+        projectDir: updates.project_dir ?? null,
+        connectedAppIds: updates.connected_app_ids ?? null,
+        connectedApps: updates.connected_apps ?? null,
+        initialTask: updates.initial_task ?? null,
       });
       await refreshAgents();
     } catch (err) {
       console.warn('Failed to update agent:', err);
     }
-  }, [inlineDirective, inlineNotes, refreshAgents]);
+  }, [refreshAgents]);
 
   // ── Kanban callbacks (unchanged) ──
 
@@ -594,6 +586,7 @@ export default function HomeView({
                 ))}
               </select>
               <input
+                ref={instructInputRef}
                 type="text"
                 value={quickInstructText}
                 onChange={e => setQuickInstructText(e.target.value)}
@@ -634,14 +627,6 @@ export default function HomeView({
                   ) : (
                     projectAgents.map(agent => {
                       const isExpanded = expandedAgentId === agent.id;
-                      const connectedCount = (() => {
-                        if (!agent.connected_apps) return 0;
-                        try {
-                          const p = JSON.parse(agent.connected_apps);
-                          const apps = p.apps || p;
-                          return Object.keys(apps).filter(k => k !== '__team').length;
-                        } catch { return 0; }
-                      })();
                       return (
                         <Fragment key={agent.id}>
                           <tr
@@ -677,7 +662,10 @@ export default function HomeView({
                                   </button>
                                 )}
                                 <button
-                                  onClick={() => setQuickInstructAgent(agent.id)}
+                                  onClick={() => {
+                                    setQuickInstructAgent(agent.id);
+                                    setTimeout(() => instructInputRef.current?.focus(), 50);
+                                  }}
                                   className="text-caption px-2 py-0.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
                                 >
                                   Instruct
@@ -688,55 +676,14 @@ export default function HomeView({
                           {isExpanded && (
                             <tr className="border-b border-gray-200 bg-gray-50">
                               <td colSpan={6} className="px-4 py-3">
-                                <div className="grid grid-cols-2 gap-3 max-w-2xl">
-                                  {/* Directive */}
-                                  <div className="col-span-2">
-                                    <label className="text-caption text-ul-text-muted block mb-1">Directive</label>
-                                    <input
-                                      type="text"
-                                      value={inlineDirective}
-                                      onChange={e => setInlineDirective(e.target.value)}
-                                      onBlur={() => handleSaveInlineAgent(agent.id)}
-                                      onKeyDown={e => { if (e.key === 'Enter') handleSaveInlineAgent(agent.id); }}
-                                      className="w-full px-2 py-1.5 text-small rounded border border-ul-border bg-white focus:outline-none focus:border-blue-300"
-                                      placeholder="Agent's mission / title..."
-                                    />
-                                  </div>
-                                  {/* Admin Notes */}
-                                  <div className="col-span-2">
-                                    <label className="text-caption text-ul-text-muted block mb-1">Admin Notes</label>
-                                    <textarea
-                                      value={inlineNotes}
-                                      onChange={e => setInlineNotes(e.target.value)}
-                                      onBlur={() => handleSaveInlineAgent(agent.id)}
-                                      placeholder="Behavioral instructions, conventions, rules..."
-                                      className="w-full px-2 py-1.5 text-small rounded border border-ul-border bg-white focus:outline-none focus:border-blue-300 resize-none"
-                                      rows={2}
-                                    />
-                                  </div>
-                                  {/* Info row */}
-                                  <div className="col-span-2 flex items-center gap-4 text-caption text-ul-text-muted">
-                                    {connectedCount > 0 && (
-                                      <span className="text-emerald-600">
-                                        {connectedCount} app{connectedCount !== 1 ? 's' : ''} connected
-                                      </span>
-                                    )}
-                                    <span>Model: {agent.model || 'default'}</span>
-                                    <span>Permissions: {agent.permission_level}</span>
-                                  </div>
-                                  {/* Actions */}
-                                  <div className="col-span-2 flex items-center gap-2 pt-1">
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); onNavigateToAgent(agent.id); }}
-                                      className="text-caption px-3 py-1 rounded bg-ul-bg-dark text-white hover:bg-gray-700 transition-colors"
-                                    >
-                                      Open Chat →
-                                    </button>
-                                    <span className="text-[10px] text-ul-text-muted">
-                                      Full config available in chat header
-                                    </span>
-                                  </div>
-                                </div>
+                                <AgentConfigPanel
+                                  agent={agent}
+                                  allAgents={projectAgents}
+                                  onUpdateAgent={async (updates) => handleInlineUpdateAgent(agent.id, updates)}
+                                  onNavigateToAgent={onNavigateToAgent}
+                                  executeMcpTool={executeMcpTool}
+                                  showOpenChat
+                                />
                               </td>
                             </tr>
                           )}
