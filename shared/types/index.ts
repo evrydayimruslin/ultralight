@@ -1184,6 +1184,41 @@ export interface ManifestValidationError {
 }
 
 /**
+ * Normalize manifest parameters from array format to object-keyed format.
+ *
+ * Manifests can arrive with parameters in two shapes:
+ *   Array:  [{ name: "action", type: "string", required: true, description: "..." }, ...]
+ *   Object: { action: { type: "string", required: true, description: "..." }, ... }
+ *
+ * The canonical format is object-keyed (matches JSON Schema `properties`).
+ * This function converts arrays → objects and passes objects through unchanged.
+ */
+export function normalizeManifestParameters(
+  params: unknown,
+): Record<string, ManifestParameter> | undefined {
+  if (params === undefined || params === null) return undefined;
+
+  // Already object-keyed — pass through
+  if (typeof params === 'object' && !Array.isArray(params)) {
+    return params as Record<string, ManifestParameter>;
+  }
+
+  // Array format — convert [{name, type, ...}] → {name: {type, ...}}
+  if (Array.isArray(params)) {
+    const result: Record<string, ManifestParameter> = {};
+    for (const item of params) {
+      if (item && typeof item === 'object' && typeof item.name === 'string') {
+        const { name, ...rest } = item;
+        result[name] = rest as ManifestParameter;
+      }
+    }
+    return result;
+  }
+
+  return undefined;
+}
+
+/**
  * Validate an app manifest
  */
 export function validateManifest(input: unknown): ManifestValidationResult {
@@ -1237,9 +1272,13 @@ export function validateManifest(input: unknown): ManifestValidationResult {
           errors.push({ path: `functions.${fnName}.description`, message: 'description is required' });
         }
 
-        // Validate parameters if present
-        if (fn.parameters !== undefined && typeof fn.parameters !== 'object') {
-          errors.push({ path: `functions.${fnName}.parameters`, message: 'parameters must be an object' });
+        // Normalize parameters: convert array format → object-keyed format in-place
+        if (fn.parameters !== undefined) {
+          if (typeof fn.parameters !== 'object') {
+            errors.push({ path: `functions.${fnName}.parameters`, message: 'parameters must be an object or array' });
+          } else {
+            fn.parameters = normalizeManifestParameters(fn.parameters);
+          }
         }
       }
     }
@@ -1286,12 +1325,13 @@ export function manifestToMCPTools(manifest: AppManifest, appId: string, appSlug
       },
     };
 
-    // Convert parameters to JSON Schema
+    // Convert parameters to JSON Schema (normalize array→object for legacy DB records)
     if (fnDef.parameters) {
+      const normalized = normalizeManifestParameters(fnDef.parameters) || {};
       const properties: Record<string, MCPJsonSchema> = {};
       const required: string[] = [];
 
-      for (const [paramName, paramDef] of Object.entries(fnDef.parameters)) {
+      for (const [paramName, paramDef] of Object.entries(normalized)) {
         properties[paramName] = {
           type: paramDef.type,
           description: paramDef.description,

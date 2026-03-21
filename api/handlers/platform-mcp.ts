@@ -767,7 +767,7 @@ View call logs and health events.
 
 **Workflow:** \`ul.download\` (scaffold) → implement → \`ul.test\` → \`ul.upload\` → \`ul.set\`
 
-**Always include a manifest.json** alongside index.ts. The manifest enables per-function pricing in the dashboard, typed parameter schemas for better agent tool use, and per-function permission grants. Without it, functions are auto-detected from exports but lack parameter/return metadata. Structure: \`{ "functions": { "fnName": { "description": "...", "parameters": [{ "name": "...", "type": "string", "required": true }] } } }\`. \`ul.download\` scaffolds this automatically.
+**Always include a manifest.json** alongside index.ts. The manifest enables per-function pricing in the dashboard, typed parameter schemas for better agent tool use, and per-function permission grants. Without it, functions are auto-detected from exports but lack parameter/return metadata. Structure: \`{ "functions": { "fnName": { "description": "...", "parameters": { "paramName": { "type": "string", "required": true, "description": "What this param does" } } } } }\`. Parameters must be an object keyed by parameter name (NOT an array). \`ul.download\` scaffolds this automatically.
 
 ### Critical Rules
 1. **FUNCTION SIGNATURE:** Single args object. \`function search(args: { query: string })\` NOT \`function search(query: string)\`. The sandbox passes args as a single object.
@@ -781,7 +781,7 @@ View call logs and health events.
 | \`ultralight.db.run(sql, params?)\` | Execute INSERT/UPDATE/DELETE (returns { success, meta }) |
 | \`ultralight.db.all(sql, params?)\` | Execute SELECT, returns all rows |
 | \`ultralight.db.first(sql, params?)\` | Execute SELECT, returns first row or null |
-| \`ultralight.db.batch(statements)\` | Execute multiple statements atomically |
+| \`ultralight.db.batch(statements)\` | Execute multiple statements sequentially (NOT atomic — design for idempotency) |
 | \`ultralight.remember(key, value)\` | Cross-app user memory (KV store) |
 | \`ultralight.recall(key)\` | Read from user memory |
 | \`ultralight.user\` | Auth context: \`{ id, email, displayName, avatarUrl, tier }\` (null if anon) |

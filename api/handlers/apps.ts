@@ -23,6 +23,7 @@ import {
   validateEnvVarKey,
   validateEnvVarValue,
   ENV_VAR_LIMITS,
+  normalizeManifestParameters,
 } from '../../shared/types/index.ts';
 import {
   encryptEnvVar,
@@ -617,17 +618,13 @@ async function handleGetAppInstructions(request: Request, appId: string): Promis
       const fns = manifest.functions as Record<string, Record<string, unknown>>;
       for (const [fnName, fnMeta] of Object.entries(fns)) {
         try {
-          // Parameters can be an array [{name, type}] or an object {name: {type, required}}
+          // Normalize parameters to object-keyed format (handles legacy array format)
           let paramStr = '';
-          const rawParams = fnMeta.parameters;
-          if (Array.isArray(rawParams)) {
-            paramStr = rawParams.map((p: Record<string, unknown>) =>
-              `${p.name}${p.required === false ? '?' : ''}: ${p.type || 'any'}`
-            ).join(', ');
-          } else if (rawParams && typeof rawParams === 'object') {
-            paramStr = Object.entries(rawParams as Record<string, Record<string, unknown>>)
+          const normalizedParams = normalizeManifestParameters(fnMeta.parameters);
+          if (normalizedParams) {
+            paramStr = Object.entries(normalizedParams)
               .map(([pName, pMeta]) =>
-                `${pName}${pMeta.required === false ? '?' : ''}: ${pMeta.type || 'any'}`
+                `${pName}${(pMeta as Record<string, unknown>).required === false ? '?' : ''}: ${(pMeta as Record<string, unknown>).type || 'any'}`
               ).join(', ');
           }
           const fnDesc = fnMeta.description ? ` — ${fnMeta.description}` : '';

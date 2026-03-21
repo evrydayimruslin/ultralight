@@ -42,7 +42,7 @@ import type {
   AppManifest,
   App,
 } from '../../shared/types/index.ts';
-import { manifestToMCPTools } from '../../shared/types/index.ts';
+import { manifestToMCPTools, normalizeManifestParameters } from '../../shared/types/index.ts';
 
 // ============================================
 // MEMORY SERVICE (lazy singleton)
@@ -2097,7 +2097,9 @@ function skillFunctionToMCPTool(fn: SkillFunction): MCPTool {
   };
 
   if (fn.parameters && typeof fn.parameters === 'object') {
-    for (const [name, schema] of Object.entries(fn.parameters)) {
+    // Normalize array→object for legacy skills_parsed records
+    const params = normalizeManifestParameters(fn.parameters) || fn.parameters;
+    for (const [name, schema] of Object.entries(params)) {
       inputSchema.properties![name] = schema as MCPJsonSchema;
       // Assume all parameters are required unless marked optional
       if (!(schema as MCPJsonSchema).nullable) {

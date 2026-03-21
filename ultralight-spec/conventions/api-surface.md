@@ -95,6 +95,38 @@ export async function my_function(args: {
 > **Why**: The platform always passes an args object, but defaulting to `{}` provides
 > defense-in-depth against destructuring errors.
 
+## Parameter naming conventions
+
+Parameter names appear in the MCP tool schema that agents use to call functions. Agents have **no access to source code** — they rely entirely on the schema's parameter names, types, and descriptions. Every parameter must be self-documenting.
+
+### Rules for parameter names
+
+1. **Use the most common/obvious name.** If an agent would guess `query`, don't call it `sql`. If it would guess `id`, don't call it `item_identifier`.
+2. **Add a `description` for every parameter** in manifest.json. The description appears in `tools/list` and is the agent's only hint for ambiguous parameters.
+3. **Use `_id` suffix for foreign keys.** `product_id`, `reservation_id`, `equipment_id` — not `product`, `reservation`, `item`.
+4. **Use `_date` / `_time` suffix for temporal values.** `check_in_date`, `tee_time` — not `check_in` (ambiguous: is it a date or a boolean?).
+5. **Use consistent naming across functions.** If `rooms_book` uses `guest_name`, then `ski_rent`, `golf_book_tee`, and `restaurant_book` must also use `guest_name` — not `name`, `customer`, or `guest`.
+
+### Manifest parameter format
+
+Parameters in `manifest.json` must be an **object keyed by parameter name** (not an array):
+
+```json
+{
+  "functions": {
+    "search": {
+      "description": "Search for items",
+      "parameters": {
+        "query": { "type": "string", "required": true, "description": "Search query text" },
+        "limit": { "type": "number", "required": false, "description": "Max results (default 10)" }
+      }
+    }
+  }
+}
+```
+
+**Do not** use the array format `[{ "name": "query", "type": "string" }]`. The platform normalizes arrays to objects, but object-keyed format is canonical and ensures correct schema delivery to agents.
+
 ## Rules
 
 1. **Always parameterize.** Use `?` placeholders. Never string-interpolate values into SQL.
@@ -102,3 +134,4 @@ export async function my_function(args: {
 3. **Use `crypto.randomUUID()` for IDs.** Generate IDs client-side, not with autoincrement.
 4. **Use `ultralight.user.id`** to get the current authenticated user's ID.
 5. **Design batch operations for idempotency.** Use `INSERT OR IGNORE`, `ON CONFLICT`, or check-before-write patterns since batch is not transactional.
+6. **Every parameter must have a description.** Agents cannot read your source code. The manifest description is their only documentation.
