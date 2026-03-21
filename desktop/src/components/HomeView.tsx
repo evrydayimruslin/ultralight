@@ -1,6 +1,6 @@
 // Command — tabbed view with Project (kanban), Agents (fleet), and Activity (event feed).
 
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef, Fragment } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useKanban, type KanbanCard as KanbanCardType } from '../hooks/useKanban';
 import type { Agent, CreateAgentParams } from '../hooks/useAgentFleet';
@@ -103,6 +103,10 @@ export default function HomeView({
   const [quickInstructAgent, setQuickInstructAgent] = useState<string | null>(null);
   const [quickInstructText, setQuickInstructText] = useState('');
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
+  const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
+  // Inline editing state for expanded agent rows
+  const [inlineDirective, setInlineDirective] = useState('');
+  const [inlineNotes, setInlineNotes] = useState('');
 
   const {
     columns,
@@ -119,6 +123,7 @@ export default function HomeView({
     agents,
     createAgent,
     startAgent,
+    refreshAgents,
   } = useAgentFleet();
 
   const { executeToolCall: executeMcpTool } = useMcp();
@@ -215,6 +220,41 @@ export default function HomeView({
       onNavigateToAgent(quickInstructAgent);
     }
   }, [quickInstructAgent, quickInstructText, onNavigateToAgent]);
+
+  // Expand/collapse agent row in fleet table
+  const handleExpandAgent = useCallback((agentId: string) => {
+    if (expandedAgentId === agentId) {
+      setExpandedAgentId(null);
+    } else {
+      const a = agents.find(a => a.id === agentId);
+      setExpandedAgentId(agentId);
+      setInlineDirective(a?.initial_task || a?.name || '');
+      setInlineNotes(a?.admin_notes || '');
+    }
+  }, [expandedAgentId, agents]);
+
+  // Save inline agent edits
+  const handleSaveInlineAgent = useCallback(async (agentId: string) => {
+    try {
+      await invoke('db_update_agent', {
+        id: agentId,
+        status: null,
+        name: inlineDirective.trim() || null,
+        adminNotes: inlineNotes || null,
+        endGoal: null,
+        context: null,
+        permissionLevel: null,
+        model: null,
+        projectDir: null,
+        connectedAppIds: null,
+        connectedApps: null,
+        initialTask: inlineDirective.trim() || null,
+      });
+      await refreshAgents();
+    } catch (err) {
+      console.warn('Failed to update agent:', err);
+    }
+  }, [inlineDirective, inlineNotes, refreshAgents]);
 
   // ── Kanban callbacks (unchanged) ──
 
@@ -592,52 +632,117 @@ export default function HomeView({
                       </td>
                     </tr>
                   ) : (
-                    projectAgents.map(agent => (
-                      <tr
-                        key={agent.id}
-                        className="border-b border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer"
-                        onClick={() => onNavigateToAgent(agent.id)}
-                      >
-                        <td className="px-3 py-2">
-                          <div className="flex items-center gap-2">
-                            <span className={`w-2 h-2 rounded-full ${statusDot(agent.status)}`} />
-                            <span className="text-caption">{statusLabel(agent.status)}</span>
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 font-medium text-ul-text">{agent.name}</td>
-                        <td className="px-3 py-2">
-                          <span className="text-caption px-1.5 py-0.5 rounded bg-gray-100 text-ul-text-secondary">
-                            {agent.role}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-ul-text-muted">
-                          {agent.message_count ?? '—'}
-                        </td>
-                        <td className="px-3 py-2 text-ul-text-muted">
-                          {formatRelativeTime(agent.updated_at)}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
-                            {agent.status === 'running' && (
-                              <button
-                                onClick={() => agentRunner.stop(agent.id)}
-                                className="text-caption px-2 py-0.5 rounded bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
-                              >
-                                Stop
-                              </button>
-                            )}
-                            <button
-                              onClick={() => {
-                                setQuickInstructAgent(agent.id);
-                              }}
-                              className="text-caption px-2 py-0.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
-                            >
-                              Instruct
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
+                    projectAgents.map(agent => {
+                      const isExpanded = expandedAgentId === agent.id;
+                      const connectedCount = (() => {
+                        if (!agent.connected_apps) return 0;
+                        try {
+                          const p = JSON.parse(agent.connected_apps);
+                          const apps = p.apps || p;
+                          return Object.keys(apps).filter(k => k !== '__team').length;
+                        } catch { return 0; }
+                      })();
+                      return (
+                        <Fragment key={agent.id}>
+                          <tr
+                            className={`border-b border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer ${isExpanded ? 'bg-gray-50' : ''}`}
+                            onClick={() => handleExpandAgent(agent.id)}
+                          >
+                            <td className="px-3 py-2">
+                              <div className="flex items-center gap-2">
+                                <span className={`w-2 h-2 rounded-full ${statusDot(agent.status)}`} />
+                                <span className="text-caption">{statusLabel(agent.status)}</span>
+                              </div>
+                            </td>
+                            <td className="px-3 py-2 font-medium text-ul-text">{agent.name}</td>
+                            <td className="px-3 py-2">
+                              <span className="text-caption px-1.5 py-0.5 rounded bg-gray-100 text-ul-text-secondary">
+                                {agent.role}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 text-ul-text-muted">
+                              {agent.message_count ?? '—'}
+                            </td>
+                            <td className="px-3 py-2 text-ul-text-muted">
+                              {formatRelativeTime(agent.updated_at)}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
+                                {agent.status === 'running' && (
+                                  <button
+                                    onClick={() => agentRunner.stop(agent.id)}
+                                    className="text-caption px-2 py-0.5 rounded bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
+                                  >
+                                    Stop
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => setQuickInstructAgent(agent.id)}
+                                  className="text-caption px-2 py-0.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
+                                >
+                                  Instruct
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                          {isExpanded && (
+                            <tr className="border-b border-gray-200 bg-gray-50">
+                              <td colSpan={6} className="px-4 py-3">
+                                <div className="grid grid-cols-2 gap-3 max-w-2xl">
+                                  {/* Directive */}
+                                  <div className="col-span-2">
+                                    <label className="text-caption text-ul-text-muted block mb-1">Directive</label>
+                                    <input
+                                      type="text"
+                                      value={inlineDirective}
+                                      onChange={e => setInlineDirective(e.target.value)}
+                                      onBlur={() => handleSaveInlineAgent(agent.id)}
+                                      onKeyDown={e => { if (e.key === 'Enter') handleSaveInlineAgent(agent.id); }}
+                                      className="w-full px-2 py-1.5 text-small rounded border border-ul-border bg-white focus:outline-none focus:border-blue-300"
+                                      placeholder="Agent's mission / title..."
+                                    />
+                                  </div>
+                                  {/* Admin Notes */}
+                                  <div className="col-span-2">
+                                    <label className="text-caption text-ul-text-muted block mb-1">Admin Notes</label>
+                                    <textarea
+                                      value={inlineNotes}
+                                      onChange={e => setInlineNotes(e.target.value)}
+                                      onBlur={() => handleSaveInlineAgent(agent.id)}
+                                      placeholder="Behavioral instructions, conventions, rules..."
+                                      className="w-full px-2 py-1.5 text-small rounded border border-ul-border bg-white focus:outline-none focus:border-blue-300 resize-none"
+                                      rows={2}
+                                    />
+                                  </div>
+                                  {/* Info row */}
+                                  <div className="col-span-2 flex items-center gap-4 text-caption text-ul-text-muted">
+                                    {connectedCount > 0 && (
+                                      <span className="text-emerald-600">
+                                        {connectedCount} app{connectedCount !== 1 ? 's' : ''} connected
+                                      </span>
+                                    )}
+                                    <span>Model: {agent.model || 'default'}</span>
+                                    <span>Permissions: {agent.permission_level}</span>
+                                  </div>
+                                  {/* Actions */}
+                                  <div className="col-span-2 flex items-center gap-2 pt-1">
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); onNavigateToAgent(agent.id); }}
+                                      className="text-caption px-3 py-1 rounded bg-ul-bg-dark text-white hover:bg-gray-700 transition-colors"
+                                    >
+                                      Open Chat →
+                                    </button>
+                                    <span className="text-[10px] text-ul-text-muted">
+                                      Full config available in chat header
+                                    </span>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
