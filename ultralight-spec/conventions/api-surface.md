@@ -101,7 +101,7 @@ Parameter names appear in the MCP tool schema that agents use to call functions.
 
 ### Rules for parameter names
 
-1. **Use the most common/obvious name.** If an agent would guess `query`, don't call it `sql`. If it would guess `id`, don't call it `item_identifier`.
+1. **Use the most precise unambiguous name.** Prefer names that tell the agent what format to provide. Use `sql` for SQL strings (not `query`, which could mean natural language). Use `id` instead of `item_identifier`. Use `query` only for free-text/semantic search parameters.
 2. **Add a `description` for every parameter** in manifest.json. The description appears in `tools/list` and is the agent's only hint for ambiguous parameters.
 3. **Use `_id` suffix for foreign keys.** `product_id`, `reservation_id`, `equipment_id` — not `product`, `reservation`, `item`.
 4. **Use `_date` / `_time` suffix for temporal values.** `check_in_date`, `tee_time` — not `check_in` (ambiguous: is it a date or a boolean?).
