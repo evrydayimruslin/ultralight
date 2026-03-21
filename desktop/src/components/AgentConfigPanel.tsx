@@ -4,7 +4,6 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Agent } from '../hooks/useAgentFleet';
-import ModelSelector from './ModelSelector';
 
 // ── Types ──
 
@@ -44,8 +43,6 @@ export interface AgentConfigPanelProps {
   onUpdateAgent: (updates: Partial<Agent>) => Promise<void>;
   onNavigateToAgent?: (agentId: string) => void;
   executeMcpTool?: (name: string, args: Record<string, unknown>) => Promise<string>;
-  /** Show model selector (only in chat header, not in agents tab) */
-  showModelSelector?: boolean;
   /** Show the Open Chat button (only in agents tab, not in chat header) */
   showOpenChat?: boolean;
 }
@@ -141,12 +138,14 @@ export default function AgentConfigPanel({
   onUpdateAgent,
   onNavigateToAgent,
   executeMcpTool,
-  showModelSelector = false,
   showOpenChat = false,
 }: AgentConfigPanelProps) {
   const [adminNotes, setAdminNotes] = useState(agent.admin_notes ?? '');
   const [directive, setDirective] = useState(agent.initial_task || agent.name || '');
   const [editingDirective, setEditingDirective] = useState(false);
+  const [editingModel, setEditingModel] = useState(false);
+  const [modelValue, setModelValue] = useState(agent.model || '');
+  const modelInputRef = useRef<HTMLInputElement>(null);
 
   // Connected apps state
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>([]);
@@ -172,6 +171,8 @@ export default function AgentConfigPanel({
     setAdminNotes(agent.admin_notes ?? '');
     setDirective(agent.initial_task || agent.name || '');
     setEditingDirective(false);
+    setModelValue(agent.model || '');
+    setEditingModel(false);
 
     // Load connected apps + team from agent record
     if (agent.connected_apps) {
@@ -265,6 +266,17 @@ export default function AgentConfigPanel({
       await onUpdateAgent({ initial_task: directive.trim(), name: directive.trim() } as Partial<Agent>);
     }
   }, [agent, directive, onUpdateAgent]);
+
+  const handleModelBlur = useCallback(async () => {
+    setEditingModel(false);
+    if (modelValue.trim() && modelValue.trim() !== (agent.model || '')) {
+      await onUpdateAgent({ model: modelValue.trim() } as Partial<Agent>);
+    }
+  }, [agent, modelValue, onUpdateAgent]);
+
+  const handleToolApprovalChange = useCallback(async (value: string) => {
+    await onUpdateAgent({ permission_level: value } as Partial<Agent>);
+  }, [onUpdateAgent]);
 
   // ── Function toggle / convention ──
 
@@ -403,30 +415,6 @@ export default function AgentConfigPanel({
 
   return (
     <div className="space-y-3">
-      {/* Top row: Role, Model, Directory, Permissions */}
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="text-caption text-ul-text-muted block mb-1">Role</label>
-          <span className="text-small text-ul-text capitalize">{agent.role}</span>
-        </div>
-        <div>
-          <label className="text-caption text-ul-text-muted block mb-1">Model</label>
-          {showModelSelector ? <ModelSelector /> : (
-            <span className="text-small text-ul-text-secondary">{agent.model || 'default'}</span>
-          )}
-        </div>
-        <div>
-          <label className="text-caption text-ul-text-muted block mb-1">Directory</label>
-          <span className="text-small text-ul-text-secondary truncate block">
-            {agent.project_dir ? agent.project_dir.split('/').slice(-2).join('/') : '—'}
-          </span>
-        </div>
-        <div>
-          <label className="text-caption text-ul-text-muted block mb-1">Permissions</label>
-          <span className="text-small text-ul-text capitalize">{agent.permission_level}</span>
-        </div>
-      </div>
-
       {/* Directive — editable title */}
       <div>
         <label className="text-caption text-ul-text-muted block mb-1">Directive</label>
@@ -465,6 +453,45 @@ export default function AgentConfigPanel({
           className="w-full px-2 py-1.5 text-small rounded border border-ul-border bg-white focus:outline-none focus:border-ul-border-focus resize-none"
           rows={3}
         />
+      </div>
+
+      {/* Model + Tool Approval row */}
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-caption text-ul-text-muted block mb-1">Model</label>
+          {editingModel ? (
+            <input
+              ref={modelInputRef}
+              type="text"
+              value={modelValue}
+              onChange={e => setModelValue(e.target.value)}
+              onBlur={handleModelBlur}
+              onKeyDown={e => { if (e.key === 'Enter') handleModelBlur(); if (e.key === 'Escape') { setModelValue(agent.model || ''); setEditingModel(false); } }}
+              autoFocus
+              className="w-full px-2 py-1.5 text-small rounded border border-blue-300 bg-white focus:outline-none focus:border-blue-500 font-mono"
+              placeholder="e.g. anthropic/claude-3.5-sonnet"
+            />
+          ) : (
+            <button
+              onClick={() => { setEditingModel(true); setTimeout(() => modelInputRef.current?.focus(), 50); }}
+              className="w-full text-left px-2 py-1.5 text-small text-ul-text-secondary rounded border border-transparent hover:border-ul-border hover:bg-white transition-colors font-mono truncate"
+            >
+              {agent.model || <span className="text-ul-text-muted italic font-sans">default</span>}
+            </button>
+          )}
+        </div>
+        <div>
+          <label className="text-caption text-ul-text-muted block mb-1">Tool Approval</label>
+          <select
+            value={agent.permission_level || 'auto_edit'}
+            onChange={e => handleToolApprovalChange(e.target.value)}
+            className="w-full px-2 py-1.5 text-small rounded border border-ul-border bg-white focus:outline-none focus:border-ul-border-focus"
+          >
+            <option value="auto_edit">Auto-approve</option>
+            <option value="ask_always">Ask always</option>
+            <option value="auto_read">Auto-read only</option>
+          </select>
+        </div>
       </div>
 
       {/* Connected Apps — granular function selection */}

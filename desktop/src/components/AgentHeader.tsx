@@ -106,7 +106,6 @@ export default function AgentHeader({
               onUpdateAgent={onUpdateAgent}
               onNavigateToAgent={onOpenSubagentChat}
               executeMcpTool={executeMcpTool}
-              showModelSelector
             />
           </div>
 
