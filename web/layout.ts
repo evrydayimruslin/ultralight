@@ -2965,8 +2965,8 @@ export function getLayoutHTML(options: {
           <section id="appEnvironmentPanel" class="settings-panel" style="display:none;">
             <div class="app-panel-name"></div>
             <h2 class="app-section-title">Environment</h2>
-            <div id="databaseContent"></div>
-            <div id="envVarsContent" style="margin-top:var(--space-6);"></div>
+            <div id="databaseContent" style="display:none;"></div>
+            <div id="envVarsContent"></div>
           </section>
 
           <!-- Payments Panel -->
@@ -6792,11 +6792,11 @@ export function getLayoutHTML(options: {
         });
         if (res.ok) {
           const data = await res.json();
-          // Convert array to object if needed
-          if (Array.isArray(data)) {
-            data.forEach(function(item) { currentEnvVars[item.key] = item.value; });
-          } else {
-            currentEnvVars = data || {};
+          // API returns { env_vars: [{key, masked, length}], count, limits }
+          if (data && Array.isArray(data.env_vars)) {
+            data.env_vars.forEach(function(item) { currentEnvVars[item.key] = item.masked || '••••••••'; });
+          } else if (Array.isArray(data)) {
+            data.forEach(function(item) { currentEnvVars[item.key] = item.value || item.masked || '••••••••'; });
           }
         }
       } catch {}
