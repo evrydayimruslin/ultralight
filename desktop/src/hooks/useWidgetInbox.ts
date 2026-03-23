@@ -1,19 +1,18 @@
-// Widget Inbox — polls connected MCPs for widget data and aggregates into an inbox.
-// MCP servers declare widgets in their manifest. This hook discovers them via
-// agents' connected_apps configs, polls the data_tool functions, and exposes
-// the results + actions for the Activity tab.
+// Widget Inbox — polls user's library apps for widget data.
+// Discovers widget-capable apps by scanning the library via platform MCP,
+// probes each app for widget_* functions, and polls them periodically.
+// No Tauri dependency — works via HTTP to the platform API.
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { executeMcpTool } from '../lib/api';
-import type { WidgetDeclaration, WidgetData, WidgetAction } from '../../../shared/types/index';
+import type { WidgetData, WidgetAction } from '../../../shared/types/index';
 
 // ── Types ──
 
 export interface WidgetSource {
   appId: string;
   appName: string;
-  widget: WidgetDeclaration;
+  widgetFunction: string;
 }
 
 export interface WidgetInboxState {
@@ -24,97 +23,98 @@ export interface WidgetInboxState {
   lastPoll: number;
 }
 
+// Well-known widget function names that MCPs can export
+const WIDGET_FUNCTIONS = ['widget_approval_queue', 'widget_inbox', 'widget_alerts', 'widget_tasks'];
+
 // ── Hook ──
 
 export function useWidgetInbox() {
   const [state, setState] = useState<WidgetInboxState>({
     sources: [],
     data: {},
-    loading: false,
+    loading: true,
     totalBadge: 0,
     lastPoll: 0,
   });
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
 
-  // Discover widget sources from all agents' connected apps
+  // Discover widget sources from user's library
   const discoverSources = useCallback(async (): Promise<WidgetSource[]> => {
+    const sources: WidgetSource[] = [];
+
     try {
-      const agents: any[] = await invoke('db_list_agents', {});
-      const seen = new Set<string>();
-      const sources: WidgetSource[] = [];
+      // Get library via platform MCP
+      const libraryResult = await executeMcpTool('ul.discover', { scope: 'library' });
+      const libraryText = libraryResult.content.map((c: any) => c.text).join('');
+      const library = JSON.parse(libraryText);
+      const markdown = library.library || '';
 
-      for (const agent of agents) {
-        if (!agent.connected_apps) continue;
+      // Parse app names, IDs, and function lists from library markdown
+      // Format: ## app-name\n...\n- widget_approval_queue(args): ...\nDashboard: /http/{uuid}/ui
+      const sections = markdown.split(/^## /m).filter(Boolean);
 
-        let config: Record<string, any>;
-        try {
-          const parsed = JSON.parse(agent.connected_apps);
-          config = parsed.apps || parsed;
-        } catch {
-          continue;
-        }
+      for (const section of sections) {
+        const lines = section.split('\n');
+        const name = lines[0]?.trim();
+        if (!name) continue;
 
-        for (const [appId, appConfig] of Object.entries(config)) {
-          if (seen.has(appId)) continue;
+        // Check if this app exports any widget_* function (from the markdown listing)
+        const exportedWidgetFn = WIDGET_FUNCTIONS.find(fn => section.includes('- ' + fn + '('));
+        if (!exportedWidgetFn) continue; // Skip apps without widget functions — no probe needed
 
-          // Inspect app manifest for widget declarations
-          try {
-            const result = await executeMcpTool('ul.discover', { scope: 'inspect', app_id: appId });
-            const inspected = JSON.parse(result.content.map(c => c.text).join(''));
-            const manifest = inspected.manifest
-              ? (typeof inspected.manifest === 'string' ? JSON.parse(inspected.manifest) : inspected.manifest)
-              : inspected.app?.manifest;
+        // Find UUID in dashboard URL or MCP endpoint
+        const uuidMatch = section.match(/\/(?:http|mcp)\/([a-f0-9-]{36})/);
+        if (!uuidMatch) continue;
 
-            if (manifest?.widgets && Array.isArray(manifest.widgets)) {
-              for (const widget of manifest.widgets) {
-                sources.push({
-                  appId,
-                  appName: (appConfig as any).name || inspected.app?.name || appId,
-                  widget: widget as WidgetDeclaration,
-                });
-              }
-              seen.add(appId);
-            }
-          } catch {
-            // App inspection failed, skip
-          }
-        }
+        sources.push({ appId: uuidMatch[1], appName: name, widgetFunction: exportedWidgetFn });
       }
-
-      return sources;
-    } catch {
-      return [];
+    } catch (e) {
+      console.error('[WidgetInbox] Discovery error:', e);
     }
+
+    return sources;
   }, []);
 
-  // Poll a single widget source for data
+  // Poll a single widget source
   const pollWidget = useCallback(async (source: WidgetSource): Promise<WidgetData | null> => {
     try {
       const result = await executeMcpTool('ul.call', {
         app_id: source.appId,
-        function_name: source.widget.data_tool,
+        function_name: source.widgetFunction,
         args: {},
       });
 
-      const text = result.content.map(c => c.text).join('');
-      const data = JSON.parse(text);
-      return data as WidgetData;
+      if (result.isError) return null;
+
+      const text = result.content.map((c: any) => c.text).join('');
+      const parsed = JSON.parse(text);
+      const data = parsed.result || parsed;
+
+      if (typeof data.badge_count === 'number' && Array.isArray(data.items)) {
+        return data as WidgetData;
+      }
+      return null;
     } catch {
       return null;
     }
   }, []);
 
-  // Poll all widget sources
+  // Poll all sources
   const pollAll = useCallback(async (sources: WidgetSource[]) => {
-    if (sources.length === 0) return;
+    if (sources.length === 0) {
+      if (mountedRef.current) {
+        setState(prev => ({ ...prev, loading: false, data: {}, totalBadge: 0, lastPoll: Date.now() }));
+      }
+      return;
+    }
 
     const newData: Record<string, WidgetData> = {};
     let totalBadge = 0;
 
     await Promise.all(
       sources.map(async (source) => {
-        const key = source.appId + ':' + source.widget.id;
+        const key = source.appId + ':' + source.widgetFunction;
         const data = await pollWidget(source);
         if (data) {
           newData[key] = data;
@@ -124,30 +124,21 @@ export function useWidgetInbox() {
     );
 
     if (mountedRef.current) {
-      setState(prev => ({
-        ...prev,
-        data: newData,
-        totalBadge,
-        loading: false,
-        lastPoll: Date.now(),
-      }));
+      setState(prev => ({ ...prev, data: newData, totalBadge, loading: false, lastPoll: Date.now() }));
     }
   }, [pollWidget]);
 
-  // Execute a widget action (approve, reject, etc.)
+  // Execute a widget action
   const executeAction = useCallback(async (
     appId: string,
     action: WidgetAction,
     editedValue?: string,
   ): Promise<{ success: boolean; error?: string }> => {
     try {
-      // Replace {{edited_value}} placeholder in args
       const args = { ...action.args };
       if (editedValue !== undefined) {
         for (const [key, val] of Object.entries(args)) {
-          if (val === '{{edited_value}}') {
-            args[key] = editedValue;
-          }
+          if (val === '{{edited_value}}') args[key] = editedValue;
         }
       }
 
@@ -157,10 +148,8 @@ export function useWidgetInbox() {
         args,
       });
 
-      // Re-poll after action to refresh the inbox
-      if (mountedRef.current) {
-        pollAll(state.sources);
-      }
+      // Re-poll after action
+      if (mountedRef.current) pollAll(state.sources);
 
       return { success: !result.isError };
     } catch (err) {
@@ -168,7 +157,7 @@ export function useWidgetInbox() {
     }
   }, [state.sources, pollAll]);
 
-  // Refresh — re-discover and re-poll
+  // Refresh
   const refresh = useCallback(async () => {
     if (!mountedRef.current) return;
     setState(prev => ({ ...prev, loading: true }));
@@ -180,21 +169,15 @@ export function useWidgetInbox() {
     await pollAll(sources);
   }, [discoverSources, pollAll]);
 
-  // Initial discovery + polling setup
+  // Initial discovery + polling
   useEffect(() => {
     mountedRef.current = true;
-
-    // Initial load
     refresh();
 
-    // Set up polling (default 30s)
     pollTimerRef.current = setInterval(() => {
       if (mountedRef.current) {
-        // Re-poll existing sources (don't re-discover every time)
         setState(prev => {
-          if (prev.sources.length > 0) {
-            pollAll(prev.sources);
-          }
+          if (prev.sources.length > 0) pollAll(prev.sources);
           return prev;
         });
       }
@@ -202,15 +185,9 @@ export function useWidgetInbox() {
 
     return () => {
       mountedRef.current = false;
-      if (pollTimerRef.current) {
-        clearInterval(pollTimerRef.current);
-      }
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     };
   }, []);
 
-  return {
-    ...state,
-    executeAction,
-    refresh,
-  };
+  return { ...state, executeAction, refresh };
 }

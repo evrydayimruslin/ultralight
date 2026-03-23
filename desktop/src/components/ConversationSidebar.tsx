@@ -41,7 +41,7 @@ export default function ConversationSidebar({
   const [searchQuery, setSearchQuery] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const searchTimeout = useRef<ReturnType<typeof setTimeout>>();
+  const searchTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // Focus search on open
   useEffect(() => {

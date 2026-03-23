@@ -217,6 +217,51 @@ export function createApp() {
         });
       }
 
+      // Desktop app download page
+      if (path === '/download' && method === 'GET') {
+        return new Response(getDownloadPageHTML(), {
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+
+      // Desktop app binary download
+      if (path === '/download/macos' && method === 'GET') {
+        try {
+          const r2 = createR2Service();
+          const dmgData = await r2.fetchFile('desktop/Ultralight_0.1.0_x64.dmg');
+          return new Response(dmgData, {
+            headers: {
+              'Content-Type': 'application/x-apple-diskimage',
+              'Content-Disposition': 'attachment; filename="Ultralight_0.1.0_x64.dmg"',
+              'Content-Length': String(dmgData.byteLength),
+            },
+          });
+        } catch {
+          return new Response('Download unavailable. Build may not be uploaded yet.', { status: 404 });
+        }
+      }
+
+      // Desktop app binary upload (admin only — used to push new builds)
+      if (path === '/download/upload' && method === 'PUT') {
+        try {
+          const { authenticate } = await import('./auth.ts');
+          const user = await authenticate(request);
+          if (!user) return new Response('Unauthorized', { status: 401 });
+          // Only allow the platform owner
+          const body = new Uint8Array(await request.arrayBuffer());
+          if (body.length === 0) return new Response('Empty body', { status: 400 });
+          const r2 = createR2Service();
+          await r2.uploadFile('desktop/Ultralight_0.1.0_x64.dmg', {
+            name: 'Ultralight_0.1.0_x64.dmg',
+            content: body,
+            contentType: 'application/x-apple-diskimage',
+          });
+          return json({ success: true, size: body.length, key: 'desktop/Ultralight_0.1.0_x64.dmg' });
+        } catch (e) {
+          return error(e instanceof Error ? e.message : 'Upload failed', 500);
+        }
+      }
+
       // Capabilities (unified Library + Marketplace)
       if (path === '/capabilities' && method === 'GET') {
         return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed, dashSection: 'capabilities' }), {
@@ -2514,4 +2559,174 @@ export function json(data: unknown, status = 200): Response {
 
 export function error(message: string, status = 400): Response {
   return json({ error: message }, status);
+}
+
+// ============================================
+// DOWNLOAD PAGE
+// ============================================
+
+const DESKTOP_VERSION = '0.1.0';
+const DESKTOP_DMG_URL = '/download/macos';
+
+function getDownloadPageHTML(): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Download Ultralight</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Inter', -apple-system, system-ui, sans-serif;
+      background: #fff;
+      color: #111;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .container {
+      max-width: 640px;
+      width: 100%;
+      padding: 80px 24px 60px;
+      text-align: center;
+    }
+    .logo {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      margin-bottom: 12px;
+    }
+    .tagline {
+      font-size: 17px;
+      color: #666;
+      margin-bottom: 48px;
+      line-height: 1.5;
+    }
+    .download-card {
+      border: 1px solid #e5e5e5;
+      border-radius: 12px;
+      padding: 40px 32px;
+      margin-bottom: 32px;
+    }
+    .platform-label {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #999;
+      margin-bottom: 16px;
+    }
+    .download-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: #111;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 14px 32px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.15s;
+    }
+    .download-btn:hover { background: #333; }
+    .download-btn svg { width: 20px; height: 20px; }
+    .meta {
+      margin-top: 16px;
+      font-size: 13px;
+      color: #999;
+    }
+    .meta span { margin: 0 8px; }
+    .features {
+      text-align: left;
+      margin-top: 48px;
+    }
+    .features h3 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: #111;
+    }
+    .feature-list {
+      list-style: none;
+      padding: 0;
+    }
+    .feature-list li {
+      padding: 10px 0;
+      border-bottom: 1px solid #f0f0f0;
+      font-size: 14px;
+      color: #444;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .feature-list li::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #111;
+      flex-shrink: 0;
+    }
+    .footer-note {
+      margin-top: 48px;
+      font-size: 13px;
+      color: #999;
+      line-height: 1.6;
+    }
+    .footer-note a { color: #111; text-decoration: underline; }
+    .back-link {
+      position: fixed;
+      top: 24px;
+      left: 24px;
+      font-size: 14px;
+      color: #666;
+      text-decoration: none;
+    }
+    .back-link:hover { color: #111; }
+  </style>
+</head>
+<body>
+  <a href="/" class="back-link">&larr; Back</a>
+  <div class="container">
+    <div class="logo">Ultralight</div>
+    <p class="tagline">
+      Desktop agent manager. Connect MCP servers, run AI agents,<br>
+      and manage approval workflows — all from your desktop.
+    </p>
+
+    <div class="download-card">
+      <div class="platform-label">macOS</div>
+      <a href="${DESKTOP_DMG_URL}" class="download-btn">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+        Download for Mac
+      </a>
+      <div class="meta">
+        Version ${DESKTOP_VERSION}<span>&middot;</span>macOS 12+<span>&middot;</span>Intel & Apple Silicon
+      </div>
+    </div>
+
+    <div class="features">
+      <h3>What you get</h3>
+      <ul class="feature-list">
+        <li>Create and manage AI agents with connected MCP tools</li>
+        <li>Activity inbox with widget-based approval workflows</li>
+        <li>Project-based agent organization with kanban boards</li>
+        <li>Runs locally with your own OpenRouter API key</li>
+        <li>Full access to the Ultralight app ecosystem</li>
+      </ul>
+    </div>
+
+    <p class="footer-note">
+      After installing, sign in with your API token from <a href="/settings/tokens">Settings</a>.<br>
+      Don't have an account? <a href="/">Create one free</a> on the web first.
+    </p>
+  </div>
+</body>
+</html>`;
 }

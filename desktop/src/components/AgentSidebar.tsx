@@ -63,7 +63,7 @@ export default function AgentSidebar({
   const [contextMenu, setContextMenu] = useState<{ agentId: string; x: number; y: number } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const searchTimeout = useRef<ReturnType<typeof setTimeout>>();
+  const searchTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
   // Focus search on open
