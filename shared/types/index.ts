@@ -332,6 +332,9 @@ export interface WidgetAction {
     field: string;
     initial_value: string;
   };
+  prompt_input?: {
+    placeholder: string;
+  };
 }
 
 export interface WidgetItem {

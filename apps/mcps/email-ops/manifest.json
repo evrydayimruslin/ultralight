@@ -60,7 +60,7 @@
       "description": "Approve, reject, or revise a queued email draft. On approve: sends email via Resend. On revise: sends your edited version.",
       "parameters": [
         { "name": "approval_id", "type": "string", "required": true },
-        { "name": "action", "type": "string", "required": true, "description": "approve | reject | revise" },
+        { "name": "action", "type": "string", "required": true, "description": "approve | reject | revise | regenerate" },
         { "name": "revision", "type": "string", "required": false, "description": "Revised email body (for revise action)" },
         { "name": "admin_notes", "type": "string", "required": false }
       ]

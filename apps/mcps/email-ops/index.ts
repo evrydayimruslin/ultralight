@@ -333,7 +333,7 @@ export async function approvals_act(args: {
   const { approval_id, action, revision, admin_notes } = args;
 
   if (!approval_id || !action) throw new Error('approval_id and action are required');
-  if (!['approve', 'reject', 'revise'].includes(action)) throw new Error('action must be "approve", "reject", or "revise"');
+  if (!['approve', 'reject', 'revise', 'regenerate'].includes(action)) throw new Error('action must be "approve", "reject", "revise", or "regenerate"');
 
   const approval = await ultralight.db.first(
     'SELECT * FROM approval_queue WHERE id = ? AND user_id = ?',
@@ -381,6 +381,42 @@ export async function approvals_act(args: {
         approval.original_email_id, now, now]
     );
     result = { new_approval_id: newApprovalId, message: 'Reply draft created for approval' };
+  }
+
+  // Regenerate — re-draft using AI with admin's prompt guidance
+  if (action === 'regenerate' && approval.type === 'email_reply') {
+    const prompt = revision || 'Rewrite the draft to be better';
+    const allConventions = await ultralight.db.all(
+      'SELECT key, value, category FROM conventions WHERE user_id = ?',
+      [uid()]
+    );
+    const conventionsText = allConventions.map((c: any) => (c.category ? '[' + c.category + '] ' : '') + c.key + ': ' + c.value).join('\n');
+
+    const aiResponse = await ultralight.ai({
+      model: 'minimax/minimax-m2.7',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are rewriting a draft email response. Follow the admin\'s instructions precisely.\n\nBusiness conventions:\n' + conventionsText + '\n\nOriginal inbound email:\n' + (payload.original_body || '') + '\n\nCurrent draft:\n' + payload.draft_body + '\n\nRespond with ONLY the rewritten email body, nothing else. Write in ' + (payload.language || 'en') + '.',
+          cache_control: { type: 'ephemeral' },
+        },
+        {
+          role: 'user',
+          content: 'Rewrite instruction: ' + prompt,
+        },
+      ],
+    });
+
+    const newDraft = aiResponse.content || payload.draft_body;
+
+    // Update the approval with the new draft (stays pending)
+    const updatedPayload = { ...payload, draft_body: newDraft };
+    await ultralight.db.run(
+      'UPDATE approval_queue SET payload = ?, admin_notes = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+      [JSON.stringify(updatedPayload), 'Regenerated: ' + prompt, now, approval_id, uid()]
+    );
+
+    return { success: true, approval_id: approval_id, action: 'regenerated', draft_body: newDraft };
   }
 
   const finalStatus = action === 'revise' ? 'revised' : 'executed';
@@ -505,6 +541,10 @@ export async function widget_approval_queue(args: {}): Promise<unknown> {
       if (isReply) {
         actions.push(
           { label: 'Send', icon: 'check', style: 'primary', tool: 'approvals_act', args: { approval_id: item.id, action: 'approve' } },
+          { label: 'Regenerate', icon: 'refresh', style: 'secondary', tool: 'approvals_act',
+            prompt_input: { placeholder: 'e.g. "Make it shorter" or "Add a greeting in Japanese"' },
+            args: { approval_id: item.id, action: 'regenerate', revision: '{{edited_value}}' }
+          },
           { label: 'Edit & Send', icon: 'edit', style: 'secondary', tool: 'approvals_act',
             editable: { field: 'draft_body', initial_value: draftBody },
             args: { approval_id: item.id, action: 'revise', revision: '{{edited_value}}' }

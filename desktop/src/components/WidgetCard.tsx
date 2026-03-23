@@ -1,6 +1,6 @@
 // WidgetCard — renders a single widget item from an MCP server.
 // Content: sandboxed HTML via iframe. Actions: native React buttons.
-// Supports inline editing for "Edit & Send" type actions.
+// Supports inline editing, prompt-based regeneration, and standard actions.
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { WidgetItem, WidgetAction } from '../../../shared/types/index';
@@ -12,11 +12,12 @@ interface WidgetCardProps {
 }
 
 export default function WidgetCard({ item, appId, onAction }: WidgetCardProps) {
-  const [editingAction, setEditingAction] = useState<WidgetAction | null>(null);
-  const [editValue, setEditValue] = useState('');
+  const [activeInput, setActiveInput] = useState<{ action: WidgetAction; mode: 'edit' | 'prompt' } | null>(null);
+  const [inputValue, setInputValue] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Auto-resize iframe to content height
   useEffect(() => {
@@ -31,7 +32,7 @@ export default function WidgetCard({ item, appId, onAction }: WidgetCardProps) {
           iframe.style.height = Math.min(height + 4, 400) + 'px';
         }
       } catch {
-        // Cross-origin restriction — use default height
+        // Cross-origin — use default height
       }
     };
 
@@ -39,37 +40,60 @@ export default function WidgetCard({ item, appId, onAction }: WidgetCardProps) {
     return () => iframe.removeEventListener('load', handleLoad);
   }, [item.html]);
 
+  // Focus input when entering edit/prompt mode
+  useEffect(() => {
+    if (activeInput) {
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }
+  }, [activeInput]);
+
   const handleAction = useCallback(async (action: WidgetAction) => {
-    if (action.editable && !editingAction) {
-      // Enter edit mode
-      setEditingAction(action);
-      setEditValue(action.editable.initial_value);
+    // If action has prompt_input or editable and we're not in input mode yet, enter it
+    if (action.prompt_input && !activeInput) {
+      setActiveInput({ action, mode: 'prompt' });
+      setInputValue('');
+      return;
+    }
+    if (action.editable && !activeInput) {
+      setActiveInput({ action, mode: 'edit' });
+      setInputValue(action.editable.initial_value);
       return;
     }
 
     setActionLoading(action.label);
     setFeedback(null);
 
-    const editedValue = editingAction ? editValue : undefined;
+    const editedValue = activeInput ? inputValue : undefined;
     const result = await onAction(appId, action, editedValue);
 
     setActionLoading(null);
-    setEditingAction(null);
 
     if (result.success) {
       setFeedback({ type: 'success', message: action.label + ' completed' });
-      setTimeout(() => setFeedback(null), 2000);
+      setActiveInput(null);
+      setInputValue('');
+      setTimeout(() => setFeedback(null), 3000);
     } else {
       setFeedback({ type: 'error', message: result.error || 'Action failed' });
     }
-  }, [appId, onAction, editingAction, editValue]);
+  }, [appId, onAction, activeInput, inputValue]);
 
-  const handleCancelEdit = useCallback(() => {
-    setEditingAction(null);
-    setEditValue('');
+  const handleCancelInput = useCallback(() => {
+    setActiveInput(null);
+    setInputValue('');
   }, []);
 
-  // Build sandboxed HTML with minimal styling reset
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && activeInput) {
+      e.preventDefault();
+      handleAction(activeInput.action);
+    }
+    if (e.key === 'Escape') {
+      handleCancelInput();
+    }
+  }, [activeInput, handleAction, handleCancelInput]);
+
+  // Build sandboxed HTML
   const iframeContent = `<!DOCTYPE html>
 <html>
 <head>
@@ -84,7 +108,7 @@ export default function WidgetCard({ item, appId, onAction }: WidgetCardProps) {
 
   return (
     <div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
-      {/* HTML Content — sandboxed iframe */}
+      {/* HTML Content */}
       <iframe
         ref={iframeRef}
         srcDoc={iframeContent}
@@ -94,36 +118,57 @@ export default function WidgetCard({ item, appId, onAction }: WidgetCardProps) {
         title="Widget content"
       />
 
-      {/* Edit Mode */}
-      {editingAction && (
-        <div className="px-3 py-2 border-t border-gray-100 bg-gray-50">
+      {/* Input Mode — edit or prompt */}
+      {activeInput && (
+        <div className="px-3 py-3 border-t border-gray-100 bg-gray-50">
+          {activeInput.mode === 'prompt' && (
+            <label className="block text-[11px] font-medium text-gray-500 mb-1.5 uppercase tracking-wide">
+              Regeneration instructions
+            </label>
+          )}
           <textarea
-            value={editValue}
-            onChange={e => setEditValue(e.target.value)}
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm font-mono resize-y min-h-[80px] focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400"
-            rows={4}
-            autoFocus
+            ref={inputRef}
+            value={inputValue}
+            onChange={e => setInputValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={
+              activeInput.mode === 'prompt'
+                ? (activeInput.action.prompt_input?.placeholder || 'Describe how to rewrite...')
+                : ''
+            }
+            className={`w-full border rounded-md px-3 py-2 text-sm resize-y focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400 ${
+              activeInput.mode === 'prompt'
+                ? 'border-blue-200 bg-blue-50/50 min-h-[48px]'
+                : 'border-gray-300 font-mono min-h-[80px]'
+            }`}
+            rows={activeInput.mode === 'prompt' ? 2 : 4}
           />
           <div className="flex items-center gap-2 mt-2">
             <button
-              onClick={() => handleAction(editingAction)}
-              disabled={actionLoading !== null}
-              className="px-3 py-1.5 text-xs font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+              onClick={() => handleAction(activeInput.action)}
+              disabled={actionLoading !== null || (activeInput.mode === 'prompt' && !inputValue.trim())}
+              className="px-3 py-1.5 text-xs font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
             >
-              {actionLoading === editingAction.label ? 'Sending…' : 'Send Edited'}
+              {actionLoading === activeInput.action.label
+                ? (activeInput.mode === 'prompt' ? 'Regenerating...' : 'Sending...')
+                : (activeInput.mode === 'prompt' ? 'Regenerate' : 'Send Edited')
+              }
             </button>
             <button
-              onClick={handleCancelEdit}
-              className="px-3 py-1.5 text-xs font-medium rounded-md text-gray-600 hover:bg-gray-200"
+              onClick={handleCancelInput}
+              className="px-3 py-1.5 text-xs font-medium rounded-md text-gray-600 hover:bg-gray-200 transition-colors"
             >
               Cancel
             </button>
+            {activeInput.mode === 'prompt' && (
+              <span className="text-[11px] text-gray-400 ml-auto">Cmd+Enter to submit</span>
+            )}
           </div>
         </div>
       )}
 
       {/* Action Buttons */}
-      {!editingAction && (
+      {!activeInput && (
         <div className="flex items-center gap-2 px-3 py-2 border-t border-gray-100 bg-gray-50/50">
           {item.actions.map(action => {
             const isPrimary = action.style === 'primary';
@@ -143,12 +188,11 @@ export default function WidgetCard({ item, appId, onAction }: WidgetCardProps) {
                       : 'text-gray-700 hover:bg-gray-200 border border-gray-200'
                 }`}
               >
-                {isLoading ? '…' : action.label}
+                {isLoading ? '...' : action.label}
               </button>
             );
           })}
 
-          {/* Feedback toast */}
           {feedback && (
             <span className={`text-xs ml-auto ${feedback.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
               {feedback.message}
