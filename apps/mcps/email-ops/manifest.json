@@ -1,0 +1,88 @@
+{
+  "name": "email-ops",
+  "version": "1.0.0",
+  "type": "mcp",
+  "entry": { "functions": "index.ts" },
+  "description": "Autonomous email agent: Resend inbound webhook receives emails, AI classifies and drafts responses in sender's language, queues for admin approval. Widget-enabled for desktop Activity tab.",
+  "permissions": ["ai:call", "net:fetch"],
+  "storage": "d1",
+  "env_vars": {
+    "RESEND_API_KEY": { "type": "universal", "required": true, "description": "Resend API key for sending emails" },
+    "BUSINESS_EMAIL": { "type": "universal", "required": true, "description": "From address for outbound emails (e.g. hello@yourdomain.com)" },
+    "BUSINESS_NAME": { "type": "universal", "required": true, "description": "Display name for outbound emails" },
+    "WEBHOOK_SECRET": { "type": "universal", "required": false, "description": "Resend webhook signing secret for verifying inbound requests" }
+  },
+  "widgets": [
+    {
+      "id": "approval_queue",
+      "label": "Email Approvals",
+      "data_tool": "widget_approval_queue",
+      "poll_interval_s": 30
+    }
+  ],
+  "functions": {
+    "receive_email": {
+      "description": "Resend inbound webhook handler. Logs email, classifies intent via AI, drafts response in sender's language, queues for admin approval. Called via POST /http/{appId}/receive_email",
+      "parameters": [
+        { "name": "from", "type": "string", "required": false, "description": "Sender email address (from Resend webhook payload)" },
+        { "name": "to", "type": "string", "required": false, "description": "Recipient email address" },
+        { "name": "subject", "type": "string", "required": false, "description": "Email subject line" },
+        { "name": "text", "type": "string", "required": false, "description": "Plain text body" },
+        { "name": "html", "type": "string", "required": false, "description": "HTML body" }
+      ]
+    },
+    "email_send": {
+      "description": "Send an email via Resend API. Usually called by approvals_act on approval, not directly.",
+      "parameters": [
+        { "name": "to", "type": "string", "required": true },
+        { "name": "subject", "type": "string", "required": true },
+        { "name": "body", "type": "string", "required": true },
+        { "name": "in_reply_to", "type": "string", "required": false }
+      ]
+    },
+    "email_log_list": {
+      "description": "View email history (inbound and outbound) with optional filters",
+      "parameters": [
+        { "name": "direction", "type": "string", "required": false, "description": "inbound | outbound" },
+        { "name": "status", "type": "string", "required": false },
+        { "name": "limit", "type": "number", "required": false }
+      ]
+    },
+    "approvals_list": {
+      "description": "List approval items awaiting admin action",
+      "parameters": [
+        { "name": "status", "type": "string", "required": false, "description": "pending | executed | rejected | revised (default: pending)" },
+        { "name": "type", "type": "string", "required": false, "description": "email_reply | email_skip" },
+        { "name": "limit", "type": "number", "required": false }
+      ]
+    },
+    "approvals_act": {
+      "description": "Approve, reject, or revise a queued email draft. On approve: sends email via Resend. On revise: sends your edited version.",
+      "parameters": [
+        { "name": "approval_id", "type": "string", "required": true },
+        { "name": "action", "type": "string", "required": true, "description": "approve | reject | revise" },
+        { "name": "revision", "type": "string", "required": false, "description": "Revised email body (for revise action)" },
+        { "name": "admin_notes", "type": "string", "required": false }
+      ]
+    },
+    "conventions_get": {
+      "description": "Get business conventions/guidelines by key or category",
+      "parameters": [
+        { "name": "key", "type": "string", "required": false },
+        { "name": "category", "type": "string", "required": false }
+      ]
+    },
+    "conventions_set": {
+      "description": "Create or update a business convention (upserts by key). Used to configure how the AI drafts responses.",
+      "parameters": [
+        { "name": "key", "type": "string", "required": true },
+        { "name": "value", "type": "string", "required": true },
+        { "name": "category", "type": "string", "required": false }
+      ]
+    },
+    "widget_approval_queue": {
+      "description": "Returns pending approval items with HTML rendering and action buttons for the desktop Activity tab widget inbox.",
+      "parameters": []
+    }
+  }
+}

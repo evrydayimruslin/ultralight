@@ -38,7 +38,11 @@ const OPENROUTER_CONFIG: ProviderConfig = {
   }),
   formatRequest: (request: AIRequest, model: string) => ({
     model,
-    messages: request.messages,
+    messages: request.messages.map(msg => {
+      const m: Record<string, unknown> = { role: msg.role, content: msg.content };
+      if (msg.cache_control) m.cache_control = msg.cache_control;
+      return m;
+    }),
     temperature: request.temperature ?? 0.7,
     max_tokens: request.max_tokens,
     tools: request.tools,

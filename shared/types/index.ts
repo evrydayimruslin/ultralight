@@ -299,7 +299,11 @@ export interface SDKContext {
 
 export interface AIRequest {
   model?: string;
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+  messages: Array<{
+    role: 'system' | 'user' | 'assistant';
+    content: string;
+    cache_control?: { type: 'ephemeral' };
+  }>;
   temperature?: number;
   max_tokens?: number;
   tools?: Array<{
@@ -307,6 +311,38 @@ export interface AIRequest {
     description: string;
     parameters: Record<string, unknown>;
   }>;
+}
+
+// ── Widget System ──
+
+export interface WidgetDeclaration {
+  id: string;
+  label: string;
+  data_tool: string;
+  poll_interval_s?: number;
+}
+
+export interface WidgetAction {
+  label: string;
+  icon?: string;
+  style?: string;
+  tool: string;
+  args: Record<string, unknown>;
+  editable?: {
+    field: string;
+    initial_value: string;
+  };
+}
+
+export interface WidgetItem {
+  id: string;
+  html: string;
+  actions: WidgetAction[];
+}
+
+export interface WidgetData {
+  badge_count: number;
+  items: WidgetItem[];
 }
 
 export interface AIResponse {
@@ -732,7 +768,7 @@ export function formatLight(amount: number): string {
 }
 
 const PLATFORM_LIMITS = {
-  max_apps: 10,
+  max_apps: Infinity,
   weekly_call_limit: 50_000,
   overage_cost_per_100k_light: 0,
   can_publish: true,                     // gated by deposit, not tier

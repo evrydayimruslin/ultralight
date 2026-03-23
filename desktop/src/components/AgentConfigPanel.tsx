@@ -96,7 +96,7 @@ async function inspectApp(
   executeMcpTool: (name: string, args: Record<string, unknown>) => Promise<string>,
   appId: string,
   cfg?: { selected_functions: string[]; conventions: Record<string, string> },
-): Promise<{ name: string; description: string | null; functions: AppFunction[] }> {
+): Promise<{ name: string; description: string | null; functions: AppFunction[]; widgets?: Array<{ id: string; label: string; data_tool: string; poll_interval_s?: number }> }> {
   const result = await executeMcpTool('ul_discover', { scope: 'inspect', app_id: appId });
   const parsed = JSON.parse(result);
   const manifest = parsed.manifest
@@ -127,7 +127,10 @@ async function inspectApp(
     }
   }
 
-  return { name: appName, description: appDesc, functions: fnList };
+  // Extract widget declarations from manifest
+  const widgets = manifest?.widgets && Array.isArray(manifest.widgets) ? manifest.widgets : undefined;
+
+  return { name: appName, description: appDesc, functions: fnList, widgets };
 }
 
 // ── Component ──

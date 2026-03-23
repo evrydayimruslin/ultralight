@@ -16,6 +16,8 @@ import CardDetailModal from './CardDetailModal';
 import CreateAgentModal from './CreateAgentModal';
 import SpendingApprovalModal from './SpendingApprovalModal';
 import AgentConfigPanel from './AgentConfigPanel';
+import WidgetInbox from './WidgetInbox';
+import { useWidgetInbox } from '../hooks/useWidgetInbox';
 
 // ── Types ──
 
@@ -107,6 +109,7 @@ export default function HomeView({
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
   const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
   const instructInputRef = useRef<HTMLInputElement>(null);
+  const { totalBadge: widgetBadge } = useWidgetInbox();
 
   const {
     columns,
@@ -469,7 +472,21 @@ export default function HomeView({
       <div className="flex items-center gap-1 px-4 border-b border-ul-border flex-shrink-0">
         <TabButton label="Project" active={activeTab === 'project'} onClick={() => setActiveTab('project')} />
         <TabButton label="Agents" active={activeTab === 'agents'} onClick={() => setActiveTab('agents')} />
-        <TabButton label="Activity" active={activeTab === 'activity'} onClick={() => setActiveTab('activity')} />
+        <button
+          onClick={() => setActiveTab('activity')}
+          className={`relative px-3 py-2 text-small font-medium transition-colors border-b-2 -mb-px ${
+            activeTab === 'activity'
+              ? 'border-ul-text text-ul-text'
+              : 'border-transparent text-ul-text-muted hover:text-ul-text-secondary'
+          }`}
+        >
+          Activity
+          {widgetBadge > 0 && (
+            <span className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-semibold rounded-full bg-blue-600 text-white">
+              {widgetBadge}
+            </span>
+          )}
+        </button>
       </div>
 
       {/* Tab content */}
@@ -716,7 +733,40 @@ export default function HomeView({
 
         {activeTab === 'activity' && (
           <div className="px-6 py-4">
-            {activityLog.length === 0 ? (
+            {/* Widget Inbox — MCP-driven action items */}
+            <WidgetInbox />
+
+            {/* Agent Activity Log */}
+            {activityLog.length > 0 && (
+              <div className="mt-6 border-t border-gray-200 pt-4">
+                <h3 className="text-caption font-medium text-ul-text-muted mb-2">Recent Activity</h3>
+                <div className="space-y-1">
+                  {activityLog.map(entry => (
+                    <div
+                      key={entry.id}
+                      className="flex items-start gap-3 px-3 py-2 rounded-md hover:bg-gray-50 transition-colors cursor-pointer"
+                      onClick={() => onNavigateToAgent(entry.agentId)}
+                    >
+                      <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${
+                        entry.type === 'warning' ? 'bg-ul-warning'
+                          : entry.type === 'completed' ? 'bg-blue-400'
+                          : 'bg-gray-300'
+                      }`} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-small font-medium text-ul-text">{entry.agentName}</span>
+                          <span className="text-caption text-ul-text-muted">{formatRelativeTime(entry.timestamp)}</span>
+                        </div>
+                        <p className="text-caption text-ul-text-secondary truncate">{entry.detail}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Empty state — only if both widgets and activity are empty */}
+            {activityLog.length === 0 && (
               <div className="text-center py-16">
                 <svg width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-300 mx-auto mb-3">
                   <circle cx="20" cy="20" r="16" />
@@ -725,29 +775,6 @@ export default function HomeView({
                 <p className="text-small text-ul-text-muted">
                   No activity yet. Events will appear here as agents run.
                 </p>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                {activityLog.map(entry => (
-                  <div
-                    key={entry.id}
-                    className="flex items-start gap-3 px-3 py-2 rounded-md hover:bg-gray-50 transition-colors cursor-pointer"
-                    onClick={() => onNavigateToAgent(entry.agentId)}
-                  >
-                    <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${
-                      entry.type === 'warning' ? 'bg-ul-warning'
-                        : entry.type === 'completed' ? 'bg-blue-400'
-                        : 'bg-gray-300'
-                    }`} />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-small font-medium text-ul-text">{entry.agentName}</span>
-                        <span className="text-caption text-ul-text-muted">{formatRelativeTime(entry.timestamp)}</span>
-                      </div>
-                      <p className="text-caption text-ul-text-secondary truncate">{entry.detail}</p>
-                    </div>
-                  </div>
-                ))}
               </div>
             )}
           </div>

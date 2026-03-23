@@ -8,6 +8,7 @@ import { createR2Service } from '../services/storage.ts';
 import { createUserService } from '../services/user.ts';
 import { createAIService } from '../services/ai.ts';
 import { decryptEnvVars, decryptEnvVar } from '../services/envvars.ts';
+import { isApiToken, validateToken } from '../services/tokens.ts';
 import { executeInSandbox, type UserContext } from '../runtime/sandbox.ts';
 import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
 import { executeGpuFunction } from '../services/gpu/executor.ts';
@@ -215,16 +216,47 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
       }
     }
 
-    // Extract basic user context from Authorization header if present
+    // Extract user context from Authorization header or ?token= query param
     let user: UserContext | null = null;
     let userApiKey: string | null = null;
     const authHeader = request.headers.get('Authorization');
+    const requestUrl = new URL(request.url);
+    const queryToken = requestUrl.searchParams.get('token');
 
-    if (authHeader?.startsWith('Bearer ')) {
-      // Try to decode JWT to get user info (without full validation)
+    // Determine auth token — prefer header, fall back to query param
+    const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    const authToken = bearerToken || queryToken;
+
+    if (authToken && isApiToken(authToken)) {
+      // ul_ API token — resolve via token service
       try {
-        const token = authHeader.slice(7);
-        const parts = token.split('.');
+        const validated = await validateToken(authToken);
+        if (validated) {
+          const userService = createUserService();
+          const userData = await userService.getUser(validated.user_id);
+          user = {
+            id: validated.user_id,
+            email: userData?.email || '',
+            displayName: userData?.display_name || null,
+            avatarUrl: userData?.avatar_url || null,
+            tier: (userData?.tier as 'free' | 'pro' | 'scale' | 'enterprise') || 'free',
+          };
+          // Get BYOK API key for AI calls
+          if (userData?.byok_enabled && userData.byok_provider) {
+            try {
+              userApiKey = await userService.getDecryptedApiKey(validated.user_id, userData.byok_provider);
+            } catch {
+              // Continue without BYOK
+            }
+          }
+        }
+      } catch {
+        // Invalid API token, continue without user context
+      }
+    } else if (bearerToken) {
+      // JWT token — decode for user info
+      try {
+        const parts = bearerToken.split('.');
         if (parts.length === 3) {
           const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
           if (payload.sub && payload.exp * 1000 > Date.now()) {
@@ -271,7 +303,6 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
 
     // Build the UltralightRequest object to pass to the function
     // This is a simplified Request-like object with useful properties
-    const requestUrl = new URL(request.url);
     const ultralightRequest = {
       method: request.method,
       url: requestUrl.pathname + requestUrl.search,
