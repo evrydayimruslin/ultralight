@@ -2573,7 +2573,7 @@ export function error(message: string, status = 400): Response {
 // ============================================
 
 const DESKTOP_VERSION = '0.1.0';
-const DESKTOP_DMG_URL = '/download/macos';
+const DESKTOP_DMG_URL = 'https://github.com/evrydayimruslin/ultralight/releases/download/v0.1.0/Ultralight_0.1.0_x64.dmg';
 
 function getDownloadPageHTML(): string {
   return `<!DOCTYPE html>
