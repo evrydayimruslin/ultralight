@@ -241,15 +241,22 @@ export function createApp() {
         }
       }
 
-      // Desktop app binary upload (admin only — used to push new builds)
+      // Desktop app binary upload (authenticated — used to push new builds)
       if (path === '/download/upload' && method === 'PUT') {
         try {
-          const { authenticate } = await import('./auth.ts');
-          const user = await authenticate(request);
-          if (!user) return new Response('Unauthorized', { status: 401 });
-          // Only allow the platform owner
+          // Validate API token
+          const authHeader = request.headers.get('Authorization');
+          if (!authHeader?.startsWith('Bearer ul_')) {
+            return new Response('Unauthorized', { status: 401 });
+          }
+          const { validateToken } = await import('../services/tokens.ts');
+          const validated = await validateToken(authHeader.slice(7));
+          if (!validated) return new Response('Invalid token', { status: 401 });
+
           const body = new Uint8Array(await request.arrayBuffer());
-          if (body.length === 0) return new Response('Empty body', { status: 400 });
+          if (body.length === 0) return error('Empty body');
+          if (body.length > 50 * 1024 * 1024) return error('File too large (max 50MB)');
+
           const r2 = createR2Service();
           await r2.uploadFile('desktop/Ultralight_0.1.0_x64.dmg', {
             name: 'Ultralight_0.1.0_x64.dmg',
