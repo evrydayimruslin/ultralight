@@ -1,6 +1,6 @@
 {
   "name": "email-ops",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "mcp",
   "entry": { "functions": "index.ts" },
   "description": "Autonomous email agent: Resend inbound webhook receives emails, AI classifies and drafts responses in sender's language, queues for admin approval. Widget-enabled for desktop Activity tab.",
@@ -81,7 +81,15 @@
       ]
     },
     "widget_approval_queue": {
-      "description": "Returns pending approval items with HTML rendering and action buttons for the desktop Activity tab widget inbox.",
+      "description": "Legacy: Returns pending approval items with HTML rendering and action buttons.",
+      "parameters": []
+    },
+    "widget_email_inbox_ui": {
+      "description": "Returns the complete email inbox widget app (HTML + meta) for the Activity tab. HTML is cached by the desktop; only meta (badge count) is polled.",
+      "parameters": []
+    },
+    "widget_email_inbox_data": {
+      "description": "Returns live data for the email inbox widget app: pending items, conventions, and stats. Called from within the widget HTML via ulAction bridge.",
       "parameters": []
     }
   }

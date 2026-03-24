@@ -8,7 +8,7 @@ import { createR2Service } from '../services/storage.ts';
 import { getCodeCache } from '../services/codecache.ts';
 import { bundleCode } from '../services/bundler.ts';
 import { parseTypeScript, toSkillsParsed } from '../services/parser.ts';
-import { generateManifestFromParseResult } from '../services/library.ts';
+import { generateManifestFromParseResult, rebuildUserLibrary } from '../services/library.ts';
 import {
   generateSkillsMd,
   validateAndParseSkillsMd,
@@ -973,6 +973,9 @@ async function handleDeleteApp(request: Request, appId: string): Promise<Respons
     await appsService.update(appId, {
       deleted_at: new Date().toISOString(),
     });
+
+    // Rebuild user library to remove deleted app
+    rebuildUserLibrary(user.id).catch(err => console.error('Library rebuild after delete failed:', err));
 
     return json({ success: true, message: 'App deleted' });
   } catch (err) {

@@ -118,7 +118,7 @@ export async function receive_email(args: {
       messages: [
         {
           role: 'system',
-          content: 'You are an email response agent for a business. Your job is to classify inbound emails and draft professional replies.\n\nBusiness conventions:\n' + conventionsText + '\n\nInstructions:\n1. Classify the email intent\n2. Detect the language of the email\n3. If it warrants a reply, draft a response IN THE SAME LANGUAGE as the sender\n4. Be warm, professional, and accurate based on the business conventions\n\nRespond with JSON only:\n{\n  "classification": "inquiry|booking_request|cancellation|complaint|feedback|spam|other",\n  "language": "detected language code (e.g. en, ja, fr, es, de, zh)",\n  "should_reply": true/false,\n  "reason": "brief explanation of classification",\n  "priority": "high|normal|low",\n  "draft_body": "the full draft reply text in the sender\'s language (null if should_reply is false)"\n}',
+          content: 'You are an email response agent for a business. Your job is to classify inbound emails and draft professional replies.\n\nBusiness conventions:\n' + conventionsText + '\n\nInstructions:\n1. Classify the email intent\n2. Detect the language of the email\n3. If it warrants a reply, draft a response IN THE SAME LANGUAGE as the sender\n4. Be warm, professional, and accurate based on the business conventions\n\nRespond with JSON only:\n{\n  "classification": "inquiry|booking_request|cancellation|complaint|feedback|spam|other",\n  "language": "detected language code (e.g. en, ja, fr, es, de, zh)",\n  "should_reply": true/false,\n  "reason": "brief explanation of classification",\n  "priority": "high|normal|low",\n  "draft_body": "the full draft reply text in the sender\'s language (null if should_reply is false)",\n  "knowledge_gaps": ["list of topics the customer asked about that are NOT covered in the business conventions above, or empty array if all topics are covered"]\n}',
           cache_control: { type: 'ephemeral' },
         },
         {
@@ -153,7 +153,7 @@ export async function receive_email(args: {
         [approvalId, uid(), 'email_reply', 'pending', parsed.priority || 'normal',
           'Reply to: ' + subject,
           'From ' + from + ' — ' + parsed.reason,
-          JSON.stringify({ to: from, subject: 'Re: ' + subject, draft_body: parsed.draft_body, original_body: body, language: parsed.language, classification: parsed.classification }),
+          JSON.stringify({ to: from, subject: 'Re: ' + subject, draft_body: parsed.draft_body, original_body: body, language: parsed.language, classification: parsed.classification, knowledge_gaps: parsed.knowledge_gaps || [] }),
           emailId, now, now]
       );
     } else {
@@ -566,3 +566,454 @@ export async function widget_approval_queue(args: {}): Promise<unknown> {
     }),
   };
 }
+
+// ============================================
+// 8. WIDGET APP — Full HTML App (new system)
+// ============================================
+
+export async function widget_email_inbox_ui(args: {}): Promise<unknown> {
+  const countResult = await ultralight.db.first(
+    'SELECT COUNT(*) as cnt FROM approval_queue WHERE user_id = ? AND status = ?',
+    [uid(), 'pending']
+  );
+  const badgeCount = countResult?.cnt || 0;
+
+  return {
+    meta: {
+      title: 'Email Approvals',
+      icon: '📧',
+      badge_count: badgeCount,
+    },
+    app_html: EMAIL_INBOX_APP_HTML,
+    version: '1.0',
+  };
+}
+
+export async function widget_email_inbox_data(args: {}): Promise<unknown> {
+  const pending = await ultralight.db.all(
+    'SELECT a.*, e.from_address, e.subject as email_subject, e.body as original_body FROM approval_queue a LEFT JOIN email_log e ON a.original_email_id = e.id AND e.user_id = a.user_id WHERE a.user_id = ? AND a.status = ? ORDER BY CASE a.priority WHEN \'high\' THEN 1 WHEN \'normal\' THEN 2 WHEN \'low\' THEN 3 END, a.created_at ASC',
+    [uid(), 'pending']
+  );
+
+  const conventions = await ultralight.db.all(
+    'SELECT key, value, category FROM conventions WHERE user_id = ? ORDER BY category, key',
+    [uid()]
+  );
+
+  const totalProcessed = await ultralight.db.first(
+    'SELECT COUNT(*) as cnt FROM email_log WHERE user_id = ?',
+    [uid()]
+  );
+
+  return {
+    items: pending.map((item: any) => {
+      const payload = JSON.parse(item.payload || '{}');
+      return {
+        id: item.id,
+        type: item.type,
+        priority: item.priority,
+        from: item.from_address || payload.from || 'unknown',
+        subject: item.email_subject || payload.subject || item.title || 'No subject',
+        language: payload.language || 'en',
+        classification: payload.classification || item.type,
+        original_body: item.original_body || payload.original_body || '',
+        draft_body: payload.draft_body || '',
+        reason: payload.reason || '',
+        knowledge_gaps: payload.knowledge_gaps || [],
+        created_at: item.created_at,
+      };
+    }),
+    conventions: conventions,
+    stats: {
+      total_processed: totalProcessed?.cnt || 0,
+      total_pending: pending.length,
+    },
+  };
+}
+
+// ── Email Inbox Deck UI — complete HTML app ──
+
+const EMAIL_INBOX_APP_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; font-size: 14px; line-height: 1.5; color: #1a1a1a; background: #f8f9fa; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* Header */
+  .header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; background: #fff; border-bottom: 1px solid #e5e7eb; flex-shrink: 0; }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .header-nav { font-size: 13px; color: #6b7280; }
+  .header-title { font-size: 15px; font-weight: 600; }
+  .header-badge { font-size: 11px; font-weight: 600; background: #ef4444; color: #fff; padding: 1px 7px; border-radius: 10px; }
+
+  /* Deck container */
+  .deck { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 20px; min-height: 0; overflow-y: auto; }
+
+  /* Card */
+  .card { width: 100%; max-width: 680px; background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.04); overflow-y: auto; max-height: calc(100% - 60px); transition: transform 0.3s ease, opacity 0.3s ease; }
+  .card.slide-left { transform: translateX(-110%); opacity: 0; }
+  .card.slide-right { transform: translateX(110%); opacity: 0; }
+  .card-inner { padding: 24px; }
+
+  /* Card header */
+  .card-from { font-weight: 600; font-size: 14px; color: #111; }
+  .card-badges { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+  .badge { font-size: 11px; color: #6b7280; background: #f3f4f6; padding: 1px 8px; border-radius: 4px; }
+  .badge-high { color: #ef4444; background: #fef2f2; }
+  .card-subject { font-size: 16px; font-weight: 500; margin-top: 10px; color: #111; }
+
+  /* Sections */
+  .section { margin-top: 16px; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+  .section-label { font-size: 11px; font-weight: 500; color: #9ca3af; padding: 8px 14px 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .section-body { padding: 4px 14px 12px; white-space: pre-wrap; font-size: 13px; color: #374151; max-height: 140px; overflow-y: auto; }
+  .section-draft { background: #eff6ff; border-color: #bfdbfe; }
+  .section-draft .section-label { color: #3b82f6; }
+  .section-draft .section-body { color: #1e3a5f; }
+
+  /* Gap analysis */
+  .gaps { margin-top: 12px; border: 1px solid #fde68a; border-radius: 8px; background: #fffbeb; padding: 10px 14px; }
+  .gaps-title { font-size: 11px; font-weight: 600; color: #b45309; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .gap-item { display: flex; align-items: start; justify-content: space-between; gap: 8px; font-size: 12px; color: #92400e; padding: 3px 0; }
+  .gap-add { font-size: 11px; color: #2563eb; cursor: pointer; white-space: nowrap; border: none; background: none; padding: 0; }
+  .gap-add:hover { text-decoration: underline; }
+
+  /* No reply section */
+  .no-reply { margin-top: 12px; font-size: 13px; color: #6b7280; font-style: italic; padding: 10px 14px; background: #f9fafb; border-radius: 8px; border: 1px solid #e5e7eb; }
+
+  /* Actions */
+  .actions { display: flex; gap: 8px; margin-top: 20px; flex-wrap: wrap; }
+  .btn { padding: 8px 16px; font-size: 13px; font-weight: 500; border-radius: 6px; border: 1px solid transparent; cursor: pointer; transition: all 0.15s; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-send { background: #16a34a; color: #fff; border-color: #16a34a; }
+  .btn-send:hover:not(:disabled) { background: #15803d; }
+  .btn-regen { background: #2563eb; color: #fff; border-color: #2563eb; }
+  .btn-regen:hover:not(:disabled) { background: #1d4ed8; }
+  .btn-edit { background: #fff; color: #374151; border-color: #d1d5db; }
+  .btn-edit:hover:not(:disabled) { background: #f3f4f6; }
+  .btn-reject { background: #fff; color: #ef4444; border-color: #fca5a5; }
+  .btn-reject:hover:not(:disabled) { background: #fef2f2; }
+
+  /* Prompt/edit input */
+  .input-section { margin-top: 12px; }
+  .input-label { font-size: 11px; font-weight: 500; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .input-area { width: 100%; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px 12px; font-size: 13px; font-family: inherit; resize: vertical; min-height: 48px; outline: none; }
+  .input-area:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(37,99,235,0.1); }
+  .input-actions { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+  .input-hint { font-size: 11px; color: #9ca3af; margin-left: auto; }
+
+  /* Navigation dots */
+  .nav-dots { display: flex; align-items: center; gap: 8px; margin-top: 16px; }
+  .nav-arrow { width: 28px; height: 28px; border-radius: 50%; border: 1px solid #d1d5db; background: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #6b7280; transition: all 0.15s; }
+  .nav-arrow:hover { background: #f3f4f6; border-color: #9ca3af; }
+  .nav-arrow:disabled { opacity: 0.3; cursor: not-allowed; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #d1d5db; transition: background 0.2s; }
+  .dot.active { background: #3b82f6; }
+
+  /* Toast */
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 500; z-index: 100; animation: fadeInUp 0.2s ease; }
+  .toast-success { background: #16a34a; color: #fff; }
+  .toast-error { background: #ef4444; color: #fff; }
+  @keyframes fadeInUp { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+  /* Empty state */
+  .empty { text-align: center; color: #9ca3af; padding: 60px 20px; }
+  .empty-icon { font-size: 48px; margin-bottom: 12px; }
+  .empty-text { font-size: 15px; }
+
+  /* Loading */
+  .loading { text-align: center; color: #9ca3af; padding: 60px 20px; }
+
+  /* Shortcuts legend */
+  .shortcuts { position: fixed; bottom: 12px; right: 16px; display: flex; gap: 10px; font-size: 11px; color: #9ca3af; }
+  .shortcut-key { display: inline-block; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 3px; padding: 0 4px; font-family: monospace; font-size: 10px; margin-right: 2px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <span class="header-title">Email Approvals</span>
+    <span class="header-nav" id="counter"></span>
+  </div>
+  <span class="header-badge" id="badge"></span>
+</div>
+
+<div class="deck" id="deck">
+  <div class="loading" id="loading">Loading emails...</div>
+</div>
+
+<div class="shortcuts" id="shortcuts" style="display:none;">
+  <span><span class="shortcut-key">←→</span> navigate</span>
+  <span><span class="shortcut-key">S</span> send</span>
+  <span><span class="shortcut-key">R</span> regenerate</span>
+  <span><span class="shortcut-key">E</span> edit</span>
+  <span><span class="shortcut-key">X</span> reject</span>
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+(function() {
+  var items = [];
+  var conventions = [];
+  var currentIndex = 0;
+  var busy = false;
+  var inputMode = null; // null | 'regen' | 'edit'
+
+  // ── Data loading ──
+  async function loadData() {
+    try {
+      var data = await ulAction('widget_email_inbox_data', {});
+      items = data.items || [];
+      conventions = data.conventions || [];
+      render();
+    } catch(e) {
+      document.getElementById('loading').textContent = 'Failed to load: ' + e.message;
+    }
+  }
+
+  // ── Render ──
+  function render() {
+    var deck = document.getElementById('deck');
+    var badge = document.getElementById('badge');
+    var counter = document.getElementById('counter');
+    var shortcuts = document.getElementById('shortcuts');
+
+    badge.textContent = items.length + ' pending';
+    badge.style.display = items.length > 0 ? '' : 'none';
+
+    if (items.length === 0) {
+      deck.innerHTML = '<div class="empty"><div class="empty-icon">✅</div><div class="empty-text">All caught up! No pending emails.</div></div>';
+      counter.textContent = '';
+      shortcuts.style.display = 'none';
+      return;
+    }
+
+    if (currentIndex >= items.length) currentIndex = items.length - 1;
+    if (currentIndex < 0) currentIndex = 0;
+
+    counter.textContent = (currentIndex + 1) + ' of ' + items.length;
+    shortcuts.style.display = '';
+
+    var item = items[currentIndex];
+    var isReply = item.type === 'email_reply';
+
+    var html = '<div class="card" id="current-card"><div class="card-inner">';
+
+    // From + badges
+    html += '<div class="card-from">' + esc(item.from) + '</div>';
+    html += '<div class="card-badges">';
+    html += '<span class="badge">' + esc(item.language) + '</span>';
+    html += '<span class="badge">' + esc(item.classification) + '</span>';
+    if (item.priority === 'high') html += '<span class="badge badge-high">HIGH</span>';
+    html += '</div>';
+
+    // Subject
+    html += '<div class="card-subject">' + esc(item.subject) + '</div>';
+
+    // Original message
+    html += '<div class="section"><div class="section-label">Original message</div>';
+    html += '<div class="section-body">' + esc(item.original_body) + '</div></div>';
+
+    // Draft response
+    if (isReply && item.draft_body) {
+      html += '<div class="section section-draft"><div class="section-label">Draft response</div>';
+      html += '<div class="section-body">' + esc(item.draft_body) + '</div></div>';
+    } else if (!isReply) {
+      html += '<div class="no-reply">AI determined no reply needed: ' + esc(item.reason) + '</div>';
+    }
+
+    // Knowledge gaps
+    if (item.knowledge_gaps && item.knowledge_gaps.length > 0) {
+      html += '<div class="gaps"><div class="gaps-title">⚠ Knowledge Gaps</div>';
+      item.knowledge_gaps.forEach(function(gap, i) {
+        html += '<div class="gap-item"><span>• ' + esc(gap) + '</span>';
+        html += '<button class="gap-add" onclick="addToConventions(' + i + ')">Add to KB</button></div>';
+      });
+      html += '</div>';
+    }
+
+    // Input section (regenerate/edit)
+    if (inputMode === 'regen') {
+      html += '<div class="input-section">';
+      html += '<div class="input-label">Regeneration instructions</div>';
+      html += '<textarea class="input-area" id="input-area" placeholder="e.g. Make it shorter, Add greeting in Japanese..."></textarea>';
+      html += '<div class="input-actions">';
+      html += '<button class="btn btn-regen" onclick="submitRegen()">Regenerate</button>';
+      html += '<button class="btn btn-edit" onclick="cancelInput()">Cancel</button>';
+      html += '<span class="input-hint">⌘+Enter to submit</span>';
+      html += '</div></div>';
+    } else if (inputMode === 'edit') {
+      html += '<div class="input-section">';
+      html += '<div class="input-label">Edit draft</div>';
+      html += '<textarea class="input-area" id="input-area" style="min-height:120px;font-family:inherit;">' + esc(item.draft_body || '') + '</textarea>';
+      html += '<div class="input-actions">';
+      html += '<button class="btn btn-send" onclick="submitEdit()">Send Edited</button>';
+      html += '<button class="btn btn-edit" onclick="cancelInput()">Cancel</button>';
+      html += '</div></div>';
+    }
+
+    // Action buttons (only if not in input mode)
+    if (!inputMode) {
+      html += '<div class="actions">';
+      if (isReply) {
+        html += '<button class="btn btn-send" onclick="doSend()" ' + (busy ? 'disabled' : '') + '>Send</button>';
+        html += '<button class="btn btn-regen" onclick="doRegen()" ' + (busy ? 'disabled' : '') + '>Regenerate</button>';
+        html += '<button class="btn btn-edit" onclick="doEdit()" ' + (busy ? 'disabled' : '') + '>Edit & Send</button>';
+      } else {
+        html += '<button class="btn btn-edit" onclick="doEdit()" ' + (busy ? 'disabled' : '') + '>Write Reply</button>';
+      }
+      html += '<button class="btn btn-reject" onclick="doReject()" ' + (busy ? 'disabled' : '') + '>Reject</button>';
+      html += '</div>';
+    }
+
+    html += '</div></div>';
+
+    // Navigation dots
+    if (items.length > 1) {
+      html += '<div class="nav-dots">';
+      html += '<button class="nav-arrow" onclick="goPrev()" ' + (currentIndex === 0 ? 'disabled' : '') + '>◀</button>';
+      for (var i = 0; i < items.length; i++) {
+        html += '<span class="dot' + (i === currentIndex ? ' active' : '') + '" onclick="goTo(' + i + ')"></span>';
+      }
+      html += '<button class="nav-arrow" onclick="goNext()" ' + (currentIndex === items.length - 1 ? 'disabled' : '') + '>▶</button>';
+      html += '</div>';
+    }
+
+    deck.innerHTML = html;
+
+    // Focus input if in input mode
+    if (inputMode) {
+      var el = document.getElementById('input-area');
+      if (el) setTimeout(function() { el.focus(); }, 50);
+    }
+  }
+
+  // ── Navigation ──
+  window.goPrev = function() { if (currentIndex > 0) { currentIndex--; inputMode = null; render(); } };
+  window.goNext = function() { if (currentIndex < items.length - 1) { currentIndex++; inputMode = null; render(); } };
+  window.goTo = function(i) { currentIndex = i; inputMode = null; render(); };
+
+  // ── Actions ──
+  window.doSend = async function() {
+    if (busy) return;
+    busy = true;
+    render();
+    try {
+      await ulAction('approvals_act', { approval_id: items[currentIndex].id, action: 'approve' });
+      toast('Email sent!', 'success');
+      await loadData();
+    } catch(e) { toast('Send failed: ' + e.message, 'error'); }
+    busy = false;
+    render();
+  };
+
+  window.doReject = async function() {
+    if (busy) return;
+    busy = true;
+    render();
+    try {
+      await ulAction('approvals_act', { approval_id: items[currentIndex].id, action: 'reject' });
+      toast('Rejected', 'success');
+      await loadData();
+    } catch(e) { toast('Reject failed: ' + e.message, 'error'); }
+    busy = false;
+    render();
+  };
+
+  window.doRegen = function() { inputMode = 'regen'; render(); };
+  window.doEdit = function() { inputMode = 'edit'; render(); };
+  window.cancelInput = function() { inputMode = null; render(); };
+
+  window.submitRegen = async function() {
+    var el = document.getElementById('input-area');
+    var prompt = el ? el.value.trim() : '';
+    if (!prompt) return;
+    busy = true;
+    render();
+    try {
+      await ulAction('approvals_act', { approval_id: items[currentIndex].id, action: 'regenerate', revision: prompt });
+      inputMode = null;
+      toast('Draft regenerated', 'success');
+      await loadData();
+    } catch(e) { toast('Regeneration failed: ' + e.message, 'error'); }
+    busy = false;
+    render();
+  };
+
+  window.submitEdit = async function() {
+    var el = document.getElementById('input-area');
+    var text = el ? el.value.trim() : '';
+    if (!text) return;
+    busy = true;
+    render();
+    try {
+      await ulAction('approvals_act', { approval_id: items[currentIndex].id, action: 'revise', revision: text });
+      inputMode = null;
+      toast('Sent with edits!', 'success');
+      await loadData();
+    } catch(e) { toast('Send failed: ' + e.message, 'error'); }
+    busy = false;
+    render();
+  };
+
+  window.addToConventions = async function(gapIndex) {
+    var item = items[currentIndex];
+    var gap = item.knowledge_gaps[gapIndex];
+    if (!gap) return;
+    var value = prompt('Value for "' + gap + '":');
+    if (!value) return;
+    try {
+      await ulAction('conventions_set', { key: gap, value: value, category: 'auto-detected' });
+      toast('Added to conventions!', 'success');
+      item.knowledge_gaps.splice(gapIndex, 1);
+      render();
+    } catch(e) { toast('Failed: ' + e.message, 'error'); }
+  };
+
+  // ── Keyboard shortcuts ──
+  document.addEventListener('keydown', function(e) {
+    // Skip if typing in input
+    if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') {
+      if (e.key === 'Escape') { window.cancelInput(); e.preventDefault(); }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        if (inputMode === 'regen') window.submitRegen();
+        else if (inputMode === 'edit') window.submitEdit();
+      }
+      return;
+    }
+    if (e.key === 'ArrowLeft') { window.goPrev(); e.preventDefault(); }
+    if (e.key === 'ArrowRight') { window.goNext(); e.preventDefault(); }
+    if (e.key === 's' || e.key === 'S') { window.doSend(); e.preventDefault(); }
+    if (e.key === 'r' || e.key === 'R') { window.doRegen(); e.preventDefault(); }
+    if (e.key === 'e' || e.key === 'E') { window.doEdit(); e.preventDefault(); }
+    if (e.key === 'x' || e.key === 'X') { window.doReject(); e.preventDefault(); }
+  });
+
+  // ── Toast ──
+  function toast(msg, type) {
+    var el = document.createElement('div');
+    el.className = 'toast toast-' + type;
+    el.textContent = msg;
+    document.getElementById('toast-container').appendChild(el);
+    setTimeout(function() { el.remove(); }, 3000);
+  }
+
+  // ── Escape HTML ──
+  function esc(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ── Init ──
+  loadData();
+})();
+</script>
+</body>
+</html>`;
+

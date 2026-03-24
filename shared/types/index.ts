@@ -348,6 +348,20 @@ export interface WidgetData {
   items: WidgetItem[];
 }
 
+// ── Widget App System (MCP-owned full HTML apps) ──
+
+export interface WidgetMeta {
+  title: string;
+  icon?: string;         // emoji or URL
+  badge_count: number;
+}
+
+export interface WidgetAppResponse {
+  meta: WidgetMeta;
+  app_html: string;      // complete HTML document
+  version?: string;      // cache-busting key
+}
+
 export interface AIResponse {
   content: string;
   model: string;

@@ -1,37 +1,39 @@
-// Widget Inbox — polls user's library apps for widget data.
-// Discovers widget-capable apps by scanning the library via platform MCP,
-// probes each app for widget_* functions, and polls them periodically.
-// No Tauri dependency — works via HTTP to the platform API.
+// Widget Inbox — discovers widget apps, polls for meta (badges),
+// caches HTML apps, and routes postMessage bridge calls.
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { executeMcpTool } from '../lib/api';
-import type { WidgetData, WidgetAction } from '../../../shared/types/index';
+import { executeMcpTool, executeAppMcpTool } from '../lib/api';
+import { getToken, getApiBase } from '../lib/storage';
+import type { WidgetMeta, WidgetAppResponse } from '../../../shared/types/index';
 
 // ── Types ──
 
-export interface WidgetSource {
-  appId: string;
+export interface WidgetAppSource {
+  appUuid: string;
   appName: string;
-  widgetFunction: string;
+  appSlug: string;
+  widgetName: string;     // e.g. "email_inbox"
+  uiFunction: string;     // e.g. "widget_email_inbox_ui"
+  dataFunction: string;   // e.g. "widget_email_inbox_data"
 }
 
 export interface WidgetInboxState {
-  sources: WidgetSource[];
-  data: Record<string, WidgetData>;
+  sources: WidgetAppSource[];
+  metas: Record<string, WidgetMeta>;   // keyed by appUuid:widgetName
   loading: boolean;
   totalBadge: number;
   lastPoll: number;
 }
 
-// Well-known widget function names that MCPs can export
-const WIDGET_FUNCTIONS = ['widget_approval_queue', 'widget_inbox', 'widget_alerts', 'widget_tasks'];
+// Legacy widget function names (backward compat)
+const LEGACY_WIDGET_FUNCTIONS = ['widget_approval_queue', 'widget_inbox', 'widget_alerts', 'widget_tasks'];
 
 // ── Hook ──
 
 export function useWidgetInbox() {
   const [state, setState] = useState<WidgetInboxState>({
     sources: [],
-    data: {},
+    metas: {},
     loading: true,
     totalBadge: 0,
     lastPoll: 0,
@@ -39,19 +41,20 @@ export function useWidgetInbox() {
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
 
-  // Discover widget sources from user's library
-  const discoverSources = useCallback(async (): Promise<WidgetSource[]> => {
-    const sources: WidgetSource[] = [];
+  // Discover widget-capable apps from user's library
+  const discoverSources = useCallback(async (): Promise<WidgetAppSource[]> => {
+    const sources: WidgetAppSource[] = [];
+    const token = getToken();
+    if (!token) return sources;
 
     try {
-      // Get library via platform MCP
+      console.log('[WidgetInbox] Starting discovery...');
       const libraryResult = await executeMcpTool('ul.discover', { scope: 'library' });
-      const libraryText = libraryResult.content.map((c: any) => c.text).join('');
+      if (libraryResult.isError) return sources;
+
+      const libraryText = libraryResult.content?.[0]?.text || '';
       const library = JSON.parse(libraryText);
       const markdown = library.library || '';
-
-      // Parse app names, IDs, and function lists from library markdown
-      // Format: ## app-name\n...\n- widget_approval_queue(args): ...\nDashboard: /http/{uuid}/ui
       const sections = markdown.split(/^## /m).filter(Boolean);
 
       for (const section of sections) {
@@ -59,112 +62,195 @@ export function useWidgetInbox() {
         const name = lines[0]?.trim();
         if (!name) continue;
 
-        // Check if this app exports any widget_* function (from the markdown listing)
-        const exportedWidgetFn = WIDGET_FUNCTIONS.find(fn => section.includes('- ' + fn + '('));
-        if (!exportedWidgetFn) continue; // Skip apps without widget functions — no probe needed
-
-        // Find UUID in dashboard URL or MCP endpoint
         const uuidMatch = section.match(/\/(?:http|mcp)\/([a-f0-9-]{36})/);
         if (!uuidMatch) continue;
+        const appUuid = uuidMatch[1];
 
-        sources.push({ appId: uuidMatch[1], appName: name, widgetFunction: exportedWidgetFn });
+        // Get tools list from the app's MCP endpoint
+        let tools: any[] = [];
+        let appSlug = '';
+        try {
+          const base = getApiBase();
+          const res = await fetch(`${base}/mcp/${appUuid}`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: crypto.randomUUID(), method: 'tools/list', params: {} }),
+          });
+          const data = await res.json();
+          tools = data?.result?.tools || [];
+        } catch { continue; }
+
+        // Look for new-style widget_*_ui functions
+        const uiTools = tools.filter((t: any) => t.name.includes('_widget_') && t.name.endsWith('_ui'));
+        for (const uiTool of uiTools) {
+          // Extract slug and widget name: "{slug}_widget_{name}_ui"
+          const match = uiTool.name.match(/^(.+)_widget_(.+)_ui$/);
+          if (!match) continue;
+          const [, slug, widgetName] = match;
+          appSlug = slug;
+          sources.push({
+            appUuid, appName: name, appSlug: slug,
+            widgetName,
+            uiFunction: `widget_${widgetName}_ui`,
+            dataFunction: `widget_${widgetName}_data`,
+          });
+        }
+
+        // Fallback: legacy widget functions (widget_approval_queue etc.)
+        if (uiTools.length === 0) {
+          for (const fn of LEGACY_WIDGET_FUNCTIONS) {
+            const legacyTool = tools.find((t: any) => t.name.endsWith('_' + fn));
+            if (legacyTool) {
+              const slug = legacyTool.name.replace('_' + fn, '');
+              sources.push({
+                appUuid, appName: name, appSlug: slug,
+                widgetName: fn.replace('widget_', ''),
+                uiFunction: fn,    // legacy: same function returns both ui + data
+                dataFunction: fn,
+              });
+            }
+          }
+        }
       }
+
+      console.log(`[WidgetInbox] Discovery: ${sources.length} widget(s)`);
     } catch (e) {
       console.error('[WidgetInbox] Discovery error:', e);
     }
-
     return sources;
   }, []);
 
-  // Poll a single widget source
-  const pollWidget = useCallback(async (source: WidgetSource): Promise<WidgetData | null> => {
+  // Poll a source for meta (badge count) — lightweight, no app_html
+  const pollMeta = useCallback(async (source: WidgetAppSource): Promise<WidgetMeta | null> => {
     try {
-      const result = await executeMcpTool('ul.call', {
-        app_id: source.appId,
-        function_name: source.widgetFunction,
-        args: {},
-      });
-
+      const prefixed = `${source.appSlug}_${source.uiFunction}`;
+      const result = await executeAppMcpTool(source.appUuid, prefixed, {});
       if (result.isError) return null;
 
-      const text = result.content.map((c: any) => c.text).join('');
+      const text = result.content?.[0]?.text || '';
       const parsed = JSON.parse(text);
-      const data = parsed.result || parsed;
 
-      if (typeof data.badge_count === 'number' && Array.isArray(data.items)) {
-        return data as WidgetData;
+      // New-style: { meta: { title, icon, badge_count }, app_html, version }
+      if (parsed.meta) {
+        // Cache version for later comparison
+        const cacheKey = `widget_app:${source.appUuid}:${source.widgetName}`;
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          const cachedData = JSON.parse(cached);
+          if (cachedData.version !== parsed.version) {
+            // Version changed — invalidate cache
+            localStorage.removeItem(cacheKey);
+          }
+        }
+        // Cache the app_html if not already cached
+        if (parsed.app_html && !localStorage.getItem(cacheKey)) {
+          localStorage.setItem(cacheKey, JSON.stringify({
+            html: parsed.app_html,
+            version: parsed.version || '1',
+            cachedAt: Date.now(),
+          }));
+        }
+        return parsed.meta;
       }
+
+      // Legacy: { badge_count, items }
+      if (typeof parsed.badge_count === 'number') {
+        return { title: source.appName, icon: '📦', badge_count: parsed.badge_count };
+      }
+
       return null;
     } catch {
       return null;
     }
   }, []);
 
-  // Poll all sources
-  const pollAll = useCallback(async (sources: WidgetSource[]) => {
+  // Poll all sources for meta
+  const pollAll = useCallback(async (sources: WidgetAppSource[]) => {
     if (sources.length === 0) {
       if (mountedRef.current) {
-        setState(prev => ({ ...prev, loading: false, data: {}, totalBadge: 0, lastPoll: Date.now() }));
+        setState(prev => ({ ...prev, loading: false, metas: {}, totalBadge: 0, lastPoll: Date.now() }));
       }
       return;
     }
 
-    const newData: Record<string, WidgetData> = {};
+    const newMetas: Record<string, WidgetMeta> = {};
     let totalBadge = 0;
 
     await Promise.all(
       sources.map(async (source) => {
-        const key = source.appId + ':' + source.widgetFunction;
-        const data = await pollWidget(source);
-        if (data) {
-          newData[key] = data;
-          totalBadge += data.badge_count;
+        const key = `${source.appUuid}:${source.widgetName}`;
+        const meta = await pollMeta(source);
+        if (meta) {
+          newMetas[key] = meta;
+          totalBadge += meta.badge_count;
         }
       })
     );
 
     if (mountedRef.current) {
-      setState(prev => ({ ...prev, data: newData, totalBadge, loading: false, lastPoll: Date.now() }));
+      setState(prev => ({ ...prev, metas: newMetas, totalBadge, loading: false, lastPoll: Date.now() }));
     }
-  }, [pollWidget]);
+  }, [pollMeta]);
 
-  // Execute a widget action
-  const executeAction = useCallback(async (
-    appId: string,
-    action: WidgetAction,
-    editedValue?: string,
-  ): Promise<{ success: boolean; error?: string }> => {
+  // Get cached app HTML (or fetch fresh)
+  const getAppHtml = useCallback(async (source: WidgetAppSource): Promise<string | null> => {
+    const cacheKey = `widget_app:${source.appUuid}:${source.widgetName}`;
+    const cached = localStorage.getItem(cacheKey);
+
+    if (cached) {
+      const { html } = JSON.parse(cached);
+      if (html) return html;
+    }
+
+    // Fetch fresh
     try {
-      const args = { ...action.args };
-      if (editedValue !== undefined) {
-        for (const [key, val] of Object.entries(args)) {
-          if (val === '{{edited_value}}') args[key] = editedValue;
-        }
+      const prefixed = `${source.appSlug}_${source.uiFunction}`;
+      const result = await executeAppMcpTool(source.appUuid, prefixed, {});
+      if (result.isError) return null;
+
+      const text = result.content?.[0]?.text || '';
+      const parsed = JSON.parse(text);
+
+      if (parsed.app_html) {
+        localStorage.setItem(cacheKey, JSON.stringify({
+          html: parsed.app_html,
+          version: parsed.version || '1',
+          cachedAt: Date.now(),
+        }));
+        return parsed.app_html;
       }
 
-      const result = await executeMcpTool('ul.call', {
-        app_id: appId,
-        function_name: action.tool,
-        args,
-      });
-
-      // Re-poll after action
-      if (mountedRef.current) pollAll(state.sources);
-
-      return { success: !result.isError };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
+      // Legacy: no app_html, return null (will render old-style)
+      return null;
+    } catch {
+      return null;
     }
-  }, [state.sources, pollAll]);
+  }, []);
 
-  // Refresh
+  // Route a bridge call from the widget iframe to the MCP
+  const executeBridgeCall = useCallback(async (
+    appUuid: string,
+    appSlug: string,
+    functionName: string,
+    args: Record<string, unknown>,
+  ): Promise<unknown> => {
+    const prefixed = `${appSlug}_${functionName}`;
+    console.log(`[WidgetBridge] ${prefixed}`, args);
+    const result = await executeAppMcpTool(appUuid, prefixed, args);
+    const text = result.content?.[0]?.text || '';
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { raw: text, isError: result.isError };
+    }
+  }, []);
+
+  // Refresh everything
   const refresh = useCallback(async () => {
     if (!mountedRef.current) return;
     setState(prev => ({ ...prev, loading: true }));
-
     const sources = await discoverSources();
     if (!mountedRef.current) return;
-
     setState(prev => ({ ...prev, sources }));
     await pollAll(sources);
   }, [discoverSources, pollAll]);
@@ -189,5 +275,5 @@ export function useWidgetInbox() {
     };
   }, []);
 
-  return { ...state, executeAction, refresh };
+  return { ...state, getAppHtml, executeBridgeCall, refresh };
 }

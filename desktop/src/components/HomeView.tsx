@@ -16,8 +16,9 @@ import CardDetailModal from './CardDetailModal';
 import CreateAgentModal from './CreateAgentModal';
 import SpendingApprovalModal from './SpendingApprovalModal';
 import AgentConfigPanel from './AgentConfigPanel';
-import WidgetInbox from './WidgetInbox';
-import { useWidgetInbox } from '../hooks/useWidgetInbox';
+import WidgetHomescreen from './WidgetHomescreen';
+import WidgetAppView from './WidgetAppView';
+import { useWidgetInbox, type WidgetAppSource } from '../hooks/useWidgetInbox';
 
 // ── Types ──
 
@@ -109,7 +110,23 @@ export default function HomeView({
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
   const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
   const instructInputRef = useRef<HTMLInputElement>(null);
-  const { totalBadge: widgetBadge } = useWidgetInbox();
+  const { sources: widgetSources, metas: widgetMetas, totalBadge: widgetBadge, loading: widgetLoading, getAppHtml, executeBridgeCall, refresh: refreshWidgets } = useWidgetInbox();
+  const [openWidget, setOpenWidget] = useState<WidgetAppSource | null>(null);
+  const [widgetAppHtml, setWidgetAppHtml] = useState<string | null>(null);
+
+  const handleOpenWidget = useCallback(async (source: WidgetAppSource) => {
+    const html = await getAppHtml(source);
+    if (html) {
+      setWidgetAppHtml(html);
+      setOpenWidget(source);
+    }
+  }, [getAppHtml]);
+
+  const handleCloseWidget = useCallback(() => {
+    setOpenWidget(null);
+    setWidgetAppHtml(null);
+    refreshWidgets();
+  }, [refreshWidgets]);
 
   const {
     columns,
@@ -490,7 +507,7 @@ export default function HomeView({
       </div>
 
       {/* Tab content */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto relative">
         {activeTab === 'project' && (
           <div className="px-6 py-4 space-y-6">
             {selectedProjectDir ? (
@@ -731,52 +748,69 @@ export default function HomeView({
           </div>
         )}
 
+        {/* Full-screen widget app overlay — positioned against the tab content container */}
+        {openWidget && widgetAppHtml && (
+          <div className="absolute inset-0 z-10 bg-white">
+            <WidgetAppView
+              source={openWidget}
+              appHtml={widgetAppHtml}
+              onBack={handleCloseWidget}
+              onBridgeCall={executeBridgeCall}
+            />
+          </div>
+        )}
+
         {activeTab === 'activity' && (
           <div className="px-6 py-4">
-            {/* Widget Inbox — MCP-driven action items */}
-            <WidgetInbox />
+                {/* Widget Homescreen — grid of widget tiles */}
+                <WidgetHomescreen
+                  sources={widgetSources}
+                  metas={widgetMetas}
+                  loading={widgetLoading}
+                  onOpenWidget={handleOpenWidget}
+                />
 
-            {/* Agent Activity Log */}
-            {activityLog.length > 0 && (
-              <div className="mt-6 border-t border-gray-200 pt-4">
-                <h3 className="text-caption font-medium text-ul-text-muted mb-2">Recent Activity</h3>
-                <div className="space-y-1">
-                  {activityLog.map(entry => (
-                    <div
-                      key={entry.id}
-                      className="flex items-start gap-3 px-3 py-2 rounded-md hover:bg-gray-50 transition-colors cursor-pointer"
-                      onClick={() => onNavigateToAgent(entry.agentId)}
-                    >
-                      <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${
-                        entry.type === 'warning' ? 'bg-ul-warning'
-                          : entry.type === 'completed' ? 'bg-blue-400'
-                          : 'bg-gray-300'
-                      }`} />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-small font-medium text-ul-text">{entry.agentName}</span>
-                          <span className="text-caption text-ul-text-muted">{formatRelativeTime(entry.timestamp)}</span>
+                {/* Agent Activity Log */}
+                {activityLog.length > 0 && (
+                  <div className="mt-6 border-t border-gray-200 pt-4">
+                    <h3 className="text-caption font-medium text-ul-text-muted mb-2">Recent Activity</h3>
+                    <div className="space-y-1">
+                      {activityLog.map(entry => (
+                        <div
+                          key={entry.id}
+                          className="flex items-start gap-3 px-3 py-2 rounded-md hover:bg-gray-50 transition-colors cursor-pointer"
+                          onClick={() => onNavigateToAgent(entry.agentId)}
+                        >
+                          <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${
+                            entry.type === 'warning' ? 'bg-ul-warning'
+                              : entry.type === 'completed' ? 'bg-blue-400'
+                              : 'bg-gray-300'
+                          }`} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-small font-medium text-ul-text">{entry.agentName}</span>
+                              <span className="text-caption text-ul-text-muted">{formatRelativeTime(entry.timestamp)}</span>
+                            </div>
+                            <p className="text-caption text-ul-text-secondary truncate">{entry.detail}</p>
+                          </div>
                         </div>
-                        <p className="text-caption text-ul-text-secondary truncate">{entry.detail}</p>
-                      </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              </div>
-            )}
+                  </div>
+                )}
 
-            {/* Empty state — only if both widgets and activity are empty */}
-            {activityLog.length === 0 && (
-              <div className="text-center py-16">
-                <svg width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-300 mx-auto mb-3">
-                  <circle cx="20" cy="20" r="16" />
-                  <path d="M20 12v8l5 5" strokeLinecap="round" />
-                </svg>
-                <p className="text-small text-ul-text-muted">
-                  No activity yet. Events will appear here as agents run.
-                </p>
-              </div>
-            )}
+                {/* Empty state */}
+                {activityLog.length === 0 && widgetBadge === 0 && !widgetLoading && (
+                  <div className="text-center py-16">
+                    <svg width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-300 mx-auto mb-3">
+                      <circle cx="20" cy="20" r="16" />
+                      <path d="M20 12v8l5 5" strokeLinecap="round" />
+                    </svg>
+                    <p className="text-small text-ul-text-muted">
+                      No activity yet. Events will appear here as agents run.
+                    </p>
+                  </div>
+                )}
           </div>
         )}
       </div>
