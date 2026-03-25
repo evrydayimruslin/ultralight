@@ -468,8 +468,40 @@ export async function generateSkillsForVersion(
   // Parse code → all artifacts derive from ParseResult
   const parseResult = parseTypeScript(code);
 
-  // Generate manifest (canonical source of truth)
-  const manifest = generateManifestFromParseResult(app, parseResult, _version);
+  // Generate manifest: prefer uploaded manifest.json (has rich descriptions + schemas),
+  // fall back to auto-generated from code parsing
+  let manifest: AppManifest;
+  const existingManifest = app.manifest ? (() => { try { return JSON.parse(app.manifest!) as AppManifest; } catch { return null; } })() : null;
+
+  if (existingManifest?.functions && existingManifest.type === 'mcp') {
+    // Uploaded manifest exists with function definitions — use it as base,
+    // but merge in any code-detected functions not declared in the manifest
+    const autoManifest = generateManifestFromParseResult(app, parseResult, _version);
+    manifest = { ...existingManifest, version: _version };
+
+    // Check if manifest descriptions are auto-generated (generic "Function X" pattern)
+    // If so, the manifest was previously auto-generated and should be replaced
+    const hasRichDescriptions = Object.values(existingManifest.functions).some(
+      (fn) => fn.description && !fn.description.startsWith('Function ')
+    );
+
+    if (hasRichDescriptions) {
+      // Merge: keep uploaded manifest functions, add any new exports not in manifest
+      if (autoManifest.functions) {
+        for (const [fnName, fnDef] of Object.entries(autoManifest.functions)) {
+          if (!manifest.functions![fnName]) {
+            manifest.functions![fnName] = fnDef;
+          }
+        }
+      }
+    } else {
+      // All descriptions are generic — auto-generated manifest is equally good, use it
+      manifest = autoManifest;
+    }
+  } else {
+    manifest = generateManifestFromParseResult(app, parseResult, _version);
+  }
+
   const manifestJson = JSON.stringify(manifest, null, 2);
 
   // Generate skills_parsed directly from parser (not from Skills.md round-trip)
