@@ -434,7 +434,24 @@ const PLATFORM_TOOLS: MCPTool[] = [
     },
   },
 
-  // ── 11. ul.auth.link ──────────────────────────
+  // ── 11. ul.job ──────────────────────────
+  {
+    name: 'ul.job',
+    description:
+      'Poll an async job\'s status and retrieve its result. ' +
+      'When a tool call takes longer than ~25 seconds, it is automatically promoted to an async job. ' +
+      'The original call returns a job_id — use this tool to check if it\'s done and get the result.',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        job_id: { type: 'string', description: 'The job ID returned from the async tool call.' },
+      },
+      required: ['job_id'],
+    },
+  },
+
+  // ── 12. ul.auth.link ──────────────────────────
   {
     name: 'ul.auth.link',
     description:
@@ -700,6 +717,12 @@ Execute any app's function through this single platform connection.
 - Returns result + full app context on first call per session (auto-inspect)
 - Subsequent calls return result + lightweight metadata
 - Uses your auth — no separate per-app connection needed
+
+### ul.job({ job_id })
+Poll an async job's status. Functions that take longer than ~25 seconds are automatically promoted to async jobs.
+- When a tool call returns \`{ _async: true, job_id: "..." }\`, use this to poll for the result
+- Returns \`{ status: "running" }\` while in progress, \`{ status: "completed", result: ... }\` when done, or \`{ status: "failed", error: ... }\`
+- Poll every 5-10 seconds until completed or failed
 
 ### ul.discover({ scope, app_id?, query?, task? })
 Find and explore apps.
@@ -1509,6 +1532,19 @@ async function handleToolsCall(
           unwrappedResult = callResult;
         }
 
+        // Detect async job envelope — propagate directly so agent knows to poll
+        if (unwrappedResult && typeof unwrappedResult === 'object' && (unwrappedResult as Record<string, unknown>)._async) {
+          const asyncResult = unwrappedResult as Record<string, unknown>;
+          result = {
+            _context: { app_id: targetAppId, function: targetFn },
+            _async: true,
+            job_id: asyncResult.job_id,
+            status: 'running',
+            message: `Function is still running. Poll with: ul.job({ job_id: "${asyncResult.job_id}" })`,
+          };
+          break;
+        }
+
         // Auto-inspect on first ul.call to this app per session
         const mcpSessionId = request.headers.get('Mcp-Session-Id') || request.headers.get('mcp-session-id') || '_anonymous';
         const isFirstCallToApp = !hasAppContext(mcpSessionId, targetAppId);
@@ -1528,6 +1564,44 @@ async function handleToolsCall(
         } else {
           // Subsequent calls: lightweight context only (deep context is in agent's conversation history)
           result = { _context: { app_id: targetAppId, function: targetFn }, result: unwrappedResult };
+        }
+        break;
+      }
+
+      // ── 11. ul.job (async job polling) ──────────────
+      case 'ul.job': {
+        const jobId = toolArgs.job_id as string;
+        if (!jobId) throw new ToolError(INVALID_PARAMS, 'Missing required: job_id');
+
+        const { getJob } = await import('../services/async-jobs.ts');
+        const job = await getJob(jobId, userId);
+
+        if (!job) throw new ToolError(NOT_FOUND, `Job ${jobId} not found`);
+
+        if (job.status === 'running') {
+          const elapsed = Date.now() - new Date(job.created_at).getTime();
+          result = {
+            job_id: jobId,
+            status: 'running',
+            elapsed_seconds: Math.round(elapsed / 1000),
+            message: 'Still running. Poll again in a few seconds.',
+          };
+        } else if (job.status === 'completed') {
+          result = {
+            job_id: jobId,
+            status: 'completed',
+            duration_ms: job.duration_ms,
+            result: job.result,
+            logs: job.logs,
+            ai_cost_light: job.ai_cost_light,
+          };
+        } else {
+          result = {
+            job_id: jobId,
+            status: 'failed',
+            duration_ms: job.duration_ms,
+            error: job.error,
+          };
         }
         break;
       }

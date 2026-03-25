@@ -1877,220 +1877,273 @@ async function executeAppFunction(
     const permissions = ['memory:read', 'memory:write', 'ai:call', 'net:fetch', 'app:call'];
     const timeoutMs = permissions.includes('ai:call') ? 120_000 : 30_000;
 
+    // ── Async promotion threshold: if execution exceeds this, return a job envelope ──
+    const ASYNC_PROMOTION_MS = 25_000;
+    const isAiCapable = permissions.includes('ai:call');
+    const executionId = crypto.randomUUID();
+
     const execStart = Date.now();
-    const result = await executeInSandbox(
-      {
-        appId: app.id,
-        userId,
-        ownerId: app.owner_id,
-        executionId: crypto.randomUUID(),
-        code,
-        permissions,
-        userApiKey,
-        user,
-        appDataService,
-        d1DataService,
-        memoryService: memoryAdapter,
-        aiService: aiServiceInstance as { call: (request: import('../../shared/types/index.ts').AIRequest, apiKey: string) => Promise<import('../../shared/types/index.ts').AIResponse> },
-        envVars,
-        supabase: supabaseConfig,
-        baseUrl,
-        authToken: meta?.authToken,
-        timeoutMs,
-      },
-      functionName,
-      argsArray
-    );
-    const execDuration = Date.now() - execStart;
+    const sandboxConfig = {
+      appId: app.id,
+      userId,
+      ownerId: app.owner_id,
+      executionId,
+      code,
+      permissions,
+      userApiKey,
+      user,
+      appDataService,
+      d1DataService,
+      memoryService: memoryAdapter,
+      aiService: aiServiceInstance as { call: (request: import('../../shared/types/index.ts').AIRequest, apiKey: string) => Promise<import('../../shared/types/index.ts').AIResponse> },
+      envVars,
+      supabase: supabaseConfig,
+      baseUrl,
+      authToken: meta?.authToken,
+      timeoutMs,
+    };
 
-    // ── Per-call pricing: charge caller → app owner ──
-    // Only charge if: call succeeded, caller is not the owner, price > 0
-    let callChargeLight = 0;
-    if (result.success && userId !== app.owner_id) {
-      const pricingConfig = (app as Record<string, unknown>).pricing_config as AppPricingConfig | null;
-      callChargeLight = getCallPriceLight(pricingConfig, functionName);
+    // Helper: run billing + logging after execution completes (used by both sync and async paths)
+    const runPostExecution = async (result: { success: boolean; result: unknown; error?: unknown; logs: Array<{ time: string; level: string; message: string }>; durationMs: number; aiCostLight: number }) => {
+      const execDuration = result.durationMs;
 
-      // ── Free calls check: skip charge if within free quota ──
-      if (callChargeLight > 0) {
-        const freeCalls = getFreeCalls(pricingConfig, functionName);
-        if (freeCalls > 0) {
-          const scope = getFreeCallsScope(pricingConfig);
-          const counterKey = scope === 'app' ? '__app__' : functionName;
-          try {
-            // @ts-ignore
-            const _Deno = globalThis.Deno;
-            const _SB_URL = _Deno.env.get('SUPABASE_URL') || '';
-            const _SB_KEY = _Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-            const usageRes = await fetch(
-              `${_SB_URL}/rest/v1/rpc/increment_caller_usage`,
-              {
-                method: 'POST',
-                headers: {
-                  'apikey': _SB_KEY,
-                  'Authorization': `Bearer ${_SB_KEY}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  p_app_id: app.id,
-                  p_user_id: userId,
-                  p_counter_key: counterKey,
-                }),
+      // ── Per-call pricing: charge caller → app owner ──
+      let callChargeLight = 0;
+      if (result.success && userId !== app.owner_id) {
+        const pricingConfig = (app as Record<string, unknown>).pricing_config as AppPricingConfig | null;
+        callChargeLight = getCallPriceLight(pricingConfig, functionName);
+
+        if (callChargeLight > 0) {
+          const freeCalls = getFreeCalls(pricingConfig, functionName);
+          if (freeCalls > 0) {
+            const scope = getFreeCallsScope(pricingConfig);
+            const counterKey = scope === 'app' ? '__app__' : functionName;
+            try {
+              // @ts-ignore
+              const _Deno = globalThis.Deno;
+              const _SB_URL = _Deno.env.get('SUPABASE_URL') || '';
+              const _SB_KEY = _Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+              const usageRes = await fetch(
+                `${_SB_URL}/rest/v1/rpc/increment_caller_usage`,
+                {
+                  method: 'POST',
+                  headers: {
+                    'apikey': _SB_KEY,
+                    'Authorization': `Bearer ${_SB_KEY}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    p_app_id: app.id,
+                    p_user_id: userId,
+                    p_counter_key: counterKey,
+                  }),
+                }
+              );
+              if (usageRes.ok) {
+                const callCount = await usageRes.json();
+                if (callCount <= freeCalls) {
+                  callChargeLight = 0;
+                }
               }
-            );
-            if (usageRes.ok) {
-              const callCount = await usageRes.json();
-              if (callCount <= freeCalls) {
-                callChargeLight = 0; // Within free quota — no charge
-              }
+            } catch (usageErr) {
+              console.error('[PRICING] Free calls usage check error:', usageErr);
             }
-            // If RPC fails, fall through and charge normally (fail-closed for billing)
-          } catch (usageErr) {
-            console.error('[PRICING] Free calls usage check error:', usageErr);
           }
         }
-      }
 
-      if (callChargeLight > 0) {
-        try {
-          // @ts-ignore
-          const Deno = globalThis.Deno;
-          const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-          const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+        if (callChargeLight > 0) {
+          try {
+            // @ts-ignore
+            const Deno = globalThis.Deno;
+            const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+            const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
-          // Atomic transfer: caller → owner (fails if insufficient balance)
-          const transferRes = await fetch(
-            `${SUPABASE_URL}/rest/v1/rpc/transfer_balance`,
-            {
-              method: 'POST',
-              headers: {
-                'apikey': SUPABASE_SERVICE_ROLE_KEY,
-                'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                p_from_user: userId,
-                p_to_user: app.owner_id,
-                p_amount_light: callChargeLight,
-              }),
-            }
-          );
-
-          if (transferRes.ok) {
-            const rows = await transferRes.json() as Array<{ from_new_balance: number; to_new_balance: number }>;
-            if (!rows || rows.length === 0) {
-              // Empty result = insufficient balance. Return payment-required error.
-              const costDisplay = formatLight(callChargeLight);
-              let insufficientMsg: string;
-              if (user?.provisional) {
-                insufficientMsg =
-                  `Insufficient balance. This tool costs ${costDisplay} per call. ` +
-                  `You're using a provisional account — sign in at https://ultralight-api-iikqz.ondigitalocean.app/dash ` +
-                  `to add funds to your wallet and continue using paid tools.`;
-              } else {
-                insufficientMsg =
-                  `Insufficient balance. This tool costs ${costDisplay} per call. ` +
-                  `Add funds to your wallet at https://ultralight-api-iikqz.ondigitalocean.app/settings/billing ` +
-                  `or enable auto top-up to avoid interruptions.`;
-              }
-              return jsonRpcResponse(id, {
-                isError: true,
-                content: [{
-                  type: 'text',
-                  text: insufficientMsg,
-                }],
-              });
-            }
-            // Log the transfer (fire-and-forget)
-            // Use 'tool_call_suspended' reason when app is suspended for audit trail
-            const transferReason = isSuspended ? 'tool_call_suspended' : 'tool_call';
-            fetch(`${SUPABASE_URL}/rest/v1/transfers`, {
-              method: 'POST',
-              headers: {
-                'apikey': SUPABASE_SERVICE_ROLE_KEY,
-                'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=minimal',
-              },
-              body: JSON.stringify({
-                from_user_id: userId,
-                to_user_id: app.owner_id,
-                amount_light: callChargeLight,
-                reason: transferReason,
-                app_id: app.id,
-                function_name: functionName,
-              }),
-            }).catch(() => {});
-
-            // Auto-unsuspend: if app was suspended and revenue pushed owner balance positive,
-            // unsuspend immediately (fire-and-forget). The hourly billing loop would also catch
-            // this, but instant recovery is better UX.
-            if (isSuspended && rows[0] && rows[0].to_new_balance > 0) {
-              fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${app.owner_id}`, {
-                method: 'PATCH',
+            const transferRes = await fetch(
+              `${SUPABASE_URL}/rest/v1/rpc/transfer_balance`,
+              {
+                method: 'POST',
                 headers: {
                   'apikey': SUPABASE_SERVICE_ROLE_KEY,
                   'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
                   'Content-Type': 'application/json',
-                  'Prefer': 'return=minimal',
                 },
-                body: JSON.stringify({ hosting_suspended: false }),
-              }).catch(() => {});
-              console.log(`[SUSPEND] Auto-unsuspended app ${app.id} — owner balance recovered to ${rows[0].to_new_balance}¢`);
+                body: JSON.stringify({
+                  p_from_user: userId,
+                  p_to_user: app.owner_id,
+                  p_amount_light: callChargeLight,
+                }),
+              }
+            );
+
+            if (transferRes.ok) {
+              const rows = await transferRes.json() as Array<{ from_new_balance: number; to_new_balance: number }>;
+              if (!rows || rows.length === 0) {
+                callChargeLight = 0; // Insufficient balance — async can't return error to caller, skip
+              } else {
+                const transferReason = isSuspended ? 'tool_call_suspended' : 'tool_call';
+                fetch(`${SUPABASE_URL}/rest/v1/transfers`, {
+                  method: 'POST',
+                  headers: {
+                    'apikey': SUPABASE_SERVICE_ROLE_KEY,
+                    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal',
+                  },
+                  body: JSON.stringify({
+                    from_user_id: userId,
+                    to_user_id: app.owner_id,
+                    amount_light: callChargeLight,
+                    reason: transferReason,
+                    app_id: app.id,
+                    function_name: functionName,
+                  }),
+                }).catch(() => {});
+
+                if (isSuspended && rows[0] && rows[0].to_new_balance > 0) {
+                  fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${app.owner_id}`, {
+                    method: 'PATCH',
+                    headers: {
+                      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+                      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                      'Content-Type': 'application/json',
+                      'Prefer': 'return=minimal',
+                    },
+                    body: JSON.stringify({ hosting_suspended: false }),
+                  }).catch(() => {});
+                  console.log(`[SUSPEND] Auto-unsuspended app ${app.id} — owner balance recovered to ${rows[0].to_new_balance}¢`);
+                }
+              }
+            } else {
+              console.error(`[PRICING] Transfer failed for ${userId} → ${app.owner_id}:`, await transferRes.text());
+              callChargeLight = 0;
             }
-          } else {
-            // Transfer RPC failed — don't block the call, just log it
-            console.error(`[PRICING] Transfer failed for ${userId} → ${app.owner_id}:`, await transferRes.text());
-            callChargeLight = 0; // Reset so telemetry doesn't show a charge that didn't happen
+          } catch (chargeErr) {
+            console.error(`[PRICING] Charge error:`, chargeErr);
+            callChargeLight = 0;
           }
-        } catch (chargeErr) {
-          console.error(`[PRICING] Charge error:`, chargeErr);
-          callChargeLight = 0;
         }
       }
-    }
 
-    // Measure response size for cost telemetry
-    const resultJson = JSON.stringify(result.success ? result.result : result.error);
-    const responseSizeBytes = new TextEncoder().encode(resultJson).byteLength;
+      // Measure response size for cost telemetry
+      const resultJson = JSON.stringify(result.success ? result.result : result.error);
+      const responseSizeBytes = new TextEncoder().encode(resultJson || '').byteLength;
+      const requestCost = 0.0000003;
+      const cpuCost = execDuration * 0.00000002;
+      const executionCostEstimateLight = (requestCost + cpuCost) * 800;
 
-    // Estimate execution cost (WfP pricing: $0.30/M requests + $0.02/M CPU-ms)
-    // This is a rough estimate — actual WfP costs will be measured post-migration
-    const requestCost = 0.0000003;        // $0.30 per million requests
-    const cpuCost = execDuration * 0.00000002; // $0.02 per million CPU-ms
-    const executionCostEstimateLight = (requestCost + cpuCost) * 800;
+      const callSource = user?.provisional ? 'onboarding_template' : undefined;
+      const { logMcpCall } = await import('../services/call-logger.ts');
+      logMcpCall({
+        userId,
+        appId: app.id,
+        appName: app.name || app.slug,
+        functionName,
+        method: 'tools/call',
+        success: result.success,
+        durationMs: execDuration,
+        errorMessage: result.success ? undefined : String(result.error),
+        source: callSource,
+        inputArgs: args,
+        outputResult: result.success ? result.result : result.error,
+        userTier: user?.tier,
+        appVersion: app.current_version || undefined,
+        aiCostLight: result.aiCostLight || 0,
+        sessionId: meta?.sessionId,
+        sequenceNumber: nextSequenceNumber(meta?.sessionId),
+        userQuery: meta?.userQuery,
+        responseSizeBytes,
+        executionCostEstimateLight,
+        callChargeLight,
+      });
 
-    // Log the call (fire-and-forget)
-    // Provisional users always come from the onboarding template CTA
-    const callSource = user?.provisional ? 'onboarding_template' : undefined;
+      return callChargeLight;
+    };
 
-    const { logMcpCall } = await import('../services/call-logger.ts');
-    logMcpCall({
-      userId,
-      appId: app.id,
-      appName: app.name || app.slug,
-      functionName,
-      method: 'tools/call',
-      success: result.success,
-      durationMs: execDuration,
-      errorMessage: result.success ? undefined : String(result.error),
-      source: callSource,
-      inputArgs: args,
-      outputResult: result.success ? result.result : result.error,
-      userTier: user?.tier,
-      appVersion: app.current_version || undefined,
-      aiCostLight: result.aiCostLight || 0,
-      sessionId: meta?.sessionId,
-      sequenceNumber: nextSequenceNumber(meta?.sessionId),
-      userQuery: meta?.userQuery,
-      responseSizeBytes,
-      executionCostEstimateLight,
-      callChargeLight,
-    });
+    // Start execution
+    const executionPromise = executeInSandbox(sandboxConfig, functionName, argsArray);
 
-    if (result.success) {
-      return jsonRpcResponse(id, formatToolResult(result.result, result.logs));
+    // ── Async promotion: race execution against timer ──
+    // Only promote AI-capable apps (others complete fast enough)
+    const { canAcceptAsyncJob, createJob, completeJob, failJob } = await import('../services/async-jobs.ts');
+
+    if (isAiCapable && canAcceptAsyncJob()) {
+      const promotionTimer = new Promise<'promote'>((resolve) => {
+        setTimeout(() => resolve('promote'), ASYNC_PROMOTION_MS);
+      });
+
+      const raceResult = await Promise.race([
+        executionPromise.then(r => ({ type: 'sync' as const, result: r })),
+        promotionTimer.then(() => ({ type: 'promote' as const, result: undefined as unknown })),
+      ]);
+
+      if (raceResult.type === 'sync') {
+        // Fast path: completed within threshold — business as usual
+        const result = raceResult.result as { success: boolean; result: unknown; error?: unknown; logs: Array<{ time: string; level: string; message: string }>; durationMs: number; aiCostLight: number };
+        const callChargeLight = await runPostExecution(result);
+
+        // Handle insufficient balance for sync path (callChargeLight would be 0 if failed)
+        if (result.success) {
+          return jsonRpcResponse(id, formatToolResult(result.result, result.logs));
+        } else {
+          return jsonRpcResponse(id, formatToolError(result.error));
+        }
+      } else {
+        // Slow path: promote to async job
+        const jobId = await createJob({
+          appId: app.id,
+          userId,
+          ownerId: app.owner_id,
+          functionName,
+          executionId,
+          meta: { sessionId: meta?.sessionId, userQuery: meta?.userQuery },
+        });
+
+        // Attach completion handler — execution continues in background
+        executionPromise.then(async (result) => {
+          await runPostExecution(result);
+          await completeJob(jobId, {
+            success: result.success,
+            result: result.success ? result.result : result.error,
+            logs: result.logs,
+            durationMs: result.durationMs,
+            aiCostLight: result.aiCostLight,
+          });
+        }).catch(async (err) => {
+          await failJob(jobId, {
+            type: 'ExecutionError',
+            message: err instanceof Error ? err.message : String(err),
+          }, Date.now() - execStart);
+        });
+
+        // Return job envelope immediately
+        return jsonRpcResponse(id, {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              _async: true,
+              job_id: jobId,
+              status: 'running',
+              message: `Execution promoted to async job. Poll with ul.job({ job_id: "${jobId}" }) to get the result.`,
+            }),
+          }],
+          structuredContent: {
+            _async: true,
+            job_id: jobId,
+            status: 'running',
+          },
+          isError: false,
+        });
+      }
     } else {
-      return jsonRpcResponse(id, formatToolError(result.error));
+      // Non-AI apps or async limit reached: synchronous execution (original behavior)
+      const result = await executionPromise;
+      await runPostExecution(result);
+
+      if (result.success) {
+        return jsonRpcResponse(id, formatToolResult(result.result, result.logs));
+      } else {
+        return jsonRpcResponse(id, formatToolError(result.error));
+      }
     }
 
   } catch (err) {
