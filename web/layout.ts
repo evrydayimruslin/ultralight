@@ -5226,7 +5226,9 @@ export function getLayoutHTML(options: {
       // -- App header (meta only — app name is set by loadAppPage) --
       const headerEl = document.getElementById('appOverviewHeader');
       if (headerEl) {
-        const endpointUrl = window.location.origin + '/mcp/' + app.id;
+        const endpointBase = window.location.origin + '/mcp/' + app.id;
+        const tokenSuffix = currentApiKey && currentApiKey.plaintext_token ? '?token=' + currentApiKey.plaintext_token : '';
+        const endpointUrl = endpointBase + tokenSuffix;
         headerEl.innerHTML =
           '<div class="app-panel-name">' + escapeHtml(app.name || app.slug || 'Untitled') + '</div>' +
           '<div class="app-overview-meta" style="margin-bottom:var(--space-4);">' +
@@ -6270,8 +6272,9 @@ export function getLayoutHTML(options: {
 
     // ===== Copy Functions =====
     window.copyAppEndpoint = function() {
-      const url = window.location.origin + '/mcp/' + currentAppId;
-      navigator.clipboard.writeText(url).then(function() { showToast('MCP endpoint copied!'); });
+      const base = window.location.origin + '/mcp/' + currentAppId;
+      const token = currentApiKey && currentApiKey.plaintext_token ? '?token=' + currentApiKey.plaintext_token : '';
+      navigator.clipboard.writeText(base + token).then(function() { showToast('MCP endpoint copied!'); });
     };
 
     window.copyPlatformMcpUrl = function() {
