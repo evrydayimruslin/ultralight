@@ -1,8 +1,8 @@
 {
   "name": "Story Builder",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "mcp",
-  "description": "Create fictional worlds, characters, and plotlines that persist across sessions. AI-powered scene and chapter generation.",
+  "description": "Create fictional worlds with characters, relationships, narrative arcs, factions, lore, and rules. AI-powered scene and chapter generation uses all dimensions for consistency.",
   "author": "ultralight",
   "entry": {
     "functions": "index.ts"
@@ -47,22 +47,76 @@
       },
       "returns": { "type": "object", "description": "Theme ID and confirmation" }
     },
+    "add_relationship": {
+      "description": "Define a relationship between two characters (e.g. rivalry, alliance, mentor-student, roommates). Relationships are the dramatic engine — they shape how characters interact in generated scenes.",
+      "parameters": {
+        "world_id": { "type": "string", "description": "World ID", "required": true },
+        "character_a_id": { "type": "string", "description": "First character ID", "required": true },
+        "character_b_id": { "type": "string", "description": "Second character ID", "required": true },
+        "type": { "type": "string", "description": "Relationship type (e.g. rivals, allies, mentor-student, roommates, enemies, uneasy-truce, transactional)", "required": true },
+        "description": { "type": "string", "description": "How this relationship works — dynamics, tension, history" }
+      },
+      "returns": { "type": "object", "description": "Relationship ID and confirmation" }
+    },
+    "add_arc": {
+      "description": "Add a narrative arc or timeline event — tracks character journeys, season structure, and story progression so the AI knows where characters are in their development.",
+      "parameters": {
+        "world_id": { "type": "string", "description": "World ID", "required": true },
+        "name": { "type": "string", "description": "Arc name (e.g. 'Snow B's Rise', 'The Earl Revelation')", "required": true },
+        "type": { "type": "string", "description": "Arc type (narrative, character, political, timeline)", "enum": ["narrative", "character", "political", "timeline"] },
+        "description": { "type": "string", "description": "What happens in this arc — beginning, middle, end state", "required": true },
+        "season": { "type": "string", "description": "Season number or label (e.g. '1', '2', '3')" },
+        "episode_range": { "type": "string", "description": "Episode range (e.g. '1-4', '5-8')" },
+        "character_ids": { "type": "array", "description": "Characters involved in this arc", "items": { "type": "string" } }
+      },
+      "returns": { "type": "object", "description": "Arc ID and confirmation" }
+    },
+    "add_faction": {
+      "description": "Add a political faction, alliance, or social group with its member characters. Factions shape the political topology of scenes.",
+      "parameters": {
+        "world_id": { "type": "string", "description": "World ID", "required": true },
+        "name": { "type": "string", "description": "Faction name", "required": true },
+        "description": { "type": "string", "description": "Faction's goals, ideology, and position in the world", "required": true },
+        "member_ids": { "type": "array", "description": "Character IDs who belong to this faction", "items": { "type": "string" } }
+      },
+      "returns": { "type": "object", "description": "Faction ID and confirmation" }
+    },
+    "add_lore": {
+      "description": "Add in-universe lore: institutions, media properties, cultural artifacts, historical events, or world-building details that characters reference or interact with.",
+      "parameters": {
+        "world_id": { "type": "string", "description": "World ID", "required": true },
+        "name": { "type": "string", "description": "Lore entry name (e.g. 'Baby Bear Function', 'BoMedia')", "required": true },
+        "type": { "type": "string", "description": "Lore type", "enum": ["institution", "media", "artifact", "event", "cultural", "technology"] },
+        "description": { "type": "string", "description": "What this is, how it works, and why it matters to the world", "required": true }
+      },
+      "returns": { "type": "object", "description": "Lore ID and confirmation" }
+    },
+    "add_rule": {
+      "description": "Add a world rule or craft constraint — things the AI must respect when generating content. Use for scientific accuracy requirements, narrative tone rules, or any hard constraint on generated output.",
+      "parameters": {
+        "world_id": { "type": "string", "description": "World ID", "required": true },
+        "name": { "type": "string", "description": "Rule name (e.g. 'Scientific Accuracy', 'No Breaking Fourth Wall')", "required": true },
+        "type": { "type": "string", "description": "Rule type", "enum": ["constraint", "tone", "accuracy", "structural"] },
+        "description": { "type": "string", "description": "The rule and how it should be applied", "required": true }
+      },
+      "returns": { "type": "object", "description": "Rule ID and confirmation" }
+    },
     "generate": {
-      "description": "Generate new content (scene, chapter, dialogue, outline) using AI with full world context. The AI uses all characters, settings, themes, and recent scenes for consistency.",
+      "description": "Generate new content (scene, chapter, dialogue, outline) using AI with full world context including all characters, relationships, factions, arcs, lore, rules, settings, themes, and recent scenes.",
       "parameters": {
         "world_id": { "type": "string", "description": "World ID", "required": true },
         "type": { "type": "string", "description": "What to generate", "enum": ["scene", "chapter", "dialogue", "outline", "description"] },
         "prompt": { "type": "string", "description": "Creative direction (e.g. 'A confrontation between X and Y at the castle')" },
-        "character_ids": { "type": "array", "description": "Focus on specific characters", "items": { "type": "string" } },
+        "character_ids": { "type": "array", "description": "Focus on specific characters — their relationships will be highlighted in context", "items": { "type": "string" } },
         "setting_id": { "type": "string", "description": "Set the scene location" },
         "save": { "type": "boolean", "description": "Save as a scene (default: true)" }
       },
       "returns": { "type": "object", "description": "Generated content with scene ID if saved" }
     },
     "status": {
-      "description": "Overview of all worlds with character, setting, theme, and scene counts.",
+      "description": "Overview of all worlds with counts for every dimension: characters, settings, themes, scenes, relationships, arcs, factions, lore, and rules.",
       "parameters": {},
-      "returns": { "type": "object", "description": "World summaries" }
+      "returns": { "type": "object", "description": "World summaries with dimension counts" }
     }
   }
 }
