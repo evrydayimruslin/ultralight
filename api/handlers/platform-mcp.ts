@@ -2265,7 +2265,11 @@ async function executeUpload(
       }).catch(() => {});
     }
 
-    // Skills generation
+    // Skills generation — update in-memory app with uploaded manifest so
+    // generateSkillsForVersion sees the rich descriptions from manifest.json
+    if (pipeline.manifest) {
+      (app as Record<string, unknown>).manifest = JSON.stringify(pipeline.manifest);
+    }
     const skills = await generateSkillsForVersion(app, storageKey, newVersion);
 
     return {
