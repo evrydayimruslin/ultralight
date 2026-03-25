@@ -577,6 +577,19 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
   let tokenAppIds: string[] | null = null;
   let tokenFunctionNames: string[] | null = null;
 
+  // Support token-in-URL: if no Authorization header, check ?token= query param
+  // This lets users share a single MCP endpoint URL that works without separate auth config
+  let authRequest = request;
+  if (!request.headers.get('Authorization')) {
+    const url = new URL(request.url);
+    const urlToken = url.searchParams.get('token');
+    if (urlToken) {
+      const headers = new Headers(request.headers);
+      headers.set('Authorization', `Bearer ${urlToken}`);
+      authRequest = new Request(request.url, { method: request.method, headers, body: request.body });
+    }
+  }
+
   // Run auth and app lookup concurrently — they have no dependency on each other
   type AuthResult = { id: string; email: string; tier: string; tokenId?: string; tokenAppIds?: string[] | null; tokenFunctionNames?: string[] | null; scopes?: string[] };
   let authUser: AuthResult;
@@ -584,7 +597,7 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
 
   try {
     [authUser, app] = await Promise.all([
-      authenticate(request),
+      authenticate(authRequest),
       appsService.findById(appId),
     ]);
   } catch (authErr) {

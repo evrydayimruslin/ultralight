@@ -854,65 +854,68 @@ export async function generate(args: {
   const world = await getWorld(world_id);
   if (!world) return { success: false, error: 'World not found: ' + world_id };
 
-  // Use get_context to build the full world state
-  const contextResult = await get_context({ world_id, format: 'narrative' }) as any;
-  let context = '';
-  if (contextResult.brief) {
-    context = contextResult.brief;
-  } else {
-    // Fallback: build context manually from structured data
-    const fullRead = await read({ world_id, scene_limit: 5 }) as any;
-    context = 'WORLD: ' + world.name + ' (' + world.genre + ')\n';
-    if (world.description) context += world.description + '\n';
+  // Build context directly from structured data (single AI call, no narrative pre-summary)
+  const fullRead = await read({ world_id, scene_limit: 3 }) as any;
+  let context = 'WORLD: ' + world.name + ' (' + world.genre + ')\n';
+  if (world.description) context += world.description + '\n';
 
-    if (fullRead.characters?.length) {
-      context += '\nCHARACTERS:\n';
-      for (const c of fullRead.characters) {
-        context += '- ' + c.name;
-        if (c.role) context += ' (' + c.role + ')';
-        if (c.traits?.length) context += ': ' + c.traits.join(', ');
-        if (c.backstory) context += '. ' + c.backstory;
-        context += '\n';
-      }
+  if (fullRead.characters?.length) {
+    context += '\nCHARACTERS:\n';
+    for (const c of fullRead.characters) {
+      context += '- ' + c.name;
+      if (c.role) context += ' (' + c.role + ')';
+      if (c.traits?.length) context += ': ' + c.traits.join(', ');
+      if (c.backstory) context += '. ' + c.backstory;
+      context += '\n';
     }
+  }
 
-    if (fullRead.relationships?.length) {
-      context += '\nRELATIONSHIPS:\n';
-      for (const r of fullRead.relationships) {
-        context += '- ' + r.character_a + ' ↔ ' + r.character_b + ' [' + r.type + ']';
-        if (r.description) context += ': ' + r.description;
-        context += '\n';
-      }
+  if (fullRead.relationships?.length) {
+    context += '\nRELATIONSHIPS:\n';
+    for (const r of fullRead.relationships) {
+      context += '- ' + r.character_a + ' ↔ ' + r.character_b + ' [' + r.type + ']';
+      if (r.description) context += ': ' + r.description;
+      context += '\n';
     }
+  }
 
-    if (fullRead.factions?.length) {
-      context += '\nFACTIONS:\n';
-      for (const f of fullRead.factions) context += '- ' + f.name + ': ' + f.description + '\n';
+  if (fullRead.factions?.length) {
+    context += '\nFACTIONS:\n';
+    for (const f of fullRead.factions) {
+      context += '- ' + f.name + ': ' + f.description;
+      if (f.members?.length) context += ' [' + f.members.join(', ') + ']';
+      context += '\n';
     }
-    if (fullRead.arcs?.length) {
-      context += '\nARCS:\n';
-      for (const a of fullRead.arcs) context += '- ' + a.name + ' [' + a.type + ']: ' + a.description + '\n';
+  }
+  if (fullRead.arcs?.length) {
+    context += '\nNARRATIVE ARCS:\n';
+    for (const a of fullRead.arcs) {
+      context += '- ' + a.name + ' [' + a.type + ']';
+      if (a.season) context += ' (S' + a.season + (a.episode_range ? ' E' + a.episode_range : '') + ')';
+      context += ': ' + a.description;
+      if (a.characters?.length) context += ' [' + a.characters.join(', ') + ']';
+      context += '\n';
     }
-    if (fullRead.lore?.length) {
-      context += '\nLORE:\n';
-      for (const l of fullRead.lore) context += '- ' + l.name + ': ' + l.description + '\n';
-    }
-    if (fullRead.rules?.length) {
-      context += '\nRULES:\n';
-      for (const r of fullRead.rules) context += '- ' + r.name + ': ' + r.description + '\n';
-    }
-    if (fullRead.settings?.length) {
-      context += '\nSETTINGS:\n';
-      for (const s of fullRead.settings) context += '- ' + s.name + ': ' + s.description + '\n';
-    }
-    if (fullRead.themes?.length) {
-      context += '\nTHEMES:\n';
-      for (const t of fullRead.themes) context += '- ' + t.name + ': ' + t.description + '\n';
-    }
-    if (fullRead.scenes?.items?.length) {
-      context += '\nRECENT SCENES:\n';
-      for (const s of fullRead.scenes.items) context += '--- ' + s.title + ' ---\n' + s.content.slice(0, 500) + '\n\n';
-    }
+  }
+  if (fullRead.lore?.length) {
+    context += '\nLORE & INSTITUTIONS:\n';
+    for (const l of fullRead.lore) context += '- ' + l.name + ' [' + l.type + ']: ' + l.description + '\n';
+  }
+  if (fullRead.rules?.length) {
+    context += '\nWORLD RULES & CONSTRAINTS:\n';
+    for (const r of fullRead.rules) context += '- ' + r.name + ' [' + r.type + ']: ' + r.description + '\n';
+  }
+  if (fullRead.settings?.length) {
+    context += '\nSETTINGS:\n';
+    for (const s of fullRead.settings) context += '- ' + s.name + ': ' + s.description + '\n';
+  }
+  if (fullRead.themes?.length) {
+    context += '\nTHEMES:\n';
+    for (const t of fullRead.themes) context += '- ' + t.name + ': ' + t.description + '\n';
+  }
+  if (fullRead.scenes?.items?.length) {
+    context += '\nRECENT SCENES:\n';
+    for (const s of fullRead.scenes.items) context += '--- ' + s.title + ' ---\n' + s.content.slice(0, 500) + '\n\n';
   }
 
   // Focus characters
