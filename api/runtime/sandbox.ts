@@ -1399,7 +1399,33 @@ export async function executeInSandbox(
         return config.user;
       },
 
-      // D1 RELATIONAL DATABASE - SQL-based, per-app
+      // APP DATA STORAGE - Key-value, per-app (R2-based, zero config)
+      // Used by app function code to persist data without needing a database.
+      store: async (key: string, value: unknown): Promise<void> => {
+        await config.appDataService.store(key, value);
+        capturedConsole.log(`[SDK] store("${key}")`);
+      },
+      load: async (key: string): Promise<unknown> => {
+        const value = await config.appDataService.load(key);
+        capturedConsole.log(`[SDK] load("${key}")`);
+        return value;
+      },
+      list: async (prefix?: string): Promise<string[]> => {
+        const keys = await config.appDataService.list(prefix);
+        capturedConsole.log(`[SDK] list("${prefix || ''}") → ${keys.length} keys`);
+        return keys;
+      },
+      remove: async (key: string): Promise<void> => {
+        await config.appDataService.remove(key);
+        capturedConsole.log(`[SDK] remove("${key}")`);
+      },
+      query: async (prefix: string, options?: { limit?: number; offset?: number }): Promise<QueryResult[]> => {
+        const results = await config.appDataService.query(prefix, options);
+        capturedConsole.log(`[SDK] query("${prefix}") → ${results.length} results`);
+        return results;
+      },
+
+    // D1 RELATIONAL DATABASE - SQL-based, per-app
       // Every query must include user_id for data isolation.
       // Schema managed via migrations/ folder in the app bundle.
       db: {

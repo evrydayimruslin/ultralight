@@ -778,6 +778,11 @@ View call logs and health events.
 ### SDK Globals Available in Sandbox
 | Global | Purpose |
 |--------|---------|
+| \`ultralight.store(key, value)\` | Store a value in app-scoped persistent KV storage (per user) |
+| \`ultralight.load(key)\` | Load a value from app-scoped storage by key |
+| \`ultralight.list(prefix?)\` | List keys in storage, optionally filtered by prefix |
+| \`ultralight.remove(key)\` | Remove a key from storage |
+| \`ultralight.query(prefix, options?)\` | Query storage with pagination (\`{ limit, offset }\`) |
 | \`ultralight.db.run(sql, params?)\` | Execute INSERT/UPDATE/DELETE (returns { success, meta }) |
 | \`ultralight.db.all(sql, params?)\` | Execute SELECT, returns all rows |
 | \`ultralight.db.first(sql, params?)\` | Execute SELECT, returns first row or null |
