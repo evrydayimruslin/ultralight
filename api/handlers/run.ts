@@ -234,7 +234,7 @@ export async function handleRun(request: Request, appId: string): Promise<Respon
     const d1DatabaseId = (app as any).d1_database_id || await getD1DatabaseId(appId);
     const d1DataService = createD1DataService(appId, d1DatabaseId);
 
-    // Execute in sandbox
+    // Execute in sandbox — AI-capable apps get 120s timeout
     const result = await executeInSandbox(
       {
         appId,
@@ -256,6 +256,7 @@ export async function handleRun(request: Request, appId: string): Promise<Respon
         },
         envVars,
         supabase: supabaseConfig,
+        timeoutMs: 120_000,
       },
       functionName,
       args,

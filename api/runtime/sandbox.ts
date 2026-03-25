@@ -50,6 +50,8 @@ export interface RuntimeConfig {
   // Inter-app calls: base URL + auth token for calling other apps via MCP
   baseUrl?: string;
   authToken?: string;
+  // Per-execution timeout override (default: 30s, max: 120s)
+  timeoutMs?: number;
 }
 
 export interface AppDataService {
@@ -1924,7 +1926,8 @@ export async function executeInSandbox(
     }
 
     // Execute with timeout — prevent user code from hanging the server
-    const EXECUTION_TIMEOUT_MS = 30_000; // 30 seconds
+    const MAX_TIMEOUT_MS = 120_000; // 2 minutes hard cap
+    const EXECUTION_TIMEOUT_MS = Math.min(config.timeoutMs || 30_000, MAX_TIMEOUT_MS);
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
     const timeoutPromise = new Promise<never>((_, reject) => {

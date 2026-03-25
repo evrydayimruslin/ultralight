@@ -1873,6 +1873,10 @@ async function executeAppFunction(
     const d1DatabaseId = app.d1_database_id ? app.d1_database_id : await getD1DatabaseId(app.id);
     const d1DataService = createD1DataService(app.id, d1DatabaseId);
 
+    // AI-capable apps get a longer timeout (120s) since AI calls are inherently slow
+    const permissions = ['memory:read', 'memory:write', 'ai:call', 'net:fetch', 'app:call'];
+    const timeoutMs = permissions.includes('ai:call') ? 120_000 : 30_000;
+
     const execStart = Date.now();
     const result = await executeInSandbox(
       {
@@ -1881,7 +1885,7 @@ async function executeAppFunction(
         ownerId: app.owner_id,
         executionId: crypto.randomUUID(),
         code,
-        permissions: ['memory:read', 'memory:write', 'ai:call', 'net:fetch', 'app:call'],
+        permissions,
         userApiKey,
         user,
         appDataService,
@@ -1892,6 +1896,7 @@ async function executeAppFunction(
         supabase: supabaseConfig,
         baseUrl,
         authToken: meta?.authToken,
+        timeoutMs,
       },
       functionName,
       argsArray

@@ -435,14 +435,15 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
     const d1DatabaseId = (app as any).d1_database_id || await getD1DatabaseId(app.id);
     const d1DataService = createD1DataService(app.id, d1DatabaseId);
 
-    // Execute the function in sandbox
+    // Execute the function in sandbox — AI-capable apps get 120s timeout
+    const httpPermissions = ['memory:read', 'memory:write', 'ai:call', 'net:fetch'];
     const result = await executeInSandbox(
       {
         appId: app.id,
         userId: user?.id || 'anonymous',
         executionId: crypto.randomUUID(),
         code,
-        permissions: ['memory:read', 'memory:write', 'ai:call', 'net:fetch'],
+        permissions: httpPermissions,
         userApiKey,
         user,
         appDataService,
@@ -451,6 +452,7 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
         aiService: aiService as { call: (request: import('../../shared/types/index.ts').AIRequest, apiKey: string) => Promise<import('../../shared/types/index.ts').AIResponse> },
         envVars,
         supabase: supabaseConfig,
+        timeoutMs: httpPermissions.includes('ai:call') ? 120_000 : 30_000,
       },
       functionName,
       [ultralightRequest]
