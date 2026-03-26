@@ -84,12 +84,12 @@ export default function ChatView({
 
   // Build system prompt — full coding agent prompt when project dir is set
   // Use state (not memo) so connected apps schema can be injected before first message
-  const baseSystemPrompt = useMemo(() => buildSystemPrompt(projectDir), [projectDir]);
+  const baseSystemPrompt = useMemo(() => buildSystemPrompt(projectDir, getModel()), [projectDir]);
   const [systemPrompt, setSystemPrompt] = useState(baseSystemPrompt);
 
   // Keep in sync when projectDir changes
   useEffect(() => {
-    setSystemPrompt(buildSystemPrompt(projectDir));
+    setSystemPrompt(buildSystemPrompt(projectDir, getModel()));
   }, [projectDir]);
 
   // Merge tool sets — only include local tools when project dir is set
