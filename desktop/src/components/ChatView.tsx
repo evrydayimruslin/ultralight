@@ -16,7 +16,7 @@ import SpendingApprovalModal from './SpendingApprovalModal';
 import AgentHeader from './AgentHeader';
 import { clearToken, getToken, getApiBase, getModel } from '../lib/storage';
 import { getContextWindow } from '../lib/tokens';
-import { buildSystemPrompt, generateConnectedAppsSchema } from '../lib/systemPrompt';
+import { buildSystemPrompt, generateConnectedAppsSchema, buildCodeModeAppsPrompt, isCodeModeCapable } from '../lib/systemPrompt';
 import { agentRunner } from '../lib/agentRunner';
 
 interface ChatViewProps {
@@ -347,8 +347,16 @@ export default function ChatView({
         }
 
         if (connectedSchemas.length > 0) {
-          const schemaBlock = generateConnectedAppsSchema(connectedSchemas);
-          agentSystemPrompt += `\n\n## Your Connected Apps\nThe following apps are pre-connected. Call their functions directly with \`ul_call({ app_id, function_name, args })\`. No need to discover them first.\n\n${schemaBlock}`;
+          const currentModel = getModel();
+          if (isCodeModeCapable(currentModel)) {
+            // Code mode: compact reference optimized for ul_execute recipes
+            const codeModeBlock = buildCodeModeAppsPrompt(connectedSchemas);
+            agentSystemPrompt += `\n\n${codeModeBlock}`;
+          } else {
+            // Traditional mode: verbose schemas for direct ul_call
+            const schemaBlock = generateConnectedAppsSchema(connectedSchemas);
+            agentSystemPrompt += `\n\n## Your Connected Apps\nThe following apps are pre-connected. Call their functions directly with \`ul_call({ app_id, function_name, args })\`. No need to discover them first.\n\n${schemaBlock}`;
+          }
         }
       }
 

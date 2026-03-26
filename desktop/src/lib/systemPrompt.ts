@@ -365,7 +365,7 @@ interface ConnectedAppManifest {
 }
 
 /**
- * Generate MCP schema blocks for connected apps.
+ * Generate MCP schema blocks for connected apps (traditional mode).
  * These go into the agent's system prompt so it can call functions
  * with 100% accuracy on the first attempt — no discovery needed.
  *
@@ -420,6 +420,127 @@ export function generateConnectedAppsSchema(apps: ConnectedAppManifest[]): strin
   });
 
   return blocks.join('\n\n---\n\n');
+}
+
+// ── Code Mode: Compact App Reference ──
+
+/** Models that support code mode (can reliably write JS recipes) */
+const CODE_MODE_MODELS = [
+  'anthropic/claude', 'anthropic/claude-sonnet', 'anthropic/claude-opus',
+  'google/gemini', 'openai/gpt-4', 'openai/o',
+  'deepseek/deepseek', 'meta-llama/llama-3',
+];
+
+/** Check if a model supports code mode based on name prefix matching */
+export function isCodeModeCapable(model: string): boolean {
+  const m = model.toLowerCase();
+  return CODE_MODE_MODELS.some(prefix => m.startsWith(prefix));
+}
+
+/**
+ * Generate a compact code-mode reference for connected apps.
+ * Instead of verbose schemas, emits one-liner-per-function format
+ * designed for use inside ul_execute recipes.
+ *
+ * Separates functions (callable) from widgets (renderable).
+ */
+export function generateCodeModeAppsReference(apps: ConnectedAppManifest[]): string {
+  if (apps.length === 0) return '';
+
+  const lines: string[] = [];
+  const widgetLines: string[] = [];
+
+  for (const app of apps) {
+    if (!app.functions || Object.keys(app.functions).length === 0) continue;
+
+    const fnEntries = Object.entries(app.functions).filter(([fnName]) => {
+      // Skip widget internal functions
+      if (fnName.startsWith('widget_') && (fnName.endsWith('_ui') || fnName.endsWith('_data'))) return false;
+      if (fnName === 'widget_approval_queue') return false;
+      // Apply selectedFunctions filter if specified
+      if (app.selectedFunctions && app.selectedFunctions.length > 0) {
+        return app.selectedFunctions.includes(fnName);
+      }
+      return true;
+    });
+
+    // Extract widgets
+    const widgetEntries = Object.entries(app.functions).filter(([fnName]) =>
+      fnName.startsWith('widget_') && fnName.endsWith('_ui') && !fnName.endsWith('_data')
+    );
+
+    if (fnEntries.length > 0) {
+      lines.push(`**${app.name}** (\`${app.app_id}\`): ${app.description || ''}`);
+      for (const [fnName, fn] of fnEntries) {
+        const params = fn.parameters
+          ? Object.entries(fn.parameters).map(([p, s]) => {
+              const opt = s.required === false ? '?' : '';
+              return `${p}${opt}`;
+            }).join(', ')
+          : '';
+        lines.push(`  - \`${fnName}(${params})\` — ${fn.description}`);
+      }
+    }
+
+    // Collect widgets
+    for (const [fnName] of widgetEntries) {
+      const widgetName = fnName.replace('widget_', '').replace('_ui', '');
+      const fn = app.functions[fnName];
+      // Extract clean description (remove "DO NOT call" instructions)
+      const desc = (fn.description || '')
+        .replace(/DO NOT call this function\.?\s*/i, '')
+        .replace(/To show.*?in your response.*?\./i, '')
+        .replace(/When you show this widget.*?\./i, '')
+        .trim() || widgetName;
+      widgetLines.push(`  - \`{{widget:${widgetName}:${app.app_id}}}\` — ${desc}`);
+    }
+  }
+
+  let result = '';
+
+  if (lines.length > 0) {
+    result += lines.join('\n');
+  }
+
+  if (widgetLines.length > 0) {
+    result += '\n\n**Available Widgets** (include token in your response text):\n';
+    result += widgetLines.join('\n');
+  }
+
+  return result;
+}
+
+/**
+ * Build the code-mode system prompt block for connected apps.
+ * Replaces the verbose traditional schema injection with a compact
+ * reference optimized for ul_execute recipes.
+ */
+export function buildCodeModeAppsPrompt(apps: ConnectedAppManifest[]): string {
+  const reference = generateCodeModeAppsReference(apps);
+  if (!reference) return '';
+
+  return `## Your Apps
+
+Use these with \`ul_execute\`. ALWAYS prefer \`ul_execute\` over sequential \`ul_call\` — write a recipe that chains calls in one execution.
+
+${reference}
+
+### How to use
+
+**Single call:** \`ul_execute({ code: 'return await ul.call("app_id", "function_name", { args })' })\`
+
+**Multi-step recipe:**
+\`\`\`
+ul_execute({ code: \`
+  const data = await ul.call("app_id", "list_items", {});
+  const processed = data.filter(d => d.status === "active");
+  return { count: processed.length, items: processed };
+\` })
+\`\`\`
+
+**With widget:** Include \`{{widget:name:app_id}}\` in your response text after the recipe result. The widget is interactive — do NOT list the same data as text.
+
+**Discovery:** If you need tools beyond your connected apps, use \`ul_execute({ code: 'return await ul.discover("library", "search query")' })\` to find them.`;
 }
 
 /**
