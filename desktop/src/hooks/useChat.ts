@@ -14,8 +14,6 @@ export interface Message {
   id: string;
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
-  /** Full untruncated content for display (e.g. widget app_html). Only set when content is truncated. */
-  displayContent?: string;
   tool_calls?: AccumulatedToolCall[];
   tool_call_id?: string;
   /** Token usage for this message (assistant only) */

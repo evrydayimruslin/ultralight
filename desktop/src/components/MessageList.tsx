@@ -15,11 +15,10 @@ export default function MessageList({ messages, isLoading }: MessageListProps) {
   const userScrolled = useRef(false);
 
   // Build tool results map: tool_call_id → result content
-  // Use displayContent (full untruncated result) when available for widget rendering
   const toolResults = new Map<string, string>();
   for (const msg of messages) {
     if (msg.role === 'tool' && msg.tool_call_id) {
-      toolResults.set(msg.tool_call_id, msg.displayContent || msg.content);
+      toolResults.set(msg.tool_call_id, msg.content);
     }
   }
 

@@ -85,19 +85,19 @@
       "parameters": []
     },
     "widget_email_inbox_ui": {
-      "description": "Renders an interactive email approvals dashboard as a rich widget. Call this when the user wants to visually browse, review, approve, edit, or manage email conversations and their AI-generated draft responses. The widget supports sending, discarding, editing drafts, and regenerating responses — all within the interactive UI. Returns app_html for in-chat widget rendering.",
+      "description": "DO NOT call this function directly. To show the interactive email approvals widget, include the token {{widget:email_inbox:APP_ID}} in your response text (replace APP_ID with this app's app_id). Use this when the user wants to visually browse, review, approve, edit, or manage email conversations and their AI-generated draft responses.",
       "parameters": []
     },
     "widget_email_inbox_data": {
-      "description": "Returns live data for the email inbox widget. Called internally by the widget HTML via ulAction bridge — do not call directly.",
+      "description": "Internal: returns live data for the email inbox widget. Called by the widget HTML via ulAction bridge — do not call directly.",
       "parameters": []
     },
     "widget_email_faqs_ui": {
-      "description": "Renders an interactive knowledge base editor as a rich widget. Call this when the user wants to visually browse, add, edit, or manage FAQ entries and business conventions that guide AI email drafting. Shows suggested topics from recent emails. Returns app_html for in-chat widget rendering.",
+      "description": "DO NOT call this function directly. To show the interactive FAQ/knowledge base editor widget, include the token {{widget:email_faqs:APP_ID}} in your response text (replace APP_ID with this app's app_id). Use this when the user wants to view, add, or manage FAQ entries and conventions.",
       "parameters": []
     },
     "widget_email_faqs_data": {
-      "description": "Returns live data for the FAQs widget. Called internally by the widget HTML via ulAction bridge — do not call directly.",
+      "description": "Internal: returns live data for the FAQs widget. Called by the widget HTML via ulAction bridge — do not call directly.",
       "parameters": []
     }
   }
