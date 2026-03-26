@@ -20,6 +20,7 @@ const MAX_ARRAY_ITEMS = 10;
 
 /**
  * Truncate a tool result to prevent context bloat.
+ * - Widget results (app_html): preserve full HTML for rendering, summarize for model
  * - JSON arrays: keep first N items + count summary
  * - Large strings: keep first MAX_RESULT_CHARS + truncation notice
  * - Small results: pass through unchanged
@@ -30,6 +31,17 @@ function truncateToolResult(result: string, toolName: string): string {
   // Try to intelligently truncate JSON
   try {
     const parsed = JSON.parse(result);
+
+    // Widget results: contains app_html for in-chat rendering.
+    // Return a compact summary for the model — the full result is preserved
+    // separately in displayContent for ToolCallCard to render the iframe.
+    if (typeof parsed === 'object' && parsed !== null && typeof parsed.app_html === 'string') {
+      const summary: Record<string, unknown> = { ...parsed };
+      delete summary.app_html;
+      summary._widget_rendered = true;
+      summary._note = 'Interactive widget has been rendered inline for the user. Do not describe the widget UI — the user can already see and interact with it.';
+      return JSON.stringify(summary);
+    }
 
     // Handle arrays (most common bloat: list queries returning 100+ items)
     if (Array.isArray(parsed)) {
@@ -68,6 +80,8 @@ export interface LoopMessage {
   id: string;
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  /** Full untruncated content for display (e.g. widget app_html). Only set when content is truncated for model context. */
+  displayContent?: string;
   tool_calls?: AccumulatedToolCall[];
   tool_call_id?: string;
   usage?: {
@@ -221,10 +235,13 @@ export async function runAgentLoop(
           callbacks.onWarning?.(`Tool ${tc.function.name} failed: ${errMsg}`);
         }
 
+        const truncatedResult = truncateToolResult(toolResult, tc.function.name);
         const toolMsg: LoopMessage = {
           id: crypto.randomUUID(),
           role: 'tool',
-          content: truncateToolResult(toolResult, tc.function.name),
+          content: truncatedResult,
+          // Preserve full result for display when truncation removed app_html
+          displayContent: truncatedResult !== toolResult ? toolResult : undefined,
           tool_call_id: tc.id,
           created_at: Date.now(),
         };
