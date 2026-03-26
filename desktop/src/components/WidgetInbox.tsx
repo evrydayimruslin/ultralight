@@ -10,7 +10,7 @@ export default function WidgetInbox() {
   // Group widget data by source
   const groups = sources
     .map(source => {
-      const key = source.appId + ':' + source.widgetFunction;
+      const key = source.appUuid + ':' + source.widgetFunction;
       const widgetData = data[key];
       return { source, data: widgetData };
     })
@@ -32,7 +32,7 @@ export default function WidgetInbox() {
   return (
     <div className="space-y-4">
       {groups.map(({ source, data: widgetData }) => (
-        <div key={source.appId + ':' + source.widgetFunction}>
+        <div key={source.appUuid + ':' + source.widgetFunction}>
           {/* Source header */}
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
@@ -52,7 +52,7 @@ export default function WidgetInbox() {
               <WidgetCard
                 key={item.id}
                 item={item}
-                appId={source.appId}
+                appId={source.appUuid}
                 onAction={executeAction}
               />
             ))}

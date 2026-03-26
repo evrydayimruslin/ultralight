@@ -85,11 +85,19 @@
       "parameters": []
     },
     "widget_email_inbox_ui": {
-      "description": "Returns the complete email inbox widget app (HTML + meta) for the Activity tab. HTML is cached by the desktop; only meta (badge count) is polled.",
+      "description": "Renders an interactive email approvals dashboard as a rich widget. Call this when the user wants to visually browse, review, approve, edit, or manage email conversations and their AI-generated draft responses. The widget supports sending, discarding, editing drafts, and regenerating responses — all within the interactive UI. Returns app_html for in-chat widget rendering.",
       "parameters": []
     },
     "widget_email_inbox_data": {
-      "description": "Returns live data for the email inbox widget app: pending items, conventions, and stats. Called from within the widget HTML via ulAction bridge.",
+      "description": "Returns live data for the email inbox widget. Called internally by the widget HTML via ulAction bridge — do not call directly.",
+      "parameters": []
+    },
+    "widget_email_faqs_ui": {
+      "description": "Renders an interactive knowledge base editor as a rich widget. Call this when the user wants to visually browse, add, edit, or manage FAQ entries and business conventions that guide AI email drafting. Shows suggested topics from recent emails. Returns app_html for in-chat widget rendering.",
+      "parameters": []
+    },
+    "widget_email_faqs_data": {
+      "description": "Returns live data for the FAQs widget. Called internally by the widget HTML via ulAction bridge — do not call directly.",
       "parameters": []
     }
   }

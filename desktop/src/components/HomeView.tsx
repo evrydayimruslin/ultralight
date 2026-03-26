@@ -22,7 +22,7 @@ import { useWidgetInbox, type WidgetAppSource } from '../hooks/useWidgetInbox';
 
 // ── Types ──
 
-type DashboardTab = 'project' | 'agents' | 'activity';
+type DashboardTab = 'agents' | 'admin';
 
 interface HomeViewProps {
   selectedProjectDir: string | null;
@@ -103,7 +103,7 @@ export default function HomeView({
   onSelectProjectDir,
   onNavigateToAgent,
 }: HomeViewProps) {
-  const [activeTab, setActiveTab] = useState<DashboardTab>('project');
+  const [activeTab, setActiveTab] = useState<DashboardTab>('admin');
   const [quickInstructAgent, setQuickInstructAgent] = useState<string | null>(null);
   const [quickInstructText, setQuickInstructText] = useState('');
   const [quickInstructNewSession, setQuickInstructNewSession] = useState(false);
@@ -125,8 +125,8 @@ export default function HomeView({
   const handleCloseWidget = useCallback(() => {
     setOpenWidget(null);
     setWidgetAppHtml(null);
-    refreshWidgets();
-  }, [refreshWidgets]);
+    // Don't trigger full refresh — the 30s poll will update badges naturally
+  }, []);
 
   const {
     columns,
@@ -478,6 +478,19 @@ export default function HomeView({
           <h1 className="text-h3 text-ul-text tracking-tight">Command</h1>
         </div>
         <div className="flex items-center gap-3">
+          {/* Refresh button */}
+          <button
+            onClick={() => {
+              if (activeTab === 'admin') refreshWidgets();
+              if (activeTab === 'agents') refreshAgents();
+            }}
+            title="Refresh"
+            className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </button>
           <ProjectDropdown
             selectedDir={selectedProjectDir}
             onSelect={onSelectProjectDir}
@@ -487,17 +500,16 @@ export default function HomeView({
 
       {/* Tab bar */}
       <div className="flex items-center gap-1 px-4 border-b border-ul-border flex-shrink-0">
-        <TabButton label="Project" active={activeTab === 'project'} onClick={() => setActiveTab('project')} />
-        <TabButton label="Agents" active={activeTab === 'agents'} onClick={() => setActiveTab('agents')} />
+        <TabButton label="Agents" active={activeTab === 'agents'} onClick={() => { setActiveTab('agents'); handleCloseWidget(); }} />
         <button
-          onClick={() => setActiveTab('activity')}
+          onClick={() => { setActiveTab('admin'); handleCloseWidget(); }}
           className={`relative px-3 py-2 text-small font-medium transition-colors border-b-2 -mb-px ${
-            activeTab === 'activity'
+            activeTab === 'admin'
               ? 'border-ul-text text-ul-text'
               : 'border-transparent text-ul-text-muted hover:text-ul-text-secondary'
           }`}
         >
-          Activity
+          Admin
           {widgetBadge > 0 && (
             <span className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-semibold rounded-full bg-blue-600 text-white">
               {widgetBadge}
@@ -508,7 +520,7 @@ export default function HomeView({
 
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto relative">
-        {activeTab === 'project' && (
+        {false && activeTab === 'project_disabled' && (
           <div className="px-6 py-4 space-y-6">
             {selectedProjectDir ? (
               <section>
@@ -760,7 +772,7 @@ export default function HomeView({
           </div>
         )}
 
-        {activeTab === 'activity' && (
+        {activeTab === 'admin' && (
           <div className="px-6 py-4">
                 {/* Widget Homescreen — grid of widget tiles */}
                 <WidgetHomescreen

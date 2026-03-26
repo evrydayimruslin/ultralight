@@ -100,6 +100,7 @@ export default function ChatView({
     return mcpTools;
   }, [mcpTools, localTools, projectDir]);
 
+
   // Ref for stable tool call reference (avoids stale closures in spawned agents)
   const handleToolCallRef = useRef<(name: string, args: Record<string, unknown>) => Promise<string>>(null!);
 

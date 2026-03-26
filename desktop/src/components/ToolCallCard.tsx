@@ -1,10 +1,12 @@
 // Tool call card — clean, non-technical display of tool invocations.
 // For app calls: shows polished app name + human-readable action summary.
 // Single expand layer with formatted details.
+// When a tool result contains app_html, renders an interactive widget iframe inline.
 
 import { useState, useMemo, useEffect, useRef } from 'react';
 import type { AccumulatedToolCall } from '../lib/sse';
 import ToolResultRenderer from './tool-renderers';
+import InChatWidget from './InChatWidget';
 
 interface ToolCallCardProps {
   toolCall: AccumulatedToolCall;
@@ -59,6 +61,9 @@ function humanizeAction(fnName: string, args?: Record<string, unknown>): string 
     return firstVal ? `Checking billing for ${firstVal}` : 'Checking billing...';
   if (name.includes('history') || name.includes('log') || name.includes('activity'))
     return firstVal ? `Reviewing history for ${firstVal}` : 'Reviewing history...';
+  // Widget functions get a clean label
+  if (name.includes('widget') && name.endsWith('_ui'))
+    return 'Loading widget...';
 
   // Fallback: convert function name to readable phrase
   const readable = fnName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -103,10 +108,26 @@ function humanizeToolAction(name: string, args: Record<string, unknown>): { labe
   }
 }
 
+/** Parse result as JSON and check for widget response (contains app_html) */
+interface WidgetResult {
+  meta?: { title?: string; icon?: string; badge_count?: number };
+  app_html: string;
+  version?: string;
+}
+
+function parseWidgetResult(result: string): WidgetResult | null {
+  try {
+    const parsed = JSON.parse(result);
+    if (parsed && typeof parsed.app_html === 'string' && parsed.app_html.length > 0) {
+      return parsed as WidgetResult;
+    }
+  } catch { /* not JSON or no app_html */ }
+  return null;
+}
+
 // ── Component ──
 
 export default function ToolCallCard({ toolCall, result, executing }: ToolCallCardProps) {
-  const [expanded, setExpanded] = useState(false);
   const startTimeRef = useRef<number>(Date.now());
   const [elapsed, setElapsed] = useState(0);
 
@@ -121,27 +142,51 @@ export default function ToolCallCard({ toolCall, result, executing }: ToolCallCa
   const name = toolCall.function.name;
   const isAppCall = name === 'ul_call';
 
+  // Check if result is a widget response
+  const widgetResult = useMemo(() => {
+    if (!result) return null;
+    return parseWidgetResult(result);
+  }, [result]);
+
+  const hasWidget = widgetResult !== null;
+
+  // Auto-expand when widget is detected, otherwise start collapsed
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    if (hasWidget) setExpanded(true);
+  }, [hasWidget]);
+
+  // Extract app call details for widget rendering
+  const appCallInfo = useMemo(() => {
+    if (!isAppCall) return null;
+    const appId = String(parsedArgs.app_id || '');
+    const fnName = String(parsedArgs.function_name || parsedArgs.function || '');
+    // Derive slug: for widget functions like "widget_email_inbox_ui",
+    // we need the app slug for the bridge. Try to extract from function naming
+    // or fall back to app_id.
+    return { appId, fnName };
+  }, [isAppCall, parsedArgs]);
+
   // Build display info
   const display = useMemo(() => {
-    if (isAppCall) {
-      const fnName = String(parsedArgs.function_name || parsedArgs.function || '');
+    if (isAppCall && appCallInfo) {
       const fnArgs = parsedArgs.args as Record<string, unknown> | undefined;
 
-      // Resolve app name: try to get from metadata, fall back to slug from app_id
       let appDisplayName = '';
-      const appId = String(parsedArgs.app_id || '');
-      // For UUID app_ids, we'll show the function action as primary
-      // The app name will be resolved from connected apps context if available
-      if (appId && !appId.includes('-')) {
-        appDisplayName = toTitleCase(appId);
+      if (appCallInfo.appId && !appCallInfo.appId.includes('-')) {
+        appDisplayName = toTitleCase(appCallInfo.appId);
       }
 
-      const action = humanizeAction(fnName, fnArgs);
-      return { appName: appDisplayName, action, fnName, fnArgs };
+      // Use widget title if available
+      const action = widgetResult?.meta?.title
+        ? widgetResult.meta.title
+        : humanizeAction(appCallInfo.fnName, fnArgs);
+
+      return { appName: appDisplayName, action, fnName: appCallInfo.fnName, fnArgs };
     }
     const { label, detail } = humanizeToolAction(name, parsedArgs);
     return { appName: '', action: detail ? `${label}: ${detail}` : label, fnName: '', fnArgs: undefined };
-  }, [isAppCall, name, parsedArgs]);
+  }, [isAppCall, appCallInfo, name, parsedArgs, widgetResult]);
 
   // Timer
   useEffect(() => {
@@ -155,8 +200,8 @@ export default function ToolCallCard({ toolCall, result, executing }: ToolCallCa
     if (result && !executing) setElapsed(Date.now() - startTimeRef.current);
   }, [result, executing]);
 
-  // Rich result
-  const richResult = result ? <ToolResultRenderer toolName={name} args={parsedArgs} result={result} /> : null;
+  // Rich result (non-widget)
+  const richResult = result && !hasWidget ? <ToolResultRenderer toolName={name} args={parsedArgs} result={result} /> : null;
 
   return (
     <div className={`my-2 rounded-lg overflow-hidden transition-colors ${
@@ -178,7 +223,7 @@ export default function ToolCallCard({ toolCall, result, executing }: ToolCallCa
           <div className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 flex-shrink-0" />
         )}
 
-        {/* Action description */}
+        {/* Action description — use widget title when available */}
         <span className={`text-small flex-1 min-w-0 truncate ${executing ? 'text-blue-700' : 'text-ul-text-secondary'}`}>
           {display.action}
         </span>
@@ -199,46 +244,60 @@ export default function ToolCallCard({ toolCall, result, executing }: ToolCallCa
         </svg>
       </button>
 
-      {/* Expanded: details + result in single layer */}
+      {/* Expanded: widget or details + result */}
       {expanded && (
-        <div className="border-t border-gray-100 px-3 py-2 space-y-2">
-          {/* Formatted details — always visible when expanded */}
-          {isAppCall ? (
-            <div className="space-y-0.5">
-              {display.fnName && (
-                <div className="flex items-baseline gap-2">
-                  <span className="text-[10px] text-gray-400 w-16 shrink-0">Function</span>
-                  <span className="text-xs font-mono text-ul-text-secondary">{display.fnName}</span>
-                </div>
-              )}
-              {display.fnArgs && Object.keys(display.fnArgs).length > 0 && (
-                Object.entries(display.fnArgs).map(([k, v]) => (
-                  <div key={k} className="flex items-baseline gap-2">
-                    <span className="text-[10px] text-gray-400 w-16 shrink-0">{toTitleCase(k)}</span>
-                    <span className="text-xs text-ul-text-secondary">{typeof v === 'string' ? v : JSON.stringify(v)}</span>
-                  </div>
-                ))
-              )}
+        <div className="border-t border-gray-100">
+          {/* Widget rendering — full width, interactive */}
+          {hasWidget && widgetResult ? (
+            <div className="p-2">
+              <InChatWidget
+                appUuid={appCallInfo?.appId || ''}
+                appSlug="" // Bridge will use appUuid directly when slug is empty
+                widgetName={widgetResult.meta?.title || appCallInfo?.fnName || 'widget'}
+                appHtml={widgetResult.app_html}
+              />
             </div>
           ) : (
-            <pre className="text-xs font-mono bg-gray-50 rounded p-2 overflow-x-auto whitespace-pre-wrap text-ul-text-secondary">
-              {JSON.stringify(parsedArgs, null, 2)}
-            </pre>
-          )}
+            <div className="px-3 py-2 space-y-2">
+              {/* Formatted details — always visible when expanded */}
+              {isAppCall ? (
+                <div className="space-y-0.5">
+                  {display.fnName && (
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-[10px] text-gray-400 w-16 shrink-0">Function</span>
+                      <span className="text-xs font-mono text-ul-text-secondary">{display.fnName}</span>
+                    </div>
+                  )}
+                  {display.fnArgs && Object.keys(display.fnArgs).length > 0 && (
+                    Object.entries(display.fnArgs).map(([k, v]) => (
+                      <div key={k} className="flex items-baseline gap-2">
+                        <span className="text-[10px] text-gray-400 w-16 shrink-0">{toTitleCase(k)}</span>
+                        <span className="text-xs text-ul-text-secondary">{typeof v === 'string' ? v : JSON.stringify(v)}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              ) : (
+                <pre className="text-xs font-mono bg-gray-50 rounded p-2 overflow-x-auto whitespace-pre-wrap text-ul-text-secondary">
+                  {JSON.stringify(parsedArgs, null, 2)}
+                </pre>
+              )}
 
-          {/* Result */}
-          {result && richResult ? (
-            <div className="pt-1">{richResult}</div>
-          ) : result ? (
-            <pre className="text-xs font-mono bg-gray-50 rounded-md p-2.5 overflow-x-auto whitespace-pre-wrap max-h-60 overflow-y-auto text-ul-text-secondary border border-gray-100">
-              {result.length > 3000 ? result.slice(0, 3000) + '\n... (truncated)' : result}
-            </pre>
-          ) : executing ? (
-            <div className="flex items-center gap-2 text-caption text-blue-500 py-1">
-              <div className="w-3 h-3 rounded-full border-2 border-blue-300 border-t-blue-600 animate-spin" />
-              Working...
+              {/* Result */}
+              {result && richResult ? (
+                <div className="pt-1">{richResult}</div>
+              ) : result ? (
+                <pre className="text-xs font-mono bg-gray-50 rounded-md p-2.5 overflow-x-auto whitespace-pre-wrap max-h-60 overflow-y-auto text-ul-text-secondary border border-gray-100">
+                  {result.length > 3000 ? result.slice(0, 3000) + '\n... (truncated)' : result}
+                </pre>
+              ) : executing ? (
+                <div className="flex items-center gap-2 text-caption text-blue-500 py-1">
+                  <div className="w-3 h-3 rounded-full border-2 border-blue-300 border-t-blue-600 animate-spin" />
+                  Working...
+                </div>
+              ) : null}
             </div>
-          ) : null}
+          )}
         </div>
       )}
     </div>

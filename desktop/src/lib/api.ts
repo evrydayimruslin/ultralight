@@ -205,6 +205,54 @@ export async function executeMcpTool(
   return data.result || { content: [{ type: 'text', text: 'No result' }], isError: true };
 }
 
+/**
+ * Call a specific app's MCP endpoint directly (bypasses ul.call prefix issues).
+ * toolName must be the slug-prefixed name (e.g., "app-7vftmp_widget_approval_queue").
+ */
+export async function executeAppMcpTool(
+  appUuid: string,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<McpToolResult> {
+  const base = getApiBase();
+
+  const res = await fetch(`${base}/mcp/${appUuid}`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: crypto.randomUUID(),
+      method: 'tools/call',
+      params: {
+        name: toolName,
+        arguments: args,
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    return {
+      content: [{ type: 'text', text: `Tool error (${res.status}): ${errText}` }],
+      isError: true,
+    };
+  }
+
+  const data = await res.json() as {
+    result?: McpToolResult;
+    error?: { message: string };
+  };
+
+  if (data.error) {
+    return {
+      content: [{ type: 'text', text: `Tool error: ${data.error.message}` }],
+      isError: true,
+    };
+  }
+
+  return data.result || { content: [{ type: 'text', text: 'No result' }], isError: true };
+}
+
 // ── Balance Check ──
 
 /**

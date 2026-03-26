@@ -1,0 +1,333 @@
+{
+  "name": "resort-manager",
+  "version": "1.0.0",
+  "type": "mcp",
+  "entry": { "functions": "index.ts" },
+  "description": "Complete ski/golf resort management: rooms, ski rentals/lessons, golf tee times, restaurant, store, guidelines, email agent, and admin approval queue.",
+  "permissions": ["ai:call", "net:fetch"],
+  "storage": "d1",
+  "env_vars": {
+    "RESEND_API_KEY": { "type": "universal", "required": false, "description": "Resend API key for sending emails" },
+    "RESORT_EMAIL_ADDRESS": { "type": "universal", "required": false, "description": "From address for outbound emails" },
+    "RESORT_NAME": { "type": "universal", "required": false, "description": "Resort display name for email templates" }
+  },
+  "functions": {
+    "rooms_initialize": {
+      "description": "Initialize room registry with all 185 rooms (401-837), tiers (Twin, Corner King, Junior Suite, Onsen Suite), and prices. Run once on first setup.",
+      "parameters": [
+        { "name": "tier_map", "type": "object", "required": false, "description": "Room number to tier mapping override, e.g. {\"401\": \"Twin\"}" },
+        { "name": "price_map", "type": "object", "required": false, "description": "Tier to nightly price mapping, e.g. {\"Twin\": 15000}" }
+      ]
+    },
+    "rooms_list": {
+      "description": "List rooms with optional filters for status, tier, building, and date availability",
+      "parameters": [
+        { "name": "status", "type": "string", "required": false, "description": "available | occupied | maintenance | blocked" },
+        { "name": "tier", "type": "string", "required": false, "description": "Twin | Corner King | Junior Suite | Onsen Suite" },
+        { "name": "building", "type": "number", "required": false, "description": "Building number 4-8" },
+        { "name": "check_in", "type": "string", "required": false, "description": "ISO date — check availability from this date" },
+        { "name": "check_out", "type": "string", "required": false, "description": "ISO date — check availability to this date" },
+        { "name": "room_number", "type": "string", "required": false, "description": "Specific room number e.g. 512" }
+      ]
+    },
+    "rooms_book": {
+      "description": "Book a room for a guest with check-in/out dates, party size, and payment details",
+      "parameters": [
+        { "name": "room_number", "type": "string", "required": true },
+        { "name": "guest_name", "type": "string", "required": true },
+        { "name": "num_guests", "type": "number", "required": true },
+        { "name": "check_in_date", "type": "string", "required": true },
+        { "name": "check_out_date", "type": "string", "required": true },
+        { "name": "nights_staying", "type": "number", "required": true },
+        { "name": "group_name", "type": "string", "required": false },
+        { "name": "payment_method", "type": "string", "required": false },
+        { "name": "payment_amount", "type": "number", "required": false },
+        { "name": "notes", "type": "string", "required": false }
+      ]
+    },
+    "rooms_update": {
+      "description": "Update a room reservation — change room, dates, payment status, or any field",
+      "parameters": [
+        { "name": "reservation_id", "type": "string", "required": true },
+        { "name": "room_number", "type": "string", "required": false },
+        { "name": "check_in_date", "type": "string", "required": false },
+        { "name": "check_out_date", "type": "string", "required": false },
+        { "name": "nights_staying", "type": "number", "required": false },
+        { "name": "num_guests", "type": "number", "required": false },
+        { "name": "guest_name", "type": "string", "required": false },
+        { "name": "payment_method", "type": "string", "required": false },
+        { "name": "payment_status", "type": "string", "required": false },
+        { "name": "payment_amount", "type": "number", "required": false },
+        { "name": "status", "type": "string", "required": false },
+        { "name": "notes", "type": "string", "required": false }
+      ]
+    },
+    "rooms_checkin": {
+      "description": "Check a guest into their room. Updates reservation and room status.",
+      "parameters": [
+        { "name": "reservation_id", "type": "string", "required": true }
+      ]
+    },
+    "rooms_checkout": {
+      "description": "Check a guest out. Returns consolidated bill of all unpaid items across services.",
+      "parameters": [
+        { "name": "reservation_id", "type": "string", "required": true }
+      ]
+    },
+    "ski_inventory": {
+      "description": "View ski equipment inventory with optional category filter and availability check",
+      "parameters": [
+        { "name": "category", "type": "string", "required": false, "description": "skis | boots | poles | helmet | jacket | pants" },
+        { "name": "available_only", "type": "boolean", "required": false }
+      ]
+    },
+    "ski_equipment_manage": {
+      "description": "Add new equipment or update existing inventory items",
+      "parameters": [
+        { "name": "action", "type": "string", "required": true, "description": "add | update" },
+        { "name": "equipment_id", "type": "string", "required": false },
+        { "name": "category", "type": "string", "required": false },
+        { "name": "brand", "type": "string", "required": false },
+        { "name": "product", "type": "string", "required": false },
+        { "name": "size", "type": "string", "required": false },
+        { "name": "gender", "type": "string", "required": false },
+        { "name": "qty_total", "type": "number", "required": false }
+      ]
+    },
+    "ski_rent": {
+      "description": "Create a rental with multiple equipment items. Validates availability and decrements stock atomically.",
+      "parameters": [
+        { "name": "guest_name", "type": "string", "required": true },
+        { "name": "room_number", "type": "string", "required": false },
+        { "name": "tohoku_pass", "type": "boolean", "required": false },
+        { "name": "equipment_ids", "type": "array", "required": true, "description": "Array of equipment IDs to rent" },
+        { "name": "payment_method", "type": "string", "required": false },
+        { "name": "payment_amount", "type": "number", "required": false }
+      ]
+    },
+    "ski_return": {
+      "description": "Return a rental and restore equipment inventory",
+      "parameters": [
+        { "name": "rental_id", "type": "string", "required": true }
+      ]
+    },
+    "ski_book_lesson": {
+      "description": "Book a ski lesson with optional instructor preference and skill level",
+      "parameters": [
+        { "name": "guest_name", "type": "string", "required": true },
+        { "name": "room_number", "type": "string", "required": false },
+        { "name": "lesson_date", "type": "string", "required": true },
+        { "name": "lesson_time", "type": "string", "required": true },
+        { "name": "duration_minutes", "type": "number", "required": false },
+        { "name": "instructor", "type": "string", "required": false },
+        { "name": "num_students", "type": "number", "required": false },
+        { "name": "skill_level", "type": "string", "required": false },
+        { "name": "payment_method", "type": "string", "required": false },
+        { "name": "payment_amount", "type": "number", "required": false }
+      ]
+    },
+    "ski_lessons_list": {
+      "description": "List ski lessons with optional date, instructor, or guest filter",
+      "parameters": [
+        { "name": "date", "type": "string", "required": false },
+        { "name": "instructor", "type": "string", "required": false },
+        { "name": "guest_name", "type": "string", "required": false }
+      ]
+    },
+    "golf_book_tee": {
+      "description": "Book a tee time with starting hole, party size, and optional golf cart assignments",
+      "parameters": [
+        { "name": "guest_name", "type": "string", "required": true },
+        { "name": "room_number", "type": "string", "required": false },
+        { "name": "tee_date", "type": "string", "required": true },
+        { "name": "tee_time", "type": "string", "required": true },
+        { "name": "starting_hole", "type": "number", "required": false },
+        { "name": "num_in_party", "type": "number", "required": false },
+        { "name": "cart_ids", "type": "array", "required": false },
+        { "name": "payment_method", "type": "string", "required": false },
+        { "name": "payment_amount", "type": "number", "required": false }
+      ]
+    },
+    "golf_availability": {
+      "description": "View available and booked tee times for a given date",
+      "parameters": [
+        { "name": "date", "type": "string", "required": true },
+        { "name": "starting_hole", "type": "number", "required": false }
+      ]
+    },
+    "golf_cancel": {
+      "description": "Cancel a tee time and remove cart assignments",
+      "parameters": [
+        { "name": "tee_time_id", "type": "string", "required": true }
+      ]
+    },
+    "restaurant_book": {
+      "description": "Book a restaurant table with party size, set menu, and allergy information",
+      "parameters": [
+        { "name": "guest_name", "type": "string", "required": true },
+        { "name": "room_number", "type": "string", "required": false },
+        { "name": "res_date", "type": "string", "required": true },
+        { "name": "res_time", "type": "string", "required": true },
+        { "name": "num_people", "type": "number", "required": true },
+        { "name": "set_menu", "type": "string", "required": false },
+        { "name": "allergies", "type": "string", "required": false },
+        { "name": "payment_method", "type": "string", "required": false },
+        { "name": "notes", "type": "string", "required": false }
+      ]
+    },
+    "restaurant_today": {
+      "description": "View all restaurant reservations for today (or a given date) with total covers",
+      "parameters": [
+        { "name": "date", "type": "string", "required": false }
+      ]
+    },
+    "restaurant_cancel": {
+      "description": "Cancel a restaurant reservation",
+      "parameters": [
+        { "name": "reservation_id", "type": "string", "required": true }
+      ]
+    },
+    "store_sell": {
+      "description": "Record a store purchase. Decrements product stock atomically.",
+      "parameters": [
+        { "name": "product_id", "type": "string", "required": true },
+        { "name": "quantity", "type": "number", "required": false },
+        { "name": "guest_name", "type": "string", "required": false },
+        { "name": "room_number", "type": "string", "required": false },
+        { "name": "payment_method", "type": "string", "required": false },
+        { "name": "payment_amount", "type": "number", "required": false }
+      ]
+    },
+    "store_inventory": {
+      "description": "View store product inventory with optional category filter and low stock alert",
+      "parameters": [
+        { "name": "category", "type": "string", "required": false },
+        { "name": "low_stock_only", "type": "boolean", "required": false }
+      ]
+    },
+    "store_manage": {
+      "description": "Add products, restock, or update prices",
+      "parameters": [
+        { "name": "action", "type": "string", "required": true, "description": "add | restock | update_price" },
+        { "name": "product_id", "type": "string", "required": false },
+        { "name": "name", "type": "string", "required": false },
+        { "name": "category", "type": "string", "required": false },
+        { "name": "brand", "type": "string", "required": false },
+        { "name": "price", "type": "number", "required": false },
+        { "name": "qty_add", "type": "number", "required": false }
+      ]
+    },
+    "store_sales": {
+      "description": "View sales history with optional date, guest, or product filters",
+      "parameters": [
+        { "name": "date", "type": "string", "required": false },
+        { "name": "guest_name", "type": "string", "required": false },
+        { "name": "product_id", "type": "string", "required": false },
+        { "name": "limit", "type": "number", "required": false }
+      ]
+    },
+    "guest_summary": {
+      "description": "Guest profile overview. Default: room + reservation + unpaid total only. Pass sections for more detail.",
+      "parameters": [
+        { "name": "guest_name", "type": "string", "required": false },
+        { "name": "room_number", "type": "string", "required": false },
+        { "name": "sections", "type": "array", "required": false, "description": "Which data to include. Default: [room, reservation, billing]. Options: room, reservation, ski_rentals, ski_lessons, tee_times, restaurant, store, billing, all" }
+      ]
+    },
+    "guest_billing": {
+      "description": "Billing summary for a guest or room. Default: totals-only per category. Pass itemized: true for line items.",
+      "parameters": [
+        { "name": "room_number", "type": "string", "required": false },
+        { "name": "guest_name", "type": "string", "required": false },
+        { "name": "payment_status", "type": "string", "required": false },
+        { "name": "itemized", "type": "boolean", "required": false, "description": "If true, return individual line items. Default: false (totals only)." }
+      ]
+    },
+    "report_daily": {
+      "description": "Daily operations snapshot: occupancy, check-ins/outs, activities, revenue, pending approvals",
+      "parameters": [
+        { "name": "date", "type": "string", "required": false }
+      ]
+    },
+    "report_revenue": {
+      "description": "Revenue report for a date range, broken down by service and payment method",
+      "parameters": [
+        { "name": "start_date", "type": "string", "required": true },
+        { "name": "end_date", "type": "string", "required": true }
+      ]
+    },
+    "guidelines_get": {
+      "description": "Get resort guidelines by key or category (policies, pricing, hours, contacts)",
+      "parameters": [
+        { "name": "key", "type": "string", "required": false },
+        { "name": "category", "type": "string", "required": false }
+      ]
+    },
+    "guidelines_set": {
+      "description": "Create or update a resort guideline (upserts by key)",
+      "parameters": [
+        { "name": "key", "type": "string", "required": true },
+        { "name": "value", "type": "string", "required": true },
+        { "name": "category", "type": "string", "required": false }
+      ]
+    },
+    "guidelines_remove": {
+      "description": "Remove a resort guideline by key",
+      "parameters": [
+        { "name": "key", "type": "string", "required": true }
+      ]
+    },
+    "email_process": {
+      "description": "Process inbound emails: AI classifies intent, drafts replies, suggests DB changes, queues everything for admin approval",
+      "parameters": [
+        { "name": "emails", "type": "array", "required": false, "description": "Array of {from, subject, body} email objects to process" }
+      ]
+    },
+    "email_send": {
+      "description": "Send an email via Resend API. Usually called by approval execution, not directly.",
+      "parameters": [
+        { "name": "to", "type": "string", "required": true },
+        { "name": "subject", "type": "string", "required": true },
+        { "name": "body", "type": "string", "required": true },
+        { "name": "in_reply_to", "type": "string", "required": false }
+      ]
+    },
+    "email_log_list": {
+      "description": "View email history (inbound and outbound) with optional filters",
+      "parameters": [
+        { "name": "direction", "type": "string", "required": false, "description": "inbound | outbound" },
+        { "name": "status", "type": "string", "required": false },
+        { "name": "limit", "type": "number", "required": false }
+      ]
+    },
+    "approvals_list": {
+      "description": "List pending approval items (email replies, DB changes) awaiting admin action",
+      "parameters": [
+        { "name": "status", "type": "string", "required": false, "description": "pending | executed | rejected | revised" },
+        { "name": "type", "type": "string", "required": false, "description": "email_reply | email_skip | db_change" },
+        { "name": "limit", "type": "number", "required": false }
+      ]
+    },
+    "approvals_act": {
+      "description": "Approve, reject, or revise a queued item. On approve: sends email or applies DB change. On revise: uses your revision.",
+      "parameters": [
+        { "name": "approval_id", "type": "string", "required": true },
+        { "name": "action", "type": "string", "required": true, "description": "approve | reject | revise" },
+        { "name": "revision", "type": "string", "required": false, "description": "Revised email body or override text" },
+        { "name": "admin_notes", "type": "string", "required": false }
+      ]
+    },
+    "db_browse": {
+      "description": "Run raw SQL queries against the resort database. Read-only by default. Auto-applies LIMIT 100 if none specified.",
+      "parameters": [
+        { "name": "sql", "type": "string", "required": true },
+        { "name": "params", "type": "array", "required": false },
+        { "name": "mode", "type": "string", "required": false, "description": "read (default) | write" }
+      ]
+    },
+    "db_tables": {
+      "description": "List all resort database tables with row counts",
+      "parameters": []
+    }
+  }
+}

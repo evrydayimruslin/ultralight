@@ -252,13 +252,38 @@ export function useWidgetInbox() {
     const sources = await discoverSources();
     if (!mountedRef.current) return;
     setState(prev => ({ ...prev, sources }));
+    // Cache for instant remounts
+    if (sources.length > 0) sessionStorage.setItem('widget_sources', JSON.stringify(sources));
     await pollAll(sources);
   }, [discoverSources, pollAll]);
 
-  // Initial discovery + polling
+  // Initial discovery + polling — use sessionStorage cache for instant remounts
   useEffect(() => {
     mountedRef.current = true;
-    refresh();
+
+    // Try to restore cached sources for instant render
+    const cached = sessionStorage.getItem('widget_sources');
+    if (cached) {
+      try {
+        const cachedSources: WidgetAppSource[] = JSON.parse(cached);
+        if (cachedSources.length > 0) {
+          setState(prev => ({ ...prev, sources: cachedSources }));
+          // Poll immediately with cached sources (fast — no discovery needed)
+          pollAll(cachedSources);
+        }
+      } catch { /* ignore corrupt cache */ }
+    }
+
+    // Full refresh in background (updates sources if library changed)
+    refresh().then(() => {
+      // Cache discovered sources for next mount
+      setState(prev => {
+        if (prev.sources.length > 0) {
+          sessionStorage.setItem('widget_sources', JSON.stringify(prev.sources));
+        }
+        return prev;
+      });
+    });
 
     pollTimerRef.current = setInterval(() => {
       if (mountedRef.current) {

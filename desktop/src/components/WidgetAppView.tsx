@@ -1,9 +1,10 @@
 // WidgetAppView — full-screen container for an MCP's HTML widget app.
-// Loads the app_html in an iframe with a postMessage bridge injected.
-// The bridge routes ulAction() calls to the MCP endpoint via the desktop.
+// Loads the app_html in an iframe with a direct-call bridge SDK injected.
+// The bridge makes HTTP calls directly to the MCP endpoint (no postMessage needed).
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useRef } from 'react';
 import type { WidgetAppSource } from '../hooks/useWidgetInbox';
+import { getApiBase, getToken } from '../lib/storage';
 
 interface WidgetAppViewProps {
   source: WidgetAppSource;
@@ -12,82 +13,53 @@ interface WidgetAppViewProps {
   onBridgeCall: (appUuid: string, slug: string, fn: string, args: Record<string, unknown>) => Promise<unknown>;
 }
 
-// Bridge SDK script — injected into the iframe's HTML.
-// Provides window.ulAction(functionName, args) → Promise<result>
-const BRIDGE_SDK = `<script>
+export default function WidgetAppView({ source, appHtml, onBack }: WidgetAppViewProps) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  // Build bridge SDK that calls the MCP endpoint directly via fetch
+  const apiBase = getApiBase();
+  const token = getToken();
+
+  const bridgeSdk = `<script>
 (function() {
+  var _apiBase = ${JSON.stringify(apiBase)};
+  var _token = ${JSON.stringify(token)};
+  var _appUuid = ${JSON.stringify(source.appUuid)};
+  var _appSlug = ${JSON.stringify(source.appSlug)};
+
   window.ulAction = function(functionName, args) {
-    return new Promise(function(resolve, reject) {
-      var id = crypto.randomUUID();
-      function handler(e) {
-        if (e.data && e.data.type === 'ul_widget_result' && e.data.id === id) {
-          window.removeEventListener('message', handler);
-          if (e.data.error) reject(new Error(e.data.error));
-          else resolve(e.data.result);
-        }
-      }
-      window.addEventListener('message', handler);
-      window.parent.postMessage({
-        type: 'ul_widget_action',
-        id: id,
-        function: functionName,
-        args: args || {}
-      }, '*');
+    var prefixed = _appSlug + '_' + functionName;
+    return fetch(_apiBase + '/mcp/' + _appUuid, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + _token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: crypto.randomUUID(),
+        method: 'tools/call',
+        params: { name: prefixed, arguments: args || {} }
+      })
+    })
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      if (data.error) throw new Error(data.error.message || 'MCP error');
+      var text = data.result && data.result.content && data.result.content[0] && data.result.content[0].text;
+      if (!text) return null;
+      try { return JSON.parse(text); } catch(e) { return text; }
     });
   };
-
-  // Notify parent that bridge is ready
-  window.parent.postMessage({ type: 'ul_widget_ready' }, '*');
 })();
 </script>`;
 
-export default function WidgetAppView({ source, appHtml, onBack, onBridgeCall }: WidgetAppViewProps) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-
   // Inject bridge SDK into the HTML
   const preparedHtml = (() => {
-    // Insert bridge script after <head> or at the start
     if (appHtml.includes('<head>')) {
-      return appHtml.replace('<head>', '<head>' + BRIDGE_SDK);
+      return appHtml.replace('<head>', '<head>' + bridgeSdk);
     }
     if (appHtml.includes('<html>')) {
-      return appHtml.replace('<html>', '<html><head>' + BRIDGE_SDK + '</head>');
+      return appHtml.replace('<html>', '<html><head>' + bridgeSdk + '</head>');
     }
-    // No head tag — wrap it
-    return `<!DOCTYPE html><html><head><meta charset="utf-8">${BRIDGE_SDK}</head><body>${appHtml}</body></html>`;
+    return `<!DOCTYPE html><html><head><meta charset="utf-8">${bridgeSdk}</head><body>${appHtml}</body></html>`;
   })();
-
-  // Listen for postMessage from iframe
-  const handleMessage = useCallback(async (event: MessageEvent) => {
-    const data = event.data;
-    if (!data || data.type !== 'ul_widget_action') return;
-
-    const { id, function: fn, args } = data;
-    if (!id || !fn) return;
-
-    try {
-      const result = await onBridgeCall(source.appUuid, source.appSlug, fn, args || {});
-
-      // Send result back to iframe
-      iframeRef.current?.contentWindow?.postMessage({
-        type: 'ul_widget_result',
-        id,
-        result,
-      }, '*');
-    } catch (err) {
-      iframeRef.current?.contentWindow?.postMessage({
-        type: 'ul_widget_result',
-        id,
-        result: null,
-        error: err instanceof Error ? err.message : String(err),
-      }, '*');
-    }
-  }, [source, onBridgeCall]);
-
-  useEffect(() => {
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, [handleMessage]);
 
   return (
     <div className="flex flex-col h-full">

@@ -1236,17 +1236,22 @@ async function handleToolsCall(
   let functionName = name;
   let isManifestFunction = false;
 
-  // Check if it's a manifest-based tool (format: appSlug_functionName)
+  // Check if it's a manifest-based tool (format: appSlug_functionName or just functionName)
   if (app.manifest) {
     try {
       const manifest = JSON.parse(app.manifest) as AppManifest;
       const prefix = `${app.slug}_`;
       if (name.startsWith(prefix) && manifest.functions) {
+        // Prefixed name: strip slug prefix
         const fnName = name.slice(prefix.length);
         if (fnName in manifest.functions) {
           functionName = fnName;
           isManifestFunction = true;
         }
+      } else if (manifest.functions && name in manifest.functions) {
+        // Unprefixed name: use directly (supports in-chat widget bridge calls)
+        functionName = name;
+        isManifestFunction = true;
       }
     } catch (err) {
       console.error('Failed to parse manifest for tool call:', err);
