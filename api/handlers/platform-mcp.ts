@@ -2370,7 +2370,7 @@ async function executeUpload(
     const appName = (args.name as string) || '';
     if (appName) {
       const appsService = createAppsService();
-      const existingApps = await appsService.listByUserId(userId);
+      const existingApps = await appsService.listByOwner(userId);
       const existingApp = existingApps.find(
         (a: App) => a.name.toLowerCase() === appName.toLowerCase() && !(a as Record<string, unknown>).deleted_at
       );
