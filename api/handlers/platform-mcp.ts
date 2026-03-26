@@ -2303,7 +2303,7 @@ async function executeUpload(
     const appsService = createAppsService();
     const versions = [...(app.versions || []), newVersion];
     const gapId = args.gap_id as string | undefined;
-    const autoLive = !args.app_id && args.name; // name-based lookup = auto-live
+    const autoLive = args._auto_live || (!args.app_id && args.name); // name-based lookup = auto-live
     const updatePayload: Record<string, unknown> = { versions };
     if (autoLive) updatePayload.current_version = newVersion;
     if (gapId) updatePayload.gap_id = gapId;
@@ -2376,8 +2376,9 @@ async function executeUpload(
       );
       if (existingApp) {
         // Recurse with app_id set — this triggers the "existing app: new version" path
+        // Keep _auto_live flag so the new version goes live immediately
         console.log(`[ul.upload] Found existing app "${appName}" (${existingApp.id}) — updating version`);
-        return executeUpload(userId, { ...args, app_id: existingApp.id });
+        return executeUpload(userId, { ...args, app_id: existingApp.id, _auto_live: true });
       }
     }
 
