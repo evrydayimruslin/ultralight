@@ -2298,11 +2298,14 @@ async function executeUpload(
     const storageKey = `apps/${app.id}/${newVersion}/`;
     await r2Service.uploadFiles(storageKey, pipeline.filesToUpload);
 
-    // Update app: add version, manifest, exports — do NOT change current_version
+    // Update app: add version, manifest, exports
+    // Auto-set as live when uploading by name (developer iteration flow)
     const appsService = createAppsService();
     const versions = [...(app.versions || []), newVersion];
     const gapId = args.gap_id as string | undefined;
+    const autoLive = !args.app_id && args.name; // name-based lookup = auto-live
     const updatePayload: Record<string, unknown> = { versions };
+    if (autoLive) updatePayload.current_version = newVersion;
     if (gapId) updatePayload.gap_id = gapId;
     if (pipeline.manifest) {
       updatePayload.manifest = JSON.stringify(pipeline.manifest);
@@ -2351,15 +2354,32 @@ async function executeUpload(
       slug: app.slug,
       version: newVersion,
       live_version: app.current_version,
-      is_live: false,
+      is_live: !!autoLive,
       exports: pipeline.exports,
       skills_generated: !!skills.skillsMd,
       gap_id: gapId || undefined,
       d1: d1Status,
-      message: `Version ${newVersion} uploaded.${gapId ? ' Gap submission created for assessment.' : ''} Use ul.set.version to make it live.`,
+      message: autoLive
+        ? `Version ${newVersion} uploaded and live.${gapId ? ' Gap submission created for assessment.' : ''}`
+        : `Version ${newVersion} uploaded.${gapId ? ' Gap submission created for assessment.' : ''} Use ul.set.version to make it live.`,
     };
   } else {
-    // ── New app ──
+    // ── New app (or update existing by name) ──
+
+    // Check if an app with the same name already exists for this user
+    const appName = (args.name as string) || '';
+    if (appName) {
+      const appsService = createAppsService();
+      const existingApps = await appsService.listByUserId(userId);
+      const existingApp = existingApps.find(
+        (a: App) => a.name.toLowerCase() === appName.toLowerCase() && !(a as Record<string, unknown>).deleted_at
+      );
+      if (existingApp) {
+        // Recurse with app_id set — this triggers the "existing app: new version" path
+        console.log(`[ul.upload] Found existing app "${appName}" (${existingApp.id}) — updating version`);
+        return executeUpload(userId, { ...args, app_id: existingApp.id });
+      }
+    }
 
     // ── GPU new app branch ──
     if (gpuYamlContent) {
