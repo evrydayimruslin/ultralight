@@ -58,26 +58,43 @@ export default function InChatWidget({
     });
   };
 
+  // Override dashboard-style height:100% and overflow:hidden for inline rendering.
+  // Widgets are designed for full-screen dashboard but need to auto-size in chat.
+  var styleOverride = document.createElement('style');
+  styleOverride.textContent = 'html, body { height: auto !important; overflow: visible !important; }';
+  (document.head || document.documentElement).appendChild(styleOverride);
+
   // Auto-resize: report height changes to parent
   function reportHeight() {
-    var h = document.documentElement.scrollHeight || document.body.scrollHeight;
-    parent.postMessage({ type: 'ul-widget-resize', height: h, id: _appUuid }, '*');
+    // Measure actual content height — get the bounding rect of all children
+    var h = 0;
+    var children = document.body.children;
+    for (var i = 0; i < children.length; i++) {
+      var rect = children[i].getBoundingClientRect();
+      var bottom = rect.top + rect.height;
+      if (bottom > h) h = bottom;
+    }
+    // Fallback to scrollHeight if bounding rect gives 0
+    if (h < 50) h = document.body.scrollHeight;
+    // Add padding
+    h += 24;
+    parent.postMessage({ type: 'ul-widget-resize', height: Math.ceil(h), id: _appUuid }, '*');
   }
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function() {
-      reportHeight();
-      new MutationObserver(reportHeight).observe(document.body, {
+      setTimeout(reportHeight, 100);
+      new MutationObserver(function() { setTimeout(reportHeight, 50); }).observe(document.body, {
         childList: true, subtree: true, attributes: true, characterData: true
       });
-      new ResizeObserver(reportHeight).observe(document.body);
+      new ResizeObserver(function() { setTimeout(reportHeight, 50); }).observe(document.body);
     });
   } else {
-    reportHeight();
-    new MutationObserver(reportHeight).observe(document.body, {
+    setTimeout(reportHeight, 100);
+    new MutationObserver(function() { setTimeout(reportHeight, 50); }).observe(document.body, {
       childList: true, subtree: true, attributes: true, characterData: true
     });
-    new ResizeObserver(reportHeight).observe(document.body);
+    new ResizeObserver(function() { setTimeout(reportHeight, 50); }).observe(document.body);
   }
 
   parent.postMessage({ type: 'ul-widget-ready', id: _appUuid }, '*');
