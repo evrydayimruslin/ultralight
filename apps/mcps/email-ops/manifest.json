@@ -85,19 +85,19 @@
       "parameters": []
     },
     "widget_email_inbox_ui": {
-      "description": "DO NOT call this function directly. To show the interactive email approvals widget, include the token {{widget:email_inbox:APP_ID}} in your response text (replace APP_ID with this app's app_id). Use this when the user wants to visually browse, review, approve, edit, or manage email conversations and their AI-generated draft responses.",
+      "description": "DO NOT call this function. To show the email approvals widget, include {{widget:email_inbox:APP_ID}} in your response (replace APP_ID with this app's app_id). The widget is interactive — users can browse, approve, reject, edit, and send drafts directly in it. When you show this widget, do NOT also list the emails as text or tables — the widget replaces text output. Just include a brief intro sentence and the widget token.",
       "parameters": []
     },
     "widget_email_inbox_data": {
-      "description": "Internal: returns live data for the email inbox widget. Called by the widget HTML via ulAction bridge — do not call directly.",
+      "description": "Internal widget data function — do not call directly.",
       "parameters": []
     },
     "widget_email_faqs_ui": {
-      "description": "DO NOT call this function directly. To show the interactive FAQ/knowledge base editor widget, include the token {{widget:email_faqs:APP_ID}} in your response text (replace APP_ID with this app's app_id). Use this when the user wants to view, add, or manage FAQ entries and conventions.",
+      "description": "DO NOT call this function. To show the FAQ editor widget, include {{widget:email_faqs:APP_ID}} in your response (replace APP_ID with this app's app_id). The widget is interactive — users can browse, add, edit, and delete FAQ entries directly. When you show this widget, do NOT also list FAQs as text — the widget replaces text output.",
       "parameters": []
     },
     "widget_email_faqs_data": {
-      "description": "Internal: returns live data for the FAQs widget. Called by the widget HTML via ulAction bridge — do not call directly.",
+      "description": "Internal widget data function — do not call directly.",
       "parameters": []
     }
   }

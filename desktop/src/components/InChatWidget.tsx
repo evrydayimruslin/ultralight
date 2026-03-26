@@ -19,7 +19,7 @@ export default function InChatWidget({
   appSlug,
   widgetName,
   appHtml,
-  maxHeight = 600,
+  maxHeight = 2000,
 }: InChatWidgetProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(300);
