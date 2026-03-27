@@ -108,27 +108,27 @@ const TRADITIONAL_TOOLS: ChatTool[] = [
 
 // ── Platform Tools (Code Mode) ──
 
-/** Minimal tool set for code mode — execute + memory only.
- *  ul.discover and ul.call are accessed INSIDE ul_execute recipes,
- *  not as standalone tools. This forces the agent to write recipes. */
+/** Minimal tool set for code mode — codemode + memory only.
+ *  All app functions are typed and available as `codemode.functionName()` inside recipes.
+ *  Discovery via `codemode.discover_library()`. This forces the agent to write recipes. */
 const CODE_MODE_TOOLS: ChatTool[] = [
   {
     type: 'function',
     function: {
-      name: 'ul_execute',
+      name: 'ul_codemode',
       description:
-        'Execute a JavaScript recipe in a secure sandbox. ' +
-        'Write an async function body that discovers apps, chains calls, and returns a composed result. ' +
-        'Inside the sandbox: ul.call(app_id, fn, args?) calls any app, ul.discover(scope, query?) searches your library/appstore. ' +
-        'Return a result object. This is your ONLY tool for interacting with apps — use it for everything.',
+        'Write JavaScript to interact with your apps. ' +
+        'All functions are typed and available on the `codemode` object. ' +
+        'Write an async function body using `await codemode.functionName(args)` and return a result. ' +
+        'Use `await codemode.discover_library({ query: "..." })` to find apps dynamically.',
       parameters: {
         type: 'object',
         properties: {
           code: {
             type: 'string',
             description:
-              'JavaScript async function body. Available: ul.call(app_id, fn, args?), ul.discover(scope, query?), console.log(). ' +
-              'Example: const apps = await ul.discover("library", "email"); return apps;',
+              'JavaScript async function body. Use `await codemode.functionName(args)` to call tools. ' +
+              'Example: const items = await codemode.email_ops_approvals_list({ status: "pending" }); return items;',
           },
         },
         required: ['code'],
@@ -171,7 +171,7 @@ const CODE_MODE_TOOLS: ChatTool[] = [
 const TOOL_NAME_MAP: Record<string, string> = {
   'ul_discover': 'ul.discover',
   'ul_call': 'ul.call',
-  'ul_execute': 'ul.execute',
+  'ul_codemode': 'ul.codemode',
   'ul_memory': 'ul.memory',
   'ul_rate': 'ul.rate',
 };

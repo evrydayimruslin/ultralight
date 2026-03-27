@@ -498,17 +498,14 @@ const PLATFORM_TOOLS: MCPTool[] = [
       required: ['action'],
     },
   },
-  // ── 13. ul.execute ──────────────────────────
+  // ── 13. ul.codemode ──────────────────────────
   {
-    name: 'ul.execute',
+    name: 'ul.codemode',
     description:
-      'Execute a JavaScript recipe in a secure sandbox. ' +
-      'Write an async function body that chains multiple app calls, transforms data, and returns a composed result. ' +
-      'Inside the sandbox you have: ' +
-      'ul.call(app_id, function_name, args?) — call any app function. ' +
-      'ul.discover(scope, query?) — search apps (scope: "library"|"appstore"). ' +
-      'Return a result object. If you want to render a widget inline, include widget: { name, app_id } in the return value. ' +
-      'Use this instead of making multiple sequential ul.call tool calls — it is faster (one execution) and cheaper (fewer tokens).',
+      'Write JavaScript to interact with your apps. All available functions are typed and accessible on the `codemode` object. ' +
+      'Write an async function body using `await codemode.functionName(args)`. ' +
+      'Discovery: `await codemode.discover_library({ query: "..." })` to find tools. ' +
+      'Return a result object.',
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
@@ -516,9 +513,8 @@ const PLATFORM_TOOLS: MCPTool[] = [
         code: {
           type: 'string',
           description:
-            'JavaScript async function body to execute. Do NOT include "async function" wrapper — just the body. ' +
-            'Available globals: ul.call(app_id, fn, args?), ul.discover(scope, query?), console.log(). ' +
-            'Example: const items = await ul.call("app-id", "list", {}); return { count: items.length, items };',
+            'JavaScript async function body. Use `await codemode.functionName(args)` to call tools. ' +
+            'Example: const items = await codemode.email_ops_approvals_list({ status: "pending" }); return items;',
         },
       },
       required: ['code'],
@@ -2067,13 +2063,12 @@ async function handleToolsCall(
         break;
       }
 
-      // ── 13. ul.execute (code mode) ──────────────
-      case 'ul.execute': {
+      // ── 13. ul.codemode (typed code mode) ──────────────
+      case 'ul.codemode':
+      case 'ul.execute': {  // backward compat alias
         const recipeCode = toolArgs.code as string;
         if (!recipeCode) throw new ToolError(INVALID_PARAMS, 'Missing required parameter: code');
 
-        // Build a sandboxed execution environment with ul.call and ul.discover as globals.
-        // The recipe runs as an async function body with these bindings available.
         const reqUrl = new URL(request.url);
         const host = request.headers.get('host') || reqUrl.host;
         const proto = request.headers.get('x-forwarded-proto') || (host.includes('localhost') ? 'http' : 'https');
@@ -2081,91 +2076,70 @@ async function handleToolsCall(
         const authToken = request.headers.get('Authorization')?.slice(7);
 
         if (!authToken) {
-          throw new ToolError(INTERNAL_ERROR, 'Missing auth token for recipe execution');
+          throw new ToolError(INTERNAL_ERROR, 'Missing auth token for codemode execution');
         }
 
-        // Helper: make an MCP call to an app (same as ul.call but as a local function)
-        const callApp = async (appId: string, functionName: string, callArgs?: Record<string, unknown>): Promise<unknown> => {
-          const rpcPayload = {
-            jsonrpc: '2.0',
-            id: crypto.randomUUID(),
-            method: 'tools/call',
-            params: { name: functionName, arguments: callArgs || {} },
-          };
-          const resp = await fetch(`${baseUrl}/mcp/${appId}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
-            body: JSON.stringify(rpcPayload),
-          });
-          if (!resp.ok) {
-            const errText = await resp.text().catch(() => resp.statusText);
-            throw new Error(`ul.call failed (${resp.status}): ${errText}`);
-          }
-          const rpcResp = await resp.json();
-          if (rpcResp.error) throw new Error(rpcResp.error.message || JSON.stringify(rpcResp.error));
-          // Unwrap MCP result
-          const callResult = rpcResp.result;
-          if (callResult?.content && Array.isArray(callResult.content)) {
-            const textBlock = callResult.content.find((c: { type: string }) => c.type === 'text');
-            if (textBlock?.text) {
-              try { return JSON.parse(textBlock.text); } catch { return textBlock.text; }
-            }
-          }
-          return callResult;
-        };
+        // 1. Fetch user's library apps with manifests
+        const { buildJsonSchemaDescriptors, buildToolFunctions } = await import('../services/codemode-tools.ts');
+        const { executeCodeMode } = await import('../runtime/codemode-executor.ts');
 
-        // Helper: discover apps (wraps existing discover functions)
-        const discoverApps = async (scope: string, query?: string): Promise<unknown> => {
-          switch (scope) {
-            case 'library':
-              return await executeDiscoverLibrary(userId, query ? { query } : {});
-            case 'appstore':
-              return await executeDiscoverAppstore(userId, query ? { query } : {});
-            case 'inspect':
-              throw new Error('ul.discover("inspect") requires app_id — use ul.discover("library") to find apps first');
-            default:
-              return await executeDiscoverLibrary(userId, query ? { query } : {});
-          }
-        };
+        const { SUPABASE_URL: cmSbUrl, SUPABASE_SERVICE_ROLE_KEY: cmSbKey } = getSupabaseEnv();
 
-        // Execute the recipe in a sandboxed async function
-        const logs: string[] = [];
-        const sandboxConsole = {
-          log: (...args: unknown[]) => logs.push(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')),
-          warn: (...args: unknown[]) => logs.push('[warn] ' + args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')),
-          error: (...args: unknown[]) => logs.push('[error] ' + args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')),
-        };
+        // Get user's owned apps
+        const ownedRes = await fetch(
+          `${cmSbUrl}/rest/v1/apps?owner_id=eq.${userId}&deleted_at=is.null&select=id,name,slug,manifest`,
+          { headers: { 'apikey': cmSbKey, 'Authorization': `Bearer ${cmSbKey}` } }
+        );
+        const ownedApps = ownedRes.ok ? await ownedRes.json() as Array<{ id: string; name: string; slug: string; manifest: string | null }> : [];
 
-        const AsyncFunction = Object.getPrototypeOf(async function() {}).constructor;
+        // Get user's liked/saved apps
+        const likedRes = await fetch(
+          `${cmSbUrl}/rest/v1/user_app_likes?user_id=eq.${userId}&liked=eq.true&select=app_id`,
+          { headers: { 'apikey': cmSbKey, 'Authorization': `Bearer ${cmSbKey}` } }
+        );
+        const likedIds = likedRes.ok
+          ? (await likedRes.json() as Array<{ app_id: string }>).map(l => l.app_id)
+          : [];
 
-        try {
-          const recipeFn = new AsyncFunction('ul', 'console', recipeCode);
-          const ulBinding = { call: callApp, discover: discoverApps };
-
-          // Execute with timeout
-          const TIMEOUT_MS = 60_000; // 60s for recipes (may chain many calls)
-          let timeoutId: ReturnType<typeof setTimeout>;
-          const timeoutPromise = new Promise<never>((_, reject) => {
-            timeoutId = setTimeout(() => reject(new Error('Recipe execution timed out after 60s')), TIMEOUT_MS);
-          });
-
-          const recipeResult = await Promise.race([
-            recipeFn(ulBinding, sandboxConsole),
-            timeoutPromise,
-          ]);
-          clearTimeout(timeoutId!);
-
-          result = {
-            result: recipeResult,
-            logs: logs.length > 0 ? logs : undefined,
-          };
-        } catch (execErr) {
-          const errMsg = execErr instanceof Error ? execErr.message : String(execErr);
-          result = {
-            error: errMsg,
-            logs: logs.length > 0 ? logs : undefined,
-          };
+        let likedApps: Array<{ id: string; name: string; slug: string; manifest: string | null }> = [];
+        if (likedIds.length > 0) {
+          const likedAppsRes = await fetch(
+            `${cmSbUrl}/rest/v1/apps?id=in.(${likedIds.join(',')})&deleted_at=is.null&select=id,name,slug,manifest`,
+            { headers: { 'apikey': cmSbKey, 'Authorization': `Bearer ${cmSbKey}` } }
+          );
+          likedApps = likedAppsRes.ok ? await likedAppsRes.json() as typeof likedApps : [];
         }
+
+        // Merge and deduplicate
+        const allAppsMap = new Map<string, { id: string; name: string; slug: string; manifest: unknown }>();
+        for (const app of [...ownedApps, ...likedApps]) {
+          if (!allAppsMap.has(app.id) && app.manifest) {
+            const manifest = typeof app.manifest === 'string' ? JSON.parse(app.manifest) : app.manifest;
+            allAppsMap.set(app.id, { id: app.id, name: app.name, slug: app.slug, manifest });
+          }
+        }
+        const appsForCodemode = Array.from(allAppsMap.values());
+
+        // 2. Build tool descriptors and function bindings
+        const { toolMap } = buildJsonSchemaDescriptors(appsForCodemode);
+
+        const discoverLib = async (args: Record<string, unknown>) =>
+          await executeDiscoverLibrary(userId, args);
+        const discoverStore = async (args: Record<string, unknown>) =>
+          await executeDiscoverAppstore(userId, args);
+
+        const toolFunctions = buildToolFunctions(
+          toolMap, baseUrl, authToken, discoverLib, discoverStore
+        );
+
+        // 3. Execute the recipe
+        const execResult = await executeCodeMode(recipeCode, toolFunctions, 60_000);
+
+        result = {
+          result: execResult.result,
+          ...(execResult.error ? { error: execResult.error } : {}),
+          ...(execResult.logs.length > 0 ? { logs: execResult.logs } : {}),
+        };
         break;
       }
 

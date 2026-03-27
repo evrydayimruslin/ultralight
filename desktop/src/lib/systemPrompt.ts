@@ -7,72 +7,31 @@ const IDENTITY_CODE_MODE = `You are Ultralight Agent, an autonomous AI assistant
 
 ## How You Use Apps
 
-You have one primary tool for interacting with apps: \`ul_execute\`. It runs a JavaScript recipe in a secure sandbox. Inside the sandbox you have:
-
-- \`ul.call(app_id, function_name, args?)\` — call any app's function
-- \`ul.discover(scope, query?)\` — search the user's app library or marketplace
-- \`console.log()\` — debug logging
-
-### Finding apps
-
-When the user's request involves external services, data, or capabilities beyond local files, write a recipe that discovers and uses the right tools:
+You have one primary tool: \`ul_codemode\`. Write a JavaScript recipe using typed functions on the \`codemode\` object. ALL app interactions happen through ONE \`ul_codemode\` call — never make multiple sequential calls.
 
 \`\`\`
-ul_execute({ code: \`
-  // 1. Find relevant apps
-  const apps = await ul.discover("library", "email approvals");
-  console.log("Found:", JSON.stringify(apps));
-
-  // 2. Use the app you found
-  const appId = "..."; // from discover results
-  const items = await ul.call(appId, "list_items", { status: "pending" });
-
-  // 3. Return composed result
+ul_codemode({ code: \`
+  const items = await codemode.email_ops_approvals_list({ status: "pending" });
   return { count: items.length, items };
 \` })
 \`\`\`
 
-Discovery scopes:
-- \`"library"\` — user's own + saved apps (search here first)
-- \`"appstore"\` — all published apps (search here if library has nothing)
+The \`codemode\` object has typed functions for all your apps. Chain calls, transform data, filter results — all in one execution.
 
-### Writing recipes
+### Discovery
 
-ALWAYS use \`ul_execute\` for app interactions. Write the recipe as a JavaScript async function body. Chain calls, transform data, filter results — all in one execution.
-
-**Single call:**
-\`\`\`
-ul_execute({ code: \`
-  return await ul.call("app-id", "list_items", { status: "active" });
-\` })
-\`\`\`
-
-**Multi-step recipe:**
-\`\`\`
-ul_execute({ code: \`
-  const pending = await ul.call(appId, "approvals_list", { status: "pending" });
-  const normal = pending.filter(p => p.priority === "normal");
-  for (const item of normal) {
-    await ul.call(appId, "approvals_act", { approval_id: item.id, action: "approve" });
-  }
-  return { approved: normal.length, remaining: pending.length - normal.length };
-\` })
-\`\`\`
+If you need tools beyond what's listed in your type declarations, use:
+\`await codemode.discover_library({ query: "email" })\` — search your apps
+\`await codemode.discover_appstore({ query: "invoicing" })\` — search marketplace
 
 ### Inline Widgets
 
-Apps may have widgets — interactive UI components that render inline in your response. To show a widget, include the token \`{{widget:WIDGET_NAME:APP_ID}}\` in your response text. The widget renders as a full interactive interface — do NOT also list the same data as text when showing a widget.
+To show an interactive widget inline, include \`{{widget:WIDGET_NAME:APP_ID}}\` in your response text. The widget replaces text output — do NOT also list the same data as text.
 
-### Other platform tools
-- \`ul_memory\` — store and retrieve persistent cross-session notes
-- \`ul_rate\` — silently report capability gaps when no app matches a user need
+### Other tools
+- \`ul_memory\` — persistent cross-session notes
 
-### When discovery fails
-If no apps match the user's need, do two things:
-1. Tell the user and propose alternatives.
-2. Silently: \`ul_rate({ shortcoming: { type: "capability_gap", summary: "..." } })\`
-
-Be concise, direct, and action-oriented. Prefer doing over explaining. Format responses with markdown when appropriate.`;
+Be concise, direct, and action-oriented. Prefer doing over explaining.`;
 
 const IDENTITY_TRADITIONAL = `You are Ultralight Agent, an autonomous AI assistant built into the Ultralight desktop app. You have direct access to the user's filesystem, shell, and git — you are a hands-on coding partner, not just a chatbot.
 
@@ -476,73 +435,60 @@ export function isCodeModeCapable(model: string): boolean {
 }
 
 /**
- * Generate a compact code-mode reference for connected apps.
- * Instead of verbose schemas, emits one-liner-per-function format
- * designed for use inside ul_execute recipes.
- *
- * Separates functions (callable) from widgets (renderable).
+ * Generate TypeScript type declarations for connected apps' functions.
+ * Used in code mode system prompt so the agent sees typed `codemode.*` functions.
  */
-export function generateCodeModeAppsReference(apps: ConnectedAppManifest[]): string {
+export function generateCodeModeTypes(apps: ConnectedAppManifest[]): string {
   if (apps.length === 0) return '';
 
-  const lines: string[] = [];
-  const widgetLines: string[] = [];
+  const entries: string[] = [];
+  const widgetTokens: string[] = [];
 
   for (const app of apps) {
     if (!app.functions || Object.keys(app.functions).length === 0) continue;
 
-    const fnEntries = Object.entries(app.functions).filter(([fnName]) => {
+    for (const [fnName, fn] of Object.entries(app.functions)) {
       // Skip widget internal functions
-      if (fnName.startsWith('widget_') && (fnName.endsWith('_ui') || fnName.endsWith('_data'))) return false;
-      if (fnName === 'widget_approval_queue') return false;
-      // Apply selectedFunctions filter if specified
-      if (app.selectedFunctions && app.selectedFunctions.length > 0) {
-        return app.selectedFunctions.includes(fnName);
-      }
-      return true;
-    });
+      if (fnName.startsWith('widget_') && (fnName.endsWith('_ui') || fnName.endsWith('_data'))) continue;
+      if (fnName === 'widget_approval_queue') continue;
+      // Apply selectedFunctions filter
+      if (app.selectedFunctions && app.selectedFunctions.length > 0 && !app.selectedFunctions.includes(fnName)) continue;
 
-    // Extract widgets
-    const widgetEntries = Object.entries(app.functions).filter(([fnName]) =>
-      fnName.startsWith('widget_') && fnName.endsWith('_ui') && !fnName.endsWith('_data')
-    );
+      // Sanitize name: app_name + function_name (must match server-side slug prefix)
+      const appPrefix = (app.name || 'app').toLowerCase().replace(/[-.\s]+/g, '_').replace(/[^a-z0-9_]/g, '');
+      const sanitized = `${appPrefix}_${fnName}`.replace(/[-.\s]/g, '_');
 
-    if (fnEntries.length > 0) {
-      lines.push(`**${app.name}** (\`${app.app_id}\`): ${app.description || ''}`);
-      for (const [fnName, fn] of fnEntries) {
-        const params = fn.parameters
-          ? Object.entries(fn.parameters).map(([p, s]) => {
-              const opt = s.required === false ? '?' : '';
-              return `${p}${opt}`;
-            }).join(', ')
-          : '';
-        lines.push(`  - \`${fnName}(${params})\` — ${fn.description}`);
+      // Build param types
+      const params = fn.parameters ? Object.entries(fn.parameters) : [];
+      let inputType = '{}';
+      if (params.length > 0) {
+        const props = params.map(([p, s]) => {
+          const opt = s.required === false ? '?' : '';
+          return `${p}${opt}: ${s.type === 'number' ? 'number' : s.type === 'boolean' ? 'boolean' : 'string'}`;
+        });
+        inputType = `{ ${props.join('; ')} }`;
       }
+
+      entries.push(`  /** [${app.name}] ${fn.description || fnName} */\n  ${sanitized}: (input: ${inputType}) => Promise<unknown>;`);
     }
 
-    // Collect widgets
-    for (const [fnName] of widgetEntries) {
-      const widgetName = fnName.replace('widget_', '').replace('_ui', '');
-      const fn = app.functions[fnName];
-      // Extract clean description (remove "DO NOT call" instructions)
-      const desc = (fn.description || '')
-        .replace(/DO NOT call this function\.?\s*/i, '')
-        .replace(/To show.*?in your response.*?\./i, '')
-        .replace(/When you show this widget.*?\./i, '')
-        .trim() || widgetName;
-      widgetLines.push(`  - \`{{widget:${widgetName}:${app.app_id}}}\` — ${desc}`);
+    // Collect widget tokens
+    for (const fnName of Object.keys(app.functions)) {
+      if (fnName.startsWith('widget_') && fnName.endsWith('_ui')) {
+        const widgetName = fnName.replace('widget_', '').replace('_ui', '');
+        widgetTokens.push(`{{widget:${widgetName}:${app.app_id}}}`);
+      }
     }
   }
 
-  let result = '';
+  // Add discovery functions
+  entries.push(`  /** Search your app library for tools */\n  discover_library: (input: { query?: string }) => Promise<unknown>;`);
+  entries.push(`  /** Search the app marketplace */\n  discover_appstore: (input: { query: string }) => Promise<unknown>;`);
 
-  if (lines.length > 0) {
-    result += lines.join('\n');
-  }
+  let result = `declare const codemode: {\n${entries.join('\n\n')}\n};`;
 
-  if (widgetLines.length > 0) {
-    result += '\n\n**Available Widgets** (include token in your response text):\n';
-    result += widgetLines.join('\n');
+  if (widgetTokens.length > 0) {
+    result += `\n\n// Widgets — include token in your response text:\n// ${widgetTokens.join('\n// ')}`;
   }
 
   return result;
@@ -550,35 +496,21 @@ export function generateCodeModeAppsReference(apps: ConnectedAppManifest[]): str
 
 /**
  * Build the code-mode system prompt block for connected apps.
- * Replaces the verbose traditional schema injection with a compact
- * reference optimized for ul_execute recipes.
+ * Injects TypeScript type declarations so the agent sees typed `codemode.*` functions.
  */
 export function buildCodeModeAppsPrompt(apps: ConnectedAppManifest[]): string {
-  const reference = generateCodeModeAppsReference(apps);
-  if (!reference) return '';
+  const types = generateCodeModeTypes(apps);
+  if (!types) return '';
 
   return `## Your Apps
 
-Use these with \`ul_execute\`. ALWAYS prefer \`ul_execute\` over sequential \`ul_call\` — write a recipe that chains calls in one execution.
+Write recipes using \`ul_codemode\`. Functions are typed on the \`codemode\` object:
 
-${reference}
-
-### How to use
-
-**Single call:** \`ul_execute({ code: 'return await ul.call("app_id", "function_name", { args })' })\`
-
-**Multi-step recipe:**
-\`\`\`
-ul_execute({ code: \`
-  const data = await ul.call("app_id", "list_items", {});
-  const processed = data.filter(d => d.status === "active");
-  return { count: processed.length, items: processed };
-\` })
+\`\`\`typescript
+${types}
 \`\`\`
 
-**With widget:** Include \`{{widget:name:app_id}}\` in your response text after the recipe result. The widget is interactive — do NOT list the same data as text.
-
-**Discovery:** If you need tools beyond your connected apps, use \`ul_execute({ code: 'return await ul.discover("library", "search query")' })\` to find them.`;
+Write ONE \`ul_codemode\` call per task. Chain calls inside the recipe. The widget tokens render interactive UI inline — do NOT list the same data as text when showing a widget.`;
 }
 
 /**
