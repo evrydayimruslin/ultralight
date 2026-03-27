@@ -3,8 +3,6 @@
 
 import { useCallback, useMemo } from 'react';
 import { executeMcpTool, type ChatTool } from '../lib/api';
-import { isCodeModeCapable } from '../lib/systemPrompt';
-import { getModel } from '../lib/storage';
 
 // ── Platform Tools (Traditional Mode) ──
 
@@ -206,10 +204,8 @@ export function useMcp(): UseMcpReturn {
     }
   }, []);
 
-  const tools = useMemo(() => {
-    const model = getModel();
-    return isCodeModeCapable(model) ? CODE_MODE_TOOLS : TRADITIONAL_TOOLS;
-  }, []);
+  // Code mode is the default for all models
+  const tools = useMemo(() => CODE_MODE_TOOLS, []);
 
   return { tools, executeToolCall };
 }

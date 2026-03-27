@@ -249,8 +249,9 @@ export async function inspectAndBuildMcpSchemas(
  * @param projectDir — The active project directory, or null if none selected.
  * @param model — The model name, used to determine code mode vs traditional.
  */
-export function buildSystemPrompt(projectDir: string | null, model?: string): string {
-  const identity = (model && isCodeModeCapable(model)) ? IDENTITY_CODE_MODE : IDENTITY_TRADITIONAL;
+export function buildSystemPrompt(projectDir: string | null, _model?: string): string {
+  // Code mode is the default for all models
+  const identity = IDENTITY_CODE_MODE;
 
   if (!projectDir) {
     return identity;
