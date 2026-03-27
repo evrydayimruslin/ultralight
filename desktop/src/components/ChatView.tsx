@@ -17,6 +17,8 @@ import AgentHeader from './AgentHeader';
 import { clearToken, getToken, getApiBase, getModel } from '../lib/storage';
 import { getContextWindow } from '../lib/tokens';
 import { buildSystemPrompt, buildCodeModeAppsPrompt } from '../lib/systemPrompt';
+import ModelSelector from './ModelSelector';
+import { fetchFunctionIndex } from '../lib/api';
 import { agentRunner } from '../lib/agentRunner';
 
 interface ChatViewProps {
@@ -307,6 +309,20 @@ export default function ChatView({
       // Build system prompt with available app types
       let agentSystemPrompt = systemPrompt;
 
+      // Inject function index types (cached locally — no network call needed)
+      try {
+        const fnIndex = await fetchFunctionIndex();
+        if (fnIndex?.types) {
+          agentSystemPrompt += `\n\n## Your Apps\n\nWrite recipes using \`ul_codemode\`. Functions are typed on the \`codemode\` object:\n\n\`\`\`typescript\n${fnIndex.types}\n\`\`\``;
+          if (fnIndex.widgets && fnIndex.widgets.length > 0) {
+            agentSystemPrompt += `\n\n**Widgets:** ${fnIndex.widgets.map(w => `\`{{widget:${w.name}:${w.appId}}}\``).join(', ')}`;
+          }
+          agentSystemPrompt += `\n\nWrite ONE \`ul_codemode\` call per task. Widget tokens render interactive UI inline — do NOT list the same data as text.`;
+        }
+      } catch (err) {
+        console.warn('Failed to load function index:', err);
+      }
+
       // Inspect any explicitly connected apps (if user connected them in pre-chat)
       if (preChatApps.length > 0) {
         const connectedSchemas = [];
@@ -501,6 +517,15 @@ export default function ChatView({
         onStopSubagent={stopAgent}
         executeMcpTool={executeMcpTool}
       />
+
+      {/* Model selector — compact bar between header and messages */}
+      {!activeAgent && (
+        <div className="px-4 py-1.5 border-b border-gray-100 bg-gray-50/50">
+          <div className="max-w-narrow mx-auto">
+            <ModelSelector />
+          </div>
+        </div>
+      )}
 
       {/* Error banner */}
       {error && (

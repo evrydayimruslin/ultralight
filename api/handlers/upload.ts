@@ -651,8 +651,9 @@ export async function handleUpload(request: Request): Promise<Response> {
           if (skills.skillsMd) {
             console.log(`Skills.md generated for ${appId}`);
           }
-          // Rebuild user library with the new app
+          // Rebuild user library and function index with the new app
           rebuildUserLibrary(userId).catch(err => console.error('Library rebuild failed:', err));
+          import('../services/function-index.ts').then(m => m.rebuildFunctionIndex(userId)).catch(err => console.error('Function index rebuild failed:', err));
         })
         .catch(err => console.error('Skills generation failed:', err));
     }
@@ -1142,6 +1143,7 @@ export async function handleUploadFiles(
       .then(skills => {
         if (skills.skillsMd) console.log(`Skills.md generated for ${appId}`);
         rebuildUserLibrary(userId).catch(err => console.error('Library rebuild failed:', err));
+        import('../services/function-index.ts').then(m => m.rebuildFunctionIndex(userId)).catch(err => console.error('Function index rebuild failed:', err));
       })
       .catch(err => console.error('Skills generation failed:', err));
   }

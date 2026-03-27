@@ -276,11 +276,11 @@ export async function handleChatModels(request: Request): Promise<Response> {
 
   // Suggested models — not an allowlist, just popular options for the UI
   const suggested = [
+    'google/gemini-3.1-flash-lite-preview:nitro',
+    'anthropic/claude-sonnet-4.6',
     'anthropic/claude-sonnet-4-20250514',
-    'anthropic/claude-3.5-sonnet',
     'openai/gpt-4o',
-    'openai/gpt-4o-mini',
-    'google/gemini-pro-1.5',
+    'google/gemini-2.5-pro-preview-05-06',
     'deepseek/deepseek-chat',
     'meta-llama/llama-3.1-405b-instruct',
     'qwen/qwen3-235b-a22b',
@@ -291,6 +291,43 @@ export async function handleChatModels(request: Request): Promise<Response> {
   });
 
   return json({ models });
+}
+
+// ============================================
+// GET /chat/function-index — Per-user function index for codemode
+// ============================================
+
+/**
+ * Returns the user's function index: all available app functions
+ * with TypeScript type declarations for codemode recipes.
+ * Cached in R2, rebuilt on app upload/version change.
+ */
+export async function handleFunctionIndex(request: Request): Promise<Response> {
+  const { authenticate } = await import('./auth.ts');
+  const user = await authenticate(request);
+  if (!user) {
+    return new Response(JSON.stringify({ error: 'Authentication required' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const { getFunctionIndex, rebuildFunctionIndex } = await import('../services/function-index.ts');
+
+  // Try to read cached index
+  let index = await getFunctionIndex(user.id);
+
+  // If no index exists, build it on demand
+  if (!index) {
+    try {
+      index = await rebuildFunctionIndex(user.id);
+    } catch (err) {
+      console.error('Failed to build function index:', err);
+      return json({ functions: {}, widgets: [], types: '', updatedAt: null });
+    }
+  }
+
+  return json(index);
 }
 
 // ============================================

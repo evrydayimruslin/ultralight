@@ -2079,50 +2079,65 @@ async function handleToolsCall(
           throw new ToolError(INTERNAL_ERROR, 'Missing auth token for codemode execution');
         }
 
-        // 1. Fetch user's library apps with manifests
-        const { buildJsonSchemaDescriptors, buildToolFunctions } = await import('../services/codemode-tools.ts');
+        // 1. Get user's function index (fast — reads from R2 cache)
+        const { buildToolFunctions, generateTypes, buildJsonSchemaDescriptors } = await import('../services/codemode-tools.ts');
         const { executeCodeMode } = await import('../runtime/codemode-executor.ts');
+        const { getFunctionIndex, rebuildFunctionIndex } = await import('../services/function-index.ts');
 
-        const { SUPABASE_URL: cmSbUrl, SUPABASE_SERVICE_ROLE_KEY: cmSbKey } = getSupabaseEnv();
+        // Try cached index first, rebuild if missing
+        let fnIndex = await getFunctionIndex(userId);
+        let toolMap: Record<string, { appId: string; appSlug: string; appName: string; fnName: string }>;
+        let availableTypes: string;
+        let widgets: Array<{ name: string; appId: string; label: string }>;
 
-        // Get user's owned apps
-        const ownedRes = await fetch(
-          `${cmSbUrl}/rest/v1/apps?owner_id=eq.${userId}&deleted_at=is.null&select=id,name,slug,manifest`,
-          { headers: { 'apikey': cmSbKey, 'Authorization': `Bearer ${cmSbKey}` } }
-        );
-        const ownedApps = ownedRes.ok ? await ownedRes.json() as Array<{ id: string; name: string; slug: string; manifest: string | null }> : [];
-
-        // Get user's liked/saved apps
-        const likedRes = await fetch(
-          `${cmSbUrl}/rest/v1/user_app_likes?user_id=eq.${userId}&liked=eq.true&select=app_id`,
-          { headers: { 'apikey': cmSbKey, 'Authorization': `Bearer ${cmSbKey}` } }
-        );
-        const likedIds = likedRes.ok
-          ? (await likedRes.json() as Array<{ app_id: string }>).map(l => l.app_id)
-          : [];
-
-        let likedApps: Array<{ id: string; name: string; slug: string; manifest: string | null }> = [];
-        if (likedIds.length > 0) {
-          const likedAppsRes = await fetch(
-            `${cmSbUrl}/rest/v1/apps?id=in.(${likedIds.join(',')})&deleted_at=is.null&select=id,name,slug,manifest`,
+        if (fnIndex) {
+          // Fast path — use cached index
+          toolMap = {};
+          for (const [name, fn] of Object.entries(fnIndex.functions)) {
+            toolMap[name] = { appId: fn.appId, appSlug: fn.appSlug, appName: '', fnName: fn.fnName };
+          }
+          availableTypes = fnIndex.types;
+          widgets = fnIndex.widgets;
+        } else {
+          // Slow path — build on demand (first time only)
+          const { SUPABASE_URL: cmSbUrl, SUPABASE_SERVICE_ROLE_KEY: cmSbKey } = getSupabaseEnv();
+          const ownedRes = await fetch(
+            `${cmSbUrl}/rest/v1/apps?owner_id=eq.${userId}&deleted_at=is.null&select=id,name,slug,manifest`,
             { headers: { 'apikey': cmSbKey, 'Authorization': `Bearer ${cmSbKey}` } }
           );
-          likedApps = likedAppsRes.ok ? await likedAppsRes.json() as typeof likedApps : [];
-        }
+          const ownedApps = ownedRes.ok ? await ownedRes.json() as Array<{ id: string; name: string; slug: string; manifest: string | null }> : [];
 
-        // Merge and deduplicate
-        const allAppsMap = new Map<string, { id: string; name: string; slug: string; manifest: unknown }>();
-        for (const app of [...ownedApps, ...likedApps]) {
-          if (!allAppsMap.has(app.id) && app.manifest) {
-            const manifest = typeof app.manifest === 'string' ? JSON.parse(app.manifest) : app.manifest;
-            allAppsMap.set(app.id, { id: app.id, name: app.name, slug: app.slug, manifest });
+          const likedRes = await fetch(
+            `${cmSbUrl}/rest/v1/user_app_likes?user_id=eq.${userId}&liked=eq.true&select=app_id`,
+            { headers: { 'apikey': cmSbKey, 'Authorization': `Bearer ${cmSbKey}` } }
+          );
+          const likedIds = likedRes.ok ? (await likedRes.json() as Array<{ app_id: string }>).map(l => l.app_id) : [];
+
+          let likedApps: typeof ownedApps = [];
+          if (likedIds.length > 0) {
+            const likedAppsRes = await fetch(
+              `${cmSbUrl}/rest/v1/apps?id=in.(${likedIds.join(',')})&deleted_at=is.null&select=id,name,slug,manifest`,
+              { headers: { 'apikey': cmSbKey, 'Authorization': `Bearer ${cmSbKey}` } }
+            );
+            likedApps = likedAppsRes.ok ? await likedAppsRes.json() as typeof ownedApps : [];
           }
-        }
-        const appsForCodemode = Array.from(allAppsMap.values());
 
-        // 2. Build tool descriptors and function bindings
-        const { descriptors, toolMap, widgets } = buildJsonSchemaDescriptors(appsForCodemode);
-        const { generateTypes } = await import('../services/codemode-tools.ts');
+          const allAppsMap = new Map<string, { id: string; name: string; slug: string; manifest: unknown }>();
+          for (const app of [...ownedApps, ...likedApps]) {
+            if (!allAppsMap.has(app.id) && app.manifest) {
+              const manifest = typeof app.manifest === 'string' ? JSON.parse(app.manifest) : app.manifest;
+              allAppsMap.set(app.id, { id: app.id, name: app.name, slug: app.slug, manifest });
+            }
+          }
+
+          const descriptorsResult = buildJsonSchemaDescriptors(Array.from(allAppsMap.values()));
+          toolMap = descriptorsResult.toolMap;
+          widgets = descriptorsResult.widgets;
+          availableTypes = generateTypes(descriptorsResult.descriptors);
+
+          // Rebuild index in background for next time
+          rebuildFunctionIndex(userId).catch(err => console.error('Index rebuild failed:', err));
+        }
 
         const discoverLib = async (args: Record<string, unknown>) =>
           await executeDiscoverLibrary(userId, args);

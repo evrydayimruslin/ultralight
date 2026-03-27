@@ -22,7 +22,7 @@ export function clearToken(): void {
 }
 
 export function getModel(): string {
-  return localStorage.getItem(STORAGE_KEYS.model) || 'anthropic/claude-sonnet-4-20250514';
+  return localStorage.getItem(STORAGE_KEYS.model) || 'google/gemini-3.1-flash-lite-preview:nitro';
 }
 
 export function setModel(model: string): void {

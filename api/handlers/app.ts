@@ -15,7 +15,7 @@ import { handleHttpEndpoint, handleHttpOptions } from './http.ts';
 import { handleTierChange } from './tier.ts';
 import { handleAdmin } from './admin.ts';
 import { handleDeveloper } from './developer.ts';
-import { handleChatStream, handleChatModels, handleProvisionKey } from './chat.ts';
+import { handleChatStream, handleChatModels, handleProvisionKey, handleFunctionIndex } from './chat.ts';
 import { getLayoutHTML } from '../../web/layout.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
@@ -434,6 +434,11 @@ export function createApp() {
       // Chat models endpoint — available model list for model picker
       if (path === '/chat/models' && method === 'GET') {
         return handleChatModels(request);
+      }
+
+      // Function index — per-user typed function list for codemode
+      if (path === '/chat/function-index' && method === 'GET') {
+        return handleFunctionIndex(request);
       }
 
       // Pre-provision per-user OpenRouter key (called on login, before first chat)

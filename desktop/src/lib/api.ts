@@ -152,6 +152,65 @@ export async function fetchModels(): Promise<ModelInfo[]> {
   }
 }
 
+// ── Function Index (per-user typed function catalog for codemode) ──
+
+export interface FunctionIndex {
+  functions: Record<string, {
+    appId: string;
+    appSlug: string;
+    fnName: string;
+    description: string;
+    params: Record<string, { type: string; required?: boolean; description?: string }>;
+  }>;
+  widgets: Array<{ name: string; appId: string; label: string }>;
+  types: string;
+  updatedAt: string | null;
+}
+
+const FN_INDEX_CACHE_KEY = 'ul_fn_index';
+
+/**
+ * Fetch the user's function index from the server, with localStorage caching.
+ * Returns cached version if available and less than 5 minutes old.
+ */
+export async function fetchFunctionIndex(forceRefresh = false): Promise<FunctionIndex | null> {
+  // Check cache first
+  if (!forceRefresh) {
+    try {
+      const cached = localStorage.getItem(FN_INDEX_CACHE_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached) as FunctionIndex & { _cachedAt?: number };
+        const age = Date.now() - (parsed._cachedAt || 0);
+        if (age < 5 * 60 * 1000) { // 5 minutes
+          return parsed;
+        }
+      }
+    } catch { /* cache corrupt */ }
+  }
+
+  // Fetch from server
+  const base = getApiBase();
+  const token = getToken();
+  if (!token) return null;
+
+  try {
+    const res = await fetch(`${base}/chat/function-index`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const index = await res.json() as FunctionIndex;
+
+    // Cache with timestamp
+    try {
+      localStorage.setItem(FN_INDEX_CACHE_KEY, JSON.stringify({ ...index, _cachedAt: Date.now() }));
+    } catch { /* storage full */ }
+
+    return index;
+  } catch {
+    return null;
+  }
+}
+
 // ── MCP Tool Execution ──
 
 export interface McpToolResult {
