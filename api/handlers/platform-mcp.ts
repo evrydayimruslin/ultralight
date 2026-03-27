@@ -2121,7 +2121,8 @@ async function handleToolsCall(
         const appsForCodemode = Array.from(allAppsMap.values());
 
         // 2. Build tool descriptors and function bindings
-        const { toolMap } = buildJsonSchemaDescriptors(appsForCodemode);
+        const { descriptors, toolMap, widgets } = buildJsonSchemaDescriptors(appsForCodemode);
+        const { generateTypes } = await import('../services/codemode-tools.ts');
 
         const discoverLib = async (args: Record<string, unknown>) =>
           await executeDiscoverLibrary(userId, args);
@@ -2132,13 +2133,20 @@ async function handleToolsCall(
           toolMap, baseUrl, authToken, discoverLib, discoverStore
         );
 
+        // Generate types string for the agent to see available functions
+        const availableTypes = generateTypes(descriptors);
+
         // 3. Execute the recipe
         const execResult = await executeCodeMode(recipeCode, toolFunctions, 60_000);
 
+        // Always include available functions so agent knows what to call next
         result = {
           result: execResult.result,
           ...(execResult.error ? { error: execResult.error } : {}),
           ...(execResult.logs.length > 0 ? { logs: execResult.logs } : {}),
+          _available_functions: Object.keys(toolFunctions),
+          _types: availableTypes,
+          ...(widgets.length > 0 ? { _widgets: widgets.map(w => `{{widget:${w.name}:${w.appId}}}`) } : {}),
         };
         break;
       }
