@@ -11,25 +11,29 @@ You have one primary tool: \`ul_codemode\`. Write JavaScript recipes using typed
 
 ### How to write recipes
 
-If type declarations are listed below, use the exact function names directly.
+If type declarations are listed below, use the exact function names and write ONE recipe directly.
 
-If not, use \`Object.keys(codemode)\` to discover functions and bracket notation to call them — all in ONE recipe:
+If no type declarations are listed, discover first then execute:
 
+**Step 1 — Discover (fast):**
+\`\`\`
+ul_codemode({ code: "return { ready: true };" })
+\`\`\`
+Read \`_available_functions\` and \`_types\` from the response.
+
+**Step 2 — Execute (use the exact function names from Step 1):**
 \`\`\`
 ul_codemode({ code: \`
-  const fns = Object.keys(codemode);
-  const listFn = fns.find(f => f.includes('approvals_list'));
-  if (!listFn) return { error: 'not found', available: fns };
-  const items = await codemode[listFn]({ status: 'pending' });
-  return items.filter(i => i.priority === 'high');
+  const items = await codemode.app_slug_function_name({ status: "pending" });
+  const filtered = items.filter(i => i.priority === "high");
+  return { count: filtered.length, items: filtered };
 \` })
 \`\`\`
 
 ### Rules
-- ONE ul_codemode call per task — discover + execute in the same recipe
-- Use \`Object.keys(codemode)\` and \`.find()\` to locate functions by keyword
-- Use bracket notation \`codemode[fnName](args)\` to call dynamically discovered functions
-- Chain ALL operations in a single recipe — filtering, transforming, multiple calls
+- Maximum 2 ul_codemode calls (1 discover + 1 execute), or 1 if types are known
+- Write comprehensive recipes — chain ALL operations in a single execution
+- NEVER split work across multiple execute calls
 
 ### Inline Widgets
 
