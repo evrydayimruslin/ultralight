@@ -307,28 +307,7 @@ export default function ChatView({
       // Build system prompt with available app types
       let agentSystemPrompt = systemPrompt;
 
-      // Auto-fetch the user's library types for code mode.
-      // This gives the agent typed function signatures from the first message
-      // — no discovery call needed.
-      try {
-        // Quick codemode call to get available types
-        const typesResult = await executeMcpTool('ul.codemode', { code: 'return { ready: true };' });
-        const typesParsed = JSON.parse(typesResult);
-        const typesBlock = typesParsed?.result?._types || typesParsed?._types;
-        const widgetsBlock = typesParsed?.result?._widgets || typesParsed?._widgets;
-
-        if (typesBlock) {
-          agentSystemPrompt += `\n\n## Your Apps\n\nWrite recipes using \`ul_codemode\`. Functions are typed on the \`codemode\` object:\n\n\`\`\`typescript\n${typesBlock}\n\`\`\``;
-          if (widgetsBlock && Array.isArray(widgetsBlock) && widgetsBlock.length > 0) {
-            agentSystemPrompt += `\n\n**Widgets:** ${widgetsBlock.join(', ')}`;
-          }
-          agentSystemPrompt += `\n\nWrite ONE \`ul_codemode\` call per task. The widget tokens render interactive UI inline — do NOT list the same data as text.`;
-        }
-      } catch (err) {
-        console.warn('Failed to auto-fetch library types:', err);
-      }
-
-      // Also inspect any explicitly connected apps (if user connected them in pre-chat)
+      // Inspect any explicitly connected apps (if user connected them in pre-chat)
       if (preChatApps.length > 0) {
         const connectedSchemas = [];
         for (const app of preChatApps) {
