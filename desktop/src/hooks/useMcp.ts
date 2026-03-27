@@ -3,11 +3,13 @@
 
 import { useCallback, useMemo } from 'react';
 import { executeMcpTool, type ChatTool } from '../lib/api';
+import { isCodeModeCapable } from '../lib/systemPrompt';
+import { getModel } from '../lib/storage';
 
-// ── Platform Tools ──
+// ── Platform Tools (Traditional Mode) ──
 
-/** MCP tools exposed to the chat model — must match the server's platform-mcp.ts schemas */
-const PLATFORM_TOOLS: ChatTool[] = [
+/** Full tool set for traditional mode — discover + call + memory */
+const TRADITIONAL_TOOLS: ChatTool[] = [
   {
     type: 'function',
     function: {
@@ -92,26 +94,70 @@ const PLATFORM_TOOLS: ChatTool[] = [
             enum: ['read', 'write', 'recall', 'query'],
             description: 'Memory operation.',
           },
-          content: {
+          content: { type: 'string', description: 'Markdown content. For write.' },
+          append: { type: 'boolean', description: 'Append instead of overwrite. For write.' },
+          key: { type: 'string', description: 'KV key. For recall.' },
+          value: { type: 'string', description: 'JSON value to store. Omit to retrieve. For recall.' },
+          prefix: { type: 'string', description: 'Key prefix filter. For query.' },
+        },
+        required: ['action'],
+      },
+    },
+  },
+];
+
+// ── Platform Tools (Code Mode) ──
+
+/** Minimal tool set for code mode — execute + memory only.
+ *  ul.discover and ul.call are accessed INSIDE ul_execute recipes,
+ *  not as standalone tools. This forces the agent to write recipes. */
+const CODE_MODE_TOOLS: ChatTool[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'ul_execute',
+      description:
+        'Execute a JavaScript recipe in a secure sandbox. ' +
+        'Write an async function body that discovers apps, chains calls, and returns a composed result. ' +
+        'Inside the sandbox: ul.call(app_id, fn, args?) calls any app, ul.discover(scope, query?) searches your library/appstore. ' +
+        'Return a result object. This is your ONLY tool for interacting with apps — use it for everything.',
+      parameters: {
+        type: 'object',
+        properties: {
+          code: {
             type: 'string',
-            description: 'Markdown content. For write.',
+            description:
+              'JavaScript async function body. Available: ul.call(app_id, fn, args?), ul.discover(scope, query?), console.log(). ' +
+              'Example: const apps = await ul.discover("library", "email"); return apps;',
           },
-          append: {
-            type: 'boolean',
-            description: 'Append instead of overwrite. For write.',
-          },
-          key: {
+        },
+        required: ['code'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'ul_memory',
+      description:
+        'Persistent cross-session memory. ' +
+        'action="read": read memory.md. ' +
+        'action="write": overwrite/append memory.md. ' +
+        'action="recall": get/set a KV key. ' +
+        'action="query": list/delete KV keys.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: {
             type: 'string',
-            description: 'KV key. For recall.',
+            enum: ['read', 'write', 'recall', 'query'],
+            description: 'Memory operation.',
           },
-          value: {
-            type: 'string',
-            description: 'JSON value to store. Omit to retrieve. For recall.',
-          },
-          prefix: {
-            type: 'string',
-            description: 'Key prefix filter. For query.',
-          },
+          content: { type: 'string', description: 'Markdown content. For write.' },
+          append: { type: 'boolean', description: 'Append instead of overwrite. For write.' },
+          key: { type: 'string', description: 'KV key. For recall.' },
+          value: { type: 'string', description: 'JSON value to store. Omit to retrieve. For recall.' },
+          prefix: { type: 'string', description: 'Key prefix filter. For query.' },
         },
         required: ['action'],
       },
@@ -125,7 +171,9 @@ const PLATFORM_TOOLS: ChatTool[] = [
 const TOOL_NAME_MAP: Record<string, string> = {
   'ul_discover': 'ul.discover',
   'ul_call': 'ul.call',
+  'ul_execute': 'ul.execute',
   'ul_memory': 'ul.memory',
+  'ul_rate': 'ul.rate',
 };
 
 // ── Hook ──
@@ -158,7 +206,10 @@ export function useMcp(): UseMcpReturn {
     }
   }, []);
 
-  const tools = useMemo(() => PLATFORM_TOOLS, []);
+  const tools = useMemo(() => {
+    const model = getModel();
+    return isCodeModeCapable(model) ? CODE_MODE_TOOLS : TRADITIONAL_TOOLS;
+  }, []);
 
   return { tools, executeToolCall };
 }
