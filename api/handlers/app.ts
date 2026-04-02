@@ -212,14 +212,14 @@ export function createApp() {
       // Public homepage
       if (path === '/' && method === 'GET') {
         return new Response(getLayoutHTML({ initialView: 'home', embed: isEmbed }), {
-          headers: { 'Content-Type': 'text/html' },
+          headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' },
         });
       }
 
       // Desktop app download page
       if (path === '/download' && method === 'GET') {
         return new Response(getDownloadPageHTML(), {
-          headers: { 'Content-Type': 'text/html' },
+          headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' },
         });
       }
 
@@ -271,14 +271,14 @@ export function createApp() {
       // Capabilities (unified Library + Marketplace)
       if (path === '/capabilities' && method === 'GET') {
         return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed, dashSection: 'capabilities' }), {
-          headers: { 'Content-Type': 'text/html' },
+          headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' },
         });
       }
 
       // Dashboard — backward compat, maps to capabilities
       if (path === '/dash' && method === 'GET') {
         return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed, dashSection: 'capabilities' }), {
-          headers: { 'Content-Type': 'text/html' },
+          headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' },
         });
       }
 
@@ -287,14 +287,14 @@ export function createApp() {
         const settingsSub = path.split('/settings/')[1] || 'keys';
         const section = settingsSub === 'billing' ? 'billing' : settingsSub === 'tokens' ? 'keys' : settingsSub;
         return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed, dashSection: section }), {
-          headers: { 'Content-Type': 'text/html' },
+          headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' },
         });
       }
 
       // Marketplace — backward compat, maps to capabilities
       if (path === '/marketplace' && method === 'GET') {
         return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed, dashSection: 'capabilities' }), {
-          headers: { 'Content-Type': 'text/html' },
+          headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' },
         });
       }
 
@@ -303,7 +303,7 @@ export function createApp() {
         const slug = path.slice(3);
         if (slug) {
           return new Response(getLayoutHTML({ initialView: 'profile', profileSlug: slug }), {
-            headers: { 'Content-Type': 'text/html' },
+            headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' },
           });
         }
       }
@@ -311,7 +311,7 @@ export function createApp() {
       // My profile (authenticated)
       if (path === '/my-profile' && method === 'GET') {
         return new Response(getLayoutHTML({ initialView: 'profile', embed: isEmbed }), {
-          headers: { 'Content-Type': 'text/html' },
+          headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' },
         });
       }
 
@@ -692,7 +692,7 @@ export function createApp() {
         // SPA routes for app detail sidebar sections
         if (['/permissions', '/environment', '/payments', '/logs'].includes(subPath) && method === 'GET') {
           return new Response(getLayoutHTML({ initialView: 'app', activeAppId: appId }), {
-            headers: { 'Content-Type': 'text/html' },
+            headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' },
           });
         }
 
