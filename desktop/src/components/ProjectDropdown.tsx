@@ -106,17 +106,17 @@ export default function ProjectDropdown({ selectedDir, onSelect, dropUp = false,
       <button
         onClick={() => setIsOpen(!isOpen)}
         className={compact
-          ? 'flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-gray-100 transition-colors max-w-[260px]'
+          ? 'flex items-center gap-1.5 px-1.5 py-0.5 rounded hover:bg-gray-100 transition-colors max-w-[260px]'
           : 'flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-gray-100 transition-colors max-w-[300px]'
         }
       >
         {compact && (
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-ul-text-muted flex-shrink-0">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-500 flex-shrink-0">
             <rect x="2" y="3" width="20" height="18" rx="2" ry="2"/><line x1="2" y1="9" x2="22" y2="9"/>
           </svg>
         )}
         <span className={compact
-          ? `text-caption truncate ${selectedDir ? 'text-ul-text-muted' : 'text-gray-300'}`
+          ? `text-caption font-normal truncate text-gray-500`
           : 'text-small text-ul-text-muted truncate'
         }>
           {selectedDir ? shortenPath(selectedDir) : (compact ? 'No project selected' : 'Select a project...')}
@@ -132,7 +132,7 @@ export default function ProjectDropdown({ selectedDir, onSelect, dropUp = false,
 
       {/* Dropdown menu */}
       {isOpen && (
-        <div className={`absolute ${dropUp ? 'bottom-full mb-1' : 'top-full mt-1'} right-0 min-w-[280px] bg-white border border-ul-border rounded-lg shadow-lg z-40 py-1`}>
+        <div className={`absolute ${dropUp ? 'bottom-full mb-1' : 'top-full mt-1'} left-0 min-w-[280px] bg-white border border-ul-border rounded-lg shadow-lg z-40 py-1`}>
           {/* Recent projects */}
           {recentProjects.length > 0 && (
             <>

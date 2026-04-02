@@ -66,74 +66,69 @@ export default function ChatInput({ onSend, isLoading, onStop, queueMode = false
   };
 
   return (
-    <div className="border-t border-ul-border bg-white px-4 py-3">
-      <div className="max-w-narrow mx-auto flex items-end gap-2">
-        <div className="flex-1 relative">
+    <div className="bg-white px-4 pt-3 pb-4">
+      <div className="max-w-narrow mx-auto">
+        <div className="flex items-end gap-2">
           <textarea
             ref={textareaRef}
             value={value}
             onChange={e => setValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={isQueueing ? 'Queue a follow-up message...' : 'Send a message...'}
+            placeholder={isQueueing ? 'Queue a follow-up...' : 'Message...'}
             rows={1}
-            className="w-full resize-none border border-ul-border rounded-lg px-3 py-2.5 text-body text-ul-text bg-white outline-none transition-colors focus:border-ul-border-focus focus:shadow-glow placeholder:text-ul-text-muted selectable"
+            className="flex-1 resize-none border border-gray-200 px-3 text-[13px] text-ul-text bg-white outline-none transition-colors focus:border-gray-400 placeholder:text-gray-500 selectable"
+            style={{ paddingTop: '9px', paddingBottom: '11px', lineHeight: '20px' }}
             disabled={inputDisabled}
           />
+
+          {/* Stop button */}
+          {isLoading && (
+            <button
+              onClick={onStop}
+              className="flex items-center justify-center w-8 h-8 rounded-full bg-gray-200 text-gray-500 hover:bg-gray-200 transition-colors flex-shrink-0 mb-0.5"
+              title="Stop"
+            >
+              <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+            </button>
+          )}
+
+          {/* Send / Queue button */}
+          {isQueueing ? (
+            <button
+              onClick={handleSend}
+              disabled={!value.trim()}
+              className="flex items-center justify-center w-8 h-8 rounded-full bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-30 transition-colors flex-shrink-0 mb-0.5"
+              title="Queue"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </button>
+          ) : !isLoading ? (
+            <button
+              onClick={handleSend}
+              disabled={!value.trim()}
+              className="flex items-center justify-center w-8 h-8 rounded-full bg-gray-800 text-white hover:bg-gray-700 disabled:opacity-20 transition-colors flex-shrink-0 mb-0.5"
+              title="Send"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 10.5L12 3m0 0l7.5 7.5M12 3v18" />
+              </svg>
+            </button>
+          ) : null}
         </div>
 
-        {/* Stop button — always shown when loading */}
-        {isLoading && (
-          <button
-            onClick={onStop}
-            className="btn-secondary btn-sm flex-shrink-0"
-            title="Stop generation"
-          >
-            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-              <rect x="6" y="6" width="12" height="12" rx="2" />
-            </svg>
-          </button>
-        )}
-
-        {/* Send/Queue button */}
-        {isQueueing ? (
-          <button
-            onClick={handleSend}
-            disabled={!value.trim()}
-            className="btn-sm flex-shrink-0 disabled:opacity-30 bg-amber-500 hover:bg-amber-600 text-white rounded-lg px-3 py-1.5 text-small font-medium transition-colors"
-            title="Queue message (will send when agent finishes)"
-          >
-            <svg className="w-4 h-4 inline mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            Queue
-          </button>
-        ) : !isLoading ? (
-          <button
-            onClick={handleSend}
-            disabled={!value.trim()}
-            className="btn-primary btn-sm flex-shrink-0 disabled:opacity-30"
-            title="Send (Enter)"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-            </svg>
-          </button>
-        ) : null}
-      </div>
-
-      <div className="flex items-center justify-between mt-1.5 max-w-narrow mx-auto">
-        <p className="text-caption text-ul-text-muted">
-          {isQueueing
-            ? 'Agent is running \u00b7 messages will be queued'
-            : 'Enter to send \u00b7 Shift+Enter for new line'}
-        </p>
         {onProjectDirChange && (
-          <ProjectDropdown
-            selectedDir={projectDir ?? null}
-            onSelect={(dir) => dir && onProjectDirChange(dir)}
-            dropUp
-            compact
-          />
+          <div className="mt-2">
+            <ProjectDropdown
+              selectedDir={projectDir ?? null}
+              onSelect={(dir) => dir && onProjectDirChange(dir)}
+              dropUp
+              compact
+            />
+          </div>
         )}
       </div>
     </div>

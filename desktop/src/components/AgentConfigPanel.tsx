@@ -4,6 +4,8 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Agent } from '../hooks/useAgentFleet';
+import { fetchModels, type ModelInfo } from '../lib/api';
+import ConfigDropdown, { type DropdownOption } from './ConfigDropdown';
 
 // ── Types ──
 
@@ -114,7 +116,25 @@ async function inspectApp(
   appId: string,
   cfg?: { selected_functions: string[]; conventions: Record<string, string> },
 ): Promise<{ name: string; description: string | null; functions: AppFunction[]; widgets?: Array<{ id: string; label: string; data_tool: string; poll_interval_s?: number }> }> {
-  const result = await executeMcpTool('ul_discover', { scope: 'inspect', app_id: appId });
+  // If appId looks like a UUID, inspect directly; otherwise search by slug first
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(appId);
+  let resolvedId = appId;
+  if (!isUuid) {
+    // Look up UUID by slug via search
+    const searchResult = await executeMcpTool('ul_discover', { scope: 'search', query: appId });
+    const searchParsed = JSON.parse(searchResult);
+    const results = searchParsed.results || searchParsed.apps || [];
+    const match = results.find((r: { slug?: string; name?: string; id: string }) =>
+      r.slug === appId || r.name === appId
+    );
+    if (match?.id) {
+      resolvedId = match.id;
+    } else {
+      throw new Error(`Could not find UUID for app "${appId}"`);
+    }
+  }
+  const result = await executeMcpTool('ul_discover', { scope: 'inspect', app_id: resolvedId });
+  if (result.startsWith('Error')) throw new Error(result);
   const parsed = JSON.parse(result);
   const manifest = parsed.manifest
     ? (typeof parsed.manifest === 'string' ? JSON.parse(parsed.manifest) : parsed.manifest)
@@ -152,8 +172,10 @@ async function inspectApp(
 
 // ── Component ──
 
-// Module-level cache for user apps — survives component remounts (e.g. toggling config panel)
-let _cachedUserApps: Array<{ id: string; slug: string; name: string; description: string | null }> | null = null;
+// Module-level caches — survive component remounts (e.g. toggling config panel)
+interface CachedApp { id: string; slug: string; name: string; description: string | null; functions?: AppFunction[] }
+let _cachedUserApps: CachedApp[] | null = null;
+let _cachedModels: ModelInfo[] | null = null;
 
 export default function AgentConfigPanel({
   agent,
@@ -167,16 +189,13 @@ export default function AgentConfigPanel({
   const [editingNotes, setEditingNotes] = useState(false);
   const [directive, setDirective] = useState(agent.initial_task || agent.name || '');
   const [editingDirective, setEditingDirective] = useState(false);
-  const [editingFlashModel, setEditingFlashModel] = useState(false);
-  const [editingHeavyModel, setEditingHeavyModel] = useState(false);
   const [flashModelValue, setFlashModelValue] = useState('');
   const [heavyModelValue, setHeavyModelValue] = useState('');
-  const flashModelRef = useRef<HTMLInputElement>(null);
-  const heavyModelRef = useRef<HTMLInputElement>(null);
+  const [models, setModels] = useState<ModelInfo[]>(_cachedModels || []);
 
   // Scope state
   const [scopedApps, setScopedApps] = useState<ScopedApp[]>([]);
-  const [allUserApps, setAllUserApps] = useState<Array<{ id: string; slug: string; name: string; description: string | null }>>([]);
+  const [allUserApps, setAllUserApps] = useState<CachedApp[]>([]);
   const [loadingApps, setLoadingApps] = useState(false);
   // Legacy — kept for backwards compat init
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>([]);
@@ -202,8 +221,13 @@ export default function AgentConfigPanel({
     const modelParts = (agent.model || '').split(' → ').map(s => s.trim());
     setFlashModelValue(modelParts[0] || '');
     setHeavyModelValue(modelParts[1] || modelParts[0] || '');
-    setEditingFlashModel(false);
-    setEditingHeavyModel(false);
+
+    // Fetch models for dropdown (use module cache if available)
+    if (_cachedModels) {
+      setModels(_cachedModels);
+    } else {
+      fetchModels().then(m => { _cachedModels = m; setModels(m); }).catch(() => {});
+    }
 
     // Fetch all user apps for the scope dropdown (use module cache if available)
     if (_cachedUserApps) {
@@ -213,8 +237,9 @@ export default function AgentConfigPanel({
       setLoadingApps(true);
       executeMcpTool('ul_discover', { scope: 'library' })
         .then(result => {
+          console.log('[AgentConfigPanel] library result:', result?.slice(0, 500));
           const parsed = JSON.parse(result);
-          let apps: Array<{ id: string; slug: string; name: string; description: string | null }> = [];
+          let apps: CachedApp[] = [];
 
           if (Array.isArray(parsed.library)) {
             apps = parsed.library
@@ -228,7 +253,15 @@ export default function AgentConfigPanel({
               const lines = section.split('\n');
               const name = lines[0]?.trim();
               if (!name || name.startsWith('#') || name === 'Saved Apps' || name === 'Saved Pages' || name === 'Library') continue;
-              apps.push({ id: name, slug: name, name, description: lines[1]?.trim() || null });
+              // Parse functions from markdown lines like "- fn_name(args): description"
+              const fns: AppFunction[] = [];
+              for (const line of lines.slice(1)) {
+                const fnMatch = line.match(/^- (\w+)\(.*?\)(?::\s*(.*))?$/);
+                if (fnMatch) {
+                  fns.push({ name: fnMatch[1], description: fnMatch[2]?.trim() === 'No description' ? '' : (fnMatch[2]?.trim() || ''), selected: true, convention: '' });
+                }
+              }
+              apps.push({ id: name, slug: name, name, description: lines[1]?.trim() || null, functions: fns.length > 0 ? fns : undefined });
             }
           } else if (parsed.results) {
             apps = parsed.results.map((r: { id: string; slug?: string; name: string; description?: string }) => ({
@@ -329,25 +362,17 @@ export default function AgentConfigPanel({
     return name.replace(/:nitro$/, '');
   };
 
-  const handleFlashModelBlur = useCallback(async () => {
-    setEditingFlashModel(false);
-    const flash = flashModelValue.trim();
-    const heavy = heavyModelValue.trim();
-    const combined = flash && heavy ? `${flash} → ${heavy}` : flash || heavy;
-    if (combined !== (agent.model || '')) {
-      await onUpdateAgent({ model: combined } as Partial<Agent>);
-    }
-  }, [agent, flashModelValue, heavyModelValue, onUpdateAgent]);
+  const handleSelectFlashModel = useCallback(async (value: string) => {
+    setFlashModelValue(value);
+    const combined = value && heavyModelValue ? `${value} → ${heavyModelValue}` : value || heavyModelValue;
+    await onUpdateAgent({ model: combined } as Partial<Agent>);
+  }, [heavyModelValue, onUpdateAgent]);
 
-  const handleHeavyModelBlur = useCallback(async () => {
-    setEditingHeavyModel(false);
-    const flash = flashModelValue.trim();
-    const heavy = heavyModelValue.trim();
-    const combined = flash && heavy ? `${flash} → ${heavy}` : flash || heavy;
-    if (combined !== (agent.model || '')) {
-      await onUpdateAgent({ model: combined } as Partial<Agent>);
-    }
-  }, [agent, flashModelValue, heavyModelValue, onUpdateAgent]);
+  const handleSelectHeavyModel = useCallback(async (value: string) => {
+    setHeavyModelValue(value);
+    const combined = flashModelValue && value ? `${flashModelValue} → ${value}` : flashModelValue || value;
+    await onUpdateAgent({ model: combined } as Partial<Agent>);
+  }, [flashModelValue, onUpdateAgent]);
 
   const handleToolApprovalChange = useCallback(async (value: string) => {
     await onUpdateAgent({ permission_level: value } as Partial<Agent>);
@@ -357,27 +382,30 @@ export default function AgentConfigPanel({
 
   // ── Scope handlers ──
 
-  const addScopedApp = useCallback(async (app: { id: string; slug: string; name: string; description: string | null }) => {
+  const addScopedApp = useCallback(async (app: CachedApp) => {
+    // Use pre-parsed functions from library cache if available
+    const cachedFns = app.functions || [];
     const newApp: ScopedApp = {
       id: app.id,
       slug: app.slug,
       name: app.name,
       description: app.description,
       access: 'all',
-      functions: [],
+      functions: cachedFns,
       expanded: false,
     };
     const next = [...scopedApps, newApp];
     setScopedApps(next);
 
-    // Inspect to get functions
-    if (executeMcpTool) {
+    // If no cached functions, try inspecting via API
+    if (cachedFns.length === 0 && executeMcpTool) {
       try {
         const info = await inspectApp(executeMcpTool, app.id);
         const updated = next.map(a => a.id === app.id ? { ...a, name: info.name, description: info.description, functions: info.functions } : a);
         setScopedApps(updated);
         await persistScopeConfig(updated);
-      } catch {
+      } catch (err) {
+        console.warn('[AgentConfigPanel] inspectApp failed:', err);
         await persistScopeConfig(next);
       }
     } else {
@@ -419,6 +447,17 @@ export default function AgentConfigPanel({
     });
     setScopedApps(next);
     await persistScopeConfig(next);
+  }, [scopedApps, persistScopeConfig]);
+
+  const updateScopeConvention = useCallback((appId: string, fnName: string, value: string) => {
+    setScopedApps(prev => prev.map(a => {
+      if (a.id !== appId) return a;
+      return { ...a, functions: a.functions.map(f => f.name === fnName ? { ...f, convention: value } : f) };
+    }));
+  }, []);
+
+  const saveScopeConvention = useCallback(async () => {
+    await persistScopeConfig(scopedApps);
   }, [scopedApps, persistScopeConfig]);
 
   // Legacy handlers (still referenced by dead code below)
@@ -531,6 +570,28 @@ export default function AgentConfigPanel({
   const valueClass = 'text-[12px] font-mono text-gray-500';
   const valueBtnClass = `${valueClass} py-0.5 hover:bg-white transition-colors`;
 
+  // Model dropdown options
+  const modelOptions: DropdownOption[] = models.map(m => ({
+    value: m.id,
+    label: displayModelName(m.id),
+    description: m.provider,
+  }));
+
+  // Approval dropdown options
+  const approvalOptions: DropdownOption[] = [
+    { value: 'auto_edit', label: 'Auto-approve', description: 'Tools run without asking', icon: <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" /> },
+    { value: 'ask_always', label: 'Ask always', description: 'Confirm before each tool', icon: <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" /> },
+    { value: 'auto_read', label: 'Read only', description: 'Block all write operations', icon: <span className="w-1.5 h-1.5 rounded-full bg-gray-300 shrink-0" /> },
+  ];
+
+  // Scope dropdown options
+  const availableApps = allUserApps.filter(a => !scopedApps.some(s => s.id === a.id));
+  const scopeOptions: DropdownOption[] = availableApps.map(a => ({
+    value: a.id,
+    label: a.name,
+    description: a.description || undefined,
+  }));
+
   return (
     <div className="space-y-1">
 
@@ -538,86 +599,68 @@ export default function AgentConfigPanel({
       <div className={cardClass}>
         <span className={`${labelClass} block mb-1.5`}>Model</span>
         <div className="space-y-1">
-              {/* Flash */}
-              {editingFlashModel ? (
-                <div className="flex items-center">
-                  <span className="text-[12px] font-mono text-gray-400 mr-3 shrink-0">Flash</span>
-                  <input
-                    ref={flashModelRef}
-                    type="text"
-                    value={flashModelValue}
-                    onChange={e => setFlashModelValue(e.target.value)}
-                    onBlur={handleFlashModelBlur}
-                    onKeyDown={e => { if (e.key === 'Enter') handleFlashModelBlur(); if (e.key === 'Escape') { const p = (agent.model || '').split(' → '); setFlashModelValue(p[0]?.trim() || ''); setEditingFlashModel(false); } }}
-                    autoFocus
-                    className="flex-1 min-w-0 px-1.5 py-0.5 text-[12px] font-mono rounded border border-gray-200 bg-white focus:outline-none focus:border-gray-400"
-                    placeholder="model id"
-                  />
-                </div>
-              ) : (
-                <button
-                  onClick={() => { setEditingFlashModel(true); setTimeout(() => flashModelRef.current?.focus(), 50); }}
-                  className="flex items-center w-[calc(100%+1.5rem)] -mx-3 pl-4 pr-3 py-0.5 hover:bg-white transition-colors"
-                  title={flashModelValue}
-                >
-                  <span className="text-[12px] font-mono text-gray-400 mr-3 shrink-0">Flash</span>
-                  <span className="flex-1 min-w-0 text-left text-[12px] font-mono text-gray-500 truncate">
-                    {flashModelValue ? displayModelName(flashModelValue) : <span className="text-gray-500">not set</span>}
-                  </span>
-                </button>
-              )}
-              {/* Heavy */}
-              {editingHeavyModel ? (
-                <div className="flex items-center">
-                  <span className="text-[12px] font-mono text-gray-400 mr-3 shrink-0">Heavy</span>
-                  <input
-                    ref={heavyModelRef}
-                    type="text"
-                    value={heavyModelValue}
-                    onChange={e => setHeavyModelValue(e.target.value)}
-                    onBlur={handleHeavyModelBlur}
-                    onKeyDown={e => { if (e.key === 'Enter') handleHeavyModelBlur(); if (e.key === 'Escape') { const p = (agent.model || '').split(' → '); setHeavyModelValue(p[1]?.trim() || p[0]?.trim() || ''); setEditingHeavyModel(false); } }}
-                    autoFocus
-                    className="flex-1 min-w-0 px-1.5 py-0.5 text-[12px] font-mono rounded border border-gray-200 bg-white focus:outline-none focus:border-gray-400"
-                    placeholder="model id"
-                  />
-                </div>
-              ) : (
-                <button
-                  onClick={() => { setEditingHeavyModel(true); setTimeout(() => heavyModelRef.current?.focus(), 50); }}
-                  className="flex items-center w-[calc(100%+1.5rem)] -mx-3 pl-4 pr-3 py-0.5 hover:bg-white transition-colors"
-                  title={heavyModelValue}
-                >
-                  <span className="text-[12px] font-mono text-gray-400 mr-3 shrink-0">Heavy</span>
-                  <span className="flex-1 min-w-0 text-left text-[12px] font-mono text-gray-500 truncate">
-                    {heavyModelValue ? displayModelName(heavyModelValue) : <span className="text-gray-500">not set</span>}
-                  </span>
-                </button>
-              )}
-            </div>
+          {/* Flash */}
+          <ConfigDropdown
+            options={modelOptions}
+            selected={flashModelValue}
+            onSelect={handleSelectFlashModel}
+            searchable
+            searchPlaceholder="Search models..."
+            allowCustom
+            customLabel="Use"
+            width="w-80"
+            trigger={
+              <div className="flex items-center w-[calc(100%+1.5rem)] -mx-3 pl-4 pr-3 py-0.5 hover:bg-white transition-colors">
+                <span className="text-[12px] font-mono text-gray-400 mr-3 shrink-0">Flash</span>
+                <span className="flex-1 min-w-0 text-left text-[12px] font-mono text-gray-500 truncate">
+                  {flashModelValue ? displayModelName(flashModelValue) : <span className="text-gray-500">not set</span>}
+                </span>
+              </div>
+            }
+          />
+          {/* Heavy */}
+          <ConfigDropdown
+            options={modelOptions}
+            selected={heavyModelValue}
+            onSelect={handleSelectHeavyModel}
+            searchable
+            searchPlaceholder="Search models..."
+            allowCustom
+            customLabel="Use"
+            width="w-80"
+            trigger={
+              <div className="flex items-center w-[calc(100%+1.5rem)] -mx-3 pl-4 pr-3 py-0.5 hover:bg-white transition-colors">
+                <span className="text-[12px] font-mono text-gray-400 mr-3 shrink-0">Heavy</span>
+                <span className="flex-1 min-w-0 text-left text-[12px] font-mono text-gray-500 truncate">
+                  {heavyModelValue ? displayModelName(heavyModelValue) : <span className="text-gray-500">not set</span>}
+                </span>
+              </div>
+            }
+          />
+        </div>
       </div>
 
       {/* ── Approval ── */}
       <div className={cardClass}>
         <span className={`${labelClass} block mb-1.5`}>Approval</span>
-        <button
-          onClick={() => {
-            const levels = ['auto_edit', 'ask_always', 'auto_read'] as const;
-            const current = agent.permission_level || 'auto_edit';
-            const next = levels[(levels.indexOf(current as typeof levels[number]) + 1) % levels.length];
-            handleToolApprovalChange(next);
-          }}
-          className="flex items-center gap-2 w-[calc(100%+1.5rem)] -mx-3 px-3 rounded py-0.5 hover:bg-white transition-colors"
-        >
-          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-            (agent.permission_level || 'auto_edit') === 'auto_edit' ? 'bg-emerald-400' :
-            agent.permission_level === 'ask_always' ? 'bg-amber-400' : 'bg-gray-300'
-          }`} />
-          <span className={valueClass}>
-            {(agent.permission_level || 'auto_edit') === 'auto_edit' ? 'Auto-approve' :
-             agent.permission_level === 'ask_always' ? 'Ask always' : 'Read only'}
-          </span>
-        </button>
+        <ConfigDropdown
+          options={approvalOptions}
+          selected={agent.permission_level || 'auto_edit'}
+          onSelect={handleToolApprovalChange}
+          width="w-64"
+          trigger={
+            <div className="flex items-center gap-2 w-[calc(100%+1.5rem)] -mx-3 px-3 py-0.5 hover:bg-white transition-colors">
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                (agent.permission_level || 'auto_edit') === 'auto_edit' ? 'bg-emerald-400' :
+                agent.permission_level === 'ask_always' ? 'bg-amber-400' : 'bg-gray-300'
+              }`} />
+              <span className={valueClass}>
+                {(agent.permission_level || 'auto_edit') === 'auto_edit' ? 'Auto-approve' :
+                 agent.permission_level === 'ask_always' ? 'Ask always' : 'Read only'}
+              </span>
+            </div>
+          }
+        />
       </div>
 
       {/* ── Scope ── */}
@@ -633,7 +676,7 @@ export default function AgentConfigPanel({
               {scopedApps.map(app => (
                 <div key={app.id} className="rounded border border-gray-100 overflow-hidden">
                   <div className="flex items-center gap-2 px-2.5 py-1.5 bg-gray-50/50">
-                    {app.access !== 'data' && app.functions.length > 0 && (
+                    {app.access !== 'data' && (
                       <button onClick={() => toggleScopeExpanded(app.id)} className="shrink-0">
                         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
                           className={`transition-transform text-gray-400 ${app.expanded ? 'rotate-90' : ''}`}>
@@ -641,7 +684,9 @@ export default function AgentConfigPanel({
                         </svg>
                       </button>
                     )}
-                    <span className="text-small text-ul-text font-medium truncate flex-1 min-w-0">{app.name}</span>
+                    <button onClick={() => app.access !== 'data' && toggleScopeExpanded(app.id)} className="text-small text-ul-text font-medium truncate flex-1 min-w-0 text-left">
+                      {app.name}
+                    </button>
                     <button
                       onClick={() => {
                         const levels: ScopeAccess[] = ['all', 'functions', 'data'];
@@ -653,9 +698,12 @@ export default function AgentConfigPanel({
                       {app.access === 'all' ? 'All' : app.access === 'functions' ? 'Functions' : 'Data'}
                     </button>
                     {app.access !== 'data' && app.functions.length > 0 && (
-                      <span className="text-[10px] text-gray-400 shrink-0">
+                      <span className="text-[10px] text-gray-400 shrink-0 font-mono">
                         {app.functions.filter(f => f.selected).length}/{app.functions.length}
                       </span>
+                    )}
+                    {app.access !== 'data' && app.functions.length === 0 && (
+                      <span className="text-[10px] text-gray-300 shrink-0">...</span>
                     )}
                     <button onClick={() => removeScopedApp(app.id)} className="text-gray-300 hover:text-red-400 transition-colors shrink-0">
                       <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
@@ -664,28 +712,46 @@ export default function AgentConfigPanel({
                     </button>
                   </div>
 
-                  {app.expanded && app.access !== 'data' && app.functions.length > 0 && (
+                  {app.expanded && app.access !== 'data' && (
                     <div className="border-t border-gray-100 bg-white px-2.5 py-1.5">
+                      {app.functions.length === 0 ? (
+                        <p className="text-[11px] text-gray-300 py-1">Loading functions...</p>
+                      ) : (
+                        <>
                       <div className="flex items-center gap-2 mb-1.5 pb-1.5 border-b border-gray-50">
                         <button onClick={() => toggleScopeAllFunctions(app.id, true)} className="text-[10px] text-gray-400 hover:text-gray-600">All</button>
                         <span className="text-[10px] text-gray-200">|</span>
                         <button onClick={() => toggleScopeAllFunctions(app.id, false)} className="text-[10px] text-gray-400 hover:text-gray-600">None</button>
                       </div>
-                      <div className="space-y-0.5 max-h-48 overflow-y-auto">
+                      <div className="space-y-1 max-h-[500px] overflow-y-auto">
                         {app.functions.map(fn => (
-                          <label key={fn.name} className="flex items-center gap-1.5 cursor-pointer py-0.5">
-                            <input
-                              type="checkbox"
-                              checked={fn.selected}
-                              onChange={() => toggleScopeFunction(app.id, fn.name)}
-                              className="rounded border-gray-300 text-gray-700 focus:ring-0 focus:ring-offset-0 w-3 h-3"
-                            />
-                            <span className={`text-[11px] font-mono ${fn.selected ? 'text-gray-600' : 'text-gray-300 line-through'}`}>
-                              {fn.name}
-                            </span>
-                          </label>
+                          <div key={fn.name} className="py-0.5">
+                            <label className="flex items-center gap-1.5 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={fn.selected}
+                                onChange={() => toggleScopeFunction(app.id, fn.name)}
+                                className="rounded border-gray-300 text-gray-700 focus:ring-0 focus:ring-offset-0 w-3 h-3"
+                              />
+                              <span className={`text-[11px] font-mono ${fn.selected ? 'text-gray-600' : 'text-gray-300 line-through'}`}>
+                                {fn.name}
+                              </span>
+                            </label>
+                            {fn.selected && (
+                              <input
+                                type="text"
+                                value={fn.convention}
+                                onChange={e => updateScopeConvention(app.id, fn.name, e.target.value)}
+                                onBlur={saveScopeConvention}
+                                placeholder="Custom instructions for this function..."
+                                className="mt-0.5 ml-[18px] w-[calc(100%-18px)] px-1.5 py-0.5 text-[11px] font-mono text-gray-400 rounded border border-gray-100 bg-gray-50/50 focus:outline-none focus:border-gray-300 focus:bg-white placeholder:text-gray-300"
+                              />
+                            )}
+                          </div>
                         ))}
                       </div>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
@@ -694,27 +760,25 @@ export default function AgentConfigPanel({
           )}
 
           {/* Add app */}
-          {(() => {
-            const available = allUserApps.filter(a => !scopedApps.some(s => s.id === a.id));
-            if (available.length === 0 && scopedApps.length > 0) return null;
-            return loadingApps ? (
-              <span className="text-[10px] text-gray-300">Loading...</span>
-            ) : available.length > 0 ? (
-              <select
-                value=""
-                onChange={e => {
-                  const app = available.find(a => a.id === e.target.value);
-                  if (app) addScopedApp(app);
-                }}
-                className={`w-full text-left ${valueBtnClass} -mx-3 px-3 w-[calc(100%+1.5rem)] bg-transparent focus:outline-none cursor-pointer appearance-none`}
-              >
-                <option value="">+ Add app...</option>
-                {available.map(app => (
-                  <option key={app.id} value={app.id}>{app.name}</option>
-                ))}
-              </select>
-            ) : null;
-          })()}
+          {loadingApps ? (
+            <span className="text-[10px] text-gray-300">Loading...</span>
+          ) : availableApps.length > 0 ? (
+            <ConfigDropdown
+              options={scopeOptions}
+              onSelect={value => {
+                const app = allUserApps.find(a => a.id === value);
+                if (app) addScopedApp(app);
+              }}
+              searchable
+              searchPlaceholder="Search apps..."
+              width="w-72"
+              trigger={
+                <div className={`${valueBtnClass} -mx-3 px-3 w-[calc(100%+1.5rem)]`}>
+                  + Add app...
+                </div>
+              }
+            />
+          ) : scopedApps.length === 0 ? null : null}
         </div>
       )}
 
