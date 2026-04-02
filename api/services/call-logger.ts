@@ -181,3 +181,40 @@ export async function getRecentCalls(
 
   return response.json();
 }
+
+/**
+ * Get call logs for an app (all users) — owner-only view.
+ * Unlike getRecentCalls which filters by user_id, this filters by app_id
+ * and includes user_id so the owner can see who called.
+ */
+export async function getAppCallLog(
+  appId: string,
+  options: { limit?: number } = {}
+): Promise<Array<{
+  id: string;
+  user_id: string;
+  app_id: string | null;
+  app_name: string | null;
+  function_name: string;
+  method: string;
+  success: boolean;
+  duration_ms: number | null;
+  error_message: string | null;
+  created_at: string;
+}>> {
+  const limit = Math.min(options.limit || 50, 200);
+  const url = `${getEnv('SUPABASE_URL')}/rest/v1/mcp_call_logs?app_id=eq.${appId}&order=created_at.desc&limit=${limit}&select=id,user_id,app_id,app_name,function_name,method,success,duration_ms,error_message,created_at`;
+
+  const response = await fetch(url, {
+    headers: {
+      'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+      'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to get app call logs: ${await response.text()}`);
+  }
+
+  return response.json();
+}

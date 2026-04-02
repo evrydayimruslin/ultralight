@@ -3101,7 +3101,7 @@ export function getLayoutHTML(options: {
     // Hide chrome in embed mode (desktop app provides its own nav)
     if (_isEmbed) {
       var _embedStyle = document.createElement('style');
-      _embedStyle.textContent = '.top-nav { display: none !important; } #dashboardView .settings-sidebar { display: none !important; } #dashboardView .settings-layout { gap: 0; justify-content: center; } #dashboardView .settings-content { flex: none; width: 100%; max-width: 800px; margin-left: auto; margin-right: auto; min-width: 0; } #dashboardView { padding-top: 0; }';
+      _embedStyle.textContent = '.top-nav { display: none !important; } .main-content { padding-top: var(--space-4) !important; } #dashboardView .settings-sidebar { display: none !important; } #dashboardView .settings-layout { gap: 0; justify-content: center; } #dashboardView .settings-content { flex: none; width: 100%; max-width: 800px; margin-left: auto; margin-right: auto; min-width: 0; } #dashboardView { padding-top: 0; } #profileView { padding-top: 0; }';
       document.head.appendChild(_embedStyle);
     }
 
@@ -4778,6 +4778,19 @@ export function getLayoutHTML(options: {
       }
     }
 
+    // Toggle Payments & Market tabs based on app visibility
+    function updatePublicTabVisibility() {
+      var isPublished = window._currentApp && window._currentApp.visibility === 'published';
+      var paymentsTab = document.querySelector('[data-app-section="payments"]');
+      var marketTab = document.querySelector('[data-app-section="market"]');
+      if (paymentsTab) paymentsTab.style.display = isPublished ? '' : 'none';
+      if (marketTab) marketTab.style.display = isPublished ? '' : 'none';
+      // If on a hidden tab, redirect to overview
+      if (!isPublished && (activeAppSection === 'payments' || activeAppSection === 'market')) {
+        switchAppSection('overview');
+      }
+    }
+
     // App sidebar click handlers
     document.querySelectorAll('[data-app-section]').forEach(function(el) {
       el.addEventListener('click', function() {
@@ -5199,7 +5212,6 @@ export function getLayoutHTML(options: {
       if (!authToken || !appId) return;
 
       var sec = section || 'overview';
-      switchAppSection(sec);
 
       try {
         const res = await fetch('/api/apps/' + appId, {
@@ -5215,6 +5227,14 @@ export function getLayoutHTML(options: {
 
         // Store current app data for editing
         window._currentApp = app;
+
+        // Toggle Payments/Market tabs based on visibility
+        updatePublicTabVisibility();
+        // If requested section is hidden, fall back to overview
+        if (sec === 'payments' || sec === 'market') {
+          if (app.visibility !== 'published') sec = 'overview';
+        }
+        switchAppSection(sec);
 
         // Set app name on all panels
         var appName = escapeHtml(app.name || app.slug || 'Untitled');
@@ -5441,6 +5461,53 @@ export function getLayoutHTML(options: {
               '<div><label class="form-label">Download Access</label><select id="permDownload" class="form-input"><option value="owner"' + (app.download_access === 'owner' ? ' selected' : '') + '>Owner Only</option><option value="public"' + (app.download_access === 'public' ? ' selected' : '') + '>Public</option></select></div>' +
             '</div>' +
           '</div>';
+        // Auto-save visibility changes
+        var permVisSel = document.getElementById('permVisibility');
+        if (permVisSel) {
+          permVisSel.addEventListener('change', async function() {
+            var newVis = this.value;
+            try {
+              var res = await fetch('/api/apps/' + app.id, {
+                method: 'PATCH',
+                headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ visibility: newVis }),
+              });
+              if (res.ok) {
+                window._currentApp.visibility = newVis;
+                updatePublicTabVisibility();
+                // Sync Overview tab's visibility dropdown
+                var overviewVisSel = document.getElementById('settingVisibility');
+                if (overviewVisSel) overviewVisSel.value = newVis;
+                showToast('Visibility updated');
+              } else {
+                showToast('Failed to update visibility', 'error');
+              }
+            } catch (e) {
+              showToast('Failed to update visibility', 'error');
+            }
+          });
+        }
+        // Auto-save download access changes
+        var permDlSel = document.getElementById('permDownload');
+        if (permDlSel) {
+          permDlSel.addEventListener('change', async function() {
+            try {
+              var res = await fetch('/api/apps/' + app.id, {
+                method: 'PATCH',
+                headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ download_access: this.value }),
+              });
+              if (res.ok) {
+                window._currentApp.download_access = this.value;
+                showToast('Download access updated');
+              } else {
+                showToast('Failed to update', 'error');
+              }
+            } catch (e) {
+              showToast('Failed to update', 'error');
+            }
+          });
+        }
       }
       // Load granted users
       const permsEl = document.getElementById('permissionsContent');
@@ -5556,7 +5623,7 @@ export function getLayoutHTML(options: {
         fetch('/api/marketplace/metrics/' + appId, {
           headers: { 'Authorization': 'Bearer ' + authToken }
         }).then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; }),
-        fetch('/api/user/call-log?limit=50&app_id=' + appId, {
+        fetch('/api/apps/' + appId + '/call-log?limit=50', {
           headers: { 'Authorization': 'Bearer ' + authToken }
         }).then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; })
       ]).then(function(results) {
@@ -5625,6 +5692,7 @@ export function getLayoutHTML(options: {
           html += '<table style="width:100%;font-size:13px;border-collapse:collapse">' +
             '<thead><tr style="border-bottom:1px solid var(--border);text-align:left">' +
               '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Status</th>' +
+              '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">User</th>' +
               '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Function</th>' +
               '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Duration</th>' +
               '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Time</th>' +
@@ -5633,6 +5701,7 @@ export function getLayoutHTML(options: {
               var success = log.success !== false;
               return '<tr style="border-bottom:1px solid var(--border)">' +
                 '<td style="padding:8px 12px"><div style="width:8px;height:8px;border-radius:50%;background:' + (success ? 'var(--success)' : 'var(--error)') + '"></div></td>' +
+                '<td style="padding:8px 12px;color:var(--text-muted);font-family:var(--font-mono);font-size:11px">' + escapeHtml((log.user_id || '').substring(0, 8)) + '</td>' +
                 '<td style="padding:8px 12px;font-family:var(--font-mono)">' + escapeHtml(log.function_name || log.method || '') + '</td>' +
                 '<td style="padding:8px 12px;color:var(--text-muted)">' + (log.duration_ms ? log.duration_ms + 'ms' : '-') + '</td>' +
                 '<td style="padding:8px 12px;color:var(--text-muted)">' + relTime(log.created_at) + '</td>' +
@@ -6334,6 +6403,13 @@ export function getLayoutHTML(options: {
           body: JSON.stringify(body),
         });
         if (res.ok) {
+          // Update cached app data and tab visibility
+          if (body.visibility) {
+            window._currentApp.visibility = body.visibility;
+            updatePublicTabVisibility();
+            var permVisSel = document.getElementById('permVisibility');
+            if (permVisSel) permVisSel.value = body.visibility;
+          }
           showToast('Settings saved!');
           await loadApps();
         } else {

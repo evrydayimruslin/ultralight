@@ -221,6 +221,11 @@ export async function handleApps(request: Request): Promise<Response> {
       return handleUpdateHealth(request, appId);
     }
 
+    // GET /api/apps/:appId/call-log - Owner call log (all users' activity)
+    if (subPath === '/call-log' && method === 'GET') {
+      return handleGetAppCallLog(request, appId);
+    }
+
     // POST /api/apps/:appId/save - Save app to user's library
     if (subPath === '/save' && method === 'POST') {
       return handleSaveApp(request, appId);
@@ -2700,6 +2705,26 @@ async function handleGetEarnings(request: Request, appId: string): Promise<Respo
  * Agents fix issues via ul.health + ul.upload.
  * GET /api/apps/:appId/health
  */
+async function handleGetAppCallLog(request: Request, appId: string): Promise<Response> {
+  try {
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+    const app = await appsService.findById(appId);
+    if (!app) return error('App not found', 404);
+    if (app.owner_id !== user.id) return error('Unauthorized', 403);
+
+    const { getAppCallLog } = await import('../services/call-logger.ts');
+    const url = new URL(request.url);
+    const limit = parseInt(url.searchParams.get('limit') || '50', 10);
+    const logs = await getAppCallLog(appId, { limit: Math.min(limit, 200) });
+    return json({ logs });
+  } catch (err: any) {
+    if (err.message === 'Not authenticated') return error('Unauthorized', 401);
+    console.error('Get app call log error:', err);
+    return error('Failed to get call logs', 500);
+  }
+}
+
 async function handleGetHealth(request: Request, appId: string): Promise<Response> {
   try {
     const user = await authenticate(request);
