@@ -2228,10 +2228,13 @@ async function handleToolsCall(
 
     const durationMs = Date.now() - execStart;
 
-    // Log the call
+    // Log the call — resolve app info from toolMap if available
+    const toolInfo = toolMap?.[name];
     const { logMcpCall } = await import('../services/call-logger.ts');
     logMcpCall({
       userId,
+      appId: toolInfo?.appId,
+      appName: toolInfo?.appName || toolInfo?.appSlug,
       functionName: name,
       method: 'tools/call',
       success: true,
@@ -2249,9 +2252,12 @@ async function handleToolsCall(
 
     const durationMs = Date.now() - execStart;
 
+    const toolInfo = toolMap?.[name];
     const { logMcpCall } = await import('../services/call-logger.ts');
     logMcpCall({
       userId,
+      appId: toolInfo?.appId,
+      appName: toolInfo?.appName || toolInfo?.appSlug,
       functionName: name,
       method: 'tools/call',
       success: false,

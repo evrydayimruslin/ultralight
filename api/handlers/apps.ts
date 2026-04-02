@@ -2716,12 +2716,14 @@ async function handleGetAppCallLog(request: Request, appId: string): Promise<Res
     const { getAppCallLog } = await import('../services/call-logger.ts');
     const url = new URL(request.url);
     const limit = parseInt(url.searchParams.get('limit') || '50', 10);
+    console.log(`[call-log] Fetching logs for app ${appId}, limit ${limit}`);
     const logs = await getAppCallLog(appId, { limit: Math.min(limit, 200) });
+    console.log(`[call-log] Got ${logs.length} logs`);
     return json({ logs });
   } catch (err: any) {
     if (err.message === 'Not authenticated') return error('Unauthorized', 401);
-    console.error('Get app call log error:', err);
-    return error('Failed to get call logs', 500);
+    console.error('Get app call log error:', err?.message, err?.stack);
+    return error(err?.message || 'Failed to get call logs', 500);
   }
 }
 
