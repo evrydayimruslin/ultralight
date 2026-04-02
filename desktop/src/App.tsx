@@ -52,10 +52,6 @@ export default function App() {
     navigateToProfile,
     navigateToWallet,
     navigateToSettings,
-    canGoBack,
-    canGoForward,
-    goBack,
-    goForward,
   } = useAppState();
   const {
     agents,
@@ -203,9 +199,15 @@ export default function App() {
     await newSession(id);
   }, [newSession]);
 
-  const toggleSidebar = useCallback(() => {
-    setSidebarOpen(prev => !prev);
-  }, []);
+  const handleRenameAgent = useCallback(async (id: string, newName: string) => {
+    await invoke('db_update_agent', {
+      id, name: newName, status: null, adminNotes: null,
+      endGoal: null, context: null, permissionLevel: null, model: null,
+      projectDir: null, connectedAppIds: null, connectedApps: null,
+      initialTask: null, stateSummary: null, systemAgentType: null,
+    });
+    await refreshAgents();
+  }, [refreshAgents]);
 
   // ── View caching: keep visited views mounted but hidden ──
   // Track which singleton views have been visited so we mount them once
@@ -263,14 +265,7 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-full">
-      <TopToolbar
-        sidebarOpen={sidebarOpen}
-        onToggleSidebar={toggleSidebar}
-        canGoBack={canGoBack}
-        canGoForward={canGoForward}
-        onGoBack={goBack}
-        onGoForward={goForward}
-      />
+      <TopToolbar />
       <div className="flex flex-1 min-h-0">
         <NavSidebar
           agents={agents}
@@ -286,6 +281,7 @@ export default function App() {
           onDeleteAgent={handleDeleteAgent}
           onStopAgent={handleStopAgent}
           onNewSession={handleNewSession}
+          onRenameAgent={handleRenameAgent}
           isAgentRunning={isAgentRunning}
         />
 

@@ -430,7 +430,9 @@ export async function* streamOrchestrate(opts: {
   conversationHistory?: Array<{ role: string; content: string }>;
   interpreterModel?: string;
   heavyModel?: string;
-  scope?: Record<string, { access: 'all' | 'functions' | 'data'; functions?: string[] }>;
+  scope?: Record<string, { access: 'all' | 'functions' | 'data'; functions?: string[]; conventions?: Record<string, string> }>;
+  /** Behavioral instructions from the agent's admin notes */
+  adminNotes?: string;
   systemAgentStates?: Array<{ type: string; name: string; tools: string[]; stateSummary: string | null; status: string }>;
   systemAgentContext?: { type: string; persona: string; skillsPath: string };
   /** Local project file context gathered client-side for Tool Maker */

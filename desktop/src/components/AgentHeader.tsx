@@ -1,12 +1,17 @@
 // Agent header — collapsed shows name + status, expanded shows full config panel.
 // Uses shared AgentConfigPanel for the config UI.
+// For new chats (agent=null), creates a synthetic agent so the same panel renders.
 
-import { useState } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import type { Agent } from '../hooks/useAgentFleet';
 import BalanceIndicator from './BalanceIndicator';
 import ContextIndicator from './ContextIndicator';
 import AgentConfigPanel from './AgentConfigPanel';
 import { openSubagentWindow } from '../lib/multiWindow';
+import {
+  getInterpreterModel, setInterpreterModel,
+  getHeavyModel, setHeavyModel,
+} from '../lib/storage';
 
 // ── Types ──
 
@@ -48,6 +53,35 @@ function formatElapsed(createdAt: number): string {
   return `${hours}h ${minutes % 60}m`;
 }
 
+function buildNewChatAgent(): Agent {
+  const flash = getInterpreterModel();
+  const heavy = getHeavyModel();
+  return {
+    id: '__new_chat__',
+    conversation_id: '',
+    parent_agent_id: null,
+    name: 'New Chat',
+    role: 'general',
+    status: 'pending',
+    system_prompt: null,
+    initial_task: null,
+    project_dir: null,
+    model: `${flash} → ${heavy}`,
+    permission_level: 'auto_edit',
+    admin_notes: null,
+    end_goal: null,
+    context: null,
+    launch_mode: 'chat',
+    connected_app_ids: null,
+    connected_apps: null,
+    is_system: 0,
+    system_agent_type: null,
+    state_summary: null,
+    created_at: Date.now(),
+    updated_at: Date.now(),
+  };
+}
+
 // ── Component ──
 
 export default function AgentHeader({
@@ -66,65 +100,63 @@ export default function AgentHeader({
 }: AgentHeaderProps) {
   const [expanded, setExpanded] = useState(false);
 
+  // Synthetic agent for new chat — lets AgentConfigPanel render identically
+  const syntheticAgent = useMemo(() => !agent ? buildNewChatAgent() : null, [agent]);
+  const displayAgent = agent || syntheticAgent;
+
+  // For new chat, intercept model updates and persist to localStorage
+  const handleUpdateAgent = useCallback(async (updates: Partial<Agent>) => {
+    if (agent) {
+      return onUpdateAgent(updates);
+    }
+    // New chat — persist model changes to localStorage
+    if (updates.model) {
+      const parts = updates.model.split(' → ').map(s => s.trim());
+      if (parts[0]) setInterpreterModel(parts[0]);
+      if (parts[1]) setHeavyModel(parts[1]);
+    }
+  }, [agent, onUpdateAgent]);
+
   return (
-    <div className="border-b border-ul-border bg-white flex-shrink-0">
+    <div className="bg-white flex-shrink-0">
       {/* Collapsed header — always visible */}
       <header className="flex items-center justify-between px-4 h-nav">
         <div className="flex items-center gap-3">
-          {agent ? (
-            <button
-              onClick={() => setExpanded(!expanded)}
-              className="flex items-center gap-2 hover:bg-gray-50 rounded px-2 py-1 -mx-2 transition-colors"
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="flex items-center gap-2 px-2 py-1 -mx-2"
+          >
+            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${statusDotClass(agent ? agent.status : 'pending')}`} />
+            <span className="text-h3 text-ul-text tracking-tight">
+              {agent ? agent.name : 'New Chat'}
+            </span>
+            <svg
+              width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
+              className={`transition-transform ${expanded ? 'rotate-180' : ''}`}
             >
-              <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${statusDotClass(agent.status)}`} />
-              <span className="text-h3 text-ul-text tracking-tight">{agent.name}</span>
-              <svg
-                width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
-                className={`transition-transform ${expanded ? 'rotate-180' : ''}`}
-              >
-                <path d="M3.5 5.5L7 9L10.5 5.5" />
-              </svg>
-            </button>
-          ) : (
-            <h1 className="text-h3 text-ul-text tracking-tight">Ultralight</h1>
-          )}
+              <path d="M3.5 5.5L7 9L10.5 5.5" />
+            </svg>
+          </button>
         </div>
 
         <div className="flex items-center gap-2">
-          <ContextIndicator tokenCount={tokenCount} contextWindow={contextWindow} />
           <BalanceIndicator />
         </div>
       </header>
 
       {/* Expanded config panel — uses shared AgentConfigPanel */}
-      {expanded && agent && (
-        <div className="px-4 pb-4 border-t border-ul-border bg-gray-50 max-h-[70vh] overflow-y-auto">
-          <div className="mt-3">
+      {expanded && displayAgent && (
+        <div className="px-4 pb-4 bg-white max-h-[70vh] overflow-y-auto">
+          <div className="mt-1">
             <AgentConfigPanel
-              agent={agent}
+              agent={displayAgent}
               allAgents={allAgents}
-              onUpdateAgent={onUpdateAgent}
+              onUpdateAgent={handleUpdateAgent}
               onNavigateToAgent={onOpenSubagentChat}
               executeMcpTool={executeMcpTool}
             />
           </div>
 
-          {/* Status + Actions */}
-          <div className="flex items-center justify-between mt-3">
-            <span className="text-caption text-ul-text-muted">
-              {agent.status === 'waiting_for_approval' ? 'Awaiting Approval' : agent.status} · {formatElapsed(agent.created_at)}
-            </span>
-            <div className="flex items-center gap-2">
-              {isRunning && (
-                <button onClick={onStop} className="btn-ghost btn-sm text-caption text-ul-error">
-                  Stop
-                </button>
-              )}
-              <button onClick={onNewSession} className="btn-ghost btn-sm text-caption">
-                New Session
-              </button>
-            </div>
-          </div>
 
           {/* Subagents */}
           {childAgents.length > 0 && (

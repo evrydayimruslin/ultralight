@@ -22,8 +22,7 @@ import { SYSTEM_AGENTS } from '../lib/systemAgents';
 import { gatherProjectContext } from '../lib/projectContext';
 import { parseFileOperations } from '../lib/parseFileOps';
 import { updateSystemAgentState, maybeEmbedConversation } from '../lib/agentStateSummary';
-import ModelSelector from './ModelSelector';
-import { fetchFunctionIndex, fetchTaskContext, streamOrchestrate } from '../lib/api';
+import { fetchFunctionIndex, fetchTaskContext, streamOrchestrate, streamChat } from '../lib/api';
 import { agentRunner } from '../lib/agentRunner';
 
 /** Map flash broker's model suggestion to a real OpenRouter model ID */
@@ -41,6 +40,16 @@ function resolveModelFromBroker(suggestion?: string): string | undefined {
       if (suggestion.includes('/')) return suggestion;
       return undefined;
   }
+}
+
+/** Parse "flash → heavy" model string from agent record, falling back to localStorage globals */
+function parseAgentModels(agentModel: string | null): { interpreter: string; heavy: string } {
+  if (agentModel) {
+    const parts = agentModel.split('→').map(s => s.trim());
+    if (parts[0] && parts[1]) return { interpreter: parts[0], heavy: parts[1] };
+    if (parts[0]) return { interpreter: parts[0], heavy: getHeavyModel() };
+  }
+  return { interpreter: getInterpreterModel(), heavy: getHeavyModel() };
 }
 
 interface ChatViewProps {
@@ -466,12 +475,12 @@ export default function ChatView({
     // Use refs to avoid stale closure issues
     const currentAgent = activeAgentRef.current;
     const currentPreChatScope = preChatScopeRef.current;
-    let scope: Record<string, { access: 'all' | 'functions' | 'data'; functions?: string[] }> | undefined;
+    let scope: Record<string, { access: 'all' | 'functions' | 'data'; functions?: string[]; conventions?: Record<string, string> }> | undefined;
     if (currentAgent?.connected_apps) {
       try {
         const parsed = JSON.parse(currentAgent.connected_apps);
         const apps = parsed.apps || parsed;
-        const scopeEntries = Object.entries(apps as Record<string, { slug?: string; access?: string; selected_functions?: string[] }>);
+        const scopeEntries = Object.entries(apps as Record<string, { slug?: string; access?: string; selected_functions?: string[]; conventions?: Record<string, string> }>);
         if (scopeEntries.length > 0) {
           scope = {};
           for (const [, cfg] of scopeEntries) {
@@ -479,7 +488,8 @@ export default function ChatView({
             if (!slug) continue;
             const access = (cfg.access || 'all') as 'all' | 'functions' | 'data';
             const fns = cfg.selected_functions && cfg.selected_functions.length > 0 ? cfg.selected_functions : undefined;
-            scope[slug] = { access, functions: fns };
+            const conventions = cfg.conventions && Object.keys(cfg.conventions).length > 0 ? cfg.conventions : undefined;
+            scope[slug] = { access, functions: fns, conventions };
           }
           if (Object.keys(scope).length === 0) scope = undefined;
         }
@@ -521,12 +531,15 @@ export default function ChatView({
       }
     }
 
+    const agentModels = parseAgentModels(currentAgent?.model || null);
+
     for await (const event of streamOrchestrate({
       message: content,
       conversationHistory: history,
-      interpreterModel: getInterpreterModel(),
-      heavyModel: getHeavyModel(),
+      interpreterModel: agentModels.interpreter,
+      heavyModel: agentModels.heavy,
       scope,
+      adminNotes: currentAgent?.admin_notes || undefined,
       systemAgentStates: systemAgentStates.length > 0 ? systemAgentStates : undefined,
       systemAgentContext: systemAgentContext || undefined,
       projectContext,
@@ -739,12 +752,14 @@ export default function ChatView({
         }
       }
 
-      // Run orchestrate with the system agent's context
+      // Run orchestrate with the system agent's context and its configured models
+      const sysModels = parseAgentModels(agent.model || null);
       let resultContent = '';
       for await (const ev of streamOrchestrate({
         message: delegationMessage,
-        interpreterModel: getInterpreterModel(),
-        heavyModel: getHeavyModel(),
+        interpreterModel: sysModels.interpreter,
+        heavyModel: sysModels.heavy,
+        adminNotes: agent.admin_notes || undefined,
         systemAgentContext: { type: config.type, persona: config.persona, skillsPath: config.skillsPath },
         projectContext: delegatedProjectContext,
       })) {
@@ -858,6 +873,33 @@ export default function ChatView({
 
         // Stream FIRST, then navigate — keeps this ChatView mounted during streaming
         await runOrchestrateStream(content);
+
+        // Generate a nice title asynchronously (don't block navigation)
+        (async () => {
+          try {
+            let title = '';
+            for await (const ev of streamChat({
+              model: getInterpreterModel(),
+              messages: [{ role: 'user', content: `Generate a short title (3-6 words, no quotes) for a chat that starts with this message:\n\n${content.slice(0, 200)}` }],
+              temperature: 0.3,
+              max_tokens: 30,
+            })) {
+              if (ev.type === 'delta') title += ev.content || '';
+            }
+            title = title.trim().replace(/^["']|["']$/g, '');
+            if (title && title.length > 0 && title.length < 60) {
+              await invoke('db_update_agent', {
+                id: agent.id, name: title, status: null, adminNotes: null,
+                endGoal: null, context: null, permissionLevel: null, model: null,
+                projectDir: null, connectedAppIds: null, connectedApps: null,
+                initialTask: null, stateSummary: null, systemAgentType: null,
+              });
+              refreshAgents();
+            }
+          } catch (err) {
+            console.warn('[ChatView] Title generation failed:', err);
+          }
+        })();
 
         // Force-save messages to DB before navigating (navigation remounts ChatView)
         const currentMessages = messagesRef.current;
@@ -1020,14 +1062,6 @@ export default function ChatView({
         executeMcpTool={executeMcpTool}
       />
 
-      {/* Model selector — compact bar between header and messages */}
-      {!activeAgent && (
-        <div className="px-4 py-1.5 border-b border-gray-100 bg-gray-50/50">
-          <div className="max-w-narrow mx-auto">
-            <ModelSelector />
-          </div>
-        </div>
-      )}
 
       {/* Error banner */}
       {error && (
@@ -1093,147 +1127,6 @@ export default function ChatView({
         </div>
       )}
 
-      {/* Pre-chat Scope picker — restrict apps before first message */}
-      {!activeAgent && (
-        <div className="px-4 pb-2 border-t border-ul-border bg-gray-50/50">
-          <div className="max-w-narrow mx-auto">
-            <div className="flex items-center gap-2 pt-2 pb-1">
-              <label className="text-caption text-ul-text-muted">Scope</label>
-              {preChatScope.length > 0 && (
-                <span className="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
-                  {preChatScope.length} app{preChatScope.length !== 1 ? 's' : ''}
-                </span>
-              )}
-              {preChatScope.length === 0 && (
-                <span className="text-[10px] text-ul-text-muted">all apps</span>
-              )}
-            </div>
-
-            {/* Scoped app rows */}
-            {preChatScope.length > 0 && (
-              <div className="space-y-2 mb-2">
-                {preChatScope.map(app => (
-                  <div key={app.id} className="rounded border border-blue-200 bg-blue-50/30 overflow-hidden">
-                    {/* App header row */}
-                    <div className="flex items-center gap-2 px-2.5 py-1.5">
-                      {app.access !== 'data' && app.functions.length > 0 && (
-                        <button
-                          onClick={() => setPreChatScope(prev => prev.map(a => a.id === app.id ? { ...a, expanded: !a.expanded } : a))}
-                          className="flex items-center shrink-0"
-                        >
-                          <svg
-                            width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
-                            className={`transition-transform ${app.expanded ? 'rotate-90' : ''}`}
-                          >
-                            <path d="M3 1.5L7 5L3 8.5" />
-                          </svg>
-                        </button>
-                      )}
-                      <span className="text-caption text-ul-text font-medium truncate flex-1 min-w-0">{app.name}</span>
-                      <select
-                        value={app.access}
-                        onChange={e => setPreChatScope(prev => prev.map(a => a.id === app.id ? { ...a, access: e.target.value as 'all' | 'functions' | 'data' } : a))}
-                        className="text-[11px] px-1.5 py-0.5 rounded border border-blue-200 bg-white focus:outline-none focus:border-blue-400 shrink-0"
-                      >
-                        <option value="all">All</option>
-                        <option value="functions">Functions only</option>
-                        <option value="data">Data only</option>
-                      </select>
-                      {app.access !== 'data' && app.functions.length > 0 && (
-                        <span className="text-[10px] text-ul-text-muted shrink-0">
-                          {app.functions.filter(f => f.selected).length}/{app.functions.length} fn
-                        </span>
-                      )}
-                      <button
-                        onClick={() => setPreChatScope(prev => prev.filter(a => a.id !== app.id))}
-                        className="text-[10px] text-red-400 hover:text-red-600 px-0.5 shrink-0"
-                      >
-                        ✕
-                      </button>
-                    </div>
-
-                    {/* Expanded function list */}
-                    {app.expanded && app.access !== 'data' && app.functions.length > 0 && (
-                      <div className="border-t border-blue-200 bg-white px-2.5 py-1.5">
-                        <div className="flex items-center gap-2 mb-1.5 pb-1.5 border-b border-gray-100">
-                          <button
-                            onClick={() => setPreChatScope(prev => prev.map(a => a.id === app.id ? { ...a, functions: a.functions.map(f => ({ ...f, selected: true })) } : a))}
-                            className="text-[10px] text-blue-600 hover:underline"
-                          >
-                            Select All
-                          </button>
-                          <span className="text-[10px] text-ul-text-muted">·</span>
-                          <button
-                            onClick={() => setPreChatScope(prev => prev.map(a => a.id === app.id ? { ...a, functions: a.functions.map(f => ({ ...f, selected: false })) } : a))}
-                            className="text-[10px] text-blue-600 hover:underline"
-                          >
-                            Deselect All
-                          </button>
-                        </div>
-                        <div className="space-y-1 max-h-60 overflow-y-auto">
-                          {app.functions.map(fn => (
-                            <label key={fn.name} className="flex items-start gap-1.5 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={fn.selected}
-                                onChange={() => setPreChatScope(prev => prev.map(a => a.id === app.id
-                                  ? { ...a, functions: a.functions.map(f => f.name === fn.name ? { ...f, selected: !f.selected } : f) }
-                                  : a
-                                ))}
-                                className="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                              />
-                              <div className="flex-1 min-w-0">
-                                <span className={`text-[11px] font-mono ${fn.selected ? 'text-ul-text' : 'text-ul-text-muted line-through'}`}>
-                                  {fn.name}
-                                </span>
-                                {fn.description && (
-                                  <span className="text-[10px] text-ul-text-muted ml-1.5">
-                                    — {fn.description.slice(0, 60)}{fn.description.length > 60 ? '...' : ''}
-                                  </span>
-                                )}
-                              </div>
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Add app dropdown */}
-            {(() => {
-              const available = preChatAllApps.filter(a => !preChatScope.some(s => s.id === a.id));
-              if (available.length === 0 && preChatScope.length > 0) return null;
-              if (preChatAppsLoading) return <span className="text-[10px] text-ul-text-muted">Loading apps...</span>;
-              if (available.length === 0) return null;
-              return (
-                <select
-                  value=""
-                  onChange={e => {
-                    const app = available.find(a => a.id === e.target.value);
-                    if (app) {
-                      // Add app with functions from library (already parsed from markdown)
-                      const fns = app.functions.map(f => ({ ...f })); // clone
-                      setPreChatScope(prev => [...prev, {
-                        id: app.id, slug: app.slug, name: app.name,
-                        access: 'all', functions: fns, expanded: false,
-                      }]);
-                    }
-                  }}
-                  className="w-full text-small rounded border border-ul-border px-2 py-1.5 bg-white focus:outline-none focus:border-ul-border-focus text-ul-text-muted"
-                >
-                  <option value="">+ Add app to scope...</option>
-                  {available.map(app => (
-                    <option key={app.id} value={app.id}>{app.name}</option>
-                  ))}
-                </select>
-              );
-            })()}
-          </div>
-        </div>
-      )}
 
       {/* Needs-folder banner */}
       {showNeedsFolderBanner && (

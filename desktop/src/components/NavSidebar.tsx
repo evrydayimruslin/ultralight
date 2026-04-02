@@ -25,6 +25,7 @@ interface NavSidebarProps {
   onDeleteAgent: (agentId: string) => void;
   onStopAgent: (agentId: string) => void;
   onNewSession: (agentId: string) => void;
+  onRenameAgent: (agentId: string, newName: string) => void;
   isAgentRunning: (agentId: string) => boolean;
 }
 
@@ -162,9 +163,9 @@ const ToolsIcon = <Package {...iconProps} />;
 
 function SystemAgentIcon({ type }: { type: string | null }) {
   switch (type as SystemAgentType) {
-    case 'tool_builder': return <Wrench {...smallIconProps} className="text-amber-500 flex-shrink-0" />;
-    case 'tool_marketer': return <Store {...smallIconProps} className="text-emerald-500 flex-shrink-0" />;
-    case 'platform_manager': return <Settings {...smallIconProps} className="text-purple-500 flex-shrink-0" />;
+    case 'tool_builder': return <Wrench {...smallIconProps} className="text-blue-500 flex-shrink-0" />;
+    case 'tool_marketer': return <Store {...smallIconProps} className="text-[#004225] flex-shrink-0" />;
+    case 'platform_manager': return <Settings {...smallIconProps} className="text-[#722F37] flex-shrink-0" />;
     default: return <Compass {...smallIconProps} className="text-gray-400 flex-shrink-0" />;
   }
 }
@@ -185,6 +186,7 @@ export default function NavSidebar({
   onDeleteAgent,
   onStopAgent,
   onNewSession,
+  onRenameAgent,
   isAgentRunning,
 }: NavSidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -193,6 +195,8 @@ export default function NavSidebar({
   const [agentsExpanded, setAgentsExpanded] = useState(() => !getCollapsed('ul_nav_agents_collapsed', false));
   const [contextMenu, setContextMenu] = useState<{ agentId: string; x: number; y: number } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [renamingAgentId, setRenamingAgentId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [userInfo, setUserInfo] = useState<{ email: string; display_name: string | null } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -282,6 +286,22 @@ export default function NavSidebar({
     setContextMenu(null);
   }, [contextMenu, onStopAgent]);
 
+  const handleRenameFromMenu = useCallback(() => {
+    if (!contextMenu) return;
+    const agent = agents.find(a => a.id === contextMenu.agentId);
+    setRenamingAgentId(contextMenu.agentId);
+    setRenameValue(agent?.name || '');
+    setContextMenu(null);
+  }, [contextMenu, agents]);
+
+  const handleRenameSubmit = useCallback(() => {
+    if (!renamingAgentId) return;
+    const trimmed = renameValue.trim();
+    if (trimmed) onRenameAgent(renamingAgentId, trimmed);
+    setRenamingAgentId(null);
+    setRenameValue('');
+  }, [renamingAgentId, renameValue, onRenameAgent]);
+
   if (!isOpen) return null;
 
   // Partition: system agents vs regular chat agents
@@ -310,7 +330,7 @@ export default function NavSidebar({
   return (
     <div className="flex flex-col w-64 h-full border-r border-ul-border bg-gray-50 flex-shrink-0">
       {/* Primary nav */}
-      <nav className="px-2 pt-2 flex-shrink-0">
+      <nav className="px-2 pt-3 flex-shrink-0">
         <NavItem
           icon={CommandIcon}
           label="Command"
@@ -333,6 +353,7 @@ export default function NavSidebar({
 
       {/* Unified scrollable area for all sections */}
       <div className="flex-1 overflow-y-auto min-h-0">
+        <div className="h-2.5" />
         {/* System Agents */}
         {systemAgents.length > 0 && (
           <CollapsibleSection
@@ -361,6 +382,8 @@ export default function NavSidebar({
             ))}
           </CollapsibleSection>
         )}
+
+        <div className="h-2.5" />
 
         {/* Chats */}
         <CollapsibleSection
@@ -394,25 +417,40 @@ export default function NavSidebar({
                   <span className="text-caption text-ul-text-muted">{group.label}</span>
                 </div>
                 {group.agents.map(agent => (
-                  <button
-                    key={agent.id}
-                    onClick={() => onSelectAgent(agent.id)}
-                    onContextMenu={e => handleContextMenu(e, agent.id)}
-                    className={`w-full text-left px-3 py-1.5 rounded-md transition-colors mx-1
-                      ${activeAgentId === agent.id
-                        ? 'bg-ul-bg-active'
-                        : 'hover:bg-ul-bg-hover'
-                      }`}
-                    style={{ width: 'calc(100% - 8px)' }}
-                  >
-                    <div className="flex items-center gap-2">
+                  renamingAgentId === agent.id ? (
+                    <div key={agent.id} className="flex items-center gap-2 px-3 py-1.5 mx-1" style={{ width: 'calc(100% - 8px)' }}>
                       <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDot(agent.status)}`} />
-                      <span className="text-small text-ul-text truncate flex-1">{agent.name}</span>
-                      <span className="text-caption text-ul-text-muted flex-shrink-0">
-                        {formatRelativeTime(agent.updated_at)}
-                      </span>
+                      <input
+                        type="text"
+                        value={renameValue}
+                        onChange={e => setRenameValue(e.target.value)}
+                        onBlur={handleRenameSubmit}
+                        onKeyDown={e => { if (e.key === 'Enter') handleRenameSubmit(); if (e.key === 'Escape') { setRenamingAgentId(null); setRenameValue(''); } }}
+                        autoFocus
+                        className="flex-1 min-w-0 text-small text-ul-text px-1 py-0 rounded border border-gray-300 bg-white focus:outline-none focus:border-gray-400"
+                      />
                     </div>
-                  </button>
+                  ) : (
+                    <button
+                      key={agent.id}
+                      onClick={() => onSelectAgent(agent.id)}
+                      onContextMenu={e => handleContextMenu(e, agent.id)}
+                      className={`w-full text-left px-3 py-1.5 rounded-md transition-colors mx-1
+                        ${activeAgentId === agent.id
+                          ? 'bg-ul-bg-active'
+                          : 'hover:bg-ul-bg-hover'
+                        }`}
+                      style={{ width: 'calc(100% - 8px)' }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDot(agent.status)}`} />
+                        <span className="text-small text-ul-text truncate flex-1">{agent.name}</span>
+                        <span className="text-caption text-ul-text-muted flex-shrink-0">
+                          {formatRelativeTime(agent.updated_at)}
+                        </span>
+                      </div>
+                    </button>
+                  )
                 ))}
               </div>
             ))
@@ -563,6 +601,14 @@ export default function NavSidebar({
             >
               New Session
             </button>
+            {!isSystem && (
+              <button
+                onClick={handleRenameFromMenu}
+                className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100"
+              >
+                Rename
+              </button>
+            )}
             {!isSystem && (
               <button
                 onClick={handleDeleteFromMenu}
