@@ -1,10 +1,12 @@
 // Function Index — per-user index of all available app functions.
-// Built on app upload/version change, stored in R2, cached on desktop.
+// Built on app upload/version change, stored in KV (primary) + R2 (fallback), cached on desktop.
 // Enables typed codemode recipes without a discovery call.
 
+import { getEnv } from '../lib/env.ts';
 import { createR2Service } from './storage.ts';
 import { createAppsService } from './apps.ts';
-import { buildJsonSchemaDescriptors, generateTypes } from './codemode-tools.ts';
+import { buildJsonSchemaDescriptors, generateTypes, sanitizeToolName } from './codemode-tools.ts';
+import { createD1DataService } from './d1-data.ts';
 
 // ── Types ──
 
@@ -15,6 +17,9 @@ export interface FunctionIndex {
     fnName: string;
     description: string;
     params: Record<string, { type: string; required?: boolean; description?: string }>;
+    returns: string;
+    conventions: string[];
+    dependsOn: string[];
   }>;
   widgets: Array<{ name: string; appId: string; label: string }>;
   types: string;
@@ -37,11 +42,11 @@ export async function rebuildFunctionIndex(userId: string): Promise<FunctionInde
 
   // Fetch owned apps
   const ownedRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${userId}&deleted_at=is.null&select=id,name,slug,manifest`,
+    `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${userId}&deleted_at=is.null&select=id,name,slug,manifest,skills_parsed,d1_database_id`,
     { headers }
   );
   const ownedApps = ownedRes.ok
-    ? await ownedRes.json() as Array<{ id: string; name: string; slug: string; manifest: string | null }>
+    ? await ownedRes.json() as Array<{ id: string; name: string; slug: string; manifest: string | null; skills_parsed: unknown; d1_database_id: string | null }>
     : [];
 
   // Fetch liked apps
@@ -56,25 +61,73 @@ export async function rebuildFunctionIndex(userId: string): Promise<FunctionInde
   let likedApps: typeof ownedApps = [];
   if (likedIds.length > 0) {
     const likedAppsRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/apps?id=in.(${likedIds.join(',')})&deleted_at=is.null&select=id,name,slug,manifest`,
+      `${SUPABASE_URL}/rest/v1/apps?id=in.(${likedIds.join(',')})&deleted_at=is.null&select=id,name,slug,manifest,skills_parsed,d1_database_id`,
       { headers }
     );
     likedApps = likedAppsRes.ok ? await likedAppsRes.json() as typeof ownedApps : [];
   }
 
   // Deduplicate and parse manifests
-  const allAppsMap = new Map<string, { id: string; name: string; slug: string; manifest: unknown }>();
+  const allAppsMap = new Map<string, { id: string; name: string; slug: string; manifest: unknown; skills_parsed: unknown; d1_database_id: string | null }>();
   for (const app of [...ownedApps, ...likedApps]) {
     if (!allAppsMap.has(app.id) && app.manifest) {
       const manifest = typeof app.manifest === 'string' ? JSON.parse(app.manifest) : app.manifest;
-      allAppsMap.set(app.id, { id: app.id, name: app.name, slug: app.slug, manifest });
+      const skillsParsed = typeof app.skills_parsed === 'string' ? JSON.parse(app.skills_parsed) : app.skills_parsed;
+      allAppsMap.set(app.id, { id: app.id, name: app.name, slug: app.slug, manifest, skills_parsed: skillsParsed, d1_database_id: app.d1_database_id });
     }
   }
   const apps = Array.from(allAppsMap.values());
 
   // Build descriptors and types
   const { descriptors, toolMap, widgets } = buildJsonSchemaDescriptors(apps);
-  const types = generateTypes(descriptors);
+
+  // ── Enrichment pass: extract return types, conventions, dependency hints ──
+
+  // 1. Extract return types from skills_parsed for each app
+  const returnTypesMap: Record<string, string> = {}; // sanitizedName → return type string
+  const appReturnTypes = new Map<string, Map<string, string>>(); // appId → (fnName → returnType)
+
+  for (const app of apps) {
+    const sp = app.skills_parsed as { functions?: Array<{ name: string; returns?: unknown }> } | null;
+    if (!sp?.functions) continue;
+
+    const fnReturns = new Map<string, string>();
+    for (const fn of sp.functions) {
+      const retSchema = fn.returns as Record<string, unknown> | undefined;
+      if (retSchema) {
+        fnReturns.set(fn.name, schemaToReturnType(retSchema));
+      }
+    }
+    appReturnTypes.set(app.id, fnReturns);
+
+    // Map to sanitized tool names
+    for (const [fnName, retType] of fnReturns) {
+      const sanitized = sanitizeToolName(`${app.slug}_${fnName}`);
+      if (toolMap[sanitized]) {
+        returnTypesMap[sanitized] = retType;
+      }
+    }
+  }
+
+  // 2. For apps with d1_database_id, try to query conventions table
+  const appConventions = new Map<string, string[]>(); // appId → conventions[]
+  for (const app of apps) {
+    if (!app.d1_database_id) continue;
+    try {
+      const d1 = createD1DataService(app.id, app.d1_database_id);
+      const rows = await d1.all<{ key: string; value: string }>(
+        `SELECT key, value FROM conventions ORDER BY rowid DESC LIMIT 50`
+      );
+      if (rows.length > 0) {
+        appConventions.set(app.id, rows.map(r => `${r.key}: ${r.value}`));
+      }
+    } catch {
+      // conventions table may not exist — that's fine, skip
+    }
+  }
+
+  // Generate types with return type info
+  const types = generateTypes(descriptors, returnTypesMap);
 
   // Build function entries
   const functions: FunctionIndex['functions'] = {};
@@ -94,12 +147,36 @@ export async function rebuildFunctionIndex(userId: string): Promise<FunctionInde
       }
     }
 
+    // 3. Infer dependency hints: params ending in _id → match to other functions' return types
+    const dependsOn: string[] = [];
+    for (const pName of Object.keys(params)) {
+      if (pName.endsWith('_id')) {
+        const entityName = pName.replace(/_id$/, '');
+        // Look for functions that might produce this entity
+        for (const [otherName, otherMapping] of Object.entries(toolMap)) {
+          if (otherName === sanitizedName) continue;
+          const otherReturn = returnTypesMap[otherName];
+          if (
+            otherReturn &&
+            (otherReturn.toLowerCase().includes(entityName) ||
+             otherMapping.fnName.toLowerCase().includes(`create_${entityName}`) ||
+             otherMapping.fnName.toLowerCase().includes(`get_${entityName}`))
+          ) {
+            dependsOn.push(otherName);
+          }
+        }
+      }
+    }
+
     functions[sanitizedName] = {
       appId: mapping.appId,
       appSlug: mapping.appSlug,
       fnName: mapping.fnName,
       description: desc?.description || mapping.fnName,
       params,
+      returns: returnTypesMap[sanitizedName] || 'unknown',
+      conventions: appConventions.get(mapping.appId) || [],
+      dependsOn: [...new Set(dependsOn)], // deduplicate
     };
   }
 
@@ -110,17 +187,38 @@ export async function rebuildFunctionIndex(userId: string): Promise<FunctionInde
     updatedAt: new Date().toISOString(),
   };
 
-  // Store in R2
-  try {
-    const r2 = createR2Service();
-    const content = new TextEncoder().encode(JSON.stringify(index));
-    await r2.uploadFile(`users/${userId}/function-index.json`, {
-      name: 'function-index.json',
-      content,
-      contentType: 'application/json',
-    });
-  } catch (err) {
-    console.error(`Failed to store function index for ${userId}:`, err);
+  // Store in KV (primary), fall back to R2
+  const kv = (globalThis as any).__env?.FN_INDEX;
+  if (kv) {
+    try {
+      await kv.put(`user:${userId}`, JSON.stringify(index));
+    } catch (err) {
+      console.error(`KV write failed for ${userId}, falling back to R2:`, err);
+      try {
+        const r2 = createR2Service();
+        const content = new TextEncoder().encode(JSON.stringify(index));
+        await r2.uploadFile(`users/${userId}/function-index.json`, {
+          name: 'function-index.json',
+          content,
+          contentType: 'application/json',
+        });
+      } catch (r2Err) {
+        console.error(`R2 fallback write also failed for ${userId}:`, r2Err);
+      }
+    }
+  } else {
+    // KV not available — use R2 directly
+    try {
+      const r2 = createR2Service();
+      const content = new TextEncoder().encode(JSON.stringify(index));
+      await r2.uploadFile(`users/${userId}/function-index.json`, {
+        name: 'function-index.json',
+        content,
+        contentType: 'application/json',
+      });
+    } catch (err) {
+      console.error(`Failed to store function index for ${userId}:`, err);
+    }
   }
 
   return index;
@@ -130,9 +228,21 @@ export async function rebuildFunctionIndex(userId: string): Promise<FunctionInde
 
 /**
  * Get the function index for a user.
- * Reads from R2. Returns null if not yet built.
+ * Reads from KV (primary), falls back to R2. Returns null if not yet built.
  */
 export async function getFunctionIndex(userId: string): Promise<FunctionIndex | null> {
+  // Try KV first
+  const kv = (globalThis as any).__env?.FN_INDEX;
+  if (kv) {
+    try {
+      const data = await kv.get(`user:${userId}`, 'json');
+      if (data) return data as FunctionIndex;
+    } catch {
+      // KV read failed, fall through to R2
+    }
+  }
+
+  // Fall back to R2
   try {
     const r2 = createR2Service();
     const text = await r2.fetchTextFile(`users/${userId}/function-index.json`);
@@ -145,10 +255,49 @@ export async function getFunctionIndex(userId: string): Promise<FunctionIndex | 
 // ── Supabase Env Helper ──
 
 function getSupabaseEnv(): { SUPABASE_URL: string; SUPABASE_SERVICE_ROLE_KEY: string } {
-  // @ts-ignore: Deno global
-  const _Deno = globalThis.Deno;
   return {
-    SUPABASE_URL: _Deno?.env?.get('SUPABASE_URL') || '',
-    SUPABASE_SERVICE_ROLE_KEY: _Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY') || '',
+    SUPABASE_URL: getEnv('SUPABASE_URL'),
+    SUPABASE_SERVICE_ROLE_KEY: getEnv('SUPABASE_SERVICE_ROLE_KEY'),
   };
+}
+
+// ── Schema → TypeScript Return Type ──
+
+/**
+ * Convert a JSON Schema return type definition to a TypeScript type string.
+ * Used to extract return types from skills_parsed for the function index.
+ */
+function schemaToReturnType(schema: Record<string, unknown>): string {
+  if (!schema) return 'unknown';
+
+  if (schema.$ref) {
+    return (schema.$ref as string).replace('#/definitions/', '');
+  }
+
+  if (schema.oneOf) {
+    return (schema.oneOf as Record<string, unknown>[]).map(s => schemaToReturnType(s)).join(' | ');
+  }
+
+  const type = schema.type as string;
+  switch (type) {
+    case 'string': return 'string';
+    case 'number':
+    case 'integer': return 'number';
+    case 'boolean': return 'boolean';
+    case 'null': return 'null';
+    case 'void': return 'void';
+    case 'array': {
+      const items = schema.items as Record<string, unknown> | undefined;
+      return items ? `${schemaToReturnType(items)}[]` : 'unknown[]';
+    }
+    case 'object': {
+      const props = schema.properties as Record<string, unknown> | undefined;
+      if (!props) return 'Record<string, unknown>';
+      const entries = Object.entries(props).map(([k, v]) => {
+        return `${k}: ${schemaToReturnType(v as Record<string, unknown>)}`;
+      });
+      return `{ ${entries.join('; ')} }`;
+    }
+    default: return 'unknown';
+  }
 }

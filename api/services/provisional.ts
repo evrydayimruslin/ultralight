@@ -4,12 +4,8 @@
 
 import { createToken } from './tokens.ts';
 import { checkRateLimit } from './ratelimit.ts';
+import { getEnv } from '../lib/env.ts';
 
-// @ts-ignore - Deno is available
-const Deno = globalThis.Deno;
-
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
 // ============================================
 // CONSTANTS
@@ -81,11 +77,11 @@ export async function createProvisionalUser(clientIp: string): Promise<Provision
   const randomPassword = Array.from(crypto.getRandomValues(new Uint8Array(32)))
     .map(b => b.toString(16).padStart(2, '0')).join('');
 
-  const authResponse = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
+  const authResponse = await fetch(`${getEnv('SUPABASE_URL')}/auth/v1/admin/users`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
+      'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -103,11 +99,11 @@ export async function createProvisionalUser(clientIp: string): Promise<Provision
   }
 
   // 2. Create public.users entry
-  const userInsertResponse = await fetch(`${SUPABASE_URL}/rest/v1/users`, {
+  const userInsertResponse = await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/users`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
+      'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
       'Content-Type': 'application/json',
       'Prefer': 'return=minimal',
     },
@@ -149,11 +145,11 @@ export async function createProvisionalUser(clientIp: string): Promise<Provision
  */
 export async function isProvisionalUser(userId: string): Promise<boolean> {
   const response = await fetch(
-    `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=provisional`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}&select=provisional`,
     {
       headers: {
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
+        'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
       },
     }
   );
@@ -177,11 +173,11 @@ export async function checkProvisionalDailyLimit(userId: string) {
  * Fire-and-forget — does not await, does not throw.
  */
 export function updateLastActive(userId: string): void {
-  fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`, {
+  fetch(`${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}`, {
     method: 'PATCH',
     headers: {
-      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
+      'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
       'Content-Type': 'application/json',
       'Prefer': 'return=minimal',
     },
@@ -229,11 +225,11 @@ export async function mergeProvisionalUser(
   const callStats = await getProvisionalCallStats(provisionalUserId);
 
   // Call the merge RPC (atomic transfer)
-  const rpcResponse = await fetch(`${SUPABASE_URL}/rest/v1/rpc/merge_provisional_user`, {
+  const rpcResponse = await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/rpc/merge_provisional_user`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
+      'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -312,11 +308,11 @@ export function getProvisionalDailyCallLimit(): number {
  * Count how many provisional users were created from this IP in the last 24 hours.
  */
 async function countProvisionalsByIp(ip: string): Promise<number> {
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/count_provisional_by_ip`, {
+  const response = await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/rpc/count_provisional_by_ip`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
+      'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ p_ip: ip }),
@@ -337,11 +333,11 @@ async function countProvisionalsByIp(ip: string): Promise<number> {
  */
 async function deleteAuthUser(userId: string): Promise<void> {
   try {
-    await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${userId}`, {
+    await fetch(`${getEnv('SUPABASE_URL')}/auth/v1/admin/users/${userId}`, {
       method: 'DELETE',
       headers: {
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
+        'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
       },
     });
   } catch (err) {
@@ -358,11 +354,11 @@ async function getProvisionalMetadata(userId: string): Promise<{
 } | null> {
   try {
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=provisional_created_at,provisional_created_ip`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}&select=provisional_created_at,provisional_created_ip`,
       {
         headers: {
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          'apikey': SUPABASE_SERVICE_ROLE_KEY,
+          'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
+          'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
         },
       }
     );
@@ -386,11 +382,11 @@ async function getProvisionalCallStats(userId: string): Promise<{
   try {
     // Get total calls and distinct apps
     const statsResponse = await fetch(
-      `${SUPABASE_URL}/rest/v1/mcp_call_logs?user_id=eq.${userId}&select=app_id,app_name,created_at&order=created_at.asc`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/mcp_call_logs?user_id=eq.${userId}&select=app_id,app_name,created_at&order=created_at.asc`,
       {
         headers: {
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          'apikey': SUPABASE_SERVICE_ROLE_KEY,
+          'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
+          'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
         },
       }
     );
@@ -419,11 +415,11 @@ async function getProvisionalCallStats(userId: string): Promise<{
  * Log a conversion event. Fire-and-forget — does not block merge.
  */
 function logConversionEvent(event: ConversionEventData): void {
-  fetch(`${SUPABASE_URL}/rest/v1/conversion_events`, {
+  fetch(`${getEnv('SUPABASE_URL')}/rest/v1/conversion_events`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
+      'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
       'Content-Type': 'application/json',
       'Prefer': 'return=minimal',
     },
@@ -451,11 +447,11 @@ function logConversionEvent(event: ConversionEventData): void {
  * Log an onboarding template request. Fire-and-forget.
  */
 export function logOnboardingRequest(clientIp: string | null, userAgent: string | null, referrer: string | null): void {
-  fetch(`${SUPABASE_URL}/rest/v1/onboarding_requests`, {
+  fetch(`${getEnv('SUPABASE_URL')}/rest/v1/onboarding_requests`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
+      'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
       'Content-Type': 'application/json',
       'Prefer': 'return=minimal',
     },
@@ -477,12 +473,12 @@ export function logOnboardingRequest(clientIp: string | null, userAgent: string 
 export function markOnboardingProvisionalCreated(clientIp: string): void {
   // Find the most recent onboarding request from this IP and mark it
   fetch(
-    `${SUPABASE_URL}/rest/v1/onboarding_requests?client_ip=eq.${encodeURIComponent(clientIp)}&order=created_at.desc&limit=1`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/onboarding_requests?client_ip=eq.${encodeURIComponent(clientIp)}&order=created_at.desc&limit=1`,
     {
       method: 'PATCH',
       headers: {
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
+        'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
         'Content-Type': 'application/json',
         'Prefer': 'return=minimal',
       },

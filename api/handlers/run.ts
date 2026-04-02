@@ -235,7 +235,9 @@ export async function handleRun(request: Request, appId: string): Promise<Respon
     const d1DataService = createD1DataService(appId, d1DatabaseId);
 
     // Execute in sandbox — AI-capable apps get 120s timeout
-    const result = await executeInSandbox(
+    // Dynamic Worker sandbox — avoids `new Function()` restriction on CF Workers
+    const { executeInDynamicSandbox } = await import('../runtime/dynamic-sandbox.ts');
+    const result = await executeInDynamicSandbox(
       {
         appId,
         userId,

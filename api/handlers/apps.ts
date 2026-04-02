@@ -36,6 +36,7 @@ import {
   checkPublishDeposit,
   getUserTier,
 } from '../services/tier-enforcement.ts';
+import { getEnv } from '../lib/env.ts';
 
 // Type for user with optional API key
 interface User {
@@ -325,10 +326,8 @@ async function handleLibraryTab(request: Request): Promise<Response> {
     return error('Invalid tab parameter. Must be "saved" or "shared".', 400);
   }
 
-  // @ts-ignore
-  const Deno = globalThis.Deno;
-  const supabaseUrl = Deno.env.get('SUPABASE_URL');
-  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
   const headers: Record<string, string> = {
     'apikey': supabaseKey,
     'Authorization': `Bearer ${supabaseKey}`,
@@ -512,10 +511,8 @@ async function handleSaveApp(request: Request, appId: string): Promise<Response>
     return error('Authentication required', 401);
   }
 
-  // @ts-ignore
-  const Deno = globalThis.Deno;
-  const supabaseUrl = Deno.env.get('SUPABASE_URL');
-  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   try {
     const res = await fetch(`${supabaseUrl}/rest/v1/user_app_library`, {
@@ -549,10 +546,8 @@ async function handleUnsaveApp(request: Request, appId: string): Promise<Respons
     return error('Authentication required', 401);
   }
 
-  // @ts-ignore
-  const Deno = globalThis.Deno;
-  const supabaseUrl = Deno.env.get('SUPABASE_URL');
-  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   try {
     await fetch(
@@ -662,7 +657,7 @@ async function handleGetAppInstructions(request: Request, appId: string): Promis
 
     // Derive base URL from request
     const proto = request.headers.get('x-forwarded-proto') || 'https';
-    const host = request.headers.get('host') || 'ultralight-api-iikqz.ondigitalocean.app';
+    const host = request.headers.get('host') || 'ultralight-api.rgn4jz429m.workers.dev';
     const baseUrl = `${proto}://${host}`;
 
     const sections: string[] = [];
@@ -1443,7 +1438,7 @@ async function handleGenerateDocs(request: Request, appId: string): Promise<Resp
 
       // Phase 1: Parse TypeScript code
       console.log('[GENERATE] Parsing code...');
-      const parseResult = parseTypeScript(code, filename);
+      const parseResult = await parseTypeScript(code, filename);
 
       // Collect parse errors and warnings
       for (const err of parseResult.parseErrors) {
@@ -1883,7 +1878,7 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
         }
 
         if (code) {
-          const parseResult = parseTypeScript(code, 'index.ts');
+          const parseResult = await parseTypeScript(code, 'index.ts');
           const skills_md = generateSkillsMd(app.name || app.slug, parseResult, {
             pricingConfig: (app as Record<string, unknown>).pricing_config as AppPricingConfig | undefined,
           });
@@ -2034,6 +2029,16 @@ async function handleRebuild(request: Request, appId: string): Promise<Response>
 
     await r2Service.uploadFiles(storageKey, filesToUpload);
     console.log(`[REBUILD] Uploaded ${filesToUpload.length} rebuilt files to ${storageKey}`);
+
+    // Store ESM bundle in KV for Dynamic Worker loading
+    if (bundleResult.esmCode && globalThis.__env?.CODE_CACHE) {
+      try {
+        await globalThis.__env.CODE_CACHE.put(`esm:${appId}:latest`, bundleResult.esmCode);
+        console.log(`[REBUILD] ESM bundle cached in KV (${bundleResult.esmCode.length} chars)`);
+      } catch (kvErr) {
+        console.error(`[REBUILD] KV cache failed:`, kvErr);
+      }
+    }
 
     // Invalidate code cache so next request picks up rebuilt bundles
     getCodeCache().invalidate(appId);
@@ -2557,10 +2562,8 @@ async function handleGetEarnings(request: Request, appId: string): Promise<Respo
     if (!app) return error('App not found', 404);
     if (app.owner_id !== user.id) return error('Unauthorized', 403);
 
-    // @ts-ignore
-    const Deno = globalThis.Deno;
-    const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+    const SUPABASE_URL = getEnv('SUPABASE_URL');
+    const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
     const headers = {
       'apikey': SUPABASE_SERVICE_ROLE_KEY,
       'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
@@ -2705,10 +2708,8 @@ async function handleGetHealth(request: Request, appId: string): Promise<Respons
     if (!app) return error('App not found', 404);
     if (app.owner_id !== user.id) return error('Unauthorized', 403);
 
-    // @ts-ignore
-    const Deno = globalThis.Deno;
-    const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+    const SUPABASE_URL = getEnv('SUPABASE_URL');
+    const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
     const headers = {
       'apikey': SUPABASE_SERVICE_ROLE_KEY,
       'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,

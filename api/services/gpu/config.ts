@@ -2,7 +2,7 @@
 // Parses and validates ultralight.gpu.yaml from uploaded files.
 // Pure utility — no API calls, no side effects.
 
-import { parse as parseYaml } from 'https://deno.land/std@0.224.0/yaml/mod.ts';
+import { parse as parseYaml } from 'yaml';
 import type { GpuConfig, GpuType } from './types.ts';
 import { isValidGpuType } from './types.ts';
 

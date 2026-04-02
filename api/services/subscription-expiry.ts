@@ -5,11 +5,8 @@
 // - Clears tier_expires_at
 // - Runs hourly via setInterval in main.ts
 
-// @ts-ignore
-const Deno = globalThis.Deno;
+import { getEnv } from '../lib/env.ts';
 
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
 interface ExpiredUser {
   id: string;
@@ -39,7 +36,7 @@ export async function processExpiredSubscriptions(): Promise<ExpiryResult> {
     details: [],
   };
 
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  if (!getEnv('SUPABASE_URL') || !getEnv('SUPABASE_SERVICE_ROLE_KEY')) { // lazy check at call time
     console.warn('[EXPIRY] Supabase not configured, skipping');
     return result;
   }
@@ -47,11 +44,11 @@ export async function processExpiredSubscriptions(): Promise<ExpiryResult> {
   try {
     // 1. Find all expired users (tier != free, tier_expires_at in the past)
     const expiredResponse = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?tier=neq.free&tier_expires_at=lt.${new Date().toISOString()}&tier_expires_at=not.is.null&select=id,email,tier`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/users?tier=neq.free&tier_expires_at=lt.${new Date().toISOString()}&tier_expires_at=not.is.null&select=id,email,tier`,
       {
         headers: {
-          'apikey': SUPABASE_SERVICE_ROLE_KEY,
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+          'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
         },
       }
     );
@@ -77,11 +74,11 @@ export async function processExpiredSubscriptions(): Promise<ExpiryResult> {
         // 2a. Set public apps to unlisted (soft degradation)
         //     Only affects 'public' apps — unlisted and private stay as-is
         const appsResponse = await fetch(
-          `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${user.id}&deleted_at=is.null&visibility=eq.public&select=id,name`,
+          `${getEnv('SUPABASE_URL')}/rest/v1/apps?owner_id=eq.${user.id}&deleted_at=is.null&visibility=eq.public&select=id,name`,
           {
             headers: {
-              'apikey': SUPABASE_SERVICE_ROLE_KEY,
-              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+              'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+              'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
             },
           }
         );
@@ -93,12 +90,12 @@ export async function processExpiredSubscriptions(): Promise<ExpiryResult> {
 
           if (publicApps.length > 0) {
             const updateResponse = await fetch(
-              `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${user.id}&deleted_at=is.null&visibility=eq.public`,
+              `${getEnv('SUPABASE_URL')}/rest/v1/apps?owner_id=eq.${user.id}&deleted_at=is.null&visibility=eq.public`,
               {
                 method: 'PATCH',
                 headers: {
-                  'apikey': SUPABASE_SERVICE_ROLE_KEY,
-                  'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                  'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+                  'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
                   'Content-Type': 'application/json',
                   'Prefer': 'return=minimal',
                 },
@@ -125,12 +122,12 @@ export async function processExpiredSubscriptions(): Promise<ExpiryResult> {
 
         // 2b. Downgrade user to free tier, clear expiry
         const tierUpdateResponse = await fetch(
-          `${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}`,
+          `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${user.id}`,
           {
             method: 'PATCH',
             headers: {
-              'apikey': SUPABASE_SERVICE_ROLE_KEY,
-              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+              'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+              'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
               'Content-Type': 'application/json',
               'Prefer': 'return=minimal',
             },

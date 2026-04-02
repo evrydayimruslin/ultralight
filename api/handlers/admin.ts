@@ -14,13 +14,11 @@
 
 import { json, error } from './app.ts';
 import { unsuspendContent } from '../services/hosting-billing.ts';
+import { getEnv } from '../lib/env.ts';
 
-// @ts-ignore
-const Deno = globalThis.Deno;
-
-function getEnv() {
-  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+function getSupabaseEnv() {
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
   return { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY };
 }
 
@@ -40,7 +38,7 @@ function writeHeaders(key: string) {
 }
 
 function authenticateAdmin(request: Request): boolean {
-  const { SUPABASE_SERVICE_ROLE_KEY } = getEnv();
+  const { SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   const authHeader = request.headers.get('Authorization');
   const token = authHeader?.replace('Bearer ', '');
   return !!token && token === SUPABASE_SERVICE_ROLE_KEY;
@@ -117,7 +115,7 @@ export async function handleAdmin(request: Request): Promise<Response> {
 }
 
 async function cleanupProvisionals(): Promise<Response> {
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getEnv();
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
   try {
     // Get IDs of provisionals about to be deleted (for auth.users cleanup)
@@ -168,7 +166,7 @@ async function cleanupProvisionals(): Promise<Response> {
 // ============================================
 
 async function createGap(request: Request): Promise<Response> {
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getEnv();
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
   let body: {
     title: string;
@@ -229,7 +227,7 @@ async function createGap(request: Request): Promise<Response> {
 // ============================================
 
 async function updateGap(request: Request, gapId: string): Promise<Response> {
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getEnv();
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
   let body: Record<string, unknown>;
   try {
@@ -269,7 +267,7 @@ async function updateGap(request: Request, gapId: string): Promise<Response> {
 // ============================================
 
 async function recordAssessment(request: Request, assessmentId: string): Promise<Response> {
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getEnv();
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
   let body: {
     agent_score?: number;
@@ -314,7 +312,7 @@ async function recordAssessment(request: Request, assessmentId: string): Promise
 // ============================================
 
 async function approveAssessment(request: Request, assessmentId: string): Promise<Response> {
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getEnv();
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   const headers = writeHeaders(SUPABASE_SERVICE_ROLE_KEY);
 
   let body: { awarded_points?: number; reviewed_by?: string };
@@ -407,7 +405,7 @@ async function approveAssessment(request: Request, assessmentId: string): Promis
 // ============================================
 
 async function rejectAssessment(assessmentId: string): Promise<Response> {
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getEnv();
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/gap_assessments?id=eq.${assessmentId}`,
@@ -434,7 +432,7 @@ async function rejectAssessment(assessmentId: string): Promise<Response> {
 // ============================================
 
 async function topUpBalance(request: Request, userId: string): Promise<Response> {
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getEnv();
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
   let body: { amount_light: number };
   try {
@@ -490,7 +488,7 @@ async function topUpBalance(request: Request, userId: string): Promise<Response>
 // ============================================
 
 async function getAnalytics(days: number): Promise<Response> {
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getEnv();
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
   // Clamp days to reasonable range
   const periodDays = Math.max(1, Math.min(days, 365));
@@ -742,7 +740,7 @@ async function getAnalytics(days: number): Promise<Response> {
 // ============================================
 
 async function setAppCategory(request: Request, appId: string): Promise<Response> {
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getEnv();
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   try {
     const body = await request.json() as { category: string | null };
     const category = body.category ?? null;
@@ -768,7 +766,7 @@ async function setAppCategory(request: Request, appId: string): Promise<Response
 }
 
 async function setAppFeatured(request: Request, appId: string): Promise<Response> {
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getEnv();
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   try {
     const body = await request.json() as { featured: boolean };
     const featured_at = body.featured ? new Date().toISOString() : null;

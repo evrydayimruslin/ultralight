@@ -2,18 +2,7 @@
 // Handles user settings, BYOK configuration, and preferences
 
 import type { BYOKProvider, BYOKConfig, User } from '../../shared/types/index.ts';
-
-// @ts-ignore - Deno is available
-const Deno = globalThis.Deno;
-
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-
-// Encryption key for BYOK API keys — must be set in environment
-const ENCRYPTION_KEY = Deno.env.get('BYOK_ENCRYPTION_KEY');
-if (!ENCRYPTION_KEY) {
-  console.error('FATAL: BYOK_ENCRYPTION_KEY environment variable is not set. BYOK encryption will fail.');
-}
+import { getEnv } from '../lib/env.ts';
 
 // ============================================
 // ENCRYPTION HELPERS
@@ -27,13 +16,14 @@ const PER_RECORD_SALT_LENGTH = 16;
 const IV_LENGTH = 12;
 
 async function deriveEncryptionKey(salt: Uint8Array): Promise<CryptoKey> {
-  if (!ENCRYPTION_KEY) {
+  const encryptionKey = getEnv('BYOK_ENCRYPTION_KEY');
+  if (!encryptionKey) {
     throw new Error('BYOK_ENCRYPTION_KEY is not configured');
   }
   const encoder = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey(
     'raw',
-    encoder.encode(ENCRYPTION_KEY),
+    encoder.encode(encryptionKey),
     'PBKDF2',
     false,
     ['deriveKey']
@@ -156,11 +146,11 @@ export function createUserService(): UserService {
 
   async function getUser(userId: string): Promise<UserProfile | null> {
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=id,email,display_name,avatar_url,tier,country,featured_app_id,profile_slug,byok_enabled,byok_provider,byok_keys`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}&select=id,email,display_name,avatar_url,tier,country,featured_app_id,profile_slug,byok_enabled,byok_provider,byok_keys`,
       {
         headers: {
-          'apikey': SUPABASE_SERVICE_ROLE_KEY,
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+          'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
         },
       }
     );
@@ -190,12 +180,12 @@ export function createUserService(): UserService {
 
   async function updateUser(userId: string, updates: Partial<UserProfile>): Promise<UserProfile> {
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}`,
       {
         method: 'PATCH',
         headers: {
-          'apikey': SUPABASE_SERVICE_ROLE_KEY,
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+          'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
           'Content-Type': 'application/json',
           'Prefer': 'return=representation',
         },
@@ -248,12 +238,12 @@ export function createUserService(): UserService {
     const isPrimaryUpdate = !user?.byok_provider;
 
     await fetch(
-      `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}`,
       {
         method: 'PATCH',
         headers: {
-          'apikey': SUPABASE_SERVICE_ROLE_KEY,
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+          'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -296,12 +286,12 @@ export function createUserService(): UserService {
     };
 
     await fetch(
-      `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}`,
       {
         method: 'PATCH',
         headers: {
-          'apikey': SUPABASE_SERVICE_ROLE_KEY,
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+          'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -332,12 +322,12 @@ export function createUserService(): UserService {
     const byokEnabled = remainingProviders.length > 0;
 
     await fetch(
-      `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}`,
       {
         method: 'PATCH',
         headers: {
-          'apikey': SUPABASE_SERVICE_ROLE_KEY,
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+          'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -358,12 +348,12 @@ export function createUserService(): UserService {
     }
 
     await fetch(
-      `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}`,
       {
         method: 'PATCH',
         headers: {
-          'apikey': SUPABASE_SERVICE_ROLE_KEY,
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+          'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -393,11 +383,11 @@ export function createUserService(): UserService {
   // Helper to get raw byok_keys from database
   async function getRawByokKeys(userId: string): Promise<Record<string, { encrypted_key: string; model?: string; added_at: string }>> {
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=byok_keys`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}&select=byok_keys`,
       {
         headers: {
-          'apikey': SUPABASE_SERVICE_ROLE_KEY,
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+          'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
         },
       }
     );

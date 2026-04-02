@@ -21,7 +21,7 @@ export interface Config {
 }
 
 const DEFAULT_CONFIG: Config = {
-  api_url: 'https://ultralight-api-iikqz.ondigitalocean.app',
+  api_url: 'https://ultralight-api.rgn4jz429m.workers.dev',
   defaults: {
     visibility: 'private',
     auto_docs: true,

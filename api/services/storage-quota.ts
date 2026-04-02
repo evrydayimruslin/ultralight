@@ -3,9 +3,7 @@
 // Used by the hosting billing system to calculate hosting costs.
 // Enforces a combined 100MB storage limit per user (source code + user data).
 
-// @ts-ignore
-const Deno = globalThis.Deno;
-
+import { getEnv } from '../lib/env.ts';
 import { COMBINED_FREE_TIER_BYTES } from '../../shared/types/index.ts';
 
 /** Combined storage limit: source code + user data = 100MB. */
@@ -28,8 +26,8 @@ export async function checkStorageQuota(
   userId: string,
   uploadSizeBytes: number
 ): Promise<StorageQuotaResult> {
-  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     // Can't check — fail open
@@ -84,8 +82,8 @@ export async function recordUploadStorage(
   version: string,
   sizeBytes: number
 ): Promise<void> {
-  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
 
@@ -122,8 +120,8 @@ export async function reclaimAppStorage(
   userId: string,
   appId: string
 ): Promise<number> {
-  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return 0;
 
@@ -159,8 +157,8 @@ export async function reclaimVersionStorage(
   appId: string,
   version: string
 ): Promise<number> {
-  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return 0;
 

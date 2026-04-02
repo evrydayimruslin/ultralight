@@ -28,6 +28,12 @@ export interface Agent {
   connected_app_ids: string | null;
   /** JSON object with per-app function selections and conventions */
   connected_apps: string | null;
+  /** Whether this is a system agent (1) or regular agent (0) */
+  is_system: number;
+  /** System agent type: tool_builder, tool_marketer, platform_manager */
+  system_agent_type: string | null;
+  /** Lightweight state summary for Flash context index */
+  state_summary: string | null;
   created_at: number;
   updated_at: number;
   // Enriched fields (from JOINs, only present in list queries)
@@ -52,6 +58,10 @@ export interface CreateAgentParams {
   connectedAppIds?: string;
   /** JSON object with per-app function selections and conventions */
   connectedApps?: string;
+  /** Mark as system agent (1) */
+  isSystem?: number;
+  /** System agent type identifier */
+  systemAgentType?: string;
 }
 
 export interface UseAgentFleetReturn {
@@ -66,7 +76,7 @@ export interface UseAgentFleetReturn {
   /** Stop a running agent */
   stopAgent: (agentId: string) => void;
   /** Update agent fields (status, name, notes, etc.) */
-  updateAgent: (id: string, updates: Partial<Pick<Agent, 'status' | 'name' | 'admin_notes' | 'end_goal' | 'context' | 'permission_level' | 'model' | 'project_dir' | 'connected_app_ids' | 'connected_apps' | 'initial_task'>>) => Promise<void>;
+  updateAgent: (id: string, updates: Partial<Pick<Agent, 'status' | 'name' | 'admin_notes' | 'end_goal' | 'context' | 'permission_level' | 'model' | 'project_dir' | 'connected_app_ids' | 'connected_apps' | 'initial_task' | 'state_summary' | 'system_agent_type'>>) => Promise<void>;
   /** Delete an agent and its conversation */
   deleteAgent: (id: string) => Promise<void>;
   /** Set which agent is currently being viewed */
@@ -149,6 +159,8 @@ export function useAgentFleet(): UseAgentFleetReturn {
       launchMode: params.launchMode ?? null,
       connectedAppIds: params.connectedAppIds ?? null,
       connectedApps: params.connectedApps ?? null,
+      isSystem: params.isSystem ?? null,
+      systemAgentType: params.systemAgentType ?? null,
     });
 
     await refreshAgents();
@@ -168,7 +180,7 @@ export function useAgentFleet(): UseAgentFleetReturn {
   // Update agent fields
   const updateAgent = useCallback(async (
     id: string,
-    updates: Partial<Pick<Agent, 'status' | 'name' | 'admin_notes' | 'end_goal' | 'context' | 'permission_level' | 'model' | 'project_dir' | 'connected_app_ids' | 'connected_apps' | 'initial_task'>>,
+    updates: Partial<Pick<Agent, 'status' | 'name' | 'admin_notes' | 'end_goal' | 'context' | 'permission_level' | 'model' | 'project_dir' | 'connected_app_ids' | 'connected_apps' | 'initial_task' | 'state_summary' | 'system_agent_type'>>,
   ) => {
     await invoke('db_update_agent', {
       id,
@@ -183,6 +195,8 @@ export function useAgentFleet(): UseAgentFleetReturn {
       connectedAppIds: updates.connected_app_ids ?? null,
       connectedApps: updates.connected_apps ?? null,
       initialTask: updates.initial_task ?? null,
+      stateSummary: updates.state_summary ?? null,
+      systemAgentType: updates.system_agent_type ?? null,
     });
 
     // Optimistic update

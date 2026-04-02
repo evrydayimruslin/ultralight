@@ -3,25 +3,24 @@
 // Reuses balance_light wallet and billing_transactions audit trail.
 // Uses debit_balance RPC with p_update_billed_at=false (chat doesn't affect hosting clock).
 
-// @ts-ignore
-const Deno = globalThis.Deno;
-
+import { getEnv } from '../lib/env.ts';
 import { CHAT_MIN_BALANCE_LIGHT, CHAT_PLATFORM_MARKUP, LIGHT_PER_DOLLAR_DESKTOP, formatLight } from '../../shared/types/index.ts';
 import type { ChatUsage, ChatBillingResult } from '../../shared/types/index.ts';
 
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+function dbHeaders(): Record<string, string> {
+  return {
+    'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+    'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
+  };
+}
 
-const headers: Record<string, string> = {
-  'apikey': SUPABASE_SERVICE_ROLE_KEY,
-  'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-};
-
-const writeHeaders: Record<string, string> = {
-  ...headers,
-  'Content-Type': 'application/json',
-  'Prefer': 'return=minimal',
-};
+function dbWriteHeaders(): Record<string, string> {
+  return {
+    ...dbHeaders(),
+    'Content-Type': 'application/json',
+    'Prefer': 'return=minimal',
+  };
+}
 
 // ============================================
 // BALANCE CHECK
@@ -33,8 +32,8 @@ const writeHeaders: Record<string, string> = {
  */
 export async function checkChatBalance(userId: string): Promise<number> {
   const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=balance_light`,
-    { headers }
+    `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}&select=balance_light`,
+    { headers: dbHeaders() }
   );
   if (!res.ok) throw new Error('Failed to query user balance');
   const rows = await res.json();
@@ -116,10 +115,10 @@ export async function deductChatCost(
 
   // Atomic debit — p_update_billed_at=false to not touch hosting billing clock
   const debitRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/rpc/debit_balance`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/rpc/debit_balance`,
     {
       method: 'POST',
-      headers: { ...headers, 'Content-Type': 'application/json' },
+      headers: { ...dbHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({
         p_user_id: userId,
         p_amount: costLight,
@@ -169,9 +168,9 @@ async function logChatTransaction(
   usage: ChatUsage,
   model: string,
 ): Promise<void> {
-  await fetch(`${SUPABASE_URL}/rest/v1/billing_transactions`, {
+  await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/billing_transactions`, {
     method: 'POST',
-    headers: writeHeaders,
+    headers: dbWriteHeaders(),
     body: JSON.stringify({
       user_id: userId,
       type: 'charge',

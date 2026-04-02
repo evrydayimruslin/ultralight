@@ -3,11 +3,13 @@
 const STORAGE_KEYS = {
   token: 'ul_token',
   model: 'ul_model',
+  interpreterModel: 'ul_interpreter_model',
+  heavyModel: 'ul_heavy_model',
   apiBase: 'ul_api_base',
   autoApproveLight: 'ul_auto_approve_light',
 } as const;
 
-const DEFAULT_API_BASE = 'https://ultralight-api-iikqz.ondigitalocean.app';
+const DEFAULT_API_BASE = 'https://ultralight-api.rgn4jz429m.workers.dev';
 
 export function getToken(): string | null {
   return localStorage.getItem(STORAGE_KEYS.token);
@@ -27,6 +29,20 @@ export function getModel(): string {
 
 export function setModel(model: string): void {
   localStorage.setItem(STORAGE_KEYS.model, model);
+}
+
+// Two-model architecture: interpreter (Flash) + heavy (Sonnet)
+export function getInterpreterModel(): string {
+  return localStorage.getItem(STORAGE_KEYS.interpreterModel) || 'google/gemini-3.1-flash-lite-preview:nitro';
+}
+export function setInterpreterModel(model: string): void {
+  localStorage.setItem(STORAGE_KEYS.interpreterModel, model);
+}
+export function getHeavyModel(): string {
+  return localStorage.getItem(STORAGE_KEYS.heavyModel) || 'anthropic/claude-sonnet-4';
+}
+export function setHeavyModel(model: string): void {
+  localStorage.setItem(STORAGE_KEYS.heavyModel, model);
 }
 
 export function getApiBase(): string {

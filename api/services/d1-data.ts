@@ -3,9 +3,7 @@
 // This is the runtime data layer — called from sandbox.ts for every ultralight.db.* invocation.
 // For provisioning and migrations, see d1-provisioning.ts and d1-migrations.ts.
 
-// @ts-ignore
-const Deno = globalThis.Deno;
-
+import { getEnv } from '../lib/env.ts';
 import { provisionD1ForApp } from './d1-provisioning.ts';
 
 // ============================================
@@ -80,8 +78,8 @@ export function createD1DataService(
   appId: string,
   databaseId: string | null,
 ): D1DataService {
-  const cfAccountId = Deno.env.get('CF_ACCOUNT_ID') || '';
-  const cfApiToken = Deno.env.get('CF_API_TOKEN') || '';
+  const cfAccountId = getEnv('CF_ACCOUNT_ID');
+  const cfApiToken = getEnv('CF_API_TOKEN');
 
   // Mutable reference — gets set on first call if null (lazy provisioning)
   let resolvedDbId: string | null = databaseId;

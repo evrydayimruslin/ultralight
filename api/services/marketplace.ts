@@ -3,13 +3,9 @@
 // All financial operations use atomic Supabase RPCs — no double-spend possible.
 // All amounts are in Light (✦).
 
-// @ts-ignore - Deno is available
-const Deno = globalThis.Deno;
-
+import { getEnv } from '../lib/env.ts';
 import { formatLight } from '../../shared/types/index.ts';
 
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
 // ============================================
 // TYPES
@@ -121,8 +117,8 @@ export interface SaleHistory {
 
 function dbHeaders() {
   return {
-    'apikey': SUPABASE_SERVICE_ROLE_KEY,
-    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+    'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
   };
 }
 
@@ -159,7 +155,7 @@ export async function placeBid(
 
   // Apps that have ever used an external database are permanently ineligible
   const appCheck = await fetch(
-    `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}&select=had_external_db`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/apps?id=eq.${appId}&select=had_external_db`,
     { headers: dbHeaders() }
   );
   const appRows = appCheck.ok ? await appCheck.json() : [];
@@ -171,7 +167,7 @@ export async function placeBid(
     ? new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString()
     : null;
 
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/escrow_bid`, {
+  const res = await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/rpc/escrow_bid`, {
     method: 'POST',
     headers: rpcHeaders(),
     body: JSON.stringify({
@@ -223,7 +219,7 @@ export async function setAskPrice(
 ): Promise<ListingResult> {
   // Verify ownership + storage eligibility
   const appRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}&select=owner_id,had_external_db`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/apps?id=eq.${appId}&select=owner_id,had_external_db`,
     { headers: dbHeaders() }
   );
   const apps = appRes.ok ? await appRes.json() : [];
@@ -246,7 +242,7 @@ export async function setAskPrice(
   };
 
   const upsertRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/app_listings`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/app_listings`,
     {
       method: 'POST',
       headers: {
@@ -281,7 +277,7 @@ export async function setAskPrice(
  * Accept a bid (owner only). Triggers atomic ownership transfer.
  */
 export async function acceptBid(ownerId: string, bidId: string): Promise<SaleResult> {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/accept_bid`, {
+  const res = await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/rpc/accept_bid`, {
     method: 'POST',
     headers: rpcHeaders(),
     body: JSON.stringify({
@@ -323,7 +319,7 @@ export async function acceptBid(ownerId: string, bidId: string): Promise<SaleRes
  * Reject a bid (owner only). Refunds buyer escrow.
  */
 export async function rejectBid(ownerId: string, bidId: string): Promise<void> {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/reject_bid`, {
+  const res = await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/rpc/reject_bid`, {
     method: 'POST',
     headers: rpcHeaders(),
     body: JSON.stringify({
@@ -347,7 +343,7 @@ export async function rejectBid(ownerId: string, bidId: string): Promise<void> {
  * Cancel own bid. Refunds escrow.
  */
 export async function cancelBid(bidderId: string, bidId: string): Promise<void> {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/cancel_bid`, {
+  const res = await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/rpc/cancel_bid`, {
     method: 'POST',
     headers: rpcHeaders(),
     body: JSON.stringify({
@@ -374,7 +370,7 @@ export async function cancelBid(bidderId: string, bidId: string): Promise<void> 
 export async function buyNow(buyerId: string, appId: string): Promise<SaleResult> {
   // Get listing
   const listingRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/app_listings?app_id=eq.${appId}&select=*`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/app_listings?app_id=eq.${appId}&select=*`,
     { headers: dbHeaders() }
   );
   const listings = listingRes.ok ? await listingRes.json() : [];
@@ -407,11 +403,11 @@ export async function buyNow(buyerId: string, appId: string): Promise<SaleResult
  */
 export async function getOffers(userId: string, appId?: string): Promise<OffersSummary> {
   // Incoming: bids on user's apps
-  let incomingUrl = `${SUPABASE_URL}/rest/v1/app_bids?status=eq.active&select=id,app_id,bidder_id,amount_light,message,created_at,apps!inner(name,owner_id)&apps.owner_id=eq.${userId}&order=amount_light.desc`;
+  let incomingUrl = `${getEnv('SUPABASE_URL')}/rest/v1/app_bids?status=eq.active&select=id,app_id,bidder_id,amount_light,message,created_at,apps!inner(name,owner_id)&apps.owner_id=eq.${userId}&order=amount_light.desc`;
   if (appId) incomingUrl += `&app_id=eq.${appId}`;
 
   // Outgoing: user's own bids
-  let outgoingUrl = `${SUPABASE_URL}/rest/v1/app_bids?bidder_id=eq.${userId}&select=id,app_id,amount_light,status,escrow_status,created_at,apps(name)&order=created_at.desc&limit=50`;
+  let outgoingUrl = `${getEnv('SUPABASE_URL')}/rest/v1/app_bids?bidder_id=eq.${userId}&select=id,app_id,amount_light,status,escrow_status,created_at,apps(name)&order=created_at.desc&limit=50`;
 
   const [incomingRes, outgoingRes] = await Promise.all([
     fetch(incomingUrl, { headers: dbHeaders() }),
@@ -434,7 +430,7 @@ export async function getOffers(userId: string, appId?: string): Promise<OffersS
   } else {
     // Fallback: get user's apps, then get bids on those apps
     const myAppsRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${userId}&select=id,name`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/apps?owner_id=eq.${userId}&select=id,name`,
       { headers: dbHeaders() }
     );
     const myApps = myAppsRes.ok ? await myAppsRes.json() : [];
@@ -444,7 +440,7 @@ export async function getOffers(userId: string, appId?: string): Promise<OffersS
       myApps.forEach((a: { id: string; name: string }) => { appNameMap[a.id] = a.name; });
 
       const bidsRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/app_bids?status=eq.active&app_id=in.(${appIds.join(',')})&select=id,app_id,bidder_id,amount_light,message,created_at&order=amount_light.desc`,
+        `${getEnv('SUPABASE_URL')}/rest/v1/app_bids?status=eq.active&app_id=in.(${appIds.join(',')})&select=id,app_id,bidder_id,amount_light,message,created_at&order=amount_light.desc`,
         { headers: dbHeaders() }
       );
       const bidsData = bidsRes.ok ? await bidsRes.json() : [];
@@ -454,7 +450,7 @@ export async function getOffers(userId: string, appId?: string): Promise<OffersS
       let emailMap: Record<string, string> = {};
       if (bidderIds.length > 0) {
         const emailRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/users?id=in.(${bidderIds.join(',')})&select=id,email`,
+          `${getEnv('SUPABASE_URL')}/rest/v1/users?id=in.(${bidderIds.join(',')})&select=id,email`,
           { headers: dbHeaders() }
         );
         const emails = emailRes.ok ? await emailRes.json() : [];
@@ -495,7 +491,7 @@ export async function getOffers(userId: string, appId?: string): Promise<OffersS
  * Get sale/provenance history for an app or user.
  */
 export async function getHistory(appId?: string, userId?: string): Promise<SaleHistory[]> {
-  let url = `${SUPABASE_URL}/rest/v1/app_sales?select=*&order=created_at.desc&limit=50`;
+  let url = `${getEnv('SUPABASE_URL')}/rest/v1/app_sales?select=*&order=created_at.desc&limit=50`;
   if (appId) url += `&app_id=eq.${appId}`;
   if (userId) url += `&or=(seller_id.eq.${userId},buyer_id.eq.${userId})`;
 
@@ -511,15 +507,15 @@ export async function getHistory(appId?: string, userId?: string): Promise<SaleH
 export async function getListing(appId: string): Promise<ListingDetails> {
   const [listingRes, bidsRes, appRes] = await Promise.all([
     fetch(
-      `${SUPABASE_URL}/rest/v1/app_listings?app_id=eq.${appId}&select=*`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/app_listings?app_id=eq.${appId}&select=*`,
       { headers: dbHeaders() }
     ),
     fetch(
-      `${SUPABASE_URL}/rest/v1/app_bids?app_id=eq.${appId}&status=eq.active&select=id,bidder_id,amount_light,message,status,created_at,expires_at&order=amount_light.desc`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/app_bids?app_id=eq.${appId}&status=eq.active&select=id,bidder_id,amount_light,message,status,created_at,expires_at&order=amount_light.desc`,
       { headers: dbHeaders() }
     ),
     fetch(
-      `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}&select=id,name,slug,owner_id,total_runs,runs_30d,description`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/apps?id=eq.${appId}&select=id,name,slug,owner_id,total_runs,runs_30d,description`,
       { headers: dbHeaders() }
     ),
   ]);
@@ -533,7 +529,7 @@ export async function getListing(appId: string): Promise<ListingDetails> {
   let emailMap: Record<string, string> = {};
   if (bidderIds.length > 0) {
     const emailRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?id=in.(${(bidderIds as string[]).join(',')})&select=id,email`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/users?id=in.(${(bidderIds as string[]).join(',')})&select=id,email`,
       { headers: dbHeaders() }
     );
     const emails = emailRes.ok ? await emailRes.json() : [];
@@ -563,17 +559,17 @@ export async function getAppMetrics(appId: string): Promise<AppMetrics> {
   const [totalRes, recentRes, callersRes] = await Promise.all([
     // Total lifetime calls
     fetch(
-      `${SUPABASE_URL}/rest/v1/mcp_call_logs?app_id=eq.${appId}&select=id`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/mcp_call_logs?app_id=eq.${appId}&select=id`,
       { headers: { ...dbHeaders(), 'Prefer': 'count=exact', 'Range-Unit': 'items', 'Range': '0-0' } }
     ),
     // 30d calls + sum revenue + success flag
     fetch(
-      `${SUPABASE_URL}/rest/v1/mcp_call_logs?app_id=eq.${appId}&created_at=gte.${thirtyDaysAgo}&select=call_charge_light,success`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/mcp_call_logs?app_id=eq.${appId}&created_at=gte.${thirtyDaysAgo}&select=call_charge_light,success`,
       { headers: dbHeaders() }
     ),
     // 30d unique callers
     fetch(
-      `${SUPABASE_URL}/rest/v1/mcp_call_logs?app_id=eq.${appId}&created_at=gte.${thirtyDaysAgo}&select=user_id`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/mcp_call_logs?app_id=eq.${appId}&created_at=gte.${thirtyDaysAgo}&select=user_id`,
       { headers: dbHeaders() }
     ),
   ]);
@@ -611,7 +607,7 @@ export async function getAppMetrics(appId: string): Promise<AppMetrics> {
 export async function flagExternalDb(appId: string): Promise<void> {
   // 1. Set the permanent flag
   const flagRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/apps?id=eq.${appId}`,
     {
       method: 'PATCH',
       headers: writeHeaders(),
@@ -624,14 +620,14 @@ export async function flagExternalDb(appId: string): Promise<void> {
 
   // 2. Cancel all active bids on this app (refunds escrow via RPC)
   const bidsRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/app_bids?app_id=eq.${appId}&status=eq.active&select=id,bidder_id`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/app_bids?app_id=eq.${appId}&status=eq.active&select=id,bidder_id`,
     { headers: dbHeaders() }
   );
   if (bidsRes.ok) {
     const bids = await bidsRes.json() as Array<{ id: string; bidder_id: string }>;
     for (const bid of bids) {
       try {
-        await fetch(`${SUPABASE_URL}/rest/v1/rpc/cancel_bid`, {
+        await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/rpc/cancel_bid`, {
           method: 'POST',
           headers: rpcHeaders(),
           body: JSON.stringify({ p_bidder_id: bid.bidder_id, p_bid_id: bid.id }),
@@ -645,7 +641,7 @@ export async function flagExternalDb(appId: string): Promise<void> {
 
   // 3. Delist the app (remove listing)
   await fetch(
-    `${SUPABASE_URL}/rest/v1/app_listings?app_id=eq.${appId}`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/app_listings?app_id=eq.${appId}`,
     {
       method: 'DELETE',
       headers: dbHeaders(),

@@ -21,9 +21,7 @@ import {
 import { createAppsService } from '../services/apps.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
 import type { EnvSchemaEntry } from '../../shared/types/index.ts';
-
-// @ts-ignore - Deno is available in Deno Deploy
-const Deno = globalThis.Deno;
+import { getEnv } from '../lib/env.ts';
 
 // ============================================
 // TYPES
@@ -266,8 +264,8 @@ async function handlePostSearch(request: Request): Promise<Response> {
 async function handleFeatured(request: Request, url: URL): Promise<Response> {
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '20', 10), 50);
 
-  const supabaseUrl = Deno?.env?.get('SUPABASE_URL');
-  const supabaseKey = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY');
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!supabaseUrl || !supabaseKey) {
     return error('Service unavailable', 503);
@@ -370,8 +368,8 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
     return discoverError('QUERY_TOO_LONG', 'Query must be at most 500 characters', 400);
   }
 
-  const supabaseUrl = Deno?.env?.get('SUPABASE_URL');
-  const supabaseKey = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY');
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
   if (!supabaseUrl || !supabaseKey) {
     return error('Service unavailable', 503);
   }
@@ -947,8 +945,8 @@ async function executeSearch(
     }, 503);
   }
 
-  const supabaseUrl = Deno?.env?.get('SUPABASE_URL');
-  const supabaseKey = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY');
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!supabaseUrl || !supabaseKey) {
     return error('Service unavailable', 503);
@@ -1171,8 +1169,8 @@ async function handleStatus(request: Request): Promise<Response> {
   // Fetch public app count for operational metrics
   let appCount = 0;
   try {
-    const supabaseUrl = Deno?.env?.get('SUPABASE_URL');
-    const supabaseKey = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY');
+    const supabaseUrl = getEnv('SUPABASE_URL');
+    const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
     if (supabaseUrl && supabaseKey) {
       const countRes = await fetch(
         `${supabaseUrl}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&select=id`,
@@ -1227,10 +1225,10 @@ function handleOpenApiSpec(): Response {
       title: 'Ultralight Discovery API',
       description: 'Semantic search across the Ultralight MCP app ecosystem. Find agent-callable tools by natural language query. Every result includes an mcp_endpoint for direct JSON-RPC 2.0 access.',
       version: '1.0.0',
-      contact: { name: 'Ultralight', url: 'https://ultralight-api-iikqz.ondigitalocean.app' },
+      contact: { name: 'Ultralight', url: 'https://ultralight-api.rgn4jz429m.workers.dev' },
     },
     servers: [
-      { url: 'https://ultralight-api-iikqz.ondigitalocean.app', description: 'Production' },
+      { url: 'https://ultralight-api.rgn4jz429m.workers.dev', description: 'Production' },
     ],
     paths: {
       '/api/discover': {
@@ -1388,7 +1386,7 @@ This installs MCP config, registers Skills + slash commands, and outputs an agen
 No install needed — connect directly via HTTP:
 
 \`\`\`
-Endpoint: https://ultralight-api-iikqz.ondigitalocean.app/mcp/platform
+Endpoint: https://ultralight-api.rgn4jz429m.workers.dev/mcp/platform
 Authorization: Bearer {TOKEN}
 Method: POST
 Content-Type: application/json
@@ -1414,7 +1412,7 @@ This works with ChatGPT Custom Actions, Gemini Extensions, open-source web agent
 
 **Platform docs & building conventions** (no auth needed):
 \`\`\`
-GET https://ultralight-api-iikqz.ondigitalocean.app/api/skills
+GET https://ultralight-api.rgn4jz429m.workers.dev/api/skills
 \`\`\`
 Returns the full Skills.md — tool reference, building guide, SDK globals, resource URIs, and agent conventions. Fetch this to understand how to build and use Ultralight tools.
 
@@ -1481,8 +1479,8 @@ async function handlePlatformStats(): Promise<Response> {
     return json(_statsCache.data);
   }
 
-  const supabaseUrl = Deno?.env?.get('SUPABASE_URL');
-  const supabaseKey = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY');
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
   if (!supabaseUrl || !supabaseKey) return error('Service unavailable', 503);
 
   const dbHeaders = {
@@ -1513,8 +1511,8 @@ async function handlePlatformStats(): Promise<Response> {
 async function handleNewlyPublished(url: URL): Promise<Response> {
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '8', 10), 30);
 
-  const supabaseUrl = Deno?.env?.get('SUPABASE_URL');
-  const supabaseKey = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY');
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
   if (!supabaseUrl || !supabaseKey) return error('Service unavailable', 503);
 
   const dbHeaders = {
@@ -1553,8 +1551,8 @@ async function handleNewlyPublished(url: URL): Promise<Response> {
 async function handleNewlyAcquired(url: URL): Promise<Response> {
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '8', 10), 30);
 
-  const supabaseUrl = Deno?.env?.get('SUPABASE_URL');
-  const supabaseKey = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY');
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
   if (!supabaseUrl || !supabaseKey) return error('Service unavailable', 503);
 
   const dbHeaders = {
@@ -1613,8 +1611,8 @@ async function handleLeaderboard(url: URL): Promise<Response> {
     return json(cached.data);
   }
 
-  const supabaseUrl = Deno?.env?.get('SUPABASE_URL');
-  const supabaseKey = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY');
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
   if (!supabaseUrl || !supabaseKey) return error('Service unavailable', 503);
 
   const dbHeaders = {

@@ -91,7 +91,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
   }, []);
 
   const loadMessages = useCallback((msgs: Message[]) => {
-    setMessages(msgs);
+    setMessages(prev => {
+      // Don't overwrite in-flight streaming messages with an empty DB load
+      if (msgs.length === 0 && prev.length > 0) return prev;
+      return msgs;
+    });
     setError(null);
     if (msgs.length > 0) {
       const apiMsgs = msgs.map(m => ({

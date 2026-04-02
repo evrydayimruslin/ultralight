@@ -12,6 +12,7 @@
 // Usage:
 //   deno run --allow-net --allow-env api/services/gpu/test-pipeline.ts
 
+import { getEnv } from '../../lib/env.ts';
 import { executeGpuFunction } from './executor.ts';
 import { settleGpuExecution, computeGpuCallCost, estimateMaxGpuCost } from './billing.ts';
 import { acquireGpuSlot, releaseGpuSlot, getGpuConcurrency } from './concurrency.ts';
@@ -362,7 +363,7 @@ async function main(): Promise<void> {
   console.log('─'.repeat(60));
 
   // Check env
-  const apiKey = Deno.env.get('RUNPOD_API_KEY');
+  const apiKey = getEnv('RUNPOD_API_KEY');
   if (!apiKey) {
     console.error(`${FAIL} RUNPOD_API_KEY not set`);
     Deno.exit(1);

@@ -11,14 +11,12 @@ import { json, error } from './app.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
 import { checkChatBalance, deductChatCost } from '../services/chat-billing.ts';
 import { getOrCreateOpenRouterKey } from '../services/openrouter-keys.ts';
+import { createUserService } from '../services/user.ts';
 import {
   CHAT_MIN_BALANCE_LIGHT,
   type ChatStreamRequest,
   type ChatUsage,
 } from '../../shared/types/index.ts';
-
-// @ts-ignore
-const Deno = globalThis.Deno;
 
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
@@ -107,10 +105,28 @@ export async function handleChatStream(request: Request): Promise<Response> {
   //   return json({ error: 'Insufficient balance', balance_light: balance, minimum_light: CHAT_MIN_BALANCE_LIGHT, topup_url: '/settings/billing' }, 402);
   // }
 
-  // ── 5. Get or create per-user OpenRouter API key ──
+  // ── 5. Get API key — prefer BYOK if configured, fallback to platform key ──
   let userOpenRouterKey: string;
   try {
-    userOpenRouterKey = await getOrCreateOpenRouterKey(user.id, user.email);
+    // Check if user has BYOK configured
+    const userService = createUserService();
+    const fullUser = await userService.getUser(user.id);
+    if (fullUser?.byok_enabled && fullUser?.byok_provider === 'openrouter') {
+      try {
+        const byokKey = await userService.getDecryptedApiKey(user.id, 'openrouter');
+        if (byokKey) {
+          userOpenRouterKey = byokKey;
+          console.log(`[CHAT] Using BYOK OpenRouter key for ${user.id}`);
+        } else {
+          throw new Error('Empty BYOK key');
+        }
+      } catch (byokErr) {
+        console.warn(`[CHAT] BYOK key failed for ${user.id}, falling back to platform key:`, byokErr);
+        userOpenRouterKey = await getOrCreateOpenRouterKey(user.id, user.email);
+      }
+    } else {
+      userOpenRouterKey = await getOrCreateOpenRouterKey(user.id, user.email);
+    }
     console.log(`[CHAT] OpenRouter key for ${user.id}: ${userOpenRouterKey.substring(0, 8)}...`);
   } catch (err) {
     console.error(`[CHAT] Failed to get/create OpenRouter key for ${user.id}:`, err);
@@ -140,7 +156,7 @@ export async function handleChatStream(request: Request): Promise<Response> {
       headers: {
         'Authorization': `Bearer ${userOpenRouterKey}`,
         'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://ultralight-api-iikqz.ondigitalocean.app',
+        'HTTP-Referer': 'https://ultralight-api.rgn4jz429m.workers.dev',
         'X-Title': 'Ultralight Chat',
       },
       body: JSON.stringify(openRouterBody),
@@ -331,6 +347,52 @@ export async function handleFunctionIndex(request: Request): Promise<Response> {
 }
 
 // ============================================
+// POST /chat/context — Resolve task context for a prompt
+// ============================================
+
+/**
+ * Given a user prompt, resolves relevant entities, functions, and conventions
+ * from pre-built indexes. Returns a TaskContext with a formatted promptBlock
+ * for system prompt injection.
+ */
+export async function handleChatContext(request: Request): Promise<Response> {
+  // Auth
+  let user: { id: string; email: string; tier: string; provisional?: boolean };
+  try {
+    user = await authenticate(request);
+  } catch (err) {
+    return json({ error: 'Unauthorized', detail: err instanceof Error ? err.message : 'Auth failed' }, 401);
+  }
+
+  // Parse body
+  let body: { prompt: string };
+  try {
+    body = await request.json() as { prompt: string };
+  } catch {
+    return error('Invalid JSON body', 400);
+  }
+
+  if (!body.prompt || typeof body.prompt !== 'string') {
+    return error('prompt is required', 400);
+  }
+
+  // Resolve context
+  try {
+    const { resolveContext } = await import('../services/context-resolver.ts');
+    const context = await resolveContext(body.prompt, user.id);
+    return json(context);
+  } catch (err) {
+    console.error('[CHAT] Context resolution failed:', err);
+    return json({
+      entities: [],
+      functions: [],
+      conventions: [],
+      promptBlock: '',
+    });
+  }
+}
+
+// ============================================
 // POST /chat/provision-key — Pre-provision OpenRouter key
 // ============================================
 
@@ -364,4 +426,105 @@ export async function handleProvisionKey(request: Request): Promise<Response> {
       error: err instanceof Error ? err.message : 'Key provisioning failed',
     }, 500);
   }
+}
+
+// ============================================
+// POST /chat/orchestrate — Server-side Flash orchestration
+// ============================================
+
+/**
+ * Server-side orchestration endpoint.
+ * Replaces the client-side agent loop with Flash broker + heavy model + recipe execution.
+ * Returns an SSE stream of typed orchestration events.
+ */
+export async function handleOrchestrate(request: Request): Promise<Response> {
+  // ── 1. Auth ──
+  let user: { id: string; email: string; tier: string; provisional?: boolean };
+  try {
+    user = await authenticate(request);
+  } catch (err) {
+    return json({ error: 'Unauthorized', detail: err instanceof Error ? err.message : 'Auth failed' }, 401);
+  }
+
+  if (user.provisional) {
+    return json({ error: 'Orchestration requires a full account.' }, 403);
+  }
+
+  // ── 2. Parse request body ──
+  let body: {
+    message: string;
+    conversationHistory?: Array<{ role: string; content: string }>;
+    preferredModel?: string;
+    interpreterModel?: string;
+    heavyModel?: string;
+    scope?: Record<string, { access: 'all' | 'functions' | 'data'; functions?: string[] }>;
+    systemAgentContext?: { type: string; persona: string; skillsPath: string };
+    projectContext?: string;
+  };
+  try {
+    body = await request.json() as typeof body;
+  } catch {
+    return error('Invalid JSON body', 400);
+  }
+
+  if (!body.message || typeof body.message !== 'string') {
+    return error('message is required', 400);
+  }
+
+  // ── 3. Rate limit ──
+  const rateResult = await checkRateLimit(user.id, 'chat:stream');
+  if (!rateResult.allowed) {
+    return json({ error: 'Rate limit exceeded', resetAt: rateResult.resetAt.toISOString() }, 429);
+  }
+
+  // ── 4. Stream orchestration events as SSE ──
+  const { orchestrate } = await import('../services/orchestrator.ts');
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      try {
+        for await (const event of orchestrate(
+          {
+            message: body.message,
+            conversationHistory: body.conversationHistory,
+            interpreterModel: body.interpreterModel,
+            heavyModel: body.heavyModel || body.preferredModel,
+            scope: body.scope,
+            systemAgentContext: body.systemAgentContext,
+            projectContext: body.projectContext,
+          },
+          user.id,
+          user.email,
+        )) {
+          const sseData = `data: ${JSON.stringify(event)}\n\n`;
+          controller.enqueue(encoder.encode(sseData));
+
+          // Close stream on done or error
+          if (event.type === 'done') {
+            controller.close();
+            return;
+          }
+        }
+        // Safety close if generator ends without 'done'
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done' })}\n\n`));
+        controller.close();
+      } catch (err) {
+        const errEvent = { type: 'error', message: err instanceof Error ? err.message : String(err) };
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(errEvent)}\n\n`));
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done' })}\n\n`));
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    },
+  });
 }

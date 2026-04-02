@@ -18,9 +18,6 @@ import { getUserTier } from '../services/tier-enforcement.ts';
 import { createD1DataService } from '../services/d1-data.ts';
 import { getD1DatabaseId } from '../services/d1-provisioning.ts';
 
-// @ts-ignore - Deno is available in Deno Deploy
-const Deno = globalThis.Deno;
-
 // ============================================
 // PER-APP IP-BASED HTTP RATE LIMITING
 // ============================================
@@ -29,15 +26,15 @@ const Deno = globalThis.Deno;
 
 const httpRateBuckets = new Map<string, { count: number; resetAt: number }>();
 
-// Cleanup expired buckets every 60 seconds
-setInterval(() => {
+// Cleanup expired buckets lazily (CF Workers don't allow setInterval at module scope)
+function cleanupHttpRateBuckets() {
   const now = Date.now();
   for (const [key, bucket] of httpRateBuckets) {
     if (bucket.resetAt < now) {
       httpRateBuckets.delete(key);
     }
   }
-}, 60_000);
+}
 
 /**
  * Check per-app HTTP rate limit (IP-scoped).
@@ -437,7 +434,9 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
 
     // Execute the function in sandbox — AI-capable apps get 120s timeout
     const httpPermissions = ['memory:read', 'memory:write', 'ai:call', 'net:fetch'];
-    const result = await executeInSandbox(
+    // Dynamic Worker sandbox — avoids `new Function()` restriction on CF Workers
+    const { executeInDynamicSandbox } = await import('../runtime/dynamic-sandbox.ts');
+    const result = await executeInDynamicSandbox(
       {
         appId: app.id,
         userId: user?.id || 'anonymous',

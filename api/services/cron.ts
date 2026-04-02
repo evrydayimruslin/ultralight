@@ -560,7 +560,7 @@ export function stopCronScheduler(): void {
 /**
  * Check all jobs and run any that are due
  */
-async function checkAndRunJobs(baseUrl: string): Promise<void> {
+export async function checkAndRunJobs(baseUrl: string): Promise<void> {
   const now = new Date();
   console.log(`[CRON] Checking jobs at ${now.toISOString()}`);
 

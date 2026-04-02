@@ -1,0 +1,21 @@
+{
+  "name": "ultralight-api-worker",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging",
+    "tail": "wrangler tail"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2",
+    "typescript": "^5.3.3",
+    "esbuild-wasm": "^0.24.0",
+    "yaml": "^2.4.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241205.0",
+    "wrangler": "^4.67.0"
+  }
+}

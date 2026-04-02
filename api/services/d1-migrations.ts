@@ -3,9 +3,7 @@
 // Tracks applied migrations in the _migrations system table.
 // Validates schemas (user_id requirement) at deploy time.
 
-// @ts-ignore
-const Deno = globalThis.Deno;
-
+import { getEnv } from '../lib/env.ts';
 import { executeD1Sql, type D1QueryResponse } from './d1-provisioning.ts';
 
 // ============================================
@@ -110,8 +108,8 @@ export async function runMigrations(
   databaseId: string,
   migrations: MigrationFile[],
 ): Promise<MigrationResult> {
-  const cfAccountId = Deno.env.get('CF_ACCOUNT_ID') || '';
-  const cfApiToken = Deno.env.get('CF_API_TOKEN') || '';
+  const cfAccountId = getEnv('CF_ACCOUNT_ID');
+  const cfApiToken = getEnv('CF_API_TOKEN');
 
   if (!cfAccountId || !cfApiToken) {
     return { applied: 0, skipped: 0, errors: ['Missing CF_ACCOUNT_ID or CF_API_TOKEN'], lastVersion: 0 };
@@ -259,8 +257,8 @@ export async function updateMigrationVersion(
   appId: string,
   lastVersion: number,
 ): Promise<void> {
-  const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
-  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!supabaseUrl || !supabaseKey) return;
 

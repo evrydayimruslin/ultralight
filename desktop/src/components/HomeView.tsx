@@ -10,7 +10,7 @@ import { usePermissions } from '../hooks/usePermissions';
 import { buildAgentSystemPrompt, inspectAndBuildMcpSchemas, generateConnectedAppsSchema } from '../lib/systemPrompt';
 import { loadBaseContext, readAbsoluteFile, fileNameWithoutExt } from '../lib/templates';
 import { agentRunner, type AgentEvent } from '../lib/agentRunner';
-import ProjectDropdown from './ProjectDropdown';
+
 import KanbanBoard from './KanbanBoard';
 import CardDetailModal from './CardDetailModal';
 import CreateAgentModal from './CreateAgentModal';
@@ -25,8 +25,6 @@ import { useWidgetInbox, type WidgetAppSource } from '../hooks/useWidgetInbox';
 type DashboardTab = 'agents' | 'admin';
 
 interface HomeViewProps {
-  selectedProjectDir: string | null;
-  onSelectProjectDir: (dir: string | null) => void;
   onNavigateToAgent: (agentId: string, initialMessage?: string) => void;
 }
 
@@ -99,10 +97,11 @@ function TabButton({ label, active, onClick }: { label: string; active: boolean;
 // ── Component ──
 
 export default function HomeView({
-  selectedProjectDir,
-  onSelectProjectDir,
   onNavigateToAgent,
 }: HomeViewProps) {
+  // Project dir removed from Command — now per-conversation in ChatInput.
+  // Pass null to downstream consumers that still expect it.
+  const selectedProjectDir: string | null = null;
   const [activeTab, setActiveTab] = useState<DashboardTab>('admin');
   const [quickInstructAgent, setQuickInstructAgent] = useState<string | null>(null);
   const [quickInstructText, setQuickInstructText] = useState('');
@@ -491,32 +490,10 @@ export default function HomeView({
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
           </button>
-          <ProjectDropdown
-            selectedDir={selectedProjectDir}
-            onSelect={onSelectProjectDir}
-          />
         </div>
       </div>
 
-      {/* Tab bar */}
-      <div className="flex items-center gap-1 px-4 border-b border-ul-border flex-shrink-0">
-        <TabButton label="Agents" active={activeTab === 'agents'} onClick={() => { setActiveTab('agents'); handleCloseWidget(); }} />
-        <button
-          onClick={() => { setActiveTab('admin'); handleCloseWidget(); }}
-          className={`relative px-3 py-2 text-small font-medium transition-colors border-b-2 -mb-px ${
-            activeTab === 'admin'
-              ? 'border-ul-text text-ul-text'
-              : 'border-transparent text-ul-text-muted hover:text-ul-text-secondary'
-          }`}
-        >
-          Admin
-          {widgetBadge > 0 && (
-            <span className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-semibold rounded-full bg-blue-600 text-white">
-              {widgetBadge}
-            </span>
-          )}
-        </button>
-      </div>
+      {/* Admin header — no tabs needed */}
 
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto relative">

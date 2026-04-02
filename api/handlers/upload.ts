@@ -54,9 +54,6 @@ interface DraftUploadResponse {
   message: string;
 }
 
-// @ts-ignore - Deno is available in Deno Deploy
-const Deno = globalThis.Deno;
-
 export async function handleUpload(request: Request): Promise<Response> {
   try {
     // Debug: Log all headers
@@ -596,6 +593,17 @@ export async function handleUpload(request: Request): Promise<Response> {
     const storageKey = `apps/${appId}/${version}/`;
     await r2Service.uploadFiles(storageKey, filesToUpload);
     log('success', 'Upload complete');
+
+    // Store ESM bundle in KV for Dynamic Worker loading (in-process MCP calls)
+    if (esmBundledCode && globalThis.__env?.CODE_CACHE) {
+      try {
+        await globalThis.__env.CODE_CACHE.put(`esm:${appId}:${version}`, esmBundledCode);
+        await globalThis.__env.CODE_CACHE.put(`esm:${appId}:latest`, esmBundledCode);
+        log('info', 'ESM bundle cached in KV for Dynamic Workers');
+      } catch (kvErr) {
+        log('warn', `KV cache failed (non-fatal): ${kvErr instanceof Error ? kvErr.message : String(kvErr)}`);
+      }
+    }
 
     // Create app record in database
     log('info', 'Creating app record...');

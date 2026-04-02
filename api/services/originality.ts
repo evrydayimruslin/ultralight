@@ -3,9 +3,7 @@
 // Detects exact clones (fingerprint), semantic duplicates (embedding), and seller-relist.
 // Called at all three publish gate points: upload, publish-draft, set-visibility.
 
-// @ts-ignore - Deno is available
-const Deno = globalThis.Deno;
-
+import { getEnv } from '../lib/env.ts';
 import {
   createEmbeddingService,
   searchAppsByEmbedding,
@@ -38,13 +36,13 @@ export interface OriginalityResult {
 function getThresholds() {
   return {
     // Below this score: block publish entirely
-    BLOCK_THRESHOLD: parseFloat(Deno?.env?.get('ORIGINALITY_BLOCK_THRESHOLD') || '0.25'),
+    BLOCK_THRESHOLD: parseFloat(getEnv('ORIGINALITY_BLOCK_THRESHOLD') || '0.25'),
     // Between WARN and BLOCK: publish with warning flag
-    WARN_THRESHOLD: parseFloat(Deno?.env?.get('ORIGINALITY_WARN_THRESHOLD') || '0.60'),
+    WARN_THRESHOLD: parseFloat(getEnv('ORIGINALITY_WARN_THRESHOLD') || '0.60'),
     // Embedding similarity above this triggers a match report
-    EMBEDDING_SIMILARITY_ALERT: parseFloat(Deno?.env?.get('ORIGINALITY_SIMILARITY_ALERT') || '0.92'),
+    EMBEDDING_SIMILARITY_ALERT: parseFloat(getEnv('ORIGINALITY_SIMILARITY_ALERT') || '0.92'),
     // Embedding similarity above this + matching fingerprint = block
-    EXACT_CLONE_THRESHOLD: parseFloat(Deno?.env?.get('ORIGINALITY_EXACT_CLONE') || '0.97'),
+    EXACT_CLONE_THRESHOLD: parseFloat(getEnv('ORIGINALITY_EXACT_CLONE') || '0.97'),
   };
 }
 
@@ -52,13 +50,10 @@ function getThresholds() {
 // SUPABASE HELPERS
 // ============================================
 
-const SUPABASE_URL = Deno?.env?.get('SUPABASE_URL') || '';
-const SUPABASE_SERVICE_ROLE_KEY = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-
 function dbHeaders() {
   return {
-    'apikey': SUPABASE_SERVICE_ROLE_KEY,
-    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+    'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
   };
 }
 
@@ -141,10 +136,10 @@ async function checkExactFingerprint(
   uploaderId: string,
   appId: string
 ): Promise<OriginalityMatch[]> {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return [];
+  if (!getEnv('SUPABASE_URL') || !getEnv('SUPABASE_SERVICE_ROLE_KEY')) return [];
 
   try {
-    const url = `${SUPABASE_URL}/rest/v1/apps?` + new URLSearchParams({
+    const url = `${getEnv('SUPABASE_URL')}/rest/v1/apps?` + new URLSearchParams({
       'source_fingerprint': `eq.${fingerprint}`,
       'id': `neq.${appId}`,
       'owner_id': `neq.${uploaderId}`,
@@ -184,10 +179,10 @@ async function checkSellerRelist(
   uploaderId: string,
   fingerprint: string
 ): Promise<boolean> {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return false;
+  if (!getEnv('SUPABASE_URL') || !getEnv('SUPABASE_SERVICE_ROLE_KEY')) return false;
 
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/check_seller_relist`, {
+    const res = await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/rpc/check_seller_relist`, {
       method: 'POST',
       headers: rpcHeaders(),
       body: JSON.stringify({
@@ -419,12 +414,12 @@ export async function recordSaleFingerprint(
   sellerId: string,
   buyerId: string
 ): Promise<void> {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  if (!getEnv('SUPABASE_URL') || !getEnv('SUPABASE_SERVICE_ROLE_KEY')) {
     console.warn('[ORIGINALITY] Supabase not configured, skipping fingerprint recording');
     return;
   }
 
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/record_sale_fingerprint`, {
+  const res = await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/rpc/record_sale_fingerprint`, {
     method: 'POST',
     headers: rpcHeaders(),
     body: JSON.stringify({
@@ -461,10 +456,10 @@ export async function storeIntegrityResults(
     integrity_checked_at?: string;
   }
 ): Promise<void> {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
+  if (!getEnv('SUPABASE_URL') || !getEnv('SUPABASE_SERVICE_ROLE_KEY')) return;
 
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}`, {
+    const res = await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/apps?id=eq.${appId}`, {
       method: 'PATCH',
       headers: {
         ...dbHeaders(),

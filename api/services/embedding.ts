@@ -2,8 +2,7 @@
 // Uses OpenRouter to generate embeddings for semantic search
 // Default model: text-embedding-3-small (OpenAI via OpenRouter)
 
-// @ts-ignore - Deno is available in Deno Deploy
-const Deno = globalThis.Deno;
+import { getEnv } from '../lib/env.ts';
 
 // ============================================
 // TYPES
@@ -52,7 +51,7 @@ export class EmbeddingService {
       headers: {
         'Authorization': `Bearer ${this.apiKey}`,
         'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://ultralight-api-iikqz.ondigitalocean.app',
+        'HTTP-Referer': 'https://ultralight-api.rgn4jz429m.workers.dev',
         'X-Title': 'Ultralight',
       },
       body: JSON.stringify({
@@ -89,7 +88,7 @@ export class EmbeddingService {
       headers: {
         'Authorization': `Bearer ${this.apiKey}`,
         'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://ultralight-api-iikqz.ondigitalocean.app',
+        'HTTP-Referer': 'https://ultralight-api.rgn4jz429m.workers.dev',
         'X-Title': 'Ultralight',
       },
       body: JSON.stringify({
@@ -145,13 +144,13 @@ export function createEmbeddingService(userApiKey?: string): EmbeddingService | 
   }
 
   // Try dedicated embedding key (regular API key, not provisioning key)
-  const embeddingKey = Deno?.env?.get('OPENROUTER_EMBEDDING_KEY');
+  const embeddingKey = getEnv('OPENROUTER_EMBEDDING_KEY');
   if (embeddingKey) {
     return new EmbeddingService({ apiKey: embeddingKey });
   }
 
   // Legacy fallback — may be a provisioning key that can't do embeddings
-  const systemKey = Deno?.env?.get('OPENROUTER_API_KEY');
+  const systemKey = getEnv('OPENROUTER_API_KEY');
   if (systemKey) {
     return new EmbeddingService({ apiKey: systemKey });
   }
@@ -164,7 +163,7 @@ export function createEmbeddingService(userApiKey?: string): EmbeddingService | 
  */
 export function isEmbeddingAvailable(userApiKey?: string): boolean {
   if (userApiKey) return true;
-  return !!(Deno?.env?.get('OPENROUTER_EMBEDDING_KEY') || Deno?.env?.get('OPENROUTER_API_KEY'));
+  return !!(getEnv('OPENROUTER_EMBEDDING_KEY') || getEnv('OPENROUTER_API_KEY'));
 }
 
 // ============================================
@@ -179,8 +178,8 @@ export async function storeAppEmbedding(
   appId: string,
   embedding: number[]
 ): Promise<void> {
-  const supabaseUrl = Deno?.env?.get('SUPABASE_URL');
-  const supabaseKey = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY');
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!supabaseUrl || !supabaseKey) {
     throw new Error('Supabase credentials not configured');
@@ -228,8 +227,8 @@ export async function searchAppsByEmbedding(
   owner_id: string;
   similarity: number;
 }>> {
-  const supabaseUrl = Deno?.env?.get('SUPABASE_URL');
-  const supabaseKey = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY');
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!supabaseUrl || !supabaseKey) {
     throw new Error('Supabase credentials not configured');
@@ -268,8 +267,8 @@ export async function searchAppsByEmbedding(
  * Used when skills are deleted or app is unpublished
  */
 export async function clearAppEmbedding(appId: string): Promise<void> {
-  const supabaseUrl = Deno?.env?.get('SUPABASE_URL');
-  const supabaseKey = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY');
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!supabaseUrl || !supabaseKey) {
     throw new Error('Supabase credentials not configured');
@@ -292,4 +291,99 @@ export async function clearAppEmbedding(appId: string): Promise<void> {
     const error = await response.text();
     throw new Error(`Failed to clear embedding: ${response.status} - ${error}`);
   }
+}
+
+// ============================================
+// CONVERSATION EMBEDDING (Supabase pgvector)
+// ============================================
+
+/**
+ * Store/upsert embedding for a conversation summary.
+ * Used for cross-session semantic search in the Flash pipeline.
+ */
+export async function storeConversationEmbedding(
+  userId: string,
+  conversationId: string,
+  conversationName: string,
+  summary: string,
+  metadata: Record<string, unknown>,
+  embedding: number[],
+): Promise<void> {
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error('Supabase credentials not configured');
+  }
+
+  const vectorString = `[${embedding.join(',')}]`;
+
+  const response = await fetch(`${supabaseUrl}/rest/v1/conversation_embeddings`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${supabaseKey}`,
+      'apikey': supabaseKey,
+      'Content-Type': 'application/json',
+      'Prefer': 'resolution=merge-duplicates',
+    },
+    body: JSON.stringify({
+      user_id: userId,
+      conversation_id: conversationId,
+      conversation_name: conversationName,
+      summary,
+      metadata,
+      embedding: vectorString,
+      updated_at: new Date().toISOString(),
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to store conversation embedding: ${response.status} - ${error}`);
+  }
+}
+
+/**
+ * Semantic search across user's conversation history.
+ * Returns top-k conversations ranked by cosine similarity.
+ */
+export async function searchConversationEmbeddings(
+  queryEmbedding: number[],
+  userId: string,
+  options: { limit?: number; threshold?: number } = {},
+): Promise<Array<{
+  conversation_id: string;
+  conversation_name: string;
+  summary: string;
+  metadata: Record<string, unknown>;
+  similarity: number;
+  created_at: string;
+}>> {
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+  if (!supabaseUrl || !supabaseKey) return [];
+
+  const { limit = 3, threshold = 0.5 } = options;
+  const vectorString = `[${queryEmbedding.join(',')}]`;
+
+  const response = await fetch(`${supabaseUrl}/rest/v1/rpc/search_conversation_embeddings`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${supabaseKey}`,
+      'apikey': supabaseKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      p_query_embedding: vectorString,
+      p_user_id: userId,
+      p_match_threshold: threshold,
+      p_match_count: limit,
+    }),
+  });
+
+  if (!response.ok) {
+    console.warn(`Conversation embedding search failed: ${response.status}`);
+    return [];
+  }
+
+  return await response.json();
 }

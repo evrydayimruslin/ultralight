@@ -1,0 +1,70 @@
+// Environment compatibility layer for Cloudflare Workers
+// Replaces all Deno.env.get() calls with a universal accessor.
+// globalThis.__env is set by worker-entry.ts on each request/scheduled event.
+
+// ============================================
+// ENV TYPES
+// ============================================
+
+export interface Env {
+  // KV namespaces
+  CODE_CACHE: KVNamespace;
+  FN_INDEX: KVNamespace;
+
+  // R2 bucket
+  R2_BUCKET: R2Bucket;
+
+  // Dynamic Workers loader
+  LOADER: {
+    load(code: WorkerCode): WorkerStub;
+    get(id: string, callback: () => Promise<WorkerCode>): WorkerStub;
+  };
+
+  // String secrets and vars — all former Deno.env.get() keys
+  SUPABASE_URL: string;
+  SUPABASE_SERVICE_ROLE_KEY: string;
+  SUPABASE_ANON_KEY: string;
+  CF_ACCOUNT_ID: string;
+  CF_API_TOKEN: string;
+  STRIPE_SECRET_KEY: string;
+  STRIPE_WEBHOOK_SECRET: string;
+  OPENROUTER_API_KEY: string;
+  BYOK_ENCRYPTION_KEY: string;
+  RUNPOD_API_KEY: string;
+  RUNPOD_TEMPLATE_ID: string;
+  SUPABASE_MGMT_OAUTH_CLIENT_ID: string;
+  SUPABASE_MGMT_OAUTH_CLIENT_SECRET: string;
+  TIER_CHANGE_SECRET: string;
+  GPU_SECRET: string;
+  BASE_URL: string;
+  ENVIRONMENT: string;
+
+  // Index signature for dynamic access
+  [key: string]: unknown;
+}
+
+// ============================================
+// GLOBAL DECLARATIONS
+// ============================================
+
+declare global {
+  var __env: Env;
+  var __ctx: ExecutionContext;
+}
+
+// ============================================
+// ENV ACCESSOR
+// ============================================
+
+/**
+ * Get an environment variable by key.
+ * Reads from globalThis.__env, set by worker-entry.ts on each request.
+ * Local dev uses `wrangler dev` which provides the same env bindings.
+ *
+ * Replaces all 175 occurrences of Deno.env.get() across the codebase.
+ */
+export function getEnv(key: string): string {
+  const val = globalThis.__env?.[key];
+  if (typeof val === 'string') return val;
+  return '';
+}

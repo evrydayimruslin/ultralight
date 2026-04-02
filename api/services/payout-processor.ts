@@ -12,9 +12,7 @@
 //
 // No platform fee on withdrawal — the 10% fee is already taken on every transfer_balance() call.
 
-// @ts-ignore - Deno is available in production
-const Deno = globalThis.Deno;
-
+import { getEnv } from '../lib/env.ts';
 import {
   createTransfer,
   createPayout,
@@ -46,8 +44,8 @@ function lightToUsdCents(amountLight: number): number {
  * Called hourly by the background job.
  */
 export async function processHeldPayouts(): Promise<PayoutProcessorResult> {
-  const SUPABASE_URL = Deno?.env?.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   const result: PayoutProcessorResult = {
     processed: 0,

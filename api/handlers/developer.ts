@@ -1,20 +1,20 @@
 // Developer Portal
 // Serves the OAuth app management UI and CRUD API endpoints.
-// Accessed via dev.ultralight-api-iikqz.ondigitalocean.app subdomain
+// Accessed via dev.ultralight-api.rgn4jz429m.workers.dev subdomain
 // or /developer path on main domain.
 
 import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
 import { generateClientSecret, generateSecretSalt, hashClientSecret } from './oauth.ts';
-import { createClient } from 'npm:@supabase/supabase-js@2';
+import { createClient } from '@supabase/supabase-js';
+import { getEnv } from '../lib/env.ts';
 
-// @ts-ignore - Deno is available
-const Deno = globalThis.Deno;
-
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+// Lazy Supabase client — CF Workers env not available at module init
+let _supabase: ReturnType<typeof createClient>;
+function getSupabase() {
+  if (!_supabase) _supabase = createClient(getEnv('SUPABASE_URL'), getEnv('SUPABASE_SERVICE_ROLE_KEY'));
+  return _supabase;
+}
 
 // ============================================
 // MAIN ROUTER
@@ -64,7 +64,7 @@ export async function handleDeveloper(request: Request): Promise<Response> {
 async function handleListApps(request: Request): Promise<Response> {
   const user = await authenticate(request);
 
-  const { data, error: err } = await supabase
+  const { data, error: err } = await getSupabase()
     .from('oauth_clients')
     .select('client_id, client_name, redirect_uris, logo_url, description, created_at')
     .eq('owner_user_id', user.id)
@@ -113,7 +113,7 @@ async function handleCreateApp(request: Request): Promise<Response> {
   const secretSalt = generateSecretSalt();
   const secretHash = await hashClientSecret(clientSecret, secretSalt);
 
-  const { error: insertErr } = await supabase
+  const { error: insertErr } = await getSupabase()
     .from('oauth_clients')
     .insert({
       client_id: clientId,
@@ -148,7 +148,7 @@ async function handleCreateApp(request: Request): Promise<Response> {
 async function handleGetApp(request: Request, clientId: string): Promise<Response> {
   const user = await authenticate(request);
 
-  const { data, error: err } = await supabase
+  const { data, error: err } = await getSupabase()
     .from('oauth_clients')
     .select('client_id, client_name, redirect_uris, logo_url, description, created_at')
     .eq('client_id', clientId)
@@ -165,7 +165,7 @@ async function handleUpdateApp(request: Request, clientId: string): Promise<Resp
   const user = await authenticate(request);
 
   // Verify ownership
-  const { data: existing } = await supabase
+  const { data: existing } = await getSupabase()
     .from('oauth_clients')
     .select('client_id')
     .eq('client_id', clientId)
@@ -201,7 +201,7 @@ async function handleUpdateApp(request: Request, clientId: string): Promise<Resp
     return error('No fields to update', 400);
   }
 
-  const { error: updateErr } = await supabase
+  const { error: updateErr } = await getSupabase()
     .from('oauth_clients')
     .update(updates)
     .eq('client_id', clientId)
@@ -215,7 +215,7 @@ async function handleUpdateApp(request: Request, clientId: string): Promise<Resp
 async function handleDeleteApp(request: Request, clientId: string): Promise<Response> {
   const user = await authenticate(request);
 
-  const { error: deleteErr } = await supabase
+  const { error: deleteErr } = await getSupabase()
     .from('oauth_clients')
     .delete()
     .eq('client_id', clientId)
@@ -225,13 +225,13 @@ async function handleDeleteApp(request: Request, clientId: string): Promise<Resp
   if (deleteErr) return error('Failed to delete app', 500);
 
   // Also revoke all tokens created via this client
-  await supabase
+  await getSupabase()
     .from('user_api_tokens')
     .delete()
     .like('name', `oauth-${clientId.slice(0, 8)}%`);
 
   // Clean up consent records
-  await supabase
+  await getSupabase()
     .from('oauth_consents')
     .delete()
     .eq('client_id', clientId);
@@ -243,7 +243,7 @@ async function handleRotateSecret(request: Request, clientId: string): Promise<R
   const user = await authenticate(request);
 
   // Verify ownership
-  const { data: existing } = await supabase
+  const { data: existing } = await getSupabase()
     .from('oauth_clients')
     .select('client_id')
     .eq('client_id', clientId)
@@ -258,7 +258,7 @@ async function handleRotateSecret(request: Request, clientId: string): Promise<R
   const secretSalt = generateSecretSalt();
   const secretHash = await hashClientSecret(clientSecret, secretSalt);
 
-  const { error: updateErr } = await supabase
+  const { error: updateErr } = await getSupabase()
     .from('oauth_clients')
     .update({
       client_secret_hash: secretHash,

@@ -2,14 +2,19 @@
 
 import { useEffect, useRef } from 'react';
 import type { Message } from '../hooks/useChat';
+import type { SystemAgentConfig } from '../lib/systemAgents';
 import MessageBubble from './MessageBubble';
 
 interface MessageListProps {
   messages: Message[];
   isLoading: boolean;
+  /** When set, renders a personalised welcome screen instead of the generic empty state */
+  systemAgent?: SystemAgentConfig;
+  /** Fires a starter prompt as if the user typed it */
+  onStarterClick?: (prompt: string) => void;
 }
 
-export default function MessageList({ messages, isLoading }: MessageListProps) {
+export default function MessageList({ messages, isLoading, systemAgent, onStarterClick }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const userScrolled = useRef(false);
@@ -47,6 +52,35 @@ export default function MessageList({ messages, isLoading }: MessageListProps) {
   const visibleMessages = messages.filter(m => m.role !== 'tool');
 
   if (visibleMessages.length === 0) {
+    // System agent: personalised welcome with starter prompts
+    if (systemAgent) {
+      const { welcome, name } = systemAgent;
+      return (
+        <div className="flex-1 flex items-center justify-center px-4">
+          <div className="text-center max-w-md">
+            <h2 className="text-h3 text-ul-text mb-2">{name}</h2>
+            <p className="text-body text-ul-text-muted mb-6">
+              {welcome.greeting}
+            </p>
+            <div className="flex flex-wrap justify-center gap-2">
+              {welcome.starters.map(s => (
+                <button
+                  key={s.label}
+                  onClick={() => onStarterClick?.(s.prompt)}
+                  className="px-3 py-1.5 text-caption rounded-full border border-ul-border
+                             text-ul-text-muted hover:text-ul-text hover:border-ul-text
+                             transition-colors cursor-pointer bg-transparent"
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Generic empty state for regular chats
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">

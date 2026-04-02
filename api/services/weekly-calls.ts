@@ -3,9 +3,7 @@
 // Enforces weekly call limits based on tier.
 
 import { TIER_LIMITS, type Tier } from '../../shared/types/index.ts';
-
-// @ts-ignore - Deno is available in Deno Deploy
-const Deno = globalThis.Deno;
+import { getEnv } from '../lib/env.ts';
 
 export interface WeeklyCallResult {
   allowed: boolean;
@@ -40,8 +38,8 @@ export async function checkAndIncrementWeeklyCalls(
   userId: string,
   tier: Tier
 ): Promise<WeeklyCallResult> {
-  const supabaseUrl = Deno.env.get('SUPABASE_URL');
-  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   const tierLimits = TIER_LIMITS[tier];
   const weekStart = getWeekStart();
@@ -51,7 +49,7 @@ export async function checkAndIncrementWeeklyCalls(
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${supabaseKey}`,
-        'apikey': supabaseKey!,
+        'apikey': supabaseKey,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -96,8 +94,8 @@ export async function getWeeklyUsage(
   userId: string,
   tier: Tier
 ): Promise<{ count: number; limit: number; weekStart: string }> {
-  const supabaseUrl = Deno.env.get('SUPABASE_URL');
-  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   const weekStart = getWeekStart();
   const limit = TIER_LIMITS[tier].weekly_call_limit;
@@ -107,7 +105,7 @@ export async function getWeeklyUsage(
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${supabaseKey}`,
-        'apikey': supabaseKey!,
+        'apikey': supabaseKey,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

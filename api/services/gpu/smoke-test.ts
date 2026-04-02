@@ -21,6 +21,7 @@
 //   6. Cleans up by deleting the endpoint
 //   7. Reports results and timing
 
+import { getEnv } from '../../lib/env.ts';
 import { RunPodProvider } from './runpod.ts';
 import {
   isValidGpuType,
@@ -111,7 +112,7 @@ function testTypeSystem(): void {
 function testProviderInstantiation(): RunPodProvider | null {
   section('Test 2: Provider Instantiation');
 
-  const apiKey = Deno.env.get('RUNPOD_API_KEY');
+  const apiKey = getEnv('RUNPOD_API_KEY');
 
   if (!apiKey) {
     console.log(`  ${INFO} RUNPOD_API_KEY not set — skipping API tests`);
@@ -155,7 +156,7 @@ function testProviderInstantiation(): RunPodProvider | null {
 async function testEndpointLifecycle(provider: RunPodProvider): Promise<void> {
   section('Test 3: Endpoint Lifecycle (live API)');
 
-  const templateId = Deno.env.get('RUNPOD_TEMPLATE_ID');
+  const templateId = getEnv('RUNPOD_TEMPLATE_ID');
   if (!templateId) {
     console.log(`  ${INFO} RUNPOD_TEMPLATE_ID not set — skipping endpoint tests`);
     console.log(`  ${INFO} Create a template in RunPod console first, then set RUNPOD_TEMPLATE_ID`);

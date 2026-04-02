@@ -5,15 +5,13 @@ import { error, json } from './app.ts';
 import { isApiToken, getUserFromToken } from '../services/tokens.ts';
 import { getUserTier } from '../services/tier-enforcement.ts';
 import { createProvisionalUser, isProvisionalUser, mergeProvisionalUser, markOnboardingProvisionalCreated } from '../services/provisional.ts';
-// @ts-ignore - base64url encode for PKCE
-import { encodeBase64Url } from 'https://deno.land/std@0.210.0/encoding/base64url.ts';
+// Base64 URL encoding for PKCE (replaces Deno std encodeBase64Url)
+function encodeBase64Url(data: Uint8Array): string {
+  const base64 = btoa(String.fromCharCode(...data));
+  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+import { getEnv } from '../lib/env.ts';
 
-// @ts-ignore - Deno is available
-const Deno = globalThis.Deno;
-
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || SUPABASE_SERVICE_ROLE_KEY; // Fallback to service key
 
 // PKCE helpers
 function generateCodeVerifier(): string {
@@ -31,8 +29,8 @@ async function generateCodeChallenge(verifier: string): Promise<string> {
 
 // Supabase client for database operations (service role bypasses RLS)
 async function getSupabaseClient() {
-  const { createClient } = await import('npm:@supabase/supabase-js@2');
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  const { createClient } = await import('@supabase/supabase-js');
+  return createClient(getEnv('SUPABASE_URL'), getEnv('SUPABASE_SERVICE_ROLE_KEY'), {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
@@ -60,7 +58,7 @@ export async function handleAuth(request: Request): Promise<Response> {
     if (returnTo) callbackParams.set('return_to', returnTo);
     const callbackUrl = `${origin}/auth/callback?${callbackParams.toString()}`;
 
-    const authUrl = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(callbackUrl)}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=S256`;
+    const authUrl = `${getEnv('SUPABASE_URL')}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(callbackUrl)}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=S256`;
 
     return new Response(null, {
       status: 302,
@@ -85,11 +83,11 @@ export async function handleAuth(request: Request): Promise<Response> {
       const codeVerifier = url.searchParams.get('v') || '';
 
       // Exchange code + verifier for tokens (Supabase PKCE grant)
-      const tokenResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=pkce`, {
+      const tokenResponse = await fetch(`${getEnv('SUPABASE_URL')}/auth/v1/token?grant_type=pkce`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'apikey': SUPABASE_ANON_KEY,
+          'apikey': (getEnv('SUPABASE_ANON_KEY') || getEnv('SUPABASE_SERVICE_ROLE_KEY')),
         },
         body: JSON.stringify({
           auth_code: code,
@@ -151,12 +149,12 @@ export async function handleAuth(request: Request): Promise<Response> {
       }
 
       const tokenResponse = await fetch(
-        `${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`,
+        `${getEnv('SUPABASE_URL')}/auth/v1/token?grant_type=refresh_token`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'apikey': SUPABASE_ANON_KEY,
+            'apikey': (getEnv('SUPABASE_ANON_KEY') || getEnv('SUPABASE_SERVICE_ROLE_KEY')),
           },
           body: JSON.stringify({ refresh_token: refreshToken }),
         }
@@ -287,10 +285,10 @@ export async function authenticate(request: Request): Promise<{ id: string; emai
   }
 
   // Otherwise, treat as JWT — verify via Supabase Auth API
-  const verifyResponse = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+  const verifyResponse = await fetch(`${getEnv('SUPABASE_URL')}/auth/v1/user`, {
     headers: {
       'Authorization': `Bearer ${token}`,
-      'apikey': SUPABASE_ANON_KEY,
+      'apikey': (getEnv('SUPABASE_ANON_KEY') || getEnv('SUPABASE_SERVICE_ROLE_KEY')),
     },
   });
 
@@ -352,11 +350,11 @@ export async function ensureUserExists(authUser: { id: string; email: string; us
 
   // First try to select to see if user exists
   const checkResponse = await fetch(
-    `${SUPABASE_URL}/rest/v1/users?id=eq.${authUser.id}&select=id`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${authUser.id}&select=id`,
     {
       headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+        'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
       },
     }
   );
@@ -370,12 +368,12 @@ export async function ensureUserExists(authUser: { id: string; email: string; us
 
   // Insert new user
   const insertResponse = await fetch(
-    `${SUPABASE_URL}/rest/v1/users`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/users`,
     {
       method: 'POST',
       headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+        'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
         'Content-Type': 'application/json',
         'Prefer': 'return=minimal',
       },
@@ -405,11 +403,11 @@ export async function ensureUserExists(authUser: { id: string; email: string; us
 async function resolvePendingPermissions(userId: string, email: string): Promise<void> {
   try {
     const pendingRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/pending_permissions?invited_email=eq.${encodeURIComponent(email.toLowerCase())}&select=*`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/pending_permissions?invited_email=eq.${encodeURIComponent(email.toLowerCase())}&select=*`,
       {
         headers: {
-          'apikey': SUPABASE_SERVICE_ROLE_KEY,
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+          'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
         },
       }
     );
@@ -427,12 +425,12 @@ async function resolvePendingPermissions(userId: string, email: string): Promise
     }));
 
     await fetch(
-      `${SUPABASE_URL}/rest/v1/user_app_permissions`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/user_app_permissions`,
       {
         method: 'POST',
         headers: {
-          'apikey': SUPABASE_SERVICE_ROLE_KEY,
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+          'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
           'Content-Type': 'application/json',
           'Prefer': 'resolution=merge-duplicates',
         },
@@ -442,12 +440,12 @@ async function resolvePendingPermissions(userId: string, email: string): Promise
 
     // Delete resolved pending rows
     await fetch(
-      `${SUPABASE_URL}/rest/v1/pending_permissions?invited_email=eq.${encodeURIComponent(email.toLowerCase())}`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/pending_permissions?invited_email=eq.${encodeURIComponent(email.toLowerCase())}`,
       {
         method: 'DELETE',
         headers: {
-          'apikey': SUPABASE_SERVICE_ROLE_KEY,
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+          'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
         },
       }
     );

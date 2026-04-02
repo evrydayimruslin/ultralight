@@ -76,7 +76,7 @@ export function startGpuBuildProcessorJob(): void {
  * 1. Check 'building' apps for endpoint activation
  * 2. Run benchmarks on 'benchmarking' apps
  */
-async function processGpuBuilds(): Promise<void> {
+export async function processGpuBuilds(): Promise<void> {
   await checkBuildingApps();
   await runPendingBenchmarks();
 }

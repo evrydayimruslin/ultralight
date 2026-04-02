@@ -3,8 +3,7 @@
 // Called on first ultralight.db.* invocation.
 // Tracks provisioning state in Supabase apps table (d1_database_id, d1_status).
 
-// @ts-ignore
-const Deno = globalThis.Deno;
+import { getEnv } from '../lib/env.ts';
 
 // ============================================
 // TYPES
@@ -68,10 +67,10 @@ CREATE TABLE IF NOT EXISTS _usage (
  * 6. Update apps row with database ID and status=ready
  */
 export async function provisionD1ForApp(appId: string): Promise<D1ProvisionResult> {
-  const cfAccountId = Deno.env.get('CF_ACCOUNT_ID') || '';
-  const cfApiToken = Deno.env.get('CF_API_TOKEN') || '';
-  const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
-  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const cfAccountId = getEnv('CF_ACCOUNT_ID');
+  const cfApiToken = getEnv('CF_API_TOKEN');
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!cfAccountId || !cfApiToken) {
     return { databaseId: '', databaseName: '', status: 'error', error: 'Missing CF_ACCOUNT_ID or CF_API_TOKEN' };
@@ -147,8 +146,8 @@ export async function provisionD1ForApp(appId: string): Promise<D1ProvisionResul
  * Get the D1 database ID for an app. Returns null if not provisioned.
  */
 export async function getD1DatabaseId(appId: string): Promise<string | null> {
-  const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
-  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
   const state = await getAppD1State(appId, supabaseUrl, supabaseKey);
   return state?.d1_database_id || null;
 }
@@ -157,10 +156,10 @@ export async function getD1DatabaseId(appId: string): Promise<string | null> {
  * Delete the D1 database for an app. Called on app deletion.
  */
 export async function deleteD1ForApp(appId: string): Promise<void> {
-  const cfAccountId = Deno.env.get('CF_ACCOUNT_ID') || '';
-  const cfApiToken = Deno.env.get('CF_API_TOKEN') || '';
-  const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
-  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const cfAccountId = getEnv('CF_ACCOUNT_ID');
+  const cfApiToken = getEnv('CF_API_TOKEN');
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   const databaseId = await getD1DatabaseId(appId);
   if (!databaseId) return;

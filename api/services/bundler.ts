@@ -1,14 +1,23 @@
 // Bundler Service
-// Uses esbuild to bundle user code with npm dependencies
-// Runs at upload time to create a single self-contained bundle
-// MCP-only: no ESM browser bundle generation
+// Uses esbuild-wasm to bundle user code with npm dependencies.
+// Runs at upload time to create a single self-contained bundle.
+// MCP-only: no ESM browser bundle generation.
+//
+// Cloudflare Workers compatible — no filesystem or subprocess usage.
+// All file operations are in-memory via esbuild's virtual filesystem plugin.
 
-// @ts-ignore - Deno is available
-const Deno = globalThis.Deno;
+import * as esbuild from 'esbuild-wasm';
+// @ts-ignore — wrangler bundles .wasm files as WebAssembly.Module
+import esbuildWasm from 'esbuild-wasm/esbuild.wasm';
+
+// ============================================
+// TYPES
+// ============================================
 
 export interface BundleResult {
   success: boolean;
   code: string;           // IIFE format for MCP sandbox execution
+  esmCode?: string;       // ESM format for Dynamic Worker loading (populated when bundling succeeds)
   errors: string[];
   warnings: string[];
   hasExternalImports: boolean;
@@ -19,19 +28,166 @@ export interface FileInput {
   content: string;
 }
 
+// ============================================
+// ESBUILD INITIALIZATION
+// ============================================
+
+let esbuildInitialized = false;
+
+async function ensureEsbuild(): Promise<void> {
+  if (esbuildInitialized) return;
+
+  try {
+    // Polyfill: esbuild-wasm needs performance.now() for timing
+    if (typeof globalThis.performance === 'undefined') {
+      (globalThis as any).performance = { now: () => Date.now() };
+    }
+
+    await esbuild.initialize({
+      wasmModule: esbuildWasm,
+      worker: false,  // CF Workers don't support Web Worker API — run on main thread
+    });
+    esbuildInitialized = true;
+  } catch (err) {
+    // If already initialized (e.g., hot reload), ignore
+    if (String(err).includes('already been called')) {
+      esbuildInitialized = true;
+    } else {
+      throw err;
+    }
+  }
+}
+
+// ============================================
+// VIRTUAL FILESYSTEM PLUGIN
+// ============================================
+
 /**
- * Bundle user code using esbuild
+ * Resolve a relative import path against the virtual file system.
+ * Handles: './foo', './foo.ts', '../bar', etc.
+ */
+function resolveVirtualPath(
+  importPath: string,
+  importer: string,
+  files: FileInput[],
+): string {
+  // External/CDN imports pass through
+  if (importPath.startsWith('http://') || importPath.startsWith('https://')) {
+    return importPath;
+  }
+
+  // Resolve relative to importer
+  let resolved = importPath;
+  if (importPath.startsWith('./') || importPath.startsWith('../')) {
+    const importerDir = importer.includes('/') ? importer.substring(0, importer.lastIndexOf('/')) : '.';
+    const parts = [...importerDir.split('/'), ...importPath.split('/')];
+    const normalized: string[] = [];
+    for (const part of parts) {
+      if (part === '.' || part === '') continue;
+      if (part === '..') { normalized.pop(); continue; }
+      normalized.push(part);
+    }
+    resolved = normalized.join('/');
+  }
+
+  // Try exact match, then with extensions
+  const extensions = ['', '.ts', '.tsx', '.js', '.jsx'];
+  for (const ext of extensions) {
+    const candidate = resolved + ext;
+    if (files.some(f => f.name === candidate)) return candidate;
+  }
+
+  // Try index files
+  for (const ext of ['/index.ts', '/index.tsx', '/index.js', '/index.jsx']) {
+    const candidate = resolved + ext;
+    if (files.some(f => f.name === candidate)) return candidate;
+  }
+
+  return resolved;
+}
+
+/**
+ * Get esbuild loader from file extension.
+ */
+function getLoader(path: string): esbuild.Loader {
+  if (path.endsWith('.tsx')) return 'tsx';
+  if (path.endsWith('.jsx')) return 'jsx';
+  if (path.endsWith('.ts')) return 'ts';
+  if (path.endsWith('.json')) return 'json';
+  if (path.endsWith('.css')) return 'css';
+  return 'js';
+}
+
+/**
+ * esbuild plugin that resolves imports against an in-memory file map.
+ * No filesystem access needed.
+ */
+function createVirtualFsPlugin(files: FileInput[]): esbuild.Plugin {
+  return {
+    name: 'virtual-fs',
+    setup(build) {
+      // Mark all local files as virtual
+      build.onResolve({ filter: /.*/ }, (args) => {
+        // Let external URLs pass through (esm.sh CDN)
+        if (args.path.startsWith('http://') || args.path.startsWith('https://')) {
+          return { path: args.path, external: true };
+        }
+
+        // node: builtins are external
+        if (args.path.startsWith('node:')) {
+          return { path: args.path, external: true };
+        }
+
+        // 'ultralight' is always external (provided by sandbox runtime)
+        if (args.path === 'ultralight') {
+          return { path: args.path, external: true };
+        }
+
+        // Resolve against virtual filesystem
+        const resolved = resolveVirtualPath(args.path, args.importer || '', files);
+
+        // If it's a known local file, load from virtual fs
+        if (files.some(f => f.name === resolved)) {
+          return { path: resolved, namespace: 'virtual' };
+        }
+
+        // Unknown external import — transform to CDN URL
+        if (!args.path.startsWith('./') && !args.path.startsWith('../')) {
+          return { path: `https://esm.sh/${args.path}`, external: true };
+        }
+
+        return { path: resolved, namespace: 'virtual' };
+      });
+
+      // Load files from virtual filesystem
+      build.onLoad({ filter: /.*/, namespace: 'virtual' }, (args) => {
+        const file = files.find(f => f.name === args.path);
+        if (!file) {
+          return { errors: [{ text: `File not found in virtual fs: ${args.path}` }] };
+        }
+        return {
+          contents: file.content,
+          loader: getLoader(args.path),
+        };
+      });
+    },
+  };
+}
+
+// ============================================
+// MAIN BUNDLE FUNCTION
+// ============================================
+
+/**
+ * Bundle user code using esbuild-wasm (in-memory, no filesystem).
  * - Resolves and inlines ALL imports (npm and relative)
- * - Outputs a single self-contained bundled file
- * - Critical: Data URL imports can't resolve relative paths, so we MUST bundle
+ * - Outputs a single self-contained IIFE bundle
+ * - Critical: IIFE format required for sandbox execution via AsyncFunction
  */
 export async function bundleCode(
   files: FileInput[],
   entryPoint: string,
 ): Promise<BundleResult> {
-  const errors: string[] = [];
-  const warnings: string[] = [];
-
   const entryFile = files.find(f => f.name === entryPoint);
   if (!entryFile) {
     return {
@@ -59,132 +215,163 @@ export async function bundleCode(
     };
   }
 
-  // Create a temporary directory for the build
-  const tempDir = await Deno.makeTempDir({ prefix: 'ultralight-build-' });
-
   try {
-    // Write all files to temp directory, transforming npm imports to CDN URLs
-    for (const file of files) {
-      const filePath = `${tempDir}/${file.name}`;
-      const dirPath = filePath.substring(0, filePath.lastIndexOf('/'));
+    await ensureEsbuild();
 
-      // Create directories if needed
-      if (dirPath !== tempDir) {
-        await Deno.mkdir(dirPath, { recursive: true }).catch(() => {});
-      }
-
-      // Transform npm imports to esm.sh CDN URLs for Deno compatibility
-      const transformedContent = transformNpmImportsToCdn(file.content);
-      await Deno.writeTextFile(filePath, transformedContent);
-    }
-
-    // Run esbuild via Deno subprocess
-    // Use IIFE format - this is critical for sandbox execution via AsyncFunction
-    // ESM format produces import statements which AsyncFunction cannot execute
-    const entryPath = `${tempDir}/${entryPoint}`;
-    const outPath = `${tempDir}/bundle.js`;
-
-    // Detect if this is a React/JSX project (JSX transpilation still needed for MCP code)
+    // Detect React/JSX project for loader configuration
     const isReactProject = entryPoint.endsWith('.tsx') || entryPoint.endsWith('.jsx') ||
       files.some(f => f.name.endsWith('.tsx') || f.name.endsWith('.jsx')) ||
       files.some(f => f.content.includes('from "react"') || f.content.includes("from 'react'"));
 
-    const esbuildArgs = [
-      'esbuild',
-      entryPath,
-      '--bundle',
-      '--format=iife',  // IIFE format for AsyncFunction compatibility (no import statements)
-      '--global-name=__exports',  // Put exports on __exports object so we can extract them
-      '--platform=browser',
-      '--target=esnext',
-      `--outfile=${outPath}`,
-      '--minify-syntax',
-      '--external:ultralight',
-    ];
-
-    // Add JSX support if this looks like a React project
-    if (isReactProject) {
-      esbuildArgs.push(
-        '--jsx=automatic',
-        '--jsx-import-source=https://esm.sh/react',
-        '--loader:.tsx=tsx',
-        '--loader:.jsx=jsx',
-      );
-    }
-
-    const command = new Deno.Command('npx', {
-      args: esbuildArgs,
-      cwd: tempDir,
-      stdout: 'piped',
-      stderr: 'piped',
-    });
-
-    const process = command.spawn();
-    const { code: exitCode, stdout, stderr } = await process.output();
-
-    const stdoutText = new TextDecoder().decode(stdout);
-    const stderrText = new TextDecoder().decode(stderr);
-
-    if (stderrText) {
-      // Parse esbuild output for errors/warnings
-      const lines = stderrText.split('\n').filter(Boolean);
-      for (const line of lines) {
-        if (line.includes('error')) {
-          errors.push(line);
-        } else if (line.includes('warning')) {
-          warnings.push(line);
-        }
-      }
-    }
-
-    if (exitCode !== 0) {
-      return {
-        success: false,
-        code: '',
-        errors: errors.length > 0 ? errors : [`Build failed with exit code ${exitCode}`],
-        warnings,
-        hasExternalImports: true,
-      };
-    }
-
-    // Read the IIFE bundled output
-    const iifeCode = await Deno.readTextFile(outPath);
-
-    // Post-process: wrap exports for our runtime
-    const processedIifeCode = postProcessBundle(iifeCode);
-
-    return {
-      success: true,
-      code: processedIifeCode,
-      errors: [],
-      warnings,
-      hasExternalImports: true,
+    const buildOptions: esbuild.BuildOptions = {
+      entryPoints: [entryPoint],
+      bundle: true,
+      format: 'iife',
+      globalName: '__exports',
+      platform: 'browser',
+      target: 'esnext',
+      write: false,             // Return in-memory, no filesystem
+      minifySyntax: true,
+      external: ['ultralight'],
+      plugins: [createVirtualFsPlugin(files)],
     };
 
+    // Add JSX support if needed
+    if (isReactProject) {
+      buildOptions.jsx = 'automatic';
+      buildOptions.jsxImportSource = 'https://esm.sh/react';
+    }
+
+    const result = await esbuild.build(buildOptions);
+
+    const outputCode = result.outputFiles?.[0]?.text || '';
+    const processedCode = postProcessBundle(outputCode);
+
+    // Also produce ESM bundle for Dynamic Worker loading
+    let esmCode: string | undefined;
+    try {
+      const esmResult = await bundleCodeESM(files, entryPoint);
+      if (esmResult.success) {
+        esmCode = esmResult.code;
+      }
+    } catch {
+      // ESM bundling is optional — don't fail the whole build
+    }
+
+    return {
+      success: result.errors.length === 0,
+      code: processedCode,
+      esmCode,
+      errors: result.errors.map(e => e.text),
+      warnings: result.warnings.map(e => e.text),
+      hasExternalImports,
+    };
   } catch (err) {
-    errors.push(err instanceof Error ? err.message : String(err));
     return {
       success: false,
       code: '',
-      errors,
-      warnings,
+      errors: [err instanceof Error ? err.message : String(err)],
+      warnings: [],
       hasExternalImports,
     };
-  } finally {
-    // Cleanup temp directory
-    await Deno.remove(tempDir, { recursive: true }).catch(() => {});
   }
 }
+
+// ============================================
+// ESM BUNDLE FUNCTION (for Dynamic Workers)
+// ============================================
+
+/**
+ * Bundle user code as ESM module for Dynamic Worker loading.
+ * Same as bundleCode() but outputs ES module format instead of IIFE.
+ * The `ultralight` global is expected to be provided by the Dynamic Worker runtime.
+ */
+export async function bundleCodeESM(
+  files: FileInput[],
+  entryPoint: string,
+): Promise<BundleResult> {
+  const entryFile = files.find(f => f.name === entryPoint);
+  if (!entryFile) {
+    return {
+      success: false,
+      code: '',
+      errors: [`Entry point not found: ${entryPoint}`],
+      warnings: [],
+      hasExternalImports: false,
+    };
+  }
+
+  const hasExternalImports = detectExternalImports(entryFile.content);
+  const hasAnyImports = detectAnyImports(entryFile.content);
+  const isTypeScript = entryPoint.endsWith('.ts') || entryPoint.endsWith('.tsx');
+
+  if (!hasAnyImports && !isTypeScript) {
+    // Wrap plain JS in ESM exports
+    return {
+      success: true,
+      code: entryFile.content + '\n',
+      errors: [],
+      warnings: [],
+      hasExternalImports: false,
+    };
+  }
+
+  try {
+    await ensureEsbuild();
+
+    const isReactProject = entryPoint.endsWith('.tsx') || entryPoint.endsWith('.jsx') ||
+      files.some(f => f.name.endsWith('.tsx') || f.name.endsWith('.jsx')) ||
+      files.some(f => f.content.includes('from "react"') || f.content.includes("from 'react'"));
+
+    const buildOptions: esbuild.BuildOptions = {
+      entryPoints: [entryPoint],
+      bundle: true,
+      format: 'esm',           // ESM for Dynamic Worker modules
+      platform: 'browser',
+      target: 'esnext',
+      write: false,
+      minifySyntax: true,
+      external: ['ultralight'], // Provided by Dynamic Worker runtime
+      plugins: [createVirtualFsPlugin(files)],
+    };
+
+    if (isReactProject) {
+      buildOptions.jsx = 'automatic';
+      buildOptions.jsxImportSource = 'https://esm.sh/react';
+    }
+
+    const result = await esbuild.build(buildOptions);
+    const outputCode = result.outputFiles?.[0]?.text || '';
+
+    return {
+      success: result.errors.length === 0,
+      code: postProcessBundle(outputCode),
+      errors: result.errors.map(e => e.text),
+      warnings: result.warnings.map(e => e.text),
+      hasExternalImports,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      code: '',
+      errors: [err instanceof Error ? err.message : String(err)],
+      warnings: [],
+      hasExternalImports,
+    };
+  }
+}
+
+// ============================================
+// IMPORT DETECTION
+// ============================================
 
 /**
  * Detect if code has ANY imports (relative or external)
  * Used to determine if bundling is needed at all
  */
 function detectAnyImports(code: string): boolean {
-  // Match any import statement
   const importRegex = /import\s+.*?\s+from\s+['"][^'"]+['"]/;
   const bareImportRegex = /import\s+['"][^'"]+['"]/;
-
   return importRegex.test(code) || bareImportRegex.test(code);
 }
 
@@ -192,34 +379,24 @@ function detectAnyImports(code: string): boolean {
  * Detect if code has external (npm) imports
  */
 function detectExternalImports(code: string): boolean {
-  // Match import statements that aren't relative paths
   const importRegex = /import\s+.*?\s+from\s+['"]([^'"]+)['"]/g;
   let match;
 
   while ((match = importRegex.exec(code)) !== null) {
     const importPath = match[1];
-
-    // Skip relative imports
-    if (importPath.startsWith('./') || importPath.startsWith('../')) {
-      continue;
-    }
-
-    // Skip Deno std library (we'll handle these separately if needed)
-    if (importPath.startsWith('https://deno.land/')) {
-      continue;
-    }
-
-    // This is an npm/external import
+    if (importPath.startsWith('./') || importPath.startsWith('../')) continue;
+    if (importPath.startsWith('https://deno.land/')) continue;
     return true;
   }
 
-  // Also check for require() calls
-  if (/require\s*\(\s*['"][^'"]+['"]\s*\)/.test(code)) {
-    return true;
-  }
+  if (/require\s*\(\s*['"][^'"]+['"]\s*\)/.test(code)) return true;
 
   return false;
 }
+
+// ============================================
+// POST-PROCESSING
+// ============================================
 
 /**
  * Post-process bundled code for our runtime
@@ -227,41 +404,12 @@ function detectExternalImports(code: string): boolean {
 function postProcessBundle(code: string): string {
   // Remove any import.meta references that might cause issues
   let processed = code.replace(/import\.meta\.url/g, '"file://ultralight-app"');
-
-  // For IIFE format with --global-name=__exports, the exports are on __exports object.
-  // The sandbox will handle extracting these to the execution scope.
-
   return processed;
 }
 
-/**
- * Transform npm package imports to esm.sh CDN URLs
- * This allows Deno/esbuild to fetch packages without npm install
- */
-function transformNpmImportsToCdn(code: string): string {
-  // Match import statements with npm package names (not relative paths, not URLs)
-  const importRegex = /(import\s+(?:[^'"]+\s+from\s+)?['"])([^'"./][^'"]*?)(['"])/g;
-
-  return code.replace(importRegex, (match, prefix, packageName, suffix) => {
-    // Skip if already a URL
-    if (packageName.startsWith('http://') || packageName.startsWith('https://')) {
-      return match;
-    }
-
-    // Skip relative imports (shouldn't match due to regex, but be safe)
-    if (packageName.startsWith('./') || packageName.startsWith('../')) {
-      return match;
-    }
-
-    // Skip node: protocol imports
-    if (packageName.startsWith('node:')) {
-      return match;
-    }
-
-    // Transform to esm.sh URL
-    return `${prefix}https://esm.sh/${packageName}${suffix}`;
-  });
-}
+// ============================================
+// QUICK BUNDLE (no esbuild)
+// ============================================
 
 /**
  * Quick bundle using in-memory transformation (no esbuild)

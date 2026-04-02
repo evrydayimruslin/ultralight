@@ -9,11 +9,8 @@
 import { json, error } from './app.ts';
 import { createAppsService } from '../services/apps.ts';
 import { authenticate } from './auth.ts';
+import { getEnv } from '../lib/env.ts';
 
-// @ts-ignore - Deno is available in Deno Deploy
-const Deno = globalThis.Deno;
-
-const BASE_URL = Deno?.env?.get('BASE_URL') || 'https://ultralight-api-iikqz.ondigitalocean.app';
 
 interface AppInfo {
   id: string;
@@ -57,8 +54,8 @@ export async function handleMcpConfig(request: Request, appId: string): Promise<
   const url = new URL(request.url);
   const client = url.searchParams.get('client') || 'claude';
   const serverName = `ultralight-${app.slug || app.id}`;
-  const mcpUrl = `${BASE_URL}/mcp/${app.id}`;
-  const httpUrl = `${BASE_URL}/http/${app.id}`;
+  const mcpUrl = `${getEnv('BASE_URL') || 'https://ultralight-api.rgn4jz429m.workers.dev'}/mcp/${app.id}`;
+  const httpUrl = `${getEnv('BASE_URL') || 'https://ultralight-api.rgn4jz429m.workers.dev'}/http/${app.id}`;
 
   switch (client) {
     case 'cursor': {
@@ -76,7 +73,7 @@ export async function handleMcpConfig(request: Request, appId: string): Promise<
           app_id: app.id,
           description: app.description,
           generated_at: new Date().toISOString(),
-          docs: `${BASE_URL}/api/discover/openapi.json`,
+          docs: `${getEnv('BASE_URL') || 'https://ultralight-api.rgn4jz429m.workers.dev'}/api/discover/openapi.json`,
         },
       });
     }
@@ -90,8 +87,8 @@ export async function handleMcpConfig(request: Request, appId: string): Promise<
         url: mcpUrl,
         http_url: httpUrl,
         transport: 'http-post',
-        oauth: `${BASE_URL}/.well-known/oauth-authorization-server`,
-        well_known: `${BASE_URL}/a/${app.id}/.well-known/mcp.json`,
+        oauth: `${getEnv('BASE_URL') || 'https://ultralight-api.rgn4jz429m.workers.dev'}/.well-known/oauth-authorization-server`,
+        well_known: `${getEnv('BASE_URL') || 'https://ultralight-api.rgn4jz429m.workers.dev'}/a/${app.id}/.well-known/mcp.json`,
         generated_at: new Date().toISOString(),
       });
     }
@@ -110,7 +107,7 @@ export async function handleMcpConfig(request: Request, appId: string): Promise<
           app_id: app.id,
           description: app.description,
           generated_at: new Date().toISOString(),
-          docs: `${BASE_URL}/api/discover/openapi.json`,
+          docs: `${getEnv('BASE_URL') || 'https://ultralight-api.rgn4jz429m.workers.dev'}/api/discover/openapi.json`,
         },
       });
     }

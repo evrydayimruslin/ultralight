@@ -3,9 +3,7 @@
 // then charges overage fees from user balance_light.
 // Runs every 5 minutes via startD1BillingJob().
 
-// @ts-ignore
-const Deno = globalThis.Deno;
-
+import { getEnv } from '../lib/env.ts';
 import { D1_FREE_TIER, D1_BILLING_RATES } from '../../shared/types/index.ts';
 import { cleanupRateLimitBuckets } from './d1-metering.ts';
 import { executeD1Sql } from './d1-provisioning.ts';
@@ -52,11 +50,11 @@ export function startD1BillingJob(): void {
   }, intervalMs);
 }
 
-async function runD1BillingCycle(): Promise<void> {
-  const cfAccountId = Deno.env.get('CF_ACCOUNT_ID') || '';
-  const cfApiToken = Deno.env.get('CF_API_TOKEN') || '';
-  const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
-  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+export async function runD1BillingCycle(): Promise<void> {
+  const cfAccountId = getEnv('CF_ACCOUNT_ID');
+  const cfApiToken = getEnv('CF_API_TOKEN');
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!cfAccountId || !cfApiToken || !supabaseUrl || !supabaseKey) return;
 

@@ -1,0 +1,53 @@
+name = "ultralight-api"
+main = "src/worker-entry.ts"
+compatibility_date = "2026-03-01"
+compatibility_flags = ["nodejs_compat"]
+
+# R2 bucket binding — native access to ultralight-apps bucket
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "ultralight-apps"
+
+# KV namespace for compiled code cache
+[[kv_namespaces]]
+binding = "CODE_CACHE"
+id = "d348ee797036460faf4b3e014921f0b0"
+
+# KV namespace for per-user function indexes
+[[kv_namespaces]]
+binding = "FN_INDEX"
+id = "75ce02786ac2466fbca833c95bf3cb56"
+
+# Dynamic Workers — enables env.LOADER.load() for sandboxed code execution
+[[worker_loaders]]
+binding = "LOADER"
+
+[vars]
+BASE_URL = "https://api.ultralight.dev"
+ENVIRONMENT = "production"
+
+# Cron triggers for scheduled worker
+[triggers]
+crons = [
+  "* * * * *",       # every minute: async cleanup, embedding processor, gpu builds, user cron scheduler
+  "*/5 * * * *",     # every 5 min: D1 billing
+  "0 * * * *",       # hourly: hosting billing, payout processor
+  "*/30 * * * *",    # every 30 min: auto-healing
+]
+
+# Secrets (configured via: wrangler secret put <NAME>):
+#   SUPABASE_URL
+#   SUPABASE_SERVICE_ROLE_KEY
+#   SUPABASE_ANON_KEY
+#   CF_ACCOUNT_ID
+#   CF_API_TOKEN
+#   STRIPE_SECRET_KEY
+#   STRIPE_WEBHOOK_SECRET
+#   OPENROUTER_API_KEY
+#   BYOK_ENCRYPTION_KEY
+#   RUNPOD_API_KEY
+#   RUNPOD_TEMPLATE_ID
+#   SUPABASE_MGMT_OAUTH_CLIENT_ID
+#   SUPABASE_MGMT_OAUTH_CLIENT_SECRET
+#   TIER_CHANGE_SECRET
+#   GPU_SECRET

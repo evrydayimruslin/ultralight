@@ -15,7 +15,7 @@ import { handleHttpEndpoint, handleHttpOptions } from './http.ts';
 import { handleTierChange } from './tier.ts';
 import { handleAdmin } from './admin.ts';
 import { handleDeveloper } from './developer.ts';
-import { handleChatStream, handleChatModels, handleProvisionKey, handleFunctionIndex } from './chat.ts';
+import { handleChatStream, handleChatModels, handleProvisionKey, handleFunctionIndex, handleChatContext, handleOrchestrate } from './chat.ts';
 import { getLayoutHTML } from '../../web/layout.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
@@ -85,8 +85,7 @@ function addCacheHeaders(headers: Record<string, string>, etag: string, immutabl
   };
 }
 
-// @ts-ignore - Deno is available in Deno Deploy
-const DenoEnv = globalThis.Deno?.env;
+import { getEnv } from '../lib/env.ts';
 
 /**
  * GPU Code Proxy — serves developer code bundles to RunPod workers.
@@ -99,7 +98,7 @@ const DenoEnv = globalThis.Deno?.env;
  */
 async function handleGpuCodeProxy(request: Request, path: string): Promise<Response> {
   // Authenticate via shared secret
-  const expectedSecret = DenoEnv?.get('GPU_INTERNAL_SECRET') || '';
+  const expectedSecret = getEnv('GPU_INTERNAL_SECRET');
   const providedSecret = request.headers.get('X-GPU-Secret') || '';
 
   if (!expectedSecret || providedSecret !== expectedSecret) {
@@ -142,7 +141,7 @@ async function handleGpuCodeProxy(request: Request, path: string): Promise<Respo
  * Returns: { results, meta } or { result, meta } or { row, meta }
  */
 async function handleInternalD1Query(request: Request): Promise<Response> {
-  const expectedSecret = DenoEnv?.get('GPU_INTERNAL_SECRET') || '';
+  const expectedSecret = getEnv('GPU_INTERNAL_SECRET');
   const providedSecret = request.headers.get('X-GPU-Secret') || '';
 
   if (!expectedSecret || providedSecret !== expectedSecret) {
@@ -441,6 +440,16 @@ export function createApp() {
         return handleFunctionIndex(request);
       }
 
+      // Context resolver — per-request entity + function resolution
+      if (path === '/chat/context' && method === 'POST') {
+        return handleChatContext(request);
+      }
+
+      // Server-side orchestration — Flash broker + heavy model + recipe execution
+      if (path === '/chat/orchestrate' && method === 'POST') {
+        return handleOrchestrate(request);
+      }
+
       // Pre-provision per-user OpenRouter key (called on login, before first chat)
       if (path === '/chat/provision-key' && method === 'POST') {
         return handleProvisionKey(request);
@@ -474,10 +483,10 @@ export function createApp() {
         steps.push({ step: 'prefix_extract', result: `Token prefix for DB lookup: "${tokenPrefix}"`, ok: true });
 
         // Direct DB lookup to show what's happening
-        const { createClient } = await import('npm:@supabase/supabase-js@2');
+        const { createClient } = await import('@supabase/supabase-js');
         const supabase = createClient(
-          Deno.env.get('SUPABASE_URL')!,
-          Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+          getEnv('SUPABASE_URL'),
+          getEnv('SUPABASE_SERVICE_ROLE_KEY'),
         );
 
         const { data: tokenRow, error: dbErr } = await supabase
@@ -529,8 +538,8 @@ export function createApp() {
         const { authenticate } = await import('./auth.ts');
         try {
           const user = await authenticate(request);
-          const { createClient } = await import('npm:@supabase/supabase-js@2');
-          const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+          const { createClient } = await import('@supabase/supabase-js');
+          const supabase = createClient(getEnv('SUPABASE_URL'), getEnv('SUPABASE_SERVICE_ROLE_KEY'));
           // Add ✦4,000 Light (= $5.00)
           const { error: dbErr } = await supabase.rpc('debit_balance', {
             p_user_id: user.id,
@@ -583,7 +592,7 @@ export function createApp() {
         }
 
         // 3. OpenRouter management key (for provisioning per-user keys)
-        const mgmtKey = Deno.env.get('OPENROUTER_API_KEY') || '';
+        const mgmtKey = getEnv('OPENROUTER_API_KEY');
         checks.push({ check: 'openrouter_mgmt_key', result: mgmtKey ? `Set (${mgmtKey.substring(0, 8)}...${mgmtKey.substring(mgmtKey.length - 4)})` : 'NOT SET', ok: !!mgmtKey });
 
         // 4. Per-user OpenRouter key (created on first chat via management API)
@@ -1393,10 +1402,8 @@ async function handlePublicAppPage(request: Request, appId: string): Promise<Res
     const baseUrl = getBaseUrl(request);
 
     // Fetch owner display name
-    // @ts-ignore
-    const Deno = globalThis.Deno;
-    const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+    const SUPABASE_URL = getEnv('SUPABASE_URL');
+    const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
     const dbHeaders = {
       'apikey': SUPABASE_SERVICE_ROLE_KEY,
       'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
@@ -1689,7 +1696,7 @@ function getPublicAppPageHTML(
   </div>
 
   <div class="footer-bar">
-    Powered by <a href="https://ultralight-api-iikqz.ondigitalocean.app">Ultralight</a>
+    Powered by <a href="https://ultralight-api.rgn4jz429m.workers.dev">Ultralight</a>
   </div>
 </div>
 <script>
@@ -1736,10 +1743,8 @@ function copyInstructions() {
 
 async function handlePublicUserProfile(request: Request, profileUserId: string): Promise<Response> {
   try {
-    // @ts-ignore
-    const Deno = globalThis.Deno;
-    const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+    const SUPABASE_URL = getEnv('SUPABASE_URL');
+    const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
     const dbHeaders = {
       'apikey': SUPABASE_SERVICE_ROLE_KEY,
       'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
@@ -2074,10 +2079,8 @@ function getPublicUserProfileHTML(
 // ============================================
 
 async function handleHomepageApi(request: Request): Promise<Response> {
-  // @ts-ignore
-  const Deno = globalThis.Deno;
-  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
   const headers = {
     'apikey': SUPABASE_SERVICE_ROLE_KEY,
     'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
@@ -2163,10 +2166,8 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
   if (slug.endsWith('.md')) slug = slug.slice(0, -3);
 
   // Check content table for visibility/access control
-  // @ts-ignore
-  const Deno = globalThis.Deno;
-  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
   const dbHeaders = {
     'apikey': SUPABASE_SERVICE_ROLE_KEY,
     'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
@@ -2546,7 +2547,7 @@ function renderMarkdownPage(title: string, markdown: string, meta?: { authorName
 <article>
 ${metaHeader}
 ${html}
-<div class="footer">Published with <a href="https://ultralight-api-iikqz.ondigitalocean.app">Ultralight</a></div>
+<div class="footer">Published with <a href="https://ultralight-api.rgn4jz429m.workers.dev">Ultralight</a></div>
 </article>
 </body>
 </html>`;

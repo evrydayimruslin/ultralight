@@ -3,9 +3,7 @@
 // Usage is tracked in-database (_usage table within each app's D1).
 // Periodically synced to Supabase for billing via d1-billing.ts cron.
 
-// @ts-ignore
-const Deno = globalThis.Deno;
-
+import { getEnv } from '../lib/env.ts';
 import { D1_FREE_TIER, D1_RATE_LIMITS } from '../../shared/types/index.ts';
 
 // ============================================
@@ -114,8 +112,8 @@ export function releaseD1ConcurrencySlot(userId: string, appId: string): void {
  * Called before executing D1 queries to determine if billing applies.
  */
 export async function checkD1FreeTier(userId: string): Promise<D1UsageCheck> {
-  const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
-  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!supabaseUrl || !supabaseKey) {
     // Can't check — allow (fail open)
@@ -167,8 +165,8 @@ export async function checkD1FreeTier(userId: string): Promise<D1UsageCheck> {
  * Returns false (with 402-style reason) if user has exhausted free tier and has zero balance.
  */
 export async function checkD1Balance(userId: string): Promise<{ allowed: boolean; reason?: string }> {
-  const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
-  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!supabaseUrl || !supabaseKey) return { allowed: true };
 

@@ -261,7 +261,7 @@ export async function settleGpuExecution(
             insufficientBalance: true,
             insufficientBalanceMessage:
               `Insufficient balance. This GPU function costs ~${formatLight(totalCharge)} per call. ` +
-              `Add funds to your wallet at https://ultralight-api-iikqz.ondigitalocean.app/settings/billing ` +
+              `Add funds to your wallet at https://ultralight-api.rgn4jz429m.workers.dev/settings/billing ` +
               `or enable auto top-up to avoid interruptions.`,
           };
         }

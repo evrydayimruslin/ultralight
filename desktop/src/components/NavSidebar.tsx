@@ -3,10 +3,11 @@
 // and bottom profile menu (Profile/Wallet/Settings).
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { CirclePlus, Compass, Package, Wallet, Settings, User } from 'lucide-react';
+import { CirclePlus, Compass, Package, Wallet, Settings, User, Wrench, Store } from 'lucide-react';
 import type { Agent } from '../hooks/useAgentFleet';
 import type { AppView } from '../hooks/useAppState';
 import { getToken, getApiBase } from '../lib/storage';
+import { SYSTEM_AGENTS, SYSTEM_AGENT_ORDER, type SystemAgentType } from '../lib/systemAgents';
 
 // ── Props ──
 
@@ -23,6 +24,7 @@ interface NavSidebarProps {
   onNewAgent: () => void;
   onDeleteAgent: (agentId: string) => void;
   onStopAgent: (agentId: string) => void;
+  onNewSession: (agentId: string) => void;
   isAgentRunning: (agentId: string) => boolean;
 }
 
@@ -153,10 +155,19 @@ function CollapsibleSection({ title, expanded, onToggle, trailing, children }: {
 // ── Icons (Lucide) ── //
 
 const iconProps = { size: 16, strokeWidth: 1.5 } as const;
+const smallIconProps = { size: 14, strokeWidth: 1.5 } as const;
 const NewSessionIcon = <CirclePlus {...iconProps} />;
 const CommandIcon = <Compass {...iconProps} />;
 const ToolsIcon = <Package {...iconProps} />;
 
+function SystemAgentIcon({ type }: { type: string | null }) {
+  switch (type as SystemAgentType) {
+    case 'tool_builder': return <Wrench {...smallIconProps} className="text-amber-500 flex-shrink-0" />;
+    case 'tool_marketer': return <Store {...smallIconProps} className="text-emerald-500 flex-shrink-0" />;
+    case 'platform_manager': return <Settings {...smallIconProps} className="text-purple-500 flex-shrink-0" />;
+    default: return <Compass {...smallIconProps} className="text-gray-400 flex-shrink-0" />;
+  }
+}
 
 // ── Component ──
 
@@ -173,10 +184,12 @@ export default function NavSidebar({
   onNewAgent,
   onDeleteAgent,
   onStopAgent,
+  onNewSession,
   isAgentRunning,
 }: NavSidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [systemAgentsExpanded, setSystemAgentsExpanded] = useState(() => !getCollapsed('ul_nav_system_agents_collapsed', false));
   const [agentsExpanded, setAgentsExpanded] = useState(() => !getCollapsed('ul_nav_agents_collapsed', false));
   const [contextMenu, setContextMenu] = useState<{ agentId: string; x: number; y: number } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -224,6 +237,14 @@ export default function NavSidebar({
     return () => document.removeEventListener('mousedown', handleClick);
   }, [profileMenuOpen]);
 
+  const toggleSystemAgents = useCallback(() => {
+    setSystemAgentsExpanded(v => {
+      const next = !v;
+      setCollapsed('ul_nav_system_agents_collapsed', !next);
+      return next;
+    });
+  }, []);
+
   const toggleAgents = useCallback(() => {
     setAgentsExpanded(v => {
       const next = !v;
@@ -231,6 +252,12 @@ export default function NavSidebar({
       return next;
     });
   }, []);
+
+  const handleNewSessionFromMenu = useCallback(() => {
+    if (!contextMenu) return;
+    onNewSession(contextMenu.agentId);
+    setContextMenu(null);
+  }, [contextMenu, onNewSession]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, agentId: string) => {
     e.preventDefault();
@@ -257,8 +284,18 @@ export default function NavSidebar({
 
   if (!isOpen) return null;
 
-  // Sort agents
-  const sorted = [...agents].sort((a, b) => {
+  // Partition: system agents vs regular chat agents
+  const systemAgents = agents
+    .filter(a => a.is_system === 1 && SYSTEM_AGENTS.some(c => c.type === a.system_agent_type))
+    .sort((a, b) =>
+      SYSTEM_AGENT_ORDER.indexOf(a.system_agent_type as SystemAgentType) -
+      SYSTEM_AGENT_ORDER.indexOf(b.system_agent_type as SystemAgentType)
+    );
+
+  const chatAgents = agents.filter(a => a.is_system !== 1);
+
+  // Sort chat agents: running first, then by updated_at
+  const sorted = [...chatAgents].sort((a, b) => {
     const aRunning = a.status === 'running' ? 0 : 1;
     const bRunning = b.status === 'running' ? 0 : 1;
     if (aRunning !== bRunning) return aRunning - bRunning;
@@ -273,7 +310,7 @@ export default function NavSidebar({
   return (
     <div className="flex flex-col w-64 h-full border-r border-ul-border bg-gray-50 flex-shrink-0">
       {/* Primary nav */}
-      <nav className="px-2 pt-2">
+      <nav className="px-2 pt-2 flex-shrink-0">
         <NavItem
           icon={CommandIcon}
           label="Command"
@@ -294,28 +331,58 @@ export default function NavSidebar({
         />
       </nav>
 
-      {/* Agents */}
-      <CollapsibleSection
-        title="Agents"
-        expanded={agentsExpanded}
-        onToggle={toggleAgents}
-        trailing={
-          agents.length > 0 ? (
-            <button
-              onClick={e => { e.stopPropagation(); setSearchOpen(true); }}
-              className="p-0.5 rounded hover:bg-ul-bg-hover text-ul-text-muted hover:text-ul-text-secondary transition-colors"
-              title="Search agents"
-            >
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <circle cx="7" cy="7" r="4.5" />
-                <line x1="10.5" y1="10.5" x2="14" y2="14" />
-              </svg>
-            </button>
-          ) : null
-        }
-      >
-        {/* Time-grouped agent list */}
-        <div className="flex-1 overflow-y-auto min-h-0" style={{ maxHeight: 'calc(100vh - 340px)' }}>
+      {/* Unified scrollable area for all sections */}
+      <div className="flex-1 overflow-y-auto min-h-0">
+        {/* System Agents */}
+        {systemAgents.length > 0 && (
+          <CollapsibleSection
+            title="Agents"
+            expanded={systemAgentsExpanded}
+            onToggle={toggleSystemAgents}
+          >
+            {systemAgents.map(agent => (
+              <button
+                key={agent.id}
+                onClick={() => onSelectAgent(agent.id)}
+                onContextMenu={e => handleContextMenu(e, agent.id)}
+                className={`w-full text-left px-3 py-1.5 rounded-md transition-colors mx-1
+                  ${activeAgentId === agent.id
+                    ? 'bg-ul-bg-active'
+                    : 'hover:bg-ul-bg-hover'
+                  }`}
+                style={{ width: 'calc(100% - 8px)' }}
+              >
+                <div className="flex items-center gap-2">
+                  <SystemAgentIcon type={agent.system_agent_type} />
+                  <span className="text-small text-ul-text truncate flex-1">{agent.name}</span>
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDot(agent.status)}`} />
+                </div>
+              </button>
+            ))}
+          </CollapsibleSection>
+        )}
+
+        {/* Chats */}
+        <CollapsibleSection
+          title="Chats"
+          expanded={agentsExpanded}
+          onToggle={toggleAgents}
+          trailing={
+            agents.length > 0 ? (
+              <button
+                onClick={e => { e.stopPropagation(); setSearchOpen(true); }}
+                className="p-0.5 rounded hover:bg-ul-bg-hover text-ul-text-muted hover:text-ul-text-secondary transition-colors"
+                title="Search agents"
+              >
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <circle cx="7" cy="7" r="4.5" />
+                  <line x1="10.5" y1="10.5" x2="14" y2="14" />
+                </svg>
+              </button>
+            ) : null
+          }
+        >
+          {/* Time-grouped agent list */}
           {timeGroups.length === 0 ? (
             <div className="px-3 py-4 text-center text-caption text-ul-text-muted">
               No agents yet
@@ -350,11 +417,8 @@ export default function NavSidebar({
               </div>
             ))
           )}
-        </div>
-      </CollapsibleSection>
-
-      {/* Spacer */}
-      <div className="flex-1" />
+        </CollapsibleSection>
+      </div>
 
       {/* Profile menu trigger */}
       <div className="relative border-t border-ul-border px-2 py-2" ref={profileMenuRef}>
@@ -476,30 +540,42 @@ export default function NavSidebar({
       )}
 
       {/* Context menu */}
-      {contextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-50 bg-white border border-ul-border rounded-md shadow-md py-1 min-w-[140px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
-          {isAgentRunning(contextMenu.agentId) && (
+      {contextMenu && (() => {
+        const menuAgent = agents.find(a => a.id === contextMenu.agentId);
+        const isSystem = menuAgent?.is_system === 1;
+        return (
+          <div
+            ref={contextMenuRef}
+            className="fixed z-50 bg-white border border-ul-border rounded-md shadow-md py-1 min-w-[140px]"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
+            {isAgentRunning(contextMenu.agentId) && (
+              <button
+                onClick={handleStopFromMenu}
+                className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100"
+              >
+                Stop
+              </button>
+            )}
             <button
-              onClick={handleStopFromMenu}
+              onClick={handleNewSessionFromMenu}
               className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100"
             >
-              Stop
+              New Session
             </button>
-          )}
-          <button
-            onClick={handleDeleteFromMenu}
-            className={`w-full text-left px-3 py-1.5 text-small hover:bg-gray-100
-              ${confirmDelete === contextMenu.agentId ? 'text-ul-error font-medium' : 'text-ul-text'}
-            `}
-          >
-            {confirmDelete === contextMenu.agentId ? 'Confirm Delete' : 'Delete'}
-          </button>
-        </div>
-      )}
+            {!isSystem && (
+              <button
+                onClick={handleDeleteFromMenu}
+                className={`w-full text-left px-3 py-1.5 text-small hover:bg-gray-100
+                  ${confirmDelete === contextMenu.agentId ? 'text-ul-error font-medium' : 'text-ul-text'}
+                `}
+              >
+                {confirmDelete === contextMenu.agentId ? 'Confirm Delete' : 'Delete'}
+              </button>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }

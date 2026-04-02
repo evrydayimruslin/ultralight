@@ -123,6 +123,11 @@ const MAX_STREAM_RETRIES = 2;
 const RETRY_DELAY_MS = 1000;
 const DEFAULT_MAX_ROUNDS = 25;
 
+// Hard cap on ul_codemode calls per conversation turn.
+// The agent should write ONE complete recipe, not 15 granular calls.
+// Allow 2: one discover (if types aren't cached) + one execute.
+const MAX_CODEMODE_CALLS = 2;
+
 // ── Core Loop ──
 
 /**
@@ -150,6 +155,7 @@ export async function runAgentLoop(
 
   const newMessages: LoopMessage[] = [];
   let toolRound = 0;
+  let codemodeCallCount = 0;  // Track codemode calls for hard cap
   let currentMessages = [...existingMessages];
   let tokenCount = 0;
 
@@ -213,6 +219,18 @@ export async function runAgentLoop(
         let toolResult: string;
         try {
           const args = JSON.parse(tc.function.arguments);
+
+          // Enforce hard cap on codemode calls — BREAK the entire loop, don't just error
+          const isCodemode = tc.function.name === 'ul_codemode' || tc.function.name === 'ul.codemode' || tc.function.name === 'ul_execute' || tc.function.name === 'ul.execute';
+          if (isCodemode) {
+            codemodeCallCount++;
+            if (codemodeCallCount > MAX_CODEMODE_CALLS) {
+              // Force-stop the agent loop — no more rounds
+              toolRound = maxToolRounds + 1;  // exceed limit to break while loop
+              break;  // break inner for loop
+            }
+          }
+
           toolResult = await callbacks.onToolCall(tc.function.name, args);
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);

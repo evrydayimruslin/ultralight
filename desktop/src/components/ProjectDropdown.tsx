@@ -54,9 +54,13 @@ function shortenPath(path: string): string {
 interface ProjectDropdownProps {
   selectedDir: string | null;
   onSelect: (dir: string | null) => void;
+  /** Open the dropdown upward (for placement near bottom of screen) */
+  dropUp?: boolean;
+  /** Compact inline style — small text, no bordered button wrapper */
+  compact?: boolean;
 }
 
-export default function ProjectDropdown({ selectedDir, onSelect }: ProjectDropdownProps) {
+export default function ProjectDropdown({ selectedDir, onSelect, dropUp = false, compact = false }: ProjectDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const recentProjects = getRecentProjects();
@@ -101,21 +105,34 @@ export default function ProjectDropdown({ selectedDir, onSelect }: ProjectDropdo
       {/* Trigger button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-gray-100 transition-colors max-w-[300px]"
+        className={compact
+          ? 'flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-gray-100 transition-colors max-w-[260px]'
+          : 'flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-gray-100 transition-colors max-w-[300px]'
+        }
       >
-        <span className="text-small text-ul-text-muted truncate">
-          {selectedDir ? shortenPath(selectedDir) : 'Select a project...'}
+        {compact && (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-ul-text-muted flex-shrink-0">
+            <rect x="2" y="3" width="20" height="18" rx="2" ry="2"/><line x1="2" y1="9" x2="22" y2="9"/>
+          </svg>
+        )}
+        <span className={compact
+          ? `text-caption truncate ${selectedDir ? 'text-ul-text-muted' : 'text-gray-300'}`
+          : 'text-small text-ul-text-muted truncate'
+        }>
+          {selectedDir ? shortenPath(selectedDir) : (compact ? 'No project selected' : 'Select a project...')}
         </span>
 
-        {/* Chevron */}
-        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-ul-text-muted flex-shrink-0">
-          <path d="M3 4.5L6 7.5L9 4.5" />
-        </svg>
+        {/* Chevron — only in non-compact mode */}
+        {!compact && (
+          <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-ul-text-muted flex-shrink-0">
+            <path d="M3 4.5L6 7.5L9 4.5" />
+          </svg>
+        )}
       </button>
 
       {/* Dropdown menu */}
       {isOpen && (
-        <div className="absolute top-full right-0 mt-1 min-w-[280px] bg-white border border-ul-border rounded-lg shadow-lg z-40 py-1">
+        <div className={`absolute ${dropUp ? 'bottom-full mb-1' : 'top-full mt-1'} right-0 min-w-[280px] bg-white border border-ul-border rounded-lg shadow-lg z-40 py-1`}>
           {/* Recent projects */}
           {recentProjects.length > 0 && (
             <>

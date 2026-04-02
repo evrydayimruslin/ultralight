@@ -3,18 +3,16 @@
 // Jobs are created in 'running' state when execution exceeds the promotion threshold.
 // The execution continues in-process; this service tracks state in Supabase.
 
-// @ts-ignore - Deno is available
-const Deno = globalThis.Deno;
+import { getEnv } from '../lib/env.ts';
 
-const SUPABASE_URL = Deno?.env?.get('SUPABASE_URL') || '';
-const SUPABASE_SERVICE_ROLE_KEY = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-
-const supabaseHeaders = {
-  'apikey': SUPABASE_SERVICE_ROLE_KEY,
-  'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-  'Content-Type': 'application/json',
-  'Prefer': 'return=representation',
-};
+function supabaseHeaders() {
+  return {
+    'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+    'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
+    'Content-Type': 'application/json',
+    'Prefer': 'return=representation',
+  };
+}
 
 /** Max result size before offloading to R2 (1MB) */
 const MAX_RESULT_SIZE = 1_000_000;
@@ -74,9 +72,9 @@ export async function createJob(params: {
   const jobId = crypto.randomUUID();
   activeJobCount++;
 
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/async_jobs`, {
+  const res = await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/async_jobs`, {
     method: 'POST',
-    headers: supabaseHeaders,
+    headers: supabaseHeaders(),
     body: JSON.stringify({
       id: jobId,
       app_id: params.appId,
@@ -137,10 +135,10 @@ export async function completeJob(jobId: string, result: {
   };
 
   const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/async_jobs?id=eq.${jobId}`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/async_jobs?id=eq.${jobId}`,
     {
       method: 'PATCH',
-      headers: supabaseHeaders,
+      headers: supabaseHeaders(),
       body: JSON.stringify(updatePayload),
     }
   );
@@ -158,10 +156,10 @@ export async function failJob(jobId: string, error: {
   activeJobCount = Math.max(0, activeJobCount - 1);
 
   const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/async_jobs?id=eq.${jobId}`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/async_jobs?id=eq.${jobId}`,
     {
       method: 'PATCH',
-      headers: supabaseHeaders,
+      headers: supabaseHeaders(),
       body: JSON.stringify({
         status: 'failed',
         error,
@@ -179,7 +177,7 @@ export async function failJob(jobId: string, error: {
 /** Get a job by ID (user-scoped for security) */
 export async function getJob(jobId: string, userId: string): Promise<AsyncJob | null> {
   const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/async_jobs?id=eq.${jobId}&user_id=eq.${userId}&select=*`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/async_jobs?id=eq.${jobId}&user_id=eq.${userId}&select=*`,
     { headers: supabaseHeaders }
   );
 
@@ -201,15 +199,15 @@ export async function getJob(jobId: string, userId: string): Promise<AsyncJob | 
 }
 
 /** Fail stale running jobs (from crashed servers or expired) */
-async function cleanupStaleJobs(): Promise<number> {
+export async function cleanupStaleJobs(): Promise<number> {
   const cutoff = new Date(Date.now() - STALE_JOB_MS).toISOString();
 
   // Fail jobs that are still 'running' but created before the cutoff
   const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/async_jobs?status=eq.running&created_at=lt.${cutoff}`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/async_jobs?status=eq.running&created_at=lt.${cutoff}`,
     {
       method: 'PATCH',
-      headers: { ...supabaseHeaders, 'Prefer': 'return=headers-only' },
+      headers: { ...supabaseHeaders(), 'Prefer': 'return=headers-only' },
       body: JSON.stringify({
         status: 'failed',
         error: { type: 'ServerTimeout', message: 'Execution exceeded maximum duration or server restarted' },
@@ -230,7 +228,7 @@ async function cleanupStaleJobs(): Promise<number> {
 
 /** R2 storage helpers for large results */
 async function storeResultInR2(key: string, value: unknown): Promise<void> {
-  const WORKER_URL = Deno?.env?.get('WORKER_URL') || '';
+  const WORKER_URL = getEnv('WORKER_URL');
   if (!WORKER_URL) {
     console.error('[ASYNC-JOBS] No WORKER_URL configured for R2 storage');
     return;
@@ -244,7 +242,7 @@ async function storeResultInR2(key: string, value: unknown): Promise<void> {
 }
 
 async function loadResultFromR2(key: string): Promise<unknown> {
-  const WORKER_URL = Deno?.env?.get('WORKER_URL') || '';
+  const WORKER_URL = getEnv('WORKER_URL');
   if (!WORKER_URL) return null;
 
   const res = await fetch(`${WORKER_URL}/r2/load?key=${encodeURIComponent(key)}`);

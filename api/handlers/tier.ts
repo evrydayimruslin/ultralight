@@ -8,13 +8,8 @@
 
 import { json, error } from './app.ts';
 import { TIER_LIMITS, type Tier } from '../../shared/types/index.ts';
+import { getEnv } from '../lib/env.ts';
 
-// @ts-ignore - Deno is available
-const Deno = globalThis.Deno;
-
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-const TIER_CHANGE_SECRET = Deno.env.get('TIER_CHANGE_SECRET') || SUPABASE_SERVICE_ROLE_KEY;
 
 const VALID_TIERS: Tier[] = ['free', 'pro'];
 
@@ -30,7 +25,7 @@ const TIER_ALIASES: Record<string, Tier> = {
  * POST /api/tier/change
  *
  * Body: { user_id: string, new_tier: Tier, reason?: string }
- * Auth: Bearer token must match TIER_CHANGE_SECRET (service-to-service)
+ * Auth: Bearer token must match (getEnv('TIER_CHANGE_SECRET') || getEnv('SUPABASE_SERVICE_ROLE_KEY')) (service-to-service)
  */
 export async function handleTierChange(request: Request): Promise<Response> {
   if (request.method !== 'POST') {
@@ -41,7 +36,7 @@ export async function handleTierChange(request: Request): Promise<Response> {
   const authHeader = request.headers.get('Authorization');
   const token = authHeader?.replace('Bearer ', '');
 
-  if (!token || token !== TIER_CHANGE_SECRET) {
+  if (!token || token !== (getEnv('TIER_CHANGE_SECRET') || getEnv('SUPABASE_SERVICE_ROLE_KEY'))) {
     return error('Unauthorized: invalid service secret', 401);
   }
 
@@ -66,11 +61,11 @@ export async function handleTierChange(request: Request): Promise<Response> {
 
   // Fetch current user
   const userResponse = await fetch(
-    `${SUPABASE_URL}/rest/v1/users?id=eq.${user_id}&select=id,tier,email`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${user_id}&select=id,tier,email`,
     {
       headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+        'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
       },
     }
   );
@@ -107,11 +102,11 @@ export async function handleTierChange(request: Request): Promise<Response> {
   // ============================================
   if (!newTierLimits.can_publish) {
     const appsResponse = await fetch(
-      `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${user_id}&deleted_at=is.null&visibility=eq.public&select=id,name,visibility`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/apps?owner_id=eq.${user_id}&deleted_at=is.null&visibility=eq.public&select=id,name,visibility`,
       {
         headers: {
-          'apikey': SUPABASE_SERVICE_ROLE_KEY,
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+          'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
         },
       }
     );
@@ -122,12 +117,12 @@ export async function handleTierChange(request: Request): Promise<Response> {
       if (publicApps.length > 0) {
         // Soft degradation: public → unlisted (NOT private)
         const updateResponse = await fetch(
-          `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${user_id}&deleted_at=is.null&visibility=eq.public`,
+          `${getEnv('SUPABASE_URL')}/rest/v1/apps?owner_id=eq.${user_id}&deleted_at=is.null&visibility=eq.public`,
           {
             method: 'PATCH',
             headers: {
-              'apikey': SUPABASE_SERVICE_ROLE_KEY,
-              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+              'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+              'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
@@ -166,12 +161,12 @@ export async function handleTierChange(request: Request): Promise<Response> {
   // UPDATE USER TIER
   // ============================================
   const updateResponse = await fetch(
-    `${SUPABASE_URL}/rest/v1/users?id=eq.${user_id}`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${user_id}`,
     {
       method: 'PATCH',
       headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+        'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

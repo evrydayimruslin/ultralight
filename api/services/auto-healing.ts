@@ -3,8 +3,7 @@
 // Does NOT patch or deploy — agents read events via ul.health and fix issues themselves.
 // Runs periodically alongside the billing loop.
 
-// @ts-ignore
-const Deno = globalThis.Deno;
+import { getEnv } from '../lib/env.ts';
 
 // ============================================
 // CONFIG
@@ -74,8 +73,8 @@ export async function runAutoHealing(): Promise<AutoHealingReport> {
     errors: [],
   };
 
-  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     report.errors.push('Missing Supabase config');

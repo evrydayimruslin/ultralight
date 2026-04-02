@@ -1,8 +1,7 @@
 // Rate Limiting Service
 // Uses Supabase table + RPC function for persistent, distributed rate limiting
 
-// @ts-ignore - Deno is available in Deno Deploy
-const Deno = globalThis.Deno;
+import { getEnv } from '../lib/env.ts';
 
 // ============================================
 // TYPES
@@ -40,8 +39,8 @@ export class RateLimitService {
   private supabaseKey: string;
 
   constructor() {
-    const url = Deno.env.get('SUPABASE_URL');
-    const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    const url = getEnv('SUPABASE_URL');
+    const key = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
     if (!url || !key) {
       throw new Error('Supabase credentials not configured');
@@ -146,6 +145,9 @@ export function checkInMemoryLimit(
   limit = 100,
   windowMs = 60000
 ): RateLimitResult {
+  // Lazy cleanup (replaces top-level setInterval, which CF Workers don't allow)
+  cleanupExpiredEntries();
+
   const key = `${userId}:${endpoint}`;
   const now = Date.now();
 
@@ -167,15 +169,16 @@ export function checkInMemoryLimit(
   };
 }
 
-// Cleanup old entries periodically
-setInterval(() => {
+// Cleanup old entries — called lazily on each check instead of setInterval
+// (CF Workers don't allow setInterval at module scope)
+function cleanupExpiredEntries() {
   const now = Date.now();
   for (const [key, entry] of inMemoryLimits) {
     if (entry.resetAt < now) {
       inMemoryLimits.delete(key);
     }
   }
-}, 60000); // Every minute
+}
 
 // ============================================
 // FACTORY

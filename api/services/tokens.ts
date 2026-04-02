@@ -9,12 +9,15 @@
  * Example: ul_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6
  */
 
-import { createClient } from 'npm:@supabase/supabase-js@2';
+import { createClient } from '@supabase/supabase-js';
+import { getEnv } from '../lib/env.ts';
 
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
-const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+// Lazy Supabase client — CF Workers env not available at module init
+let _supabase: ReturnType<typeof createClient>;
+function getSupabase() {
+  if (!_supabase) _supabase = createClient(getEnv('SUPABASE_URL'), getEnv('SUPABASE_SERVICE_ROLE_KEY'));
+  return _supabase;
+}
 
 // Token prefix for easy identification
 const TOKEN_PREFIX = 'ul_';
@@ -128,7 +131,7 @@ export async function createToken(
   }
 ): Promise<CreateTokenResult> {
   // Check if token with this name already exists
-  const { data: existing } = await supabase
+  const { data: existing } = await getSupabase()
     .from('user_api_tokens')
     .select('id')
     .eq('user_id', userId)
@@ -167,7 +170,7 @@ export async function createToken(
     expires_at: expiresAt,
   };
 
-  let { data, error } = await supabase
+  let { data, error } = await getSupabase()
     .from('user_api_tokens')
     .insert(insertPayload)
     .select()
@@ -176,7 +179,7 @@ export async function createToken(
   // Fallback: if plaintext_token column doesn't exist yet, retry without it
   if (error && error.message?.includes('plaintext_token')) {
     delete insertPayload.plaintext_token;
-    ({ data, error } = await supabase
+    ({ data, error } = await getSupabase()
       .from('user_api_tokens')
       .insert(insertPayload)
       .select()
@@ -197,7 +200,7 @@ export async function createToken(
  * List all tokens for a user (without exposing hashes)
  */
 export async function listTokens(userId: string): Promise<ApiToken[]> {
-  let { data, error } = await supabase
+  let { data, error } = await getSupabase()
     .from('user_api_tokens')
     .select('id, user_id, name, token_prefix, plaintext_token, scopes, app_ids, function_names, last_used_at, last_used_ip, expires_at, created_at')
     .eq('user_id', userId)
@@ -205,7 +208,7 @@ export async function listTokens(userId: string): Promise<ApiToken[]> {
 
   // Fallback: if plaintext_token column doesn't exist yet, query without it
   if (error && error.message?.includes('plaintext_token')) {
-    ({ data, error } = await supabase
+    ({ data, error } = await getSupabase()
       .from('user_api_tokens')
       .select('id, user_id, name, token_prefix, scopes, app_ids, function_names, last_used_at, last_used_ip, expires_at, created_at')
       .eq('user_id', userId)
@@ -223,7 +226,7 @@ export async function listTokens(userId: string): Promise<ApiToken[]> {
  * Revoke (delete) a token
  */
 export async function revokeToken(userId: string, tokenId: string): Promise<void> {
-  const { error } = await supabase
+  const { error } = await getSupabase()
     .from('user_api_tokens')
     .delete()
     .eq('id', tokenId)
@@ -238,7 +241,7 @@ export async function revokeToken(userId: string, tokenId: string): Promise<void
  * Revoke all tokens for a user
  */
 export async function revokeAllTokens(userId: string): Promise<number> {
-  const { data, error } = await supabase
+  const { data, error } = await getSupabase()
     .from('user_api_tokens')
     .delete()
     .eq('user_id', userId)
@@ -266,7 +269,7 @@ export async function revokeByToken(token: string): Promise<boolean> {
   const tokenPrefix = token.substring(0, 8);
 
   // Look up by prefix (indexed), then verify hash with appropriate method
-  const { data, error: lookupErr } = await supabase
+  const { data, error: lookupErr } = await getSupabase()
     .from('user_api_tokens')
     .select('id, token_hash, token_salt')
     .eq('token_prefix', tokenPrefix)
@@ -286,7 +289,7 @@ export async function revokeByToken(token: string): Promise<boolean> {
   }
 
   // Delete the token
-  const { error: deleteErr } = await supabase
+  const { error: deleteErr } = await getSupabase()
     .from('user_api_tokens')
     .delete()
     .eq('id', data.id);
@@ -309,7 +312,7 @@ export async function revokeExcessTokens(
   maxTokens: number
 ): Promise<{ revoked_count: number; kept_count: number; revoked_names: string[] }> {
   // Get all tokens ordered by created_at descending (newest first)
-  const { data: tokens, error: listErr } = await supabase
+  const { data: tokens, error: listErr } = await getSupabase()
     .from('user_api_tokens')
     .select('id, name, created_at')
     .eq('user_id', userId)
@@ -329,7 +332,7 @@ export async function revokeExcessTokens(
   const revokedNames: string[] = [];
 
   for (const token of tokensToRevoke) {
-    const { error: revokeErr } = await supabase
+    const { error: revokeErr } = await getSupabase()
       .from('user_api_tokens')
       .delete()
       .eq('id', token.id)
@@ -371,7 +374,7 @@ export async function validateToken(
   console.log(`[TOKEN] Validating token with prefix: ${tokenPrefix}`);
 
   // Look up token by prefix first (indexed), then verify hash
-  const { data, error } = await supabase
+  const { data, error } = await getSupabase()
     .from('user_api_tokens')
     .select('id, user_id, token_hash, token_salt, scopes, app_ids, function_names, expires_at')
     .eq('token_prefix', tokenPrefix)
@@ -402,7 +405,7 @@ export async function validateToken(
   }
 
   // Update last used (fire and forget - don't wait)
-  supabase
+  getSupabase()
     .from('user_api_tokens')
     .update({
       last_used_at: new Date().toISOString(),
@@ -444,7 +447,7 @@ export async function getUserFromToken(token: string, clientIp?: string): Promis
   }
 
   // Get user from database (include provisional + last_active_at for expiry check)
-  const { data: user, error } = await supabase
+  const { data: user, error } = await getSupabase()
     .from('users')
     .select('id, email, tier, provisional, last_active_at')
     .eq('id', validated.user_id)

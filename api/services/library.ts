@@ -6,6 +6,7 @@
 // R2 layout per version:  apps/{appId}/{version}/skills.md, library.txt, embedding.json
 // R2 layout per user:     users/{userId}/library.md, users/{userId}/memory.md
 
+import { getEnv } from '../lib/env.ts';
 import { createR2Service } from './storage.ts';
 import { createAppsService } from './apps.ts';
 import { parseTypeScript, toSkillsParsed } from './parser.ts';
@@ -116,10 +117,8 @@ async function upsertContentWithEmbedding(
   content: string,
   sizeBytes: number
 ): Promise<void> {
-  // @ts-ignore
-  const Deno = globalThis.Deno;
-  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
 
   const headers = {
@@ -199,10 +198,8 @@ async function upsertMemoryChunks(
   userId: string,
   content: string
 ): Promise<void> {
-  // @ts-ignore
-  const Deno = globalThis.Deno;
-  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
 
   const headers = {
@@ -466,7 +463,7 @@ export async function generateSkillsForVersion(
   if (!code) return { skillsMd: null, libraryTxt: null, embeddingJson: null };
 
   // Parse code → all artifacts derive from ParseResult
-  const parseResult = parseTypeScript(code);
+  const parseResult = await parseTypeScript(code);
 
   // Generate manifest: prefer uploaded manifest.json (has rich descriptions + schemas),
   // fall back to auto-generated from code parsing

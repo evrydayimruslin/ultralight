@@ -1,8 +1,7 @@
 // Environment Variables Service
 // Handles encryption/decryption of app environment variables
 
-// @ts-ignore - Deno is available in Deno Deploy
-const Deno = globalThis.Deno;
+import { getEnv } from '../lib/env.ts';
 
 const ENCRYPTION_KEY_ENV = 'ENV_VARS_ENCRYPTION_KEY';
 
@@ -11,7 +10,7 @@ const ENCRYPTION_KEY_ENV = 'ENV_VARS_ENCRYPTION_KEY';
  * Falls back to BYOK_ENCRYPTION_KEY if ENV_VARS_ENCRYPTION_KEY is not set
  */
 function getEncryptionKey(): string {
-  const key = Deno?.env?.get(ENCRYPTION_KEY_ENV) || Deno?.env?.get('BYOK_ENCRYPTION_KEY');
+  const key = getEnv(ENCRYPTION_KEY_ENV) || getEnv('BYOK_ENCRYPTION_KEY');
   if (!key) {
     throw new Error('ENV_VARS_ENCRYPTION_KEY or BYOK_ENCRYPTION_KEY environment variable is required');
   }

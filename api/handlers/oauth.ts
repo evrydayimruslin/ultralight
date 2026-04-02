@@ -9,16 +9,15 @@ import { json, error } from './app.ts';
 import { createToken, revokeByToken } from '../services/tokens.ts';
 import { authenticate, hasScope } from './auth.ts';
 import { createUserService } from '../services/user.ts';
-import { createClient } from 'npm:@supabase/supabase-js@2';
+import { createClient } from '@supabase/supabase-js';
+import { getEnv } from '../lib/env.ts';
 
-// @ts-ignore - Deno is available
-const Deno = globalThis.Deno;
-
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || SUPABASE_SERVICE_ROLE_KEY;
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+// Lazy Supabase client — CF Workers env not available at module init
+let _supabase: ReturnType<typeof createClient>;
+function getSupabase() {
+  if (!_supabase) _supabase = createClient(getEnv('SUPABASE_URL'), getEnv('SUPABASE_SERVICE_ROLE_KEY'));
+  return _supabase;
+}
 
 // ============================================
 // OAUTH CLIENT PERSISTENCE (Supabase)
@@ -46,7 +45,7 @@ interface OAuthClientFull extends OAuthClient {
  * Save an OAuth client to the database.
  */
 async function saveOAuthClient(client: OAuthClient): Promise<void> {
-  const { error: err } = await supabase
+  const { error: err } = await getSupabase()
     .from('oauth_clients')
     .insert({
       client_id: client.client_id,
@@ -67,7 +66,7 @@ async function saveOAuthClient(client: OAuthClient): Promise<void> {
  * Look up an OAuth client by client_id from the database.
  */
 async function getOAuthClient(clientId: string): Promise<OAuthClient | null> {
-  const { data, error: err } = await supabase
+  const { data, error: err } = await getSupabase()
     .from('oauth_clients')
     .select('client_id, client_name, redirect_uris, grant_types, response_types, token_endpoint_auth_method')
     .eq('client_id', clientId)
@@ -89,7 +88,7 @@ async function getOAuthClient(clientId: string): Promise<OAuthClient | null> {
  * Look up full OAuth client including developer app fields.
  */
 async function getOAuthClientFull(clientId: string): Promise<OAuthClientFull | null> {
-  const { data, error: err } = await supabase
+  const { data, error: err } = await getSupabase()
     .from('oauth_clients')
     .select('client_id, client_name, redirect_uris, grant_types, response_types, token_endpoint_auth_method, owner_user_id, client_secret_hash, client_secret_salt, logo_url, description, is_developer_app')
     .eq('client_id', clientId)
@@ -117,7 +116,7 @@ async function getOAuthClientFull(clientId: string): Promise<OAuthClientFull | n
  * Get existing consent record for a user/client pair.
  */
 async function getExistingConsent(userId: string, clientId: string): Promise<{ scopes: string[] } | null> {
-  const { data, error: err } = await supabase
+  const { data, error: err } = await getSupabase()
     .from('oauth_consents')
     .select('scopes')
     .eq('user_id', userId)
@@ -133,7 +132,7 @@ async function getExistingConsent(userId: string, clientId: string): Promise<{ s
  * Save or update consent record.
  */
 async function saveConsent(userId: string, clientId: string, scopes: string[]): Promise<void> {
-  await supabase
+  await getSupabase()
     .from('oauth_consents')
     .upsert({
       user_id: userId,
@@ -181,7 +180,7 @@ async function saveAuthorizationCode(entry: AuthorizationCode): Promise<void> {
     ? await encryptToken(entry.supabase_refresh_token)
     : null;
 
-  const { error: err } = await supabase
+  const { error: err } = await getSupabase()
     .from('oauth_authorization_codes')
     .insert({
       code: entry.code,
@@ -207,7 +206,7 @@ async function saveAuthorizationCode(entry: AuthorizationCode): Promise<void> {
  */
 async function getAndDeleteAuthorizationCode(code: string): Promise<AuthorizationCode | null> {
   // Select the code (only if not expired)
-  const { data, error: selectErr } = await supabase
+  const { data, error: selectErr } = await getSupabase()
     .from('oauth_authorization_codes')
     .select('*')
     .eq('code', code)
@@ -217,7 +216,7 @@ async function getAndDeleteAuthorizationCode(code: string): Promise<Authorizatio
   if (selectErr || !data) return null;
 
   // Delete immediately (one-time use)
-  await supabase
+  await getSupabase()
     .from('oauth_authorization_codes')
     .delete()
     .eq('code', code);
@@ -254,7 +253,7 @@ async function getAndDeleteAuthorizationCode(code: string): Promise<Authorizatio
  */
 async function cleanupExpiredCodes(): Promise<void> {
   try {
-    await supabase
+    await getSupabase()
       .from('oauth_authorization_codes')
       .delete()
       .lt('expires_at', new Date().toISOString());
@@ -263,8 +262,7 @@ async function cleanupExpiredCodes(): Promise<void> {
   }
 }
 
-// Periodic cleanup every 5 minutes
-setInterval(() => { cleanupExpiredCodes(); }, 5 * 60 * 1000);
+// Cleanup runs lazily when auth codes are checked (CF Workers don't allow setInterval at module scope)
 
 // ============================================
 // TOKEN ENCRYPTION (AES-256-GCM with per-record salt)
@@ -278,7 +276,7 @@ const TOKEN_IV_LENGTH = 12;
 async function deriveTokenEncryptionKey(salt: Uint8Array): Promise<CryptoKey> {
   const encoder = new TextEncoder();
   // Domain-separated key derivation from the service role key
-  const keyData = encoder.encode(`oauth-token-encryption:${SUPABASE_SERVICE_ROLE_KEY}`);
+  const keyData = encoder.encode(`oauth-token-encryption:${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`);
   const keyMaterial = await crypto.subtle.importKey('raw', keyData, 'PBKDF2', false, ['deriveKey']);
   return crypto.subtle.deriveKey(
     { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
@@ -337,7 +335,7 @@ async function getStateSigningKey(): Promise<CryptoKey> {
   if (_stateSigningKey) return _stateSigningKey;
   const encoder = new TextEncoder();
   // Use a domain-separated derivation so the signing key differs from the raw service key
-  const keyData = encoder.encode(`oauth-state-signing:${SUPABASE_SERVICE_ROLE_KEY}`);
+  const keyData = encoder.encode(`oauth-state-signing:${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`);
   _stateSigningKey = await crypto.subtle.importKey(
     'raw',
     keyData,
@@ -418,10 +416,10 @@ async function verifyPKCE(codeVerifier: string, codeChallenge: string, method: s
 
 // Verify a Supabase JWT and get user info
 async function verifySupabaseToken(accessToken: string): Promise<{ id: string; email: string } | null> {
-  const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+  const res = await fetch(`${getEnv('SUPABASE_URL')}/auth/v1/user`, {
     headers: {
       'Authorization': `Bearer ${accessToken}`,
-      'apikey': SUPABASE_ANON_KEY,
+      'apikey': (getEnv('SUPABASE_ANON_KEY') || getEnv('SUPABASE_SERVICE_ROLE_KEY')),
     },
   });
   if (!res.ok) return null;
@@ -920,7 +918,7 @@ function handleAuthorizationServerMetadata(request: Request): Response {
     token_endpoint_auth_methods_supported: ['none', 'client_secret_post'],
     revocation_endpoint: `${baseUrl}/oauth/revoke`,
     revocation_endpoint_auth_methods_supported: ['none'],
-    service_documentation: 'https://ultralight-api-iikqz.ondigitalocean.app/docs/mcp',
+    service_documentation: 'https://ultralight-api.rgn4jz429m.workers.dev/docs/mcp',
   });
 }
 
@@ -1027,7 +1025,7 @@ async function handleAuthorize(request: Request): Promise<Response> {
 
   // Redirect to Supabase Google OAuth, with our /oauth/callback as the redirect
   const callbackUrl = `${baseUrl}/oauth/callback?oauth_state=${encodeURIComponent(signedState)}`;
-  const authUrl = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(callbackUrl)}`;
+  const authUrl = `${getEnv('SUPABASE_URL')}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(callbackUrl)}`;
 
   return new Response(null, {
     status: 302,
@@ -1070,11 +1068,11 @@ async function handleOAuthCallback(request: Request): Promise<Response> {
 
   if (code) {
     // Supabase code exchange — exchange Supabase auth code for tokens
-    const tokenResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=authorization_code`, {
+    const tokenResponse = await fetch(`${getEnv('SUPABASE_URL')}/auth/v1/token?grant_type=authorization_code`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
       },
       body: JSON.stringify({
         auth_code: code,

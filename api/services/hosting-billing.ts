@@ -9,9 +9,7 @@
 // Balance → 0 = published content goes offline (hosting_suspended = true).
 // Runs hourly via setInterval (same pattern as subscription-expiry.ts).
 
-// @ts-ignore
-const Deno = globalThis.Deno;
-
+import { getEnv } from '../lib/env.ts';
 import { HOSTING_RATE_LIGHT_PER_MB_PER_HOUR, DATA_RATE_LIGHT_PER_MB_PER_HOUR, COMBINED_FREE_TIER_BYTES, LIGHT_PER_DOLLAR_DESKTOP } from '../../shared/types/index.ts';
 import { refreshGpuReliabilityView } from './gpu/reliability.ts';
 
@@ -63,8 +61,8 @@ export interface BillingResult {
  * 4. Deduct from balance; suspend if depleted
  */
 export async function processHostingBilling(): Promise<BillingResult> {
-  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   const result: BillingResult = {
     usersProcessed: 0,
@@ -388,8 +386,8 @@ export async function processHostingBilling(): Promise<BillingResult> {
  * Unsuspend all content for a user after they top up their balance.
  */
 export async function unsuspendContent(userId: string): Promise<{ apps: number; pages: number }> {
-  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   const writeHeaders = {
     'apikey': SUPABASE_SERVICE_ROLE_KEY,
@@ -442,7 +440,7 @@ async function triggerAutoTopup(
   supabaseUrl: string,
   supabaseKey: string
 ): Promise<void> {
-  const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY') || '';
+  const STRIPE_SECRET_KEY = getEnv('STRIPE_SECRET_KEY');
 
   if (!STRIPE_SECRET_KEY) {
     console.warn('[BILLING] Stripe not configured, skipping auto top-up');

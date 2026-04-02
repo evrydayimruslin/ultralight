@@ -2,11 +2,8 @@
 // Queries the gpu_reliability_7d materialized view for app-level reliability
 // stats and refreshes the view hourly via the billing job.
 
-// @ts-ignore - Deno is available
-const Deno = globalThis.Deno;
+import { getEnv } from '../../lib/env.ts';
 
-const SUPABASE_URL = Deno?.env?.get('SUPABASE_URL') || '';
-const SUPABASE_SERVICE_ROLE_KEY = Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -43,21 +40,21 @@ export interface GpuReliabilityStats {
 export async function getGpuReliability(
   appId: string,
 ): Promise<GpuReliabilityStats | null> {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  if (!getEnv('SUPABASE_URL') || !getEnv('SUPABASE_SERVICE_ROLE_KEY')) {
     return null;
   }
 
   try {
     const url =
-      `${SUPABASE_URL}/rest/v1/gpu_reliability_7d` +
+      `${getEnv('SUPABASE_URL')}/rest/v1/gpu_reliability_7d` +
       `?app_id=eq.${appId}` +
       `&select=total_calls,successful_calls,success_rate,avg_duration_ms,total_compute_light` +
       `&limit=1`;
 
     const res = await fetch(url, {
       headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+        'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
       },
     });
 
@@ -109,18 +106,18 @@ export async function getGpuReliability(
  * but does not throw.
  */
 export async function refreshGpuReliabilityView(): Promise<void> {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  if (!getEnv('SUPABASE_URL') || !getEnv('SUPABASE_SERVICE_ROLE_KEY')) {
     return;
   }
 
   try {
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/rpc/refresh_gpu_reliability`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/rpc/refresh_gpu_reliability`,
       {
         method: 'POST',
         headers: {
-          'apikey': SUPABASE_SERVICE_ROLE_KEY,
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+          'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
           'Content-Type': 'application/json',
         },
         body: '{}',

@@ -2,9 +2,11 @@
 // Parses TypeScript/JavaScript code to extract exported functions with full type information
 // Uses the TypeScript compiler API for accurate AST parsing
 
-// Note: TypeScript compiler is loaded via npm: specifier (Deno 2.x native support)
-// This adds ~2MB to the bundle but provides accurate type extraction
-import ts from 'npm:typescript@5.3.3';
+// TypeScript compiler — dynamically imported to avoid __filename crash at module init.
+// The TS compiler uses Node.js APIs (fs, path, __filename) not available in Workers global scope.
+// We lazy-load it only when parseTypeScript() is actually called.
+type TS = typeof import('typescript');
+let _ts: TS | null = null;
 
 import type { ParsedSkills, SkillFunction, PermissionDeclaration } from '../../shared/types/index.ts';
 
@@ -74,7 +76,11 @@ export interface JSDocInfo {
 /**
  * Parse TypeScript/JavaScript code and extract exported functions
  */
-export function parseTypeScript(code: string, filename = 'index.ts'): ParseResult {
+export async function parseTypeScript(code: string, filename = 'index.ts'): Promise<ParseResult> {
+  // Lazy-load TypeScript compiler (can't load at module init in CF Workers)
+  if (!_ts) _ts = await import('typescript');
+  const ts = _ts.default || _ts;
+
   const functions: ParsedFunction[] = [];
   const types: Record<string, JsonSchema> = {};
   const parseErrors: string[] = [];

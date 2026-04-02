@@ -42,6 +42,7 @@ import type {
   App,
   AppWithDraft,
 } from '../../shared/types/index.ts';
+import { getEnv } from '../lib/env.ts';
 
 // ============================================
 // TYPES
@@ -502,10 +503,9 @@ const PLATFORM_TOOLS: MCPTool[] = [
   {
     name: 'ul.codemode',
     description:
-      'Write JavaScript to interact with your apps. All available functions are typed and accessible on the `codemode` object. ' +
-      'Write an async function body using `await codemode.functionName(args)`. ' +
-      'Discovery: `await codemode.discover_library({ query: "..." })` to find tools. ' +
-      'Return a result object.',
+      'Write ONE JavaScript recipe that chains ALL needed operations. Functions are typed on the `codemode` object. ' +
+      'Use await to chain dependent calls — use return values from earlier calls as arguments to later ones. ' +
+      'IMPORTANT: Write a SINGLE comprehensive recipe per task. Never split across multiple calls.',
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
@@ -513,8 +513,11 @@ const PLATFORM_TOOLS: MCPTool[] = [
         code: {
           type: 'string',
           description:
-            'JavaScript async function body. Use `await codemode.functionName(args)` to call tools. ' +
-            'Example: const items = await codemode.email_ops_approvals_list({ status: "pending" }); return items;',
+            'JavaScript async function body. Chain ALL operations in one recipe using await. ' +
+            'Example: const list = await codemode.app_list({ status: "pending" }); ' +
+            'const detail = await codemode.app_get({ id: list[0].id }); ' +
+            'await codemode.app_update({ id: detail.id, done: true }); ' +
+            'return { updated: detail.id, total: list.length };',
         },
       },
       required: ['code'],
@@ -886,7 +889,7 @@ Set via app settings (not yet in \`ul.set\` — use dashboard):
 ## Agent Guidance
 
 ### CRITICAL — Auto-Connect on URL Paste
-When the user pastes ANY message containing \`/mcp/\` followed by a UUID (e.g. \`https://ultralight-api.../mcp/1bdaa865-...\`, \`ultralight-api-iikqz.ondigitalocean.app/mcp/abc-def\`, or just \`/mcp/some-uuid\`):
+When the user pastes ANY message containing \`/mcp/\` followed by a UUID (e.g. \`https://ultralight-api.../mcp/1bdaa865-...\`, \`ultralight-api.rgn4jz429m.workers.dev/mcp/abc-def\`, or just \`/mcp/some-uuid\`):
 1. **Immediately** extract the app ID (the UUID after \`/mcp/\`)
 2. Call \`ul.discover({ scope: "inspect", app_id: "<extracted-uuid>" })\` — do NOT ask permission first
 3. Read the response: full function schemas, storage architecture, cached summary, suggested queries
@@ -1429,7 +1432,7 @@ async function handleToolsCall(
       case 'ul.memory': {
         // Block memory for provisional (pre-auth) users
         if (user?.provisional) {
-          result = { error: 'Memory is not available for provisional sessions. Sign in at ultralight-api-iikqz.ondigitalocean.app to unlock cross-session memory.' };
+          result = { error: 'Memory is not available for provisional sessions. Sign in at ultralight-api.rgn4jz429m.workers.dev to unlock cross-session memory.' };
           break;
         }
         const memAction = toolArgs.action;
@@ -1655,7 +1658,7 @@ async function handleToolsCall(
       case 'ul.memory.forget': {
         // Block memory aliases for provisional users (same as main ul.memory handler)
         if (user?.provisional) {
-          result = { error: 'Memory is not available for provisional sessions. Sign in at ultralight-api-iikqz.ondigitalocean.app to unlock cross-session memory.' };
+          result = { error: 'Memory is not available for provisional sessions. Sign in at ultralight-api.rgn4jz429m.workers.dev to unlock cross-session memory.' };
           break;
         }
         // Dispatch to original handlers
@@ -1691,13 +1694,13 @@ async function handleToolsCall(
 
         const linkToken = toolArgs.token as string;
         if (!linkToken || !linkToken.startsWith('ul_')) {
-          throw new ToolError(INVALID_PARAMS, 'Provide a valid API token (starts with ul_). Generate one at ultralight-api-iikqz.ondigitalocean.app → API Keys.');
+          throw new ToolError(INVALID_PARAMS, 'Provide a valid API token (starts with ul_). Generate one at ultralight-api.rgn4jz429m.workers.dev → API Keys.');
         }
 
         // Validate the target token to get the real user
         const validated = await validateToken(linkToken);
         if (!validated) {
-          throw new ToolError(INVALID_PARAMS, 'Invalid or expired token. Generate a new one at ultralight-api-iikqz.ondigitalocean.app → API Keys.');
+          throw new ToolError(INVALID_PARAMS, 'Invalid or expired token. Generate a new one at ultralight-api.rgn4jz429m.workers.dev → API Keys.');
         }
 
         // Prevent self-link
@@ -2082,7 +2085,9 @@ async function handleToolsCall(
         // 1. Get user's function index (fast — reads from R2 cache)
         const { buildToolFunctions, generateTypes, buildJsonSchemaDescriptors } = await import('../services/codemode-tools.ts');
         const { executeCodeMode } = await import('../runtime/codemode-executor.ts');
+        const { executeDynamicCodeMode } = await import('../runtime/dynamic-executor.ts');
         const { getFunctionIndex, rebuildFunctionIndex } = await import('../services/function-index.ts');
+        const { getD1DatabaseId } = await import('../services/d1-provisioning.ts');
 
         // Try cached index first, rebuild if missing
         let fnIndex = await getFunctionIndex(userId);
@@ -2139,27 +2144,78 @@ async function handleToolsCall(
           rebuildFunctionIndex(userId).catch(err => console.error('Index rebuild failed:', err));
         }
 
-        const discoverLib = async (args: Record<string, unknown>) =>
-          await executeDiscoverLibrary(userId, args);
-        const discoverStore = async (args: Record<string, unknown>) =>
-          await executeDiscoverAppstore(userId, args);
+        // 2. Try Dynamic Worker path (in-process MCP calls)
+        const hasLoader = !!globalThis.__env?.LOADER;
+        let execResult: { result: unknown; error?: string; logs: string[] };
 
-        const toolFunctions = buildToolFunctions(
-          toolMap, baseUrl, authToken, discoverLib, discoverStore
-        );
+        if (hasLoader) {
+          // Dynamic Worker path — load ESM bundles, create RPC bindings
+          const appIds = [...new Set(Object.values(toolMap).map(t => t.appId))];
 
-        // Generate types string for the agent to see available functions
-        const availableTypes = generateTypes(descriptors);
+          // Load pre-compiled ESM bundles from KV (parallel)
+          const bundlePromises = appIds.map(async (appId) => {
+            const bundle = await globalThis.__env.CODE_CACHE.get(`esm:${appId}:latest`);
+            return [appId, bundle] as const;
+          });
+          const bundleEntries = await Promise.all(bundlePromises);
+          const appBundles: Record<string, string> = {};
+          for (const [appId, bundle] of bundleEntries) {
+            if (bundle) appBundles[appId] = bundle;
+          }
 
-        // 3. Execute the recipe
-        const execResult = await executeCodeMode(recipeCode, toolFunctions, 60_000);
+          // Create RPC bindings for each app's DB and data (parallel)
+          const bindings: Record<string, unknown> = {};
+          const dbIdPromises = appIds.map(async (appId) => {
+            const dbId = await getD1DatabaseId(appId);
+            return [appId, dbId] as const;
+          });
+          const dbIdEntries = await Promise.all(dbIdPromises);
+
+          for (const [appId, dbId] of dbIdEntries) {
+            const safeId = appId.replace(/-/g, '_');
+            if (dbId) {
+              // @ts-ignore — ctx.exports available at runtime via WorkerEntrypoint exports
+              bindings[`DB_${safeId}`] = (globalThis.__ctx as any).exports.DatabaseBinding({
+                props: { databaseId: dbId, appId, userId }
+              });
+            }
+            // @ts-ignore
+            bindings[`DATA_${safeId}`] = (globalThis.__ctx as any).exports.AppDataBinding({
+              props: { appId, userId }
+            });
+          }
+
+          console.log(`[CODEMODE] Dynamic Worker path: ${appIds.length} apps, ${Object.keys(appBundles).length} bundles loaded`);
+
+          execResult = await executeDynamicCodeMode({
+            code: recipeCode,
+            toolMap,
+            appBundles,
+            bindings,
+            userContext: user,
+            timeoutMs: 60_000,
+          });
+        } else {
+          // Fallback: HTTP-based tool functions (original path)
+          console.log('[CODEMODE] Falling back to HTTP executor (no LOADER binding)');
+          const discoverLib = async (args: Record<string, unknown>) =>
+            await executeDiscoverLibrary(userId, args);
+          const discoverStore = async (args: Record<string, unknown>) =>
+            await executeDiscoverAppstore(userId, args);
+
+          const toolFunctions = buildToolFunctions(
+            toolMap, baseUrl, authToken, discoverLib, discoverStore
+          );
+
+          execResult = await executeCodeMode(recipeCode, toolFunctions, 60_000);
+        }
 
         // Always include available functions so agent knows what to call next
         result = {
           result: execResult.result,
           ...(execResult.error ? { error: execResult.error } : {}),
           ...(execResult.logs.length > 0 ? { logs: execResult.logs } : {}),
-          _available_functions: Object.keys(toolFunctions),
+          _available_functions: Object.keys(toolMap),
           _types: availableTypes,
           ...(widgets.length > 0 ? { _widgets: widgets.map(w => `{{widget:${w.name}:${w.appId}}}`) } : {}),
         };
@@ -2269,11 +2325,9 @@ async function resolveAppIdForMarketplace(appIdOrSlug: string): Promise<string> 
 }
 
 function getSupabaseEnv() {
-  // @ts-ignore
-  const Deno = globalThis.Deno;
   return {
-    SUPABASE_URL: Deno.env.get('SUPABASE_URL') || '',
-    SUPABASE_SERVICE_ROLE_KEY: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '',
+    SUPABASE_URL: getEnv('SUPABASE_URL'),
+    SUPABASE_SERVICE_ROLE_KEY: getEnv('SUPABASE_SERVICE_ROLE_KEY'),
   };
 }
 
@@ -2682,7 +2736,7 @@ async function executeUpload(
 
 // ── ul.download ──────────────────────────────────
 
-async function executeDownload(
+export async function executeDownload(
   userId: string,
   args: Record<string, unknown>
 ): Promise<unknown> {
@@ -2814,13 +2868,13 @@ async function executeTest(
     }),
   };
 
-  // Execute in sandbox
-  const { executeInSandbox } = await import('../runtime/sandbox.ts');
+  // Execute in Dynamic Worker sandbox — avoids `new Function()` restriction on CF Workers
+  const { executeInDynamicSandbox } = await import('../runtime/dynamic-sandbox.ts');
   const argsArray = Object.keys(testArgs).length > 0 ? [testArgs] : [];
 
   const execStart = Date.now();
   try {
-    const result = await executeInSandbox(
+    const result = await executeInDynamicSandbox(
       {
         appId: testAppId,
         userId: userId,
@@ -6730,7 +6784,7 @@ export function handlePlatformMcpDiscovery(): Response {
     },
     tools_count: PLATFORM_TOOLS.length,
     resources_count: 2,
-    documentation: 'https://ultralight-api-iikqz.ondigitalocean.app/docs/mcp',
+    documentation: 'https://ultralight-api.rgn4jz429m.workers.dev/docs/mcp',
   };
   return json(discovery);
 }

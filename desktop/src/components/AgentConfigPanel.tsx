@@ -14,6 +14,19 @@ interface AppFunction {
   convention: string;
 }
 
+type ScopeAccess = 'all' | 'functions' | 'data';
+
+interface ScopedApp {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  access: ScopeAccess;
+  functions: AppFunction[];
+  expanded: boolean;
+}
+
+/** Legacy type — kept for backwards compat parsing */
 interface ConnectedApp {
   id: string;
   name: string;
@@ -26,6 +39,8 @@ interface ConnectedApp {
 interface ConnectedAppsConfig {
   [appId: string]: {
     name: string;
+    slug?: string;
+    access?: ScopeAccess;
     selected_functions: string[];
     conventions: Record<string, string>;
   };
@@ -61,7 +76,7 @@ function statusDotClass(status: string): string {
   }
 }
 
-function buildPersistedConfig(apps: ConnectedApp[], teamMemberIds: string[]): PersistedConfig {
+function buildScopePersistedConfig(apps: ScopedApp[], teamMemberIds: string[]): PersistedConfig {
   const appsConfig: ConnectedAppsConfig = {};
   for (const app of apps) {
     const selectedFns = app.functions.filter(f => f.selected).map(f => f.name);
@@ -73,6 +88,8 @@ function buildPersistedConfig(apps: ConnectedApp[], teamMemberIds: string[]): Pe
     }
     appsConfig[app.id] = {
       name: app.name,
+      slug: app.slug,
+      access: app.access,
       selected_functions: selectedFns,
       conventions,
     };
@@ -146,11 +163,18 @@ export default function AgentConfigPanel({
   const [adminNotes, setAdminNotes] = useState(agent.admin_notes ?? '');
   const [directive, setDirective] = useState(agent.initial_task || agent.name || '');
   const [editingDirective, setEditingDirective] = useState(false);
-  const [editingModel, setEditingModel] = useState(false);
-  const [modelValue, setModelValue] = useState(agent.model || '');
-  const modelInputRef = useRef<HTMLInputElement>(null);
+  const [editingFlashModel, setEditingFlashModel] = useState(false);
+  const [editingHeavyModel, setEditingHeavyModel] = useState(false);
+  const [flashModelValue, setFlashModelValue] = useState('');
+  const [heavyModelValue, setHeavyModelValue] = useState('');
+  const flashModelRef = useRef<HTMLInputElement>(null);
+  const heavyModelRef = useRef<HTMLInputElement>(null);
 
-  // Connected apps state
+  // Scope state
+  const [scopedApps, setScopedApps] = useState<ScopedApp[]>([]);
+  const [allUserApps, setAllUserApps] = useState<Array<{ id: string; slug: string; name: string; description: string | null }>>([]);
+  const [loadingApps, setLoadingApps] = useState(false);
+  // Legacy — kept for backwards compat init
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>([]);
   const [appSearchQuery, setAppSearchQuery] = useState('');
   const [appSearchResults, setAppSearchResults] = useState<Array<{ id: string; name: string; description: string | null }>>([]);
@@ -174,61 +198,82 @@ export default function AgentConfigPanel({
     setAdminNotes(agent.admin_notes ?? '');
     setDirective(agent.initial_task || agent.name || '');
     setEditingDirective(false);
-    setModelValue(agent.model || '');
-    setEditingModel(false);
+    const modelParts = (agent.model || '').split(' → ').map(s => s.trim());
+    setFlashModelValue(modelParts[0] || '');
+    setHeavyModelValue(modelParts[1] || modelParts[0] || '');
+    setEditingFlashModel(false);
+    setEditingHeavyModel(false);
 
-    // Load connected apps + team from agent record
+    // Fetch all user apps for the scope dropdown
+    if (executeMcpTool) {
+      setLoadingApps(true);
+      executeMcpTool('ul_discover', { scope: 'library' })
+        .then(result => {
+          const parsed = JSON.parse(result);
+          let apps: Array<{ id: string; slug: string; name: string; description: string | null }> = [];
+
+          if (Array.isArray(parsed.library)) {
+            apps = parsed.library
+              .filter((r: { type?: string }) => r.type === 'app')
+              .map((r: { id: string; slug?: string; name: string; description?: string }) => ({
+                id: r.id, slug: r.slug || r.id, name: r.name, description: r.description || null,
+              }));
+          } else if (typeof parsed.library === 'string') {
+            const sections = (parsed.library as string).split(/^## /gm).filter(Boolean);
+            for (const section of sections) {
+              const lines = section.split('\n');
+              const name = lines[0]?.trim();
+              if (!name || name.startsWith('#') || name === 'Saved Apps' || name === 'Saved Pages' || name === 'Library') continue;
+              apps.push({ id: name, slug: name, name, description: lines[1]?.trim() || null });
+            }
+          } else if (parsed.results) {
+            apps = parsed.results.map((r: { id: string; slug?: string; name: string; description?: string }) => ({
+              id: r.id, slug: r.slug || r.id, name: r.name, description: r.description || null,
+            }));
+          }
+
+          setAllUserApps(apps);
+        })
+        .catch(() => setAllUserApps([]))
+        .finally(() => setLoadingApps(false));
+    }
+
+    // Load scoped apps from agent record
     if (agent.connected_apps) {
       try {
         const persisted = parsePersistedConfig(agent.connected_apps);
         setTeamMembers(persisted.team || []);
         const config = persisted.apps;
-        const apps: ConnectedApp[] = Object.entries(config).map(([appId, cfg]) => ({
+        const apps: ScopedApp[] = Object.entries(config).map(([appId, cfg]) => ({
           id: appId,
+          slug: cfg.slug || appId,
           name: cfg.name,
           description: null,
+          access: cfg.access || 'all',
           functions: [],
           expanded: false,
         }));
-        setConnectedApps(apps);
+        setScopedApps(apps);
 
         // Inspect each app to get full function lists
         if (executeMcpTool) {
           Object.entries(config).forEach(async ([appId, cfg]) => {
             try {
               const info = await inspectApp(executeMcpTool, appId, cfg);
-              setConnectedApps(prev => prev.map(a =>
+              setScopedApps(prev => prev.map(a =>
                 a.id === appId ? { ...a, name: info.name, description: info.description, functions: info.functions } : a
               ));
             } catch { /* keep placeholder */ }
           });
         }
       } catch {
-        setConnectedApps([]);
-        setTeamMembers([]);
-      }
-    } else if (agent.connected_app_ids) {
-      // Legacy: just app IDs without granular config
-      try {
-        const ids: string[] = JSON.parse(agent.connected_app_ids);
-        setConnectedApps(ids.map(id => ({ id, name: id, description: null, functions: [], expanded: false })));
-        if (executeMcpTool) {
-          ids.forEach(async (appId) => {
-            try {
-              const info = await inspectApp(executeMcpTool, appId);
-              setConnectedApps(prev => prev.map(a =>
-                a.id === appId ? { ...a, name: info.name, description: info.description, functions: info.functions } : a
-              ));
-            } catch { /* keep placeholder */ }
-          });
-        }
-      } catch {
-        setConnectedApps([]);
+        setScopedApps([]);
         setTeamMembers([]);
       }
     } else {
-      setConnectedApps([]);
+      setScopedApps([]);
       setTeamMembers([]);
+      setConnectedApps([]);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent.id]);
@@ -238,8 +283,8 @@ export default function AgentConfigPanel({
   const teamMembersRef = useRef(teamMembers);
   teamMembersRef.current = teamMembers;
 
-  const persistConfig = useCallback(async (apps: ConnectedApp[]) => {
-    const config = buildPersistedConfig(apps, teamMembersRef.current);
+  const persistScopeConfig = useCallback(async (apps: ScopedApp[]) => {
+    const config = buildScopePersistedConfig(apps, teamMembersRef.current);
     const ids = apps.map(a => a.id);
     await onUpdateAgent({
       connected_apps: JSON.stringify(config),
@@ -247,14 +292,30 @@ export default function AgentConfigPanel({
     } as Partial<Agent>);
   }, [onUpdateAgent]);
 
+  const persistConfig = useCallback(async (apps: ConnectedApp[]) => {
+    // Legacy compat — unused in new scope UI
+    const appsConfig: ConnectedAppsConfig = {};
+    for (const app of apps) {
+      appsConfig[app.id] = {
+        name: app.name,
+        selected_functions: app.functions.filter(f => f.selected).map(f => f.name),
+        conventions: {},
+      };
+    }
+    await onUpdateAgent({
+      connected_apps: JSON.stringify({ apps: appsConfig }),
+      connected_app_ids: apps.length > 0 ? JSON.stringify(apps.map(a => a.id)) : null,
+    } as Partial<Agent>);
+  }, [onUpdateAgent]);
+
   const persistTeam = useCallback(async (team: string[]) => {
-    const config = buildPersistedConfig(connectedApps, team);
-    const ids = connectedApps.map(a => a.id);
+    const config = buildScopePersistedConfig(scopedApps, team);
+    const ids = scopedApps.map(a => a.id);
     await onUpdateAgent({
       connected_apps: JSON.stringify(config),
       connected_app_ids: ids.length > 0 ? JSON.stringify(ids) : null,
     } as Partial<Agent>);
-  }, [connectedApps, onUpdateAgent]);
+  }, [scopedApps, onUpdateAgent]);
 
   const handleNotesBlur = useCallback(async () => {
     if (adminNotes !== (agent.admin_notes ?? '')) {
@@ -270,12 +331,31 @@ export default function AgentConfigPanel({
     }
   }, [agent, directive, onUpdateAgent]);
 
-  const handleModelBlur = useCallback(async () => {
-    setEditingModel(false);
-    if (modelValue.trim() && modelValue.trim() !== (agent.model || '')) {
-      await onUpdateAgent({ model: modelValue.trim() } as Partial<Agent>);
+  const displayModelName = (id: string) => {
+    const parts = id.split('/');
+    const name = parts.length > 1 ? parts[1] : id;
+    return name.replace(/:nitro$/, '');
+  };
+
+  const handleFlashModelBlur = useCallback(async () => {
+    setEditingFlashModel(false);
+    const flash = flashModelValue.trim();
+    const heavy = heavyModelValue.trim();
+    const combined = flash && heavy ? `${flash} → ${heavy}` : flash || heavy;
+    if (combined !== (agent.model || '')) {
+      await onUpdateAgent({ model: combined } as Partial<Agent>);
     }
-  }, [agent, modelValue, onUpdateAgent]);
+  }, [agent, flashModelValue, heavyModelValue, onUpdateAgent]);
+
+  const handleHeavyModelBlur = useCallback(async () => {
+    setEditingHeavyModel(false);
+    const flash = flashModelValue.trim();
+    const heavy = heavyModelValue.trim();
+    const combined = flash && heavy ? `${flash} → ${heavy}` : flash || heavy;
+    if (combined !== (agent.model || '')) {
+      await onUpdateAgent({ model: combined } as Partial<Agent>);
+    }
+  }, [agent, flashModelValue, heavyModelValue, onUpdateAgent]);
 
   const handleToolApprovalChange = useCallback(async (value: string) => {
     await onUpdateAgent({ permission_level: value } as Partial<Agent>);
@@ -283,6 +363,73 @@ export default function AgentConfigPanel({
 
   // ── Function toggle / convention ──
 
+  // ── Scope handlers ──
+
+  const addScopedApp = useCallback(async (app: { id: string; slug: string; name: string; description: string | null }) => {
+    const newApp: ScopedApp = {
+      id: app.id,
+      slug: app.slug,
+      name: app.name,
+      description: app.description,
+      access: 'all',
+      functions: [],
+      expanded: false,
+    };
+    const next = [...scopedApps, newApp];
+    setScopedApps(next);
+
+    // Inspect to get functions
+    if (executeMcpTool) {
+      try {
+        const info = await inspectApp(executeMcpTool, app.id);
+        const updated = next.map(a => a.id === app.id ? { ...a, name: info.name, description: info.description, functions: info.functions } : a);
+        setScopedApps(updated);
+        await persistScopeConfig(updated);
+      } catch {
+        await persistScopeConfig(next);
+      }
+    } else {
+      await persistScopeConfig(next);
+    }
+  }, [scopedApps, executeMcpTool, persistScopeConfig]);
+
+  const removeScopedApp = useCallback(async (id: string) => {
+    const next = scopedApps.filter(a => a.id !== id);
+    setScopedApps(next);
+    await persistScopeConfig(next);
+  }, [scopedApps, persistScopeConfig]);
+
+  const changeScopeAccess = useCallback(async (appId: string, access: ScopeAccess) => {
+    const next = scopedApps.map(a => a.id === appId ? { ...a, access } : a);
+    setScopedApps(next);
+    await persistScopeConfig(next);
+  }, [scopedApps, persistScopeConfig]);
+
+  const toggleScopeExpanded = useCallback((appId: string) => {
+    setScopedApps(prev => prev.map(a =>
+      a.id === appId ? { ...a, expanded: !a.expanded } : a
+    ));
+  }, []);
+
+  const toggleScopeFunction = useCallback(async (appId: string, fnName: string) => {
+    const next = scopedApps.map(a => {
+      if (a.id !== appId) return a;
+      return { ...a, functions: a.functions.map(f => f.name === fnName ? { ...f, selected: !f.selected } : f) };
+    });
+    setScopedApps(next);
+    await persistScopeConfig(next);
+  }, [scopedApps, persistScopeConfig]);
+
+  const toggleScopeAllFunctions = useCallback(async (appId: string, selectAll: boolean) => {
+    const next = scopedApps.map(a => {
+      if (a.id !== appId) return a;
+      return { ...a, functions: a.functions.map(f => ({ ...f, selected: selectAll })) };
+    });
+    setScopedApps(next);
+    await persistScopeConfig(next);
+  }, [scopedApps, persistScopeConfig]);
+
+  // Legacy handlers (still referenced by dead code below)
   const toggleFunction = useCallback(async (appId: string, fnName: string) => {
     const nextApps = connectedApps.map(a => {
       if (a.id !== appId) return a;
@@ -458,30 +605,62 @@ export default function AgentConfigPanel({
         />
       </div>
 
-      {/* Model + Tool Approval row */}
+      {/* Model (Flash + Heavy) + Tool Approval row */}
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="text-caption text-ul-text-muted block mb-1">Model</label>
-          {editingModel ? (
-            <input
-              ref={modelInputRef}
-              type="text"
-              value={modelValue}
-              onChange={e => setModelValue(e.target.value)}
-              onBlur={handleModelBlur}
-              onKeyDown={e => { if (e.key === 'Enter') handleModelBlur(); if (e.key === 'Escape') { setModelValue(agent.model || ''); setEditingModel(false); } }}
-              autoFocus
-              className="w-full px-2 py-1.5 text-small rounded border border-blue-300 bg-white focus:outline-none focus:border-blue-500 font-mono"
-              placeholder="e.g. anthropic/claude-3.5-sonnet"
-            />
-          ) : (
-            <button
-              onClick={() => { setEditingModel(true); setTimeout(() => modelInputRef.current?.focus(), 50); }}
-              className="w-full text-left px-2 py-1.5 text-small text-ul-text-secondary rounded border border-transparent hover:border-ul-border hover:bg-white transition-colors font-mono truncate"
-            >
-              {agent.model || <span className="text-ul-text-muted italic font-sans">default</span>}
-            </button>
-          )}
+          <div className="flex flex-col gap-1">
+            {/* Flash model */}
+            <div className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
+              {editingFlashModel ? (
+                <input
+                  ref={flashModelRef}
+                  type="text"
+                  value={flashModelValue}
+                  onChange={e => setFlashModelValue(e.target.value)}
+                  onBlur={handleFlashModelBlur}
+                  onKeyDown={e => { if (e.key === 'Enter') handleFlashModelBlur(); if (e.key === 'Escape') { const p = (agent.model || '').split(' → '); setFlashModelValue(p[0]?.trim() || ''); setEditingFlashModel(false); } }}
+                  autoFocus
+                  className="flex-1 min-w-0 px-1.5 py-0.5 text-small rounded border border-blue-300 bg-white focus:outline-none focus:border-blue-500 font-mono"
+                  placeholder="flash model"
+                />
+              ) : (
+                <button
+                  onClick={() => { setEditingFlashModel(true); setTimeout(() => flashModelRef.current?.focus(), 50); }}
+                  className="flex-1 min-w-0 text-left px-1.5 py-0.5 text-small text-ul-text-secondary rounded border border-transparent hover:border-ul-border hover:bg-white transition-colors font-mono truncate"
+                  title={flashModelValue}
+                >
+                  {flashModelValue ? displayModelName(flashModelValue) : <span className="text-ul-text-muted italic font-sans text-caption">flash</span>}
+                </button>
+              )}
+            </div>
+            {/* Heavy model */}
+            <div className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-ul-success flex-shrink-0" />
+              {editingHeavyModel ? (
+                <input
+                  ref={heavyModelRef}
+                  type="text"
+                  value={heavyModelValue}
+                  onChange={e => setHeavyModelValue(e.target.value)}
+                  onBlur={handleHeavyModelBlur}
+                  onKeyDown={e => { if (e.key === 'Enter') handleHeavyModelBlur(); if (e.key === 'Escape') { const p = (agent.model || '').split(' → '); setHeavyModelValue(p[1]?.trim() || p[0]?.trim() || ''); setEditingHeavyModel(false); } }}
+                  autoFocus
+                  className="flex-1 min-w-0 px-1.5 py-0.5 text-small rounded border border-blue-300 bg-white focus:outline-none focus:border-blue-500 font-mono"
+                  placeholder="heavy model"
+                />
+              ) : (
+                <button
+                  onClick={() => { setEditingHeavyModel(true); setTimeout(() => heavyModelRef.current?.focus(), 50); }}
+                  className="flex-1 min-w-0 text-left px-1.5 py-0.5 text-small text-ul-text-secondary rounded border border-transparent hover:border-ul-border hover:bg-white transition-colors font-mono truncate"
+                  title={heavyModelValue}
+                >
+                  {heavyModelValue ? displayModelName(heavyModelValue) : <span className="text-ul-text-muted italic font-sans text-caption">heavy</span>}
+                </button>
+              )}
+            </div>
+          </div>
         </div>
         <div>
           <label className="text-caption text-ul-text-muted block mb-1">Tool Approval</label>
@@ -497,97 +676,99 @@ export default function AgentConfigPanel({
         </div>
       </div>
 
-      {/* Connected Apps — granular function selection */}
+      {/* Scope — restrict which apps/functions/data are available */}
       {executeMcpTool && (
         <div>
           <label className="text-caption text-ul-text-muted block mb-1.5">
-            Connected Apps
-            {connectedApps.length > 0 && (
-              <span className="ml-1.5 text-[10px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
-                {connectedApps.length} app{connectedApps.length !== 1 ? 's' : ''}
-                {' · '}
-                {connectedApps.reduce((sum, a) => sum + a.functions.filter(f => f.selected).length, 0)} fn
+            Scope
+            {scopedApps.length > 0 && (
+              <span className="ml-1.5 text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
+                {scopedApps.length} app{scopedApps.length !== 1 ? 's' : ''}
               </span>
             )}
           </label>
 
-          {/* Connected apps list */}
-          {connectedApps.length > 0 && (
+          {scopedApps.length === 0 && (
+            <p className="text-[10px] text-ul-text-muted mb-2">No scope — all apps available</p>
+          )}
+
+          {/* Scoped apps list */}
+          {scopedApps.length > 0 && (
             <div className="space-y-2 mb-2">
-              {connectedApps.map(app => (
-                <div key={app.id} className="rounded border border-emerald-200 bg-emerald-50/30 overflow-hidden">
-                  {/* App header */}
+              {scopedApps.map(app => (
+                <div key={app.id} className="rounded border border-blue-200 bg-blue-50/30 overflow-hidden">
+                  {/* App row: name + access dropdown + remove */}
                   <div className="flex items-center gap-2 px-2.5 py-1.5">
-                    <button
-                      onClick={() => toggleAppExpanded(app.id)}
-                      className="flex items-center gap-1.5 flex-1 min-w-0"
-                    >
-                      <svg
-                        width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
-                        className={`transition-transform flex-shrink-0 ${app.expanded ? 'rotate-90' : ''}`}
+                    {app.access !== 'data' && app.functions.length > 0 && (
+                      <button
+                        onClick={() => toggleScopeExpanded(app.id)}
+                        className="flex items-center shrink-0"
                       >
-                        <path d="M3 1.5L7 5L3 8.5" />
-                      </svg>
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
-                      <span className="text-caption text-ul-text font-medium truncate">{app.name}</span>
-                    </button>
-                    <span className="text-[10px] text-ul-text-muted shrink-0">
-                      {app.functions.filter(f => f.selected).length}/{app.functions.length} fn
-                    </span>
+                        <svg
+                          width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
+                          className={`transition-transform ${app.expanded ? 'rotate-90' : ''}`}
+                        >
+                          <path d="M3 1.5L7 5L3 8.5" />
+                        </svg>
+                      </button>
+                    )}
+                    <span className="text-caption text-ul-text font-medium truncate flex-1 min-w-0">{app.name}</span>
+                    <select
+                      value={app.access}
+                      onChange={e => changeScopeAccess(app.id, e.target.value as ScopeAccess)}
+                      className="text-[11px] px-1.5 py-0.5 rounded border border-blue-200 bg-white focus:outline-none focus:border-blue-400 shrink-0"
+                    >
+                      <option value="all">All</option>
+                      <option value="functions">Functions only</option>
+                      <option value="data">Data only</option>
+                    </select>
+                    {app.access !== 'data' && app.functions.length > 0 && (
+                      <span className="text-[10px] text-ul-text-muted shrink-0">
+                        {app.functions.filter(f => f.selected).length}/{app.functions.length} fn
+                      </span>
+                    )}
                     <button
                       type="button"
-                      onClick={() => removeConnectedApp(app.id)}
+                      onClick={() => removeScopedApp(app.id)}
                       className="text-[10px] text-red-400 hover:text-red-600 px-0.5 shrink-0"
                     >
                       ✕
                     </button>
                   </div>
 
-                  {/* Expanded function list */}
-                  {app.expanded && app.functions.length > 0 && (
-                    <div className="border-t border-emerald-200 bg-white px-2.5 py-1.5">
+                  {/* Expanded function list — only for All / Functions only */}
+                  {app.expanded && app.access !== 'data' && app.functions.length > 0 && (
+                    <div className="border-t border-blue-200 bg-white px-2.5 py-1.5">
                       <div className="flex items-center gap-2 mb-1.5 pb-1.5 border-b border-gray-100">
-                        <button onClick={() => toggleAllFunctions(app.id, true)} className="text-[10px] text-blue-600 hover:underline">
+                        <button onClick={() => toggleScopeAllFunctions(app.id, true)} className="text-[10px] text-blue-600 hover:underline">
                           Select All
                         </button>
                         <span className="text-[10px] text-ul-text-muted">·</span>
-                        <button onClick={() => toggleAllFunctions(app.id, false)} className="text-[10px] text-blue-600 hover:underline">
+                        <button onClick={() => toggleScopeAllFunctions(app.id, false)} className="text-[10px] text-blue-600 hover:underline">
                           Deselect All
                         </button>
                       </div>
 
                       <div className="space-y-1 max-h-60 overflow-y-auto">
                         {app.functions.map(fn => (
-                          <div key={fn.name}>
-                            <label className="flex items-start gap-1.5 cursor-pointer group">
-                              <input
-                                type="checkbox"
-                                checked={fn.selected}
-                                onChange={() => toggleFunction(app.id, fn.name)}
-                                className="mt-0.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
-                              />
-                              <div className="flex-1 min-w-0">
-                                <span className={`text-[11px] font-mono ${fn.selected ? 'text-ul-text' : 'text-ul-text-muted line-through'}`}>
-                                  {fn.name}
+                          <label key={fn.name} className="flex items-start gap-1.5 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={fn.selected}
+                              onChange={() => toggleScopeFunction(app.id, fn.name)}
+                              className="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <span className={`text-[11px] font-mono ${fn.selected ? 'text-ul-text' : 'text-ul-text-muted line-through'}`}>
+                                {fn.name}
+                              </span>
+                              {fn.description && (
+                                <span className="text-[10px] text-ul-text-muted ml-1.5">
+                                  — {fn.description.slice(0, 60)}{fn.description.length > 60 ? '...' : ''}
                                 </span>
-                                {fn.description && (
-                                  <span className="text-[10px] text-ul-text-muted ml-1.5">
-                                    — {fn.description.slice(0, 60)}{fn.description.length > 60 ? '...' : ''}
-                                  </span>
-                                )}
-                              </div>
-                            </label>
-                            {fn.selected && (
-                              <input
-                                type="text"
-                                value={fn.convention}
-                                onChange={e => updateConvention(app.id, fn.name, e.target.value)}
-                                onBlur={() => saveConvention()}
-                                placeholder="Convention: e.g. always confirm before executing..."
-                                className="ml-5 mt-0.5 mb-1 w-[calc(100%-1.25rem)] text-[10px] px-1.5 py-0.5 rounded border border-gray-200 bg-gray-50 focus:outline-none focus:border-blue-300 focus:bg-white text-ul-text-secondary placeholder:text-gray-300"
-                              />
-                            )}
-                          </div>
+                              )}
+                            </div>
+                          </label>
                         ))}
                       </div>
                     </div>
@@ -597,46 +778,37 @@ export default function AgentConfigPanel({
             </div>
           )}
 
-          {/* Search input */}
-          <div className="relative">
-            <input
-              type="text"
-              value={appSearchQuery}
-              onChange={e => setAppSearchQuery(e.target.value)}
-              placeholder="Search your apps to connect..."
-              className="w-full text-small rounded border border-ul-border px-2 py-1.5 bg-white focus:outline-none focus:border-ul-border-focus"
-            />
-            {searchingApps && (
-              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-ul-text-muted">
-                searching...
-              </span>
-            )}
-          </div>
-
-          {/* Search results dropdown */}
-          {appSearchResults.length > 0 && (
-            <div className="mt-1 rounded border border-ul-border bg-white shadow-sm max-h-40 overflow-y-auto">
-              {appSearchResults.map(app => (
-                <button
-                  key={app.id}
-                  type="button"
-                  onClick={() => addConnectedApp(app)}
-                  className="w-full text-left px-3 py-1.5 hover:bg-gray-50 flex items-center gap-2 border-b border-ul-border last:border-b-0"
-                >
-                  <span className="text-caption text-ul-text truncate flex-1">{app.name}</span>
-                  {app.description && (
-                    <span className="text-[10px] text-ul-text-muted truncate max-w-[150px]">{app.description}</span>
-                  )}
-                  <span className="text-[10px] text-emerald-600 shrink-0">+ connect</span>
-                </button>
-              ))}
-            </div>
-          )}
+          {/* Add app dropdown */}
+          {(() => {
+            const available = allUserApps.filter(a => !scopedApps.some(s => s.id === a.id));
+            if (available.length === 0 && scopedApps.length > 0) return null;
+            return (
+              <div className="relative">
+                {loadingApps ? (
+                  <span className="text-[10px] text-ul-text-muted">Loading apps...</span>
+                ) : available.length > 0 ? (
+                  <select
+                    value=""
+                    onChange={e => {
+                      const app = available.find(a => a.id === e.target.value);
+                      if (app) addScopedApp(app);
+                    }}
+                    className="w-full text-small rounded border border-ul-border px-2 py-1.5 bg-white focus:outline-none focus:border-ul-border-focus text-ul-text-muted"
+                  >
+                    <option value="">+ Add app to scope...</option>
+                    {available.map(app => (
+                      <option key={app.id} value={app.id}>{app.name}</option>
+                    ))}
+                  </select>
+                ) : null}
+              </div>
+            );
+          })()}
         </div>
       )}
 
-      {/* Team — search and connect sibling agents */}
-      <div>
+      {/* Team — deprecated for now */}
+      {false && <div>
         <label className="text-caption text-ul-text-muted block mb-1.5">
           Team
           {resolvedTeamMembers.length > 0 && (
@@ -704,7 +876,7 @@ export default function AgentConfigPanel({
             ))}
           </div>
         )}
-      </div>
+      </div>}
 
       {/* Open Chat button (agents tab only) */}
       {showOpenChat && onNavigateToAgent && (

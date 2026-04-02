@@ -3,9 +3,7 @@
 // Runs every 10 seconds. Processes up to 100 rows per batch using embedBatch().
 // Same startup pattern as hosting-billing.ts and auto-healing.ts.
 
-// @ts-ignore
-const Deno = globalThis.Deno;
-
+import { getEnv } from '../lib/env.ts';
 import { createEmbeddingService } from './embedding.ts';
 
 // ============================================
@@ -36,9 +34,9 @@ interface PendingRow {
  * Process all content rows that have embedding_text but NULL embedding.
  * Returns the number of rows successfully embedded.
  */
-async function processNullEmbeddings(): Promise<number> {
-  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+export async function processNullEmbeddings(): Promise<number> {
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return 0;
 
   const embeddingService = createEmbeddingService();

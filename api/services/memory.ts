@@ -2,6 +2,7 @@
 // Handles remember/recall operations
 
 import type { MemoryEntry } from '../../shared/types/index.ts';
+import { getEnv } from '../lib/env.ts';
 
 export interface SupabaseConfig {
   url: string;
@@ -139,8 +140,8 @@ export class MemoryService {
 
 // Factory function
 export function createMemoryService(): MemoryService {
-  const url = Deno.env.get('SUPABASE_URL');
-  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const url = getEnv('SUPABASE_URL');
+  const key = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!url || !key) {
     throw new Error('Supabase credentials not configured');

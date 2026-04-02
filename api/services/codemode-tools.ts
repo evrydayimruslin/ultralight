@@ -194,7 +194,10 @@ export function buildJsonSchemaDescriptors(apps: AppForCodemode[]): {
  *
  * Inlined from @cloudflare/codemode's generateTypesFromJsonSchema for Deno compat.
  */
-export function generateTypes(descriptors: Record<string, JsonSchemaToolDescriptor>): string {
+export function generateTypes(
+  descriptors: Record<string, JsonSchemaToolDescriptor>,
+  returnTypes?: Record<string, string>,  // sanitizedName → return type string
+): string {
   const entries: string[] = [];
 
   for (const [name, desc] of Object.entries(descriptors)) {
@@ -216,7 +219,8 @@ export function generateTypes(descriptors: Record<string, JsonSchemaToolDescript
       inputType = props.length > 0 ? `{\n${props.join('\n')}\n  }` : '{}';
     }
 
-    entries.push(`${jsdoc}  ${name}: (input: ${inputType}) => Promise<unknown>;`);
+    const returnType = returnTypes?.[name] || 'unknown';
+    entries.push(`${jsdoc}  ${name}: (input: ${inputType}) => Promise<${returnType}>;`);
   }
 
   return `declare const codemode: {\n${entries.join('\n\n')}\n};`;

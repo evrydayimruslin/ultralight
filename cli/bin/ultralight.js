@@ -17,7 +17,7 @@ import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const API_URL = process.env.ULTRALIGHT_API_URL || 'https://ultralight-api-iikqz.ondigitalocean.app';
+const API_URL = process.env.ULTRALIGHT_API_URL || 'https://ultralight-api.rgn4jz429m.workers.dev';
 
 // ─── Color helpers (no dependencies) ─────────────────────────────────
 const isTTY = process.stdout.isTTY;
@@ -55,8 +55,8 @@ const PLUGIN_JSON = {
   name: 'ultralight',
   description: 'Ultralight — serverless MCP platform. Discover, build, test, and deploy AI agent tools.',
   version: '1.0.0',
-  author: { name: 'Ultralight', url: 'https://ultralight-api-iikqz.ondigitalocean.app' },
-  homepage: 'https://ultralight-api-iikqz.ondigitalocean.app',
+  author: { name: 'Ultralight', url: 'https://ultralight-api.rgn4jz429m.workers.dev' },
+  homepage: 'https://ultralight-api.rgn4jz429m.workers.dev',
   license: 'MIT',
   keywords: ['ultralight', 'mcp', 'serverless', 'ai', 'tools', 'agent'],
 };
@@ -369,7 +369,7 @@ function registerPlugin(token, apiUrl) {
               description: 'Ultralight — serverless MCP platform. Discover, build, test, and deploy AI agent tools instantly.',
               category: 'development',
               source: './external_plugins/ultralight',
-              homepage: 'https://ultralight-api-iikqz.ondigitalocean.app',
+              homepage: 'https://ultralight-api.rgn4jz429m.workers.dev',
             });
             writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
           }
@@ -639,7 +639,7 @@ ${c.red('Full CLI not found.')}
 The ${c.cyan('setup')} command works standalone, but ${c.cyan(command)} needs the full Deno CLI.
 
 To use the full CLI, clone the repo or install globally:
-  ${c.cyan('deno install --allow-all -n ultralight https://ultralight-api-iikqz.ondigitalocean.app/cli/mod.ts')}
+  ${c.cyan('deno install --allow-all -n ultralight https://ultralight-api.rgn4jz429m.workers.dev/cli/mod.ts')}
 `);
     process.exit(1);
   }

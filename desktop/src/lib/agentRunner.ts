@@ -5,6 +5,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { runAgentLoop, type LoopMessage, type AgentLoopCallbacks } from './agentLoop';
 import type { ChatTool } from './api';
+import { updateSystemAgentState, maybeEmbedConversation } from './agentStateSummary';
 
 // ── Types ──
 
@@ -160,6 +161,16 @@ class AgentRunner {
           toolRounds: result.toolRounds,
           hitLimit: result.hitLimit,
         });
+
+        // System agent state summary — fire and forget
+        this.maybeUpdateSystemAgentState(agentId, run.messages);
+
+        // Embed conversation for cross-session semantic search — fire and forget
+        maybeEmbedConversation(
+          run.conversationId,
+          run.config?.agentId || 'Untitled',
+          run.messages.slice(-10).map(m => ({ role: m.role, content: m.content })),
+        ).catch(() => {});
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -292,6 +303,16 @@ class AgentRunner {
         await this.updateDbStatus(agentId, 'completed');
         this.emit({ type: 'status_change', agentId, status: 'completed' });
         this.emit({ type: 'completed', agentId, toolRounds: result.toolRounds, hitLimit: result.hitLimit });
+
+        // System agent state summary — fire and forget
+        this.maybeUpdateSystemAgentState(agentId, run.messages);
+
+        // Embed conversation for cross-session semantic search — fire and forget
+        maybeEmbedConversation(
+          run.conversationId,
+          run.config?.agentId || 'Untitled',
+          run.messages.slice(-10).map(m => ({ role: m.role, content: m.content })),
+        ).catch(() => {});
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -442,6 +463,27 @@ class AgentRunner {
     } catch (err) {
       console.error(`[AgentRunner] Failed to update agent status in DB:`, err);
     }
+  }
+
+  /**
+   * If this is a system agent, generate and persist a state summary.
+   * Runs async (fire-and-forget) to not block the main flow.
+   */
+  private maybeUpdateSystemAgentState(agentId: string, messages: LoopMessage[]): void {
+    // Check if this is a system agent — async, non-blocking
+    invoke<{ is_system: number } | null>('db_get_agent', { id: agentId })
+      .then(agent => {
+        if (agent?.is_system === 1 && messages.length > 0) {
+          const recentMsgs = messages.slice(-5).map(m => ({
+            role: m.role,
+            content: m.content,
+          }));
+          updateSystemAgentState(agentId, recentMsgs).catch(err =>
+            console.warn('[AgentRunner] State summary update failed:', err)
+          );
+        }
+      })
+      .catch(() => { /* ignore lookup errors */ });
   }
 
   private async persistMessage(

@@ -93,6 +93,12 @@ pub struct Agent {
     /// JSON object with per-app function selections and conventions.
     /// Keys are app_ids, values have selected_functions and conventions.
     pub connected_apps: Option<String>,
+    /// Whether this is a system agent (1) or a regular user agent (0).
+    pub is_system: i64,
+    /// System agent type: tool_explorer, tool_builder, tool_publisher, platform_manager.
+    pub system_agent_type: Option<String>,
+    /// Lightweight state summary for Flash context index.
+    pub state_summary: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
     // Enriched fields (from JOINs, only present in list queries)
@@ -243,6 +249,18 @@ pub fn init_db(app_data_dir: &std::path::Path) -> Result<Connection, String> {
     );
     let _ = conn.execute(
         "ALTER TABLE agents ADD COLUMN connected_apps TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE agents ADD COLUMN is_system INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE agents ADD COLUMN system_agent_type TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE agents ADD COLUMN state_summary TEXT",
         [],
     );
 
@@ -498,7 +516,8 @@ pub fn db_save_messages_batch(
 const AGENT_SELECT_COLS: &str =
     "id, conversation_id, parent_agent_id, name, role, status, system_prompt, \
      initial_task, project_dir, model, permission_level, admin_notes, end_goal, \
-     context, launch_mode, connected_app_ids, connected_apps, created_at, updated_at";
+     context, launch_mode, connected_app_ids, connected_apps, is_system, \
+     system_agent_type, state_summary, created_at, updated_at";
 
 #[tauri::command]
 pub fn db_create_agent(
@@ -519,11 +538,14 @@ pub fn db_create_agent(
     launch_mode: Option<String>,
     connected_app_ids: Option<String>,
     connected_apps: Option<String>,
+    is_system: Option<i64>,
+    system_agent_type: Option<String>,
 ) -> Result<Agent, String> {
     let conn = db.0.lock().map_err(|e| format!("DB lock error: {}", e))?;
     let now = chrono_now();
     let perm = permission_level.unwrap_or_else(|| "auto_edit".to_string());
     let lm = launch_mode.unwrap_or_else(|| "build_now".to_string());
+    let is_sys = is_system.unwrap_or(0);
     let model_for_conv = model.clone().unwrap_or_else(|| "anthropic/claude-sonnet-4-20250514".to_string());
 
     let tx = conn.unchecked_transaction()
@@ -540,12 +562,14 @@ pub fn db_create_agent(
     tx.execute(
         "INSERT INTO agents (id, conversation_id, parent_agent_id, name, role, status, \
          system_prompt, initial_task, project_dir, model, permission_level, \
-         admin_notes, end_goal, context, launch_mode, connected_app_ids, connected_apps, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+         admin_notes, end_goal, context, launch_mode, connected_app_ids, connected_apps, \
+         is_system, system_agent_type, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
         params![
             id, conversation_id, parent_agent_id, name, role, "pending",
             system_prompt, initial_task, project_dir, model, perm,
-            admin_notes, end_goal, context, lm, connected_app_ids, connected_apps, now, now,
+            admin_notes, end_goal, context, lm, connected_app_ids, connected_apps,
+            is_sys, system_agent_type, now, now,
         ],
     ).map_err(|e| format!("Create agent error: {}", e))?;
 
@@ -569,6 +593,9 @@ pub fn db_create_agent(
         launch_mode: lm,
         connected_app_ids,
         connected_apps,
+        is_system: is_sys,
+        system_agent_type,
+        state_summary: None,
         created_at: now,
         updated_at: now,
         last_message_preview: None,
@@ -579,7 +606,8 @@ pub fn db_create_agent(
 const AGENT_ENRICHED_SELECT: &str =
     "a.id, a.conversation_id, a.parent_agent_id, a.name, a.role, a.status, a.system_prompt, \
      a.initial_task, a.project_dir, a.model, a.permission_level, a.admin_notes, a.end_goal, \
-     a.context, a.launch_mode, a.connected_app_ids, a.connected_apps, a.created_at, a.updated_at, \
+     a.context, a.launch_mode, a.connected_app_ids, a.connected_apps, a.is_system, \
+     a.system_agent_type, a.state_summary, a.created_at, a.updated_at, \
      COUNT(m.id) as message_count, \
      (SELECT content FROM messages WHERE conversation_id = a.conversation_id ORDER BY sort_order DESC LIMIT 1) as last_message_preview";
 
@@ -704,6 +732,8 @@ pub fn db_update_agent(
     connected_app_ids: Option<String>,
     initial_task: Option<String>,
     connected_apps: Option<String>,
+    state_summary: Option<String>,
+    system_agent_type: Option<String>,
 ) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| format!("DB lock error: {}", e))?;
     let now = chrono_now();
@@ -734,6 +764,8 @@ pub fn db_update_agent(
     maybe_set!(connected_app_ids, "connected_app_ids");
     maybe_set!(initial_task, "initial_task");
     maybe_set!(connected_apps, "connected_apps");
+    maybe_set!(state_summary, "state_summary");
+    maybe_set!(system_agent_type, "system_agent_type");
 
     // Always add the WHERE id = ?N
     let where_clause = format!("WHERE id = ?{}", param_index);
@@ -754,6 +786,16 @@ pub fn db_delete_agent(
     id: String,
 ) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| format!("DB lock error: {}", e))?;
+
+    // Guard: prevent deletion of system agents
+    let is_sys: i64 = conn.query_row(
+        "SELECT is_system FROM agents WHERE id = ?1",
+        params![id],
+        |row| row.get(0),
+    ).unwrap_or(0);
+    if is_sys == 1 {
+        return Err("Cannot delete system agents. Use 'New Session' to reset instead.".to_string());
+    }
 
     // Get conversation_id first for cascade cleanup
     let conv_id: Option<String> = conn.query_row(
@@ -813,6 +855,29 @@ pub fn db_new_agent_session(
     ).map_err(|e| format!("Update agent error: {}", e))?;
 
     Ok(())
+}
+
+/// List all system agents (is_system = 1), ordered by type.
+#[tauri::command]
+pub fn db_list_system_agents(
+    db: State<'_, DbState>,
+) -> Result<Vec<Agent>, String> {
+    let conn = db.0.lock().map_err(|e| format!("DB lock error: {}", e))?;
+
+    let mut agents = Vec::new();
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {} FROM agents a LEFT JOIN messages m ON m.conversation_id = a.conversation_id \
+         WHERE a.is_system = 1 GROUP BY a.id ORDER BY a.system_agent_type ASC",
+        AGENT_ENRICHED_SELECT
+    )).map_err(|e| format!("Query error: {}", e))?;
+
+    let rows = stmt.query_map([], row_to_agent_enriched)
+        .map_err(|e| format!("Query error: {}", e))?;
+    for row in rows {
+        agents.push(row.map_err(|e| format!("Row error: {}", e))?);
+    }
+
+    Ok(agents)
 }
 
 // ── Kanban Commands ──
@@ -1239,8 +1304,11 @@ fn row_to_agent(row: &rusqlite::Row) -> rusqlite::Result<Agent> {
         launch_mode: row.get(14)?,
         connected_app_ids: row.get(15)?,
         connected_apps: row.get(16)?,
-        created_at: row.get(17)?,
-        updated_at: row.get(18)?,
+        is_system: row.get(17)?,
+        system_agent_type: row.get(18)?,
+        state_summary: row.get(19)?,
+        created_at: row.get(20)?,
+        updated_at: row.get(21)?,
         last_message_preview: None,
         message_count: None,
     })
@@ -1265,10 +1333,13 @@ fn row_to_agent_enriched(row: &rusqlite::Row) -> rusqlite::Result<Agent> {
         launch_mode: row.get(14)?,
         connected_app_ids: row.get(15)?,
         connected_apps: row.get(16)?,
-        created_at: row.get(17)?,
-        updated_at: row.get(18)?,
-        message_count: row.get(19)?,
-        last_message_preview: row.get::<_, Option<String>>(20)?.map(|s| truncate(&s, 100)),
+        is_system: row.get(17)?,
+        system_agent_type: row.get(18)?,
+        state_summary: row.get(19)?,
+        created_at: row.get(20)?,
+        updated_at: row.get(21)?,
+        message_count: row.get(22)?,
+        last_message_preview: row.get::<_, Option<String>>(23)?.map(|s| truncate(&s, 100)),
     })
 }
 

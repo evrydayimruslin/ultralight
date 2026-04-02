@@ -10,11 +10,13 @@
 // Or pass endpoint ID as arg:
 //   deno run --allow-net --allow-env api/services/gpu/test-endpoint.ts ENDPOINT_ID
 
-const RUNPOD_API_KEY = Deno.env.get('RUNPOD_API_KEY') || '';
+import { getEnv } from '../../lib/env.ts';
+
 const ENDPOINT_ID = Deno.args[0] || '6oszl95nvl9bns';
 
+const RUNPOD_API_KEY = getEnv('RUNPOD_API_KEY');
 if (!RUNPOD_API_KEY) {
-  console.error('❌ RUNPOD_API_KEY not set');
+  console.error('RUNPOD_API_KEY not set');
   Deno.exit(1);
 }
 

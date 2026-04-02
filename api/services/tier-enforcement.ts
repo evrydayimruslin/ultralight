@@ -3,6 +3,7 @@
 // Enforces: visibility checks, storage quotas, publish deposit gate.
 
 import { type Tier, TIER_LIMITS, MIN_PUBLISH_DEPOSIT_LIGHT, formatLight } from '../../shared/types/index.ts';
+import { getEnv } from '../lib/env.ts';
 
 type Visibility = 'private' | 'unlisted' | 'public';
 
@@ -26,10 +27,8 @@ export function checkVisibilityAllowed(
 export async function checkPublishDeposit(
   userId: string
 ): Promise<string | null> {
-  // @ts-ignore - Deno is available
-  const Deno = globalThis.Deno;
-  const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
-  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!supabaseUrl || !supabaseKey) {
     // Can't check — fail open
@@ -80,10 +79,8 @@ export async function checkPublishDeposit(
 export async function checkAppLimit(
   userId: string
 ): Promise<string | null> {
-  // @ts-ignore - Deno is available
-  const Deno = globalThis.Deno;
-  const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
-  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!supabaseUrl || !supabaseKey) return null; // fail open
 
@@ -128,10 +125,8 @@ export async function checkAppLimit(
  * Lightweight helper — avoids importing the full user service.
  */
 export async function getUserTier(userId: string): Promise<Tier> {
-  // @ts-ignore - Deno is available
-  const Deno = globalThis.Deno;
-  const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
-  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   try {
     const response = await fetch(

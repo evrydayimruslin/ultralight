@@ -56,6 +56,7 @@ pub fn run() {
       db::db_update_agent,
       db::db_delete_agent,
       db::db_new_agent_session,
+      db::db_list_system_agents,
       // Kanban commands
       db::db_create_board,
       db::db_list_boards,

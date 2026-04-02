@@ -211,6 +211,57 @@ export async function fetchFunctionIndex(forceRefresh = false): Promise<Function
   }
 }
 
+// ── Task Context (per-request entity + function resolution) ──
+
+export interface TaskContext {
+  entities: Array<{
+    name: string;
+    match: string;
+    type: string;
+    id: string;
+    appId: string;
+    appName: string;
+    context: string;
+  }>;
+  functions: Array<{
+    name: string;
+    appId: string;
+    description: string;
+    returns: string;
+    conventions: string[];
+    dependsOn: string[];
+  }>;
+  conventions: Array<{ appName: string; key: string; value: string }>;
+  promptBlock: string;
+  modelSuggestion?: string;  // flash broker's recommendation: "flash" or "sonnet"
+}
+
+/**
+ * Resolve task context for a user prompt.
+ * POSTs the prompt to /chat/context and returns matched entities,
+ * functions, conventions, and a formatted promptBlock for system prompt injection.
+ */
+export async function fetchTaskContext(prompt: string): Promise<TaskContext | null> {
+  const base = getApiBase();
+  const token = getToken();
+  if (!token) return null;
+
+  try {
+    const res = await fetch(`${base}/chat/context`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ prompt }),
+    });
+    if (!res.ok) return null;
+    return await res.json() as TaskContext;
+  } catch {
+    return null;
+  }
+}
+
 // ── MCP Tool Execution ──
 
 export interface McpToolResult {
@@ -319,7 +370,7 @@ export async function executeAppMcpTool(
  */
 export async function fetchBalance(): Promise<number | null> {
   try {
-    const result = await executeMcpTool('ul.wallet', {});
+    const result = await executeMcpTool('ul.wallet', { action: 'status' });
     const text = result.content?.[0]?.text || '';
     const match = text.match(/(\d+\.?\d*)\s*light/i) || text.match(/balance[:\s]*✦?(\d+\.?\d*)/i);
     if (match) {
@@ -328,6 +379,154 @@ export async function fetchBalance(): Promise<number | null> {
     return null;
   } catch {
     return null;
+  }
+}
+
+// ── Orchestrate Stream ──
+
+export interface OrchestrateEvent {
+  type:
+    // Flash phase
+    | 'flash_status' | 'flash_search' | 'flash_found' | 'flash_context' | 'flash_prompt' | 'flash_direct'
+    // Heavy phase
+    | 'heavy_status' | 'heavy_text' | 'heavy_recipe'
+    // Execution phase
+    | 'exec_start' | 'exec_result'
+    // System agent delegation
+    | 'system_agent_spawn'
+    // Meta
+    | 'usage' | 'done' | 'error'
+    // Legacy compat
+    | 'status' | 'text' | 'tool_start' | 'result';
+  text?: string;
+  content?: string;
+  name?: string;
+  code?: string;
+  data?: unknown;
+  flash?: unknown;
+  heavy?: unknown;
+  message?: string;
+  query?: string;
+  apps?: string[];
+  entity?: string;
+  detail?: string;
+  functions?: string[];
+  conventions?: number;
+  prompt?: string;
+  model?: string;
+  /** System agent delegation fields */
+  agentType?: string;
+  task?: string;
+  originalPrompt?: string;
+}
+
+/**
+ * Stream events from the /chat/orchestrate SSE endpoint.
+ * The server handles routing, tool execution, and model selection —
+ * the client just consumes the event stream.
+ */
+export async function* streamOrchestrate(opts: {
+  message: string;
+  conversationHistory?: Array<{ role: string; content: string }>;
+  interpreterModel?: string;
+  heavyModel?: string;
+  scope?: Record<string, { access: 'all' | 'functions' | 'data'; functions?: string[] }>;
+  systemAgentStates?: Array<{ type: string; name: string; tools: string[]; stateSummary: string | null; status: string }>;
+  systemAgentContext?: { type: string; persona: string; skillsPath: string };
+  /** Local project file context gathered client-side for Tool Maker */
+  projectContext?: string;
+}): AsyncGenerator<OrchestrateEvent> {
+  const base = getApiBase();
+
+  let res: Response;
+  try {
+    res = await fetch(`${base}/chat/orchestrate`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(opts),
+    });
+  } catch (err) {
+    yield { type: 'error', message: `Network error: ${err instanceof Error ? err.message : 'Connection failed'}` };
+    return;
+  }
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => res.statusText);
+    yield { type: 'error', message: `Server error (${res.status}): ${errText}` };
+    return;
+  }
+
+  if (!res.body) {
+    yield { type: 'error', message: 'No response body' };
+    return;
+  }
+
+  // Parse SSE stream
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || ''; // Keep incomplete line
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const data = line.slice(6).trim();
+        if (data === '[DONE]') {
+          yield { type: 'done' };
+          return;
+        }
+        try {
+          yield JSON.parse(data) as OrchestrateEvent;
+        } catch {
+          // Skip unparseable lines
+        }
+      }
+    }
+  }
+}
+
+// ── Conversation Embedding ──
+
+/** Embed a conversation summary for cross-session semantic search */
+export async function embedConversation(opts: {
+  conversationId: string;
+  conversationName: string;
+  summary: string;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  const base = getApiBase();
+  try {
+    await fetch(`${base}/api/user/conversation-embedding`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(opts),
+    });
+  } catch (err) {
+    console.warn('[api] Failed to embed conversation:', err);
+  }
+}
+
+// ── System Agent State Sync ──
+
+/** Sync system agent states to server KV for Flash's Context Index */
+export async function syncSystemAgentStates(
+  states: Array<{ type: string; name: string; tools: string[]; stateSummary: string | null; status: string }>,
+): Promise<void> {
+  const base = getApiBase();
+  try {
+    await fetch(`${base}/api/user/system-agent-states`, {
+      method: 'PUT',
+      headers: authHeaders(),
+      body: JSON.stringify({ states }),
+    });
+  } catch (err) {
+    console.warn('[api] Failed to sync system agent states:', err);
   }
 }
 

@@ -26,29 +26,28 @@ export interface UseAppStateReturn {
   canGoForward: boolean;
   goBack: () => void;
   goForward: () => void;
-  selectedProjectDir: string | null;
-  setSelectedProjectDir: (dir: string | null) => void;
 }
 
 // ── Storage keys ──
 
-const STORAGE_PROJECT_DIR = 'ul_selected_project_dir';
+const STORAGE_VIEW = 'ul_current_view';
 
-function getStoredProjectDir(): string | null {
+function getStoredView(): AppView {
   try {
-    return localStorage.getItem(STORAGE_PROJECT_DIR);
+    const raw = localStorage.getItem(STORAGE_VIEW);
+    if (raw) {
+      const parsed = JSON.parse(raw) as AppView;
+      if (parsed && typeof parsed.kind === 'string') return parsed;
+    }
   } catch {
-    return null;
+    // ignore
   }
+  return { kind: 'home' };
 }
 
-function storeProjectDir(dir: string | null) {
+function storeView(view: AppView) {
   try {
-    if (dir) {
-      localStorage.setItem(STORAGE_PROJECT_DIR, dir);
-    } else {
-      localStorage.removeItem(STORAGE_PROJECT_DIR);
-    }
+    localStorage.setItem(STORAGE_VIEW, JSON.stringify(view));
   } catch {
     // ignore
   }
@@ -67,21 +66,20 @@ function viewsEqual(a: AppView, b: AppView): boolean {
 // ── Hook ──
 
 export function useAppState(): UseAppStateReturn {
+  const initialView = useRef(getStoredView()).current;
   const historyRef = useRef<{ stack: AppView[]; index: number }>({
-    stack: [{ kind: 'home' }],
+    stack: [initialView],
     index: 0,
   });
-  const [view, setView] = useState<AppView>({ kind: 'home' });
+  const [view, setView] = useState<AppView>(initialView);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
 
-  const [selectedProjectDir, _setSelectedProjectDir] = useState<string | null>(
-    getStoredProjectDir
-  );
-
   const syncState = useCallback(() => {
     const h = historyRef.current;
-    setView(h.stack[h.index]);
+    const current = h.stack[h.index];
+    setView(current);
+    storeView(current);
     setCanGoBack(h.index > 0);
     setCanGoForward(h.index < h.stack.length - 1);
   }, []);
@@ -125,11 +123,6 @@ export function useAppState(): UseAppStateReturn {
   const navigateToWallet = useCallback(() => navigate({ kind: 'wallet' }), [navigate]);
   const navigateToSettings = useCallback(() => navigate({ kind: 'settings' }), [navigate]);
 
-  const setSelectedProjectDir = useCallback((dir: string | null) => {
-    _setSelectedProjectDir(dir);
-    storeProjectDir(dir);
-  }, []);
-
   return {
     view,
     navigateHome,
@@ -143,7 +136,5 @@ export function useAppState(): UseAppStateReturn {
     canGoForward,
     goBack,
     goForward,
-    selectedProjectDir,
-    setSelectedProjectDir,
   };
 }

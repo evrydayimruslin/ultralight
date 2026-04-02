@@ -33,7 +33,7 @@ export default function AuthGate({ onAuthenticated }: AuthGateProps) {
 
     // Validate token against the server
     try {
-      const base = 'https://ultralight-api-iikqz.ondigitalocean.app';
+      const base = 'https://ultralight-api.rgn4jz429m.workers.dev';
       const res = await fetch(`${base}/debug/auth-test`, {
         headers: { 'Authorization': `Bearer ${trimmed}` },
       });

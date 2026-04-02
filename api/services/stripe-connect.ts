@@ -4,9 +4,7 @@
 // Gracefully handles missing API keys (throws 503 with descriptive message).
 // Internal ledger is in Light (✦); Stripe boundary uses USD cents.
 
-// @ts-ignore - Deno is available in production
-const Deno = globalThis.Deno;
-
+import { getEnv } from '../lib/env.ts';
 import { MIN_WITHDRAWAL_LIGHT, LIGHT_PER_DOLLAR_PAYOUT, formatLight } from '../../shared/types/index.ts';
 
 // ============================================
@@ -59,7 +57,7 @@ export const PAYOUT_HOLD_DAYS = 14;
 // ============================================
 
 function getStripeKey(): string {
-  return Deno?.env?.get('STRIPE_SECRET_KEY') || '';
+  return getEnv('STRIPE_SECRET_KEY');
 }
 
 function ensureStripeKey(): string {

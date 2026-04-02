@@ -3,9 +3,7 @@
 // Combined with storage_used_bytes (app source code) to enforce a 100MB free tier.
 // Overage billed at DATA_RATE_LIGHT_PER_MB_PER_HOUR from balance_light.
 
-// @ts-ignore
-const Deno = globalThis.Deno;
-
+import { getEnv } from '../lib/env.ts';
 import { COMBINED_FREE_TIER_BYTES } from '../../shared/types/index.ts';
 
 // ============================================
@@ -43,8 +41,8 @@ export async function checkDataQuota(
   userId: string,
   additionalBytes: number
 ): Promise<DataQuotaResult> {
-  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     // Can't check — fail open
@@ -131,8 +129,8 @@ export async function adjustDataStorage(
 ): Promise<DataStorageAdjustResult | null> {
   if (deltaBytes === 0) return null;
 
-  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return null;
 

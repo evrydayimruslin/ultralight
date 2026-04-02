@@ -43,6 +43,7 @@ import type {
   App,
 } from '../../shared/types/index.ts';
 import { manifestToMCPTools, normalizeManifestParameters } from '../../shared/types/index.ts';
+import { getEnv } from '../lib/env.ts';
 
 // ============================================
 // MEMORY SERVICE (lazy singleton)
@@ -74,10 +75,8 @@ async function indexAppKV(
   key: string,
   value: unknown
 ): Promise<void> {
-  // @ts-ignore
-  const _Deno = globalThis.Deno;
-  const SUPABASE_URL = _Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = _Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
 
   const embeddingText = typeof value === 'string' ? value : JSON.stringify(value);
@@ -125,10 +124,8 @@ async function indexUserKV(
   key: string,
   value: unknown
 ): Promise<void> {
-  // @ts-ignore
-  const _Deno = globalThis.Deno;
-  const SUPABASE_URL = _Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = _Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
 
   const embeddingText = typeof value === 'string' ? value : JSON.stringify(value);
@@ -174,10 +171,8 @@ async function removeKVIndex(
   type: string,
   slug: string
 ): Promise<void> {
-  // @ts-ignore
-  const _Deno = globalThis.Deno;
-  const SUPABASE_URL = _Deno.env.get('SUPABASE_URL') || '';
-  const SUPABASE_SERVICE_ROLE_KEY = _Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
 
   await fetch(
@@ -771,7 +766,7 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
     if (provisionalRL && !provisionalRL.allowed) {
       return jsonRpcErrorResponse(
         rpcRequest.id, RATE_LIMITED,
-        `Provisional account daily limit reached (50 calls/day). Sign in at ultralight-api-iikqz.ondigitalocean.app to unlock full access.`
+        `Provisional account daily limit reached (50 calls/day). Sign in at ultralight-api.rgn4jz429m.workers.dev to unlock full access.`
       );
     }
   }
@@ -1184,10 +1179,8 @@ async function handleToolsCall(
 
         // Increment budget_used atomically if budget_limit is set
         if (matchingRow.budget_limit !== null && matchingRow.budget_limit > 0) {
-          // @ts-ignore
-          const _Deno = globalThis.Deno;
-          const sbUrl = _Deno.env.get('SUPABASE_URL') || '';
-          const sbKey = _Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+          const sbUrl = getEnv('SUPABASE_URL');
+          const sbKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
           try {
             // Use Supabase RPC for atomic increment to avoid race conditions
             const rpcRes = await fetch(`${sbUrl}/rest/v1/rpc/increment_budget_used`, {
@@ -1300,10 +1293,8 @@ async function executeSDKTool(
   try {
     // Create app data service — use Worker-backed service if configured (native R2, ~10x faster)
     // Wrap with metered service when userId is present to track user data storage.
-    // @ts-ignore - Deno is available in Deno Deploy
-    const __Deno = globalThis.Deno;
-    const _workerUrl = __Deno?.env?.get('WORKER_DATA_URL') || '';
-    const _workerSecret = __Deno?.env?.get('WORKER_SECRET') || '';
+    const _workerUrl = getEnv('WORKER_DATA_URL');
+    const _workerSecret = getEnv('WORKER_SECRET');
     const _rawAppDataService = (_workerUrl && _workerSecret)
       ? createWorkerAppDataService(appId, userId, _workerUrl, _workerSecret)
       : createAppDataService(appId, userId);
@@ -1455,9 +1446,7 @@ async function executeSDKTool(
           break;
         }
 
-        // @ts-ignore - Deno is available
-        const __Deno = globalThis.Deno;
-        const baseUrl = __Deno?.env?.get('BASE_URL');
+        const baseUrl = getEnv('BASE_URL');
         const authToken = request?.headers.get('Authorization')?.slice(7);
 
         if (!baseUrl || !authToken) {
@@ -1668,14 +1657,11 @@ async function executeAppFunction(
       return await handleGpuExecution(id, appFull, functionName, args, userId, user, meta);
     }
 
-    // @ts-ignore
-    const _Deno = globalThis.Deno;
-
     const r2Service = createR2Service();
     // Use Worker-backed data service if configured (native R2 bindings, ~10x faster)
     // Wrap with metered service when userId is present to track user data storage.
-    const _wUrl = _Deno?.env?.get('WORKER_DATA_URL') || '';
-    const _wSecret = _Deno?.env?.get('WORKER_SECRET') || '';
+    const _wUrl = getEnv('WORKER_DATA_URL');
+    const _wSecret = getEnv('WORKER_SECRET');
     const _rawAppDataService2 = (_wUrl && _wSecret)
       ? createWorkerAppDataService(app.id, userId, _wUrl, _wSecret)
       : createAppDataService(app.id, userId);
@@ -1728,8 +1714,8 @@ async function executeAppFunction(
     const perUserKeys = Object.entries(envSchema)
       .filter(([, v]) => v.scope === 'per_user')
       .map(([k]) => k);
-    const _SUPABASE_URL = _Deno.env.get('SUPABASE_URL') || '';
-    const _SUPABASE_SERVICE_ROLE_KEY = _Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+    const _SUPABASE_URL = getEnv('SUPABASE_URL');
+    const _SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
     const secretsPromise = perUserKeys.length > 0
       ? fetch(
@@ -1862,7 +1848,7 @@ async function executeAppFunction(
 
     // ── Deno Sandbox Path (existing, unchanged) ──
     // Execute in sandbox (local — Worker handles data layer only)
-    const baseUrl = _Deno?.env?.get('BASE_URL') || undefined;
+    const baseUrl = getEnv('BASE_URL') || undefined;
 
     const memService = getMemoryService();
     const memoryAdapter = memService ? {
@@ -1924,10 +1910,8 @@ async function executeAppFunction(
             const scope = getFreeCallsScope(pricingConfig);
             const counterKey = scope === 'app' ? '__app__' : functionName;
             try {
-              // @ts-ignore
-              const _Deno = globalThis.Deno;
-              const _SB_URL = _Deno.env.get('SUPABASE_URL') || '';
-              const _SB_KEY = _Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+              const _SB_URL = getEnv('SUPABASE_URL');
+              const _SB_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
               const usageRes = await fetch(
                 `${_SB_URL}/rest/v1/rpc/increment_caller_usage`,
                 {
@@ -1958,10 +1942,8 @@ async function executeAppFunction(
 
         if (callChargeLight > 0) {
           try {
-            // @ts-ignore
-            const Deno = globalThis.Deno;
-            const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-            const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+            const SUPABASE_URL = getEnv('SUPABASE_URL');
+            const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
             const transferRes = await fetch(
               `${SUPABASE_URL}/rest/v1/rpc/transfer_balance`,
@@ -2064,8 +2046,9 @@ async function executeAppFunction(
       return callChargeLight;
     };
 
-    // Start execution
-    const executionPromise = executeInSandbox(sandboxConfig, functionName, argsArray);
+    // Start execution (Dynamic Worker sandbox — avoids `new Function()` restriction on CF Workers)
+    const { executeInDynamicSandbox } = await import('../runtime/dynamic-sandbox.ts');
+    const executionPromise = executeInDynamicSandbox(sandboxConfig, functionName, argsArray);
 
     // ── Async promotion: race execution against timer ──
     // Only promote AI-capable apps (others complete fast enough)
@@ -2085,6 +2068,13 @@ async function executeAppFunction(
         // Fast path: completed within threshold — business as usual
         const result = raceResult.result as { success: boolean; result: unknown; error?: unknown; logs: Array<{ time: string; level: string; message: string }>; durationMs: number; aiCostLight: number };
         const callChargeLight = await runPostExecution(result);
+
+        // Fire-and-forget: rebuild entity index after successful execution
+        if (result.success) {
+          import('../services/entity-index.ts')
+            .then(({ rebuildEntityIndex }) => rebuildEntityIndex(userId))
+            .catch(err => console.error('[MCP] Entity index rebuild failed:', err));
+        }
 
         // Handle insufficient balance for sync path (callChargeLight would be 0 if failed)
         if (result.success) {
@@ -2143,6 +2133,13 @@ async function executeAppFunction(
       // Non-AI apps or async limit reached: synchronous execution (original behavior)
       const result = await executionPromise;
       await runPostExecution(result);
+
+      // Fire-and-forget: rebuild entity index after successful execution
+      if (result.success) {
+        import('../services/entity-index.ts')
+          .then(({ rebuildEntityIndex }) => rebuildEntityIndex(userId))
+          .catch(err => console.error('[MCP] Entity index rebuild failed:', err));
+      }
 
       if (result.success) {
         return jsonRpcResponse(id, formatToolResult(result.result, result.logs));

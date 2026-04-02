@@ -33,7 +33,7 @@ const OPENROUTER_CONFIG: ProviderConfig = {
   formatHeaders: (apiKey: string) => ({
     'Authorization': `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
-    'HTTP-Referer': 'https://ultralight-api-iikqz.ondigitalocean.app',
+    'HTTP-Referer': 'https://ultralight-api.rgn4jz429m.workers.dev',
     'X-Title': 'Ultralight',
   }),
   formatRequest: (request: AIRequest, model: string) => ({

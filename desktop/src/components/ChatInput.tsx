@@ -2,6 +2,7 @@
 // Supports queue mode: input stays enabled while agent runs, shows "Queue" instead of "Send".
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import ProjectDropdown from './ProjectDropdown';
 
 interface ChatInputProps {
   onSend: (content: string) => void;
@@ -9,9 +10,13 @@ interface ChatInputProps {
   onStop?: () => void;
   /** When true, input stays enabled during loading — sends go to queue */
   queueMode?: boolean;
+  /** Current conversation's project directory */
+  projectDir?: string | null;
+  /** Called when user picks a new project directory */
+  onProjectDirChange?: (dir: string) => void;
 }
 
-export default function ChatInput({ onSend, isLoading, onStop, queueMode = false }: ChatInputProps) {
+export default function ChatInput({ onSend, isLoading, onStop, queueMode = false, projectDir, onProjectDirChange }: ChatInputProps) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -116,11 +121,21 @@ export default function ChatInput({ onSend, isLoading, onStop, queueMode = false
         ) : null}
       </div>
 
-      <p className="text-center text-caption text-ul-text-muted mt-1.5 max-w-narrow mx-auto">
-        {isQueueing
-          ? 'Agent is running \u00b7 messages will be queued'
-          : 'Enter to send \u00b7 Shift+Enter for new line'}
-      </p>
+      <div className="flex items-center justify-between mt-1.5 max-w-narrow mx-auto">
+        <p className="text-caption text-ul-text-muted">
+          {isQueueing
+            ? 'Agent is running \u00b7 messages will be queued'
+            : 'Enter to send \u00b7 Shift+Enter for new line'}
+        </p>
+        {onProjectDirChange && (
+          <ProjectDropdown
+            selectedDir={projectDir ?? null}
+            onSelect={(dir) => dir && onProjectDirChange(dir)}
+            dropUp
+            compact
+          />
+        )}
+      </div>
     </div>
   );
 }

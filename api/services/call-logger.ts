@@ -2,11 +2,8 @@
 // Records MCP tool calls with full I/O telemetry for monitoring,
 // dashboard display, and structured training data export.
 
-// @ts-ignore - Deno is available
-const Deno = globalThis.Deno;
+import { getEnv } from '../lib/env.ts';
 
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
 /** Maximum size for input_args and output_result JSONB (bytes). */
 const MAX_IO_SIZE = 10_000;
@@ -77,12 +74,12 @@ export function logMcpCall(entry: McpCallLogEntry): void {
 
 async function _insertLog(entry: McpCallLogEntry): Promise<void> {
   const response = await fetch(
-    `${SUPABASE_URL}/rest/v1/mcp_call_logs`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/mcp_call_logs`,
     {
       method: 'POST',
       headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+        'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -161,7 +158,7 @@ export async function getRecentCalls(
   created_at: string;
 }>> {
   const limit = options.limit || 50;
-  let url = `${SUPABASE_URL}/rest/v1/mcp_call_logs?user_id=eq.${userId}&order=created_at.desc&limit=${limit}&select=id,app_id,app_name,function_name,method,success,duration_ms,error_message,created_at`;
+  let url = `${getEnv('SUPABASE_URL')}/rest/v1/mcp_call_logs?user_id=eq.${userId}&order=created_at.desc&limit=${limit}&select=id,app_id,app_name,function_name,method,success,duration_ms,error_message,created_at`;
 
   if (options.since) {
     url += `&created_at=gt.${options.since}`;
@@ -173,8 +170,8 @@ export async function getRecentCalls(
 
   const response = await fetch(url, {
     headers: {
-      'apikey': SUPABASE_SERVICE_ROLE_KEY,
-      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+      'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
     },
   });
 

@@ -2678,9 +2678,9 @@ export function getLayoutHTML(options: {
           <section id="dashCapabilitiesPanel" class="settings-panel"${dashSection !== 'capabilities' ? ' style="display:none;"' : ''}>
             <!-- Sub-tab bar -->
             <div class="marketplace-filters" style="margin-bottom:var(--space-4);">
-              <button class="marketplace-filter active" data-cap-tab="market">Market</button>
-              <button class="marketplace-filter" data-cap-tab="library">Library</button>
+              <button class="marketplace-filter active" data-cap-tab="library">Library</button>
               <button class="marketplace-filter" data-cap-tab="shared">Shared</button>
+              <button class="marketplace-filter" data-cap-tab="market">Market</button>
             </div>
 
             <!-- Search + filters (shared across all sub-tabs) -->
@@ -2708,8 +2708,8 @@ export function getLayoutHTML(options: {
               </div>
             </div>
 
-            <!-- Market sub-tab content -->
-            <div id="capMarketContent">
+            <!-- Market sub-tab content (hidden by default) -->
+            <div id="capMarketContent" style="display:none;">
               <!-- Ticker tape stats -->
               <div class="cap-carousel" style="margin-bottom:var(--space-6);">
                 <div class="cap-carousel-inner" id="marketTicker">
@@ -2762,8 +2762,8 @@ export function getLayoutHTML(options: {
               </div>
             </div>
 
-            <!-- Library sub-tab content (hidden by default) -->
-            <div id="capLibraryContent" style="display:none;">
+            <!-- Library sub-tab content (default) -->
+            <div id="capLibraryContent">
               <div id="appList" class="app-list"></div>
             </div>
 
@@ -2899,6 +2899,20 @@ export function getLayoutHTML(options: {
 
               <button id="profileSettingsSaveBtn" class="btn btn-primary btn-sm" style="border-radius:0;" onclick="saveProfileSettings()">Save Profile</button>
               <span id="profileSettingsSaved" style="font-size:12px;color:var(--success);margin-left:var(--space-2);display:none;">Saved!</span>
+            </div>
+
+            <!-- BYOK: Bring Your Own Key -->
+            <div style="margin-top:var(--space-8);padding-top:var(--space-6);border-top:1px solid var(--border);">
+              <h3 style="font-size:16px;font-weight:600;margin-bottom:var(--space-1);">AI Keys (Bring Your Own)</h3>
+              <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Use your own API keys for model access. OpenRouter gives access to 100+ models from all providers with a single key.</p>
+
+              <div id="byokProviderList" style="display:flex;flex-direction:column;gap:var(--space-2);">
+                <div style="font-size:12px;color:var(--text-muted);">Loading...</div>
+              </div>
+
+              <div style="margin-top:var(--space-4);">
+                <button class="btn btn-sm" style="border:1px solid var(--border);" onclick="addByokKey()">+ Add API Key</button>
+              </div>
             </div>
           </section>
         </div>
@@ -3744,7 +3758,7 @@ export function getLayoutHTML(options: {
     });
 
     // ===== Capabilities Tab Management =====
-    var activeCapTab = 'market';
+    var activeCapTab = 'library';
     var activeCapType = 'all';
     var activeCapOwner = 'all';
     var leaderboardPeriod = '30d';
@@ -7074,6 +7088,7 @@ export function getLayoutHTML(options: {
       loadApiKey();
       loadHostingData();
       populateProfileSettings();
+      loadByokConfig();
     }
 
     // --- API Key (single key) ---
@@ -7194,6 +7209,114 @@ export function getLayoutHTML(options: {
       finally {
         if (regenBtn) { regenBtn.disabled = false; regenBtn.textContent = 'Regenerate Key'; }
       }
+    };
+
+    // --- BYOK (Bring Your Own Key) ---
+    var byokConfig = null;
+
+    async function loadByokConfig() {
+      var container = document.getElementById('byokProviderList');
+      if (!container) return;
+      try {
+        var res = await fetch('/api/user/byok', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) { container.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">Failed to load</div>'; return; }
+        byokConfig = await res.json();
+        renderByokProviders();
+      } catch { container.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">Failed to load</div>'; }
+    }
+
+    function renderByokProviders() {
+      var container = document.getElementById('byokProviderList');
+      if (!container || !byokConfig) return;
+
+      var providers = [
+        { id: 'openrouter', name: 'OpenRouter', desc: 'Access 100+ models', prefix: 'sk-or-' },
+        { id: 'anthropic', name: 'Anthropic', desc: 'Claude models direct', prefix: 'sk-ant-' },
+        { id: 'openai', name: 'OpenAI', desc: 'GPT models direct', prefix: 'sk-' },
+      ];
+      var configs = byokConfig.configs || [];
+      var primaryProvider = byokConfig.primary_provider;
+
+      var html = '';
+      providers.forEach(function(p) {
+        var cfg = configs.find(function(c) { return c.provider === p.id; });
+        var isPrimary = primaryProvider === p.id;
+        var hasKey = !!cfg;
+
+        html += '<div style="display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3);background:var(--bg-raised);border:1px solid var(--border);border-radius:6px;">';
+        html += '<div style="flex:1;min-width:0;">';
+        html += '<div style="display:flex;align-items:center;gap:var(--space-2);">';
+        html += '<span style="font-size:13px;font-weight:500;">' + p.name + '</span>';
+        if (isPrimary) html += '<span style="font-size:10px;background:var(--text-primary);color:var(--bg-base);padding:1px 6px;border-radius:3px;font-weight:500;">Primary</span>';
+        html += '</div>';
+        if (hasKey) {
+          var maskedKey = cfg.api_key_preview || (p.prefix + '\\u2022'.repeat(12));
+          html += '<div style="font-size:11px;color:var(--text-muted);margin-top:2px;font-family:monospace;">' + maskedKey + '</div>';
+        } else {
+          html += '<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">' + p.desc + '</div>';
+        }
+        html += '</div>';
+
+        if (hasKey) {
+          if (!isPrimary) html += '<button class="btn btn-sm" style="font-size:11px;border:1px solid var(--border);" onclick="setPrimaryByok(\\\'' + p.id + '\\\')">Set Primary</button>';
+          html += '<button class="btn btn-sm" style="font-size:11px;color:var(--error);border:1px solid var(--border);" onclick="removeByokKey(\\\'' + p.id + '\\\')">Remove</button>';
+        } else {
+          html += '<button class="btn btn-sm" style="font-size:11px;border:1px solid var(--border);" onclick="addByokKeyForProvider(\\\'' + p.id + '\\\')">Add Key</button>';
+        }
+        html += '</div>';
+      });
+
+      container.innerHTML = html;
+    }
+
+    window.addByokKey = function() { addByokKeyForProvider('openrouter'); };
+
+    window.addByokKeyForProvider = async function(provider) {
+      var key = prompt('Enter your ' + provider.charAt(0).toUpperCase() + provider.slice(1) + ' API key:');
+      if (!key || !key.trim()) return;
+
+      try {
+        var res = await fetch('/api/user/byok', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: provider, api_key: key.trim(), validate: true }),
+        });
+        if (!res.ok) {
+          var err = await res.json().catch(function() { return {}; });
+          showToast(err.error || 'Failed to add key', 'error');
+          return;
+        }
+        showToast(provider.charAt(0).toUpperCase() + provider.slice(1) + ' key added!');
+        await loadByokConfig();
+      } catch { showToast('Failed to add key', 'error'); }
+    };
+
+    window.removeByokKey = async function(provider) {
+      if (!confirm('Remove your ' + provider + ' API key?')) return;
+      try {
+        var res = await fetch('/api/user/byok/' + provider, {
+          method: 'DELETE',
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) { showToast('Failed to remove key', 'error'); return; }
+        showToast('Key removed');
+        await loadByokConfig();
+      } catch { showToast('Failed to remove key', 'error'); }
+    };
+
+    window.setPrimaryByok = async function(provider) {
+      try {
+        var res = await fetch('/api/user/byok/primary', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: provider }),
+        });
+        if (!res.ok) { showToast('Failed to set primary', 'error'); return; }
+        showToast(provider + ' set as primary');
+        await loadByokConfig();
+      } catch { showToast('Failed to set primary', 'error'); }
     };
 
     // --- Transactions ---

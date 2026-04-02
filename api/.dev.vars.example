@@ -1,0 +1,35 @@
+# Wrangler local development secrets
+# Copy this to .dev.vars and fill in your values
+# These are used by `wrangler dev` for local development
+# For production, set via `wrangler secret put <NAME>`
+
+# Supabase
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_ANON_KEY=
+
+# Cloudflare (for D1 HTTP API — still needed until native D1 bindings)
+CF_ACCOUNT_ID=8d2df08dac65694aa1c6bf56233a2090
+CF_API_TOKEN=
+
+# Stripe
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+
+# OpenRouter
+OPENROUTER_API_KEY=
+
+# Encryption
+BYOK_ENCRYPTION_KEY=
+
+# RunPod GPU
+RUNPOD_API_KEY=
+RUNPOD_TEMPLATE_ID=
+
+# Supabase Management OAuth
+SUPABASE_MGMT_OAUTH_CLIENT_ID=
+SUPABASE_MGMT_OAUTH_CLIENT_SECRET=
+
+# Inter-service auth
+TIER_CHANGE_SECRET=
+GPU_SECRET=

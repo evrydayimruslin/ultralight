@@ -1,0 +1,1043 @@
+// Flash Broker — two-stage context resolution + prompt construction.
+//
+// Stage 1: Flash analyzes the user's message against the function index
+//          (function signatures + conventions). Identifies relevant apps.
+//
+// Stage 2: MAGNIFICATION — for the identified apps, pull their full D1 data
+//          for this user. Flash now sees the actual database contents and can
+//          resolve any reference (names, IDs, states, amounts) directly.
+//
+// Flash then constructs a COMPLETE prompt for the heavy model with all
+// resolved data, conventions, and function signatures. The heavy model
+// writes ONE recipe and it works first try.
+//
+// Cost: ~$0.002 per call (two Flash rounds + D1 queries), ~1-2s total.
+
+import { getEnv } from '../lib/env.ts';
+import { getFunctionIndex, rebuildFunctionIndex, type FunctionIndex } from './function-index.ts';
+import { createR2Service } from './storage.ts';
+import { getD1DatabaseId } from './d1-provisioning.ts';
+
+// ── Types ──
+
+/** System agent state — synced from desktop client, included in Stage 1 catalog */
+export interface SystemAgentState {
+  type: string;
+  name: string;
+  tools: string[];
+  stateSummary: string | null;
+  status: string;
+}
+
+export interface FlashBrokerResult {
+  needsTool: boolean;
+  directResponse: string;
+  model: string;
+  prompt: string;
+  functions: string;
+  entities: Array<{
+    name: string;
+    type: string;
+    id: string;
+    appId: string;
+    appName: string;
+    context: string;
+  }>;
+  conventions: Array<{ appName: string; key: string; value: string }>;
+  involvedAppIds: string[];
+  toolMap: Record<string, { appId: string; fnName: string; appSlug: string }>;
+  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  /** System agent delegations recommended by Flash analysis */
+  systemAgentDelegations?: Array<{ agentType: string; task: string; originalPrompt: string }>;
+  /** Cross-session conversation search query (triggers semantic retrieval in Stage 2) */
+  conversationSearch?: string;
+}
+
+export type FlashEvent =
+  | { type: 'analyzing'; text: string }
+  | { type: 'searching'; query: string; apps: string[] }
+  | { type: 'magnifying'; text: string; apps: string[] }
+  | { type: 'magnified'; app: string; tables: number; rows: number }
+  | { type: 'constructing'; functions: string[]; conventionCount: number }
+  | { type: 'prompt_ready'; prompt: string; model: string }
+  | { type: 'direct_response'; content: string }
+  | { type: 'done'; result: FlashBrokerResult }
+  | { type: 'error'; message: string }
+  // Legacy compat
+  | { type: 'prefetch_start'; text: string; queries: string[] }
+  | { type: 'prefetch_result'; entities: Array<{ name: string; type: string; context: string }> };
+
+// ── Models ──
+
+const DEFAULT_FLASH_MODEL = 'google/gemini-3.1-flash-lite-preview:nitro';
+const DEFAULT_HEAVY_FLASH = 'google/gemini-3.1-flash-lite-preview:nitro';
+const DEFAULT_HEAVY_SONNET = 'anthropic/claude-sonnet-4';
+
+// ── Flash System Prompts ──
+
+const FLASH_ANALYZE_SYSTEM = `You are a task router for an AI agent platform. Given a user's message and a catalog of available functions, output structured JSON.
+
+Your job:
+1. Decide the response mode:
+   - "direct": No app data needed (greetings, general questions)
+   - "read": User wants to READ/VIEW data. You'll write the response yourself after seeing the data.
+   - "write": User wants to CHANGE/CREATE/SEND something. A code-writing model will handle this.
+2. Identify which APPS are relevant (by app slug)
+3. For "write" mode: select the action functions needed
+
+Output ONLY valid JSON:
+{
+  "mode": "read",
+  "directResponse": "",
+  "relevantApps": ["app-exbg0f"],
+  "actionFunctions": [],
+  "systemAgentDelegations": [],
+  "conversationSearch": "",
+  "reasoning": "User wants to know about a character. Need to read Story Builder data."
+}
+
+Rules:
+- mode="direct" ONLY for greetings and general knowledge questions that clearly have nothing to do with any app. Put answer in directResponse.
+- mode="read" for: "tell me about", "show me", "how many", "what is", "list", "find", any informational query. IMPORTANT: If the user mentions a name, entity, or term that COULD exist in any app's data, ALWAYS use "read" mode — even if you're unsure which app contains it. Err on the side of "read" over "direct".
+- mode="write" for: "draft", "revise", "book", "create", "send", "approve", "reject", "update", "delete", any action that changes data
+- relevantApps: app slugs whose DATA is relevant (max 3). Required for read and write modes. When uncertain, include the most likely apps.
+- actionFunctions: ONLY needed for "write" mode. The WRITE functions the code model will call.
+- For "read" mode, leave actionFunctions empty — you'll respond directly after seeing the data.
+- systemAgentDelegations: If part or all of the task is better handled by a system agent, include delegations. Each is { "agentType": "tool_marketer", "task": "Search marketplace for ..." }. Types: tool_builder (building/testing/deploying MCP apps), tool_marketer (marketplace lifecycle — browsing, discovery, publishing, pricing, analytics), platform_manager (settings/API keys/billing/guidance). Can coexist with mode="read" or "write".
+- IMPORTANT: If the user's request requires capabilities NOT FOUND in the available functions catalog, delegate to tool_marketer. Do NOT respond with "I don't have any apps for that." Instead, delegate: { "agentType": "tool_marketer", "task": "User needs [capability]. Search marketplace for tools that provide this and help them evaluate options." }. Tool Dealer will search the full marketplace, try apps, and report back.
+- If "Local Project Files" context is provided, the user may be asking about their local codebase. For questions about project structure, code, or dependencies, use mode="read" or mode="direct" and answer from the context. For tasks that create or modify local files, use mode="write". If you're not in a tool_builder context, delegate file-modification tasks to tool_builder.
+- conversationSearch: If the user references past work, a previous conversation, or something discussed before (visible in "Past Conversation Topics"), put a descriptive search query here (e.g., "auth pattern for inventory management"). Leave empty if not needed.
+- Always return valid JSON, nothing else`;
+
+const FLASH_READ_RESPONSE_SYSTEM = `You are a helpful AI assistant responding to a user's question using live data from their apps. Write a clear, well-formatted response using markdown.
+
+Rules:
+- Use the provided app data to answer the user's question completely
+- Format with markdown: headings, bold, lists, etc.
+- Be concise but thorough — include all relevant details from the data
+- If the data doesn't contain what the user asked about, say so clearly
+- Never show raw JSON to the user — synthesize it into natural language
+- Include specific names, IDs, dates, and values from the data
+- If there are multiple items, use numbered or bulleted lists
+- If Local Project Context is provided, use it to answer questions about the user's codebase. Reference specific file names, line numbers, and code snippets when helpful.`;
+
+const FLASH_WRITE_CONFIRM_SYSTEM = `You are confirming the result of an action that was just executed. Given the user's original request and the execution result, write a brief, clear confirmation message.
+
+Rules:
+- Be concise — 1-3 sentences
+- Confirm what was done specifically (e.g., "I've revised Mike Chen's draft to include group discount information")
+- If the result contains useful data, mention key details
+- If there was an error, explain it clearly
+- Use markdown formatting as appropriate`;
+
+const FLASH_PROMPT_SYSTEM = `You are constructing a prompt for a code-writing AI model. Given:
+1. The user's original message
+2. Live data from the user's apps (magnified database contents)
+3. Available functions with their signatures
+
+Construct a COMPLETE prompt that tells the code-writing model exactly what to do. Include:
+- All relevant data IDs and values from the magnified data
+- Specific function calls to make with exact arguments
+- Conventions to follow
+- What to return
+
+The code-writing model will receive ONLY your prompt (no system prompt) and ONE tool: ul_codemode.
+It writes JavaScript using codemode.functionName(args) to execute.
+
+When the task involves creating or modifying LOCAL PROJECT FILES (not platform apps), instruct the model to output file contents using this format in its text response (NOT in the codemode recipe):
+<!-- file:write path="src/example.ts" -->
+\`\`\`ts
+// file content here
+\`\`\`
+<!-- /file:write -->
+The client will parse these markers and write files to the user's local project directory.
+
+Output ONLY valid JSON:
+{
+  "prompt": "The user wants to shorten Mike Chen's draft response.\\n\\nMike Chen's approval:\\n- ID: 4ac6c973...\\n- Current draft: [full draft text]\\n\\nConventions:\\n- Reply in guest's language\\n\\nCall codemode.app_ges2af_approvals_act({ approval_id: \\"4ac6c973...\\", action: \\"revise\\", revision: \\"[shortened version]\\" })",
+  "model": "sonnet",
+  "entities": [
+    { "name": "Mike Chen", "type": "contact", "id": "4ac6c973...", "appId": "d90a446c...", "appName": "email-ops", "context": "Pending approval for family trip" }
+  ],
+  "conventions": [
+    { "appName": "email-ops", "key": "reply_language", "value": "Reply in guest's language" }
+  ]
+}`;
+
+// ── Magnification Config ──
+
+/** Tables to skip during magnification (internal/system tables) */
+const SKIP_TABLES = new Set([
+  '_cf_KV', '_migrations', '_usage', '_analytics', '_cache', '_sessions',
+  '_jobs', '_queue', '_locks', '_schema_version', 'sqlite_sequence',
+]);
+
+/** Max rows per table */
+const MAX_ROWS_PER_TABLE = 30;
+
+/** Max total characters of magnified data per app */
+const MAX_CHARS_PER_APP = 8000;
+
+// ── Main Entry (Async Generator) ──
+
+/** System agent context — injected into Flash prompts for persona + skills */
+export interface SystemAgentContext {
+  type: 'tool_builder' | 'tool_marketer' | 'platform_manager';
+  persona: string;
+  skillsPath: string;
+}
+
+/** Scope config passed from the client — restricts which apps/functions/data are available */
+export type ScopeConfig = Record<string, {
+  access: 'all' | 'functions' | 'data';
+  functions?: string[];
+}>;
+
+export async function* runFlashBroker(
+  message: string,
+  userId: string,
+  userEmail: string,
+  conversationHistory?: Array<{ role: string; content: string }>,
+  interpreterModel?: string,
+  heavyModel?: string,
+  scope?: ScopeConfig,
+  systemAgentStates?: SystemAgentState[],
+  systemAgentContext?: SystemAgentContext,
+  projectContext?: string,
+): AsyncGenerator<FlashEvent> {
+  const flashModel = interpreterModel || DEFAULT_FLASH_MODEL;
+
+  yield { type: 'analyzing', text: 'Analyzing your request...' };
+
+  // Load function index + memory + system agent states + agent skills + conversation topics concurrently
+  let [fnIndex, userMemory, loadedSystemAgentStates, agentSkills, conversationTopics] = await Promise.all([
+    getFunctionIndex(userId),
+    loadUserMemory(userId),
+    systemAgentStates ? Promise.resolve(systemAgentStates) : loadSystemAgentStates(userId),
+    systemAgentContext ? loadSystemAgentSkills(systemAgentContext.type) : Promise.resolve(''),
+    loadConversationTopics(userId),
+  ]);
+
+  // Auto-rebuild if empty
+  if (!fnIndex || Object.keys(fnIndex.functions).length === 0) {
+    try {
+      fnIndex = await rebuildFunctionIndex(userId);
+    } catch (err) {
+      console.error('[FLASH-BROKER] Failed to rebuild function index:', err);
+    }
+  }
+
+  if (!fnIndex || Object.keys(fnIndex.functions).length === 0) {
+    const result: FlashBrokerResult = {
+      needsTool: false,
+      directResponse: "I don't have any apps or functions set up yet. Install an app to get started.",
+      model: DEFAULT_HEAVY_FLASH,
+      prompt: '', functions: '', entities: [], conventions: [],
+      involvedAppIds: [], toolMap: {},
+    };
+    yield { type: 'direct_response', content: result.directResponse };
+    yield { type: 'done', result };
+    return;
+  }
+
+  // Keep unfiltered index for data-only app lookups (slug → appId)
+  const fullFnIndex = fnIndex;
+
+  // ── Apply scope filter — restrict the function index to scoped apps/functions ──
+  // Scope keys can be app names (from library markdown) or DB slugs — build a lookup
+  if (scope && Object.keys(scope).length > 0) {
+    // Build name→slug and slug→name maps from the function index
+    const appNameToSlug: Record<string, string> = {};
+    const appSlugToName: Record<string, string> = {};
+    for (const fn of Object.values(fnIndex.functions)) {
+      // Extract app name from description: "[App Name] description..."
+      const match = fn.description.match(/^\[([^\]]+)\]/);
+      if (match) {
+        appNameToSlug[match[1].toLowerCase()] = fn.appSlug;
+        appSlugToName[fn.appSlug] = match[1];
+      }
+    }
+
+    // Normalize scope keys to DB slugs
+    const normalizedScope: typeof scope = {};
+    for (const [key, cfg] of Object.entries(scope)) {
+      // Try direct match (already a DB slug)
+      const directMatch = Object.values(fnIndex.functions).some(fn => fn.appSlug === key);
+      if (directMatch) {
+        normalizedScope[key] = cfg;
+      } else {
+        // Try name→slug lookup (case-insensitive)
+        const dbSlug = appNameToSlug[key.toLowerCase()];
+        if (dbSlug) {
+          normalizedScope[dbSlug] = cfg;
+        } else {
+          console.log(`[FLASH-BROKER] Scope key "${key}" not found in function index — skipping`);
+        }
+      }
+    }
+
+    const originalCount = Object.keys(fnIndex.functions).length;
+    const filtered: typeof fnIndex.functions = {};
+    for (const [name, fn] of Object.entries(fnIndex.functions)) {
+      const appScope = normalizedScope[fn.appSlug];
+      if (!appScope) continue; // App not in scope — exclude entirely
+      if (appScope.access === 'data') continue; // Data-only — no functions in catalog
+      // Check function-level filter
+      if (appScope.functions && appScope.functions.length > 0 && !appScope.functions.includes(fn.fnName)) continue;
+      filtered[name] = fn;
+    }
+    fnIndex = { ...fnIndex, functions: filtered };
+    // Replace scope with normalized version for downstream use
+    scope = Object.keys(normalizedScope).length > 0 ? normalizedScope : undefined;
+    console.log(`[FLASH-BROKER] Scope applied: ${Object.keys(normalizedScope).length} apps, ${Object.keys(filtered).length}/${originalCount} functions`);
+  }
+
+  // Build compact catalog for Flash (function signatures + conventions only, no data)
+  const catalog = buildCatalog(fnIndex, loadedSystemAgentStates);
+  const historyStr = conversationHistory && conversationHistory.length > 0
+    ? conversationHistory.slice(-6).map(m => `${m.role}: ${m.content}`).join('\n')
+    : '';
+
+  // ── Stage 1: Analyze — identify relevant apps ──
+  const apiKey = getEnv('OPENROUTER_API_KEY');
+  if (!apiKey) {
+    yield { type: 'error', message: 'OpenRouter API key not configured' };
+    return;
+  }
+
+  // Build persona-aware system prompt
+  const analyzeSystem = systemAgentContext
+    ? `You are acting as "${systemAgentContext.persona}" — a specialized system agent on the Ultralight platform.\n\n${FLASH_ANALYZE_SYSTEM}`
+    : FLASH_ANALYZE_SYSTEM;
+
+  let analyzeContent = '';
+  if (scope && Object.keys(scope).length > 0) {
+    const scopedNames = Object.keys(scope);
+    analyzeContent += `## SESSION SCOPE\nThis session is scoped to ONLY these apps: ${scopedNames.join(', ')}. Do not reference or suggest other apps.\n\n`;
+  }
+  if (projectContext) analyzeContent += `## Local Project Files\n${projectContext}\n\n`;
+  if (agentSkills) analyzeContent += `## Agent Skills Reference\n${agentSkills}\n\n`;
+  if (conversationTopics) analyzeContent += `## Past Conversation Topics\n${conversationTopics}\n\n`;
+  if (historyStr) analyzeContent += `## Recent Conversation\n${historyStr}\n\n`;
+  if (userMemory) analyzeContent += `## User Memory\n${userMemory}\n\n`;
+  analyzeContent += `## Current Message\n${message}\n\n## Available Functions\n${catalog}`;
+
+  const analyzeResult = await callFlash(flashModel, analyzeSystem, analyzeContent, apiKey);
+  if (!analyzeResult) {
+    const result = heuristicFallback(message, fnIndex, heavyModel);
+    yield { type: 'done', result };
+    return;
+  }
+
+  // Determine mode (support both old needsTool and new mode field)
+  const mode = analyzeResult.mode || (analyzeResult.needsTool === false ? 'direct' : 'write');
+
+  // Capture system agent delegations from Flash analysis
+  const systemAgentDelegations: Array<{ agentType: string; task: string }> =
+    (analyzeResult.systemAgentDelegations || [])
+      .filter((d: any) => d.agentType && d.task)
+      .map((d: any) => ({ agentType: d.agentType, task: d.task, originalPrompt: message }));
+
+  // Capture conversation search query (for cross-session context retrieval)
+  const conversationSearch: string | undefined = analyzeResult.conversationSearch || undefined;
+
+  // Direct response — no data needed
+  if (mode === 'direct') {
+    const result: FlashBrokerResult = {
+      needsTool: false,
+      directResponse: analyzeResult.directResponse || 'I can help with that!',
+      model: heavyModel || DEFAULT_HEAVY_FLASH,
+      prompt: '', functions: '', entities: [], conventions: [],
+      involvedAppIds: [], toolMap: {},
+      usage: analyzeResult._usage,
+      systemAgentDelegations: systemAgentDelegations.length > 0 ? systemAgentDelegations : undefined,
+      conversationSearch,
+    };
+    yield { type: 'direct_response', content: result.directResponse };
+    yield { type: 'done', result };
+    return;
+  }
+
+  // ── Stage 2: MAGNIFICATION — pull live data from identified apps ──
+
+  // Determine which apps to magnify
+  const relevantAppSlugs = analyzeResult.relevantApps || [];
+  const actionFunctions = analyzeResult.actionFunctions || [];
+
+  // Resolve app slugs to app IDs
+  const involvedAppIds = new Set<string>();
+  const toolMap: FlashBrokerResult['toolMap'] = {};
+  const appSlugToId: Record<string, string> = {};
+
+  // First, map from action functions
+  for (const fnName of actionFunctions) {
+    const fn = fnIndex.functions[fnName];
+    if (fn) {
+      toolMap[fnName] = { appId: fn.appId, fnName: fn.fnName, appSlug: fn.appSlug };
+      involvedAppIds.add(fn.appId);
+      appSlugToId[fn.appSlug] = fn.appId;
+    }
+  }
+
+  // Then, add any apps from relevantApps that aren't already included
+  for (const slug of relevantAppSlugs) {
+    if (!appSlugToId[slug]) {
+      // Find any function with this app slug to get the appId
+      const fn = Object.values(fnIndex.functions).find(f => f.appSlug === slug);
+      if (fn) {
+        involvedAppIds.add(fn.appId);
+        appSlugToId[slug] = fn.appId;
+      }
+    }
+  }
+
+  // Also include ALL functions for involved apps in the toolMap
+  for (const [fnName, fn] of Object.entries(fnIndex.functions)) {
+    if (involvedAppIds.has(fn.appId) && !toolMap[fnName]) {
+      toolMap[fnName] = { appId: fn.appId, fnName: fn.fnName, appSlug: fn.appSlug };
+    }
+  }
+
+  // ── Scope: add data-only apps to involvedAppIds (for magnification) ──
+  // Data-only apps were filtered out of fnIndex, so use fullFnIndex to find their appIds
+  if (scope) {
+    for (const [slug, cfg] of Object.entries(scope)) {
+      if (cfg.access === 'data' || cfg.access === 'all') {
+        if (!appSlugToId[slug]) {
+          const fn = Object.values(fullFnIndex.functions).find(f => f.appSlug === slug);
+          if (fn) {
+            involvedAppIds.add(fn.appId);
+            appSlugToId[slug] = fn.appId;
+          }
+        }
+      }
+    }
+  }
+
+  // ── Scope: filter out apps that shouldn't be magnified ──
+  if (scope && Object.keys(scope).length > 0) {
+    const slugsAllowingData = new Set(
+      Object.entries(scope).filter(([, cfg]) => cfg.access === 'all' || cfg.access === 'data').map(([slug]) => slug)
+    );
+    // Remove apps whose scope is 'functions' only (no magnification)
+    for (const appId of [...involvedAppIds]) {
+      const slug = Object.entries(appSlugToId).find(([, id]) => id === appId)?.[0];
+      if (slug && !slugsAllowingData.has(slug)) {
+        involvedAppIds.delete(appId);
+      }
+    }
+  }
+
+  const appIds = [...involvedAppIds];
+
+  // Resolve human-readable app names from function descriptions
+  // Descriptions are formatted as "[App Name] description..."
+  // Use fullFnIndex to find names for data-only apps that were filtered out
+  const appNames: Record<string, string> = {};
+  const appSlugs: string[] = [];
+  for (const id of appIds) {
+    const fn = Object.values(fnIndex.functions).find(f => f.appId === id)
+      || Object.values(fullFnIndex.functions).find(f => f.appId === id);
+    const slug = fn?.appSlug || id.slice(0, 8);
+    appSlugs.push(slug);
+    const match = fn?.description.match(/^\[([^\]]+)\]/);
+    appNames[slug] = match ? match[1] : slug;
+  }
+
+  yield {
+    type: 'magnifying',
+    text: `Loading data from ${Object.values(appNames).join(', ')}...`,
+    apps: Object.values(appNames),
+  };
+
+  // Magnify: query D1 databases for each involved app
+  const magnifiedData: Record<string, string> = {};
+  const magnifyPromises = appIds.map(async (appId, i) => {
+    const slug = appSlugs[i];
+    try {
+      const data = await magnifyApp(appId, userId);
+      magnifiedData[slug] = data.context;
+      return { slug, tables: data.tableCount, rows: data.rowCount };
+    } catch (err) {
+      console.error(`[FLASH-BROKER] Magnification failed for ${slug}:`, err);
+      magnifiedData[slug] = '(Data unavailable)';
+      return { slug, tables: 0, rows: 0 };
+    }
+  });
+
+  const magnifyResults = await Promise.all(magnifyPromises);
+  for (const mr of magnifyResults) {
+    yield { type: 'magnified', app: appNames[mr.slug] || mr.slug, tables: mr.tables, rows: mr.rows };
+  }
+
+  // ── Collect conventions for involved apps ──
+  const allConventions: Array<{ appName: string; key: string; value: string }> = [];
+  const seenConv = new Set<string>();
+  for (const fn of Object.values(fnIndex.functions)) {
+    if (!involvedAppIds.has(fn.appId)) continue;
+    for (const conv of fn.conventions || []) {
+      if (seenConv.has(conv)) continue;
+      seenConv.add(conv);
+      const colonIdx = conv.indexOf(':');
+      allConventions.push({
+        appName: fn.appSlug,
+        key: colonIdx > 0 ? conv.substring(0, colonIdx).trim() : conv,
+        value: colonIdx > 0 ? conv.substring(colonIdx + 1).trim() : '',
+      });
+    }
+  }
+
+  // ── MODE: READ — Flash responds directly using magnified data ──
+  if (mode === 'read') {
+    yield { type: 'constructing', functions: [], conventionCount: allConventions.length };
+
+    let readInput = `## User's Question\n${message}\n\n`;
+    if (projectContext) readInput += `## Local Project Context\n${projectContext}\n\n`;
+    readInput += `## Live App Data\n`;
+    for (const [slug, data] of Object.entries(magnifiedData)) {
+      readInput += `### ${appNames[slug] || slug}\n${data}\n\n`;
+    }
+    if (allConventions.length > 0) {
+      readInput += `## Conventions\n`;
+      for (const c of allConventions.slice(0, 10)) {
+        readInput += `- [${c.appName}] ${c.key}: ${c.value}\n`;
+      }
+    }
+
+    // Cross-session context retrieval for read mode
+    if (conversationSearch) {
+      try {
+        const { createEmbeddingService, searchConversationEmbeddings } = await import('./embedding.ts');
+        const svc = createEmbeddingService();
+        const { embedding } = await svc.embed(conversationSearch);
+        const matches = await searchConversationEmbeddings(embedding, userId, { limit: 3, threshold: 0.55 });
+        if (matches.length > 0) {
+          readInput += '\n## Relevant Past Conversations\n';
+          for (const m of matches) {
+            readInput += `### ${m.conversation_name} (${new Date(m.created_at).toLocaleDateString()})\n${m.summary}\n\n`;
+          }
+        }
+      } catch { /* ignore retrieval failures */ }
+    }
+
+    // Flash writes the response directly — no heavy model, plain text output
+    const readSystem = systemAgentContext
+      ? `You are "${systemAgentContext.persona}". ${FLASH_READ_RESPONSE_SYSTEM}`
+      : FLASH_READ_RESPONSE_SYSTEM;
+    const responseText = await callFlashText(flashModel, readSystem, readInput, apiKey)
+      || "I found the data but had trouble formatting the response. Could you try rephrasing your question?";
+
+    const result: FlashBrokerResult = {
+      needsTool: false,
+      directResponse: responseText,
+      model: flashModel,
+      prompt: '', functions: '', entities: [], conventions: allConventions.slice(0, 5),
+      involvedAppIds: appIds, toolMap: {},
+      usage: analyzeResult._usage,
+    };
+    yield { type: 'direct_response', content: responseText };
+    yield { type: 'done', result };
+    return;
+  }
+
+  // ── MODE: WRITE — construct prompt for Heavy model ──
+  yield {
+    type: 'constructing',
+    functions: actionFunctions,
+    conventionCount: allConventions.length,
+  };
+
+  // Build type declarations for ALL functions of involved apps
+  const typeDeclLines: string[] = [];
+  for (const [fnName] of Object.entries(toolMap)) {
+    const fn = fnIndex.functions[fnName];
+    if (!fn) continue;
+    const params = Object.entries(fn.params || {})
+      .map(([p, info]) => `${p}${info.required ? '' : '?'}: ${info.type}`)
+      .join(', ');
+    const returns = fn.returns && fn.returns !== 'unknown' ? fn.returns : 'unknown';
+    typeDeclLines.push(`  /** ${fn.description} */`);
+    typeDeclLines.push(`  ${fnName}(args: { ${params} }): Promise<${returns}>;`);
+  }
+  const functionsDecl = typeDeclLines.length > 0
+    ? `interface Codemode {\n${typeDeclLines.join('\n')}\n}`
+    : '';
+
+  // Build Flash round 2 input for prompt construction
+  let promptInput = `## User's Message\n${message}\n\n`;
+  if (projectContext) promptInput += `## Local Project Context\n${projectContext}\n\n`;
+  promptInput += `## Live App Data\n`;
+  for (const [slug, data] of Object.entries(magnifiedData)) {
+    promptInput += `### ${appNames[slug] || slug}\n${data}\n\n`;
+  }
+  promptInput += `## Available Functions\n`;
+  for (const [fnName] of Object.entries(toolMap)) {
+    const fn = fnIndex.functions[fnName];
+    if (!fn) continue;
+    const params = Object.entries(fn.params || {})
+      .map(([p, info]) => `${p}${info.required ? '' : '?'}: ${info.type}`)
+      .join(', ');
+    const rw = isReadOnly(fnName, fn.description) ? '[READ]' : '[WRITE]';
+    promptInput += `- codemode.${fnName}({ ${params} }) ${rw} — ${fn.description}\n`;
+  }
+  if (allConventions.length > 0) {
+    promptInput += `\n## Conventions\n`;
+    for (const c of allConventions.slice(0, 15)) {
+      promptInput += `- [${c.appName}] ${c.key}: ${c.value}\n`;
+    }
+  }
+
+  // Flash round 2: construct the final prompt for Heavy
+  const promptSystem = systemAgentContext
+    ? `You are constructing a prompt for "${systemAgentContext.persona}". Include their skills and conventions in the prompt.\n\n${FLASH_PROMPT_SYSTEM}`
+    : FLASH_PROMPT_SYSTEM;
+  const promptResult = await callFlash(flashModel, promptSystem, promptInput, apiKey);
+
+  let finalPrompt: string;
+  let finalModel: string;
+  let resolvedEntities: FlashBrokerResult['entities'] = [];
+  let resolvedConventions: FlashBrokerResult['conventions'] = [];
+
+  if (promptResult) {
+    finalPrompt = promptResult.prompt || '';
+    finalModel = resolveModel(promptResult.model, heavyModel);
+    resolvedEntities = (promptResult.entities || []).map((e: any) => ({
+      name: e.name || '', type: e.type || '', id: String(e.id || ''),
+      appId: e.appId || '', appName: e.appName || '', context: e.context || '',
+    }));
+    resolvedConventions = (promptResult.conventions || []).map((c: any) => ({
+      appName: c.appName || '', key: c.key || '', value: c.value || '',
+    }));
+  } else {
+    finalPrompt = `The user said: "${message}"\n\n`;
+    for (const [slug, data] of Object.entries(magnifiedData)) {
+      finalPrompt += `Data from ${slug}:\n${data}\n\n`;
+    }
+    finalPrompt += `Write a codemode recipe that fulfills the user's request.`;
+    finalModel = resolveModel(analyzeResult.model, heavyModel);
+  }
+
+  yield { type: 'prompt_ready', prompt: finalPrompt.slice(0, 200) + '...', model: finalModel };
+
+  const result: FlashBrokerResult = {
+    needsTool: true,
+    directResponse: '',
+    model: finalModel,
+    prompt: finalPrompt,
+    functions: functionsDecl,
+    entities: resolvedEntities,
+    conventions: resolvedConventions.length > 0 ? resolvedConventions : allConventions.slice(0, 5),
+    involvedAppIds: appIds,
+    toolMap,
+    usage: analyzeResult._usage,
+    systemAgentDelegations: systemAgentDelegations.length > 0 ? systemAgentDelegations : undefined,
+  };
+
+  yield { type: 'done', result };
+}
+
+// ── Magnification: Pull live D1 data for an app ──
+
+interface MagnifyResult {
+  context: string;
+  tableCount: number;
+  rowCount: number;
+}
+
+/**
+ * Query an app's D1 database and return a compact context string
+ * with all user-relevant data. This is the "magnification" step.
+ */
+async function magnifyApp(appId: string, userId: string): Promise<MagnifyResult> {
+  const dbId = await getD1DatabaseId(appId);
+  if (!dbId) {
+    return { context: '(No database provisioned)', tableCount: 0, rowCount: 0 };
+  }
+
+  const cfAccountId = getEnv('CF_ACCOUNT_ID');
+  const cfApiToken = getEnv('CF_API_TOKEN');
+
+  // Helper to query D1 via HTTP API
+  async function queryD1(sql: string, params: unknown[] = []): Promise<any[]> {
+    const res = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${cfAccountId}/d1/database/${dbId}/query`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${cfApiToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ sql, params }),
+      },
+    );
+    if (!res.ok) return [];
+    const data = await res.json() as { result?: Array<{ results?: any[] }> };
+    return data.result?.[0]?.results || [];
+  }
+
+  // 1. Discover tables
+  const tables = await queryD1("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name");
+  const tableNames = tables
+    .map((t: any) => t.name as string)
+    .filter(name => !SKIP_TABLES.has(name) && !name.startsWith('_') && !name.startsWith('sqlite_'));
+
+  if (tableNames.length === 0) {
+    return { context: '(Empty database)', tableCount: 0, rowCount: 0 };
+  }
+
+  // 2. Sample data from each table (parallel)
+  let totalRows = 0;
+  let totalChars = 0;
+  const sections: string[] = [];
+
+  const samplePromises = tableNames.slice(0, 10).map(async (tableName) => {
+    try {
+      // Get column info
+      const columns = await queryD1(`PRAGMA table_info("${tableName}")`);
+      const colNames = columns.map((c: any) => c.name as string);
+
+      // Sample recent rows (ORDER BY rowid DESC for most recent)
+      const rows = await queryD1(
+        `SELECT * FROM "${tableName}" ORDER BY rowid DESC LIMIT ${MAX_ROWS_PER_TABLE}`,
+      );
+
+      return { tableName, colNames, rows };
+    } catch {
+      return { tableName, colNames: [], rows: [] };
+    }
+  });
+
+  const samples = await Promise.all(samplePromises);
+
+  for (const { tableName, colNames, rows } of samples) {
+    if (rows.length === 0) continue;
+
+    totalRows += rows.length;
+
+    // Compact format: table name + column headers + rows as compact JSON
+    let section = `[${tableName}] (${rows.length} rows)\n`;
+    section += `Columns: ${colNames.join(', ')}\n`;
+
+    // Compact row representation — skip large text fields
+    for (const row of rows) {
+      const compactRow: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(row as Record<string, unknown>)) {
+        if (typeof value === 'string' && value.length > 200) {
+          compactRow[key] = value.slice(0, 200) + '...';
+        } else {
+          compactRow[key] = value;
+        }
+      }
+      const rowStr = JSON.stringify(compactRow);
+      if (totalChars + rowStr.length > MAX_CHARS_PER_APP) break;
+      section += rowStr + '\n';
+      totalChars += rowStr.length;
+    }
+
+    sections.push(section);
+    if (totalChars > MAX_CHARS_PER_APP) break;
+  }
+
+  return {
+    context: sections.join('\n'),
+    tableCount: tableNames.length,
+    rowCount: totalRows,
+  };
+}
+
+// ── Flash API Call ──
+
+async function callFlash(
+  model: string,
+  systemPrompt: string,
+  userContent: string,
+  apiKey: string,
+): Promise<any | null> {
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://ultralight.dev',
+        'X-Title': 'Ultralight Flash Broker',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userContent },
+        ],
+        temperature: 0,
+        max_tokens: 2048,
+        response_format: { type: 'json_object' },
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(`[FLASH-BROKER] Flash failed: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json() as {
+      choices: Array<{ message: { content: string } }>;
+      usage?: object;
+    };
+
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) return null;
+
+    const parsed = JSON.parse(content);
+    parsed._usage = data.usage || undefined;
+    return parsed;
+  } catch (err) {
+    console.error('[FLASH-BROKER] Flash error:', err);
+    return null;
+  }
+}
+
+/**
+ * Call Flash and return plain text (not JSON). Used for read responses and confirmations.
+ */
+export async function callFlashText(
+  model: string,
+  systemPrompt: string,
+  userContent: string,
+  apiKey: string,
+): Promise<string> {
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://ultralight.dev',
+        'X-Title': 'Ultralight Flash Broker',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userContent },
+        ],
+        temperature: 0.3,
+        max_tokens: 2048,
+        // No response_format — plain text output
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(`[FLASH-BROKER] Flash text call failed: ${response.status}`);
+      return '';
+    }
+
+    const data = await response.json() as {
+      choices: Array<{ message: { content: string } }>;
+    };
+
+    return data.choices?.[0]?.message?.content || '';
+  } catch (err) {
+    console.error('[FLASH-BROKER] Flash text error:', err);
+    return '';
+  }
+}
+
+// ── Catalog Builder (Stage 1 — functions + conventions only, no data) ──
+
+function buildCatalog(fnIndex: FunctionIndex, systemAgentStates?: SystemAgentState[]): string {
+  const sections: string[] = [];
+
+  // Group functions by app
+  const appFns: Record<string, Array<{ name: string; fn: FunctionIndex['functions'][string] }>> = {};
+  for (const [name, fn] of Object.entries(fnIndex.functions)) {
+    if (!appFns[fn.appSlug]) appFns[fn.appSlug] = [];
+    appFns[fn.appSlug].push({ name, fn });
+  }
+
+  for (const [slug, fns] of Object.entries(appFns)) {
+    const appDesc = fns[0]?.fn.description?.match(/^\[([^\]]+)\]/)?.[1] || slug;
+    sections.push(`\n### ${slug} (${appDesc})`);
+    for (const { name, fn } of fns) {
+      const params = Object.entries(fn.params || {})
+        .map(([p, info]) => `${p}${info.required ? '' : '?'}: ${info.type}`)
+        .join(', ');
+      const returns = fn.returns && fn.returns !== 'unknown' ? ` -> ${fn.returns}` : '';
+      const rw = isReadOnly(name, fn.description) ? ' [READ]' : ' [WRITE]';
+      // Strip the [appName] prefix from description since we're grouping by app
+      const desc = fn.description.replace(/^\[[^\]]+\]\s*/, '');
+      sections.push(`- ${name}(${params})${returns}${rw} — ${desc}`);
+    }
+
+    // Add conventions for this app (deduplicated)
+    const convs = new Set<string>();
+    for (const { fn } of fns) {
+      for (const c of fn.conventions || []) {
+        if (c.length > 3 && c.length < 120) convs.add(c);
+      }
+    }
+    if (convs.size > 0) {
+      const convList = [...convs].slice(0, 5);
+      sections.push(`  Conventions: ${convList.join('; ')}`);
+    }
+  }
+
+  // System Agents section — allows Flash to recommend delegations
+  if (systemAgentStates && systemAgentStates.length > 0) {
+    sections.push('\n## System Agents\nSpecialized agents you can delegate tasks to:');
+    for (const sa of systemAgentStates) {
+      let line = `- **${sa.name}** (${sa.type}): ${sa.tools.join(', ')}`;
+      if (sa.stateSummary) line += ` | State: ${sa.stateSummary.slice(0, 200)}`;
+      sections.push(line);
+    }
+  }
+
+  return sections.join('\n');
+}
+
+// ── Helpers ──
+
+function isReadOnly(fnName: string, description: string): boolean {
+  const writePatterns = /create|update|delete|remove|add|set|send|approve|reject|revise|act|store|save|insert|modify|post|put|generate|receive/i;
+  const readPatterns = /list|get|search|query|browse|count|check|view|show|find|fetch|read|load|inspect|history|context/i;
+  if (writePatterns.test(fnName) || writePatterns.test(description)) return false;
+  if (readPatterns.test(fnName) || readPatterns.test(description)) return true;
+  return true;
+}
+
+function resolveModel(flashSuggestion: string, userPreference?: string): string {
+  if (userPreference) return userPreference;
+  if (flashSuggestion === 'sonnet') return DEFAULT_HEAVY_SONNET;
+  if (flashSuggestion === 'flash') return DEFAULT_HEAVY_FLASH;
+  if (flashSuggestion && flashSuggestion.includes('/')) return flashSuggestion;
+  return DEFAULT_HEAVY_SONNET;
+}
+
+async function loadConversationTopics(userId: string): Promise<string> {
+  try {
+    const env = getEnv();
+    const kv = env.FN_INDEX;
+    if (!kv) return '';
+    const data = await kv.get(`conversation-topics:${userId}`, 'json') as {
+      count: number;
+      recent: Array<{ id: string; name: string; timestamp: number; entities: string[] }>;
+    } | null;
+    if (!data?.recent?.length) return '';
+    let hint = `${data.count} past conversations. Recent:\n`;
+    for (const r of data.recent) {
+      const date = new Date(r.timestamp).toLocaleDateString();
+      hint += `- "${r.name}" (${date})${r.entities?.length ? ': ' + r.entities.join(', ') : ''}\n`;
+    }
+    return hint;
+  } catch {
+    return '';
+  }
+}
+
+async function loadSystemAgentSkills(agentType: string): Promise<string> {
+  try {
+    const r2 = createR2Service();
+    const text = await r2.fetchTextFile(`system-agents/${agentType}/skills.md`);
+    return text.length > 4000 ? text.substring(0, 4000) + '...' : text;
+  } catch {
+    return '';
+  }
+}
+
+async function loadSystemAgentStates(userId: string): Promise<SystemAgentState[]> {
+  try {
+    const env = getEnv();
+    const kv = env.FN_INDEX;
+    if (!kv) return [];
+    const data = await kv.get(`system-agents:${userId}`, 'json');
+    return (data as SystemAgentState[]) || [];
+  } catch {
+    return [];
+  }
+}
+
+async function loadUserMemory(userId: string): Promise<string> {
+  try {
+    const r2 = createR2Service();
+    const text = await r2.fetchTextFile(`users/${userId}/memory.md`);
+    return text.length > 500 ? text.substring(0, 500) + '...' : text;
+  } catch {
+    return '';
+  }
+}
+
+// ── Heuristic Fallback ──
+
+function heuristicFallback(
+  message: string,
+  fnIndex: FunctionIndex,
+  preferredModel?: string,
+): FlashBrokerResult {
+  const msgLower = message.toLowerCase();
+  const words = msgLower.split(/\s+/);
+
+  const greetings = ['hi', 'hello', 'hey', 'sup', 'yo', 'howdy'];
+  if (words.length <= 3 && words.some(w => greetings.includes(w))) {
+    return {
+      needsTool: false,
+      directResponse: 'Hey! How can I help you today?',
+      model: preferredModel || DEFAULT_HEAVY_FLASH,
+      prompt: '', functions: '', entities: [], conventions: [],
+      involvedAppIds: [], toolMap: {},
+    };
+  }
+
+  // Match functions by keyword overlap
+  const scored: Array<{ name: string; fn: FunctionIndex['functions'][string]; score: number }> = [];
+  for (const [name, fn] of Object.entries(fnIndex.functions)) {
+    const descLower = fn.description.toLowerCase();
+    const nameLower = name.toLowerCase();
+    let score = 0;
+    for (const word of words) {
+      if (word.length < 3) continue;
+      if (nameLower.includes(word)) score += 3;
+      if (descLower.includes(word)) score += 2;
+    }
+    if (score > 0) scored.push({ name, fn, score });
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  const topFunctions = scored.slice(0, 5);
+
+  if (topFunctions.length === 0) {
+    return {
+      needsTool: false,
+      directResponse: "I'm not sure how to help with that. Could you be more specific?",
+      model: preferredModel || DEFAULT_HEAVY_FLASH,
+      prompt: '', functions: '', entities: [], conventions: [],
+      involvedAppIds: [], toolMap: {},
+    };
+  }
+
+  const toolMap: FlashBrokerResult['toolMap'] = {};
+  const involvedAppIds = new Set<string>();
+  const typeDeclLines: string[] = [];
+
+  for (const { name, fn } of topFunctions) {
+    toolMap[name] = { appId: fn.appId, fnName: fn.fnName, appSlug: fn.appSlug };
+    involvedAppIds.add(fn.appId);
+    const params = Object.entries(fn.params || {})
+      .map(([p, info]) => `${p}${info.required ? '' : '?'}: ${info.type}`)
+      .join(', ');
+    const returns = fn.returns && fn.returns !== 'unknown' ? fn.returns : 'unknown';
+    typeDeclLines.push(`  /** ${fn.description} */`);
+    typeDeclLines.push(`  ${name}(args: { ${params} }): Promise<${returns}>;`);
+  }
+
+  const fnList = topFunctions.map(f => `- codemode.${f.name}(): ${f.fn.description}`).join('\n');
+
+  return {
+    needsTool: true,
+    directResponse: '',
+    model: preferredModel || DEFAULT_HEAVY_FLASH,
+    prompt: `The user said: "${message}"\n\nAvailable functions:\n${fnList}\n\nWrite a codemode recipe.`,
+    functions: `interface Codemode {\n${typeDeclLines.join('\n')}\n}`,
+    entities: [], conventions: [],
+    involvedAppIds: [...involvedAppIds],
+    toolMap,
+  };
+}

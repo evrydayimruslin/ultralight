@@ -1,9 +1,7 @@
 // Apps Service
 // Handles app CRUD operations via Supabase
 
-// @ts-ignore - Deno is available in Deno Deploy
-const Deno = globalThis.Deno;
-
+import { getEnv } from '../lib/env.ts';
 import type { App } from '../../shared/types/index.ts';
 
 export interface SupabaseConfig {
@@ -317,8 +315,8 @@ export class AppsService {
 
 // Factory function
 export function createAppsService(): AppsService {
-  const url = Deno.env.get('SUPABASE_URL');
-  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const url = getEnv('SUPABASE_URL');
+  const key = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!url || !key) {
     throw new Error('Supabase credentials not configured');

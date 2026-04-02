@@ -15,18 +15,19 @@ import {
 import { createAppsService } from '../services/apps.ts';
 import { encryptEnvVar, decryptEnvVar } from '../services/envvars.ts';
 import { unsuspendContent } from '../services/hosting-billing.ts';
+import { getEnv } from '../lib/env.ts';
 
 // Stripe webhook idempotency: track processed event IDs in memory (1hr TTL).
 // Prevents double-crediting from Stripe's automatic webhook retries.
 const processedStripeEvents = new Map<string, number>();
 
-// Cleanup old entries every 10 minutes (events older than 1 hour are removed)
-setInterval(() => {
+// Cleanup old entries lazily (CF Workers don't allow setInterval at module scope)
+function cleanupProcessedEvents() {
   const cutoff = Date.now() - 60 * 60 * 1000;
-  for (const [id, ts] of processedStripeEvents) {
-    if (ts < cutoff) processedStripeEvents.delete(id);
+  for (const [id, timestamp] of processedStripeEvents) {
+    if (timestamp < cutoff) processedStripeEvents.delete(id);
   }
-}, 10 * 60 * 1000);
+}
 
 export async function handleUser(request: Request): Promise<Response> {
   const url = new URL(request.url);
@@ -42,9 +43,7 @@ export async function handleUser(request: Request): Promise<Response> {
   // Idempotent: deduplicates by Stripe event ID (in-memory cache, 1hr TTL).
   if (path === '/api/webhooks/stripe' && method === 'POST') {
     try {
-      // @ts-ignore
-      const Deno = globalThis.Deno;
-      const STRIPE_WEBHOOK_SECRET = Deno.env.get('STRIPE_WEBHOOK_SECRET') || '';
+      const STRIPE_WEBHOOK_SECRET = getEnv('STRIPE_WEBHOOK_SECRET');
 
       if (!STRIPE_WEBHOOK_SECRET) {
         return error('Stripe webhooks not configured', 503);
@@ -293,10 +292,8 @@ export async function handleUser(request: Request): Promise<Response> {
       });
 
       // Exchange code for tokens
-      // @ts-ignore
-      const Deno = globalThis.Deno;
-      const clientId = Deno.env.get('SUPABASE_MGMT_OAUTH_CLIENT_ID') || '';
-      const clientSecret = Deno.env.get('SUPABASE_MGMT_OAUTH_CLIENT_SECRET') || '';
+      const clientId = getEnv('SUPABASE_MGMT_OAUTH_CLIENT_ID');
+      const clientSecret = getEnv('SUPABASE_MGMT_OAUTH_CLIENT_SECRET');
       const baseUrl = `${url.protocol}//${url.host}`;
       const redirectUri = `${baseUrl}/api/user/supabase/oauth/callback`;
 
@@ -461,6 +458,86 @@ export async function handleUser(request: Request): Promise<Response> {
   }
 
   const userService = createUserService();
+
+  // ============================================
+  // POST /api/user/conversation-embedding - Embed conversation for semantic search
+  // ============================================
+  if (path === '/api/user/conversation-embedding' && method === 'POST') {
+    try {
+      const body = await request.json() as {
+        conversationId?: string;
+        conversationName?: string;
+        summary?: string;
+        metadata?: Record<string, unknown>;
+      };
+      const { conversationId, conversationName, summary, metadata } = body;
+
+      if (!conversationId || !summary || summary.length < 20) {
+        return error('conversationId and summary (min 20 chars) required', 400);
+      }
+
+      // Generate embedding
+      const { createEmbeddingService, storeConversationEmbedding } = await import('../services/embedding.ts');
+      const embeddingService = createEmbeddingService();
+      const { embedding } = await embeddingService.embed(summary.slice(0, 4000));
+
+      // Store in Supabase
+      await storeConversationEmbedding(
+        userId, conversationId, conversationName || 'Untitled', summary,
+        metadata || {}, embedding,
+      );
+
+      // Update topics hint in KV
+      const fnIndex = getEnv('FN_INDEX');
+      if (fnIndex) {
+        try {
+          const existing = (await fnIndex.get(`conversation-topics:${userId}`, 'json') as {
+            count: number;
+            recent: Array<{ id: string; name: string; timestamp: number; entities: string[] }>;
+          }) || { count: 0, recent: [] };
+          const recent = (existing.recent || []).filter((r: { id: string }) => r.id !== conversationId);
+          recent.unshift({
+            id: conversationId,
+            name: conversationName || 'Untitled',
+            timestamp: Date.now(),
+            entities: ((metadata?.entities || []) as string[]).slice(0, 10),
+          });
+          await fnIndex.put(`conversation-topics:${userId}`, JSON.stringify({
+            count: Math.max(existing.count || 0, recent.length),
+            recent: recent.slice(0, 10),
+          }));
+        } catch (kvErr) {
+          console.warn('Failed to update conversation topics KV:', kvErr);
+        }
+      }
+
+      return json({ ok: true });
+    } catch (err) {
+      console.error('Conversation embedding error:', err);
+      return error('Failed to embed conversation', 500);
+    }
+  }
+
+  // ============================================
+  // PUT /api/user/system-agent-states - Sync system agent states for Flash context
+  // ============================================
+  if (path === '/api/user/system-agent-states' && method === 'PUT') {
+    try {
+      const body = await request.json();
+      const states = body.states;
+      if (!Array.isArray(states)) {
+        return error('states must be an array', 400);
+      }
+      const fnIndex = getEnv('FN_INDEX');
+      if (fnIndex) {
+        await fnIndex.put(`system-agents:${userId}`, JSON.stringify(states));
+      }
+      return json({ ok: true });
+    } catch (err) {
+      console.error('Sync system agent states error:', err);
+      return error('Failed to sync system agent states', 500);
+    }
+  }
 
   // ============================================
   // GET /api/user - Get user profile
@@ -949,9 +1026,7 @@ export async function handleUser(request: Request): Promise<Response> {
   // GET /api/user/supabase/oauth/authorize — Initiate OAuth flow
   if (path === '/api/user/supabase/oauth/authorize' && method === 'GET') {
     try {
-      // @ts-ignore
-      const Deno = globalThis.Deno;
-      const clientId = Deno.env.get('SUPABASE_MGMT_OAUTH_CLIENT_ID');
+      const clientId = getEnv('SUPABASE_MGMT_OAUTH_CLIENT_ID');
       if (!clientId) {
         return error('Supabase OAuth not configured', 501);
       }
@@ -1759,10 +1834,8 @@ export async function handleUser(request: Request): Promise<Response> {
         return error('amount_cents must be at least 500 ($5.00 minimum deposit)', 400);
       }
 
-      // @ts-ignore
-      const Deno = globalThis.Deno;
-      const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY') || '';
-      const BASE_URL = Deno.env.get('BASE_URL') || '';
+      const STRIPE_SECRET_KEY = getEnv('STRIPE_SECRET_KEY');
+      const BASE_URL = getEnv('BASE_URL');
 
       if (!STRIPE_SECRET_KEY) {
         return error(
@@ -2045,9 +2118,7 @@ export async function handleUser(request: Request): Promise<Response> {
         });
       }
 
-      // @ts-ignore
-      const Deno = globalThis.Deno;
-      const BASE_URL = Deno.env.get('BASE_URL') || '';
+      const BASE_URL = getEnv('BASE_URL');
 
       const link = await createOnboardingLink(
         accountId,
@@ -2802,11 +2873,9 @@ async function verifyStripeSignature(
 // Supabase env helper
 // ============================================
 function getSupabaseEnv(): { SUPABASE_URL: string; SUPABASE_SERVICE_ROLE_KEY: string } {
-  // @ts-ignore - Deno is available
-  const Deno = globalThis.Deno;
   return {
-    SUPABASE_URL: Deno.env.get('SUPABASE_URL') || '',
-    SUPABASE_SERVICE_ROLE_KEY: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '',
+    SUPABASE_URL: getEnv('SUPABASE_URL'),
+    SUPABASE_SERVICE_ROLE_KEY: getEnv('SUPABASE_SERVICE_ROLE_KEY'),
   };
 }
 
@@ -2955,10 +3024,8 @@ async function getSupabaseMgmtToken(userId: string): Promise<string | null> {
   }
 
   // Token expired — refresh it
-  // @ts-ignore
-  const Deno = globalThis.Deno;
-  const clientId = Deno.env.get('SUPABASE_MGMT_OAUTH_CLIENT_ID') || '';
-  const clientSecret = Deno.env.get('SUPABASE_MGMT_OAUTH_CLIENT_SECRET') || '';
+  const clientId = getEnv('SUPABASE_MGMT_OAUTH_CLIENT_ID');
+  const clientSecret = getEnv('SUPABASE_MGMT_OAUTH_CLIENT_SECRET');
 
   const tokenRes = await fetch('https://api.supabase.com/v1/oauth/token', {
     method: 'POST',

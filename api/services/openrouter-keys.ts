@@ -15,14 +15,9 @@
  * Docs: https://openrouter.ai/docs/api/api-reference/api-keys/create-keys
  */
 
-// @ts-ignore
-const Deno = globalThis.Deno;
+import { getEnv } from '../lib/env.ts';
 
-const OPENROUTER_MGMT_KEY = Deno.env.get('OPENROUTER_API_KEY') || '';
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
-
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
 // ── Types ──
 
@@ -49,7 +44,7 @@ interface OpenRouterKeyResponse {
  * Returns the plaintext key (shown only once).
  */
 export async function createOpenRouterKey(userId: string, userEmail: string): Promise<string> {
-  if (!OPENROUTER_MGMT_KEY) {
+  if (!getEnv('OPENROUTER_API_KEY')) {
     throw new Error('OPENROUTER_API_KEY (management key) not configured');
   }
 
@@ -60,7 +55,7 @@ export async function createOpenRouterKey(userId: string, userEmail: string): Pr
   const res = await fetch(`${OPENROUTER_BASE}/keys`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${OPENROUTER_MGMT_KEY}`,
+      'Authorization': `Bearer ${getEnv('OPENROUTER_API_KEY')}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -98,11 +93,11 @@ const PLATFORM_OR_KEY = '_platform_openrouter';
  */
 export async function getStoredOpenRouterKey(userId: string): Promise<string | null> {
   const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=byok_keys`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}&select=byok_keys`,
     {
       headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+        'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
       },
     }
   );
@@ -129,11 +124,11 @@ export async function getStoredOpenRouterKey(userId: string): Promise<string | n
 export async function storeOpenRouterKey(userId: string, key: string): Promise<void> {
   // 1. Read current byok_keys to preserve existing BYOK provider configs
   const getRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=byok_keys`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}&select=byok_keys`,
     {
       headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+        'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
       },
     }
   );
@@ -157,12 +152,12 @@ export async function storeOpenRouterKey(userId: string, key: string): Promise<v
 
   // 3. Write back
   const patchRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}`,
     {
       method: 'PATCH',
       headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+        'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
         'Content-Type': 'application/json',
         'Prefer': 'return=minimal',
       },
