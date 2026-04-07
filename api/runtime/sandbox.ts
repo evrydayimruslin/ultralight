@@ -1351,6 +1351,82 @@ export async function executeInSandbox(
       }
     };
 
+    // ── net:connect — TCP/TLS socket access (gated by permission) ──
+    // Exposes Deno.connect and Deno.connectTls for apps that need raw socket access
+    // (IMAP, SMTP, database drivers, etc). Only available when manifest declares net:connect.
+    const MAX_CONCURRENT_CONNECTIONS = 5;
+    let activeConnectionCount = 0;
+    const CONNECTION_TIMEOUT_MS = 30_000;
+
+    const hasNetConnect = config.permissions.includes('net:connect');
+
+    // @ts-ignore — Deno global
+    const _Deno = globalThis.Deno;
+
+    const sandboxConnect = async (options: { hostname: string; port: number }) => {
+      if (!hasNetConnect) {
+        throw new Error('net:connect permission required. Add "net:connect" to your manifest permissions array.');
+      }
+      if (activeConnectionCount >= MAX_CONCURRENT_CONNECTIONS) {
+        throw new Error(`Concurrent connection limit exceeded (max ${MAX_CONCURRENT_CONNECTIONS})`);
+      }
+      if (!options?.hostname || !options?.port) {
+        throw new Error('hostname and port are required');
+      }
+      // Block connections to localhost/internal networks
+      const host = options.hostname.toLowerCase();
+      if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host.startsWith('10.') || host.startsWith('192.168.') || host.startsWith('172.')) {
+        throw new Error('Connections to internal/private networks are not allowed');
+      }
+
+      activeConnectionCount++;
+      capturedConsole.log(`[net:connect] TCP ${options.hostname}:${options.port}`);
+      try {
+        const conn = await _Deno.connect({ hostname: options.hostname, port: options.port });
+        // Wrap to track cleanup
+        const originalClose = conn.close.bind(conn);
+        conn.close = () => {
+          activeConnectionCount--;
+          return originalClose();
+        };
+        return conn;
+      } catch (e) {
+        activeConnectionCount--;
+        throw e;
+      }
+    };
+
+    const sandboxConnectTls = async (options: { hostname: string; port: number }) => {
+      if (!hasNetConnect) {
+        throw new Error('net:connect permission required. Add "net:connect" to your manifest permissions array.');
+      }
+      if (activeConnectionCount >= MAX_CONCURRENT_CONNECTIONS) {
+        throw new Error(`Concurrent connection limit exceeded (max ${MAX_CONCURRENT_CONNECTIONS})`);
+      }
+      if (!options?.hostname || !options?.port) {
+        throw new Error('hostname and port are required');
+      }
+      const host = options.hostname.toLowerCase();
+      if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host.startsWith('10.') || host.startsWith('192.168.') || host.startsWith('172.')) {
+        throw new Error('Connections to internal/private networks are not allowed');
+      }
+
+      activeConnectionCount++;
+      capturedConsole.log(`[net:connect] TLS ${options.hostname}:${options.port}`);
+      try {
+        const conn = await _Deno.connectTls({ hostname: options.hostname, port: options.port });
+        const originalClose = conn.close.bind(conn);
+        conn.close = () => {
+          activeConnectionCount--;
+          return originalClose();
+        };
+        return conn;
+      } catch (e) {
+        activeConnectionCount--;
+        throw e;
+      }
+    };
+
     // User ID validation for D1 queries — ensures data isolation between users.
     // Every SELECT/UPDATE/DELETE must reference user_id in a WHERE clause.
     // Every INSERT must include user_id in the column list.
@@ -1740,6 +1816,12 @@ export async function executeInSandbox(
       // Network (all HTTPS allowed)
       fetch: openFetch,
 
+      // TCP/TLS sockets (requires net:connect permission)
+      Deno: hasNetConnect ? {
+        connect: sandboxConnect,
+        connectTls: sandboxConnectTls,
+      } : undefined,
+
       // Timers — tracked for cleanup after execution
       setTimeout: (fn: () => void, ms: number) => {
         const id = setTimeout(fn, Math.min(ms, 30000));
@@ -1821,6 +1903,7 @@ export async function executeInSandbox(
       _,
       console: capturedConsole,
       fetch: openFetch,
+      Deno: hasNetConnect ? { connect: sandboxConnect, connectTls: sandboxConnectTls } : undefined,
       setTimeout: context.setTimeout as typeof globalThis.setTimeout,
       clearTimeout: context.clearTimeout as typeof globalThis.clearTimeout,
       setInterval: context.setInterval as typeof globalThis.setInterval,

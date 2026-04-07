@@ -83,6 +83,37 @@ globalThis.ultralight = {
   recall(k) { const e = globalThis.__rpcEnv; return e.MEMORY ? e.MEMORY.recall(k) : Promise.resolve(null); },
   ai(r) { const e = globalThis.__rpcEnv; return e.AI ? e.AI.call(r) : Promise.resolve({ content: '', error: 'AI not available' }); },
   call() { throw new Error('ultralight.call() not available in sandbox. Use ul.call platform tool.'); },
+  // net:connect — TCP/TLS socket access (gated by permission)
+  net: ${config.permissions.includes('net:connect') ? `{
+    connect(hostname, port, options) {
+      if (!hostname || !port) throw new Error('hostname and port are required');
+      const h = hostname.toLowerCase();
+      if (h === 'localhost' || h === '127.0.0.1' || h === '0.0.0.0' || h.startsWith('10.') || h.startsWith('192.168.') || h.startsWith('172.')) {
+        throw new Error('Connections to internal/private networks are not allowed');
+      }
+      if (port === 25) throw new Error('Port 25 (SMTP) is blocked. Use port 465 (SMTPS) or 587 (submission).');
+      const opts = Object.assign({ secureTransport: 'on' }, options || {});
+      try {
+        return globalThis.connect({ hostname: hostname, port: port }, opts);
+      } catch(e) {
+        throw new Error('TCP connect failed: ' + e.message + '. Ensure net:connect permission is declared.');
+      }
+    },
+    connectTls(hostname, port) {
+      return this.connect(hostname, port, { secureTransport: 'on' });
+    },
+    connectPlain(hostname, port) {
+      return this.connect(hostname, port, { secureTransport: 'off' });
+    },
+    connectStartTls(hostname, port) {
+      return this.connect(hostname, port, { secureTransport: 'starttls' });
+    },
+  }` : `{
+    connect() { throw new Error('net:connect permission required. Add "net:connect" to your manifest permissions.'); },
+    connectTls() { throw new Error('net:connect permission required.'); },
+    connectPlain() { throw new Error('net:connect permission required.'); },
+    connectStartTls() { throw new Error('net:connect permission required.'); },
+  }`},
 };
 `;
 

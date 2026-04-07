@@ -433,7 +433,16 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
     const d1DataService = createD1DataService(app.id, d1DatabaseId);
 
     // Execute the function in sandbox — AI-capable apps get 120s timeout
+    // Include manifest-declared permissions (e.g., net:connect for IMAP/SMTP)
     const httpPermissions = ['memory:read', 'memory:write', 'ai:call', 'net:fetch'];
+    const manifestPerms = (app as any).manifest?.permissions || (app as any).declared_permissions || [];
+    if (Array.isArray(manifestPerms)) {
+      for (const p of manifestPerms) {
+        if (p === 'net:connect' && !httpPermissions.includes(p)) {
+          httpPermissions.push(p);
+        }
+      }
+    }
     // Dynamic Worker sandbox — avoids `new Function()` restriction on CF Workers
     const { executeInDynamicSandbox } = await import('../runtime/dynamic-sandbox.ts');
     const result = await executeInDynamicSandbox(
