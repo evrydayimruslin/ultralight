@@ -27,6 +27,16 @@ pub fn shell_exec(
     let root = validate_root(&project_root)?;
     let timeout = Duration::from_millis(timeout_ms.unwrap_or(120_000));
 
+    #[cfg(target_os = "windows")]
+    let child = Command::new("cmd")
+        .args(&["/C", &command])
+        .current_dir(&root)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn command: {}", e))?;
+
+    #[cfg(not(target_os = "windows"))]
     let child = Command::new("sh")
         .arg("-c")
         .arg(&command)

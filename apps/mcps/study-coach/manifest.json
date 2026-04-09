@@ -1,8 +1,8 @@
 {
-  "name": "Study Coach",
+  "name": "Private Tutor",
   "version": "1.0.0",
   "type": "mcp",
-  "description": "Personalized learning paths with spaced repetition for any subject. Track concepts, rate understanding, and get AI-generated quizzes.",
+  "description": "Your personal AI tutor. Generates quizzes to assess your understanding, creates custom lessons targeting your weak spots, and tracks your progress over time with spaced repetition.",
   "author": "ultralight",
   "entry": {
     "functions": "index.ts"

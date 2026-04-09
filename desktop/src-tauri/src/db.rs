@@ -1398,7 +1398,7 @@ mod tests {
 
         conn.execute(
             "INSERT INTO conversations (id, title, model, project_dir, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params!["conv1", "Test Chat", "anthropic/claude-sonnet-4-20250514", Some("/tmp/project"), now, now],
+            params!["conv1", "Test Chat", "anthropic/claude-sonnet-4-20250514", Some(std::env::temp_dir().join("project").to_string_lossy().to_string()).as_deref(), now, now],
         ).unwrap();
 
         let mut stmt = conn.prepare(
@@ -1683,7 +1683,7 @@ mod tests {
 
         conn.execute(
             "INSERT INTO kanban_boards (id, name, project_dir, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params!["board1", "My Board", Some("/tmp/project"), now, now],
+            params!["board1", "My Board", Some(std::env::temp_dir().join("project").to_string_lossy().to_string()).as_deref(), now, now],
         ).unwrap();
 
         // Create 4 default columns

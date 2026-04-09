@@ -21,7 +21,7 @@
     "add": {
       "description": "Batch-create any combination of entities in a single call. Characters, settings, themes, relationships, arcs, factions, lore, rules, and scenes. Relationships reference characters by name. Create characters and their relationships in the same call.",
       "parameters": {
-        "world_id": { "type": "string", "description": "World ID", "required": true },
+        "world_id": { "type": "string", "description": "World name or ID. Use the world's name (e.g. 'Fantasy RPG') — it will be resolved automatically.", "required": true },
         "characters": { "type": "array", "description": "Characters to create. Each: { name, role?, traits?: string[], backstory? }" },
         "settings": { "type": "array", "description": "Locations to create. Each: { name, description }" },
         "themes": { "type": "array", "description": "Themes to create. Each: { name, description }" },
@@ -37,7 +37,7 @@
     "read": {
       "description": "Read world data. Returns all dimensions by default, or filter with 'include'. Zoom into a single character with 'character_name' to see their profile, relationships, scenes, and faction memberships. Paginate scenes with scene_limit/scene_offset.",
       "parameters": {
-        "world_id": { "type": "string", "description": "World ID", "required": true },
+        "world_id": { "type": "string", "description": "World name or ID. Use the world's name (e.g. 'Fantasy RPG') — it will be resolved automatically.", "required": true },
         "include": { "type": "array", "description": "Filter dimensions: 'characters', 'settings', 'themes', 'relationships', 'arcs', 'factions', 'lore', 'rules', 'scenes'. Omit for all." },
         "character_name": { "type": "string", "description": "Zoom into one character — returns their full profile, relationships, scenes they appear in, and factions" },
         "scene_limit": { "type": "number", "description": "Max scenes to return (default: 10)" },
@@ -48,7 +48,7 @@
     "update": {
       "description": "Batch-update entities by name or ID. Partial updates — only specified fields change. For characters: merge_traits=true appends traits instead of replacing. For factions: use add_members/remove_members to modify membership. For relationships: use 'between' with [charA_name, charB_name].",
       "parameters": {
-        "world_id": { "type": "string", "description": "World ID", "required": true },
+        "world_id": { "type": "string", "description": "World name or ID. Use the world's name (e.g. 'Fantasy RPG') — it will be resolved automatically.", "required": true },
         "world": { "type": "object", "description": "Update world metadata: { name?, genre?, description? }" },
         "characters": { "type": "array", "description": "Each: { name_or_id, name?, role?, traits?, backstory?, merge_traits?: bool }" },
         "settings": { "type": "array", "description": "Each: { name_or_id, name?, description? }" },
@@ -64,7 +64,7 @@
     "remove": {
       "description": "Batch-delete entities by name or ID. Deleting a character also removes their relationships. Delete relationships by name pair ('Cash Bo / Blazer Sith') or by ID.",
       "parameters": {
-        "world_id": { "type": "string", "description": "World ID", "required": true },
+        "world_id": { "type": "string", "description": "World name or ID. Use the world's name (e.g. 'Fantasy RPG') — it will be resolved automatically.", "required": true },
         "characters": { "type": "array", "description": "Character names or IDs to delete (also removes their relationships)" },
         "settings": { "type": "array", "description": "Setting names or IDs to delete" },
         "themes": { "type": "array", "description": "Theme names or IDs to delete" },
@@ -80,7 +80,7 @@
     "get_context": {
       "description": "Full world dump optimized for agent handoff. 'structured' returns all data as JSON. 'narrative' uses AI to generate a concise story bible brief — covers premise, characters, dynamics, political landscape, active arcs, rules, and timeline. Best way for a new agent to pick up where the last one left off.",
       "parameters": {
-        "world_id": { "type": "string", "description": "World ID", "required": true },
+        "world_id": { "type": "string", "description": "World name or ID. Use the world's name (e.g. 'Fantasy RPG') — it will be resolved automatically.", "required": true },
         "format": { "type": "string", "description": "'structured' (default) or 'narrative' (AI-generated brief)", "enum": ["structured", "narrative"] }
       },
       "returns": { "type": "object", "description": "Full world state in requested format" }
@@ -88,7 +88,7 @@
     "generate": {
       "description": "AI-powered content generation using full world context (all 9 dimensions). Automatically saves as a scene in the timeline. Reference characters and settings by name.",
       "parameters": {
-        "world_id": { "type": "string", "description": "World ID", "required": true },
+        "world_id": { "type": "string", "description": "World name or ID. Use the world's name (e.g. 'Fantasy RPG') — it will be resolved automatically.", "required": true },
         "type": { "type": "string", "description": "Content type to generate", "enum": ["scene", "chapter", "dialogue", "outline", "description"] },
         "prompt": { "type": "string", "description": "Creative direction (e.g. 'Cash Bo confronts The Earl about the BBF ratings')" },
         "character_names": { "type": "array", "description": "Focus characters by name — their relationships are highlighted in context" },

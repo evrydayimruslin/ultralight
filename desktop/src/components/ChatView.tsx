@@ -543,6 +543,7 @@ export default function ChatView({
       systemAgentStates: systemAgentStates.length > 0 ? systemAgentStates : undefined,
       systemAgentContext: systemAgentContext || undefined,
       projectContext,
+      conversationId: activeId || undefined,
     })) {
       switch (event.type) {
         // Flash phase — show subtle status hints
@@ -762,6 +763,7 @@ export default function ChatView({
         adminNotes: agent.admin_notes || undefined,
         systemAgentContext: { type: config.type, persona: config.persona, skillsPath: config.skillsPath },
         projectContext: delegatedProjectContext,
+        conversationId: activeId || undefined,
       })) {
         if (ev.type === 'flash_direct' || ev.type === 'heavy_text') {
           resultContent += ev.content || '';

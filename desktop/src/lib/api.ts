@@ -437,6 +437,8 @@ export async function* streamOrchestrate(opts: {
   systemAgentContext?: { type: string; persona: string; skillsPath: string };
   /** Local project file context gathered client-side for Tool Maker */
   projectContext?: string;
+  /** Conversation ID for rolling summary persistence */
+  conversationId?: string;
 }): AsyncGenerator<OrchestrateEvent> {
   const base = getApiBase();
 

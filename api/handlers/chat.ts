@@ -460,6 +460,7 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
     scope?: Record<string, { access: 'all' | 'functions' | 'data'; functions?: string[] }>;
     systemAgentContext?: { type: string; persona: string; skillsPath: string };
     projectContext?: string;
+    conversationId?: string;
   };
   try {
     body = await request.json() as typeof body;
@@ -493,6 +494,7 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
             scope: body.scope,
             systemAgentContext: body.systemAgentContext,
             projectContext: body.projectContext,
+            conversationId: body.conversationId,
           },
           user.id,
           user.email,

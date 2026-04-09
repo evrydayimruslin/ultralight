@@ -1,4 +1,4 @@
--- Study Coach: subjects, concepts, ratings tables
+-- Private Tutor: subjects, concepts, ratings tables
 
 CREATE TABLE IF NOT EXISTS subjects (
   id TEXT PRIMARY KEY,

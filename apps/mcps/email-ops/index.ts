@@ -1,13 +1,14 @@
-// Email-Ops — Ultralight MCP App (v2: Conversations + Versions)
+// Email-Ops — Ultralight MCP App (v2: IMAP/SMTP Direct)
 //
-// Version-controlled email thread system. Every action (draft, edit, regenerate,
-// send, followup) creates a version. Full audit trail with diffs computed on read.
+// Version-controlled email thread system. Connects directly to hotel mailbox
+// via IMAP (inbound) and SMTP (outbound) using ultralight.net TCP/TLS sockets.
+// Every action (draft, edit, regenerate, send, followup) creates a version.
 //
-// Tables: conversations, versions, conventions (+ legacy email_log, approval_queue)
+// Tables: conversations, versions, conventions, imap_sync_state
 // AI: ultralight.ai() with google/gemini-3-flash-preview
-// Network: Resend API for outbound
-// Widgets: widget_email_inbox_ui (full deck app), widget_email_inbox_data
-// Permissions: ai:call, net:fetch
+// Network: IMAP/SMTP via ultralight.net.connectTls (Cloudflare Workers TCP sockets)
+// Widgets: widget_email_inbox_ui (full deck app), widget_email_faqs_ui (FAQ editor)
+// Permissions: ai:call, net:fetch, net:connect
 
 const ultralight = (globalThis as any).ultralight;
 const AI_MODEL = 'google/gemini-3-flash-preview';
@@ -38,24 +39,455 @@ async function nextVersionNum(conversationId: string): Promise<number> {
   return (row?.mx || 0) + 1;
 }
 
-async function sendViaResend(to: string, subject: string, body: string, inReplyTo?: string): Promise<{ success: boolean; resendId?: string; error?: string }> {
-  const apiKey = ultralight.env.RESEND_API_KEY;
-  const fromAddr = ultralight.env.BUSINESS_EMAIL || 'noreply@resend.dev';
-  const bizName = ultralight.env.BUSINESS_NAME || 'Business';
-  if (!apiKey) return { success: false, error: 'RESEND_API_KEY not configured' };
+// ── TCP/TLS Protocol Helpers ──
 
-  const payload: any = { from: bizName + ' <' + fromAddr + '>', to: [to], subject, html: body.replace(/\n/g, '<br>') };
-  if (inReplyTo) { payload.headers = { 'In-Reply-To': inReplyTo, 'References': inReplyTo }; }
+const enc = new TextEncoder();
+const dec = new TextDecoder();
 
-  const res = await fetch('https://api.resend.com/emails', {
-    method: 'POST', headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-  });
+// Line-buffered reader for IMAP/SMTP text protocols
+class LineReader {
+  private reader: any;
+  private buf = '';
 
-  if (res.ok) {
-    const data = await res.json();
-    return { success: true, resendId: data?.id };
+  constructor(readable: any) {
+    this.reader = readable.getReader();
   }
-  return { success: false, error: await res.text() };
+
+  async readLine(): Promise<string> {
+    while (true) {
+      const idx = this.buf.indexOf('\r\n');
+      if (idx >= 0) {
+        const line = this.buf.substring(0, idx);
+        this.buf = this.buf.substring(idx + 2);
+        return line;
+      }
+      const { value, done } = await this.reader.read();
+      if (done) throw new Error('Connection closed');
+      this.buf += dec.decode(value);
+    }
+  }
+
+  // Read exactly N bytes (for IMAP literals {N})
+  async readBytes(n: number): Promise<string> {
+    while (this.buf.length < n) {
+      const { value, done } = await this.reader.read();
+      if (done) throw new Error('Connection closed during literal read');
+      this.buf += dec.decode(value);
+    }
+    const result = this.buf.substring(0, n);
+    this.buf = this.buf.substring(n);
+    return result;
+  }
+
+  releaseLock() {
+    try { this.reader.releaseLock(); } catch {}
+  }
+}
+
+// ── SMTP Sender ──
+
+async function sendViaSMTP(to: string, subject: string, body: string, inReplyTo?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  const host = ultralight.env.SMTP_HOST;
+  const port = parseInt(ultralight.env.SMTP_PORT || '465');
+  const user = ultralight.env.SMTP_USER;
+  const pass = ultralight.env.SMTP_PASS;
+  const fromAddr = ultralight.env.BUSINESS_EMAIL || user;
+  const bizName = ultralight.env.BUSINESS_NAME || 'Hotel';
+
+  if (!host || !user || !pass) return { success: false, error: 'SMTP credentials not configured' };
+
+  const socket = ultralight.net.connectTls(host, port);
+  const lr = new LineReader(socket.readable);
+  const writer = socket.writable.getWriter();
+
+  async function send(cmd: string): Promise<string> {
+    await writer.write(enc.encode(cmd + '\r\n'));
+    return await lr.readLine();
+  }
+
+  try {
+    // Read greeting
+    const greeting = await lr.readLine();
+    if (!greeting.startsWith('220')) throw new Error('SMTP greeting failed: ' + greeting);
+
+    // EHLO
+    let resp = await send('EHLO ultralight.dev');
+    // Read multi-line EHLO response
+    while (resp.charAt(3) === '-') { resp = await lr.readLine(); }
+
+    // AUTH LOGIN
+    resp = await send('AUTH LOGIN');
+    if (!resp.startsWith('334')) throw new Error('AUTH not supported: ' + resp);
+    resp = await send(btoa(user));
+    if (!resp.startsWith('334')) throw new Error('AUTH user failed: ' + resp);
+    resp = await send(btoa(pass));
+    if (!resp.startsWith('235')) throw new Error('AUTH failed: ' + resp);
+
+    // MAIL FROM
+    resp = await send('MAIL FROM:<' + fromAddr + '>');
+    if (!resp.startsWith('250')) throw new Error('MAIL FROM failed: ' + resp);
+
+    // RCPT TO
+    resp = await send('RCPT TO:<' + to + '>');
+    if (!resp.startsWith('250')) throw new Error('RCPT TO failed: ' + resp);
+
+    // DATA
+    resp = await send('DATA');
+    if (!resp.startsWith('354')) throw new Error('DATA failed: ' + resp);
+
+    // Build email
+    const domain = fromAddr.split('@')[1] || 'ultralight.dev';
+    const messageId = '<' + crypto.randomUUID() + '@' + domain + '>';
+    const boundary = '----=_Part_' + crypto.randomUUID().replace(/-/g, '');
+    const htmlBody = body.replace(/\n/g, '<br>');
+
+    let headers = 'From: ' + bizName + ' <' + fromAddr + '>\r\n';
+    headers += 'To: ' + to + '\r\n';
+    headers += 'Subject: ' + subject + '\r\n';
+    headers += 'Date: ' + new Date().toUTCString() + '\r\n';
+    headers += 'Message-ID: ' + messageId + '\r\n';
+    headers += 'MIME-Version: 1.0\r\n';
+    if (inReplyTo) {
+      headers += 'In-Reply-To: ' + inReplyTo + '\r\n';
+      headers += 'References: ' + inReplyTo + '\r\n';
+    }
+    headers += 'Content-Type: multipart/alternative; boundary="' + boundary + '"\r\n';
+
+    let msg = headers + '\r\n';
+    msg += '--' + boundary + '\r\n';
+    msg += 'Content-Type: text/plain; charset=UTF-8\r\n\r\n';
+    msg += body + '\r\n';
+    msg += '--' + boundary + '\r\n';
+    msg += 'Content-Type: text/html; charset=UTF-8\r\n\r\n';
+    msg += htmlBody + '\r\n';
+    msg += '--' + boundary + '--\r\n';
+
+    // Escape leading dots (SMTP transparency)
+    msg = msg.replace(/\r\n\./g, '\r\n..');
+
+    await writer.write(enc.encode(msg + '\r\n.\r\n'));
+    resp = await lr.readLine();
+    if (!resp.startsWith('250')) throw new Error('Send failed: ' + resp);
+
+    await send('QUIT');
+    return { success: true, messageId };
+  } catch (e: any) {
+    return { success: false, error: e.message || String(e) };
+  } finally {
+    lr.releaseLock();
+    try { writer.releaseLock(); } catch {}
+    try { socket.close(); } catch {}
+  }
+}
+
+// ── IMAP Helpers ──
+
+async function createImapConnection(): Promise<{ lr: LineReader; writer: any; socket: any; tag: number; cmd: (command: string) => Promise<{ tag: string; lines: string[]; ok: boolean }> }> {
+  const host = ultralight.env.IMAP_HOST;
+  const port = parseInt(ultralight.env.IMAP_PORT || '993');
+  const user = ultralight.env.IMAP_USER;
+  const pass = ultralight.env.IMAP_PASS;
+
+  if (!host || !user || !pass) throw new Error('IMAP credentials not configured');
+
+  const socket = ultralight.net.connectTls(host, port);
+  const lr = new LineReader(socket.readable);
+  const writer = socket.writable.getWriter();
+  let tagNum = 0;
+
+  // Read server greeting
+  const greeting = await lr.readLine();
+  if (!greeting.startsWith('* OK')) throw new Error('IMAP greeting failed: ' + greeting);
+
+  async function cmd(command: string): Promise<{ tag: string; lines: string[]; ok: boolean }> {
+    tagNum++;
+    const tag = 'A' + String(tagNum).padStart(4, '0');
+    await writer.write(enc.encode(tag + ' ' + command + '\r\n'));
+
+    const lines: string[] = [];
+    while (true) {
+      let line = await lr.readLine();
+
+      // Handle IMAP literals: * 1 FETCH (BODY[] {1234}\r\n<1234 bytes>)
+      const litMatch = line.match(/\{(\d+)\}$/);
+      if (litMatch) {
+        const litBytes = parseInt(litMatch[1]);
+        const litData = await lr.readBytes(litBytes);
+        line += '\r\n' + litData;
+        // Read the closing paren line
+        const closing = await lr.readLine();
+        line += closing;
+      }
+
+      if (line.startsWith(tag + ' ')) {
+        const ok = line.includes(tag + ' OK');
+        return { tag, lines, ok };
+      }
+      lines.push(line);
+    }
+  }
+
+  // Login
+  const loginResult = await cmd('LOGIN "' + user.replace(/"/g, '\\"') + '" "' + pass.replace(/"/g, '\\"') + '"');
+  if (!loginResult.ok) {
+    lr.releaseLock();
+    try { writer.releaseLock(); } catch {}
+    try { socket.close(); } catch {}
+    throw new Error('IMAP login failed');
+  }
+
+  return { lr, writer, socket, tag: tagNum, cmd };
+}
+
+function closeImap(conn: { lr: LineReader; writer: any; socket: any; cmd: any }) {
+  conn.lr.releaseLock();
+  try { conn.writer.releaseLock(); } catch {}
+  try { conn.socket.close(); } catch {}
+}
+
+// ── Email Parser ──
+
+function parseEmail(raw: string): { from: string; to: string; subject: string; body: string; messageId: string; inReplyTo: string } {
+  const headerEnd = raw.indexOf('\r\n\r\n');
+  const headerBlock = headerEnd > 0 ? raw.substring(0, headerEnd) : raw;
+  const bodyBlock = headerEnd > 0 ? raw.substring(headerEnd + 4) : '';
+
+  // Unfold headers (continuation lines start with whitespace)
+  const unfolded = headerBlock.replace(/\r\n([ \t])/g, ' ');
+
+  function getHeader(name: string): string {
+    const re = new RegExp('^' + name + ':\\s*(.+)$', 'im');
+    const m = unfolded.match(re);
+    return m ? m[1].trim() : '';
+  }
+
+  // Decode encoded-word (=?charset?encoding?text?=)
+  function decodeWord(s: string): string {
+    return s.replace(/=\?([^?]+)\?([BQ])\?([^?]+)\?=/gi, (_, charset, encoding, text) => {
+      if (encoding.toUpperCase() === 'B') {
+        return dec.decode(Uint8Array.from(atob(text), c => c.charCodeAt(0)));
+      }
+      // Quoted-printable
+      return text.replace(/_/g, ' ').replace(/=([0-9A-F]{2})/gi, (__, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+    });
+  }
+
+  // Extract email address from "Name <addr>" or bare "addr"
+  function extractAddr(s: string): string {
+    const m = s.match(/<([^>]+)>/);
+    return m ? m[1] : s.trim();
+  }
+
+  const from = extractAddr(getHeader('From'));
+  const to = extractAddr(getHeader('To'));
+  const subject = decodeWord(getHeader('Subject'));
+  const messageId = getHeader('Message-ID').replace(/[<>]/g, '');
+  const inReplyTo = getHeader('In-Reply-To').replace(/[<>]/g, '');
+
+  // Extract body — handle multipart
+  let textBody = '';
+  const contentType = getHeader('Content-Type');
+
+  if (contentType.includes('multipart/')) {
+    const bMatch = contentType.match(/boundary="?([^";\s]+)"?/);
+    if (bMatch) {
+      const boundary = bMatch[1];
+      const parts = bodyBlock.split('--' + boundary);
+      for (const part of parts) {
+        if (part.trim() === '--' || part.trim() === '') continue;
+        const partHeaderEnd = part.indexOf('\r\n\r\n');
+        if (partHeaderEnd < 0) continue;
+        const partHeaders = part.substring(0, partHeaderEnd).toLowerCase();
+        const partBody = part.substring(partHeaderEnd + 4).trim();
+        if (partHeaders.includes('text/plain')) {
+          textBody = partBody;
+          // Decode quoted-printable if specified
+          if (partHeaders.includes('quoted-printable')) {
+            textBody = textBody.replace(/=\r?\n/g, '').replace(/=([0-9A-F]{2})/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+          } else if (partHeaders.includes('base64')) {
+            textBody = dec.decode(Uint8Array.from(atob(partBody.replace(/\s/g, '')), c => c.charCodeAt(0)));
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  if (!textBody) {
+    textBody = bodyBlock;
+    // Decode if entire body is quoted-printable
+    if (contentType.includes('quoted-printable') || getHeader('Content-Transfer-Encoding').includes('quoted-printable')) {
+      textBody = textBody.replace(/=\r?\n/g, '').replace(/=([0-9A-F]{2})/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+    } else if (getHeader('Content-Transfer-Encoding').includes('base64')) {
+      textBody = dec.decode(Uint8Array.from(atob(textBody.replace(/\s/g, '')), c => c.charCodeAt(0)));
+    }
+    // If it was HTML, strip tags
+    if (contentType.includes('text/html')) {
+      textBody = stripHtml(textBody);
+    }
+  }
+
+  return { from, to, subject: subject || '(no subject)', body: textBody.trim(), messageId, inReplyTo };
+}
+
+// ── Staff Reply Detection ──
+
+async function checkSentFolder(guestEmail: string): Promise<boolean> {
+  let conn: any = null;
+  try {
+    conn = await createImapConnection();
+
+    // Discover sent folder name
+    const listResult = await conn.cmd('LIST "" "*"');
+    let sentFolder = 'Sent';
+    for (const line of listResult.lines) {
+      const lower = line.toLowerCase();
+      if (lower.includes('\\sent') || lower.includes('"sent"') || lower.includes('sent messages')) {
+        const m = line.match(/"([^"]+)"$/);
+        if (m) sentFolder = m[1];
+      }
+    }
+
+    const selResult = await conn.cmd('SELECT "' + sentFolder + '"');
+    if (!selResult.ok) return false; // Sent folder not found — assume no reply
+
+    const searchResult = await conn.cmd('UID SEARCH TO "' + guestEmail + '"');
+    const uidLine = searchResult.lines.find((l: string) => l.startsWith('* SEARCH'));
+    if (uidLine) {
+      const uids = uidLine.replace('* SEARCH', '').trim();
+      if (uids.length > 0) return true;
+    }
+
+    return false;
+  } catch {
+    return false; // On error, don't block sending
+  } finally {
+    if (conn) {
+      try { await conn.cmd('LOGOUT'); } catch {}
+      closeImap(conn);
+    }
+  }
+}
+
+// ============================================
+// 0. CHECK INBOX — IMAP Poller
+// ============================================
+
+export async function check_inbox(args: {}): Promise<unknown> {
+  let conn: any = null;
+  try {
+    conn = await createImapConnection();
+    const businessEmail = (ultralight.env.BUSINESS_EMAIL || ultralight.env.IMAP_USER || '').toLowerCase();
+
+    // Select INBOX
+    const selResult = await conn.cmd('SELECT INBOX');
+    if (!selResult.ok) throw new Error('SELECT INBOX failed');
+
+    // Get last processed UID
+    const syncRow = await ultralight.db.first('SELECT last_uid FROM imap_sync_state WHERE user_id = ?', [uid()]);
+    const lastUid = syncRow?.last_uid || 0;
+
+    // Search for unseen, unprocessed emails
+    let searchCmd = 'UID SEARCH';
+    if (lastUid > 0) {
+      searchCmd += ' UID ' + (lastUid + 1) + ':*';
+    }
+    searchCmd += ' UNKEYWORD $ULProcessed UNSEEN';
+
+    const searchResult = await conn.cmd(searchCmd);
+    const uidLine = searchResult.lines.find((l: string) => l.startsWith('* SEARCH'));
+    const uids: number[] = [];
+    if (uidLine) {
+      const parts = uidLine.replace('* SEARCH', '').trim().split(/\s+/);
+      for (const p of parts) {
+        const n = parseInt(p);
+        if (n > 0) uids.push(n);
+      }
+    }
+
+    if (uids.length === 0) {
+      // Update last_check
+      await ultralight.db.run(
+        'INSERT INTO imap_sync_state (user_id, last_uid, last_check) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET last_check = ?',
+        [uid(), lastUid, now(), now()]
+      );
+      await conn.cmd('LOGOUT');
+      closeImap(conn);
+      conn = null;
+      return { success: true, processed: 0, message: 'No new emails' };
+    }
+
+    // Limit to 20 per call (timeout safety)
+    const toProcess = uids.slice(0, 20);
+    let processed = 0;
+    let newConversations = 0;
+    let followups = 0;
+
+    for (const emailUid of toProcess) {
+      try {
+        // Fetch with PEEK (does not mark as \Seen)
+        const fetchResult = await conn.cmd('UID FETCH ' + emailUid + ' (BODY.PEEK[] FLAGS)');
+        const rawEmail = fetchResult.lines.join('\r\n');
+
+        // Extract the email body from the FETCH response
+        const bodyMatch = rawEmail.match(/BODY\[\]\s*\{(\d+)\}\r\n([\s\S]*)/);
+        if (!bodyMatch) continue;
+
+        const emailContent = bodyMatch[2].substring(0, parseInt(bodyMatch[1]));
+        const parsed = parseEmail(emailContent);
+
+        // Skip our own outbound emails
+        if (parsed.from.toLowerCase() === businessEmail) continue;
+
+        // Process through existing pipeline
+        const result = await receive_email({
+          from: parsed.from,
+          to: parsed.to,
+          subject: parsed.subject,
+          text: parsed.body,
+          message_id: parsed.messageId,
+          in_reply_to: parsed.inReplyTo,
+        }) as any;
+
+        if (result?.success) {
+          processed++;
+          if (result.thread) followups++;
+          else newConversations++;
+        }
+
+        // Mark as processed with custom flag
+        await conn.cmd('UID STORE ' + emailUid + ' +FLAGS ($ULProcessed)');
+      } catch (e: any) {
+        console.error('Failed to process UID ' + emailUid + ': ' + e.message);
+      }
+    }
+
+    // Update sync state
+    const maxUid = Math.max(...toProcess);
+    await ultralight.db.run(
+      'INSERT INTO imap_sync_state (user_id, last_uid, last_check) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET last_uid = MAX(imap_sync_state.last_uid, ?), last_check = ?',
+      [uid(), maxUid, now(), maxUid, now()]
+    );
+
+    await conn.cmd('LOGOUT');
+    closeImap(conn);
+    conn = null;
+
+    return {
+      success: true,
+      processed,
+      new_conversations: newConversations,
+      followups,
+      has_more: uids.length > 20,
+    };
+  } catch (e: any) {
+    return { success: false, error: e.message || String(e) };
+  } finally {
+    if (conn) {
+      try { await conn.cmd('LOGOUT'); } catch {}
+      closeImap(conn);
+    }
+  }
 }
 
 // ============================================
@@ -186,9 +618,9 @@ export async function receive_email(args: any): Promise<unknown> {
 export async function email_send(args: { to: string; subject: string; body: string; in_reply_to?: string }): Promise<unknown> {
   const { to, subject, body, in_reply_to } = args;
   if (!to || !subject || !body) throw new Error('to, subject, and body are required');
-  const result = await sendViaResend(to, subject, body, in_reply_to);
+  const result = await sendViaSMTP(to, subject, body, in_reply_to);
   if (!result.success) throw new Error('Email send failed: ' + result.error);
-  return { success: true, to, subject, resend_id: result.resendId };
+  return { success: true, to, subject, message_id: result.messageId };
 }
 
 // ============================================
@@ -220,17 +652,29 @@ export async function conversation_act(args: {
     const bodyToSend = inputBody || latestDraft?.body;
     if (!bodyToSend) throw new Error('No draft to send');
 
+    // Check if staff already replied manually via their inbox
+    const staffReplied = await checkSentFolder(convo.guest_email);
+    if (staffReplied) {
+      const vNum = await nextVersionNum(conversation_id);
+      await ultralight.db.run(
+        "INSERT INTO versions (id, conversation_id, user_id, version_num, type, body, actor, metadata, created_at) VALUES (?, ?, ?, ?, 'discarded', ?, 'system', ?, ?)",
+        [crypto.randomUUID(), conversation_id, uid(), vNum, bodyToSend, JSON.stringify({ reason: 'staff_already_replied' }), ts]
+      );
+      await ultralight.db.run('UPDATE conversations SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?', ['resolved', ts, conversation_id, uid()]);
+      return { success: true, action: 'skipped', reason: 'staff_already_replied', conversation_id };
+    }
+
     const vNum = await nextVersionNum(conversation_id);
     const isSentBefore = !!(await ultralight.db.first("SELECT id FROM versions WHERE conversation_id = ? AND user_id = ? AND type IN ('sent', 'followup_sent')", [conversation_id, uid()]));
     const vType = isSentBefore ? 'followup_sent' : 'sent';
 
-    // Send via Resend
-    const result = await sendViaResend(convo.guest_email, (isSentBefore ? 'Re: ' : 'Re: ') + convo.subject, bodyToSend, convo.message_id);
+    // Send via SMTP through hotel's mail server
+    const result = await sendViaSMTP(convo.guest_email, 'Re: ' + convo.subject, bodyToSend, convo.message_id);
     if (!result.success) throw new Error('Send failed: ' + result.error);
 
     await ultralight.db.run(
       'INSERT INTO versions (id, conversation_id, user_id, version_num, type, body, actor, resend_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [crypto.randomUUID(), conversation_id, uid(), vNum, vType, bodyToSend, actor, result.resendId || null, ts]
+      [crypto.randomUUID(), conversation_id, uid(), vNum, vType, bodyToSend, actor, result.messageId || null, ts]
     );
     await ultralight.db.run('UPDATE conversations SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?', ['resolved', ts, conversation_id, uid()]);
 
@@ -492,7 +936,7 @@ export async function approvals_act(args: { approval_id: string; action: string;
 
 export async function widget_email_inbox_ui(args: {}): Promise<unknown> {
   const countResult = await ultralight.db.first("SELECT COUNT(*) as cnt FROM conversations WHERE user_id = ? AND status = 'active'", [uid()]);
-  return { meta: { title: 'Email Approvals', icon: '📧', badge_count: countResult?.cnt || 0 }, app_html: DECK_UI_HTML, version: '4.0' };
+  return { meta: { title: 'Email Approvals', icon: '📧', badge_count: countResult?.cnt || 0 }, app_html: DECK_UI_HTML, version: '5.0' };
 }
 
 export async function widget_email_inbox_data(args: { view?: string }): Promise<unknown> {
@@ -638,6 +1082,11 @@ const DECK_UI_HTML = `<!DOCTYPE html>
   .badge { font-size: 11px; color: #6b7280; background: #f3f4f6; padding: 1px 8px; border-radius: 4px; }
   .card-subject { font-size: 16px; font-weight: 500; margin-top: 10px; }
 
+  .btn-refresh { width: 28px; height: 28px; border-radius: 50%; border: 1px solid #d1d5db; background: #fff; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; color: #6b7280; transition: all 0.15s; }
+  .btn-refresh:hover { background: #f3f4f6; color: #111; }
+  .btn-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-refresh.spinning { animation: spin 1s linear infinite; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   .nav-dots { display: flex; align-items: center; gap: 6px; }
   .nav-arrow { width: 28px; height: 28px; border-radius: 50%; border: 1px solid #d1d5db; background: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #6b7280; }
   .nav-arrow:hover { background: #f3f4f6; }
@@ -715,6 +1164,7 @@ const DECK_UI_HTML = `<!DOCTYPE html>
       <button class="tab" data-view="discarded">Discarded <span class="cnt" id="cnt-discarded">0</span></button>
     </div>
     <select class="filter-select" id="lang-filter"><option value="">All</option></select>
+    <button class="btn-refresh" id="refresh-btn" onclick="doRefresh()" title="Check for new emails">↻</button>
     <div class="nav-dots" id="nav-dots"></div>
   </div>
 </div>
@@ -776,6 +1226,20 @@ async function loadData() {
   }
 }
 
+async function doRefresh() {
+  var btn = document.getElementById('refresh-btn');
+  btn.disabled = true;
+  btn.classList.add('spinning');
+  try {
+    var result = await ulAction('check_inbox', {});
+    var count = result.processed || 0;
+    toast(count > 0 ? count + ' new email' + (count > 1 ? 's' : '') + ' found' : 'No new emails', count > 0);
+    if (count > 0) await loadData();
+  } catch(e) { toast('Check failed: ' + e.message, false); }
+  btn.disabled = false;
+  btn.classList.remove('spinning');
+}
+
 function applyFilter() {
   var lang = document.getElementById('lang-filter').value;
   filteredItems = lang ? items.filter(function(i) { return i.language === lang; }) : items;
@@ -827,8 +1291,9 @@ function render() {
   // Thread view
   if (inbounds.length > 1 || sentVersions.length > 0) {
     var threadMsgs = versions.filter(function(v) { return v.type === 'inbound' || v.type === 'sent' || v.type === 'followup_sent'; });
-    html += '<div class="thread"><button class="thread-toggle" onclick="toggleThread()">▶ Thread (' + threadMsgs.length + ' messages)</button>';
-    html += '<div id="thread-messages" style="display:none;">';
+    html += '<div class="thread"><button class="thread-toggle" onclick="toggleThread()">' + (expandThread ? '▼' : '▶') + ' Thread (' + threadMsgs.length + ' messages)</button>';
+    var expandThread = threadMsgs.length > 1;
+    html += '<div id="thread-messages" style="display:' + (expandThread ? 'block' : 'none') + ';">';
     threadMsgs.forEach(function(v) {
       var isGuest = v.type === 'inbound';
       html += '<div class="thread-msg ' + (isGuest ? 'guest' : 'you') + '">';

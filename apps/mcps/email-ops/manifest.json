@@ -1,16 +1,22 @@
 {
   "name": "email-ops",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "type": "mcp",
   "entry": { "functions": "index.ts" },
-  "description": "Autonomous email agent: Resend inbound webhook receives emails, AI classifies and drafts responses in sender's language, queues for admin approval. Widget-enabled for desktop Activity tab.",
-  "permissions": ["ai:call", "net:fetch"],
+  "description": "Autonomous email agent: connects to hotel mailbox via IMAP, AI classifies and drafts responses in sender's language, queues for admin approval, sends via SMTP. Widget-enabled for desktop Activity tab.",
+  "permissions": ["ai:call", "net:fetch", "net:connect"],
   "storage": "d1",
   "env_vars": {
-    "RESEND_API_KEY": { "type": "universal", "required": true, "description": "Resend API key for sending emails" },
-    "BUSINESS_EMAIL": { "type": "universal", "required": true, "description": "From address for outbound emails (e.g. hello@yourdomain.com)" },
-    "BUSINESS_NAME": { "type": "universal", "required": true, "description": "Display name for outbound emails" },
-    "WEBHOOK_SECRET": { "type": "universal", "required": false, "description": "Resend webhook signing secret for verifying inbound requests" }
+    "IMAP_HOST": { "type": "universal", "required": true, "description": "IMAP server hostname (e.g. imap.titan.email)" },
+    "IMAP_PORT": { "type": "universal", "required": true, "description": "IMAP port (993 for TLS)" },
+    "IMAP_USER": { "type": "universal", "required": true, "description": "IMAP login (full email address)" },
+    "IMAP_PASS": { "type": "universal", "required": true, "description": "IMAP password" },
+    "SMTP_HOST": { "type": "universal", "required": true, "description": "SMTP server hostname (e.g. smtp.titan.email)" },
+    "SMTP_PORT": { "type": "universal", "required": true, "description": "SMTP port (465 for TLS)" },
+    "SMTP_USER": { "type": "universal", "required": true, "description": "SMTP login (full email address)" },
+    "SMTP_PASS": { "type": "universal", "required": true, "description": "SMTP password" },
+    "BUSINESS_EMAIL": { "type": "universal", "required": true, "description": "From address for outbound emails (e.g. info@rockwoodhotel.com)" },
+    "BUSINESS_NAME": { "type": "universal", "required": true, "description": "Display name for outbound emails (e.g. Rockwood Hotel)" }
   },
   "widgets": [
     {
@@ -21,18 +27,24 @@
     }
   ],
   "functions": {
+    "check_inbox": {
+      "description": "Poll the hotel mailbox via IMAP for new emails. Fetches unseen messages, classifies with AI, drafts responses, queues for approval. Can be called manually or via cron.",
+      "parameters": []
+    },
     "receive_email": {
-      "description": "Resend inbound webhook handler. Logs email, classifies intent via AI, drafts response in sender's language, queues for admin approval. Called via POST /http/{appId}/receive_email",
+      "description": "Process an inbound email (called by check_inbox or directly). Classifies intent, drafts response in sender's language, queues for admin approval.",
       "parameters": [
-        { "name": "from", "type": "string", "required": false, "description": "Sender email address (from Resend webhook payload)" },
-        { "name": "to", "type": "string", "required": false, "description": "Recipient email address" },
-        { "name": "subject", "type": "string", "required": false, "description": "Email subject line" },
-        { "name": "text", "type": "string", "required": false, "description": "Plain text body" },
-        { "name": "html", "type": "string", "required": false, "description": "HTML body" }
+        { "name": "from", "type": "string", "required": false },
+        { "name": "to", "type": "string", "required": false },
+        { "name": "subject", "type": "string", "required": false },
+        { "name": "text", "type": "string", "required": false },
+        { "name": "html", "type": "string", "required": false },
+        { "name": "message_id", "type": "string", "required": false },
+        { "name": "in_reply_to", "type": "string", "required": false }
       ]
     },
     "email_send": {
-      "description": "Send an email via Resend API. Usually called by approvals_act on approval, not directly.",
+      "description": "Send an email via SMTP through the hotel's mail server.",
       "parameters": [
         { "name": "to", "type": "string", "required": true },
         { "name": "subject", "type": "string", "required": true },
@@ -40,29 +52,26 @@
         { "name": "in_reply_to", "type": "string", "required": false }
       ]
     },
-    "email_log_list": {
-      "description": "View email history (inbound and outbound) with optional filters",
+    "conversation_act": {
+      "description": "Take action on a conversation: send, discard, restore, save_edit, regenerate, followup_draft.",
       "parameters": [
-        { "name": "direction", "type": "string", "required": false, "description": "inbound | outbound" },
+        { "name": "conversation_id", "type": "string", "required": true },
+        { "name": "action", "type": "string", "required": true },
+        { "name": "body", "type": "string", "required": false },
+        { "name": "prompt", "type": "string", "required": false }
+      ]
+    },
+    "conversation_history": {
+      "description": "Get full version history for a conversation.",
+      "parameters": [
+        { "name": "conversation_id", "type": "string", "required": true }
+      ]
+    },
+    "conversations_list": {
+      "description": "List conversations by status.",
+      "parameters": [
         { "name": "status", "type": "string", "required": false },
         { "name": "limit", "type": "number", "required": false }
-      ]
-    },
-    "approvals_list": {
-      "description": "List approval items awaiting admin action",
-      "parameters": [
-        { "name": "status", "type": "string", "required": false, "description": "pending | executed | rejected | revised (default: pending)" },
-        { "name": "type", "type": "string", "required": false, "description": "email_reply | email_skip" },
-        { "name": "limit", "type": "number", "required": false }
-      ]
-    },
-    "approvals_act": {
-      "description": "Approve, reject, or revise a queued email draft. On approve: sends email via Resend. On revise: sends your edited version.",
-      "parameters": [
-        { "name": "approval_id", "type": "string", "required": true },
-        { "name": "action", "type": "string", "required": true, "description": "approve | reject | revise | regenerate" },
-        { "name": "revision", "type": "string", "required": false, "description": "Revised email body (for revise action)" },
-        { "name": "admin_notes", "type": "string", "required": false }
       ]
     },
     "conventions_get": {
@@ -73,32 +82,17 @@
       ]
     },
     "conventions_set": {
-      "description": "Create or update a business convention (upserts by key). Used to configure how the AI drafts responses.",
+      "description": "Create or update a business convention.",
       "parameters": [
         { "name": "key", "type": "string", "required": true },
         { "name": "value", "type": "string", "required": true },
         { "name": "category", "type": "string", "required": false }
       ]
     },
-    "widget_approval_queue": {
-      "description": "Legacy: Returns pending approval items with HTML rendering and action buttons.",
-      "parameters": []
-    },
-    "widget_email_inbox_ui": {
-      "description": "DO NOT call this function. To show the email approvals widget, include {{widget:email_inbox:APP_ID}} in your response (replace APP_ID with this app's app_id). The widget is interactive — users can browse, approve, reject, edit, and send drafts directly in it. When you show this widget, do NOT also list the emails as text or tables — the widget replaces text output. Just include a brief intro sentence and the widget token.",
-      "parameters": []
-    },
-    "widget_email_inbox_data": {
-      "description": "Internal widget data function — do not call directly.",
-      "parameters": []
-    },
-    "widget_email_faqs_ui": {
-      "description": "DO NOT call this function. To show the FAQ editor widget, include {{widget:email_faqs:APP_ID}} in your response (replace APP_ID with this app's app_id). The widget is interactive — users can browse, add, edit, and delete FAQ entries directly. When you show this widget, do NOT also list FAQs as text — the widget replaces text output.",
-      "parameters": []
-    },
-    "widget_email_faqs_data": {
-      "description": "Internal widget data function — do not call directly.",
-      "parameters": []
-    }
+    "widget_approval_queue": { "description": "Legacy widget bridge.", "parameters": [] },
+    "widget_email_inbox_ui": { "description": "Email approvals deck UI.", "parameters": [] },
+    "widget_email_inbox_data": { "description": "Email approvals data.", "parameters": [] },
+    "widget_email_faqs_ui": { "description": "FAQ editor widget UI.", "parameters": [] },
+    "widget_email_faqs_data": { "description": "FAQ editor data.", "parameters": [] }
   }
 }

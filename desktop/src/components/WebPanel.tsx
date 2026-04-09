@@ -25,6 +25,7 @@ export default function WebPanel({ path, title, headerExtra }: WebPanelProps) {
     const url = new URL(path, base);
     if (token) url.searchParams.set('token', token);
     url.searchParams.set('embed', '1');
+    url.searchParams.set('_v', Date.now().toString());
     return url.toString();
   }, [path, retryKey]);
 

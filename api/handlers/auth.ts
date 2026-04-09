@@ -12,6 +12,30 @@ function encodeBase64Url(data: Uint8Array): string {
 }
 import { getEnv } from '../lib/env.ts';
 
+// ── Desktop OAuth session store ──
+// Temporary in-memory store for desktop OAuth polling.
+// Sessions expire after 5 minutes. This is safe because the API runs as a
+// single Deno process on DigitalOcean — all poll requests hit the same instance.
+const desktopSessions = new Map<string, { token: string; createdAt: number }>();
+
+function storeDesktopSession(sessionId: string, token: string) {
+  desktopSessions.set(sessionId, { token, createdAt: Date.now() });
+  // Auto-cleanup after 5 minutes
+  setTimeout(() => desktopSessions.delete(sessionId), 5 * 60 * 1000);
+}
+
+function consumeDesktopSession(sessionId: string): string | null {
+  const entry = desktopSessions.get(sessionId);
+  if (!entry) return null;
+  // Expired check (belt-and-suspenders with setTimeout)
+  if (Date.now() - entry.createdAt > 5 * 60 * 1000) {
+    desktopSessions.delete(sessionId);
+    return null;
+  }
+  desktopSessions.delete(sessionId); // one-time use
+  return entry.token;
+}
+
 
 // PKCE helpers
 function generateCodeVerifier(): string {
@@ -47,6 +71,7 @@ export async function handleAuth(request: Request): Promise<Response> {
     // Force HTTPS — DigitalOcean terminates TLS at load balancer so request.url is HTTP internally
     const origin = url.origin.replace('http://', 'https://');
     const returnTo = url.searchParams.get('return_to');
+    const desktopSession = url.searchParams.get('desktop_session');
 
     // Generate PKCE code verifier and challenge (S256)
     const codeVerifier = generateCodeVerifier();
@@ -56,6 +81,7 @@ export async function handleAuth(request: Request): Promise<Response> {
     const callbackParams = new URLSearchParams();
     callbackParams.set('v', codeVerifier);
     if (returnTo) callbackParams.set('return_to', returnTo);
+    if (desktopSession) callbackParams.set('desktop_session', desktopSession);
     const callbackUrl = `${origin}/auth/callback?${callbackParams.toString()}`;
 
     const authUrl = `${getEnv('SUPABASE_URL')}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(callbackUrl)}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=S256`;
@@ -97,6 +123,16 @@ export async function handleAuth(request: Request): Promise<Response> {
 
       if (tokenResponse.ok) {
         const tokens = await tokenResponse.json();
+        const desktopSession = url.searchParams.get('desktop_session');
+
+        // Desktop OAuth flow: store token for polling, show "close this tab" page
+        if (desktopSession) {
+          storeDesktopSession(desktopSession, tokens.access_token);
+          return new Response(getDesktopCallbackHTML(), {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }
+
         const returnTo = url.searchParams.get('return_to') || undefined;
         return new Response(getCallbackSuccessHTML(tokens.access_token, tokens.refresh_token, returnTo), {
           headers: { 'Content-Type': 'text/html' },
@@ -243,6 +279,20 @@ export async function handleAuth(request: Request): Promise<Response> {
       console.error('[AUTH] Merge failed:', err);
       return error(err.message || 'Merge failed', 500);
     }
+  }
+
+  // Desktop OAuth polling — desktop app polls this after opening browser for Google OAuth
+  if (path === '/auth/desktop-poll' && request.method === 'GET') {
+    const sessionId = url.searchParams.get('session_id');
+    if (!sessionId) {
+      return error('Missing session_id', 400);
+    }
+
+    const token = consumeDesktopSession(sessionId);
+    if (token) {
+      return json({ status: 'complete', token });
+    }
+    return json({ status: 'pending' });
   }
 
   return error('Auth endpoint not found', 404);
@@ -393,6 +443,51 @@ export async function ensureUserExists(authUser: { id: string; email: string; us
   }
 
   await resolvePendingPermissions(authUser.id, authUser.email);
+
+  // Provision default system apps for new users (fire-and-forget)
+  provisionDefaultApps(authUser.id).catch(err =>
+    console.error('[AUTH] Failed to provision default apps:', err)
+  );
+}
+
+/**
+ * Default system apps — auto-installed for every new user.
+ * Looked up by name since IDs are assigned at publish time.
+ */
+const DEFAULT_APP_NAMES = ['Memory Wiki', 'email-ops', 'Private Tutor', 'Smart Budget', 'Recipe Box', 'Reading List'];
+
+async function provisionDefaultApps(userId: string): Promise<void> {
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const serviceKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+  const headers = {
+    'apikey': serviceKey,
+    'Authorization': `Bearer ${serviceKey}`,
+    'Content-Type': 'application/json',
+  };
+
+  // Look up default apps by name
+  const namesFilter = DEFAULT_APP_NAMES.map(n => `"${n}"`).join(',');
+  const appsRes = await fetch(
+    `${supabaseUrl}/rest/v1/apps?name=in.(${namesFilter})&deleted_at=is.null&select=id,name`,
+    { headers }
+  );
+  if (!appsRes.ok) return;
+  const apps = await appsRes.json() as Array<{ id: string; name: string }>;
+  if (apps.length === 0) return;
+
+  // Insert into app_likes (makes them appear in function index) and user_app_library
+  for (const app of apps) {
+    await fetch(`${supabaseUrl}/rest/v1/app_likes`, {
+      method: 'POST',
+      headers: { ...headers, 'Prefer': 'resolution=merge-duplicates' },
+      body: JSON.stringify({ user_id: userId, app_id: app.id, positive: true }),
+    });
+    await fetch(`${supabaseUrl}/rest/v1/user_app_library`, {
+      method: 'POST',
+      headers: { ...headers, 'Prefer': 'resolution=merge-duplicates' },
+      body: JSON.stringify({ user_id: userId, app_id: app.id, source: 'default' }),
+    });
+  }
 }
 
 /**
@@ -577,6 +672,28 @@ function getCallbackSuccessHTML(token: string, refreshToken?: string, returnTo?:
       window.location.href = '${safeRedirect}';
     }
   </script>
+</body>
+</html>`;
+}
+
+function getDesktopCallbackHTML(): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <title>Signed in!</title>
+  <style>
+    body { font-family: system-ui; background: #fff; color: #0a0a0a; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+    .container { text-align: center; max-width: 400px; padding: 20px; }
+    .checkmark { font-size: 48px; margin-bottom: 16px; }
+    p { color: #666; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="checkmark">&#10003;</div>
+    <h2>Signed in to Ultralight</h2>
+    <p>You can close this tab and return to the desktop app.</p>
+  </div>
 </body>
 </html>`;
 }

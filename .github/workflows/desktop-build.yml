@@ -1,0 +1,65 @@
+name: Desktop Build
+
+on:
+  push:
+    branches: [main]
+    paths: ['desktop/**']
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: universal-apple-darwin
+            args: '--target universal-apple-darwin'
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+
+      - name: Install dependencies
+        working-directory: desktop
+        run: pnpm install
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop
+          args: ${{ matrix.args }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.target }}
+          path: |
+            desktop/src-tauri/target/**/release/bundle/**/*.dmg
+            desktop/src-tauri/target/**/release/bundle/**/*.exe
+            desktop/src-tauri/target/**/release/bundle/**/*.msi
+          if-no-files-found: error

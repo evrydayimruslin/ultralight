@@ -9,10 +9,18 @@ function uuid() { return crypto.randomUUID(); }
 function now() { return new Date().toISOString(); }
 function uid() { return ultralight.user.id; }
 
-async function getWorld(world_id: string) {
-  return ultralight.db.first(
-    'SELECT id, name, genre, description FROM worlds WHERE id = ? AND user_id = ?',
-    [world_id, uid()]
+async function getWorld(world_id_or_name: string) {
+  // Try by ID first, then by name
+  return (
+    await ultralight.db.first(
+      'SELECT id, name, genre, description FROM worlds WHERE id = ? AND user_id = ?',
+      [world_id_or_name, uid()]
+    )
+  ) || (
+    await ultralight.db.first(
+      'SELECT id, name, genre, description FROM worlds WHERE name = ? AND user_id = ?',
+      [world_id_or_name, uid()]
+    )
   );
 }
 
@@ -76,9 +84,9 @@ export async function add(args: {
   rules?: Array<{ name: string; type?: string; description: string }>;
   scenes?: Array<{ title: string; content: string; type?: string; character_names?: string[]; setting_name?: string }>;
 }): Promise<unknown> {
-  const { world_id } = args;
-  const world = await getWorld(world_id);
-  if (!world) return { success: false, error: 'World not found: ' + world_id };
+  const world = await getWorld(args.world_id);
+  if (!world) return { success: false, error: 'World not found: ' + args.world_id };
+  const world_id = world.id; // resolved ID (accepts name or ID)
 
   const ts = now();
   const created: Record<string, any[]> = {};
@@ -227,9 +235,9 @@ export async function read(args: {
   scene_limit?: number;
   scene_offset?: number;
 }): Promise<unknown> {
-  const { world_id } = args;
-  const world = await getWorld(world_id);
-  if (!world) return { success: false, error: 'World not found: ' + world_id };
+  const world = await getWorld(args.world_id);
+  if (!world) return { success: false, error: 'World not found: ' + args.world_id };
+  const world_id = world.id; // resolved ID (accepts name or ID)
 
   const include = args.include || ['characters', 'settings', 'themes', 'relationships', 'arcs', 'factions', 'lore', 'rules', 'scenes'];
   const includeSet = new Set(include);
@@ -420,9 +428,9 @@ export async function update(args: {
   lore?: Array<{ name_or_id: string; name?: string; type?: string; description?: string }>;
   rules?: Array<{ name_or_id: string; name?: string; type?: string; description?: string }>;
 }): Promise<unknown> {
-  const { world_id } = args;
-  const world = await getWorld(world_id);
-  if (!world) return { success: false, error: 'World not found: ' + world_id };
+  const world = await getWorld(args.world_id);
+  if (!world) return { success: false, error: 'World not found: ' + args.world_id };
+  const world_id = world.id; // resolved ID (accepts name or ID)
 
   const ts = now();
   const updated: Record<string, any[]> = {};
@@ -659,9 +667,9 @@ export async function remove(args: {
   rules?: string[];
   scenes?: string[];
 }): Promise<unknown> {
-  const { world_id } = args;
-  const world = await getWorld(world_id);
-  if (!world) return { success: false, error: 'World not found: ' + world_id };
+  const world = await getWorld(args.world_id);
+  if (!world) return { success: false, error: 'World not found: ' + args.world_id };
+  const world_id = world.id; // resolved ID (accepts name or ID)
 
   const deleted: Record<string, any[]> = {};
 
@@ -734,9 +742,9 @@ export async function get_context(args: {
   world_id: string;
   format?: string;
 }): Promise<unknown> {
-  const { world_id } = args;
-  const world = await getWorld(world_id);
-  if (!world) return { success: false, error: 'World not found: ' + world_id };
+  const world = await getWorld(args.world_id);
+  if (!world) return { success: false, error: 'World not found: ' + args.world_id };
+  const world_id = world.id; // resolved ID (accepts name or ID)
 
   // Get everything
   const fullRead = await read({ world_id, scene_limit: 100 }) as any;

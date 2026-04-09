@@ -1,5 +1,5 @@
-// Study Coach — Ultralight MCP App
-// Personalized learning paths with spaced repetition for any subject.
+// Private Tutor — Ultralight MCP App
+// Your personal AI tutor with quizzes, custom lessons, and progress tracking.
 // Storage: Ultralight D1 | Permissions: ai:call
 
 const ultralight = (globalThis as any).ultralight;

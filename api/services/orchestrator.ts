@@ -51,6 +51,8 @@ export interface OrchestrateRequest {
   systemAgentContext?: SystemAgentContext;
   /** Local project file context gathered client-side (directory tree, config files, relevant source) */
   projectContext?: string;
+  /** Conversation ID for rolling summary persistence */
+  conversationId?: string;
 }
 
 // ── Main Orchestration Loop ──
@@ -64,7 +66,7 @@ export async function* orchestrate(
   userId: string,
   userEmail: string,
 ): AsyncGenerator<OrchestrateEvent> {
-  const { message, conversationHistory, interpreterModel, heavyModel, scope, systemAgentStates, systemAgentContext, projectContext } = request;
+  const { message, conversationHistory, interpreterModel, heavyModel, scope, systemAgentStates, systemAgentContext, projectContext, conversationId } = request;
 
   // ── Phase 1: Flash Broker (yields live events) ──
 
@@ -81,6 +83,7 @@ export async function* orchestrate(
       systemAgentStates,
       systemAgentContext,
       projectContext,
+      conversationId,
     );
 
     // Forward Flash events to client as they happen

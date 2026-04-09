@@ -5623,7 +5623,7 @@ export function getLayoutHTML(options: {
         fetch('/api/marketplace/metrics/' + appId, {
           headers: { 'Authorization': 'Bearer ' + authToken }
         }).then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; }),
-        fetch('/api/apps/' + appId + '/call-log?limit=50', {
+        fetch('/api/user/call-log?limit=50&app_id=' + appId, {
           headers: { 'Authorization': 'Bearer ' + authToken }
         }).then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; })
       ]).then(function(results) {

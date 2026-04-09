@@ -53,6 +53,13 @@ export interface FlashBrokerResult {
   conversationSearch?: string;
 }
 
+/** Rolling conversation summary persisted in KV */
+interface ConversationSummary {
+  summary: string;           // Rolling summary, 200-500 tokens
+  lastMessageIndex: number;  // How many messages are covered
+  updatedAt: number;
+}
+
 export type FlashEvent =
   | { type: 'analyzing'; text: string }
   | { type: 'searching'; query: string; apps: string[] }
@@ -82,17 +89,21 @@ Your job:
    - "direct": No app data needed (greetings, general questions)
    - "read": User wants to READ/VIEW data. You'll write the response yourself after seeing the data.
    - "write": User wants to CHANGE/CREATE/SEND something. A code-writing model will handle this.
-2. Identify which APPS are relevant (by app slug)
+2. Identify which APPS are relevant (by app slug) and what data to look for in each
 3. For "write" mode: select the action functions needed
 
 Output ONLY valid JSON:
 {
   "mode": "read",
   "directResponse": "",
-  "relevantApps": ["app-exbg0f"],
+  "relevantApps": [
+    { "slug": "app-exbg0f", "scope": "character Sarah, Thornvale world" }
+  ],
   "actionFunctions": [],
   "systemAgentDelegations": [],
   "conversationSearch": "",
+  "updatedSummary": "User exploring Story Builder characters. Asked about Sarah in the Thornvale world.",
+  "contextQuery": "",
   "reasoning": "User wants to know about a character. Need to read Story Builder data."
 }
 
@@ -100,13 +111,16 @@ Rules:
 - mode="direct" ONLY for greetings and general knowledge questions that clearly have nothing to do with any app. Put answer in directResponse.
 - mode="read" for: "tell me about", "show me", "how many", "what is", "list", "find", any informational query. IMPORTANT: If the user mentions a name, entity, or term that COULD exist in any app's data, ALWAYS use "read" mode — even if you're unsure which app contains it. Err on the side of "read" over "direct".
 - mode="write" for: "draft", "revise", "book", "create", "send", "approve", "reject", "update", "delete", any action that changes data
-- relevantApps: app slugs whose DATA is relevant (max 3). Required for read and write modes. When uncertain, include the most likely apps.
+- relevantApps: array of objects { "slug": "app-slug", "scope": "..." }. slug identifies the app. scope is a short hint (entity names, topics, keywords) describing what data from that app is relevant to the request — e.g. "character Sarah, Thornvale world" or "pending approvals from Mike Chen". Use null scope when the user wants a broad overview. Max 3 apps. Required for read and write modes. When uncertain, include the most likely apps.
 - actionFunctions: ONLY needed for "write" mode. The WRITE functions the code model will call.
 - For "read" mode, leave actionFunctions empty — you'll respond directly after seeing the data.
 - systemAgentDelegations: If part or all of the task is better handled by a system agent, include delegations. Each is { "agentType": "tool_marketer", "task": "Search marketplace for ..." }. Types: tool_builder (building/testing/deploying MCP apps), tool_marketer (marketplace lifecycle — browsing, discovery, publishing, pricing, analytics), platform_manager (settings/API keys/billing/guidance). Can coexist with mode="read" or "write".
 - IMPORTANT: If the user's request requires capabilities NOT FOUND in the available functions catalog, delegate to tool_marketer. Do NOT respond with "I don't have any apps for that." Instead, delegate: { "agentType": "tool_marketer", "task": "User needs [capability]. Search marketplace for tools that provide this and help them evaluate options." }. Tool Dealer will search the full marketplace, try apps, and report back.
 - If "Local Project Files" context is provided, the user may be asking about their local codebase. For questions about project structure, code, or dependencies, use mode="read" or mode="direct" and answer from the context. For tasks that create or modify local files, use mode="write". If you're not in a tool_builder context, delegate file-modification tasks to tool_builder.
 - conversationSearch: If the user references past work, a previous conversation, or something discussed before (visible in "Past Conversation Topics"), put a descriptive search query here (e.g., "auth pattern for inventory management"). Leave empty if not needed.
+- updatedSummary: ALWAYS output this field. Maintain a rolling summary of this conversation. You receive the previous summary (in "Conversation Summary") and the latest exchange (in "Last Exchange"). Merge them into an updated summary (200-400 tokens max). Include: key decisions made, entities referenced by name, user preferences expressed, task progress, and commitments/follow-ups. Omit exact data values and IDs (those are available via raw history if needed). If no summary section is provided, create one from whatever conversation context is available. On the very first message with no prior context, summarize just the current request.
+- contextQuery: If the user's current message references specific details from earlier in THIS conversation that aren't captured in the summary (exact values, previous results, specific numbers, "the same format as before"), put a descriptive search query here to retrieve relevant raw exchanges. Leave empty when the summary provides sufficient context. This is different from conversationSearch (which searches PAST conversations).
+- NAMES OVER IDs: Always identify entities by human-readable names, not opaque IDs. When a user says "my Fantasy RPG world" or "the weather app", match by name from the catalog or data. Never ask users for UUIDs or internal IDs.
 - Always return valid JSON, nothing else`;
 
 const FLASH_READ_RESPONSE_SYSTEM = `You are a helpful AI assistant responding to a user's question using live data from their apps. Write a clear, well-formatted response using markdown.
@@ -117,9 +131,10 @@ Rules:
 - Be concise but thorough — include all relevant details from the data
 - If the data doesn't contain what the user asked about, say so clearly
 - Never show raw JSON to the user — synthesize it into natural language
-- Include specific names, IDs, dates, and values from the data
+- Include specific names, dates, and values from the data — use human-readable names, not opaque IDs
 - If there are multiple items, use numbered or bulleted lists
-- If Local Project Context is provided, use it to answer questions about the user's codebase. Reference specific file names, line numbers, and code snippets when helpful.`;
+- If Local Project Context is provided, use it to answer questions about the user's codebase. Reference specific file names, line numbers, and code snippets when helpful.
+- NAMES OVER IDs: Always refer to entities by their human-readable names. Never show UUIDs or internal IDs to the user unless they specifically ask for them.`;
 
 const FLASH_WRITE_CONFIRM_SYSTEM = `You are confirming the result of an action that was just executed. Given the user's original request and the execution result, write a brief, clear confirmation message.
 
@@ -136,10 +151,11 @@ const FLASH_PROMPT_SYSTEM = `You are constructing a prompt for a code-writing AI
 3. Available functions with their signatures
 
 Construct a COMPLETE prompt that tells the code-writing model exactly what to do. Include:
-- All relevant data IDs and values from the magnified data
+- All relevant data values from the magnified data — resolve names to IDs from the data tables so the code model has exact IDs to use in function calls
 - Specific function calls to make with exact arguments
 - Conventions to follow
 - What to return
+- NAMES OVER IDs: When the user refers to an entity by name, look up its ID from the magnified data and include BOTH in the prompt (e.g., "The world 'Fantasy RPG' (id: w123)"). The code model needs IDs for function calls, but never ask the user for an ID — always resolve it from the data yourself.
 
 The code-writing model will receive ONLY your prompt (no system prompt) and ONE tool: ul_codemode.
 It writes JavaScript using codemode.functionName(args) to execute.
@@ -204,18 +220,19 @@ export async function* runFlashBroker(
   systemAgentStates?: SystemAgentState[],
   systemAgentContext?: SystemAgentContext,
   projectContext?: string,
+  conversationId?: string,
 ): AsyncGenerator<FlashEvent> {
   const flashModel = interpreterModel || DEFAULT_FLASH_MODEL;
 
   yield { type: 'analyzing', text: 'Analyzing your request...' };
 
-  // Load function index + memory + system agent states + agent skills + conversation topics concurrently
-  let [fnIndex, userMemory, loadedSystemAgentStates, agentSkills, conversationTopics] = await Promise.all([
+  // Load function index + system agent states + agent skills + conversation topics concurrently
+  let [fnIndex, loadedSystemAgentStates, agentSkills, conversationTopics, loadedSummary] = await Promise.all([
     getFunctionIndex(userId),
-    loadUserMemory(userId),
     systemAgentStates ? Promise.resolve(systemAgentStates) : loadSystemAgentStates(userId),
     systemAgentContext ? loadSystemAgentSkills(systemAgentContext.type) : Promise.resolve(''),
     loadConversationTopics(userId),
+    loadConversationSummary(conversationId),
   ]);
 
   // Auto-rebuild if empty
@@ -294,9 +311,23 @@ export async function* runFlashBroker(
 
   // Build compact catalog for Flash (function signatures + conventions only, no data)
   const catalog = buildCatalog(fnIndex, loadedSystemAgentStates);
-  const historyStr = conversationHistory && conversationHistory.length > 0
-    ? conversationHistory.slice(-6).map(m => `${m.role}: ${m.content}`).join('\n')
-    : '';
+  // Build conversation context from rolling summary + unsummarized exchanges
+  let summaryStr = '';
+  let lastExchangeStr = '';
+
+  if (loadedSummary?.summary) {
+    summaryStr = loadedSummary.summary;
+    // Extract messages after lastMessageIndex as the unsummarized exchange
+    const unsummarized = conversationHistory
+      ? conversationHistory.slice(loadedSummary.lastMessageIndex)
+      : [];
+    if (unsummarized.length > 0) {
+      lastExchangeStr = unsummarized.map(m => `${m.role}: ${m.content}`).join('\n');
+    }
+  } else if (conversationHistory && conversationHistory.length > 0) {
+    // Bootstrap: no summary yet, send recent messages for initial summary creation
+    lastExchangeStr = conversationHistory.slice(-6).map(m => `${m.role}: ${m.content}`).join('\n');
+  }
 
   // ── Stage 1: Analyze — identify relevant apps ──
   const apiKey = getEnv('OPENROUTER_API_KEY');
@@ -318,8 +349,8 @@ export async function* runFlashBroker(
   if (projectContext) analyzeContent += `## Local Project Files\n${projectContext}\n\n`;
   if (agentSkills) analyzeContent += `## Agent Skills Reference\n${agentSkills}\n\n`;
   if (conversationTopics) analyzeContent += `## Past Conversation Topics\n${conversationTopics}\n\n`;
-  if (historyStr) analyzeContent += `## Recent Conversation\n${historyStr}\n\n`;
-  if (userMemory) analyzeContent += `## User Memory\n${userMemory}\n\n`;
+  if (summaryStr) analyzeContent += `## Conversation Summary\n${summaryStr}\n\n`;
+  if (lastExchangeStr) analyzeContent += `## Last Exchange\n${lastExchangeStr}\n\n`;
   analyzeContent += `## Current Message\n${message}\n\n## Available Functions\n${catalog}`;
 
   const analyzeResult = await callFlash(flashModel, analyzeSystem, analyzeContent, apiKey);
@@ -341,6 +372,28 @@ export async function* runFlashBroker(
   // Capture conversation search query (for cross-session context retrieval)
   const conversationSearch: string | undefined = analyzeResult.conversationSearch || undefined;
 
+  // Capture intra-conversation context query (for raw history magnification in Stage 2)
+  const contextQuery: string | undefined = analyzeResult.contextQuery || undefined;
+
+  // Persist updated rolling summary (fire-and-forget)
+  const updatedSummary: string | undefined = analyzeResult.updatedSummary || undefined;
+  if (loadedSummary) {
+    console.log(`[FLASH-BROKER] Loaded conversation summary (${loadedSummary.summary.length} chars, covers ${loadedSummary.lastMessageIndex} messages)`);
+  }
+  if (updatedSummary && conversationId) {
+    const env = getEnv();
+    const kv = env.FN_INDEX;
+    if (kv) {
+      kv.put(`convo-summary:${conversationId}`, JSON.stringify({
+        summary: updatedSummary,
+        lastMessageIndex: conversationHistory?.length || 0,
+        updatedAt: Date.now(),
+      } as ConversationSummary)).catch(err =>
+        console.warn('[FLASH-BROKER] Summary KV write failed:', err)
+      );
+    }
+  }
+
   // Direct response — no data needed
   if (mode === 'direct') {
     const result: FlashBrokerResult = {
@@ -361,7 +414,17 @@ export async function* runFlashBroker(
   // ── Stage 2: MAGNIFICATION — pull live data from identified apps ──
 
   // Determine which apps to magnify
-  const relevantAppSlugs = analyzeResult.relevantApps || [];
+  const rawRelevantApps = analyzeResult.relevantApps || [];
+  const relevantAppSlugs: string[] = [];
+  const appScopeHints: Record<string, string> = {};
+  for (const entry of rawRelevantApps) {
+    if (typeof entry === 'string') {
+      relevantAppSlugs.push(entry);
+    } else if (entry && typeof entry === 'object') {
+      relevantAppSlugs.push(entry.slug);
+      if (entry.scope) appScopeHints[entry.slug] = entry.scope;
+    }
+  }
   const actionFunctions = analyzeResult.actionFunctions || [];
 
   // Resolve app slugs to app IDs
@@ -455,7 +518,7 @@ export async function* runFlashBroker(
   const magnifyPromises = appIds.map(async (appId, i) => {
     const slug = appSlugs[i];
     try {
-      const data = await magnifyApp(appId, userId);
+      const data = await magnifyApp(appId, userId, appScopeHints[slug]);
       magnifiedData[slug] = data.context;
       return { slug, tables: data.tableCount, rows: data.rowCount };
     } catch (err) {
@@ -502,6 +565,16 @@ export async function* runFlashBroker(
       for (const c of allConventions.slice(0, 10)) {
         readInput += `- [${c.appName}] ${c.key}: ${c.value}\n`;
       }
+    }
+
+    // Inject conversation context for read mode continuity
+    if (summaryStr) readInput += `\n## Conversation Summary\n${summaryStr}\n`;
+    if (lastExchangeStr) readInput += `\n## Last Exchange\n${lastExchangeStr}\n`;
+
+    // Intra-conversation raw history magnification
+    if (contextQuery && conversationHistory && conversationHistory.length > 0) {
+      const rawContext = searchRawHistory(contextQuery, conversationHistory);
+      if (rawContext) readInput += `\n## Relevant Earlier Conversation\n${rawContext}\n`;
     }
 
     // Cross-session context retrieval for read mode
@@ -587,6 +660,16 @@ export async function* runFlashBroker(
     }
   }
 
+  // Inject conversation context for write mode
+  if (summaryStr) promptInput += `\n## Conversation Summary\n${summaryStr}\n`;
+  if (lastExchangeStr) promptInput += `\n## Last Exchange\n${lastExchangeStr}\n`;
+
+  // Intra-conversation raw history magnification for write mode
+  if (contextQuery && conversationHistory && conversationHistory.length > 0) {
+    const rawContext = searchRawHistory(contextQuery, conversationHistory);
+    if (rawContext) promptInput += `\n## Relevant Earlier Conversation\n${rawContext}\n`;
+  }
+
   // Flash round 2: construct the final prompt for Heavy
   const promptSystem = systemAgentContext
     ? `You are constructing a prompt for "${systemAgentContext.persona}". Include their skills and conventions in the prompt.\n\n${FLASH_PROMPT_SYSTEM}`
@@ -648,7 +731,7 @@ interface MagnifyResult {
  * Query an app's D1 database and return a compact context string
  * with all user-relevant data. This is the "magnification" step.
  */
-async function magnifyApp(appId: string, userId: string): Promise<MagnifyResult> {
+async function magnifyApp(appId: string, userId: string, scope?: string): Promise<MagnifyResult> {
   const dbId = await getD1DatabaseId(appId);
   if (!dbId) {
     return { context: '(No database provisioned)', tableCount: 0, rowCount: 0 };
@@ -675,6 +758,20 @@ async function magnifyApp(appId: string, userId: string): Promise<MagnifyResult>
     return data.result?.[0]?.results || [];
   }
 
+  // Extract search keywords from scope hint
+  const scopeKeywords: string[] = [];
+  if (scope) {
+    const stopWords = new Set([
+      'the','a','an','in','on','at','to','for','of','and','or','is','are',
+      'was','were','from','with','about','my','their','this','that','all',
+    ]);
+    for (const word of scope.split(/[\s,]+/)) {
+      if (word.length > 2 && !stopWords.has(word.toLowerCase())) {
+        scopeKeywords.push(word);
+      }
+    }
+  }
+
   // 1. Discover tables
   const tables = await queryD1("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name");
   const tableNames = tables
@@ -696,10 +793,51 @@ async function magnifyApp(appId: string, userId: string): Promise<MagnifyResult>
       const columns = await queryD1(`PRAGMA table_info("${tableName}")`);
       const colNames = columns.map((c: any) => c.name as string);
 
-      // Sample recent rows (ORDER BY rowid DESC for most recent)
-      const rows = await queryD1(
-        `SELECT * FROM "${tableName}" ORDER BY rowid DESC LIMIT ${MAX_ROWS_PER_TABLE}`,
-      );
+      let rows: any[];
+
+      if (scopeKeywords.length > 0) {
+        // Identify searchable text columns (skip IDs and timestamps)
+        const textCols = colNames.filter(c =>
+          !c.endsWith('_at') && !c.endsWith('_id') && c !== 'id' && c !== 'user_id' && c !== 'rowid'
+        );
+
+        if (textCols.length > 0) {
+          // Build WHERE: any text column LIKE any keyword
+          const conditions = scopeKeywords.flatMap(kw =>
+            textCols.map(col => `"${col}" LIKE ?`)
+          );
+          const params = scopeKeywords.flatMap(kw =>
+            textCols.map(() => `%${kw}%`)
+          );
+
+          rows = await queryD1(
+            `SELECT * FROM "${tableName}" WHERE (${conditions.join(' OR ')}) ORDER BY rowid DESC LIMIT ${MAX_ROWS_PER_TABLE}`,
+            params,
+          );
+
+          // Fallback: if scoped query returned too few, backfill with recent rows
+          if (rows.length < 3) {
+            const seenIds = new Set(rows.map((r: any) => r.id || r.rowid));
+            const backfill = await queryD1(
+              `SELECT * FROM "${tableName}" ORDER BY rowid DESC LIMIT ${MAX_ROWS_PER_TABLE}`,
+            );
+            for (const r of backfill) {
+              if (!seenIds.has(r.id || r.rowid)) rows.push(r);
+              if (rows.length >= MAX_ROWS_PER_TABLE) break;
+            }
+          }
+        } else {
+          // No text columns to search — fallback to recent rows
+          rows = await queryD1(
+            `SELECT * FROM "${tableName}" ORDER BY rowid DESC LIMIT ${MAX_ROWS_PER_TABLE}`,
+          );
+        }
+      } else {
+        // No scope — current behavior
+        rows = await queryD1(
+          `SELECT * FROM "${tableName}" ORDER BY rowid DESC LIMIT ${MAX_ROWS_PER_TABLE}`,
+        );
+      }
 
       return { tableName, colNames, rows };
     } catch {
@@ -736,6 +874,56 @@ async function magnifyApp(appId: string, userId: string): Promise<MagnifyResult>
 
     sections.push(section);
     if (totalChars > MAX_CHARS_PER_APP) break;
+  }
+
+  // Relationship expansion: follow FK columns one level deep when scoped
+  if (scopeKeywords.length > 0 && totalChars < MAX_CHARS_PER_APP) {
+    for (const { tableName, colNames, rows } of samples) {
+      if (rows.length === 0 || totalChars >= MAX_CHARS_PER_APP) continue;
+
+      const fkCols = colNames.filter(c => c.endsWith('_id') && c !== 'id' && c !== 'user_id');
+      for (const fkCol of fkCols) {
+        if (totalChars >= MAX_CHARS_PER_APP) break;
+
+        // Infer target table: world_id → worlds, character_a_id → characters
+        const base = fkCol.replace(/_id$/, '').replace(/_[a-z]$/, '');
+        const targetTable = tableNames.find(t => t === base + 's' || t === base + 'es' || t === base);
+        if (!targetTable) continue;
+
+        // Skip if we already sampled this table with results
+        if (samples.some(s => s.tableName === targetTable && s.rows.length > 0)) continue;
+
+        const ids = [...new Set(rows.map((r: any) => r[fkCol]).filter(Boolean))].slice(0, 10);
+        if (ids.length === 0) continue;
+
+        try {
+          const placeholders = ids.map(() => '?').join(',');
+          const related = await queryD1(
+            `SELECT * FROM "${targetTable}" WHERE id IN (${placeholders}) LIMIT 10`,
+            ids,
+          );
+          if (related.length === 0) continue;
+
+          let section = `[${targetTable}] (${related.length} related rows)\n`;
+          const relCols = await queryD1(`PRAGMA table_info("${targetTable}")`);
+          section += `Columns: ${relCols.map((c: any) => c.name).join(', ')}\n`;
+
+          for (const row of related) {
+            const compact: Record<string, unknown> = {};
+            for (const [key, value] of Object.entries(row as Record<string, unknown>)) {
+              compact[key] = typeof value === 'string' && value.length > 200
+                ? value.slice(0, 200) + '...' : value;
+            }
+            const rowStr = JSON.stringify(compact);
+            if (totalChars + rowStr.length > MAX_CHARS_PER_APP) break;
+            section += rowStr + '\n';
+            totalChars += rowStr.length;
+            totalRows++;
+          }
+          sections.push(section);
+        } catch { /* skip failed FK expansions */ }
+      }
+    }
   }
 
   return {
@@ -933,11 +1121,42 @@ async function loadConversationTopics(userId: string): Promise<string> {
   }
 }
 
+async function loadConversationSummary(conversationId?: string): Promise<ConversationSummary | null> {
+  if (!conversationId) return null;
+  try {
+    const env = getEnv();
+    const kv = env.FN_INDEX;
+    if (!kv) return null;
+    return await kv.get(`convo-summary:${conversationId}`, 'json') as ConversationSummary | null;
+  } catch {
+    return null;
+  }
+}
+
+function searchRawHistory(
+  query: string,
+  history: Array<{ role: string; content: string }>,
+): string {
+  const terms = query.toLowerCase().split(/\s+/).filter(t => t.length > 2);
+  if (terms.length === 0) return '';
+  const scored: Array<{ score: number; text: string }> = [];
+  for (let i = 0; i < history.length; i++) {
+    const content = history[i].content.toLowerCase();
+    const score = terms.filter(t => content.includes(t)).length;
+    if (score > 0) {
+      scored.push({ score, text: `${history[i].role}: ${history[i].content}` });
+    }
+  }
+  const top = scored.sort((a, b) => b.score - a.score).slice(0, 5);
+  let result = top.map(m => m.text).join('\n---\n');
+  return result.length > 2500 ? result.slice(0, 2500) + '\n...(truncated)' : result;
+}
+
 async function loadSystemAgentSkills(agentType: string): Promise<string> {
   try {
     const r2 = createR2Service();
     const text = await r2.fetchTextFile(`system-agents/${agentType}/skills.md`);
-    return text.length > 4000 ? text.substring(0, 4000) + '...' : text;
+    return text.length > 10000 ? text.substring(0, 10000) + '...' : text;
   } catch {
     return '';
   }
@@ -955,15 +1174,6 @@ async function loadSystemAgentStates(userId: string): Promise<SystemAgentState[]
   }
 }
 
-async function loadUserMemory(userId: string): Promise<string> {
-  try {
-    const r2 = createR2Service();
-    const text = await r2.fetchTextFile(`users/${userId}/memory.md`);
-    return text.length > 500 ? text.substring(0, 500) + '...' : text;
-  } catch {
-    return '';
-  }
-}
 
 // ── Heuristic Fallback ──
 
