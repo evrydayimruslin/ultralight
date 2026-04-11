@@ -7,8 +7,6 @@
 // All file operations are in-memory via esbuild's virtual filesystem plugin.
 
 import * as esbuild from 'esbuild-wasm';
-// @ts-ignore — wrangler bundles .wasm files as WebAssembly.Module
-import esbuildWasm from 'esbuild-wasm/esbuild.wasm';
 
 // ============================================
 // TYPES
@@ -43,8 +41,20 @@ async function ensureEsbuild(): Promise<void> {
       (globalThis as any).performance = { now: () => Date.now() };
     }
 
+    if (typeof (globalThis as any).Deno !== 'undefined') {
+      // Deno: import map points 'esbuild-wasm' → npm:esbuild (native binary).
+      // Native esbuild needs no initialize() call.
+      esbuildInitialized = true;
+      return;
+    }
+
+    // CF Workers: dynamically import wrangler-bundled .wasm module.
+    // Variable prevents Deno's static analyzer from trying to resolve this.
+    const wasmPath = 'esbuild-wasm/esbuild.wasm';
+    // @ts-ignore — wrangler bundles .wasm files as WebAssembly.Module
+    const { default: wasmModule } = await import(wasmPath);
     await esbuild.initialize({
-      wasmModule: esbuildWasm,
+      wasmModule,
       worker: false,  // CF Workers don't support Web Worker API — run on main thread
     });
     esbuildInitialized = true;
