@@ -83,22 +83,30 @@ globalThis.ultralight = {
   recall(k) { const e = globalThis.__rpcEnv; return e.MEMORY ? e.MEMORY.recall(k) : Promise.resolve(null); },
   ai(r) { const e = globalThis.__rpcEnv; return e.AI ? e.AI.call(r) : Promise.resolve({ content: '', error: 'AI not available' }); },
   call() { throw new Error('ultralight.call() not available in sandbox. Use ul.call platform tool.'); },
-  // net:connect — TCP/TLS socket access via RPC binding (gated by permission)
+  // net:connect — TCP/TLS socket access (gated by permission)
   net: ${config.permissions.includes('net:connect') ? `{
     connectTls(hostname, port) {
-      const e = globalThis.__rpcEnv;
-      if (!e.NET) throw new Error('net:connect binding not available');
-      return e.NET.connectTls(hostname, port);
+      // Try RPC binding first (CF Workers Dynamic Workers)
+      var e = globalThis.__rpcEnv;
+      if (e && e.NET && typeof e.NET.connectTls === 'function') return e.NET.connectTls(hostname, port);
+      // Fallback: Cloudflare Workers global connect()
+      if (typeof globalThis.connect === 'function') return globalThis.connect({ hostname: hostname, port: port }, { secureTransport: 'on' });
+      // Fallback: Deno.connectTls
+      if (globalThis.Deno && globalThis.Deno.connectTls) return globalThis.Deno.connectTls({ hostname: hostname, port: port });
+      throw new Error('No TCP/TLS socket API available');
     },
     connectPlain(hostname, port) {
-      const e = globalThis.__rpcEnv;
-      if (!e.NET) throw new Error('net:connect binding not available');
-      return e.NET.connectPlain(hostname, port);
+      var e = globalThis.__rpcEnv;
+      if (e && e.NET && typeof e.NET.connectPlain === 'function') return e.NET.connectPlain(hostname, port);
+      if (typeof globalThis.connect === 'function') return globalThis.connect({ hostname: hostname, port: port }, { secureTransport: 'off' });
+      if (globalThis.Deno && globalThis.Deno.connect) return globalThis.Deno.connect({ hostname: hostname, port: port });
+      throw new Error('No TCP socket API available');
     },
     connectStartTls(hostname, port) {
-      const e = globalThis.__rpcEnv;
-      if (!e.NET) throw new Error('net:connect binding not available');
-      return e.NET.connectStartTls(hostname, port);
+      var e = globalThis.__rpcEnv;
+      if (e && e.NET && typeof e.NET.connectStartTls === 'function') return e.NET.connectStartTls(hostname, port);
+      if (typeof globalThis.connect === 'function') return globalThis.connect({ hostname: hostname, port: port }, { secureTransport: 'starttls' });
+      throw new Error('No STARTTLS socket API available');
     },
   }` : `{
     connectTls() { throw new Error('net:connect permission required. Add "net:connect" to your manifest permissions.'); },
