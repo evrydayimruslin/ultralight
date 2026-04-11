@@ -17,6 +17,9 @@ WORKDIR /app
 # Copy all files
 COPY . .
 
+# Install npm deps from api/package.json (Deno uses node_modules/ when it finds a package.json)
+RUN cd api && npm install --production
+
 # Cache Deno dependencies
 RUN deno cache api/main.ts
 

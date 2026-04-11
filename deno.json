@@ -13,12 +13,8 @@
     "cli:install": "deno install --allow-net --allow-read --allow-write --allow-env -n ultralight cli/mod.ts",
     "cli:compile": "deno compile --allow-net --allow-read --allow-write --allow-env --output=ultralight cli/mod.ts"
   },
-  "nodeModulesDir": "none",
   "imports": {
-    "@std/": "https://deno.land/std@0.210.0/",
-    "esbuild-wasm": "npm:esbuild-wasm",
-    "yaml": "npm:yaml",
-    "@supabase/supabase-js": "npm:@supabase/supabase-js"
+    "@std/": "https://deno.land/std@0.210.0/"
   },
   "compilerOptions": {
     "strict": true,
