@@ -15,7 +15,7 @@
   },
   "imports": {
     "@std/": "https://deno.land/std@0.210.0/",
-    "esbuild-wasm": "npm:esbuild",
+    "esbuild-wasm": "npm:esbuild-wasm",
     "yaml": "npm:yaml",
     "@supabase/supabase-js": "npm:@supabase/supabase-js"
   },

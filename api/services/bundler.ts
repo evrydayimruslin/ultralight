@@ -42,21 +42,20 @@ async function ensureEsbuild(): Promise<void> {
     }
 
     if (typeof (globalThis as any).Deno !== 'undefined') {
-      // Deno: import map points 'esbuild-wasm' → npm:esbuild (native binary).
-      // Native esbuild needs no initialize() call.
-      esbuildInitialized = true;
-      return;
+      // Deno: import map points 'esbuild-wasm' → npm:esbuild-wasm.
+      // Let esbuild-wasm auto-locate its .wasm file from the npm package.
+      await esbuild.initialize({ worker: false });
+    } else {
+      // CF Workers: dynamically import wrangler-bundled .wasm module.
+      // Variable prevents Deno's static analyzer from trying to resolve this.
+      const wasmPath = 'esbuild-wasm/esbuild.wasm';
+      // @ts-ignore — wrangler bundles .wasm files as WebAssembly.Module
+      const { default: wasmModule } = await import(wasmPath);
+      await esbuild.initialize({
+        wasmModule,
+        worker: false,  // CF Workers don't support Web Worker API — run on main thread
+      });
     }
-
-    // CF Workers: dynamically import wrangler-bundled .wasm module.
-    // Variable prevents Deno's static analyzer from trying to resolve this.
-    const wasmPath = 'esbuild-wasm/esbuild.wasm';
-    // @ts-ignore — wrangler bundles .wasm files as WebAssembly.Module
-    const { default: wasmModule } = await import(wasmPath);
-    await esbuild.initialize({
-      wasmModule,
-      worker: false,  // CF Workers don't support Web Worker API — run on main thread
-    });
     esbuildInitialized = true;
   } catch (err) {
     // If already initialized (e.g., hot reload), ignore
