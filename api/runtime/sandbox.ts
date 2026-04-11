@@ -1742,6 +1742,24 @@ export async function executeInSandbox(
         };
       },
 
+      // net:connect — TCP/TLS sockets (Deno path)
+      net: hasNetConnect ? {
+        connectTls: async (hostname: string, port: number) => {
+          return sandboxConnectTls({ hostname, port });
+        },
+        connectPlain: async (hostname: string, port: number) => {
+          return sandboxConnect({ hostname, port });
+        },
+        connectStartTls: async (hostname: string, port: number) => {
+          const conn = await sandboxConnect({ hostname, port });
+          return await _Deno.startTls(conn, { hostname });
+        },
+      } : {
+        connectTls: () => { throw new Error('net:connect permission required.'); },
+        connectPlain: () => { throw new Error('net:connect permission required.'); },
+        connectStartTls: () => { throw new Error('net:connect permission required.'); },
+      },
+
     };
 
     // Create Supabase client if configured

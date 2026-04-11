@@ -196,10 +196,36 @@ export default {
     }
 
     // Network binding (net:connect permission)
-    if (config.permissions.includes('net:connect') && ctx?.exports?.NetworkBinding) {
-      bindings.NET = ctx.exports.NetworkBinding({
-        props: { userId: config.userId, appId: config.appId },
-      });
+    if (config.permissions.includes('net:connect')) {
+      if (ctx?.exports?.NetworkBinding) {
+        // CF Workers: use RPC binding
+        bindings.NET = ctx.exports.NetworkBinding({
+          props: { userId: config.userId, appId: config.appId },
+        });
+      } else {
+        // Deno fallback: create a NET binding that uses Deno.connectTls directly
+        // @ts-ignore — Deno global
+        const _Deno = globalThis.Deno;
+        if (_Deno?.connectTls) {
+          bindings.NET = {
+            async connectTls(hostname: string, port: number) {
+              const h = hostname.toLowerCase();
+              if (h === 'localhost' || h === '127.0.0.1' || h === '0.0.0.0' || h.startsWith('10.') || h.startsWith('192.168.') || h.startsWith('172.')) {
+                throw new Error('Connections to internal/private networks are not allowed');
+              }
+              if (port === 25) throw new Error('Port 25 blocked. Use 465 or 587.');
+              return await _Deno.connectTls({ hostname, port });
+            },
+            async connectPlain(hostname: string, port: number) {
+              return await _Deno.connect({ hostname, port });
+            },
+            async connectStartTls(hostname: string, port: number) {
+              const conn = await _Deno.connect({ hostname, port });
+              return await _Deno.startTls(conn, { hostname });
+            },
+          };
+        }
+      }
     }
 
     // 5. Create Dynamic Worker
