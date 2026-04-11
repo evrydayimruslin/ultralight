@@ -435,12 +435,16 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
     // Execute the function in sandbox — AI-capable apps get 120s timeout
     // Include manifest-declared permissions (e.g., net:connect for IMAP/SMTP)
     const httpPermissions = ['memory:read', 'memory:write', 'ai:call', 'net:fetch'];
-    const manifestPerms = (app as any).manifest?.permissions || (app as any).declared_permissions || [];
-    if (Array.isArray(manifestPerms)) {
-      for (const p of manifestPerms) {
-        if (p === 'net:connect' && !httpPermissions.includes(p)) {
-          httpPermissions.push(p);
-        }
+    let manifestPerms: string[] = [];
+    try {
+      const rawManifest = (app as any).manifest;
+      const parsed = typeof rawManifest === 'string' ? JSON.parse(rawManifest) : rawManifest;
+      manifestPerms = parsed?.permissions || [];
+    } catch {}
+    if (!Array.isArray(manifestPerms)) manifestPerms = [];
+    for (const p of manifestPerms) {
+      if (p === 'net:connect' && !httpPermissions.includes(p)) {
+        httpPermissions.push(p);
       }
     }
     // Dynamic Worker sandbox — avoids `new Function()` restriction on CF Workers

@@ -1867,12 +1867,16 @@ async function executeAppFunction(
     // AI-capable apps get a longer timeout (120s) since AI calls are inherently slow
     const permissions = ['memory:read', 'memory:write', 'ai:call', 'net:fetch', 'app:call'];
     // Include manifest-declared permissions (e.g., net:connect for IMAP/SMTP)
-    const manifestPerms = (app as any).manifest?.permissions || (app as any).declared_permissions || [];
-    if (Array.isArray(manifestPerms)) {
-      for (const p of manifestPerms) {
-        if (p === 'net:connect' && !permissions.includes(p)) {
-          permissions.push(p);
-        }
+    let manifestPerms: string[] = [];
+    try {
+      const rawManifest = (app as any).manifest;
+      const parsed = typeof rawManifest === 'string' ? JSON.parse(rawManifest) : rawManifest;
+      manifestPerms = parsed?.permissions || [];
+    } catch {}
+    if (!Array.isArray(manifestPerms)) manifestPerms = [];
+    for (const p of manifestPerms) {
+      if (p === 'net:connect' && !permissions.includes(p)) {
+        permissions.push(p);
       }
     }
     const timeoutMs = permissions.includes('ai:call') ? 120_000 : 30_000;
