@@ -22,6 +22,7 @@ export { DatabaseBinding } from './bindings/database-binding.ts';
 export { AppDataBinding } from './bindings/appdata-binding.ts';
 export { AIBinding } from './bindings/ai-binding.ts';
 export { MemoryBinding } from './bindings/memory-binding.ts';
+export { NetworkBinding } from './bindings/network-binding.ts';
 
 // ============================================
 // SECURITY & CORS HEADERS
