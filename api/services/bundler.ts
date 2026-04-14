@@ -52,11 +52,12 @@ async function ensureEsbuild(): Promise<void> {
       // Let esbuild-wasm auto-locate its .wasm file from the npm package.
       await esbuild.initialize({ worker: false });
     } else {
-      // CF Workers: dynamically import wrangler-bundled .wasm module.
-      // Variable prevents Deno's static analyzer from trying to resolve this.
-      const wasmPath = 'esbuild-wasm/esbuild.wasm';
-      // @ts-ignore — wrangler bundles .wasm files as WebAssembly.Module
-      const { default: wasmModule } = await import(wasmPath);
+      // CF Workers: load the wrangler-bundled .wasm module via a separate
+      // loader file with a static import. Dynamic import with a literal path
+      // keeps Deno's analyzer from touching the loader while still letting
+      // wrangler see the static wasm import inside it.
+      const loaderMod = await import('./esbuild-wasm-loader.ts');
+      const wasmModule = loaderMod.default;
       await esbuild.initialize({
         wasmModule,
         worker: false,  // CF Workers don't support Web Worker API — run on main thread
@@ -262,15 +263,22 @@ export async function bundleCode(
     const outputCode = result.outputFiles?.[0]?.text || '';
     const processedCode = postProcessBundle(outputCode);
 
-    // Also produce ESM bundle for Dynamic Worker loading
+    // Also produce ESM bundle for Dynamic Worker loading.
+    // The runtime at api/runtime/dynamic-sandbox.ts loads from KV `esm:{appId}:latest`
+    // which is written from this esmCode — if this silently fails, the runtime
+    // will keep serving whatever bundle was there before. Log errors visibly so
+    // upload handlers can surface them and fall back to direct transform.
     let esmCode: string | undefined;
     try {
       const esmResult = await bundleCodeESM(files, entryPoint);
       if (esmResult.success) {
         esmCode = esmResult.code;
+      } else {
+        console.warn('[BUNDLER] ESM bundle reported failure:', esmResult.errors.join('; '));
       }
-    } catch {
-      // ESM bundling is optional — don't fail the whole build
+    } catch (esmErr) {
+      console.warn('[BUNDLER] ESM bundle threw:', esmErr instanceof Error ? esmErr.message : String(esmErr));
+      // ESM bundling is non-fatal here — upload handler has a transform fallback
     }
 
     return {

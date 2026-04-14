@@ -1595,6 +1595,7 @@ async function handleToolsCall(
       }
 
       // ── 11. ul.job (async job polling) ──────────────
+      case 'ultralight.job':
       case 'ul.job': {
         const jobId = toolArgs.job_id as string;
         if (!jobId) throw new ToolError(INVALID_PARAMS, 'Missing required: job_id');
@@ -2495,13 +2496,113 @@ async function executeUpload(
     const gapId = args.gap_id as string | undefined;
     const autoLive = args._auto_live || (!args.app_id && args.name); // name-based lookup = auto-live
     const updatePayload: Record<string, unknown> = { versions };
-    if (autoLive) updatePayload.current_version = newVersion;
+    if (autoLive) {
+      updatePayload.current_version = newVersion;
+      updatePayload.storage_key = storageKey;  // Point code fetcher at new version's R2 path
+    }
     if (gapId) updatePayload.gap_id = gapId;
     if (pipeline.manifest) {
       updatePayload.manifest = JSON.stringify(pipeline.manifest);
     }
     updatePayload.exports = pipeline.exports;
     await appsService.update(app.id, updatePayload as Partial<App>);
+
+    // Update KV CODE_CACHE with ESM bundle for Dynamic Workers.
+    // The runtime at api/runtime/dynamic-sandbox.ts:34 loads app code from
+    // `esm:{appId}:latest` — if this write is skipped, the runtime keeps
+    // serving whatever bundle was written last time, silently running stale
+    // code. So we make this write mandatory and fail the upload if we can't
+    // produce a bundle.
+    let kvBundle = pipeline.esmBundledCode;
+    let kvBundleSource = 'pipeline';
+    const fallbackErrors: string[] = [];
+
+    // Fallback chain for producing the ESM bundle:
+    //   1. pipeline.esmBundledCode (from processUploadPipeline → bundler)
+    //   2. bundleCodeESM directly on just the entry file (skips the full pipeline's virtual fs)
+    //   3. esbuild.transform (requires esbuild to already be initialized)
+    //   4. For .js/.jsx files: raw content wrapped as ESM (no transpilation needed)
+    // If all four fail for a TS file, we throw — shipping broken code is worse
+    // than failing the upload visibly.
+    if (!kvBundle) {
+      const entryCandidates = ['index.ts', 'index.tsx', 'index.js', 'index.jsx'];
+      let entryFile = validatedFiles.find(f => entryCandidates.includes(f.name));
+      if (!entryFile) {
+        entryFile = validatedFiles.find(f => /\.(tsx?|jsx?)$/.test(f.name));
+      }
+
+      if (!entryFile) {
+        fallbackErrors.push('no executable entry file found (expected index.ts/tsx/js/jsx)');
+      } else {
+        // Attempt 1: bundleCodeESM on just the entry file (ensures esbuild init)
+        try {
+          const { bundleCodeESM } = await import('../services/bundler.ts');
+          const result = await bundleCodeESM(
+            [{ name: entryFile.name, content: entryFile.content }],
+            entryFile.name,
+          );
+          if (result.success && result.code) {
+            kvBundle = result.code;
+            kvBundleSource = `bundleCodeESM:${entryFile.name}`;
+          } else {
+            fallbackErrors.push(`bundleCodeESM: ${result.errors.join('; ') || 'no code'}`);
+          }
+        } catch (err) {
+          fallbackErrors.push(`bundleCodeESM threw: ${err instanceof Error ? err.message : String(err)}`);
+        }
+
+        // Attempt 2: direct esbuild.transform
+        if (!kvBundle) {
+          try {
+            const esbuild = await import('esbuild-wasm');
+            const loader: 'ts' | 'tsx' | 'js' | 'jsx' =
+              entryFile.name.endsWith('.tsx') ? 'tsx' :
+              entryFile.name.endsWith('.jsx') ? 'jsx' :
+              entryFile.name.endsWith('.ts') ? 'ts' : 'js';
+            const transformed = await esbuild.transform(entryFile.content, {
+              loader, format: 'esm', target: 'esnext',
+            });
+            kvBundle = transformed.code;
+            kvBundleSource = `transform:${entryFile.name}`;
+          } catch (err) {
+            fallbackErrors.push(`esbuild.transform: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+
+        // Attempt 3: For plain .js/.jsx files, no transpilation is needed.
+        // (TS files genuinely need transpilation — no safe fallback for them.)
+        if (!kvBundle && /\.jsx?$/.test(entryFile.name) && !/\.tsx?$/.test(entryFile.name)) {
+          kvBundle = entryFile.content;
+          kvBundleSource = `raw:${entryFile.name}`;
+        }
+      }
+    }
+
+    if (!kvBundle) {
+      throw new Error(
+        'Upload failed: could not produce ESM bundle for KV.\n' +
+        `Fallback errors:\n  - ${fallbackErrors.join('\n  - ')}\n` +
+        'App would be uploaded to R2 but unreachable at runtime. ' +
+        'This usually means esbuild-wasm failed to initialize in the Worker.'
+      );
+    }
+
+    // KV write is fatal — if this fails, the runtime would keep serving stale code.
+    try {
+      await globalThis.__env.CODE_CACHE.put(`esm:${app.id}:${newVersion}`, kvBundle);
+      await globalThis.__env.CODE_CACHE.put(`esm:${app.id}:latest`, kvBundle);
+      console.log(`[UPLOAD] KV cache updated for ${app.id} via ${kvBundleSource} (${kvBundle.length} chars)`);
+    } catch (kvErr) {
+      console.error(`[UPLOAD] KV cache write FAILED:`, kvErr);
+      throw new Error(
+        `Upload failed: could not write ESM bundle to KV: ${kvErr instanceof Error ? kvErr.message : String(kvErr)}`
+      );
+    }
+
+    // Invalidate in-memory code cache so next request fetches new version from R2.
+    // Always invalidate (not just when autoLive) — KV now has a new bundle.
+    const { getCodeCache } = await import('../services/codecache.ts');
+    getCodeCache().invalidate(app.id);
 
     // ── D1 provisioning — SYNCHRONOUS, eager ──
     let d1Status: { provisioned: boolean; status: string; database_id?: string; migrations_applied: number; migrations_skipped: number; error?: string } | undefined;

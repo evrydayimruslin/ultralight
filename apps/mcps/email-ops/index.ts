@@ -265,13 +265,119 @@ function closeImap(conn: { lr: LineReader; writer: any; socket: any; cmd: any })
 
 // ── Email Parser ──
 
+// Charset extraction from a Content-Type header value
+function getCharset(contentType: string): string {
+  const m = contentType.match(/charset="?([^";\s]+)"?/i);
+  return m ? m[1].toLowerCase() : 'utf-8';
+}
+
+// Charset-aware byte decoding with UTF-8 fallback
+function decodeBytes(bytes: Uint8Array, charset: string): string {
+  try { return new TextDecoder(charset).decode(bytes); }
+  catch { return new TextDecoder('utf-8').decode(bytes); }
+}
+
+// Decode body bytes according to Content-Transfer-Encoding + charset.
+// Handles base64, quoted-printable, and 7bit/8bit/binary (ISO-2022-JP etc).
+function decodeBody(body: string, transferEncoding: string, charset: string): string {
+  const te = (transferEncoding || '').toLowerCase();
+  if (te === 'base64') {
+    try {
+      return decodeBytes(Uint8Array.from(atob(body.replace(/\s/g, '')), c => c.charCodeAt(0)), charset);
+    } catch {
+      return body;
+    }
+  }
+  if (te === 'quoted-printable') {
+    const qp = body.replace(/=\r?\n/g, '').replace(/=([0-9A-F]{2})/gi, (_: string, h: string) => String.fromCharCode(parseInt(h, 16)));
+    if (charset !== 'utf-8') {
+      return decodeBytes(new Uint8Array([...qp].map(c => c.charCodeAt(0))), charset);
+    }
+    return qp;
+  }
+  // 7bit / 8bit / binary / none — apply charset if non-UTF-8 (handles ISO-2022-JP)
+  if (charset !== 'utf-8') {
+    return decodeBytes(new Uint8Array([...body].map(c => c.charCodeAt(0))), charset);
+  }
+  return body;
+}
+
+function unfoldHeaders(h: string): string {
+  return h.replace(/\r\n([ \t])/g, ' ');
+}
+
+function getPartHeader(headers: string, name: string): string {
+  const re = new RegExp('^' + name + ':\\s*(.+)$', 'im');
+  const m = headers.match(re);
+  return m ? m[1].trim() : '';
+}
+
+// Recursive MIME text extractor: handles nested multipart, skips attachments,
+// prefers text/plain over text/html, uses per-part charset.
+function extractTextFromMime(rawHeaders: string, body: string): string {
+  const headers = unfoldHeaders(rawHeaders);
+  const ct = getPartHeader(headers, 'Content-Type');
+  const cte = getPartHeader(headers, 'Content-Transfer-Encoding').toLowerCase();
+  const charset = getCharset(ct);
+  const ctLower = ct.toLowerCase();
+
+  if (ctLower.includes('multipart/')) {
+    const bMatch = ct.match(/boundary="?([^";\s]+)"?/i);
+    if (!bMatch) return '';
+    const boundary = bMatch[1];
+    const parts = body.split('--' + boundary);
+
+    let plainText = '';
+    let htmlText = '';
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (trimmed === '' || trimmed === '--') continue;
+      const phe = part.indexOf('\r\n\r\n');
+      if (phe < 0) continue;
+      const partHeaders = part.substring(0, phe);
+      const partBody = part.substring(phe + 4).replace(/\r?\n$/, '');
+      const partCt = getPartHeader(unfoldHeaders(partHeaders), 'Content-Type').toLowerCase();
+
+      // Skip binary attachments
+      if (partCt.startsWith('application/') || partCt.startsWith('image/') || partCt.startsWith('audio/') || partCt.startsWith('video/')) continue;
+
+      // Recurse into nested multipart
+      if (partCt.includes('multipart/')) {
+        const nested = extractTextFromMime(partHeaders, partBody);
+        if (nested && !plainText) plainText = nested;
+        continue;
+      }
+
+      const partCte = getPartHeader(unfoldHeaders(partHeaders), 'Content-Transfer-Encoding').toLowerCase();
+      const partCharset = getCharset(partCt || ct);
+
+      if (partCt.includes('text/plain') && !plainText) {
+        plainText = decodeBody(partBody, partCte, partCharset);
+      } else if (partCt.includes('text/html') && !htmlText) {
+        htmlText = decodeBody(partBody, partCte, partCharset);
+      }
+    }
+
+    if (plainText) return plainText;
+    if (htmlText) return stripHtml(htmlText);
+    return '';
+  }
+
+  // Single-part
+  const decoded = decodeBody(body, cte, charset);
+  if (ctLower.includes('text/html')) {
+    return stripHtml(decoded);
+  }
+  return decoded;
+}
+
 function parseEmail(raw: string): { from: string; to: string; subject: string; body: string; messageId: string; inReplyTo: string } {
   const headerEnd = raw.indexOf('\r\n\r\n');
   const headerBlock = headerEnd > 0 ? raw.substring(0, headerEnd) : raw;
   const bodyBlock = headerEnd > 0 ? raw.substring(headerEnd + 4) : '';
 
   // Unfold headers (continuation lines start with whitespace)
-  const unfolded = headerBlock.replace(/\r\n([ \t])/g, ' ');
+  const unfolded = unfoldHeaders(headerBlock);
 
   function getHeader(name: string): string {
     const re = new RegExp('^' + name + ':\\s*(.+)$', 'im');
@@ -279,14 +385,26 @@ function parseEmail(raw: string): { from: string; to: string; subject: string; b
     return m ? m[1].trim() : '';
   }
 
-  // Decode encoded-word (=?charset?encoding?text?=)
+  // Decode RFC 2047 encoded-word with proper charset handling.
+  // Per RFC 2047: whitespace between adjacent encoded-words is ignored.
   function decodeWord(s: string): string {
-    return s.replace(/=\?([^?]+)\?([BQ])\?([^?]+)\?=/gi, (_, charset, encoding, text) => {
+    // Collapse whitespace between adjacent encoded-words before decoding
+    const joined = s.replace(/\?=[\s]+=\?/g, '?==?');
+    return joined.replace(/=\?([^?]+)\?([BQ])\?([^?]*)\?=/gi, (_, charset, encoding, text) => {
+      const cs = charset.toLowerCase();
       if (encoding.toUpperCase() === 'B') {
-        return dec.decode(Uint8Array.from(atob(text), c => c.charCodeAt(0)));
+        try {
+          return decodeBytes(Uint8Array.from(atob(text), c => c.charCodeAt(0)), cs);
+        } catch {
+          return text;
+        }
       }
       // Quoted-printable
-      return text.replace(/_/g, ' ').replace(/=([0-9A-F]{2})/gi, (__, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+      const qp = text.replace(/_/g, ' ').replace(/=([0-9A-F]{2})/gi, (__: string, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+      if (cs !== 'utf-8') {
+        return decodeBytes(new Uint8Array([...qp].map(c => c.charCodeAt(0))), cs);
+      }
+      return qp;
     });
   }
 
@@ -302,48 +420,7 @@ function parseEmail(raw: string): { from: string; to: string; subject: string; b
   const messageId = getHeader('Message-ID').replace(/[<>]/g, '');
   const inReplyTo = getHeader('In-Reply-To').replace(/[<>]/g, '');
 
-  // Extract body — handle multipart
-  let textBody = '';
-  const contentType = getHeader('Content-Type');
-
-  if (contentType.includes('multipart/')) {
-    const bMatch = contentType.match(/boundary="?([^";\s]+)"?/);
-    if (bMatch) {
-      const boundary = bMatch[1];
-      const parts = bodyBlock.split('--' + boundary);
-      for (const part of parts) {
-        if (part.trim() === '--' || part.trim() === '') continue;
-        const partHeaderEnd = part.indexOf('\r\n\r\n');
-        if (partHeaderEnd < 0) continue;
-        const partHeaders = part.substring(0, partHeaderEnd).toLowerCase();
-        const partBody = part.substring(partHeaderEnd + 4).trim();
-        if (partHeaders.includes('text/plain')) {
-          textBody = partBody;
-          // Decode quoted-printable if specified
-          if (partHeaders.includes('quoted-printable')) {
-            textBody = textBody.replace(/=\r?\n/g, '').replace(/=([0-9A-F]{2})/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
-          } else if (partHeaders.includes('base64')) {
-            textBody = dec.decode(Uint8Array.from(atob(partBody.replace(/\s/g, '')), c => c.charCodeAt(0)));
-          }
-          break;
-        }
-      }
-    }
-  }
-
-  if (!textBody) {
-    textBody = bodyBlock;
-    // Decode if entire body is quoted-printable
-    if (contentType.includes('quoted-printable') || getHeader('Content-Transfer-Encoding').includes('quoted-printable')) {
-      textBody = textBody.replace(/=\r?\n/g, '').replace(/=([0-9A-F]{2})/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
-    } else if (getHeader('Content-Transfer-Encoding').includes('base64')) {
-      textBody = dec.decode(Uint8Array.from(atob(textBody.replace(/\s/g, '')), c => c.charCodeAt(0)));
-    }
-    // If it was HTML, strip tags
-    if (contentType.includes('text/html')) {
-      textBody = stripHtml(textBody);
-    }
-  }
+  const textBody = extractTextFromMime(headerBlock, bodyBlock);
 
   return { from, to, subject: subject || '(no subject)', body: textBody.trim(), messageId, inReplyTo };
 }
@@ -483,6 +560,140 @@ export async function check_inbox(args: { debug?: boolean; config_only?: boolean
   }
 }
 
+// ── Phase B: Pre-processing + Classification Helpers ──
+
+// Strip quoted replies, forwarded markers, signatures, and common footers
+// for cleaner AI input. Returns both cleaned and original — we store original
+// for admin reference and feed cleaned to the AI.
+function cleanEmailBody(body: string): { cleaned: string; original: string } {
+  if (!body) return { cleaned: '', original: '' };
+  const original = body;
+  let cleaned = body.replace(/\r\n/g, '\n');
+
+  // 1. Strip quoted-reply lines (lines starting with >)
+  cleaned = cleaned.split('\n').filter(l => !/^\s*>/.test(l)).join('\n');
+
+  // 2. Find earliest cut point across all markers (protect first 80 chars)
+  const cutPatterns = [
+    // Forwarded / original message markers
+    /^[-—_=]{2,}\s*(?:Forwarded|Original)\s*(?:message|Message)[-—_=\s]*$/m,
+    /^-----\s*転送(?:された)?メッセージ\s*-----$/m,
+    // "On ... wrote:" reply headers
+    /\n\s*On\s[\s\S]{5,120}?\bwrote:\s*\n/i,
+    // Outlook-style forwarded headers (From/Sent/To/Subject block)
+    /\n\s*From:\s[^\n]+\n\s*(?:Sent|Date):\s[^\n]+\n\s*To:\s[^\n]+\n\s*Subject:\s/i,
+    // Signature separators
+    /\n-- ?\n/,
+    /\n[-_=*#]{10,}\n/,
+    /\n\*{5,}\n/,
+    // Common footer/disclaimer phrases (English + Japanese)
+    /\n\s*Sent from my (?:iPhone|iPad|Android|Galaxy|Samsung)/i,
+    /\n\s*CONFIDENTIAL(?:ITY)?\s+NOTICE/i,
+    /\n\s*This (?:email|e-mail|message)[^\n.]{0,120}(?:confidential|privileged)/i,
+    /\n\s*If you are not the intended recipient/i,
+    /\n\s*(?:この|本)(?:メール|メッセージ)は[^\n]{0,100}(?:送信|配信|機密)/,
+    /\n\s*本(?:メール|メッセージ)には機密情報/,
+  ];
+
+  let cutAt = cleaned.length;
+  for (const p of cutPatterns) {
+    const m = cleaned.match(p);
+    if (m && m.index !== undefined && m.index > 80 && m.index < cutAt) {
+      cutAt = m.index;
+    }
+  }
+  cleaned = cleaned.substring(0, cutAt).replace(/\n{3,}/g, '\n\n').trim();
+
+  return { cleaned, original };
+}
+
+// Extract guest email addresses from a message body. Runs unconditionally so
+// that OTA booking confirmations and contact-form submissions reveal the real
+// guest (not the noreply/system sender in the From header).
+function extractEmailsFromBody(body: string): { emails: string[]; primaryName: string | null } {
+  if (!body) return { emails: [], primaryName: null };
+
+  // Find all email-like strings, dedupe, lowercase
+  const allEmails = [...new Set(
+    (body.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [])
+      .map(e => e.toLowerCase())
+  )];
+
+  // Filter out obvious system/noreply addresses (but keep for fallback)
+  const filtered = allEmails.filter(e =>
+    !/(?:noreply|no-reply|donotreply|mailer-daemon|postmaster|bounce|^system@|^admin@|^info@|^support@)/i.test(e)
+  );
+
+  // Look for a "primary" email via labeled fields (guest form fields)
+  const labelPatterns = [
+    /(?:reply.?to|返信先)[\s\S]{0,10}?[:：]\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i,
+    /(?:guest|customer|お客[様さ]ま?|予約者|申込者)[\s\S]{0,80}?(?:e[-\s]?mail|メール(?:アドレス)?)[\s\S]{0,10}?[:：]\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i,
+    /(?:^|\n)\s*(?:e[-\s]?mail|メール(?:アドレス)?|連絡先)\s*[:：]\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i,
+  ];
+
+  let primaryEmail: string | null = null;
+  for (const p of labelPatterns) {
+    const m = body.match(p);
+    if (m) { primaryEmail = m[1].trim().toLowerCase(); break; }
+  }
+
+  // Look for a labeled guest name
+  const namePatterns = [
+    /(?:^|\n)\s*(?:name|お名前|氏名|名前|予約者(?:名)?|申込者(?:名)?|ゲスト名)\s*[:：]\s*([^\r\n]{1,80})/i,
+  ];
+  let primaryName: string | null = null;
+  for (const p of namePatterns) {
+    const m = body.match(p);
+    if (m) { primaryName = m[1].trim().replace(/\s*[様さん]$/, '').slice(0, 80); break; }
+  }
+
+  // Put primary first, then rest (deduped)
+  let emails = filtered;
+  if (primaryEmail) {
+    emails = [primaryEmail, ...filtered.filter(e => e !== primaryEmail)];
+  }
+
+  return { emails, primaryName };
+}
+
+// Rough language detection via CJK unicode ranges. Hotel context: default to
+// 'ja' for any CJK (shared with Chinese but Japanese is far more common here).
+function detectLanguage(text: string): string {
+  if (!text) return 'en';
+  // Hiragana or katakana → strong Japanese signal
+  if (/[\u3040-\u309f\u30a0-\u30ff]/.test(text)) return 'ja';
+  // CJK unified ideographs → default to ja in hotel context
+  if (/[\u4e00-\u9fff]/.test(text)) return 'ja';
+  if (/[\uac00-\ud7af]/.test(text)) return 'ko';
+  return 'en';
+}
+
+// Pattern for noreply/system/form sender addresses
+const NOREPLY_PATTERN = /(?:noreply|no-reply|donotreply|mailer-daemon|postmaster|bounce|notification|notify|alert|system|form|mailer|info@forms|webmaster|auto|automated)/i;
+
+// Known OTA / travel agency domains that send booking confirmations
+const OTA_DOMAINS = [
+  'ikyu.com',
+  'jtb.co.jp',
+  'rakuten.co.jp',
+  'travel.rakuten.co.jp',
+  'jalan.net',
+  'booking.com',
+  'expedia.com',
+  'agoda.com',
+  'hotels.com',
+  'trivago.com',
+  'yahoo-travel',
+  'ctrip.com',
+  'trip.com',
+  'yomiuri-ryokou.co.jp',
+  'hankyu-travel.com',
+  'hankyu.co.jp',
+];
+
+// Subject keywords that indicate an automated booking confirmation
+const BOOKING_CONFIRMATION_KEYWORDS = /(?:confirm(?:ation|ed)?|予約(?:受付|確認|完了)|reservation\s*(?:confirmed|received)|booking\s*(?:confirmed|received)|ご予約|予約番号|予約受付|confirmation\s*number|receipt)/i;
+
 // ============================================
 // 1. RECEIVE EMAIL — Webhook + Direct
 // ============================================
@@ -502,6 +713,26 @@ export async function receive_email(args: any): Promise<unknown> {
 
   if (!from || !subject) return { error: 'from and subject are required' };
 
+  // ── Phase B: pre-process body, extract emails, resolve guest identity ──
+  const { cleaned: cleanBody, original: originalBody } = cleanEmailBody(body);
+  const { emails: bodyEmails, primaryName } = extractEmailsFromBody(originalBody);
+
+  // Resolve guest identity: if the From is a form/noreply/OTA sender AND the
+  // body yielded at least one real email, use that as the guest contact.
+  // Otherwise fall back to the envelope From.
+  const fromLower = from.toLowerCase();
+  const fromIsSystem = NOREPLY_PATTERN.test(from) || OTA_DOMAINS.some(d => fromLower.includes(d));
+  const guestEmail = (fromIsSystem && bodyEmails.length > 0) ? bodyEmails[0] : from;
+  const guestName = primaryName
+    || ((fromIsSystem && bodyEmails.length > 0) ? bodyEmails[0].split('@')[0] : from.split('@')[0]);
+
+  // Metadata to attach to the inbound version so the widget recipient dropdown
+  // can populate from extracted emails (Phase D). Piggybacks on the existing
+  // metadata TEXT column — no migration needed.
+  const inboundMeta = bodyEmails.length > 0 || primaryName
+    ? JSON.stringify({ extracted_emails: bodyEmails, primary_name: primaryName })
+    : null;
+
   // Check for reply threading — match by In-Reply-To or same guest+subject
   const inReplyTo = args.in_reply_to || args.headers?.['in-reply-to'];
   let existingConvo: any = null;
@@ -514,12 +745,23 @@ export async function receive_email(args: any): Promise<unknown> {
     );
   }
   if (!existingConvo) {
-    // Try matching by guest email + similar subject (strip Re:/Fwd: prefixes)
-    const cleanSubject = subject.replace(/^(Re|Fwd|Fw):\s*/gi, '').trim();
-    existingConvo = await ultralight.db.first(
-      'SELECT * FROM conversations WHERE user_id = ? AND guest_email = ? AND subject LIKE ? AND status != ? ORDER BY updated_at DESC LIMIT 1',
-      [uid(), from, '%' + cleanSubject + '%', 'discarded']
-    );
+    // Match by guest email + similar subject. Do the subject comparison in JS
+    // rather than SQL LIKE — D1's LIKE has a "pattern too complex" limit that
+    // long full-Japanese subjects with special chars (【】：！) reliably trip.
+    // Threading uses resolved guestEmail OR raw From so contact-form submissions
+    // and direct replies from the same person both match.
+    const normalize = (s: string) => (s || '').replace(/^(Re|Fwd|Fw):\s*/gi, '').trim().toLowerCase();
+    const cleanSubject = normalize(subject);
+    if (cleanSubject) {
+      const recent = await ultralight.db.all(
+        'SELECT * FROM conversations WHERE user_id = ? AND (guest_email = ? OR guest_email = ?) AND status != ? ORDER BY updated_at DESC LIMIT 20',
+        [uid(), guestEmail, from, 'discarded']
+      );
+      existingConvo = recent.find((c: any) => {
+        const n = normalize(c.subject);
+        return n && (n.includes(cleanSubject) || cleanSubject.includes(n));
+      }) || null;
+    }
   }
 
   const ts = now();
@@ -530,34 +772,42 @@ export async function receive_email(args: any): Promise<unknown> {
     const vNum = await nextVersionNum(existingConvo.id);
     const vId = crypto.randomUUID();
     await ultralight.db.run(
-      'INSERT INTO versions (id, conversation_id, user_id, version_num, type, body, actor, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [vId, existingConvo.id, uid(), vNum, 'inbound', body, from, ts]
+      'INSERT INTO versions (id, conversation_id, user_id, version_num, type, body, actor, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [vId, existingConvo.id, uid(), vNum, 'inbound', originalBody, guestEmail, inboundMeta, ts]
     );
 
-    // Get full thread for context
-    const allVersions = await ultralight.db.all(
-      'SELECT type, body, actor FROM versions WHERE conversation_id = ? AND user_id = ? ORDER BY version_num',
-      [existingConvo.id, uid()]
-    );
-    const threadContext = allVersions.map((v: any) => (v.type === 'inbound' ? 'Guest: ' : 'You: ') + v.body).join('\n---\n');
+    // Skip AI draft for internal / booking_confirmation / spam followups —
+    // admin can trigger a manual draft via conversation_act('generate_draft').
+    const skipAutoDraft = ['internal', 'booking_confirmation', 'spam'].includes(existingConvo.classification);
+    if (!skipAutoDraft) {
+      // Get full thread for context (cleaned bodies for AI input quality)
+      const allVersions = await ultralight.db.all(
+        'SELECT type, body, actor FROM versions WHERE conversation_id = ? AND user_id = ? ORDER BY version_num',
+        [existingConvo.id, uid()]
+      );
+      const threadContext = allVersions.map((v: any) => {
+        const b = v.type === 'inbound' ? cleanEmailBody(v.body).cleaned : v.body;
+        return (v.type === 'inbound' ? 'Guest: ' : 'You: ') + b;
+      }).join('\n---\n');
 
-    // AI draft followup
-    const aiResp = await ultralight.ai({
-      model: AI_MODEL,
-      messages: [
-        { role: 'system', content: 'You are an email response agent. Draft a followup reply to an ongoing conversation.\n\nBusiness conventions:\n' + conventionsText + '\n\nFull thread so far:\n' + threadContext + '\n\nRespond with JSON:\n{"draft_body": "your reply", "knowledge_gaps": ["topics not in conventions"]}', cache_control: { type: 'ephemeral' } },
-        { role: 'user', content: 'Latest message from guest:\n' + body },
-      ],
-    });
+      // AI draft followup
+      const aiResp = await ultralight.ai({
+        model: AI_MODEL,
+        messages: [
+          { role: 'system', content: 'You are an email response agent. Draft a followup reply to an ongoing conversation.\n\nBusiness conventions:\n' + conventionsText + '\n\nFull thread so far:\n' + threadContext + '\n\nRespond with JSON:\n{"draft_body": "your reply", "knowledge_gaps": ["topics not in conventions"]}', cache_control: { type: 'ephemeral' } },
+          { role: 'user', content: 'Latest message from guest:\n' + cleanBody.substring(0, 2000) },
+        ],
+      });
 
-    let parsed: any;
-    try { const m = (aiResp.content || '').match(/```(?:json)?\s*([\s\S]*?)```/) || [null, aiResp.content]; parsed = JSON.parse(m[1] || aiResp.content); } catch { parsed = { draft_body: 'Thank you for your message. I will get back to you shortly.', knowledge_gaps: [] }; }
+      let parsed: any;
+      try { const m = (aiResp.content || '').match(/```(?:json)?\s*([\s\S]*?)```/) || [null, aiResp.content]; parsed = JSON.parse(m[1] || aiResp.content); } catch { parsed = { draft_body: 'Thank you for your message. I will get back to you shortly.', knowledge_gaps: [] }; }
 
-    const draftVId = crypto.randomUUID();
-    await ultralight.db.run(
-      'INSERT INTO versions (id, conversation_id, user_id, version_num, type, body, actor, model, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [draftVId, existingConvo.id, uid(), vNum + 1, 'auto_draft', parsed.draft_body, 'ai', AI_MODEL, JSON.stringify({ knowledge_gaps: parsed.knowledge_gaps || [] }), ts]
-    );
+      const draftVId = crypto.randomUUID();
+      await ultralight.db.run(
+        'INSERT INTO versions (id, conversation_id, user_id, version_num, type, body, actor, model, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [draftVId, existingConvo.id, uid(), vNum + 1, 'auto_draft', parsed.draft_body, 'ai', AI_MODEL, JSON.stringify({ knowledge_gaps: parsed.knowledge_gaps || [] }), ts]
+      );
+    }
 
     await ultralight.db.run('UPDATE conversations SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?', ['active', ts, existingConvo.id, uid()]);
 
@@ -568,30 +818,86 @@ export async function receive_email(args: any): Promise<unknown> {
   // ── New conversation ──
   const convoId = crypto.randomUUID();
 
-  // AI classify + draft
+  // Fast-path classification: deterministic rules for internal / OTA emails
+  // that don't need AI classification or drafting.
+  const businessEmail = ((ultralight.env.BUSINESS_EMAIL as string) || '').toLowerCase();
+  const businessDomain = businessEmail.split('@')[1] || '';
+
+  // Internal staff emails from the same domain
+  const isInternal = businessDomain && fromLower.endsWith('@' + businessDomain);
+
+  // Booking confirmation: known OTA domain OR noreply-pattern sender with
+  // booking-related subject keywords
+  const isOtaSender = OTA_DOMAINS.some(d => fromLower.includes(d));
+  const isBookingConfirmation = !isInternal && (
+    isOtaSender || (NOREPLY_PATTERN.test(from) && BOOKING_CONFIRMATION_KEYWORDS.test(subject))
+  );
+
+  if (isInternal || isBookingConfirmation) {
+    const classification = isInternal ? 'internal' : 'booking_confirmation';
+    const lang = detectLanguage(subject + '\n' + (cleanBody || originalBody).slice(0, 500));
+    console.log('[receive_email] fast-path classification:', classification, 'lang:', lang, 'from:', from);
+
+    await ultralight.db.run(
+      'INSERT INTO conversations (id, user_id, guest_email, guest_name, subject, language, classification, status, message_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [convoId, uid(), guestEmail, guestName, subject, lang, classification, 'active', messageId || null, ts, ts]
+    );
+    await ultralight.db.run(
+      'INSERT INTO versions (id, conversation_id, user_id, version_num, type, body, actor, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [crypto.randomUUID(), convoId, uid(), 1, 'inbound', originalBody, guestEmail, inboundMeta, ts]
+    );
+    if (args.method) return { statusCode: 200, body: { received: true, conversation_id: convoId } };
+    return { success: true, conversation_id: convoId, classification, language: lang, action: 'no_reply' };
+  }
+
+  // ── AI classify + draft ──
   const aiResp = await ultralight.ai({
     model: AI_MODEL,
     messages: [
-      { role: 'system', content: 'You are an email response agent for a business. Classify inbound emails and draft professional replies.\n\nBusiness conventions:\n' + conventionsText + '\n\nInstructions:\n1. Classify intent\n2. Detect language\n3. Draft reply IN THE SAME LANGUAGE as sender\n4. Be warm, professional, accurate\n\nRespond with JSON only:\n{"classification":"inquiry|booking_request|cancellation|complaint|feedback|spam|other","language":"en|ja|etc","should_reply":true/false,"priority":"high|normal|low","draft_body":"full reply text or null","knowledge_gaps":["topics not covered in conventions"]}', cache_control: { type: 'ephemeral' } },
-      { role: 'user', content: 'From: ' + from + '\nSubject: ' + subject + '\n\n' + body },
+      { role: 'system', content:
+        'You are an email response agent for a business. Classify inbound emails and draft professional replies.\n\n'
+        + 'Business conventions:\n' + conventionsText + '\n\n'
+        + 'Classifications: inquiry | booking_request | booking_confirmation | cancellation | complaint | feedback | internal | spam | other\n\n'
+        + 'Hints:\n'
+        + '- "booking_request" = guest asking to make a NEW reservation (should_reply=true, draft the response)\n'
+        + '- "booking_confirmation" = automated confirmation from an OTA/travel agency for an existing booking (should_reply=false)\n'
+        + '- "internal" = staff email from within the business (should_reply=false)\n'
+        + '- "spam" / "other" that does not need a response → should_reply=false\n'
+        + '- Contact-form submissions: classify by content, not by the form sender address\n\n'
+        + 'Instructions:\n'
+        + '1. Classify intent using the enum above\n'
+        + '2. Detect language (en, ja, etc.)\n'
+        + '3. Draft reply IN THE SAME LANGUAGE as sender (only when should_reply=true)\n'
+        + '4. Be warm, professional, accurate\n\n'
+        + 'Respond with JSON only:\n'
+        + '{"classification":"inquiry|booking_request|booking_confirmation|cancellation|complaint|feedback|internal|spam|other","language":"en|ja|etc","should_reply":true/false,"priority":"high|normal|low","draft_body":"full reply text or null","knowledge_gaps":["topics not covered in conventions"]}',
+        cache_control: { type: 'ephemeral' } },
+      { role: 'user', content: 'From: ' + from + (guestEmail !== from ? '\nGuest: ' + guestEmail : '') + '\nSubject: ' + subject + '\n\n' + cleanBody.substring(0, 2000) },
     ],
   });
 
   let parsed: any;
   console.log('[receive_email] AI raw response:', JSON.stringify({ content: aiResp.content?.substring(0, 500), error: aiResp.error }));
-  try { const m = (aiResp.content || '').match(/```(?:json)?\s*([\s\S]*?)```/) || [null, aiResp.content]; parsed = JSON.parse(m[1] || aiResp.content); } catch (e: any) { console.error('[receive_email] AI parse failed:', e.message, 'raw:', (aiResp.content || '').substring(0, 200)); parsed = { classification: 'other', language: 'en', should_reply: false, priority: 'normal', draft_body: null, knowledge_gaps: [] }; }
+  try { const m = (aiResp.content || '').match(/```(?:json)?\s*([\s\S]*?)```/) || [null, aiResp.content]; parsed = JSON.parse(m[1] || aiResp.content); } catch (e: any) { console.error('[receive_email] AI parse failed:', e.message, 'raw:', (aiResp.content || '').substring(0, 200)); parsed = { classification: 'other', language: detectLanguage(cleanBody), should_reply: false, priority: 'normal', draft_body: null, knowledge_gaps: [] }; }
   console.log('[receive_email] Parsed:', JSON.stringify({ classification: parsed.classification, should_reply: parsed.should_reply, has_draft: !!parsed.draft_body }));
+
+  // Force should_reply=false for classifications that never warrant an auto-draft
+  const noDraftClasses = ['booking_confirmation', 'internal', 'spam'];
+  if (noDraftClasses.includes(parsed.classification)) {
+    parsed.should_reply = false;
+    parsed.draft_body = null;
+  }
 
   // Create conversation
   await ultralight.db.run(
     'INSERT INTO conversations (id, user_id, guest_email, guest_name, subject, language, classification, status, message_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [convoId, uid(), from, from.split('@')[0], subject, parsed.language, parsed.classification, 'active', messageId || null, ts, ts]
+    [convoId, uid(), guestEmail, guestName, subject, parsed.language, parsed.classification, 'active', messageId || null, ts, ts]
   );
 
-  // Version 1: inbound
+  // Version 1: inbound (original body for admin reference, extracted emails in metadata)
   await ultralight.db.run(
-    'INSERT INTO versions (id, conversation_id, user_id, version_num, type, body, actor, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [crypto.randomUUID(), convoId, uid(), 1, 'inbound', body, from, ts]
+    'INSERT INTO versions (id, conversation_id, user_id, version_num, type, body, actor, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [crypto.randomUUID(), convoId, uid(), 1, 'inbound', originalBody, guestEmail, inboundMeta, ts]
   );
 
   // Version 2: auto_draft (if should_reply)
@@ -627,8 +933,9 @@ export async function conversation_act(args: {
   action: string;
   body?: string;
   prompt?: string;
+  to?: string;
 }): Promise<unknown> {
-  const { conversation_id, action, body: inputBody, prompt } = args;
+  const { conversation_id, action, body: inputBody, prompt, to: toOverride } = args;
   if (!conversation_id || !action) throw new Error('conversation_id and action are required');
 
   const convo = await ultralight.db.first('SELECT * FROM conversations WHERE id = ? AND user_id = ?', [conversation_id, uid()]);
@@ -647,8 +954,14 @@ export async function conversation_act(args: {
     const bodyToSend = inputBody || latestDraft?.body;
     if (!bodyToSend) throw new Error('No draft to send');
 
+    // Recipient: explicit override (from widget recipient dropdown) > convo guest_email.
+    // Validate format so we don't attempt SMTP with garbage.
+    const recipient = (toOverride && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(toOverride))
+      ? toOverride
+      : convo.guest_email;
+
     // Check if staff already replied manually via their inbox
-    const staffReplied = await checkSentFolder(convo.guest_email);
+    const staffReplied = await checkSentFolder(recipient);
     if (staffReplied) {
       const vNum = await nextVersionNum(conversation_id);
       await ultralight.db.run(
@@ -664,16 +977,21 @@ export async function conversation_act(args: {
     const vType = isSentBefore ? 'followup_sent' : 'sent';
 
     // Send via SMTP through hotel's mail server
-    const result = await sendViaSMTP(convo.guest_email, 'Re: ' + convo.subject, bodyToSend, convo.message_id);
+    const result = await sendViaSMTP(recipient, 'Re: ' + convo.subject, bodyToSend, convo.message_id);
     if (!result.success) throw new Error('Send failed: ' + result.error);
 
+    // Track recipient on the sent version's metadata so the widget can show
+    // which address was actually used (useful when admin picks from the dropdown).
+    const sendMeta = recipient !== convo.guest_email
+      ? JSON.stringify({ sent_to: recipient })
+      : null;
     await ultralight.db.run(
-      'INSERT INTO versions (id, conversation_id, user_id, version_num, type, body, actor, resend_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [crypto.randomUUID(), conversation_id, uid(), vNum, vType, bodyToSend, actor, result.messageId || null, ts]
+      'INSERT INTO versions (id, conversation_id, user_id, version_num, type, body, actor, resend_id, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [crypto.randomUUID(), conversation_id, uid(), vNum, vType, bodyToSend, actor, result.messageId || null, sendMeta, ts]
     );
     await ultralight.db.run('UPDATE conversations SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?', ['resolved', ts, conversation_id, uid()]);
 
-    return { success: true, action: 'sent', conversation_id };
+    return { success: true, action: 'sent', conversation_id, to: recipient };
   }
 
   if (action === 'discard') {
@@ -732,6 +1050,115 @@ export async function conversation_act(args: {
     );
 
     return { success: true, action: 'regenerated', conversation_id, version_num: vNum, draft_body: parsed.draft_body, knowledge_gaps: parsed.knowledge_gaps || [] };
+  }
+
+  if (action === 'translate') {
+    // Ephemeral translation — does NOT create a version. The widget shows the
+    // translation inline next to the original body. Default behavior: translate
+    // to English unless the text is already English, in which case translate to
+    // Japanese (the hotel's staff language). Admin can override via `prompt`
+    // (e.g. "translate to Korean").
+    if (!inputBody) throw new Error('body is required for translate');
+    const instruction = prompt
+      ? prompt
+      : 'Translate the following text to English. If the text is already in English, translate it to Japanese instead. Output ONLY the translation — no commentary, no quoting, no language label.';
+    const aiResp = await ultralight.ai({
+      model: AI_MODEL,
+      messages: [
+        { role: 'system', content: instruction },
+        { role: 'user', content: inputBody },
+      ],
+    });
+    const translation = (aiResp.content || '').trim();
+    if (!translation) throw new Error('Translation failed: empty response');
+    return { success: true, action: 'translated', conversation_id, translation };
+  }
+
+  if (action === 'generate_draft') {
+    // Manual trigger: admin clicks "Draft Reply" on a card that has no auto-draft
+    // (e.g. booking_confirmation, internal, spam, or any case where AI decided
+    // should_reply=false). Reuses the same conventions + thread-context + cache
+    // as the auto-draft pipeline. Optional `prompt` lets admin steer the draft.
+    const conventionsText = await getConventionsText();
+    const allVersions = await ultralight.db.all(
+      'SELECT type, body, actor FROM versions WHERE conversation_id = ? AND user_id = ? ORDER BY version_num',
+      [conversation_id, uid()]
+    );
+
+    // Prefer cleaned bodies for AI input (same cleanEmailBody used by receive_email)
+    const threadContext = allVersions.map((v: any) => {
+      const b = v.type === 'inbound' ? cleanEmailBody(v.body || '').cleaned : (v.body || '');
+      return (v.type === 'inbound' ? 'Guest: ' : 'You: ') + b;
+    }).join('\n---\n');
+
+    // Detect followup context — any prior send means this is a followup, not a first draft
+    const isFollowup = allVersions.some((v: any) => v.type === 'sent' || v.type === 'followup_sent');
+
+    const adminInstruction = prompt
+      ? '\n\nAdmin instruction for this draft: ' + prompt
+      : '';
+
+    const systemPrompt = isFollowup
+      ? 'You are an email response agent. Draft a followup reply to an ongoing conversation.\n\n'
+        + 'Business conventions:\n' + conventionsText + '\n\n'
+        + 'Full thread so far:\n' + threadContext + '\n\n'
+        + 'Reply in the same language as the guest. Be warm, professional, accurate.' + adminInstruction + '\n\n'
+        + 'Respond with JSON:\n{"draft_body": "your reply", "knowledge_gaps": ["topics not in conventions"]}'
+      : 'You are an email response agent for a business. Draft a professional reply to the guest.\n\n'
+        + 'Business conventions:\n' + conventionsText + '\n\n'
+        + 'Classification: ' + (convo.classification || 'other') + ' (admin manually requested a draft)\n\n'
+        + 'Reply in the same language as the guest. Be warm, professional, accurate.' + adminInstruction + '\n\n'
+        + 'Respond with JSON:\n{"draft_body": "full reply text", "knowledge_gaps": ["topics not covered in conventions"]}';
+
+    const latestInbound = [...allVersions].reverse().find((v: any) => v.type === 'inbound');
+    const userContent = isFollowup && latestInbound
+      ? 'Latest message from guest:\n' + cleanEmailBody(latestInbound.body || '').cleaned.substring(0, 2000)
+      : 'From: ' + convo.guest_email + '\nSubject: ' + convo.subject + '\n\n'
+        + allVersions.filter((v: any) => v.type === 'inbound').map((v: any) => cleanEmailBody(v.body || '').cleaned).join('\n---\n').substring(0, 2000);
+
+    const aiResp = await ultralight.ai({
+      model: AI_MODEL,
+      messages: [
+        { role: 'system', content: systemPrompt, cache_control: { type: 'ephemeral' } },
+        { role: 'user', content: userContent },
+      ],
+    });
+
+    let parsed: any;
+    try {
+      const m = (aiResp.content || '').match(/```(?:json)?\s*([\s\S]*?)```/) || [null, aiResp.content];
+      parsed = JSON.parse(m[1] || aiResp.content);
+    } catch {
+      parsed = { draft_body: (aiResp.content || '').trim() || 'Thank you for your message. I will get back to you shortly.', knowledge_gaps: [] };
+    }
+
+    if (!parsed.draft_body) throw new Error('Draft generation failed: no draft_body in response');
+
+    const vNum = await nextVersionNum(conversation_id);
+    await ultralight.db.run(
+      'INSERT INTO versions (id, conversation_id, user_id, version_num, type, body, actor, actor_prompt, model, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        crypto.randomUUID(), conversation_id, uid(), vNum,
+        isFollowup ? 'followup_draft' : 'auto_draft',
+        parsed.draft_body, 'ai', prompt || null, AI_MODEL,
+        JSON.stringify({ knowledge_gaps: parsed.knowledge_gaps || [], manual_trigger: true }),
+        ts,
+      ]
+    );
+
+    // Nudge the conversation back to active if it was resolved/archived
+    if (convo.status !== 'active') {
+      await ultralight.db.run('UPDATE conversations SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?', ['active', ts, conversation_id, uid()]);
+    }
+
+    return {
+      success: true,
+      action: 'draft_generated',
+      conversation_id,
+      version_num: vNum,
+      draft_body: parsed.draft_body,
+      knowledge_gaps: parsed.knowledge_gaps || [],
+    };
   }
 
   if (action === 'followup_draft') {
@@ -1093,8 +1520,33 @@ const DECK_UI_HTML = `<!DOCTYPE html>
   .thread-msg { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 14px; margin-top: 8px; }
   .thread-msg.guest { background: #fafafa; }
   .thread-msg.you { background: #f0fdf4; border-color: #bbf7d0; }
-  .thread-msg-header { font-size: 11px; color: #9ca3af; margin-bottom: 4px; display: flex; justify-content: space-between; }
+  .thread-msg-header { font-size: 11px; color: #9ca3af; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .thread-msg-header-right { display: flex; align-items: center; gap: 8px; }
   .thread-msg-body { font-size: 13px; white-space: pre-wrap; color: #374151; }
+
+  /* Phase D: translate toggle */
+  .translate-btn { font-size: 10px; padding: 2px 7px; border-radius: 4px; border: 1px solid #d1d5db; background: #fff; color: #6b7280; cursor: pointer; line-height: 1.4; font-family: inherit; }
+  .translate-btn:hover { background: #f3f4f6; color: #111; }
+  .translate-btn.loading { opacity: 0.6; cursor: wait; }
+  .translation-overlay { display: none; margin-top: 6px; padding: 8px 12px; background: #fef3c7; border: 1px solid #fde68a; border-radius: 6px; font-size: 12px; color: #78350f; white-space: pre-wrap; }
+  .translation-overlay.visible { display: block; }
+  .translation-overlay-label { font-size: 10px; color: #b45309; text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 4px; font-weight: 600; }
+
+  /* Phase D: recipient dropdown */
+  .recipient-row { display: flex; align-items: center; gap: 8px; margin-top: 14px; padding: 8px 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; }
+  .recipient-label { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; white-space: nowrap; }
+  .recipient-select { flex: 1; min-width: 0; font-size: 13px; padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 5px; background: #fff; color: #111; cursor: pointer; font-family: inherit; }
+  .recipient-custom { flex: 1; font-size: 13px; padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 5px; background: #fff; color: #111; display: none; font-family: inherit; }
+  .recipient-custom.visible { display: block; }
+  .recipient-toggle { font-size: 11px; padding: 4px 8px; border-radius: 5px; border: 1px solid #d1d5db; background: #fff; color: #6b7280; cursor: pointer; font-family: inherit; white-space: nowrap; }
+  .recipient-toggle:hover { background: #f3f4f6; color: #111; }
+
+  /* Phase D: no-auto-draft placeholder */
+  .section-no-draft { border: 1px dashed #cbd5e1 !important; background: #f9fafb !important; }
+  .section-no-draft .section-label { color: #94a3b8 !important; }
+  .section-no-draft .section-body { color: #64748b !important; font-style: italic; }
+  .no-draft-actions { display: flex; gap: 8px; padding: 4px 14px 12px; align-items: center; }
+  .no-draft-prompt { flex: 1; font-size: 12px; padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 5px; background: #fff; color: #374151; font-family: inherit; }
 
   .section { margin-top: 16px; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
   .section-label { font-size: 11px; font-weight: 500; color: #9ca3af; padding: 8px 14px 4px; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -1271,6 +1723,33 @@ function render() {
   var sentVersions = versions.filter(function(v) { return v.type === 'sent' || v.type === 'followup_sent'; });
   var gaps = latestDraft && latestDraft.metadata ? (latestDraft.metadata.knowledge_gaps || []) : [];
 
+  // Phase D: gather unique recipient candidates from the conversation.
+  // Sources (in priority order): guest_email → extracted_emails on inbound
+  // metadata → inbound actor fields → sent metadata.sent_to. This powers the
+  // recipient dropdown so admin can pick between the envelope From address
+  // and any real guest emails the Phase B extractor found in the body.
+  var recipientEmails = [];
+  var seenRecipients = {};
+  function addRecipient(e) {
+    if (!e || typeof e !== 'string') return;
+    var trimmed = e.trim();
+    if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return;
+    var key = trimmed.toLowerCase();
+    if (seenRecipients[key]) return;
+    seenRecipients[key] = true;
+    recipientEmails.push(trimmed);
+  }
+  addRecipient(item.guest_email);
+  versions.forEach(function(v) {
+    if (v.metadata) {
+      if (v.metadata.extracted_emails && v.metadata.extracted_emails.forEach) {
+        v.metadata.extracted_emails.forEach(addRecipient);
+      }
+      if (v.metadata.sent_to) addRecipient(v.metadata.sent_to);
+    }
+    if (v.type === 'inbound' && v.actor) addRecipient(v.actor);
+  });
+
   var html = '<div class="card"><div class="card-inner">';
 
   // Header with nav
@@ -1291,9 +1770,15 @@ function render() {
     html += '<div id="thread-messages" style="display:' + (expandThread ? 'block' : 'none') + ';">';
     threadMsgs.forEach(function(v) {
       var isGuest = v.type === 'inbound';
+      var msgKey = 't-' + v.id;
       html += '<div class="thread-msg ' + (isGuest ? 'guest' : 'you') + '">';
-      html += '<div class="thread-msg-header"><span>' + (isGuest ? 'Guest' : 'You (' + esc(v.actor) + ')') + '</span><span>' + timeAgo(v.created_at) + '</span></div>';
-      html += '<div class="thread-msg-body">' + esc(v.body) + '</div></div>';
+      html += '<div class="thread-msg-header"><span>' + (isGuest ? 'Guest' : 'You (' + esc(v.actor) + ')') + '</span>';
+      html += '<div class="thread-msg-header-right">';
+      html += '<button class="translate-btn" data-msg="' + msgKey + '" onclick="translateMsg(\'' + msgKey + '\', this)">🌐 Translate</button>';
+      html += '<span>' + timeAgo(v.created_at) + '</span></div></div>';
+      html += '<div class="thread-msg-body" id="body-' + msgKey + '">' + esc(v.body) + '</div>';
+      html += '<div class="translation-overlay" id="overlay-' + msgKey + '"><div class="translation-overlay-label">Translation</div><div class="translation-overlay-text"></div></div>';
+      html += '</div>';
     });
     html += '</div></div>';
   }
@@ -1306,13 +1791,35 @@ function render() {
 
   // Draft section (for active view)
   if (currentView === 'active' && latestDraft) {
-    html += '<div class="section section-draft"><div class="section-label">Draft response</div><div class="section-body" id="draft-display">';
+    var draftKey = 'draft-' + latestDraft.id;
+    html += '<div class="section section-draft">';
+    html += '<div class="section-label" style="display:flex;justify-content:space-between;align-items:center;padding-right:14px;">';
+    html += '<span>Draft response</span>';
+    if (inputMode !== 'edit') {
+      html += '<button class="translate-btn" onclick="translateMsg(\'' + draftKey + '\', this)">🌐 Translate</button>';
+    }
+    html += '</div>';
+    html += '<div class="section-body" id="draft-display">';
     if (inputMode === 'edit') {
       html += '<textarea class="input-area" id="edit-area">' + esc(latestDraft.body) + '</textarea>';
     } else {
-      html += esc(latestDraft.body);
+      html += '<div id="body-' + draftKey + '">' + esc(latestDraft.body) + '</div>';
+      html += '<div class="translation-overlay" id="overlay-' + draftKey + '"><div class="translation-overlay-label">Translation</div><div class="translation-overlay-text"></div></div>';
     }
     html += '</div></div>';
+  } else if (currentView === 'active' && !latestDraft) {
+    // Phase D: no-auto-draft placeholder — classification like booking_confirmation,
+    // internal, or spam skip auto-drafting. Admin can click "Draft Reply" to run
+    // the same AI pipeline on demand via conversation_act('generate_draft').
+    var classLabel = item.classification || 'other';
+    html += '<div class="section section-draft section-no-draft">';
+    html += '<div class="section-label">No auto-draft — ' + esc(classLabel) + '</div>';
+    html += '<div class="section-body">This email was classified as "' + esc(classLabel) + '" and no automatic reply was generated. Click "Draft Reply" to generate one on demand.</div>';
+    html += '<div class="no-draft-actions">';
+    html += '<button class="btn btn-followup" onclick="generateDraft()">Draft Reply</button>';
+    html += '<input type="text" class="no-draft-prompt" id="gen-prompt" placeholder="Optional: instructions for the AI (e.g. reply in English, keep it short)" />';
+    html += '</div>';
+    html += '</div>';
   }
 
   // Sent version (for archive view)
@@ -1344,6 +1851,21 @@ function render() {
     html += '<div class="prompt-actions"><button class="btn btn-followup" onclick="doFollowup()">Send Followup</button><button class="btn btn-secondary" onclick="doFollowupDraft()">Generate Draft</button><button class="btn btn-secondary" onclick="cancelInput()">Cancel</button></div></div>';
   }
 
+  // Phase D: recipient dropdown (active view only, when we have a draft to send)
+  if (currentView === 'active' && latestDraft && inputMode !== 'edit' && inputMode !== 'regen' && inputMode !== 'followup') {
+    html += '<div class="recipient-row">';
+    html += '<span class="recipient-label">To:</span>';
+    html += '<select class="recipient-select" id="recipient-select">';
+    recipientEmails.forEach(function(e) {
+      var isDefault = e === item.guest_email;
+      html += '<option value="' + esc(e) + '"' + (isDefault ? ' selected' : '') + '>' + esc(e) + (isDefault ? ' (default)' : '') + '</option>';
+    });
+    html += '</select>';
+    html += '<input type="email" class="recipient-custom" id="recipient-custom" placeholder="email@example.com" />';
+    html += '<button class="recipient-toggle" id="recipient-toggle" onclick="toggleCustomRecipient()">Custom</button>';
+    html += '</div>';
+  }
+
   // Actions
   if (!inputMode || inputMode === 'edit') {
     html += '<div class="actions">';
@@ -1351,11 +1873,14 @@ function render() {
       if (inputMode === 'edit') {
         html += '<button class="btn btn-send" onclick="doSaveEdit()">Save</button>';
         html += '<button class="btn btn-secondary" onclick="cancelInput()">Cancel</button>';
-      } else {
+      } else if (latestDraft) {
         html += '<button class="btn btn-discard" onclick="doAction(&quot;discard&quot;)">Discard</button>';
         html += '<button class="btn btn-secondary" onclick="startEdit()">Edit</button>';
         html += '<button class="btn btn-secondary" onclick="startRegen()">Regenerate</button>';
-        html += '<button class="btn btn-send" onclick="doAction(&quot;send&quot;)">Send</button>';
+        html += '<button class="btn btn-send" onclick="doSend()">Send</button>';
+      } else {
+        // No-draft card: only show Discard (Draft Reply is inside the placeholder)
+        html += '<button class="btn btn-discard" onclick="doAction(&quot;discard&quot;)">Discard</button>';
       }
     } else if (currentView === 'archive') {
       html += '<button class="btn btn-followup" onclick="startFollowup()">Follow Up</button>';
@@ -1409,6 +1934,130 @@ async function doAction(action) {
     inputMode = null;
     await loadData();
   } catch(e) { toast('Failed: ' + e.message, false); }
+}
+
+// Phase D: send with recipient selection. Reads from the dropdown or custom
+// input and passes it as the "to" override to conversation_act('send').
+async function doSend() {
+  var item = filteredItems[currentIdx];
+  if (!item) return;
+  var selectEl = document.getElementById('recipient-select');
+  var customEl = document.getElementById('recipient-custom');
+  var recipient = null;
+  if (customEl && customEl.classList.contains('visible') && customEl.value.trim()) {
+    recipient = customEl.value.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
+      toast('Invalid email: ' + recipient, false);
+      return;
+    }
+  } else if (selectEl) {
+    recipient = selectEl.value;
+  }
+  try {
+    var args = { conversation_id: item.id, action: 'send' };
+    if (recipient && recipient !== item.guest_email) args.to = recipient;
+    await ulAction('conversation_act', args);
+    toast(recipient ? 'Sent to ' + recipient : 'Email sent!', true);
+    inputMode = null;
+    await loadData();
+  } catch(e) { toast('Failed: ' + e.message, false); }
+}
+
+// Phase D: toggle custom recipient input vs dropdown
+function toggleCustomRecipient() {
+  var selectEl = document.getElementById('recipient-select');
+  var customEl = document.getElementById('recipient-custom');
+  var toggleBtn = document.getElementById('recipient-toggle');
+  if (!selectEl || !customEl || !toggleBtn) return;
+  if (customEl.classList.contains('visible')) {
+    customEl.classList.remove('visible');
+    selectEl.style.display = '';
+    toggleBtn.textContent = 'Custom';
+  } else {
+    customEl.classList.add('visible');
+    selectEl.style.display = 'none';
+    toggleBtn.textContent = 'Use list';
+    setTimeout(function() { customEl.focus(); }, 50);
+  }
+}
+
+// Phase D: per-session translation cache (keyed by message id)
+if (!window.__transCache) window.__transCache = {};
+
+// Phase D: translate toggle for thread messages and draft body.
+// Fetches via conversation_act('translate'), caches per session, toggles visibility.
+async function translateMsg(msgKey, btn) {
+  var item = filteredItems[currentIdx];
+  if (!item) return;
+  var overlay = document.getElementById('overlay-' + msgKey);
+  var bodyEl = document.getElementById('body-' + msgKey);
+  if (!overlay || !bodyEl) return;
+  var textEl = overlay.querySelector('.translation-overlay-text');
+  if (!textEl) return;
+
+  // Already visible → hide
+  if (overlay.classList.contains('visible')) {
+    overlay.classList.remove('visible');
+    btn.textContent = '🌐 Translate';
+    return;
+  }
+
+  // Cached → show immediately
+  if (window.__transCache[msgKey]) {
+    textEl.textContent = window.__transCache[msgKey];
+    overlay.classList.add('visible');
+    btn.textContent = '🌐 Hide';
+    return;
+  }
+
+  // Fetch from AI
+  var original = bodyEl.textContent || bodyEl.innerText || '';
+  if (!original.trim()) return;
+  btn.classList.add('loading');
+  btn.textContent = '🌐 Translating...';
+  btn.disabled = true;
+  try {
+    var result = await ulAction('conversation_act', {
+      conversation_id: item.id,
+      action: 'translate',
+      body: original,
+    });
+    var translation = (result && result.translation) ? result.translation : '';
+    if (!translation) throw new Error('Empty translation');
+    window.__transCache[msgKey] = translation;
+    textEl.textContent = translation;
+    overlay.classList.add('visible');
+    btn.textContent = '🌐 Hide';
+  } catch(e) {
+    toast('Translation failed: ' + e.message, false);
+    btn.textContent = '🌐 Retry';
+  } finally {
+    btn.classList.remove('loading');
+    btn.disabled = false;
+  }
+}
+
+// Phase D: manual draft generation for no-auto-draft cards.
+// Calls conversation_act('generate_draft') with optional admin prompt, then
+// refreshes the card — the new draft appears in the normal Draft section with
+// all existing Send/Edit/Regenerate controls.
+async function generateDraft() {
+  var item = filteredItems[currentIdx];
+  if (!item) return;
+  var promptEl = document.getElementById('gen-prompt');
+  var adminPrompt = (promptEl && promptEl.value.trim()) || null;
+  var btn = document.querySelector('.section-no-draft .btn-followup');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
+  try {
+    var args = { conversation_id: item.id, action: 'generate_draft' };
+    if (adminPrompt) args.prompt = adminPrompt;
+    await ulAction('conversation_act', args);
+    toast('Draft generated', true);
+    await loadData();
+  } catch(e) {
+    toast('Draft generation failed: ' + e.message, false);
+    if (btn) { btn.disabled = false; btn.textContent = 'Draft Reply'; }
+  }
 }
 
 async function doSaveEdit() {

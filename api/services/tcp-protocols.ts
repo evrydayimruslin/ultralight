@@ -57,11 +57,123 @@ export interface ParsedEmail {
   inReplyTo: string;
 }
 
+// Charset extraction from a Content-Type header value
+function getCharset(contentType: string): string {
+  const m = contentType.match(/charset="?([^";\s]+)"?/i);
+  return m ? m[1].toLowerCase() : 'utf-8';
+}
+
+// Charset-aware byte decoding with UTF-8 fallback
+function decodeBytes(bytes: Uint8Array, charset: string): string {
+  try { return new TextDecoder(charset).decode(bytes); }
+  catch { return new TextDecoder('utf-8').decode(bytes); }
+}
+
+// Decode body bytes according to Content-Transfer-Encoding + charset.
+// Handles base64, quoted-printable, and 7bit/8bit/binary (ISO-2022-JP etc).
+function decodeBody(body: string, transferEncoding: string, charset: string): string {
+  const te = (transferEncoding || '').toLowerCase();
+  if (te === 'base64') {
+    try {
+      return decodeBytes(Uint8Array.from(atob(body.replace(/\s/g, '')), c => c.charCodeAt(0)), charset);
+    } catch {
+      return body;
+    }
+  }
+  if (te === 'quoted-printable') {
+    const qp = body.replace(/=\r?\n/g, '').replace(/=([0-9A-F]{2})/gi, (_: string, h: string) => String.fromCharCode(parseInt(h, 16)));
+    if (charset !== 'utf-8') {
+      return decodeBytes(new Uint8Array([...qp].map(c => c.charCodeAt(0))), charset);
+    }
+    return qp;
+  }
+  // 7bit / 8bit / binary / none — apply charset if non-UTF-8 (handles ISO-2022-JP)
+  if (charset !== 'utf-8') {
+    return decodeBytes(new Uint8Array([...body].map(c => c.charCodeAt(0))), charset);
+  }
+  return body;
+}
+
+function stripHtmlTags(html: string): string {
+  return html.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n\n').replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").trim();
+}
+
+function unfoldHeaders(h: string): string {
+  return h.replace(/\r\n([ \t])/g, ' ');
+}
+
+function getPartHeader(headers: string, name: string): string {
+  const re = new RegExp('^' + name + ':\\s*(.+)$', 'im');
+  const m = headers.match(re);
+  return m ? m[1].trim() : '';
+}
+
+// Recursive MIME text extractor: handles nested multipart, skips attachments,
+// prefers text/plain over text/html, uses per-part charset.
+function extractTextFromMime(rawHeaders: string, body: string): string {
+  const headers = unfoldHeaders(rawHeaders);
+  const ct = getPartHeader(headers, 'Content-Type');
+  const cte = getPartHeader(headers, 'Content-Transfer-Encoding').toLowerCase();
+  const charset = getCharset(ct);
+  const ctLower = ct.toLowerCase();
+
+  if (ctLower.includes('multipart/')) {
+    const bMatch = ct.match(/boundary="?([^";\s]+)"?/i);
+    if (!bMatch) return '';
+    const boundary = bMatch[1];
+    const parts = body.split('--' + boundary);
+
+    let plainText = '';
+    let htmlText = '';
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (trimmed === '' || trimmed === '--') continue;
+      const phe = part.indexOf('\r\n\r\n');
+      if (phe < 0) continue;
+      const partHeaders = part.substring(0, phe);
+      const partBody = part.substring(phe + 4).replace(/\r?\n$/, '');
+      const partCt = getPartHeader(unfoldHeaders(partHeaders), 'Content-Type').toLowerCase();
+
+      // Skip binary attachments
+      if (partCt.startsWith('application/') || partCt.startsWith('image/') || partCt.startsWith('audio/') || partCt.startsWith('video/')) continue;
+
+      // Recurse into nested multipart
+      if (partCt.includes('multipart/')) {
+        const nested = extractTextFromMime(partHeaders, partBody);
+        if (nested && !plainText) plainText = nested;
+        continue;
+      }
+
+      const partCte = getPartHeader(unfoldHeaders(partHeaders), 'Content-Transfer-Encoding').toLowerCase();
+      const partCharset = getCharset(partCt || ct);
+
+      if (partCt.includes('text/plain') && !plainText) {
+        plainText = decodeBody(partBody, partCte, partCharset);
+      } else if (partCt.includes('text/html') && !htmlText) {
+        htmlText = decodeBody(partBody, partCte, partCharset);
+      }
+    }
+
+    if (plainText) return plainText;
+    if (htmlText) return stripHtmlTags(htmlText);
+    return '';
+  }
+
+  // Single-part
+  const decoded = decodeBody(body, cte, charset);
+  if (ctLower.includes('text/html')) {
+    return stripHtmlTags(decoded);
+  }
+  return decoded;
+}
+
 function parseEmail(raw: string): Omit<ParsedEmail, 'uid'> {
   const headerEnd = raw.indexOf('\r\n\r\n');
   const headerBlock = headerEnd > 0 ? raw.substring(0, headerEnd) : raw;
   const bodyBlock = headerEnd > 0 ? raw.substring(headerEnd + 4) : '';
-  const unfolded = headerBlock.replace(/\r\n([ \t])/g, ' ');
+  const unfolded = unfoldHeaders(headerBlock);
 
   function getHeader(name: string): string {
     const re = new RegExp('^' + name + ':\\s*(.+)$', 'im');
@@ -69,12 +181,26 @@ function parseEmail(raw: string): Omit<ParsedEmail, 'uid'> {
     return m ? m[1].trim() : '';
   }
 
+  // Decode RFC 2047 encoded-word with proper charset handling.
+  // Per RFC 2047: whitespace between adjacent encoded-words is ignored.
   function decodeWord(s: string): string {
-    return s.replace(/=\?([^?]+)\?([BQ])\?([^?]+)\?=/gi, (_: string, _c: string, encoding: string, text: string) => {
+    // Collapse whitespace between adjacent encoded-words before decoding
+    const joined = s.replace(/\?=[\s]+=\?/g, '?==?');
+    return joined.replace(/=\?([^?]+)\?([BQ])\?([^?]*)\?=/gi, (_: string, charset: string, encoding: string, text: string) => {
+      const cs = charset.toLowerCase();
       if (encoding.toUpperCase() === 'B') {
-        return dec.decode(Uint8Array.from(atob(text), c => c.charCodeAt(0)));
+        try {
+          return decodeBytes(Uint8Array.from(atob(text), c => c.charCodeAt(0)), cs);
+        } catch {
+          return text;
+        }
       }
-      return text.replace(/_/g, ' ').replace(/=([0-9A-F]{2})/gi, (__: string, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+      // Quoted-printable
+      const qp = text.replace(/_/g, ' ').replace(/=([0-9A-F]{2})/gi, (__: string, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+      if (cs !== 'utf-8') {
+        return decodeBytes(new Uint8Array([...qp].map(c => c.charCodeAt(0))), cs);
+      }
+      return qp;
     });
   }
 
@@ -89,46 +215,7 @@ function parseEmail(raw: string): Omit<ParsedEmail, 'uid'> {
   const messageId = getHeader('Message-ID').replace(/[<>]/g, '');
   const inReplyTo = getHeader('In-Reply-To').replace(/[<>]/g, '');
 
-  let textBody = '';
-  const contentType = getHeader('Content-Type');
-
-  if (contentType.includes('multipart/')) {
-    const bMatch = contentType.match(/boundary="?([^";\s]+)"?/);
-    if (bMatch) {
-      const boundary = bMatch[1];
-      const parts = bodyBlock.split('--' + boundary);
-      for (const part of parts) {
-        if (part.trim() === '--' || part.trim() === '') continue;
-        const phe = part.indexOf('\r\n\r\n');
-        if (phe < 0) continue;
-        const ph = part.substring(0, phe).toLowerCase();
-        const pb = part.substring(phe + 4).trim();
-        if (ph.includes('text/plain')) {
-          textBody = pb;
-          if (ph.includes('quoted-printable')) {
-            textBody = textBody.replace(/=\r?\n/g, '').replace(/=([0-9A-F]{2})/gi, (_: string, hex: string) => String.fromCharCode(parseInt(hex, 16)));
-          } else if (ph.includes('base64')) {
-            textBody = dec.decode(Uint8Array.from(atob(pb.replace(/\s/g, '')), c => c.charCodeAt(0)));
-          }
-          break;
-        }
-      }
-    }
-  }
-
-  if (!textBody) {
-    textBody = bodyBlock;
-    if (contentType.includes('quoted-printable') || getHeader('Content-Transfer-Encoding').includes('quoted-printable')) {
-      textBody = textBody.replace(/=\r?\n/g, '').replace(/=([0-9A-F]{2})/gi, (_: string, hex: string) => String.fromCharCode(parseInt(hex, 16)));
-    } else if (getHeader('Content-Transfer-Encoding').includes('base64')) {
-      textBody = dec.decode(Uint8Array.from(atob(textBody.replace(/\s/g, '')), c => c.charCodeAt(0)));
-    }
-    if (contentType.includes('text/html')) {
-      textBody = textBody.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n\n').replace(/<[^>]+>/g, '')
-        .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
-        .replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").trim();
-    }
-  }
+  const textBody = extractTextFromMime(headerBlock, bodyBlock);
 
   return { from, to, subject: subject || '(no subject)', body: textBody.trim(), messageId, inReplyTo };
 }
