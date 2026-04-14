@@ -12,7 +12,7 @@ import { checkRateLimit } from '../services/ratelimit.ts';
 import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
 import { checkProvisionalDailyLimit, updateLastActive } from '../services/provisional.ts';
 import { getPermissionsForUser } from './user.ts';
-import { type Tier, type AppPricingConfig, getCallPriceLight, getFreeCalls, getFreeCallsScope, formatLight } from '../../shared/types/index.ts';
+import { type Tier, type AppPricingConfig, getCallPriceLight, getFreeCalls, getFreeCallsScope, formatLight, LIGHT_PER_DOLLAR_DESKTOP } from '../../shared/types/index.ts';
 import { executeInSandbox, type UserContext } from '../runtime/sandbox.ts';
 import { createR2Service } from '../services/storage.ts';
 import { createUserService } from '../services/user.ts';
@@ -1127,8 +1127,8 @@ async function handleToolsCall(
 
   const { name, arguments: args } = callParams;
 
-  // Check if it's an SDK tool (always allowed)
-  if (name.startsWith('ultralight.')) {
+  // Check if it's an SDK tool (always allowed) — supports both ultralight.* and ul.* prefixes
+  if (name.startsWith('ultralight.') || name.startsWith('ul.')) {
     return await executeSDKTool(id, name, args || {}, app.id, app.owner_id, userId, user, request);
   }
 
@@ -1418,7 +1418,7 @@ async function executeSDKTool(
         // Make the AI call
         try {
           result = await aiService.call({
-            messages: args.messages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+            messages: args.messages as Array<{ role: 'system' | 'user' | 'assistant'; content: string | unknown[] }>,
             model: args.model as string | undefined,
             temperature: args.temperature as number | undefined,
             max_tokens: args.max_tokens as number | undefined,
@@ -1501,6 +1501,31 @@ async function executeSDKTool(
           }
         } else {
           result = callResult;
+        }
+        break;
+      }
+
+      // Async job polling — mirrors ul.job from platform-mcp
+      case 'ultralight.job':
+      case 'ul.job': {
+        const jobId = args.job_id as string;
+        if (!jobId) {
+          result = { error: 'Missing required: job_id' };
+          break;
+        }
+        const { getJob } = await import('../services/async-jobs.ts');
+        const job = await getJob(jobId, userId);
+        if (!job) {
+          result = { error: `Job ${jobId} not found` };
+          break;
+        }
+        if (job.status === 'running') {
+          const elapsed = Date.now() - new Date(job.created_at).getTime();
+          result = { job_id: jobId, status: 'running', elapsed_seconds: Math.round(elapsed / 1000), message: 'Still running. Poll again in a few seconds.' };
+        } else if (job.status === 'completed') {
+          result = { job_id: jobId, status: 'completed', duration_ms: job.duration_ms, result: job.result, logs: job.logs, ai_cost_light: job.ai_cost_light };
+        } else {
+          result = { job_id: jobId, status: 'failed', duration_ms: job.duration_ms, error: job.error };
         }
         break;
       }
@@ -1684,12 +1709,18 @@ async function executeAppFunction(
     const codeFetchPromise = cachedCode
       ? Promise.resolve(cachedCode)
       : (async () => {
-          console.log(`[MCP] Code cache MISS for app ${app.id}, fetching from R2...`);
+          console.log(`[MCP] Code cache MISS for app ${app.id}, fetching from R2 (storage_key=${app.storage_key})...`);
           const entryFiles = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
           for (const entryFile of entryFiles) {
             try {
-              const fetched = await r2Service.fetchTextFile(`${app.storage_key}${entryFile}`);
+              const path = `${app.storage_key}${entryFile}`;
+              const fetched = await r2Service.fetchTextFile(path);
               if (fetched) {
+                // Log code fingerprint for debugging
+                const hasGemma = fetched.includes('gemma');
+                const hasSub = fetched.includes('FROM subjects sub WHERE');
+                const hasOldS = fetched.includes('FROM subjects WHERE');
+                console.log(`[MCP] Fetched ${path} (${fetched.length} bytes) gemma=${hasGemma} subAlias=${hasSub} oldSQL=${hasOldS}`);
                 codeCache.set(app.id, app.storage_key, fetched);
                 return fetched;
               }
@@ -1849,6 +1880,7 @@ async function executeAppFunction(
     // ── Deno Sandbox Path (existing, unchanged) ──
     // Execute in sandbox (local — Worker handles data layer only)
     const baseUrl = getEnv('BASE_URL') || undefined;
+    // workerBaseUrl not needed — SELF service binding handles internal routing
 
     const memService = getMemoryService();
     const memoryAdapter = memService ? {
@@ -1882,7 +1914,9 @@ async function executeAppFunction(
     const timeoutMs = permissions.includes('ai:call') ? 120_000 : 30_000;
 
     // ── Async promotion threshold: if execution exceeds this, return a job envelope ──
-    const ASYNC_PROMOTION_MS = 25_000;
+    // Set high to avoid promotion — CF Workers Dynamic Worker sub-isolates don't survive
+    // after the parent response is sent, even with ctx.waitUntil(). Keep sync for reliability.
+    const ASYNC_PROMOTION_MS = 120_000;
     const isAiCapable = permissions.includes('ai:call');
     const executionId = crypto.randomUUID();
 
@@ -1904,6 +1938,7 @@ async function executeAppFunction(
       supabase: supabaseConfig,
       baseUrl,
       authToken: meta?.authToken,
+      workerSecret: getEnv('WORKER_SECRET') || undefined,
       timeoutMs,
     };
 
@@ -2029,7 +2064,7 @@ async function executeAppFunction(
       const responseSizeBytes = new TextEncoder().encode(resultJson || '').byteLength;
       const requestCost = 0.0000003;
       const cpuCost = execDuration * 0.00000002;
-      const executionCostEstimateLight = (requestCost + cpuCost) * 800;
+      const executionCostEstimateLight = (requestCost + cpuCost) * LIGHT_PER_DOLLAR_DESKTOP;
 
       const callSource = user?.provisional ? 'onboarding_template' : undefined;
       const { logMcpCall } = await import('../services/call-logger.ts');
@@ -2091,6 +2126,10 @@ async function executeAppFunction(
 
         // Handle insufficient balance for sync path (callChargeLight would be 0 if failed)
         if (result.success) {
+          // Auto-stamp widget responses with app version for client cache busting
+          if (result.result && typeof result.result === 'object' && (result.result as any).app_html) {
+            (result.result as any).version = app.current_version || '1';
+          }
           return jsonRpcResponse(id, formatToolResult(result.result, result.logs));
         } else {
           return jsonRpcResponse(id, formatToolError(result.error));
@@ -2107,7 +2146,8 @@ async function executeAppFunction(
         });
 
         // Attach completion handler — execution continues in background
-        executionPromise.then(async (result) => {
+        // Must use ctx.waitUntil() to keep CF Worker alive after response is sent
+        const completionPromise = executionPromise.then(async (result) => {
           await runPostExecution(result);
           await completeJob(jobId, {
             success: result.success,
@@ -2122,6 +2162,10 @@ async function executeAppFunction(
             message: err instanceof Error ? err.message : String(err),
           }, Date.now() - execStart);
         });
+
+        // Keep CF Worker alive until async execution completes
+        const ctx = (globalThis as any).__ctx as { waitUntil?: (p: Promise<unknown>) => void } | undefined;
+        if (ctx?.waitUntil) ctx.waitUntil(completionPromise);
 
         // Return job envelope immediately
         return jsonRpcResponse(id, {
@@ -2155,6 +2199,10 @@ async function executeAppFunction(
       }
 
       if (result.success) {
+        // Auto-stamp widget responses with app version for client cache busting
+        if (result.result && typeof result.result === 'object' && (result.result as any).app_html) {
+          (result.result as any).version = app.current_version || '1';
+        }
         return jsonRpcResponse(id, formatToolResult(result.result, result.logs));
       } else {
         return jsonRpcResponse(id, formatToolError(result.error));

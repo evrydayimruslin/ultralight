@@ -94,30 +94,40 @@ const apiKey = ultralight.env.MY_API_KEY; // declared in manifest.env
 const response = await ultralight.ai({ prompt: 'Summarize this', text: content });
 ```
 
-### TCP/TLS Sockets (net:connect)
-For apps that need raw socket access (IMAP, SMTP, database drivers). Requires `"net:connect"` in manifest permissions.
+### Runtime Environment
+
+MCP apps execute inside **Cloudflare Workers Dynamic Workers** — sandboxed isolates that provide security through isolation. The platform transparently handles routing to the right execution context based on what the app needs.
+
+**What works in the sandbox (Dynamic Worker):**
+- `fetch()` — HTTP requests to external APIs, webhooks, REST services ✅
+- `ultralight.db` — D1 database access via platform RPC ✅
+- `ultralight.ai()` — LLM calls via platform RPC ✅
+- `ultralight.store/load/list/query` — key-value data access ✅
+- Standard JS/TS, async/await, JSON, crypto ✅
+
+**What does NOT work in the sandbox:**
+- `connect()` — TCP/TLS sockets (not available in Dynamic Workers)
+- `ultralight.net.connectTls()` — will throw, do not use
+- Long-running operations (>30s) — will be killed by wall time limits
+- Direct Cloudflare bindings (KV, R2, D1, Durable Objects)
+
+**Design principle:** Prefer HTTP (`fetch()`) over TCP whenever possible. Most modern APIs are HTTP-based. For the rare cases that require TCP (IMAP, SMTP, raw database drivers), the platform provides high-level protocol methods that run the TCP session in the main Worker:
 
 ```js
-// TLS connection (IMAP port 993, SMTPS port 465)
-const socket = ultralight.net.connectTls('imap.example.com', 993);
-const writer = socket.writable.getWriter();
-const reader = socket.readable.getReader();
+// IMAP: Fetch unseen emails (entire TCP session handled by platform)
+const result = await ultralight.net.imapFetchUnseen(
+  host, port, user, pass, lastUid, businessEmail, '$ULProcessed', 20,
+);
+// Returns: { emails: [{uid, from, to, subject, body, messageId, inReplyTo}], maxUid, hasMore }
 
-// Read server greeting
-const { value } = await reader.read();
-const greeting = new TextDecoder().decode(value);
-
-// Send command
-await writer.write(new TextEncoder().encode('LOGIN user pass\r\n'));
-
-// STARTTLS connection (SMTP port 587)
-const socket = ultralight.net.connectStartTls('smtp.example.com', 587);
-
-// Plain TCP (no encryption)
-const socket = ultralight.net.connectPlain('example.com', 8080);
+// SMTP: Send an email (entire TCP session handled by platform)
+const result = await ultralight.net.smtpSend(
+  host, port, user, pass, fromAddr, fromName, toAddr, subject, body, inReplyTo,
+);
+// Returns: { success: boolean, error?: string }
 ```
 
-**Security:** localhost, private networks (10.x, 192.168.x, 172.x), and port 25 are blocked. TLS is the default.
+**For everything else, use `fetch()`** with `net:fetch` permission — HTTP APIs, webhooks, REST endpoints all work reliably.
 
 ### Widgets
 MCPs can expose interactive UI widgets on the Admin homescreen. Widgets are full HTML apps served by the MCP and rendered in the desktop client.

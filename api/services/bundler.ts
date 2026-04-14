@@ -41,6 +41,12 @@ async function ensureEsbuild(): Promise<void> {
       (globalThis as any).performance = { now: () => Date.now() };
     }
 
+    // Polyfill: esbuild-wasm references __filename/__dirname (Node.js APIs) not available in Workers
+    if (typeof (globalThis as any).__filename === 'undefined') {
+      (globalThis as any).__filename = '/worker.js';
+      (globalThis as any).__dirname = '/';
+    }
+
     if (typeof (globalThis as any).Deno !== 'undefined') {
       // Deno: import map points 'esbuild-wasm' → npm:esbuild-wasm.
       // Let esbuild-wasm auto-locate its .wasm file from the npm package.

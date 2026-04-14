@@ -360,6 +360,109 @@ export function createApp() {
         return handleUpload(request);
       }
 
+      // Temporary IMAP test endpoint
+      if (path === '/api/imap-test' && method === 'POST') {
+        try {
+          const { authenticate } = await import('./auth.ts');
+          await authenticate(request);
+          const body = await request.json() as Record<string, unknown>;
+          const { connect } = await import('cloudflare:sockets');
+          const socket = connect({ hostname: body.host as string, port: body.port as number }, { secureTransport: 'on' });
+          const reader = socket.readable.getReader();
+          const writer = socket.writable.getWriter();
+          const d = new TextDecoder();
+          const e = new TextEncoder();
+          let buf = '';
+          async function rl(): Promise<string> {
+            while (true) {
+              const idx = buf.indexOf('\r\n');
+              if (idx >= 0) { const l = buf.substring(0, idx); buf = buf.substring(idx + 2); return l; }
+              const { value, done } = await reader.read();
+              if (done) return buf;
+              buf += d.decode(value, { stream: true });
+            }
+          }
+          async function rb(n: number): Promise<string> {
+            while (buf.length < n) { const { value, done } = await reader.read(); if (done) break; buf += d.decode(value, { stream: true }); }
+            const data = buf.substring(0, n); buf = buf.substring(n); return data;
+          }
+          let tagN = 0;
+          async function cmd(c: string): Promise<{ lines: string[]; ok: boolean }> {
+            tagN++; const tag = 'A' + String(tagN).padStart(4, '0');
+            await writer.write(e.encode(tag + ' ' + c + '\r\n'));
+            const lines: string[] = [];
+            while (true) {
+              const line = await rl();
+              if (line.startsWith(tag + ' ')) return { lines, ok: line.includes(tag + ' OK') };
+              lines.push(line);
+            }
+          }
+          const greeting = await rl();
+          const login = await cmd('LOGIN "' + (body.user as string) + '" "' + (body.pass as string) + '"');
+          const sel = await cmd('SELECT INBOX');
+          const search = await cmd('UID SEARCH UNSEEN');
+          const uidLine = search.lines.find(l => l.startsWith('* SEARCH'));
+          const uids = uidLine ? uidLine.replace('* SEARCH','').trim().split(/\s+/).map(Number).filter(n => n > 0) : [];
+          let fetchResult: any = null;
+          if (uids.length > 0) {
+            fetchResult = await cmd('UID FETCH ' + uids[0] + ' (BODY.PEEK[] FLAGS)');
+          }
+          await cmd('LOGOUT');
+          reader.releaseLock(); try { writer.releaseLock(); } catch {} try { socket.close(); } catch {}
+          return new Response(JSON.stringify({
+            greeting: greeting.substring(0, 80),
+            login: login.ok,
+            unseen: uids.length,
+            firstUid: uids[0],
+            fetchLines: fetchResult ? fetchResult.lines.length : 0,
+            fetchOk: fetchResult?.ok,
+            fetchFirstLine: fetchResult?.lines?.[0]?.substring(0, 100),
+          }, null, 2), { headers: { 'Content-Type': 'application/json' } });
+        } catch (e2: unknown) {
+          return new Response(JSON.stringify({ error: e2 instanceof Error ? e2.message : String(e2) }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+        }
+      }
+
+      // Internal TCP protocol endpoints — called by Dynamic Worker sandbox via fetch()
+      // Auth: X-Worker-Secret header (service-to-service, not user-facing)
+      if (path === '/api/net/imap-fetch' && method === 'POST') {
+        const secret = request.headers.get('X-Worker-Secret');
+        if (!secret || secret !== getEnv('WORKER_SECRET')) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+        }
+        try {
+          const { imapFetchUnseen } = await import('../services/tcp-protocols.ts');
+          const body = await request.json() as Record<string, unknown>;
+          const result = await imapFetchUnseen(
+            body.host as string, body.port as number, body.user as string, body.pass as string,
+            (body.lastUid as number) || 0, (body.businessEmail as string) || '',
+            (body.processedFlag as string) || '$ULProcessed', (body.limit as number) || 20,
+          );
+          return new Response(JSON.stringify(result), { headers: { 'Content-Type': 'application/json' } });
+        } catch (e: unknown) {
+          return new Response(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+        }
+      }
+
+      if (path === '/api/net/smtp-send' && method === 'POST') {
+        const secret = request.headers.get('X-Worker-Secret');
+        if (!secret || secret !== getEnv('WORKER_SECRET')) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+        }
+        try {
+          const { smtpSend } = await import('../services/tcp-protocols.ts');
+          const body = await request.json() as Record<string, unknown>;
+          const result = await smtpSend(
+            body.host as string, body.port as number, body.user as string, body.pass as string,
+            body.from as string, (body.fromName as string) || '', body.to as string,
+            body.subject as string, body.body as string, body.inReplyTo as string | undefined,
+          );
+          return new Response(JSON.stringify(result), { headers: { 'Content-Type': 'application/json' } });
+        } catch (e: unknown) {
+          return new Response(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+        }
+      }
+
       // Run route
       if (path.startsWith('/api/run/') && method === 'POST') {
         const appId = path.replace('/api/run/', '');

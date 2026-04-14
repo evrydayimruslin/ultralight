@@ -45,6 +45,8 @@ export async function executeInDynamicSandbox(
     // User context and env vars are baked in as literals (they're per-request constants)
     const userJson = config.user ? JSON.stringify(config.user) : 'null';
     const envVarsJson = JSON.stringify(config.envVars || {});
+    const netBaseUrl = JSON.stringify(config.workerBaseUrl || config.baseUrl || '');
+    const netWorkerSecret = JSON.stringify(config.workerSecret || '');
 
     const setupModule = `
 // Setup module — runs before app.js, sets globalThis.ultralight
@@ -83,35 +85,35 @@ globalThis.ultralight = {
   recall(k) { const e = globalThis.__rpcEnv; return e.MEMORY ? e.MEMORY.recall(k) : Promise.resolve(null); },
   ai(r) { const e = globalThis.__rpcEnv; return e.AI ? e.AI.call(r) : Promise.resolve({ content: '', error: 'AI not available' }); },
   call() { throw new Error('ultralight.call() not available in sandbox. Use ul.call platform tool.'); },
-  // net:connect — TCP/TLS socket access (gated by permission)
+  // net:connect — high-level protocol methods via internal HTTP (gated by permission)
   net: ${config.permissions.includes('net:connect') ? `{
-    connectTls(hostname, port) {
-      // Try RPC binding first (CF Workers Dynamic Workers)
+    async imapFetchUnseen(host, port, user, pass, lastUid, businessEmail, processedFlag, limit) {
       var e = globalThis.__rpcEnv;
-      if (e && e.NET && typeof e.NET.connectTls === 'function') return e.NET.connectTls(hostname, port);
-      // Fallback: Cloudflare Workers global connect()
-      if (typeof globalThis.connect === 'function') return globalThis.connect({ hostname: hostname, port: port }, { secureTransport: 'on' });
-      // Fallback: Deno.connectTls
-      if (globalThis.Deno && globalThis.Deno.connectTls) return globalThis.Deno.connectTls({ hostname: hostname, port: port });
-      throw new Error('No TCP/TLS socket API available');
+      var fetchFn = (e && e.SELF) ? e.SELF.fetch.bind(e.SELF) : fetch;
+      var resp = await fetchFn('https://internal/api/net/imap-fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': ${netWorkerSecret} },
+        body: JSON.stringify({ host: host, port: port, user: user, pass: pass, lastUid: lastUid || 0, businessEmail: businessEmail || '', processedFlag: processedFlag || '$ULProcessed', limit: limit || 20 }),
+      });
+      if (!resp.ok) { var err = await resp.text(); throw new Error('IMAP fetch failed: ' + err); }
+      return await resp.json();
     },
-    connectPlain(hostname, port) {
+    async smtpSend(host, port, user, pass, from, fromName, to, subject, body, inReplyTo) {
       var e = globalThis.__rpcEnv;
-      if (e && e.NET && typeof e.NET.connectPlain === 'function') return e.NET.connectPlain(hostname, port);
-      if (typeof globalThis.connect === 'function') return globalThis.connect({ hostname: hostname, port: port }, { secureTransport: 'off' });
-      if (globalThis.Deno && globalThis.Deno.connect) return globalThis.Deno.connect({ hostname: hostname, port: port });
-      throw new Error('No TCP socket API available');
+      var fetchFn = (e && e.SELF) ? e.SELF.fetch.bind(e.SELF) : fetch;
+      var resp = await fetchFn('https://internal/api/net/smtp-send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': ${netWorkerSecret} },
+        body: JSON.stringify({ host: host, port: port, user: user, pass: pass, from: from, fromName: fromName || '', to: to, subject: subject, body: body, inReplyTo: inReplyTo || '' }),
+      });
+      if (!resp.ok) { var err = await resp.text(); throw new Error('SMTP send failed: ' + err); }
+      return await resp.json();
     },
-    connectStartTls(hostname, port) {
-      var e = globalThis.__rpcEnv;
-      if (e && e.NET && typeof e.NET.connectStartTls === 'function') return e.NET.connectStartTls(hostname, port);
-      if (typeof globalThis.connect === 'function') return globalThis.connect({ hostname: hostname, port: port }, { secureTransport: 'starttls' });
-      throw new Error('No STARTTLS socket API available');
-    },
+    connectTls() { throw new Error('Low-level sockets not available. Use ultralight.net.imapFetchUnseen() or .smtpSend().'); },
   }` : `{
-    connectTls() { throw new Error('net:connect permission required. Add "net:connect" to your manifest permissions.'); },
-    connectPlain() { throw new Error('net:connect permission required.'); },
-    connectStartTls() { throw new Error('net:connect permission required.'); },
+    imapFetchUnseen() { throw new Error('net:connect permission required.'); },
+    smtpSend() { throw new Error('net:connect permission required.'); },
+    connectTls() { throw new Error('net:connect permission required.'); },
   }`},
 };
 `;
@@ -203,41 +205,16 @@ export default {
       });
     }
 
-    // Network binding (net:connect permission)
-    if (config.permissions.includes('net:connect')) {
-      if (ctx?.exports?.NetworkBinding) {
-        // CF Workers: use RPC binding
-        bindings.NET = ctx.exports.NetworkBinding({
-          props: { userId: config.userId, appId: config.appId },
-        });
-      } else {
-        // Deno fallback: create a NET binding that uses Deno.connectTls directly
-        // @ts-ignore — Deno global
-        const _Deno = globalThis.Deno;
-        if (_Deno?.connectTls) {
-          bindings.NET = {
-            async connectTls(hostname: string, port: number) {
-              const h = hostname.toLowerCase();
-              if (h === 'localhost' || h === '127.0.0.1' || h === '0.0.0.0' || h.startsWith('10.') || h.startsWith('192.168.') || h.startsWith('172.')) {
-                throw new Error('Connections to internal/private networks are not allowed');
-              }
-              if (port === 25) throw new Error('Port 25 blocked. Use 465 or 587.');
-              return await _Deno.connectTls({ hostname, port });
-            },
-            async connectPlain(hostname: string, port: number) {
-              return await _Deno.connect({ hostname, port });
-            },
-            async connectStartTls(hostname: string, port: number) {
-              const conn = await _Deno.connect({ hostname, port });
-              return await _Deno.startTls(conn, { hostname });
-            },
-          };
-        }
-      }
+    // Network: pass SELF binding so Dynamic Worker can call /api/net/* internally
+    // (Direct fetch() to Worker URL goes through CDN which blocks it)
+    const env = (globalThis as any).__env;
+    if (config.permissions.includes('net:connect') && env?.SELF) {
+      bindings.SELF = env.SELF;
     }
 
     // 5. Create Dynamic Worker
-    const worker = loader.load({
+    const hasNetConnect = config.permissions.includes('net:connect');
+    const loadConfig: Record<string, unknown> = {
       compatibilityDate: '2026-03-01',
       mainModule: 'wrapper.js',
       modules: {
@@ -247,7 +224,12 @@ export default {
       },
       env: bindings,
       globalOutbound: null,
-    });
+    };
+    // net:connect apps need outbound fetch() for internal TCP endpoints — remove restriction
+    if (hasNetConnect) {
+      delete loadConfig.globalOutbound;
+    }
+    const worker = loader.load(loadConfig);
 
     // 6. Execute with timeout
     const timeoutMs = config.timeoutMs || 30_000;

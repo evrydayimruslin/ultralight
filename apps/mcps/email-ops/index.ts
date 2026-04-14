@@ -44,6 +44,24 @@ async function nextVersionNum(conversationId: string): Promise<number> {
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
+// Socket connector — tries ultralight.net first, falls back to Deno/CF Workers globals
+async function openTlsSocket(hostname: string, port: number): Promise<any> {
+  // Try ultralight.net (SDK-provided, works in both CF Workers and Deno sandboxes)
+  if ((ultralight as any).net?.connectTls) {
+    return (ultralight as any).net.connectTls(hostname, port);
+  }
+  // Fallback: Cloudflare Workers global connect()
+  if (typeof (globalThis as any).connect === 'function') {
+    return (globalThis as any).connect({ hostname, port }, { secureTransport: 'on' });
+  }
+  // Fallback: Deno.connectTls (when running in Deno with --allow-all)
+  const _Deno = (globalThis as any).Deno;
+  if (_Deno?.connectTls) {
+    return _Deno.connectTls({ hostname, port });
+  }
+  throw new Error('No TCP/TLS socket API available. Ensure net:connect permission is declared.');
+}
+
 // Line-buffered reader for IMAP/SMTP text protocols
 class LineReader {
   private reader: any;
@@ -96,7 +114,7 @@ async function sendViaSMTP(to: string, subject: string, body: string, inReplyTo?
 
   if (!host || !user || !pass) return { success: false, error: 'SMTP credentials not configured' };
 
-  const socket = ultralight.net.connectTls(host, port);
+  const socket = await openTlsSocket(host, port);
   const lr = new LineReader(socket.readable);
   const writer = socket.writable.getWriter();
 
@@ -190,7 +208,7 @@ async function createImapConnection(): Promise<{ lr: LineReader; writer: any; so
 
   if (!host || !user || !pass) throw new Error('IMAP credentials not configured');
 
-  const socket = ultralight.net.connectTls(host, port);
+  const socket = await openTlsSocket(host, port);
   const lr = new LineReader(socket.readable);
   const writer = socket.writable.getWriter();
   let tagNum = 0;
@@ -373,120 +391,95 @@ async function checkSentFolder(guestEmail: string): Promise<boolean> {
 // 0. CHECK INBOX — IMAP Poller
 // ============================================
 
-export async function check_inbox(args: {}): Promise<unknown> {
-  let conn: any = null;
+export async function check_inbox(args: { debug?: boolean; config_only?: boolean }): Promise<unknown> {
   try {
-    conn = await createImapConnection();
     const businessEmail = (ultralight.env.BUSINESS_EMAIL || ultralight.env.IMAP_USER || '').toLowerCase();
 
-    // Select INBOX
-    const selResult = await conn.cmd('SELECT INBOX');
-    if (!selResult.ok) throw new Error('SELECT INBOX failed');
-
-    // Get last processed UID
+    // Get last processed UID from DB
     const syncRow = await ultralight.db.first('SELECT last_uid FROM imap_sync_state WHERE user_id = ?', [uid()]);
     const lastUid = syncRow?.last_uid || 0;
 
-    // Search for unseen, unprocessed emails
-    let searchCmd = 'UID SEARCH';
-    if (lastUid > 0) {
-      searchCmd += ' UID ' + (lastUid + 1) + ':*';
-    }
-    searchCmd += ' UNKEYWORD $ULProcessed UNSEEN';
-
-    const searchResult = await conn.cmd(searchCmd);
-    const uidLine = searchResult.lines.find((l: string) => l.startsWith('* SEARCH'));
-    const uids: number[] = [];
-    if (uidLine) {
-      const parts = uidLine.replace('* SEARCH', '').trim().split(/\s+/);
-      for (const p of parts) {
-        const n = parseInt(p);
-        if (n > 0) uids.push(n);
-      }
+    // Config-only mode: return immediately without IMAP call
+    if (args.config_only) {
+      return {
+        config: {
+          host: ultralight.env.IMAP_HOST, port: ultralight.env.IMAP_PORT,
+          user: ultralight.env.IMAP_USER, hasPass: !!ultralight.env.IMAP_PASS, passLength: (ultralight.env.IMAP_PASS || '').length,
+          businessEmail, lastUid,
+          smtpHost: ultralight.env.SMTP_HOST, smtpPort: ultralight.env.SMTP_PORT,
+        },
+      };
     }
 
-    if (uids.length === 0) {
-      // Update last_check
+    // Fetch unseen emails via high-level IMAP RPC (entire TCP session in one call)
+    const result = await (ultralight as any).net.imapFetchUnseen(
+      ultralight.env.IMAP_HOST,
+      parseInt(ultralight.env.IMAP_PORT || '993'),
+      ultralight.env.IMAP_USER,
+      ultralight.env.IMAP_PASS,
+      lastUid,
+      businessEmail,
+      '$ULProcessed',
+      3,
+    );
+
+    // Debug mode: return raw IMAP result without AI processing
+    if (args.debug) {
+      return {
+        success: true, debug: true, lastUid,
+        config: { host: ultralight.env.IMAP_HOST, port: ultralight.env.IMAP_PORT, user: ultralight.env.IMAP_USER, hasPass: !!ultralight.env.IMAP_PASS, businessEmail },
+        imapResult: { emailCount: result.emails?.length, maxUid: result.maxUid, hasMore: result.hasMore, emails: (result.emails || []).map((e: any) => ({ uid: e.uid, from: e.from, subject: e.subject })) },
+      };
+    }
+
+    if (!result.emails || result.emails.length === 0) {
       await ultralight.db.run(
         'INSERT INTO imap_sync_state (user_id, last_uid, last_check) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET last_check = ?',
         [uid(), lastUid, now(), now()]
       );
-      await conn.cmd('LOGOUT');
-      closeImap(conn);
-      conn = null;
       return { success: true, processed: 0, message: 'No new emails' };
     }
 
-    // Limit to 20 per call (timeout safety)
-    const toProcess = uids.slice(0, 20);
     let processed = 0;
     let newConversations = 0;
     let followups = 0;
 
-    for (const emailUid of toProcess) {
+    for (const email of result.emails) {
       try {
-        // Fetch with PEEK (does not mark as \Seen)
-        const fetchResult = await conn.cmd('UID FETCH ' + emailUid + ' (BODY.PEEK[] FLAGS)');
-        const rawEmail = fetchResult.lines.join('\r\n');
-
-        // Extract the email body from the FETCH response
-        const bodyMatch = rawEmail.match(/BODY\[\]\s*\{(\d+)\}\r\n([\s\S]*)/);
-        if (!bodyMatch) continue;
-
-        const emailContent = bodyMatch[2].substring(0, parseInt(bodyMatch[1]));
-        const parsed = parseEmail(emailContent);
-
-        // Skip our own outbound emails
-        if (parsed.from.toLowerCase() === businessEmail) continue;
-
-        // Process through existing pipeline
-        const result = await receive_email({
-          from: parsed.from,
-          to: parsed.to,
-          subject: parsed.subject,
-          text: parsed.body,
-          message_id: parsed.messageId,
-          in_reply_to: parsed.inReplyTo,
+        const processResult = await receive_email({
+          from: email.from,
+          to: email.to,
+          subject: email.subject,
+          text: email.body,
+          message_id: email.messageId,
+          in_reply_to: email.inReplyTo,
         }) as any;
 
-        if (result?.success) {
+        if (processResult?.success) {
           processed++;
-          if (result.thread) followups++;
+          if (processResult.thread) followups++;
           else newConversations++;
         }
-
-        // Mark as processed with custom flag
-        await conn.cmd('UID STORE ' + emailUid + ' +FLAGS ($ULProcessed)');
       } catch (e: any) {
-        console.error('Failed to process UID ' + emailUid + ': ' + e.message);
+        console.error('Failed to process email from ' + email.from + ': ' + e.message);
       }
     }
 
     // Update sync state
-    const maxUid = Math.max(...toProcess);
     await ultralight.db.run(
       'INSERT INTO imap_sync_state (user_id, last_uid, last_check) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET last_uid = MAX(imap_sync_state.last_uid, ?), last_check = ?',
-      [uid(), maxUid, now(), maxUid, now()]
+      [uid(), result.maxUid, now(), result.maxUid, now()]
     );
-
-    await conn.cmd('LOGOUT');
-    closeImap(conn);
-    conn = null;
 
     return {
       success: true,
       processed,
       new_conversations: newConversations,
       followups,
-      has_more: uids.length > 20,
+      has_more: result.hasMore,
     };
   } catch (e: any) {
     return { success: false, error: e.message || String(e) };
-  } finally {
-    if (conn) {
-      try { await conn.cmd('LOGOUT'); } catch {}
-      closeImap(conn);
-    }
   }
 }
 
@@ -585,7 +578,9 @@ export async function receive_email(args: any): Promise<unknown> {
   });
 
   let parsed: any;
-  try { const m = (aiResp.content || '').match(/```(?:json)?\s*([\s\S]*?)```/) || [null, aiResp.content]; parsed = JSON.parse(m[1] || aiResp.content); } catch { parsed = { classification: 'other', language: 'en', should_reply: false, priority: 'normal', draft_body: null, knowledge_gaps: [] }; }
+  console.log('[receive_email] AI raw response:', JSON.stringify({ content: aiResp.content?.substring(0, 500), error: aiResp.error }));
+  try { const m = (aiResp.content || '').match(/```(?:json)?\s*([\s\S]*?)```/) || [null, aiResp.content]; parsed = JSON.parse(m[1] || aiResp.content); } catch (e: any) { console.error('[receive_email] AI parse failed:', e.message, 'raw:', (aiResp.content || '').substring(0, 200)); parsed = { classification: 'other', language: 'en', should_reply: false, priority: 'normal', draft_body: null, knowledge_gaps: [] }; }
+  console.log('[receive_email] Parsed:', JSON.stringify({ classification: parsed.classification, should_reply: parsed.should_reply, has_draft: !!parsed.draft_body }));
 
   // Create conversation
   await ultralight.db.run(

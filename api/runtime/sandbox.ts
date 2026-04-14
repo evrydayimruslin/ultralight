@@ -50,6 +50,10 @@ export interface RuntimeConfig {
   // Inter-app calls: base URL + auth token for calling other apps via MCP
   baseUrl?: string;
   authToken?: string;
+  // Internal service auth for TCP protocol endpoints (/api/net/*)
+  workerSecret?: string;
+  // Worker's direct URL (not CDN) for internal fetch calls from Dynamic Workers
+  workerBaseUrl?: string;
   // Per-execution timeout override (default: 30s, max: 120s)
   timeoutMs?: number;
 }
@@ -1675,8 +1679,8 @@ export async function executeInSandbox(
         if (!config.user) {
           throw new Error('Authentication required. User must be signed in to make purchases.');
         }
-        if (typeof amountLight !== 'number' || amountLight < 1 || amountLight > 800000) {
-          throw new Error('amountLight must be between 1 and 800000');
+        if (typeof amountLight !== 'number' || amountLight < 1 || amountLight > 100000) {
+          throw new Error('amountLight must be between 1 and 100000');
         }
         if (config.userId === config.ownerId) {
           throw new Error('Cannot charge yourself');

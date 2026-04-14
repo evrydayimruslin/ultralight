@@ -22,6 +22,11 @@ id = "75ce02786ac2466fbca833c95bf3cb56"
 [[worker_loaders]]
 binding = "LOADER"
 
+# Self-referencing service binding for internal fetch from Dynamic Workers
+[[services]]
+binding = "SELF"
+service = "ultralight-api"
+
 [vars]
 BASE_URL = "https://api.ultralight.dev"
 ENVIRONMENT = "production"
