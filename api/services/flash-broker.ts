@@ -209,6 +209,46 @@ export type ScopeConfig = Record<string, {
   functions?: string[];
 }>;
 
+/** File attachment from chat input */
+interface ChatFileAttachment {
+  name: string;
+  size: number;
+  mimeType: string;
+  content: string;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+function buildFileContext(files: ChatFileAttachment[]): string {
+  if (!files.length) return '';
+  const items = files.map(f => `- ${f.name} (${formatFileSize(f.size)}, ${f.mimeType})`).join('\n');
+  return `## Attached Files\nThe user attached ${files.length} file(s) with their message:\n${items}\nThe file contents are available as base64 data URLs and should be passed to the relevant app's functions (e.g. quick_start with file_content + file_name args, or ultralight.ai with multimodal content parts).\n\n`;
+}
+
+const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp']);
+
+/**
+ * Build multimodal content array: text prompt + image files as vision content parts.
+ * Non-image files stay as metadata text (they flow to MCPs via __files).
+ */
+function buildMultimodalContent(textContent: string, files?: ChatFileAttachment[]): string | unknown[] {
+  if (!files?.length) return textContent;
+
+  const imageFiles = files.filter(f => IMAGE_MIMES.has(f.mimeType));
+  if (imageFiles.length === 0) return textContent; // No images — keep as plain text
+
+  const parts: unknown[] = [{ type: 'text', text: textContent }];
+  for (const f of imageFiles) {
+    const url = f.content.startsWith('data:') ? f.content : `data:${f.mimeType};base64,${f.content}`;
+    parts.push({ type: 'image_url', image_url: { url } });
+  }
+  return parts;
+}
+
 export async function* runFlashBroker(
   message: string,
   userId: string,
@@ -221,6 +261,7 @@ export async function* runFlashBroker(
   systemAgentContext?: SystemAgentContext,
   projectContext?: string,
   conversationId?: string,
+  files?: ChatFileAttachment[],
 ): AsyncGenerator<FlashEvent> {
   const flashModel = interpreterModel || DEFAULT_FLASH_MODEL;
 
@@ -346,6 +387,7 @@ export async function* runFlashBroker(
     const scopedNames = Object.keys(scope);
     analyzeContent += `## SESSION SCOPE\nThis session is scoped to ONLY these apps: ${scopedNames.join(', ')}. Do not reference or suggest other apps.\n\n`;
   }
+  if (files?.length) analyzeContent += buildFileContext(files);
   if (projectContext) analyzeContent += `## Local Project Files\n${projectContext}\n\n`;
   if (agentSkills) analyzeContent += `## Agent Skills Reference\n${agentSkills}\n\n`;
   if (conversationTopics) analyzeContent += `## Past Conversation Topics\n${conversationTopics}\n\n`;
@@ -353,7 +395,7 @@ export async function* runFlashBroker(
   if (lastExchangeStr) analyzeContent += `## Last Exchange\n${lastExchangeStr}\n\n`;
   analyzeContent += `## Current Message\n${message}\n\n## Available Functions\n${catalog}`;
 
-  const analyzeResult = await callFlash(flashModel, analyzeSystem, analyzeContent, apiKey);
+  const analyzeResult = await callFlash(flashModel, analyzeSystem, buildMultimodalContent(analyzeContent, files), apiKey);
   if (!analyzeResult) {
     const result = heuristicFallback(message, fnIndex, heavyModel);
     yield { type: 'done', result };
@@ -555,6 +597,7 @@ export async function* runFlashBroker(
     yield { type: 'constructing', functions: [], conventionCount: allConventions.length };
 
     let readInput = `## User's Question\n${message}\n\n`;
+    if (files?.length) readInput += buildFileContext(files);
     if (projectContext) readInput += `## Local Project Context\n${projectContext}\n\n`;
     readInput += `## Live App Data\n`;
     for (const [slug, data] of Object.entries(magnifiedData)) {
@@ -597,7 +640,7 @@ export async function* runFlashBroker(
     const readSystem = systemAgentContext
       ? `You are "${systemAgentContext.persona}". ${FLASH_READ_RESPONSE_SYSTEM}`
       : FLASH_READ_RESPONSE_SYSTEM;
-    const responseText = await callFlashText(flashModel, readSystem, readInput, apiKey)
+    const responseText = await callFlashText(flashModel, readSystem, buildMultimodalContent(readInput, files), apiKey)
       || "I found the data but had trouble formatting the response. Could you try rephrasing your question?";
 
     const result: FlashBrokerResult = {
@@ -638,6 +681,7 @@ export async function* runFlashBroker(
 
   // Build Flash round 2 input for prompt construction
   let promptInput = `## User's Message\n${message}\n\n`;
+  if (files?.length) promptInput += buildFileContext(files);
   if (projectContext) promptInput += `## Local Project Context\n${projectContext}\n\n`;
   promptInput += `## Live App Data\n`;
   for (const [slug, data] of Object.entries(magnifiedData)) {
@@ -646,7 +690,7 @@ export async function* runFlashBroker(
   promptInput += `## Available Functions\n`;
   for (const [fnName] of Object.entries(toolMap)) {
     const fn = fnIndex.functions[fnName];
-    if (!fn) continue;
+    if (!fn || fn.fnName === '__context') continue; // skip skill context entries
     const params = Object.entries(fn.params || {})
       .map(([p, info]) => `${p}${info.required ? '' : '?'}: ${info.type}`)
       .join(', ');
@@ -674,7 +718,7 @@ export async function* runFlashBroker(
   const promptSystem = systemAgentContext
     ? `You are constructing a prompt for "${systemAgentContext.persona}". Include their skills and conventions in the prompt.\n\n${FLASH_PROMPT_SYSTEM}`
     : FLASH_PROMPT_SYSTEM;
-  const promptResult = await callFlash(flashModel, promptSystem, promptInput, apiKey);
+  const promptResult = await callFlash(flashModel, promptSystem, buildMultimodalContent(promptInput, files), apiKey);
 
   let finalPrompt: string;
   let finalModel: string;
@@ -727,11 +771,67 @@ interface MagnifyResult {
   rowCount: number;
 }
 
+/** Fetch lightweight app metadata for type checking (skill vs mcp) */
+async function getAppMeta(appId: string): Promise<{ app_type: string | null; storage_key: string; name: string } | null> {
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}&select=app_type,storage_key,name`,
+    { headers: { 'apikey': SUPABASE_SERVICE_ROLE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` } }
+  );
+  if (!res.ok) return null;
+  const rows = await res.json() as Array<{ app_type: string | null; storage_key: string; name: string }>;
+  return rows[0] || null;
+}
+
+/** Magnify a skill app — fetch .md content from R2 instead of D1 */
+async function magnifySkillApp(app: { storage_key: string; name: string }, scope?: string): Promise<MagnifyResult> {
+  try {
+    const r2 = (globalThis as any).__env?.R2_BUCKET;
+    if (!r2) return { context: '(R2 not available)', tableCount: 0, rowCount: 0 };
+
+    // List files under the app's storage key to find .md files
+    const listed = await r2.list({ prefix: app.storage_key, limit: 20 });
+    const mdKeys = (listed.objects || [])
+      .map((o: any) => o.key as string)
+      .filter((k: string) => k.endsWith('.md'));
+
+    if (mdKeys.length === 0) {
+      return { context: '(No skill content found)', tableCount: 0, rowCount: 0 };
+    }
+
+    // Read all .md files and concatenate (respect 8000 char limit)
+    const MAX_CHARS = 8000;
+    let content = '';
+    for (const key of mdKeys) {
+      const obj = await r2.get(key);
+      if (!obj) continue;
+      const text = await obj.text();
+      if (content.length + text.length > MAX_CHARS) {
+        content += text.slice(0, MAX_CHARS - content.length);
+        break;
+      }
+      content += text + '\n\n';
+    }
+
+    return { context: content.trim(), tableCount: 0, rowCount: 0 };
+  } catch (err) {
+    console.error(`[MAGNIFY] Skill magnification failed for ${app.name}:`, err);
+    return { context: '(Skill content unavailable)', tableCount: 0, rowCount: 0 };
+  }
+}
+
 /**
  * Query an app's D1 database and return a compact context string
  * with all user-relevant data. This is the "magnification" step.
  */
 async function magnifyApp(appId: string, userId: string, scope?: string): Promise<MagnifyResult> {
+  // ── Skill apps: fetch .md content from R2 instead of querying D1 ──
+  const appMeta = await getAppMeta(appId);
+  if (appMeta?.app_type === 'skill') {
+    return magnifySkillApp(appMeta, scope);
+  }
+
   const dbId = await getD1DatabaseId(appId);
   if (!dbId) {
     return { context: '(No database provisioned)', tableCount: 0, rowCount: 0 };
@@ -938,7 +1038,7 @@ async function magnifyApp(appId: string, userId: string, scope?: string): Promis
 async function callFlash(
   model: string,
   systemPrompt: string,
-  userContent: string,
+  userContent: string | unknown[],
   apiKey: string,
 ): Promise<any | null> {
   try {
@@ -990,7 +1090,7 @@ async function callFlash(
 export async function callFlashText(
   model: string,
   systemPrompt: string,
-  userContent: string,
+  userContent: string | unknown[],
   apiKey: string,
 ): Promise<string> {
   try {
@@ -1043,9 +1143,17 @@ function buildCatalog(fnIndex: FunctionIndex, systemAgentStates?: SystemAgentSta
   }
 
   for (const [slug, fns] of Object.entries(appFns)) {
+    // Skill entries — show as available context, not callable functions
+    if (fns.length === 1 && fns[0].fn.fnName === '__context') {
+      const desc = fns[0].fn.description.replace(/^\[[^\]]+\]\s*/, '');
+      sections.push(`\n### ${slug} [SKILL/CONTEXT] — ${desc}`);
+      continue;
+    }
+
     const appDesc = fns[0]?.fn.description?.match(/^\[([^\]]+)\]/)?.[1] || slug;
     sections.push(`\n### ${slug} (${appDesc})`);
     for (const { name, fn } of fns) {
+      if (fn.fnName === '__context') continue; // skip skill entries mixed in
       const params = Object.entries(fn.params || {})
         .map(([p, info]) => `${p}${info.required ? '' : '?'}: ${info.type}`)
         .join(', ');

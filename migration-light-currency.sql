@@ -3,14 +3,12 @@
 --
 -- Converts the entire billing system from USD cents to Light (✦).
 -- Exchange rates:
---   Web purchase:     720 Light per $1 USD
---   Desktop purchase: 800 Light per $1 USD
---   Publisher payout: $1 USD per 800 Light
+--   Web purchase:     95 Light per $1 USD
+--   Desktop purchase: 100 Light per $1 USD  (1 Light ≈ 1¢)
+--   Publisher payout: $1 USD per 100 Light
 -- Platform fee: 10% on every transfer (replaces withdrawal-only fee)
--- Hosting rate: ✦18/MB/hr (was $0.025/MB/hr)
+-- Hosting rate: ✦2.25/MB/hr (was $0.025/MB/hr)
 -- Light is divisible to 8 decimal places.
---
--- Migration converts existing balances at 800:1 (cents → Light = cents * 8).
 
 -- ============================================
 -- 1. USER BALANCE COLUMNS
@@ -318,7 +316,7 @@ $$;
 -- 13. REWRITE create_payout_record() — NO WITHDRAWAL FEE
 -- ============================================
 -- The 10% platform fee is now on every transfer, not on withdrawal.
--- Withdrawal is a straight conversion: amount_light / 800 = USD.
+-- Withdrawal is a straight conversion: amount_light / 100 = USD.
 
 DROP FUNCTION IF EXISTS create_payout_record(UUID, FLOAT, FLOAT, FLOAT, FLOAT);
 DROP FUNCTION IF EXISTS create_payout_record(UUID, FLOAT, FLOAT, FLOAT);

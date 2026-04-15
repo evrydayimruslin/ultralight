@@ -28,6 +28,8 @@ export interface DynamicExecuteOptions {
   envVars?: Record<string, string>;
   /** Execution timeout in ms (default 60s) */
   timeoutMs?: number;
+  /** Attached files from chat input — available as `__files` in recipe code */
+  files?: Array<{ name: string; size: number; mimeType: string; content: string }>;
 }
 
 // ============================================
@@ -48,7 +50,7 @@ export interface DynamicExecuteOptions {
 export async function executeDynamicCodeMode(
   options: DynamicExecuteOptions,
 ): Promise<ExecuteResult> {
-  const { code, toolMap, appBundles, bindings, userContext, envVars, timeoutMs = 60_000 } = options;
+  const { code, toolMap, appBundles, bindings, userContext, envVars, timeoutMs = 60_000, files } = options;
   const loader = globalThis.__env?.LOADER;
 
   if (!loader) {
@@ -72,7 +74,7 @@ export async function executeDynamicCodeMode(
   }
 
   // Build the recipe module
-  const recipeModule = buildRecipeModule(code, toolMap);
+  const recipeModule = buildRecipeModule(code, toolMap, files);
 
   // Setup module: sets globalThis.ultralight with lazy getters
   // MUST run before any app module that captures globalThis.ultralight at init time
@@ -191,6 +193,7 @@ globalThis.ultralight = {
 function buildRecipeModule(
   recipeCode: string,
   toolMap: Record<string, { appId: string; fnName: string }>,
+  files?: Array<{ name: string; size: number; mimeType: string; content: string }>,
 ): string {
   // Collect unique app IDs
   const appIds = [...new Set(Object.values(toolMap).map(t => t.appId))];
@@ -245,6 +248,9 @@ ${toolEntries.join(',\n')}
       warn: (...args) => logs.push('[warn] ' + args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')),
       error: (...args) => logs.push('[error] ' + args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')),
     };
+
+    // Attached files from chat input — available as __files in recipe code
+    const __files = ${files?.length ? JSON.stringify(files) : '[]'};
 
     try {
       // Recipe code is inlined directly — no eval/AsyncFunction needed

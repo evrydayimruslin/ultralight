@@ -5,7 +5,7 @@
 // Flow per payout:
 //   1. Query get_releasable_payouts() RPC for mature held payouts
 //   2. For each: mark_payout_releasing() to atomically transition held → pending
-//   3. Execute Stripe Transfer (platform → connected account) — amount in USD = Light / 800
+//   3. Execute Stripe Transfer (platform → connected account) — amount in USD = Light / 100
 //   4. Execute Stripe Payout (connected account → bank)
 //   5. Update payout record with Stripe IDs and status
 //   6. On failure: call fail_payout_refund() to restore developer balance
@@ -34,7 +34,7 @@ export interface PayoutProcessorResult {
   errors: string[];
 }
 
-/** Convert a Light amount to USD cents at the payout rate (800 Light/$1). */
+/** Convert a Light amount to USD cents at the payout rate (100 Light/$1). */
 function lightToUsdCents(amountLight: number): number {
   return Math.round((amountLight / LIGHT_PER_DOLLAR_PAYOUT) * 100);
 }

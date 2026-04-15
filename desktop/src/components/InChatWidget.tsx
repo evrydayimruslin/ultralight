@@ -38,8 +38,10 @@ export default function InChatWidget({
   // Bridge: call MCP functions from within the widget.
   // Sends unprefixed function names when slug is empty.
   window.ulAction = function(functionName, args) {
-    var toolName = _appSlug ? (_appSlug + '_' + functionName) : functionName;
-    return fetch(_apiBase + '/mcp/' + _appUuid, {
+    var isPlatform = functionName.indexOf('ultralight.') === 0 || functionName.indexOf('ul.') === 0;
+    var toolName = isPlatform ? functionName : (_appSlug ? (_appSlug + '_' + functionName) : functionName);
+    var endpoint = isPlatform ? (_apiBase + '/mcp/platform') : (_apiBase + '/mcp/' + _appUuid);
+    return fetch(endpoint, {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + _token, 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -56,6 +58,11 @@ export default function InChatWidget({
       if (!text) return null;
       try { return JSON.parse(text); } catch(e) { return text; }
     });
+  };
+
+  // Open another widget in a new window
+  window.ulOpenWidget = function(widgetName, context) {
+    parent.postMessage({ type: 'ul-open-widget', widgetName: widgetName, context: context || {} }, '*');
   };
 
   // Override dashboard-style height:100% and overflow:hidden for inline rendering.

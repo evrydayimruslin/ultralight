@@ -41,6 +41,14 @@ export type OrchestrateEvent =
   | { type: 'done' }
   | { type: 'error'; message: string };
 
+/** File attachment sent from the desktop client */
+export interface ChatFileAttachment {
+  name: string;
+  size: number;
+  mimeType: string;
+  content: string; // base64 data URL
+}
+
 export interface OrchestrateRequest {
   message: string;
   conversationHistory?: Array<{ role: string; content: string }>;
@@ -53,6 +61,8 @@ export interface OrchestrateRequest {
   projectContext?: string;
   /** Conversation ID for rolling summary persistence */
   conversationId?: string;
+  /** Attached files from the chat input */
+  files?: ChatFileAttachment[];
 }
 
 // ── Main Orchestration Loop ──
@@ -66,7 +76,7 @@ export async function* orchestrate(
   userId: string,
   userEmail: string,
 ): AsyncGenerator<OrchestrateEvent> {
-  const { message, conversationHistory, interpreterModel, heavyModel, scope, systemAgentStates, systemAgentContext, projectContext, conversationId } = request;
+  const { message, conversationHistory, interpreterModel, heavyModel, scope, systemAgentStates, systemAgentContext, projectContext, conversationId, files } = request;
 
   // ── Phase 1: Flash Broker (yields live events) ──
 
@@ -84,6 +94,7 @@ export async function* orchestrate(
       systemAgentContext,
       projectContext,
       conversationId,
+      files,
     );
 
     // Forward Flash events to client as they happen
@@ -156,6 +167,22 @@ export async function* orchestrate(
   // ── System Agent Delegations (if Flash recommended any) ──
   if (brokerResult.systemAgentDelegations?.length) {
     for (const d of brokerResult.systemAgentDelegations) {
+      // Tool Dealer discovery: render inline discover widget instead of spawning agent chat
+      if (d.agentType === 'tool_marketer' && d.task) {
+        // Extract search intent from the task description
+        const searchQuery = d.task
+          .replace(/^User needs?\s*/i, '')
+          .replace(/\.\s*Search marketplace.*$/i, '')
+          .replace(/\.\s*Help them.*$/i, '')
+          .trim();
+        yield {
+          type: 'flash_direct' as const,
+          content: `I'll help you find the right tools.\n\n{{discover:${searchQuery || d.originalPrompt}}}`,
+        };
+        yield { type: 'done' };
+        return; // Don't continue to heavy model — discovery widget handles the UX
+      }
+
       yield { type: 'system_agent_spawn' as const, agentType: d.agentType, task: d.task, originalPrompt: d.originalPrompt };
     }
   }
@@ -217,11 +244,25 @@ export async function* orchestrate(
     return;
   }
 
-  const codemodeToolDef = buildCodemodeToolDef(brokerResult);
+  const codemodeToolDef = buildCodemodeToolDef(brokerResult, files);
 
   // Heavy model gets Flash's prompt as the ONLY user message — NO system prompt
+  // Include image files as multimodal content so Heavy can see them
+  let heavyContent: unknown = brokerResult.prompt;
+  if (files?.length) {
+    const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp']);
+    const imageFiles = files.filter(f => IMAGE_MIMES.has(f.mimeType));
+    if (imageFiles.length > 0) {
+      const parts: unknown[] = [{ type: 'text', text: brokerResult.prompt }];
+      for (const f of imageFiles) {
+        const url = f.content.startsWith('data:') ? f.content : `data:${f.mimeType};base64,${f.content}`;
+        parts.push({ type: 'image_url', image_url: { url } });
+      }
+      heavyContent = parts;
+    }
+  }
   const heavyMessages: Array<{ role: string; content: unknown }> = [
-    { role: 'user', content: brokerResult.prompt },
+    { role: 'user', content: heavyContent },
   ];
 
   let heavyUsage: object = {};
@@ -248,7 +289,7 @@ export async function* orchestrate(
       let execError: string | undefined;
 
       try {
-        const execResult = await executeRecipe(recipeCode, brokerResult, userId, userEmail);
+        const execResult = await executeRecipe(recipeCode, brokerResult, userId, userEmail, files);
         if (execResult.error) {
           execError = execResult.error;
         } else {
@@ -464,6 +505,7 @@ async function executeRecipe(
   brokerResult: FlashBrokerResult,
   userId: string,
   userEmail: string,
+  files?: ChatFileAttachment[],
 ): Promise<{ result: unknown; error?: string; logs: string[] }> {
   const appIds = brokerResult.involvedAppIds;
 
@@ -516,17 +558,26 @@ async function executeRecipe(
     bindings,
     userContext: { id: userId, email: userEmail },
     timeoutMs: 60_000,
+    files,
   });
 }
 
 // ── Tool Definition Builder ──
 
-function buildCodemodeToolDef(brokerResult: FlashBrokerResult): object {
+function buildCodemodeToolDef(brokerResult: FlashBrokerResult, files?: ChatFileAttachment[]): object {
   const fnList = Object.entries(brokerResult.toolMap)
     .map(([name]) => `codemode.${name}()`)
     .join(', ');
 
   let description = `Execute a JavaScript recipe. Available functions: ${fnList}.`;
+
+  if (files?.length) {
+    description += `\n\nUser attached files — available as the \`__files\` array. Each file has { name, size, mimeType, content (base64 data URL) }.`;
+    for (const f of files) {
+      description += `\n- __files[${files.indexOf(f)}]: "${f.name}" (${f.mimeType}, ${f.size} bytes)`;
+    }
+    description += `\nPass file content to functions like: codemode.quick_start({ topic: "...", file_content: __files[0].content, file_name: __files[0].name })`;
+  }
 
   if (brokerResult.functions) {
     description += `\n\nType declarations:\n${brokerResult.functions}`;

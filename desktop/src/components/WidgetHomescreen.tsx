@@ -4,6 +4,7 @@
 
 import type { WidgetAppSource } from '../hooks/useWidgetInbox';
 import type { WidgetMeta } from '../../../shared/types/index';
+import { openWidgetWindow } from '../lib/multiWindow';
 
 interface WidgetHomescreenProps {
   sources: WidgetAppSource[];
@@ -44,6 +45,19 @@ export default function WidgetHomescreen({ sources, metas, loading, onOpenWidget
           onClick={() => onOpenWidget(source)}
           className="relative flex flex-col items-center justify-center gap-2 p-5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-300 hover:shadow-sm transition-all cursor-pointer text-center group"
         >
+          {/* Pop-out button (top-left, visible on hover) */}
+          <span
+            role="button"
+            tabIndex={-1}
+            onClick={(e) => { e.stopPropagation(); openWidgetWindow(source); }}
+            className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-gray-200 transition-all text-gray-400 hover:text-gray-700"
+            title="Open in new window"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+            </svg>
+          </span>
+
           {/* Badge */}
           {meta!.badge_count > 0 && (
             <span className="absolute top-2 right-2 min-w-[20px] h-5 flex items-center justify-center text-[11px] font-semibold bg-red-500 text-white rounded-full px-1.5">

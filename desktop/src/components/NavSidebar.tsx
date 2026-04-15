@@ -3,9 +3,11 @@
 // and bottom profile menu (Profile/Wallet/Settings).
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { CirclePlus, Compass, Package, Wallet, Settings, User, Wrench, Store } from 'lucide-react';
+import { CirclePlus, Compass, Package, Wallet, Settings, User, Wrench, Store, HelpCircle } from 'lucide-react';
 import type { Agent } from '../hooks/useAgentFleet';
 import type { AppView } from '../hooks/useAppState';
+import type { PopoutView } from '../lib/multiWindow';
+import type { OnboardingHighlight } from './OnboardingWizard';
 import { getToken, getApiBase } from '../lib/storage';
 import { SYSTEM_AGENTS, SYSTEM_AGENT_ORDER, type SystemAgentType } from '../lib/systemAgents';
 
@@ -15,6 +17,8 @@ interface NavSidebarProps {
   agents: Agent[];
   activeView: AppView;
   isOpen: boolean;
+  onboardingHighlight?: OnboardingHighlight;
+  onShowTutorial?: () => void;
   onNavigateHome: () => void;
   onNavigateToCapabilities: () => void;
   onNavigateToProfile: () => void;
@@ -27,6 +31,8 @@ interface NavSidebarProps {
   onNewSession: (agentId: string) => void;
   onRenameAgent: (agentId: string, newName: string) => void;
   isAgentRunning: (agentId: string) => boolean;
+  onOpenInNewWindow?: (view: PopoutView) => void;
+  onNewSystemAgentSession?: (agentType: string, agentName: string) => void;
 }
 
 // ── Helpers (ported from AgentSidebar) ──
@@ -103,21 +109,31 @@ function setCollapsed(key: string, val: boolean) {
 
 // ── Sub-components ──
 
-function NavItem({ icon, label, active, onClick }: {
+function NavItem({ icon, label, active, highlighted, onClick, onContextMenu }: {
   icon: React.ReactNode;
   label: string;
   active: boolean;
+  highlighted?: boolean;
   onClick: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }) {
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-small transition-colors
-        ${active
-          ? 'bg-ul-bg-active text-ul-text font-medium'
-          : 'text-ul-text-secondary hover:bg-ul-bg-hover hover:text-ul-text'
+      onContextMenu={onContextMenu}
+      className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-small transition-all relative
+        ${highlighted
+          ? 'bg-white text-ul-text font-medium'
+          : active
+            ? 'bg-ul-bg-active text-ul-text font-medium'
+            : 'text-ul-text-secondary hover:bg-ul-bg-hover hover:text-ul-text'
         }`}
     >
+      {highlighted && (
+        <span className="absolute -right-8 top-1/2 -translate-y-1/2 z-50 pointer-events-none text-ul-text">
+          <svg width="8" height="12" viewBox="0 0 8 12" fill="currentColor"><path d="M0 6L8 12V0z"/></svg>
+        </span>
+      )}
       {icon}
       <span className="truncate">{label}</span>
     </button>
@@ -188,12 +204,17 @@ export default function NavSidebar({
   onNewSession,
   onRenameAgent,
   isAgentRunning,
+  onboardingHighlight,
+  onShowTutorial,
+  onOpenInNewWindow,
+  onNewSystemAgentSession,
 }: NavSidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [systemAgentsExpanded, setSystemAgentsExpanded] = useState(() => !getCollapsed('ul_nav_system_agents_collapsed', false));
   const [agentsExpanded, setAgentsExpanded] = useState(() => !getCollapsed('ul_nav_agents_collapsed', false));
   const [contextMenu, setContextMenu] = useState<{ agentId: string; x: number; y: number } | null>(null);
+  const [navContextMenu, setNavContextMenu] = useState<{ view: PopoutView; x: number; y: number } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [renamingAgentId, setRenamingAgentId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -201,6 +222,7 @@ export default function NavSidebar({
   const [userInfo, setUserInfo] = useState<{ email: string; display_name: string | null } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const navContextMenuRef = useRef<HTMLDivElement>(null);
   const profileMenuRef = useRef<HTMLDivElement>(null);
 
   // Fetch user info for profile menu
@@ -228,6 +250,18 @@ export default function NavSidebar({
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [contextMenu]);
+
+  // Close nav context menu on click outside
+  useEffect(() => {
+    if (!navContextMenu) return;
+    const handleClick = (e: MouseEvent) => {
+      if (navContextMenuRef.current && !navContextMenuRef.current.contains(e.target as Node)) {
+        setNavContextMenu(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [navContextMenu]);
 
   // Close profile menu on click outside
   useEffect(() => {
@@ -294,6 +328,41 @@ export default function NavSidebar({
     setContextMenu(null);
   }, [contextMenu, agents]);
 
+  const handleOpenInNewWindowFromMenu = useCallback(() => {
+    if (!contextMenu || !onOpenInNewWindow) return;
+    const agent = agents.find(a => a.id === contextMenu.agentId);
+    onOpenInNewWindow({ kind: 'chat', agentId: contextMenu.agentId, agentName: agent?.name || 'Chat' });
+    setContextMenu(null);
+  }, [contextMenu, agents, onOpenInNewWindow]);
+
+  const handleNewSystemSessionInWindow = useCallback(() => {
+    if (!contextMenu || !onNewSystemAgentSession) return;
+    const agent = agents.find(a => a.id === contextMenu.agentId);
+    if (agent?.system_agent_type) {
+      onNewSystemAgentSession(agent.system_agent_type, agent.name);
+    }
+    setContextMenu(null);
+  }, [contextMenu, agents, onNewSystemAgentSession]);
+
+  const handleNavContextMenu = useCallback((e: React.MouseEvent, view: PopoutView) => {
+    if (!onOpenInNewWindow) return;
+    e.preventDefault();
+    setNavContextMenu({ view, x: e.clientX, y: e.clientY });
+  }, [onOpenInNewWindow]);
+
+  const handleNavOpenInNewWindow = useCallback(() => {
+    if (!navContextMenu || !onOpenInNewWindow) return;
+    onOpenInNewWindow(navContextMenu.view);
+    setNavContextMenu(null);
+  }, [navContextMenu, onOpenInNewWindow]);
+
+  const handleProfileItemContextMenu = useCallback((e: React.MouseEvent, view: PopoutView) => {
+    if (!onOpenInNewWindow) return;
+    e.preventDefault();
+    setProfileMenuOpen(false);
+    onOpenInNewWindow(view);
+  }, [onOpenInNewWindow]);
+
   const handleRenameSubmit = useCallback(() => {
     if (!renamingAgentId) return;
     const trimmed = renameValue.trim();
@@ -304,15 +373,23 @@ export default function NavSidebar({
 
   if (!isOpen) return null;
 
-  // Partition: system agents vs regular chat agents
-  const systemAgents = agents
-    .filter(a => a.is_system === 1 && SYSTEM_AGENTS.some(c => c.type === a.system_agent_type))
+  // Partition: canonical system agents (one per type, oldest) vs the rest
+  const canonicalByType = new Map<string, Agent>();
+  for (const a of agents) {
+    if (a.is_system !== 1 || !SYSTEM_AGENTS.some(c => c.type === a.system_agent_type)) continue;
+    const prev = canonicalByType.get(a.system_agent_type!);
+    if (!prev || a.created_at < prev.created_at) canonicalByType.set(a.system_agent_type!, a);
+  }
+  const canonicalIds = new Set([...canonicalByType.values()].map(a => a.id));
+
+  const systemAgents = [...canonicalByType.values()]
     .sort((a, b) =>
       SYSTEM_AGENT_ORDER.indexOf(a.system_agent_type as SystemAgentType) -
       SYSTEM_AGENT_ORDER.indexOf(b.system_agent_type as SystemAgentType)
     );
 
-  const chatAgents = agents.filter(a => a.is_system !== 1);
+  // Chat agents: regular chats + system agent instances (non-canonical)
+  const chatAgents = agents.filter(a => !canonicalIds.has(a.id));
 
   // Sort chat agents: running first, then by updated_at
   const sorted = [...chatAgents].sort((a, b) => {
@@ -323,7 +400,8 @@ export default function NavSidebar({
   });
 
   const timeGroups = groupAgentsByTime(sorted);
-  const activeAgentId = activeView.kind === 'agent' ? activeView.agentId : null;
+  const tutorialActive = onboardingHighlight && onboardingHighlight !== 'none';
+  const activeAgentId = tutorialActive ? null : (activeView.kind === 'agent' ? activeView.agentId : null);
   const displayName = userInfo?.display_name || userInfo?.email?.split('@')[0] || 'User';
   const initial = displayName.charAt(0).toUpperCase();
 
@@ -334,64 +412,87 @@ export default function NavSidebar({
         <NavItem
           icon={CommandIcon}
           label="Command"
-          active={activeView.kind === 'home'}
+          active={!onboardingHighlight || onboardingHighlight === 'none' ? activeView.kind === 'home' : false}
+          highlighted={onboardingHighlight === 'chat-command'}
           onClick={onNavigateHome}
+          onContextMenu={e => handleNavContextMenu(e, { kind: 'home' })}
         />
         <NavItem
           icon={ToolsIcon}
           label="Tools"
-          active={activeView.kind === 'capabilities'}
+          active={!onboardingHighlight || onboardingHighlight === 'none' ? activeView.kind === 'capabilities' : false}
+          highlighted={onboardingHighlight === 'tools'}
           onClick={onNavigateToCapabilities}
+          onContextMenu={e => handleNavContextMenu(e, { kind: 'capabilities' })}
         />
         <NavItem
           icon={NewSessionIcon}
           label="New Chat"
-          active={activeView.kind === 'new-chat'}
+          active={!onboardingHighlight || onboardingHighlight === 'none' ? activeView.kind === 'new-chat' : false}
+          highlighted={onboardingHighlight === 'chat-command'}
           onClick={onNewAgent}
         />
       </nav>
 
-      {/* Unified scrollable area for all sections */}
-      <div className="flex-1 overflow-y-auto min-h-0">
-        <div className="h-2.5" />
-        {/* System Agents */}
-        {systemAgents.length > 0 && (
+      {/* System Agents — sticky, not scrollable */}
+      {systemAgents.length > 0 && (
+        <div className="flex-shrink-0 px-0 overflow-visible">
+          <div className="h-2.5" />
           <CollapsibleSection
             title="Agents"
             expanded={systemAgentsExpanded}
             onToggle={toggleSystemAgents}
           >
-            {systemAgents.map(agent => (
+            {systemAgents.map(agent => {
+              const isAgentHighlighted = onboardingHighlight === 'agents' &&
+                (agent.system_agent_type === 'tool_builder' || agent.system_agent_type === 'tool_marketer');
+              return (
               <button
                 key={agent.id}
                 onClick={() => onSelectAgent(agent.id)}
                 onContextMenu={e => handleContextMenu(e, agent.id)}
-                className={`w-full text-left px-3 py-1.5 rounded-md transition-colors mx-1
-                  ${activeAgentId === agent.id
-                    ? 'bg-ul-bg-active'
-                    : 'hover:bg-ul-bg-hover'
+                className={`w-full text-left px-3 py-1.5 rounded-md transition-all mx-1 relative
+                  ${isAgentHighlighted
+                    ? 'bg-white'
+                    : activeAgentId === agent.id
+                      ? 'bg-ul-bg-active'
+                      : 'hover:bg-ul-bg-hover'
                   }`}
                 style={{ width: 'calc(100% - 8px)' }}
               >
+                {isAgentHighlighted && (
+                  <span className="absolute -right-7 top-1/2 -translate-y-1/2 z-50 pointer-events-none text-ul-text">
+                    <svg width="8" height="12" viewBox="0 0 8 12" fill="currentColor"><path d="M0 6L8 12V0z"/></svg>
+                  </span>
+                )}
                 <div className="flex items-center gap-2">
                   <SystemAgentIcon type={agent.system_agent_type} />
                   <span className="text-small text-ul-text truncate flex-1">{agent.name}</span>
-                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDot(agent.status)}`} />
                 </div>
               </button>
-            ))}
+              );
+            })}
           </CollapsibleSection>
-        )}
+        </div>
+      )}
 
-        <div className="h-2.5" />
-
-        {/* Chats */}
-        <CollapsibleSection
-          title="Chats"
-          expanded={agentsExpanded}
-          onToggle={toggleAgents}
-          trailing={
-            agents.length > 0 ? (
+      {/* Chats header — sticky */}
+      <div className="flex-shrink-0 mt-1">
+        <div className="flex items-center px-3 py-1.5">
+          <button
+            onClick={toggleAgents}
+            className="flex items-center gap-1 text-caption font-medium text-ul-text-muted uppercase tracking-wider hover:text-ul-text-secondary transition-colors"
+          >
+            Chats
+            <svg
+              width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
+              className={`transition-transform ${agentsExpanded ? '' : '-rotate-90'}`}
+            >
+              <path d="M3 4.5L6 7.5L9 4.5" />
+            </svg>
+          </button>
+          {agents.length > 0 && (
+            <div className="ml-auto">
               <button
                 onClick={e => { e.stopPropagation(); setSearchOpen(true); }}
                 className="p-0.5 rounded hover:bg-ul-bg-hover text-ul-text-muted hover:text-ul-text-secondary transition-colors"
@@ -402,9 +503,14 @@ export default function NavSidebar({
                   <line x1="10.5" y1="10.5" x2="14" y2="14" />
                 </svg>
               </button>
-            ) : null
-          }
-        >
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Scrollable chat list */}
+      <div className="flex-1 overflow-y-auto min-h-0">
+        {agentsExpanded && <div className="px-1">
           {/* Time-grouped agent list */}
           {timeGroups.length === 0 ? (
             <div className="px-3 py-4 text-center text-caption text-ul-text-muted">
@@ -414,13 +520,12 @@ export default function NavSidebar({
             timeGroups.map(group => (
               <div key={group.label}>
                 <div className="px-3 py-1">
-                  <span className="text-caption text-ul-text-muted">{group.label}</span>
+                  <span className="text-ul-text" style={{ fontSize: '10px' }}>{group.label}</span>
                 </div>
                 {group.agents.map(agent => (
                   renamingAgentId === agent.id ? (
                     <div key={agent.id} className="flex items-center gap-2 px-3 py-1.5 mx-1" style={{ width: 'calc(100% - 8px)' }}>
-                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDot(agent.status)}`} />
-                      <input
+                          <input
                         type="text"
                         value={renameValue}
                         onChange={e => setRenameValue(e.target.value)}
@@ -443,11 +548,11 @@ export default function NavSidebar({
                       style={{ width: 'calc(100% - 8px)' }}
                     >
                       <div className="flex items-center gap-2">
-                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDot(agent.status)}`} />
-                        <span className="text-small text-ul-text truncate flex-1">{agent.name}</span>
-                        <span className="text-caption text-ul-text-muted flex-shrink-0">
-                          {formatRelativeTime(agent.updated_at)}
-                        </span>
+                              {agent.system_agent_type
+                                ? <SystemAgentIcon type={agent.system_agent_type} />
+                                : <span className="w-1.5 h-1.5 rounded-full bg-gray-300 flex-shrink-0" />
+                              }
+                              <span className="text-caption text-ul-text truncate flex-1 font-normal">{agent.name}</span>
                       </div>
                     </button>
                   )
@@ -455,7 +560,7 @@ export default function NavSidebar({
               </div>
             ))
           )}
-        </CollapsibleSection>
+        </div>}
       </div>
 
       {/* Profile menu trigger */}
@@ -464,6 +569,7 @@ export default function NavSidebar({
           <div className="absolute bottom-full left-2 right-2 mb-1 bg-white border border-ul-border rounded-md shadow-md py-1 z-50">
             <button
               onClick={() => { setProfileMenuOpen(false); onNavigateToProfile(); }}
+              onContextMenu={e => handleProfileItemContextMenu(e, { kind: 'profile' })}
               className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100 flex items-center gap-2.5"
             >
               <User {...iconProps} />
@@ -471,6 +577,7 @@ export default function NavSidebar({
             </button>
             <button
               onClick={() => { setProfileMenuOpen(false); onNavigateToWallet(); }}
+              onContextMenu={e => handleProfileItemContextMenu(e, { kind: 'wallet' })}
               className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100 flex items-center gap-2.5"
             >
               <Wallet {...iconProps} />
@@ -478,11 +585,24 @@ export default function NavSidebar({
             </button>
             <button
               onClick={() => { setProfileMenuOpen(false); onNavigateToSettings(); }}
+              onContextMenu={e => handleProfileItemContextMenu(e, { kind: 'settings' })}
               className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100 flex items-center gap-2.5"
             >
               <Settings {...iconProps} />
               Settings
             </button>
+            {onShowTutorial && (
+              <>
+                <div className="border-t border-ul-border my-1" />
+                <button
+                  onClick={() => { setProfileMenuOpen(false); onShowTutorial(); }}
+                  className="w-full text-left px-3 py-1.5 text-small text-ul-text-secondary hover:bg-gray-100 flex items-center gap-2.5"
+                >
+                  <HelpCircle {...iconProps} />
+                  Tutorial
+                </button>
+              </>
+            )}
           </div>
         )}
         <button
@@ -559,8 +679,7 @@ export default function NavSidebar({
                       className={`w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-gray-50 transition-colors
                         ${activeAgentId === agent.id ? 'bg-gray-50' : ''}`}
                     >
-                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDot(agent.status)}`} />
-                      <div className="flex-1 min-w-0">
+                          <div className="flex-1 min-w-0">
                         <div className="text-sm text-ul-text truncate">{agent.name}</div>
                         {agent.initial_task && (
                           <div className="text-xs text-ul-text-muted truncate">{agent.initial_task}</div>
@@ -580,11 +699,11 @@ export default function NavSidebar({
       {/* Context menu */}
       {contextMenu && (() => {
         const menuAgent = agents.find(a => a.id === contextMenu.agentId);
-        const isSystem = menuAgent?.is_system === 1;
+        const isCanonical = canonicalIds.has(contextMenu.agentId);
         return (
           <div
             ref={contextMenuRef}
-            className="fixed z-50 bg-white border border-ul-border rounded-md shadow-md py-1 min-w-[140px]"
+            className="fixed z-50 bg-white border border-ul-border rounded-md shadow-md py-1 max-w-[200px]"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
             {isAgentRunning(contextMenu.agentId) && (
@@ -601,7 +720,23 @@ export default function NavSidebar({
             >
               New Session
             </button>
-            {!isSystem && (
+            {onOpenInNewWindow && (
+              <button
+                onClick={handleOpenInNewWindowFromMenu}
+                className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100"
+              >
+                Open in New Window ↗
+              </button>
+            )}
+            {isCanonical && onNewSystemAgentSession && (
+              <button
+                onClick={handleNewSystemSessionInWindow}
+                className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100"
+              >
+                New Session in Window ↗
+              </button>
+            )}
+            {!isCanonical && (
               <button
                 onClick={handleRenameFromMenu}
                 className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100"
@@ -609,7 +744,7 @@ export default function NavSidebar({
                 Rename
               </button>
             )}
-            {!isSystem && (
+            {!isCanonical && (
               <button
                 onClick={handleDeleteFromMenu}
                 className={`w-full text-left px-3 py-1.5 text-small hover:bg-gray-100
@@ -622,6 +757,22 @@ export default function NavSidebar({
           </div>
         );
       })()}
+
+      {/* Nav context menu (for primary nav items) */}
+      {navContextMenu && (
+        <div
+          ref={navContextMenuRef}
+          className="fixed z-50 bg-white border border-ul-border rounded-md shadow-md py-1 max-w-[200px]"
+          style={{ left: navContextMenu.x, top: navContextMenu.y }}
+        >
+          <button
+            onClick={handleNavOpenInNewWindow}
+            className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100"
+          >
+            Open in New Window ↗
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 {
   "name": "Private Tutor",
-  "version": "1.0.0",
+  "version": "4.0.0",
   "type": "mcp",
   "description": "Your personal AI tutor. Generates quizzes to assess your understanding, creates custom lessons targeting your weak spots, and tracks your progress over time with spaced repetition.",
   "author": "ultralight",
@@ -8,7 +8,23 @@
     "functions": "index.ts"
   },
   "permissions": ["ai:call"],
+  "widgets": [
+    { "id": "quiz", "label": "Quiz" },
+    { "id": "progress", "label": "Study Progress" },
+    { "id": "lessons", "label": "Lessons" }
+  ],
   "functions": {
+    "quick_start": {
+      "description": "Instantly start studying a topic or uploaded material. Extracts subject + concepts via AI, creates them in your library, and returns everything ready for quizzing or lessons.",
+      "parameters": {
+        "topic": { "type": "string", "description": "Free text topic (e.g. 'photosynthesis', 'WW2 causes')" },
+        "file_content": { "type": "string", "description": "Base64 data URL of uploaded file content" },
+        "file_name": { "type": "string", "description": "Original filename (e.g. 'notes.pdf')" },
+        "count": { "type": "number", "description": "Number of concepts to extract (default: auto 3-8)" },
+        "mode": { "type": "string", "description": "Mode: 'quiz' (start quiz after), 'lesson' (generate lesson after), 'setup' (just create concepts)" }
+      },
+      "returns": { "type": "object", "description": "Subject ID, concept list, and summary" }
+    },
     "add_concept": {
       "description": "Add a concept to study. Concepts can be organized hierarchically with parent-child relationships.",
       "parameters": {
@@ -43,8 +59,42 @@
       },
       "returns": { "type": "object", "description": "Concept tree with parent-child relationships" }
     },
+    "start_quiz": {
+      "description": "Start an interactive quiz session. Returns a session ID and the first question. Questions target weak areas using spaced repetition data and student profile.",
+      "parameters": {
+        "subject_id": { "type": "string", "description": "Quiz on concepts from this subject" },
+        "concept_ids": { "type": "array", "description": "Specific concept IDs to quiz on", "items": { "type": "string" } },
+        "count": { "type": "number", "description": "Number of questions (default 5, max 15)" }
+      },
+      "returns": { "type": "object", "description": "Session ID and first question with options" }
+    },
+    "submit_answer": {
+      "description": "Submit an answer for a quiz question. For MC questions, provide the letter (A-D). For open-ended questions, provide your written answer. AI grades open-ended responses with score (1-5), feedback, and misconception detection.",
+      "parameters": {
+        "session_id": { "type": "string", "description": "Quiz session ID", "required": true },
+        "answer_id": { "type": "string", "description": "Answer row ID", "required": true },
+        "user_answer": { "type": "string", "description": "Answer letter (A-D) for MC, or written response for open-ended", "required": true }
+      },
+      "returns": { "type": "object", "description": "Correctness, score (1-5), feedback, misconceptions, and next question" }
+    },
+    "complete_quiz": {
+      "description": "Complete a quiz session. Calculates score, updates student profile, identifies weak areas, and optionally generates a lesson.",
+      "parameters": {
+        "session_id": { "type": "string", "description": "Quiz session ID", "required": true }
+      },
+      "returns": { "type": "object", "description": "Score, per-concept breakdown, weak/strong areas, and auto-generated lesson if score is low" }
+    },
+    "generate_lesson": {
+      "description": "Generate a personalized lesson targeting specific weak concepts. Can be triggered after a quiz or manually for any concepts.",
+      "parameters": {
+        "subject_id": { "type": "string", "description": "Subject to generate lesson for" },
+        "concept_ids": { "type": "array", "description": "Specific concept IDs to cover", "items": { "type": "string" } },
+        "quiz_session_id": { "type": "string", "description": "Generate lesson based on quiz wrong answers" }
+      },
+      "returns": { "type": "object", "description": "Lesson content in markdown with title and concepts covered" }
+    },
     "quiz": {
-      "description": "Generate an AI-powered quiz on your concepts. Focuses on weak areas by default.",
+      "description": "Generate a quick quiz (legacy — prefer start_quiz for interactive sessions).",
       "parameters": {
         "subject_id": { "type": "string", "description": "Quiz on concepts from this subject" },
         "concept_ids": { "type": "array", "description": "Specific concept IDs to quiz on", "items": { "type": "string" } },
@@ -53,9 +103,82 @@
       "returns": { "type": "object", "description": "Quiz questions with options, answers, and explanations" }
     },
     "status": {
-      "description": "Overview of subjects, concepts, and average understanding.",
+      "description": "Overview of subjects, concepts, mastery levels, recent quiz scores, and student profile strengths/weaknesses.",
+      "parameters": {
+        "subject_id": { "type": "string", "description": "Filter to a specific subject" }
+      },
+      "returns": { "type": "object", "description": "Comprehensive study stats with per-subject mastery" }
+    },
+    "conventions_get": {
+      "description": "Get study conventions and progress notes that are injected as AI context.",
+      "parameters": {
+        "key": { "type": "string", "description": "Specific convention key" },
+        "category": { "type": "string", "description": "Filter by category" }
+      },
+      "returns": { "type": "object", "description": "Convention entries" }
+    },
+    "conventions_set": {
+      "description": "Set a study convention or progress note.",
+      "parameters": {
+        "key": { "type": "string", "description": "Convention key", "required": true },
+        "value": { "type": "string", "description": "Convention value", "required": true },
+        "category": { "type": "string", "description": "Category (default: general)" }
+      },
+      "returns": { "type": "object", "description": "Confirmation" }
+    },
+    "widget_quiz_ui": {
+      "description": "Quiz widget UI — interactive card-swipe quiz interface.",
       "parameters": {},
-      "returns": { "type": "object", "description": "Study stats" }
+      "returns": { "type": "object", "description": "Widget HTML and metadata" }
+    },
+    "widget_quiz_data": {
+      "description": "Quiz widget data — handles quick_start, quiz start, answer submission, and completion.",
+      "parameters": {
+        "action": { "type": "string", "description": "Action: subjects, quick_start, start, answer, complete" },
+        "session_id": { "type": "string" },
+        "answer_id": { "type": "string" },
+        "user_answer": { "type": "string" },
+        "subject_id": { "type": "string" },
+        "count": { "type": "number" },
+        "topic": { "type": "string" },
+        "file_content": { "type": "string" },
+        "file_name": { "type": "string" }
+      },
+      "returns": { "type": "object", "description": "Action-specific response data" }
+    },
+    "widget_progress_ui": {
+      "description": "Study progress widget UI — mastery bars, quiz history, strengths/weaknesses.",
+      "parameters": {},
+      "returns": { "type": "object", "description": "Widget HTML and metadata" }
+    },
+    "widget_progress_data": {
+      "description": "Study progress widget data. Supports quick_start action for onboarding.",
+      "parameters": {
+        "action": { "type": "string", "description": "Action: quick_start or omit for status" },
+        "topic": { "type": "string" },
+        "file_content": { "type": "string" },
+        "file_name": { "type": "string" }
+      },
+      "returns": { "type": "object", "description": "Full study status data" }
+    },
+    "widget_lessons_ui": {
+      "description": "Lessons widget UI — browse and read personalized lessons.",
+      "parameters": {},
+      "returns": { "type": "object", "description": "Widget HTML and metadata" }
+    },
+    "widget_lessons_data": {
+      "description": "Lessons widget data — list, fetch, quick_start, or generate_lesson.",
+      "parameters": {
+        "action": { "type": "string", "description": "Action: quick_start, generate_lesson, or omit for list" },
+        "lesson_id": { "type": "string", "description": "Fetch specific lesson by ID" },
+        "limit": { "type": "number", "description": "Max lessons to return (default 10)" },
+        "topic": { "type": "string" },
+        "file_content": { "type": "string" },
+        "file_name": { "type": "string" },
+        "subject_id": { "type": "string" },
+        "concept_ids": { "type": "array", "items": { "type": "string" } }
+      },
+      "returns": { "type": "object", "description": "Lesson list or single lesson content" }
     }
   }
 }

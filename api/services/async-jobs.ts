@@ -178,7 +178,7 @@ export async function failJob(jobId: string, error: {
 export async function getJob(jobId: string, userId: string): Promise<AsyncJob | null> {
   const res = await fetch(
     `${getEnv('SUPABASE_URL')}/rest/v1/async_jobs?id=eq.${jobId}&user_id=eq.${userId}&select=*`,
-    { headers: supabaseHeaders }
+    { headers: supabaseHeaders() }
   );
 
   if (!res.ok) return null;

@@ -149,8 +149,8 @@ async function testExecutorTimed(): Promise<void> {
 
   assert(result.success === true, `success: ${result.success}`);
 
-  // Verify cost calculation: A40 rate = 0.00080000 Light/ms
-  // 2000ms × 0.0008 = 1.6 Light
+  // Verify cost calculation: A40 rate = 0.00010000 Light/ms
+  // 2000ms × 0.0001 = 0.2 Light
   const expectedCost = computeGpuCostLight('A40', 2000);
   console.log(`  ${INFO} Expected cost for 2000ms on A40: ${expectedCost.toFixed(4)} Light`);
   console.log(`  ${INFO} Actual cost from executor: ${result.gpuCostLight.toFixed(4)} Light`);

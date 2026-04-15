@@ -90,11 +90,11 @@ function testTypeSystem(): void {
   assert(getGpuVram('B200') === 180, 'getGpuVram("B200") → 180');
 
   // computeGpuCostLight
-  // 1000ms on A100-80GB-SXM: 0.00400000 Light/ms * 1000ms = 4.0 Light
+  // 1000ms on A100-80GB-SXM: 0.00050000 Light/ms * 1000ms = 0.5 Light
   const cost = computeGpuCostLight('A100-80GB-SXM', 1000);
   assert(
-    Math.abs(cost - 4.0) < 0.001,
-    `computeGpuCostLight("A100-80GB-SXM", 1000) → ${cost} (expected ~4.0)`,
+    Math.abs(cost - 0.5) < 0.001,
+    `computeGpuCostLight("A100-80GB-SXM", 1000) → ${cost} (expected ~0.5)`,
   );
 
   // Rate table completeness

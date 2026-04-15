@@ -7,7 +7,7 @@ import type { Agent } from '../hooks/useAgentFleet';
 import BalanceIndicator from './BalanceIndicator';
 import ContextIndicator from './ContextIndicator';
 import AgentConfigPanel from './AgentConfigPanel';
-import { openSubagentWindow } from '../lib/multiWindow';
+import { openSubagentWindow, openViewWindow } from '../lib/multiWindow';
 import {
   getInterpreterModel, setInterpreterModel,
   getHeavyModel, setHeavyModel,
@@ -25,6 +25,7 @@ interface AgentHeaderProps {
   onUpdateAgent: (updates: Partial<Agent>) => Promise<void>;
   onStop: () => void;
   onNewSession: () => void;
+  onShowTutorial?: () => void;
   onOpenSubagentChat?: (agentId: string) => void;
   onStopSubagent?: (agentId: string) => void;
   executeMcpTool?: (name: string, args: Record<string, unknown>) => Promise<string>;
@@ -94,6 +95,7 @@ export default function AgentHeader({
   onUpdateAgent,
   onStop,
   onNewSession,
+  onShowTutorial,
   onOpenSubagentChat,
   onStopSubagent,
   executeMcpTool,
@@ -126,7 +128,6 @@ export default function AgentHeader({
             onClick={() => setExpanded(!expanded)}
             className="flex items-center gap-2 px-2 py-1 -mx-2"
           >
-            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${statusDotClass(agent ? agent.status : 'pending')}`} />
             <span className="text-h3 text-ul-text tracking-tight">
               {agent ? agent.name : 'New Chat'}
             </span>
@@ -140,6 +141,31 @@ export default function AgentHeader({
         </div>
 
         <div className="flex items-center gap-2">
+          {agent && (
+            <button
+              onClick={() => openViewWindow({ kind: 'chat', agentId: agent.id, agentName: agent.name })}
+              className="text-caption text-ul-text-muted hover:text-ul-text transition-colors"
+              title="Open in new window"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                <polyline points="15 3 21 3 21 9" />
+                <line x1="10" y1="14" x2="21" y2="3" />
+              </svg>
+            </button>
+          )}
+          {onShowTutorial && (
+            <button
+              onClick={onShowTutorial}
+              className="btn btn-sm btn-secondary gap-1.5"
+              title="Replay tutorial"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+              Tutorial
+            </button>
+          )}
           <BalanceIndicator />
         </div>
       </header>

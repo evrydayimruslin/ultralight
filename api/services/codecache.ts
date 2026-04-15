@@ -10,7 +10,7 @@ interface CacheEntry {
 }
 
 const DEFAULT_MAX_ENTRIES = 1000;
-const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const DEFAULT_TTL_MS = 0; // Disabled — always fetch fresh from R2
 
 export class CodeCache {
   private cache = new Map<string, CacheEntry>();

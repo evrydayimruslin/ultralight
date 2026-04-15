@@ -11,7 +11,7 @@ import { usePermissions } from '../hooks/usePermissions';
 import { useConversations } from '../hooks/useConversations';
 import { useAgentFleet } from '../hooks/useAgentFleet';
 import MessageList from './MessageList';
-import ChatInput from './ChatInput';
+import ChatInput, { type ChatFile } from './ChatInput';
 import PermissionModal from './PermissionModal';
 import SpendingApprovalModal from './SpendingApprovalModal';
 import AgentHeader from './AgentHeader';
@@ -58,6 +58,7 @@ interface ChatViewProps {
   initialMessage?: string;
   onNavigateHome?: () => void;
   onNavigateToAgent?: (agentId: string) => void;
+  onShowTutorial?: () => void;
 }
 
 export default function ChatView({
@@ -65,6 +66,7 @@ export default function ChatView({
   initialMessage,
   onNavigateHome,
   onNavigateToAgent,
+  onShowTutorial,
 }: ChatViewProps = {}) {
   const { tools: mcpTools, executeToolCall: executeMcpTool } = useMcp();
   const { tools: localTools, executeToolCall: executeLocalTool, isLocalTool } = useLocalTools();
@@ -111,6 +113,7 @@ export default function ChatView({
   // Per-conversation project directory (persisted to agent DB record)
   const [conversationProjectDir, setConversationProjectDir] = useState<string | null>(null);
   const conversationProjectDirRef = useRef<string | null>(null);
+  const pendingFilesRef = useRef<ChatFile[] | null>(null);
   useEffect(() => { conversationProjectDirRef.current = conversationProjectDir; }, [conversationProjectDir]);
 
   // Track whether the active conversation uses the orchestrate endpoint (no local agent loop)
@@ -533,6 +536,10 @@ export default function ChatView({
 
     const agentModels = parseAgentModels(currentAgent?.model || null);
 
+    // Attach pending files (from ChatInput)
+    const chatFiles = pendingFilesRef.current || undefined;
+    pendingFilesRef.current = null;
+
     for await (const event of streamOrchestrate({
       message: content,
       conversationHistory: history,
@@ -544,6 +551,7 @@ export default function ChatView({
       systemAgentContext: systemAgentContext || undefined,
       projectContext,
       conversationId: activeId || undefined,
+      files: chatFiles,
     })) {
       switch (event.type) {
         // Flash phase — show subtle status hints
@@ -798,7 +806,10 @@ export default function ChatView({
     }
   }, [agents]);
 
-  const sendMessage = useCallback(async (content: string) => {
+  const sendMessage = useCallback(async (content: string, files?: ChatFile[]) => {
+    // Stash files on ref so runOrchestrateStream can pick them up
+    pendingFilesRef.current = files || null;
+
     // System agents always route through Flash orchestrate pipeline
     if (systemAgentContext && activeAgent) {
       const history = messages
@@ -806,6 +817,7 @@ export default function ChatView({
         .slice(-10)
         .map(m => ({ role: m.role, content: m.content }));
       await runOrchestrateStream(content, history);
+      pendingFilesRef.current = null;
       return;
     }
 
@@ -996,6 +1008,32 @@ export default function ChatView({
     await refreshAgents();
   }, [activeAgent, refreshAgents]);
 
+  // ── Scope injection from DiscoverWidget ──
+  // Listens for custom event dispatched when user selects apps from inline discover widget
+  useEffect(() => {
+    const handler = async (e: Event) => {
+      const { apps } = (e as CustomEvent).detail as { apps: Array<{ id: string; slug: string; name: string; access: string }> };
+      if (!activeAgent || !apps?.length) return;
+
+      const current = JSON.parse(activeAgent.connected_apps || '{"apps":{}}');
+      if (!current.apps) current.apps = {};
+      for (const app of apps) {
+        current.apps[app.id] = {
+          name: app.name,
+          slug: app.slug,
+          access: app.access || 'all',
+          selected_functions: [],
+          conventions: {},
+        };
+      }
+      await handleUpdateAgent({ connected_apps: JSON.stringify(current) });
+      console.log(`[ChatView] Injected ${apps.length} app(s) into scope`);
+    };
+
+    window.addEventListener('ul-inject-scope', handler);
+    return () => window.removeEventListener('ul-inject-scope', handler);
+  }, [activeAgent, handleUpdateAgent]);
+
   // Handle project directory changes — update local state + persist to DB
   const handleProjectDirChange = useCallback(async (dir: string) => {
     setConversationProjectDir(dir);
@@ -1058,7 +1096,7 @@ export default function ChatView({
         onUpdateAgent={handleUpdateAgent}
         onStop={() => activeAgent && stopAgent(activeAgent.id)}
         onNewSession={handleNewSession}
-
+        onShowTutorial={activeAgent?.system_agent_type === 'platform_manager' ? onShowTutorial : undefined}
         onOpenSubagentChat={onNavigateToAgent}
         onStopSubagent={stopAgent}
         executeMcpTool={executeMcpTool}

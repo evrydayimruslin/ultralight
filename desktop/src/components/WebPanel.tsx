@@ -38,7 +38,7 @@ export default function WebPanel({ path, title, headerExtra }: WebPanelProps) {
   return (
     <div className="flex-1 flex flex-col h-full bg-white min-w-0">
       {/* Header bar */}
-      <div className="flex items-center justify-between px-4 h-nav border-b border-ul-border flex-shrink-0">
+      <div className="flex items-center justify-between px-4 h-nav flex-shrink-0">
         <div className="flex items-center gap-3">
           <h1 className="text-h3 text-ul-text tracking-tight">{title}</h1>
         </div>

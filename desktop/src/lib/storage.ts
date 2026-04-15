@@ -7,6 +7,7 @@ const STORAGE_KEYS = {
   heavyModel: 'ul_heavy_model',
   apiBase: 'ul_api_base',
   autoApproveLight: 'ul_auto_approve_light',
+  onboardingComplete: 'ul_onboarding_complete',
 } as const;
 
 const DEFAULT_API_BASE = 'https://ultralight-api.rgn4jz429m.workers.dev';
@@ -55,9 +56,21 @@ export function setApiBase(url: string): void {
 
 export function getAutoApproveLight(): number {
   const val = localStorage.getItem(STORAGE_KEYS.autoApproveLight);
-  return val ? parseFloat(val) : 200; // default ✦200
+  return val ? parseFloat(val) : 25; // default ✦25
 }
 
 export function setAutoApproveLight(light: number): void {
   localStorage.setItem(STORAGE_KEYS.autoApproveLight, String(light));
+}
+
+export function isOnboardingComplete(): boolean {
+  return localStorage.getItem(STORAGE_KEYS.onboardingComplete) === '1';
+}
+
+export function setOnboardingComplete(): void {
+  localStorage.setItem(STORAGE_KEYS.onboardingComplete, '1');
+}
+
+export function resetOnboarding(): void {
+  localStorage.removeItem(STORAGE_KEYS.onboardingComplete);
 }

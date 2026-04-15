@@ -77,7 +77,7 @@ export async function handleUpload(request: Request): Promise<Response> {
     const files: File[] = [];
     let providedName: string | null = null;
     let providedDescription: string | null = null;
-    let providedAppType: 'mcp' | null = null;
+    let providedAppType: 'mcp' | 'skill' | null = null;
     let providedFunctionsEntry: string | null = null;
 
     for (const [name, value] of formData.entries()) {
@@ -88,8 +88,8 @@ export async function handleUpload(request: Request): Promise<Response> {
       } else if (name === 'description' && typeof value === 'string') {
         providedDescription = value.trim();
       } else if (name === 'app_type' && typeof value === 'string') {
-        if (value === 'mcp') {
-          providedAppType = 'mcp';
+        if (value === 'mcp' || value === 'skill') {
+          providedAppType = value as 'mcp' | 'skill';
         }
       } else if (name === 'functions_entry' && typeof value === 'string') {
         providedFunctionsEntry = value.trim();
@@ -125,6 +125,12 @@ export async function handleUpload(request: Request): Promise<Response> {
       const content = await file.text();
       validatedFiles.push({ name: file.name, content });
     }
+
+    // Build logs — declared early so migration validation can log too
+    const buildLogs: BuildLogEntry[] = [];
+    const log = (level: BuildLogEntry['level'], message: string) => {
+      buildLogs.push({ time: new Date().toISOString(), level, message });
+    };
 
     // Check for manifest.json (v2 architecture)
     const manifestFile = validatedFiles.find((f) => {
@@ -414,12 +420,6 @@ export async function handleUpload(request: Request): Promise<Response> {
     }
     console.log('Entry file found:', entryFile.name);
 
-    // Build logs
-    const buildLogs: BuildLogEntry[] = [];
-    const log = (level: BuildLogEntry['level'], message: string) => {
-      buildLogs.push({ time: new Date().toISOString(), level, message });
-    };
-
     log('info', `Starting build for ${validatedFiles.length} files...`);
 
     if (manifest) {
@@ -437,6 +437,58 @@ export async function handleUpload(request: Request): Promise<Response> {
       // Fallback to parsing code (legacy behavior)
       exports = extractExports(entryFile.content);
       log('success', `Found ${exports.length} exports from code: ${exports.join(', ')}`);
+    }
+
+    // ── Skill upload path — simplified, no bundling/manifest/D1 ──
+    if (providedAppType === 'skill') {
+      const appId = crypto.randomUUID();
+      const version = '1.0.0';
+      const slug = generateSlug(null);
+      const appName = providedName || validatedFiles[0]?.name.replace(/\.\w+$/, '') || slug;
+      // Summary: first 200 chars of the primary .md file content
+      const mdFile = validatedFiles.find(f => f.name.endsWith('.md')) || validatedFiles[0];
+      const mdContent = mdFile?.content || '';
+      const summary = providedDescription || mdContent.replace(/^#[^\n]*\n/, '').trim().slice(0, 200);
+
+      const r2Service = createR2Service();
+      const appsService = createAppsService();
+
+      // Store files in R2
+      const storageKey = `apps/${appId}/${version}/`;
+      const filesToUpload = validatedFiles.map(f => ({
+        name: f.name,
+        content: new TextEncoder().encode(f.content),
+      }));
+      await r2Service.uploadFiles(storageKey, filesToUpload);
+      log('success', 'Skill files uploaded to R2');
+
+      // Create app record
+      await appsService.create({
+        id: appId,
+        owner_id: userId,
+        slug,
+        name: appName,
+        description: summary,
+        storage_key: storageKey,
+        exports: [],
+        manifest: null,
+        app_type: 'skill',
+      });
+      log('success', `Skill app created: ${appName}`);
+
+      // Rebuild function index to include the new skill
+      import('../services/function-index.ts').then(m => m.rebuildFunctionIndex(userId))
+        .catch(err => console.error('Function index rebuild failed:', err));
+
+      return json({
+        id: appId,
+        slug,
+        name: appName,
+        description: summary,
+        version,
+        app_type: 'skill',
+        logs: buildLogs,
+      });
     }
 
     // Bundle the code
@@ -650,21 +702,28 @@ export async function handleUpload(request: Request): Promise<Response> {
       });
     }).catch(err => console.error('[INTEGRITY] Fingerprint storage failed:', err));
 
-    // Auto-generate Skills.md + library entry + embedding (fire-and-forget for speed)
+    // Auto-generate Skills.md (fire-and-forget, non-blocking)
     log('info', 'Generating Skills.md...');
     const appsForSkills = await appsService.findById(appId);
     if (appsForSkills) {
       generateSkillsForVersion(appsForSkills, storageKey, version)
         .then(skills => {
-          if (skills.skillsMd) {
-            console.log(`Skills.md generated for ${appId}`);
-          }
-          // Rebuild user library and function index with the new app
-          rebuildUserLibrary(userId).catch(err => console.error('Library rebuild failed:', err));
-          import('../services/function-index.ts').then(m => m.rebuildFunctionIndex(userId)).catch(err => console.error('Function index rebuild failed:', err));
+          if (skills.skillsMd) console.log(`Skills.md generated for ${appId}`);
         })
-        .catch(err => console.error('Skills generation failed:', err));
+        .catch(err => console.error('Skills generation failed (non-fatal):', err));
     }
+
+    // Always rebuild library + function index after upload (independent of skills gen)
+    // Run synchronously to ensure it completes before the Worker exits
+    try {
+      await rebuildUserLibrary(userId);
+      console.log(`[UPLOAD] Library rebuilt for ${userId}`);
+    } catch (err) { console.error('Library rebuild failed:', err); }
+    try {
+      const { rebuildFunctionIndex } = await import('../services/function-index.ts');
+      await rebuildFunctionIndex(userId);
+      console.log(`[UPLOAD] Function index rebuilt for ${userId}`);
+    } catch (err) { console.error('Function index rebuild failed:', err); }
 
     log('success', 'Build complete!');
 

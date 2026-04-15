@@ -113,7 +113,16 @@ export function useWidgetInbox() {
         }
       }
 
-      console.log(`[WidgetInbox] Discovery: ${sources.length} widget(s)`);
+      // Deduplicate: if multiple apps share the same name + widget, keep the last (most recent)
+      const seen = new Map<string, number>();
+      sources.forEach((s, i) => seen.set(`${s.appName}:${s.widgetName}`, i));
+      const deduped = sources.filter((s, i) => seen.get(`${s.appName}:${s.widgetName}`) === i);
+      if (deduped.length < sources.length) {
+        console.log(`[WidgetInbox] Deduped ${sources.length - deduped.length} duplicate widget(s)`);
+      }
+
+      console.log(`[WidgetInbox] Discovery: ${deduped.length} widget(s)`);
+      return deduped;
     } catch (e) {
       console.error('[WidgetInbox] Discovery error:', e);
     }
@@ -132,18 +141,9 @@ export function useWidgetInbox() {
 
       // New-style: { meta: { title, icon, badge_count }, app_html, version }
       if (parsed.meta) {
-        // Cache version for later comparison
+        // Always update cache when fresh app_html is available
         const cacheKey = `widget_app:${source.appUuid}:${source.widgetName}`;
-        const cached = localStorage.getItem(cacheKey);
-        if (cached) {
-          const cachedData = JSON.parse(cached);
-          if (cachedData.version !== parsed.version) {
-            // Version changed — invalidate cache
-            localStorage.removeItem(cacheKey);
-          }
-        }
-        // Cache the app_html if not already cached
-        if (parsed.app_html && !localStorage.getItem(cacheKey)) {
+        if (parsed.app_html) {
           localStorage.setItem(cacheKey, JSON.stringify({
             html: parsed.app_html,
             version: parsed.version || '1',
@@ -245,6 +245,19 @@ export function useWidgetInbox() {
     }
   }, []);
 
+  // Prune orphaned widget caches for app UUIDs that no longer appear in sources
+  const pruneStaleWidgetCaches = useCallback((freshSources: WidgetAppSource[]) => {
+    const freshKeys = new Set(freshSources.map(s => `widget_app:${s.appUuid}:${s.widgetName}`));
+    // Scan localStorage for stale widget_app:* entries
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key?.startsWith('widget_app:') && !freshKeys.has(key)) {
+        console.log(`[WidgetInbox] Pruning stale cache: ${key}`);
+        localStorage.removeItem(key);
+      }
+    }
+  }, []);
+
   // Refresh everything
   const refresh = useCallback(async () => {
     if (!mountedRef.current) return;
@@ -252,10 +265,16 @@ export function useWidgetInbox() {
     const sources = await discoverSources();
     if (!mountedRef.current) return;
     setState(prev => ({ ...prev, sources }));
-    // Cache for instant remounts
-    if (sources.length > 0) sessionStorage.setItem('widget_sources', JSON.stringify(sources));
+    // Update sessionStorage cache (or clear if no sources left)
+    if (sources.length > 0) {
+      sessionStorage.setItem('widget_sources', JSON.stringify(sources));
+    } else {
+      sessionStorage.removeItem('widget_sources');
+    }
+    // Clean up caches for deleted/removed apps
+    pruneStaleWidgetCaches(sources);
     await pollAll(sources);
-  }, [discoverSources, pollAll]);
+  }, [discoverSources, pollAll, pruneStaleWidgetCaches]);
 
   // Initial discovery + polling — use sessionStorage cache for instant remounts
   useEffect(() => {

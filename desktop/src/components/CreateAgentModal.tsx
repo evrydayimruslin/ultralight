@@ -94,7 +94,7 @@ export default function CreateAgentModal({
   // Marketplace state
   const [marketplaceSkills, setMarketplaceSkills] = useState<MarketplaceSkill[]>([]);
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(new Set());
-  const [skillBudgetLight, setSkillBudgetLight] = useState(() => Math.min(getAutoApproveLight() * 4, 8000));
+  const [skillBudgetLight, setSkillBudgetLight] = useState(() => Math.min(getAutoApproveLight() * 4, 1000));
   const [searchingSkills, setSearchingSkills] = useState(false);
 
   // Connected apps state

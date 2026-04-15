@@ -1,7 +1,7 @@
 // Hosting Billing Service
 // Per-app billing: each published app/page has its own billing clock (hosting_last_billed_at).
-// Charges ✦18/MB/hour for each published app/page from the moment it was published.
-// Charges ✦0.36/MB/hour for user data storage exceeding the 100MB free tier (user-level clock).
+// Charges ✦2.25/MB/hour for each published app/page from the moment it was published.
+// Charges ✦0.045/MB/hour for user data storage exceeding the 100MB free tier (user-level clock).
 // Both charges debit from the same balance_light pool.
 // No free tier for hosting — every published MB costs from the first byte.
 // 100MB free tier for user data — overage billed hourly.
@@ -507,7 +507,7 @@ async function triggerAutoTopup(
   }
 
   // Step 2: Create PaymentIntent (off-session, confirm immediately)
-  // Convert Light to USD cents for Stripe: amount_light / LIGHT_PER_DOLLAR_DESKTOP * 100
+  // Convert Light to USD cents for Stripe: 1 Light ≈ 1¢
   // metadata.amount_light is the deposit credited to the user's balance.
   const chargeCents = Math.round(amountLight / LIGHT_PER_DOLLAR_DESKTOP * 100);
 

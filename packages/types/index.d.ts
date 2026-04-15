@@ -319,8 +319,43 @@ interface AIRequest {
 interface AIMessage {
   /** Role of the message sender */
   role: 'system' | 'user' | 'assistant';
-  /** Content of the message */
-  content: string;
+  /**
+   * Content of the message.
+   * String for simple text messages.
+   * Array for multimodal messages containing text + files.
+   * @example
+   * // Simple text
+   * { role: 'user', content: 'Hello' }
+   * // Multimodal (text + image)
+   * { role: 'user', content: [
+   *   { type: 'text', text: 'What is in this image?' },
+   *   { type: 'file', data: 'data:image/png;base64,...', filename: 'photo.png' }
+   * ]}
+   */
+  content: string | AIContentPart[];
+}
+
+/**
+ * A content part in a multimodal message.
+ */
+type AIContentPart = AITextPart | AIFilePart;
+
+interface AITextPart {
+  type: 'text';
+  text: string;
+}
+
+/**
+ * A file content part. Pass base64 data URLs for images/documents.
+ * Supported: images (.png, .jpg, .gif, .webp), text files (.txt, .md, .csv, .json).
+ * The platform translates this to the model's native multimodal format.
+ */
+interface AIFilePart {
+  type: 'file';
+  /** Base64 data URL (e.g. "data:image/png;base64,...") or raw text content */
+  data: string;
+  /** Original filename — used to detect file type */
+  filename?: string;
 }
 
 interface AITool {
@@ -765,6 +800,9 @@ export {
   UserContext,
   AIRequest,
   AIMessage,
+  AIContentPart,
+  AITextPart,
+  AIFilePart,
   AITool,
   AIResponse,
   QueryOptions,

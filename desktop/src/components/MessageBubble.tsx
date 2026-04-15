@@ -8,6 +8,7 @@ import remarkGfm from 'remark-gfm';
 import type { Message } from '../hooks/useChat';
 import ToolCallCard from './ToolCallCard';
 import InChatWidget from './InChatWidget';
+import DiscoverWidget from './DiscoverWidget';
 import { executeAppMcpTool } from '../lib/api';
 
 interface MessageBubbleProps {
@@ -21,41 +22,54 @@ interface MessageBubbleProps {
 // ── Widget Token Parsing ──
 
 interface ContentSegment {
-  type: 'text' | 'widget';
+  type: 'text' | 'widget' | 'discover';
   content: string;       // markdown text for 'text' segments
   widgetName?: string;    // e.g. "email_inbox"
   appId?: string;         // e.g. "d90a446c-..."
+  discoverQuery?: string; // search query for discover widget
 }
 
 /** Regex to match {{widget:widget_name:app_uuid}} tokens */
 const WIDGET_TOKEN_RE = /\{\{widget:([a-z0-9_]+):([a-f0-9-]{36})\}\}/g;
+/** Regex to match {{discover:search query}} tokens */
+const DISCOVER_TOKEN_RE = /\{\{discover:([^}]+)\}\}/g;
 
-/** Split message content into text and widget segments */
+/** Split message content into text, widget, and discover segments */
 function parseWidgetTokens(content: string): ContentSegment[] {
+  // Combine both token patterns with their types
+  const allMatches: Array<{ index: number; length: number; segment: ContentSegment }> = [];
+
+  for (const match of content.matchAll(WIDGET_TOKEN_RE)) {
+    allMatches.push({
+      index: match.index!,
+      length: match[0].length,
+      segment: { type: 'widget', content: match[0], widgetName: match[1], appId: match[2] },
+    });
+  }
+
+  for (const match of content.matchAll(DISCOVER_TOKEN_RE)) {
+    allMatches.push({
+      index: match.index!,
+      length: match[0].length,
+      segment: { type: 'discover', content: match[0], discoverQuery: match[1] },
+    });
+  }
+
+  // Sort by position
+  allMatches.sort((a, b) => a.index - b.index);
+
   const segments: ContentSegment[] = [];
   let lastIndex = 0;
 
-  for (const match of content.matchAll(WIDGET_TOKEN_RE)) {
-    const matchStart = match.index!;
-
-    // Add text before the match
-    if (matchStart > lastIndex) {
-      const text = content.slice(lastIndex, matchStart).trim();
+  for (const m of allMatches) {
+    if (m.index > lastIndex) {
+      const text = content.slice(lastIndex, m.index).trim();
       if (text) segments.push({ type: 'text', content: text });
     }
-
-    // Add widget segment
-    segments.push({
-      type: 'widget',
-      content: match[0],
-      widgetName: match[1],
-      appId: match[2],
-    });
-
-    lastIndex = matchStart + match[0].length;
+    segments.push(m.segment);
+    lastIndex = m.index + m.length;
   }
 
-  // Add remaining text
   if (lastIndex < content.length) {
     const text = content.slice(lastIndex).trim();
     if (text) segments.push({ type: 'text', content: text });
@@ -172,7 +186,7 @@ export default function MessageBubble({ message, toolResults, toolsExecuting }: 
   const segments = isAssistant && message.content
     ? parseWidgetTokens(message.content)
     : [];
-  const hasWidgets = segments.some(s => s.type === 'widget');
+  const hasWidgets = segments.some(s => s.type === 'widget' || s.type === 'discover');
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
@@ -212,6 +226,19 @@ export default function MessageBubble({ message, toolResults, toolsExecuting }: 
                         widgetName={seg.widgetName}
                         appId={seg.appId}
                       />
+                    );
+                  }
+                  if (seg.type === 'discover' && seg.discoverQuery) {
+                    return (
+                      <div key={`discover-${i}`} className="my-3">
+                        <DiscoverWidget
+                          query={seg.discoverQuery}
+                          onInjectScope={(apps) => {
+                            // Dispatch custom event — ChatView listens and updates agent scope
+                            window.dispatchEvent(new CustomEvent('ul-inject-scope', { detail: { apps } }));
+                          }}
+                        />
+                      </div>
                     );
                   }
                   return (

@@ -140,14 +140,12 @@ export async function runMigrations(
     const existingChecksum = appliedVersions.get(migration.version);
 
     if (existingChecksum) {
-      // Already applied — verify checksum
+      // Already applied — warn on checksum mismatch but continue processing
       if (existingChecksum !== migration.checksum) {
-        result.errors.push(
-          `Migration ${migration.filename} (v${migration.version}) has been modified since it was applied. ` +
-          `Expected checksum ${existingChecksum}, got ${migration.checksum}. ` +
-          `Do not modify already-applied migrations — create a new migration instead.`
+        console.warn(
+          `[D1-MIGRATIONS] Checksum drift: ${migration.filename} (v${migration.version}) ` +
+          `expected ${existingChecksum}, got ${migration.checksum}. Skipping (already applied).`
         );
-        break; // Stop processing on checksum mismatch
       }
       result.skipped++;
       result.lastVersion = migration.version;

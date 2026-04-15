@@ -472,7 +472,7 @@ export default function HomeView({
   return (
     <div className="flex-1 flex flex-col h-full bg-white">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 h-nav border-b border-ul-border flex-shrink-0">
+      <div className="flex items-center justify-between px-4 h-nav flex-shrink-0">
         <div className="flex items-center gap-3">
           <h1 className="text-h3 text-ul-text tracking-tight">Command</h1>
         </div>

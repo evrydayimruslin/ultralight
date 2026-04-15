@@ -1729,8 +1729,8 @@ export async function handleUser(request: Request): Promise<Response> {
         hosting_last_billed_at: ud.hosting_last_billed_at ?? null,
         auto_topup: {
           enabled: ud.auto_topup_enabled ?? false,
-          threshold_light: ud.auto_topup_threshold_light ?? 720,
-          amount_light: ud.auto_topup_amount_light ?? 7200,
+          threshold_light: ud.auto_topup_threshold_light ?? 100,
+          amount_light: ud.auto_topup_amount_light ?? 1000,
           last_failed_at: ud.auto_topup_last_failed_at ?? null,
         },
         has_payment_method: !!ud.stripe_customer_id,
@@ -1775,13 +1775,13 @@ export async function handleUser(request: Request): Promise<Response> {
 
       // Validate thresholds
       if (body.threshold_light !== undefined) {
-        if (typeof body.threshold_light !== 'number' || body.threshold_light < 0 || body.threshold_light > 720_000) {
-          return error('threshold_light must be between 0 and 720000', 400);
+        if (typeof body.threshold_light !== 'number' || body.threshold_light < 0 || body.threshold_light > 90_000) {
+          return error('threshold_light must be between 0 and 90000', 400);
         }
       }
       if (body.amount_light !== undefined) {
-        if (typeof body.amount_light !== 'number' || body.amount_light < 4000 || body.amount_light > 720_000) {
-          return error('amount_light must be between 4000 and 720000', 400);
+        if (typeof body.amount_light !== 'number' || body.amount_light < 500 || body.amount_light > 90_000) {
+          return error('amount_light must be between 500 and 90000', 400);
         }
       }
 

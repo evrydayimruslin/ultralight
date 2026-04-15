@@ -1,7 +1,7 @@
 // AI Service Implementation (BYOK)
 // Single provider: OpenRouter (covers 100+ models via one API key)
 
-import type { AIRequest, AIResponse, BYOKProvider } from '../../shared/types/index.ts';
+import type { AIRequest, AIResponse, AIContentPart, BYOKProvider } from '../../shared/types/index.ts';
 
 // ============================================
 // TYPES
@@ -23,6 +23,76 @@ interface ProviderConfig {
 }
 
 // ============================================
+// MULTIMODAL CONTENT TRANSLATION
+// ============================================
+
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']);
+const TEXT_EXTS = new Set(['txt', 'md', 'csv', 'json', 'xml', 'yaml', 'yml', 'html', 'htm', 'css', 'js', 'ts', 'py', 'rb', 'go', 'rs', 'java', 'c', 'cpp', 'h', 'sh', 'sql', 'toml', 'ini', 'cfg', 'log', 'env']);
+
+function getExtension(filename?: string): string {
+  if (!filename) return '';
+  return (filename.split('.').pop() || '').toLowerCase();
+}
+
+function getMimeFromDataUrl(data: string): string {
+  const match = data.match(/^data:([^;,]+)/);
+  return match ? match[1] : '';
+}
+
+/**
+ * Translate Ultralight AIContentPart[] to OpenAI/OpenRouter-compatible content array.
+ * - type:'text' → { type:'text', text }
+ * - type:'file' + image → { type:'image_url', image_url: { url: dataUrl } }
+ * - type:'file' + text file → { type:'text', text: decoded content }
+ * - type:'file' + PDF/other → { type:'image_url', image_url: { url: dataUrl } } (let model handle)
+ */
+function translateContentParts(parts: AIContentPart[]): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+
+  for (const part of parts) {
+    if (part.type === 'text') {
+      out.push({ type: 'text', text: part.text });
+      continue;
+    }
+
+    if (part.type === 'file') {
+      const ext = getExtension(part.filename);
+      const mime = getMimeFromDataUrl(part.data);
+      const isImage = IMAGE_EXTS.has(ext) || mime.startsWith('image/');
+      const isText = TEXT_EXTS.has(ext) || mime.startsWith('text/');
+
+      if (isImage) {
+        // Images → image_url (native vision support)
+        const url = part.data.startsWith('data:') ? part.data : `data:image/${ext || 'png'};base64,${part.data}`;
+        out.push({ type: 'image_url', image_url: { url } });
+      } else if (isText) {
+        // Text files → decode and inline as text block
+        let text = '';
+        if (part.data.startsWith('data:')) {
+          try {
+            const b64 = part.data.split(',')[1];
+            if (b64) text = atob(b64);
+          } catch { text = part.data; }
+        } else {
+          text = part.data;
+        }
+        const label = part.filename ? `[File: ${part.filename}]\n` : '';
+        out.push({ type: 'text', text: label + text });
+      } else {
+        // PDF, DOCX, etc. → send as image_url and let the model/provider handle it.
+        // OpenRouter passes data URLs through to models that support document vision.
+        const url = part.data.startsWith('data:') ? part.data : `data:application/octet-stream;base64,${part.data}`;
+        const label = part.filename ? `[Attached: ${part.filename}]` : '';
+        if (label) out.push({ type: 'text', text: label });
+        out.push({ type: 'image_url', image_url: { url } });
+      }
+    }
+  }
+
+  return out;
+}
+
+// ============================================
 // PROVIDER CONFIGURATION (OpenRouter only)
 // ============================================
 
@@ -39,8 +109,22 @@ const OPENROUTER_CONFIG: ProviderConfig = {
   formatRequest: (request: AIRequest, model: string) => ({
     model,
     messages: request.messages.map(msg => {
-      const m: Record<string, unknown> = { role: msg.role, content: msg.content };
+      const m: Record<string, unknown> = { role: msg.role };
       if (msg.cache_control) m.cache_control = msg.cache_control;
+
+      // String content — pass through as-is
+      if (typeof msg.content === 'string') {
+        m.content = msg.content;
+        return m;
+      }
+
+      // Array content — translate to OpenAI/OpenRouter multimodal format
+      if (Array.isArray(msg.content)) {
+        m.content = translateContentParts(msg.content as AIContentPart[]);
+        return m;
+      }
+
+      m.content = msg.content;
       return m;
     }),
     temperature: request.temperature ?? 0.7,

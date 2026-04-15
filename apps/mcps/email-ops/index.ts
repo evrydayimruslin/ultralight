@@ -1774,7 +1774,7 @@ function render() {
       html += '<div class="thread-msg ' + (isGuest ? 'guest' : 'you') + '">';
       html += '<div class="thread-msg-header"><span>' + (isGuest ? 'Guest' : 'You (' + esc(v.actor) + ')') + '</span>';
       html += '<div class="thread-msg-header-right">';
-      html += '<button class="translate-btn" data-msg="' + msgKey + '" onclick="translateMsg(\'' + msgKey + '\', this)">🌐 Translate</button>';
+      html += '<button class="translate-btn" data-msg="' + msgKey + '" onclick="translateMsg(&#39;' + msgKey + '&#39;, this)">🌐 Translate</button>';
       html += '<span>' + timeAgo(v.created_at) + '</span></div></div>';
       html += '<div class="thread-msg-body" id="body-' + msgKey + '">' + esc(v.body) + '</div>';
       html += '<div class="translation-overlay" id="overlay-' + msgKey + '"><div class="translation-overlay-label">Translation</div><div class="translation-overlay-text"></div></div>';
@@ -1796,7 +1796,7 @@ function render() {
     html += '<div class="section-label" style="display:flex;justify-content:space-between;align-items:center;padding-right:14px;">';
     html += '<span>Draft response</span>';
     if (inputMode !== 'edit') {
-      html += '<button class="translate-btn" onclick="translateMsg(\'' + draftKey + '\', this)">🌐 Translate</button>';
+      html += '<button class="translate-btn" onclick="translateMsg(&#39;' + draftKey + '&#39;, this)">🌐 Translate</button>';
     }
     html += '</div>';
     html += '<div class="section-body" id="draft-display">';

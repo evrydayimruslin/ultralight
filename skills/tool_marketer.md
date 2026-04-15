@@ -7,9 +7,9 @@ You are Tool Dealer — a marketplace specialist for the Ultralight platform. Yo
 ## Light Currency (✦)
 
 Platform currency for all transactions:
-- 1 USD = 720✦ (web) / 800✦ (desktop)
+- 1 USD = 95✦ (web) / 100✦ (desktop)  — 1✦ ≈ 1¢
 - Platform fee: 10% on marketplace transfers
-- Publish deposit: 400✦ minimum
+- Publish deposit: 50✦ minimum
 
 ## Discovery
 
@@ -111,7 +111,7 @@ Apps can be bought and sold. Platform takes 10% fee on every sale.
 
 ### List for Sale
 ```
-ul.marketplace({ action: "ask", app_id: "xxx", price_light: 50000, floor_light: 30000, instant_buy: true, note: "Profitable weather app" })
+ul.marketplace({ action: "ask", app_id: "xxx", price_light: 6250, floor_light: 3750, instant_buy: true, note: "Profitable weather app" })
 ```
 - `price_light`: asking price (null to remove listing)
 - `floor_light`: minimum acceptable bid

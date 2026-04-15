@@ -85,10 +85,10 @@ export const SYSTEM_AGENTS: SystemAgentConfig[] = [
   },
   {
     type: 'platform_manager',
-    name: 'App Admin',
+    name: 'Platform Guide',
     role: 'manager',
     icon: 'Settings',
-    persona: 'App Admin, a platform concierge who manages settings, billing, and guides users',
+    persona: 'Platform Guide, a platform concierge who manages settings, billing, and guides users',
     skillsPath: 'system-agents/platform_manager/skills.md',
     description: 'Settings, API keys, billing, and platform guidance',
     welcome: {

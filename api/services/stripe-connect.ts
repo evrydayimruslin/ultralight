@@ -23,7 +23,7 @@ export interface ConnectAccountStatus {
 
 export interface PayoutEstimate {
   gross_light: number;        // Light deducted from balance
-  gross_usd_cents: number;    // USD cents equivalent (light / 800 * 100)
+  gross_usd_cents: number;    // USD cents equivalent (light / 100 * 100)
   stripe_fee_cents: number;   // estimated Stripe payout fee (in USD cents)
   net_cents: number;          // estimated bank deposit (in USD cents)
 }
@@ -71,7 +71,7 @@ function ensureStripeKey(): string {
   return key;
 }
 
-/** Convert a Light amount to USD cents at the payout rate (800 Light/$1). */
+/** Convert a Light amount to USD cents at the payout rate (100 Light/$1). */
 function lightToUsdCents(amountLight: number): number {
   return Math.round((amountLight / LIGHT_PER_DOLLAR_PAYOUT) * 100);
 }

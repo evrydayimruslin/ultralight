@@ -15,11 +15,49 @@ interface AIBindingProps {
   provider: string | null;
 }
 
+type ContentPart = { type: 'text'; text: string }
+  | { type: 'file'; data: string; filename?: string };
+
 interface AIRequest {
   model?: string;
-  messages: Array<{ role: string; content: string }>;
+  messages: Array<{ role: string; content: string | ContentPart[] }>;
   max_tokens?: number;
   temperature?: number;
+}
+
+// ============================================
+// MULTIMODAL TRANSLATION (mirrors ai.ts)
+// ============================================
+
+const IMG = new Set(['png','jpg','jpeg','gif','webp','bmp','svg']);
+const TXT = new Set(['txt','md','csv','json','xml','yaml','yml','html','htm','css','js','ts','py','rb','go','rs','java','c','cpp','h','sh','sql','toml','ini','cfg','log','env']);
+
+function ext(f?: string): string { return f ? (f.split('.').pop() || '').toLowerCase() : ''; }
+function mime(d: string): string { const m = d.match(/^data:([^;,]+)/); return m ? m[1] : ''; }
+
+function translateParts(parts: ContentPart[]): unknown[] {
+  const out: unknown[] = [];
+  for (const p of parts) {
+    if (p.type === 'text') { out.push({ type: 'text', text: p.text }); continue; }
+    if (p.type !== 'file') continue;
+    const e = ext(p.filename), m = mime(p.data);
+    const isImg = IMG.has(e) || m.startsWith('image/');
+    const isTxt = TXT.has(e) || m.startsWith('text/');
+    if (isImg) {
+      const url = p.data.startsWith('data:') ? p.data : `data:image/${e||'png'};base64,${p.data}`;
+      out.push({ type: 'image_url', image_url: { url } });
+    } else if (isTxt) {
+      let text = '';
+      if (p.data.startsWith('data:')) { try { const b = p.data.split(',')[1]; if (b) text = atob(b); } catch { text = p.data; } }
+      else text = p.data;
+      out.push({ type: 'text', text: (p.filename ? `[File: ${p.filename}]\n` : '') + text });
+    } else {
+      const url = p.data.startsWith('data:') ? p.data : `data:application/octet-stream;base64,${p.data}`;
+      if (p.filename) out.push({ type: 'text', text: `[Attached: ${p.filename}]` });
+      out.push({ type: 'image_url', image_url: { url } });
+    }
+  }
+  return out;
 }
 
 // ============================================
@@ -40,6 +78,13 @@ export class AIBinding extends WorkerEntrypoint<unknown, AIBindingProps> {
       };
     }
 
+    // Format messages — handle multimodal content arrays
+    const messages = request.messages.map(msg => {
+      if (typeof msg.content === 'string') return { role: msg.role, content: msg.content };
+      if (Array.isArray(msg.content)) return { role: msg.role, content: translateParts(msg.content) };
+      return { role: msg.role, content: msg.content };
+    });
+
     // Route through OpenRouter (same as existing AI service)
     const openRouterKey = apiKey;
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -52,7 +97,7 @@ export class AIBinding extends WorkerEntrypoint<unknown, AIBindingProps> {
       },
       body: JSON.stringify({
         model: request.model || 'openai/gpt-4o-mini',
-        messages: request.messages,
+        messages,
         max_tokens: request.max_tokens || 4096,
         temperature: request.temperature ?? 0.7,
       }),

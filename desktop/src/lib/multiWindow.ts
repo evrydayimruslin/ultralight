@@ -1,7 +1,17 @@
-// Multi-window management — opens subagent chats in separate Tauri windows.
+// Multi-window management — opens subagent chats, widget apps, and any view in separate Tauri windows.
 // Uses @tauri-apps/api/webviewWindow to create new windows.
 
 import { WebviewWindow, getAllWebviewWindows } from '@tauri-apps/api/webviewWindow';
+import type { WidgetAppSource } from '../hooks/useWidgetInbox';
+
+/** Any view that can be opened in its own window. */
+export type PopoutView =
+  | { kind: 'home' }
+  | { kind: 'capabilities' }
+  | { kind: 'profile' }
+  | { kind: 'wallet' }
+  | { kind: 'settings' }
+  | { kind: 'chat'; agentId: string; agentName: string };
 
 /**
  * Open a new window for a subagent's chat.
@@ -32,4 +42,98 @@ export async function openSubagentWindow(agentId: string, agentName: string): Pr
   });
 
   // No need to await — window opens asynchronously
+}
+
+/**
+ * Open a new window for a widget app.
+ * Passes WidgetAppSource fields via query params; the window reads
+ * token/apiBase from shared localStorage and fetches its own HTML.
+ */
+export async function openWidgetWindow(source: WidgetAppSource, context?: Record<string, string>): Promise<void> {
+  // Include context in label so different contexts open different windows
+  const ctxSuffix = context ? '-' + Object.values(context).join('').slice(0, 8) : '';
+  const label = `widget-${source.appUuid.slice(0, 8)}-${source.widgetName}${ctxSuffix}`;
+
+  const existingWindows = await getAllWebviewWindows();
+  const existing = existingWindows.find(w => w.label === label);
+  if (existing) {
+    await existing.setFocus();
+    return;
+  }
+
+  const params = new URLSearchParams({
+    widget: '1',
+    appUuid: source.appUuid,
+    appSlug: source.appSlug,
+    appName: source.appName,
+    widgetName: source.widgetName,
+    uiFunction: source.uiFunction,
+    dataFunction: source.dataFunction,
+  });
+
+  // Encode context as ctx_* query params
+  if (context) {
+    for (const [k, v] of Object.entries(context)) {
+      params.set(`ctx_${k}`, v);
+    }
+  }
+
+  const _webview = new WebviewWindow(label, {
+    url: `index.html?${params.toString()}`,
+    title: `${source.appName} — Ultralight`,
+    width: 800,
+    height: 650,
+    minWidth: 450,
+    minHeight: 350,
+    center: true,
+    decorations: true,
+    resizable: true,
+  });
+}
+
+const VIEW_TITLES: Record<string, string> = {
+  home: 'Command',
+  capabilities: 'Tools',
+  profile: 'Profile',
+  wallet: 'Wallet',
+  settings: 'Settings',
+};
+
+/**
+ * Open any view in its own window.
+ * Singleton views (home, capabilities, etc.) allow one instance; chats allow one per agent.
+ */
+export async function openViewWindow(popout: PopoutView): Promise<void> {
+  const label = popout.kind === 'chat'
+    ? `chat-${popout.agentId.slice(0, 8)}`
+    : `view-${popout.kind}`;
+
+  const existingWindows = await getAllWebviewWindows();
+  const existing = existingWindows.find(w => w.label === label);
+  if (existing) {
+    await existing.setFocus();
+    return;
+  }
+
+  const params = new URLSearchParams({ view: popout.kind });
+  if (popout.kind === 'chat') {
+    params.set('agentId', popout.agentId);
+    params.set('agentName', popout.agentName);
+  }
+
+  const title = popout.kind === 'chat'
+    ? `${popout.agentName} — Ultralight`
+    : `${VIEW_TITLES[popout.kind] || popout.kind} — Ultralight`;
+
+  const _webview = new WebviewWindow(label, {
+    url: `index.html?${params.toString()}`,
+    title,
+    width: 900,
+    height: 700,
+    minWidth: 500,
+    minHeight: 400,
+    center: true,
+    decorations: true,
+    resizable: true,
+  });
 }

@@ -6,6 +6,7 @@ import { streamChat, type ChatMessage, type ChatTool } from './api';
 import { accumulateToolCalls, type AccumulatedToolCall } from './sse';
 import { countAllTokens, shouldSummarize } from './tokens';
 import { summarizeMessages } from './summarizer';
+import { LIGHT_PER_DOLLAR_DESKTOP, CHAT_PLATFORM_MARKUP } from '../../../shared/types/index';
 
 // ── Tool Result Truncation ──
 
@@ -188,10 +189,10 @@ export async function runAgentLoop(
 
     if (!streamResult || isAborted()) break;
 
-    // Calculate cost in Light (USD × 800 × 1.2 markup)
+    // Calculate cost in Light (USD × rate × markup)
     let costLight: number | undefined;
     if (streamResult.usage?.total_cost !== undefined) {
-      costLight = streamResult.usage.total_cost * 800 * 1.2;
+      costLight = streamResult.usage.total_cost * LIGHT_PER_DOLLAR_DESKTOP * CHAT_PLATFORM_MARKUP;
     }
 
     // Finalize assistant message

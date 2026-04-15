@@ -439,6 +439,8 @@ export async function* streamOrchestrate(opts: {
   projectContext?: string;
   /** Conversation ID for rolling summary persistence */
   conversationId?: string;
+  /** Attached files (base64 data URLs) */
+  files?: Array<{ name: string; size: number; mimeType: string; content: string }>;
 }): AsyncGenerator<OrchestrateEvent> {
   const base = getApiBase();
 

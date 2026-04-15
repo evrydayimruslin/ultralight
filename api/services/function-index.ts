@@ -78,6 +78,29 @@ export async function rebuildFunctionIndex(userId: string): Promise<FunctionInde
   }
   const apps = Array.from(allAppsMap.values());
 
+  // ── Fetch skill apps (owned + liked) — .md context files ──
+  const skillOwnedRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${userId}&app_type=eq.skill&deleted_at=is.null&select=id,name,slug,description,storage_key`,
+    { headers }
+  );
+  const skillOwned = skillOwnedRes.ok
+    ? await skillOwnedRes.json() as Array<{ id: string; name: string; slug: string; description: string | null; storage_key: string }>
+    : [];
+
+  let skillLiked: typeof skillOwned = [];
+  if (likedIds.length > 0) {
+    const skillLikedRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/apps?id=in.(${likedIds.join(',')})&app_type=eq.skill&deleted_at=is.null&select=id,name,slug,description,storage_key`,
+      { headers }
+    );
+    skillLiked = skillLikedRes.ok ? await skillLikedRes.json() as typeof skillOwned : [];
+  }
+
+  const skillApps = new Map<string, typeof skillOwned[0]>();
+  for (const s of [...skillOwned, ...skillLiked]) {
+    if (!skillApps.has(s.id)) skillApps.set(s.id, s);
+  }
+
   // Build descriptors and types
   const { descriptors, toolMap, widgets } = buildJsonSchemaDescriptors(apps);
 
@@ -177,6 +200,21 @@ export async function rebuildFunctionIndex(userId: string): Promise<FunctionInde
       returns: returnTypesMap[sanitizedName] || 'unknown',
       conventions: appConventions.get(mapping.appId) || [],
       dependsOn: [...new Set(dependsOn)], // deduplicate
+    };
+  }
+
+  // ── Add skill entries as context-only sources ──
+  for (const [, skill] of skillApps) {
+    const key = `skill__${skill.slug}`;
+    functions[key] = {
+      appId: skill.id,
+      appSlug: skill.slug,
+      fnName: '__context',
+      description: `[${skill.name}] ${skill.description || 'Skill context'}`,
+      params: {},
+      returns: 'context',
+      conventions: [],
+      dependsOn: [],
     };
   }
 

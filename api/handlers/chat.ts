@@ -461,6 +461,7 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
     systemAgentContext?: { type: string; persona: string; skillsPath: string };
     projectContext?: string;
     conversationId?: string;
+    files?: Array<{ name: string; size: number; mimeType: string; content: string }>;
   };
   try {
     body = await request.json() as typeof body;
@@ -495,6 +496,7 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
             systemAgentContext: body.systemAgentContext,
             projectContext: body.projectContext,
             conversationId: body.conversationId,
+            files: body.files,
           },
           user.id,
           user.email,

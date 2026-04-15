@@ -28,19 +28,19 @@ export interface GpuRateEntry {
 
 /**
  * Platform rate table. All-in per-ms rate in Light (cold starts, egress, VRAM absorbed).
- * Derived from RunPod community cloud rates with consistent 10-13x markup, at 800 Light/$1.
+ * Derived from RunPod community cloud rates with consistent 10-13x markup, at 100 Light/$1.
  */
 export const GPU_RATE_TABLE: Record<GpuType, GpuRateEntry> = {
-  'A40':            { rate_per_ms: 0.00080000,  vram_gb: 48 },
-  'L40':            { rate_per_ms: 0.00160000,  vram_gb: 48 },
-  'L40S':           { rate_per_ms: 0.00176000,  vram_gb: 48 },
-  'A100-80GB-PCIe': { rate_per_ms: 0.00320000,  vram_gb: 80 },
-  'A100-80GB-SXM':  { rate_per_ms: 0.00400000,  vram_gb: 80 },
-  'H100-PCIe':      { rate_per_ms: 0.00560000,  vram_gb: 80 },
-  'H100-SXM':       { rate_per_ms: 0.00720000,  vram_gb: 80 },
-  'H100-NVL':       { rate_per_ms: 0.00720000,  vram_gb: 94 },
-  'H200':           { rate_per_ms: 0.00960000,  vram_gb: 141 },
-  'B200':           { rate_per_ms: 0.01600000,  vram_gb: 180 },
+  'A40':            { rate_per_ms: 0.00010000,  vram_gb: 48 },
+  'L40':            { rate_per_ms: 0.00020000,  vram_gb: 48 },
+  'L40S':           { rate_per_ms: 0.00022000,  vram_gb: 48 },
+  'A100-80GB-PCIe': { rate_per_ms: 0.00040000,  vram_gb: 80 },
+  'A100-80GB-SXM':  { rate_per_ms: 0.00050000,  vram_gb: 80 },
+  'H100-PCIe':      { rate_per_ms: 0.00070000,  vram_gb: 80 },
+  'H100-SXM':       { rate_per_ms: 0.00090000,  vram_gb: 80 },
+  'H100-NVL':       { rate_per_ms: 0.00090000,  vram_gb: 94 },
+  'H200':           { rate_per_ms: 0.00120000,  vram_gb: 141 },
+  'B200':           { rate_per_ms: 0.00200000,  vram_gb: 180 },
 };
 
 /** All valid GPU type strings. */
