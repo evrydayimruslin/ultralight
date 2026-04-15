@@ -9,6 +9,7 @@ export type AppView =
   | { kind: 'agent'; agentId: string; initialMessage?: string }
   | { kind: 'new-chat' }
   | { kind: 'capabilities' }
+  | { kind: 'app-store'; appId: string; appName?: string }
   | { kind: 'profile' }
   | { kind: 'wallet' }
   | { kind: 'settings' };
@@ -19,6 +20,7 @@ export interface UseAppStateReturn {
   navigateToAgent: (agentId: string, initialMessage?: string) => void;
   navigateToNewChat: () => void;
   navigateToCapabilities: () => void;
+  navigateToAppStore: (appId: string, appName?: string) => void;
   navigateToProfile: () => void;
   navigateToWallet: () => void;
   navigateToSettings: () => void;
@@ -60,6 +62,7 @@ const MAX_HISTORY = 50;
 function viewsEqual(a: AppView, b: AppView): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === 'agent' && b.kind === 'agent') return a.agentId === b.agentId;
+  if (a.kind === 'app-store' && b.kind === 'app-store') return a.appId === b.appId;
   return true;
 }
 
@@ -119,6 +122,7 @@ export function useAppState(): UseAppStateReturn {
   const navigateToAgent = useCallback((agentId: string, initialMessage?: string) => navigate({ kind: 'agent', agentId, initialMessage }), [navigate]);
   const navigateToNewChat = useCallback(() => navigate({ kind: 'new-chat' }), [navigate]);
   const navigateToCapabilities = useCallback(() => navigate({ kind: 'capabilities' }), [navigate]);
+  const navigateToAppStore = useCallback((appId: string, appName?: string) => navigate({ kind: 'app-store', appId, appName }), [navigate]);
   const navigateToProfile = useCallback(() => navigate({ kind: 'profile' }), [navigate]);
   const navigateToWallet = useCallback(() => navigate({ kind: 'wallet' }), [navigate]);
   const navigateToSettings = useCallback(() => navigate({ kind: 'settings' }), [navigate]);
@@ -129,6 +133,7 @@ export function useAppState(): UseAppStateReturn {
     navigateToAgent,
     navigateToNewChat,
     navigateToCapabilities,
+    navigateToAppStore,
     navigateToProfile,
     navigateToWallet,
     navigateToSettings,

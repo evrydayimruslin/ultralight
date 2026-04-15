@@ -50,6 +50,7 @@ export class AppsService {
   async findById(appId: string): Promise<App | null> {
     const url = new URL(`${this.supabaseUrl}/rest/v1/apps`);
     url.searchParams.set('id', `eq.${appId}`);
+    url.searchParams.set('deleted_at', 'is.null');
     url.searchParams.set('select', '*');
     url.searchParams.set('limit', '1');
 
@@ -147,6 +148,30 @@ export class AppsService {
       const error = await response.text();
       // Log but don't throw - run counting shouldn't break execution
       console.error(`App increment runs failed: ${error}`);
+    }
+  }
+
+  /**
+   * Atomically increment impressions_total + impressions_7d.
+   * Called on non-bot /app/:id visits. Fire-and-forget semantics —
+   * analytics failures must never break page rendering.
+   */
+  async incrementImpression(appId: string): Promise<void> {
+    const url = `${this.supabaseUrl}/rest/v1/rpc/increment_app_impression`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.supabaseKey}`,
+        'apikey': this.supabaseKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ app_id: appId }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      console.error(`App increment impression failed: ${error}`);
     }
   }
 

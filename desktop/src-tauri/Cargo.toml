@@ -24,6 +24,16 @@ log = "0.4"
 tauri = { version = "2.10.3", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
+# Deep linking: register `ultralight://` URL scheme and receive URL-open
+# events from the OS. Ships Phase 3 of the app store work — lets users
+# click `ultralight://app/{id}` links in the browser to open the desktop
+# app directly on the corresponding store page.
+tauri-plugin-deep-link = "2"
+# Single-instance: on Windows/Linux, custom-protocol clicks launch a new
+# process. This plugin intercepts the second launch, forwards the URL to
+# the running instance, and focuses its window. On macOS this is a no-op
+# (macOS natively routes `openUrl` to the running app).
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 glob = "0.3"
 regex = "1"
 walkdir = "2"

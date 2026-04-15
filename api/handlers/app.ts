@@ -4,6 +4,7 @@
 import { handleUpload } from './upload.ts';
 import { handleRun } from './run.ts';
 import { handleAuth } from './auth.ts';
+import { appStoreUrl, downloadUrl, deepLinkAppUrl } from '../lib/urls.ts';
 import { handleApps } from './apps.ts';
 import { handleUser } from './user.ts';
 import { handleMcp, handleMcpDiscovery } from './mcp.ts';
@@ -1488,6 +1489,12 @@ function escAttr(s) { return String(s).replace(/"/g, "&quot;").replace(/'/g, "&#
 // PUBLIC APP PAGE
 // ============================================
 
+// Bot detection for impression filtering. Matches common crawlers, social
+// preview fetchers (Slack/Discord/Facebook/Twitter/LinkedIn/WhatsApp), and
+// generic "bot" UAs. Intentionally broad — false positives just mean an
+// occasional missed impression, which is fine.
+const BOT_UA_PATTERN = /bot|crawler|spider|facebookexternalhit|slackbot|whatsapp|twitterbot|linkedinbot|discordbot|preview|headless|pinterest|telegram|vkshare|embedly|bitlybot|quora|outbrain|pocket|redditbot|applebot/i;
+
 async function handlePublicAppPage(request: Request, appId: string): Promise<Response> {
   try {
     const appsService = createAppsService();
@@ -1503,6 +1510,23 @@ async function handlePublicAppPage(request: Request, appId: string): Promise<Res
     }
 
     const baseUrl = getBaseUrl(request);
+    const urlObj = new URL(request.url);
+    const isEmbed = urlObj.searchParams.get('embed') === '1';
+
+    // Note: isOwner is NOT detected server-side. The page is cached with
+    // `public, max-age=60` and must render identically for every viewer.
+    // Client-side bootstrap calls /api/apps/:id/library-status which
+    // returns { inLibrary, isOwner } and renders the owner banner from
+    // that response.
+
+    // Fire-and-forget impression counter (bot-filtered).
+    // Must never block rendering or surface errors to the viewer.
+    const ua = request.headers.get('user-agent') || '';
+    if (!BOT_UA_PATTERN.test(ua)) {
+      void appsService.incrementImpression(app.id).catch(err =>
+        console.warn('[impression] failed:', err)
+      );
+    }
 
     // Fetch owner display name
     const SUPABASE_URL = getEnv('SUPABASE_URL');
@@ -1526,7 +1550,7 @@ async function handlePublicAppPage(request: Request, appId: string): Promise<Res
       }
     } catch { /* best effort */ }
 
-    const html = getPublicAppPageHTML(app, ownerName, baseUrl);
+    const html = getPublicAppPageHTML(app, ownerName, baseUrl, { isEmbed });
     return new Response(html, {
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
@@ -1540,15 +1564,60 @@ async function handlePublicAppPage(request: Request, appId: string): Promise<Res
 }
 
 function getPublicAppPageHTML(
-  app: { id: string; name: string; slug: string; description?: string; current_version?: string; owner_id: string; skills_md?: string; skills_parsed?: unknown },
+  app: {
+    id: string;
+    name: string;
+    slug: string;
+    description?: string | null;
+    current_version?: string;
+    owner_id: string;
+    visibility?: string;
+    category?: string | null;
+    tags?: string[] | null;
+    likes?: number;
+    dislikes?: number;
+    total_runs?: number;
+    icon_url?: string | null;
+    skills_md?: string | null;
+    skills_parsed?: unknown;
+    screenshots?: string[] | null;
+    long_description?: string | null;
+  },
   ownerName: string,
-  baseUrl: string
+  baseUrl: string,
+  opts: { isEmbed: boolean }
 ): string {
+  const { isEmbed } = opts;
   const appName = escapeHtml(app.name || app.slug);
-  const description = app.description ? escapeHtml(app.description) : '';
+  const rawDescription = app.description || '';
+  const description = escapeHtml(rawDescription);
   const version = app.current_version ? escapeHtml(app.current_version) : '1.0';
   const mcpEndpoint = `${baseUrl}/mcp/${app.id}`;
-  // Render skills documentation
+  const shareUrl = appStoreUrl(app.id);
+  const deepLink = deepLinkAppUrl(app.id);
+  const dlUrl = downloadUrl({ app: app.id });
+  const likes = Number(app.likes ?? 0);
+  const runs = Number(app.total_runs ?? 0);
+  const category = app.category ? escapeHtml(app.category) : '';
+  const isUnlisted = app.visibility === 'unlisted';
+  const ownerProfileUrl = `/u/${escapeHtml(app.owner_id)}`;
+  const tags = Array.isArray(app.tags) ? app.tags.filter(t => typeof t === 'string').slice(0, 5) : [];
+
+  // Phase 2: screenshots and long description.
+  const screenshots: string[] = Array.isArray(app.screenshots)
+    ? app.screenshots.filter((s): s is string => typeof s === 'string')
+    : [];
+  const hasScreenshots = screenshots.length > 0;
+  const longDescriptionMd = typeof app.long_description === 'string' ? app.long_description : '';
+  const longDescriptionHtml = longDescriptionMd ? markdownToHtml(longDescriptionMd) : '';
+
+  // OpenGraph prefers the first screenshot over the icon — richer previews
+  // in Slack/iMessage/Twitter when apps have visual content.
+  const ogImage = hasScreenshots
+    ? `${baseUrl}/api/apps/${app.id}/screenshots/0`
+    : `${baseUrl}/api/apps/${app.id}/icon`;
+
+  // Render skills documentation (unchanged)
   let skillsHtml = '';
   if (app.skills_md) {
     skillsHtml = markdownToHtml(app.skills_md);
@@ -1567,13 +1636,33 @@ function getPublicAppPageHTML(
     skillsHtml = '<p class="no-docs">No documentation yet.</p>';
   }
 
+  // Short meta description for <meta> + OG (trim to ~160 chars)
+  const metaDesc = rawDescription.length > 160
+    ? rawDescription.slice(0, 157) + '...'
+    : rawDescription;
+  const metaDescEscaped = escapeHtml(metaDesc || `${app.name || app.slug} on Ultralight — MCP app store`);
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${appName} — Ultralight MCP Server</title>
-<meta name="description" content="${description}">
+<title>${appName} — Ultralight</title>
+<meta name="description" content="${metaDescEscaped}">
+${isEmbed ? '<meta name="robots" content="noindex">' : ''}
+
+<!-- OpenGraph / social share previews -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Ultralight">
+<meta property="og:title" content="${appName}">
+<meta property="og:description" content="${metaDescEscaped}">
+<meta property="og:url" content="${escapeHtml(shareUrl)}">
+<meta property="og:image" content="${escapeHtml(ogImage)}">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="${appName}">
+<meta name="twitter:description" content="${metaDescEscaped}">
+<meta name="twitter:image" content="${escapeHtml(ogImage)}">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -1582,127 +1671,269 @@ function getPublicAppPageHTML(
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     background: #ffffff;
     color: #0a0a0a;
-    padding: 2rem 1rem;
+    padding: 2rem 1rem 4rem;
     min-height: 100vh;
   }
   .container { max-width: 680px; margin: 0 auto; }
 
-  .app-header {
+  /* Owner banner (client-side rendered) */
+  .owner-banner {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1.25rem;
+    background: #fafafa;
+    border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 4px;
+    font-size: 0.8125rem;
+  }
+  .owner-banner.show { display: flex; }
+  .owner-banner a {
+    color: #0a0a0a;
+    font-weight: 500;
+    text-decoration: none;
+  }
+  .owner-banner a:hover { text-decoration: underline; }
+
+  /* Hero */
+  .hero {
     display: flex;
     align-items: flex-start;
     gap: 1rem;
-    margin-bottom: 1.25rem;
+    margin-bottom: 1.5rem;
   }
-  .app-icon {
-    width: 48px; height: 48px;
+  .hero-icon {
+    width: 64px; height: 64px;
     background: #0a0a0a;
     display: flex; align-items: center; justify-content: center;
-    font-size: 1.5rem;
+    font-size: 2rem;
     flex-shrink: 0;
     color: #fff;
+    border-radius: 12px;
+    overflow: hidden;
   }
-  .app-info h1 { font-size: 1.5rem; font-weight: 700; color: #0a0a0a; line-height: 1.2; }
-  .app-meta {
-    display: flex; align-items: center; gap: 0.5rem;
-    margin-top: 0.25rem; font-size: 0.8125rem; color: #999;
+  .hero-icon img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
   }
-  .app-meta a { color: #555; text-decoration: none; }
-  .app-meta a:hover { text-decoration: underline; }
-  .version-badge {
+  .hero-info { flex: 1; min-width: 0; }
+  .hero-info h1 {
+    font-size: 1.625rem;
+    font-weight: 700;
+    color: #0a0a0a;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+  }
+  .hero-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-top: 0.375rem;
+    font-size: 0.8125rem;
+    color: #999;
+  }
+  .hero-meta a { color: #555; text-decoration: none; }
+  .hero-meta a:hover { text-decoration: underline; }
+  .hero-meta .sep { color: #ccc; }
+  .badge {
+    display: inline-block;
     background: #fafafa;
     color: #555;
     padding: 0.1rem 0.4rem;
     font-size: 0.75rem;
     font-weight: 500;
     border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 3px;
+    white-space: nowrap;
   }
-  .app-desc {
+  .badge.unlisted {
+    background: #fff7ed;
+    color: #9a3412;
+    border-color: #fed7aa;
+  }
+  .badge.category {
+    text-transform: capitalize;
+  }
+  .hero-stats {
+    margin-top: 0.5rem;
+    font-size: 0.8125rem;
+    color: #666;
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+  }
+  .hero-stats .sep { color: #ccc; }
+
+  .tag-row {
+    display: flex;
+    gap: 0.375rem;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+  }
+  .tag {
+    font-size: 0.6875rem;
+    color: #666;
+    background: #f5f5f5;
+    padding: 0.15rem 0.5rem;
+    border-radius: 10px;
+  }
+
+  /* CTA area — client JS renders into this */
+  .cta-area {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin: 1.5rem 0 2rem;
+  }
+  .cta-row {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .cta-secondary-link {
+    font-size: 0.8125rem;
     color: #555;
+    text-decoration: none;
+    padding: 0.25rem 0;
+  }
+  .cta-secondary-link:hover {
+    color: #0a0a0a;
+    text-decoration: underline;
+  }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.6rem 1rem;
+    font-family: 'Inter', -apple-system, sans-serif;
+    font-size: 0.875rem;
+    font-weight: 500;
+    text-decoration: none;
+    border: none;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+    border-radius: 6px;
+  }
+  .btn:disabled { cursor: not-allowed; opacity: 0.7; }
+  .btn-primary {
+    background: #0a0a0a;
+    color: #ffffff;
+  }
+  .btn-primary:hover:not(:disabled) { background: #333; }
+  .btn-primary.copied { background: #333; }
+  .btn-primary.btn-lg {
+    padding: 0.75rem 1.5rem;
+    font-size: 0.9375rem;
+    min-width: 200px;
+  }
+  .btn-secondary {
+    background: #fafafa;
+    color: #0a0a0a;
+    border: 1px solid rgba(0,0,0,0.1);
+  }
+  .btn-secondary:hover:not(:disabled) { background: #f0f0f0; }
+  .btn-secondary.copied { background: #0a0a0a; color: #fff; }
+  .btn-ghost {
+    background: transparent;
+    color: #555;
+    font-size: 0.8125rem;
+    padding: 0.4rem 0.75rem;
+  }
+  .btn-ghost:hover:not(:disabled) { color: #0a0a0a; background: rgba(0,0,0,0.04); }
+
+  /* Spinner */
+  .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Description */
+  .app-desc {
+    color: #333;
     font-size: 0.9375rem;
     line-height: 1.6;
     margin-bottom: 1.5rem;
   }
 
-  .endpoint-box {
-    background: #fafafa;
-    border: 1px solid rgba(0,0,0,0.08);
-    padding: 1.25rem;
-    margin-bottom: 1.5rem;
+  /* Screenshots carousel — horizontal snap scroller, bleeds to edges on mobile */
+  .app-screenshots {
+    margin: 0 -1rem 1.5rem;
+    padding: 0 1rem;
   }
-  .endpoint-label {
-    font-size: 0.6875rem;
-    color: #999;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 0.5rem;
-  }
-  .endpoint-row {
+  .screenshots-scroller {
     display: flex;
-    align-items: center;
-    gap: 0.5rem;
+    gap: 0.75rem;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 0.5rem;
   }
-  .endpoint-url {
-    flex: 1;
-    background: #fff;
+  .screenshots-scroller::-webkit-scrollbar { height: 6px; }
+  .screenshots-scroller::-webkit-scrollbar-thumb {
+    background: rgba(0,0,0,0.15);
+    border-radius: 3px;
+  }
+  .screenshot-item {
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+    width: min(80vw, 420px);
+    border-radius: 8px;
+    overflow: hidden;
     border: 1px solid rgba(0,0,0,0.08);
-    padding: 0.6rem 0.75rem;
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 0.8125rem;
-    color: #0a0a0a;
-    word-break: break-all;
-    user-select: all;
-  }
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0.5rem 0.875rem;
-    font-family: 'Inter', -apple-system, sans-serif;
-    font-size: 0.8125rem;
-    font-weight: 500;
-    text-decoration: none;
-    border: none;
-    cursor: pointer;
-    transition: background 0.15s;
-    white-space: nowrap;
-  }
-  .btn-primary {
-    background: #0a0a0a;
-    color: #ffffff;
-  }
-  .btn-primary:hover { background: #333; }
-  .btn-primary.copied { background: #333; }
-  .btn-secondary {
     background: #fafafa;
-    color: #0a0a0a;
-    border: 1px solid rgba(0,0,0,0.08);
+    display: block;
+    transition: transform 0.15s;
   }
-  .btn-secondary:hover { background: rgba(0,0,0,0.04); }
-  .btn-secondary.copied { background: #0a0a0a; color: #fff; }
-  .endpoint-actions {
-    display: flex;
-    gap: 0.5rem;
-    margin-top: 0.75rem;
+  .screenshot-item:hover { transform: translateY(-2px); }
+  .screenshot-item img {
+    display: block;
+    width: 100%;
+    height: auto;
+    object-fit: cover;
+    aspect-ratio: 16 / 10;
   }
 
-  .docs-section {
-    background: #fafafa;
-    border: 1px solid rgba(0,0,0,0.08);
-    padding: 1.5rem;
+  /* Long description section — reuses .section and .docs-content styles */
+  .app-long-desc {
     margin-bottom: 1.5rem;
   }
-  .docs-title {
+
+  /* Functions section */
+  .section {
+    background: #fafafa;
+    border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 6px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.25rem;
+  }
+  .section-title {
     font-size: 0.6875rem;
     color: #999;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    margin-bottom: 1rem;
+    margin-bottom: 0.75rem;
+    font-weight: 600;
   }
   .docs-content { color: #333; line-height: 1.7; }
-  .docs-content h1 { font-size: 1.375rem; color: #0a0a0a; margin: 1.5rem 0 0.75rem; }
-  .docs-content h2 { font-size: 1.125rem; color: #0a0a0a; margin: 1.5rem 0 0.5rem; border-bottom: 1px solid rgba(0,0,0,0.08); padding-bottom: 0.3rem; }
-  .docs-content h3 { font-size: 1rem; color: #0a0a0a; margin: 1.25rem 0 0.5rem; }
-  .docs-content p { margin: 0.6rem 0; }
+  .docs-content h1 { font-size: 1.25rem; color: #0a0a0a; margin: 1.25rem 0 0.5rem; }
+  .docs-content h2 { font-size: 1.0625rem; color: #0a0a0a; margin: 1.25rem 0 0.5rem; border-bottom: 1px solid rgba(0,0,0,0.08); padding-bottom: 0.3rem; }
+  .docs-content h3 { font-size: 0.9375rem; color: #0a0a0a; margin: 1rem 0 0.4rem; }
+  .docs-content p { margin: 0.5rem 0; }
   .docs-content a { color: #0a0a0a; text-decoration: underline; }
   .docs-content code {
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
@@ -1710,28 +1941,30 @@ function getPublicAppPageHTML(
     background: rgba(0,0,0,0.04);
     padding: 0.15em 0.4em;
     color: #0a0a0a;
+    border-radius: 3px;
   }
   .docs-content pre {
-    margin: 1rem 0;
-    padding: 1rem;
+    margin: 0.75rem 0;
+    padding: 0.875rem;
     background: #fff;
     border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 4px;
     overflow-x: auto;
   }
   .docs-content pre code { background: none; padding: 0; font-size: 0.8125em; color: #555; }
   .docs-content ul, .docs-content ol { margin: 0.5rem 0; padding-left: 1.5rem; }
-  .docs-content li { margin: 0.25rem 0; }
+  .docs-content li { margin: 0.2rem 0; }
   .docs-content blockquote {
-    margin: 1rem 0;
-    padding: 0.75rem 1rem;
+    margin: 0.75rem 0;
+    padding: 0.5rem 0.875rem;
     border-left: 3px solid #0a0a0a;
     background: #fafafa;
     color: #555;
   }
-  .docs-content hr { margin: 1.5rem 0; border: none; border-top: 1px solid rgba(0,0,0,0.08); }
+  .docs-content hr { margin: 1.25rem 0; border: none; border-top: 1px solid rgba(0,0,0,0.08); }
 
   .fn-item {
-    padding: 0.65rem 0;
+    padding: 0.55rem 0;
     border-bottom: 1px solid rgba(0,0,0,0.06);
   }
   .fn-item:last-child { border-bottom: none; }
@@ -1739,102 +1972,552 @@ function getPublicAppPageHTML(
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
     color: #0a0a0a;
     font-weight: 500;
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
   }
   .fn-desc {
     display: block;
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
     color: #999;
     margin-top: 0.2rem;
   }
-  .no-docs { color: #999; font-style: italic; }
+  .no-docs { color: #999; font-style: italic; font-size: 0.875rem; }
 
+  /* MCP endpoint — demoted to collapsible */
+  details.mcp-details {
+    background: #fafafa;
+    border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 6px;
+    padding: 0.875rem 1.25rem;
+    margin-bottom: 1.25rem;
+  }
+  details.mcp-details summary {
+    cursor: pointer;
+    font-size: 0.8125rem;
+    color: #555;
+    font-weight: 500;
+    list-style: none;
+    user-select: none;
+  }
+  details.mcp-details summary::-webkit-details-marker { display: none; }
+  details.mcp-details summary::before {
+    content: '▸ ';
+    color: #999;
+    margin-right: 0.25rem;
+  }
+  details.mcp-details[open] summary::before { content: '▾ '; }
+  details.mcp-details[open] summary { margin-bottom: 0.75rem; }
+  .endpoint-url {
+    background: #fff;
+    border: 1px solid rgba(0,0,0,0.08);
+    padding: 0.55rem 0.75rem;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.75rem;
+    color: #0a0a0a;
+    word-break: break-all;
+    user-select: all;
+    border-radius: 4px;
+    margin-bottom: 0.6rem;
+  }
+  .endpoint-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  /* Footer-bar with share button */
   .footer-bar {
-    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     padding-top: 1.5rem;
+    margin-top: 0.5rem;
+    border-top: 1px solid rgba(0,0,0,0.06);
     font-size: 0.75rem;
     color: #999;
   }
   .footer-bar a { color: #555; text-decoration: none; }
   .footer-bar a:hover { color: #0a0a0a; }
 
+  /* Toast */
+  .toast {
+    position: fixed;
+    bottom: 1.5rem;
+    left: 50%;
+    transform: translateX(-50%) translateY(1rem);
+    background: #0a0a0a;
+    color: #fff;
+    padding: 0.65rem 1.1rem;
+    border-radius: 6px;
+    font-size: 0.8125rem;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s, transform 0.2s;
+    z-index: 9999;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    max-width: 90vw;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  .toast.error { background: #b91c1c; }
+  .toast-action {
+    color: #fff;
+    text-decoration: underline;
+    cursor: pointer;
+    font-weight: 500;
+  }
+  .toast-dismiss {
+    color: rgba(255,255,255,0.6);
+    cursor: pointer;
+    padding: 0 0.25rem;
+    font-size: 1rem;
+    line-height: 1;
+  }
+  .toast-dismiss:hover { color: #fff; }
+
   @media (max-width: 600px) {
-    body { padding: 1rem 0.5rem; }
-    .endpoint-row { flex-direction: column; align-items: stretch; }
-    .endpoint-actions { flex-direction: column; }
+    body { padding: 1rem 0.5rem 3rem; }
+    .hero { gap: 0.75rem; }
+    .hero-icon { width: 56px; height: 56px; font-size: 1.75rem; }
+    .hero-info h1 { font-size: 1.375rem; }
+    .btn-primary.btn-lg { width: 100%; min-width: 0; }
+    .cta-row { flex-direction: column; align-items: stretch; }
   }
 </style>
 </head>
 <body>
 <div class="container">
-  <div class="app-header">
-    <div class="app-icon">&#9889;</div>
-    <div class="app-info">
+
+  <!-- Owner banner (rendered client-side once library-status resolves) -->
+  <div id="ownerBanner" class="owner-banner" role="region" aria-label="Owner controls">
+    <span>You own this app.</span>
+    <a href="/a/${escapeHtml(app.id)}">Manage &rarr;</a>
+  </div>
+
+  <!-- Hero -->
+  <div class="hero">
+    <div class="hero-icon">
+      <img src="/api/apps/${escapeHtml(app.id)}/icon" alt="" onerror="this.replaceWith(document.createTextNode('\\u26A1'));">
+    </div>
+    <div class="hero-info">
       <h1>${appName}</h1>
-      <div class="app-meta">
-        <a href="/u/${escapeHtml(app.owner_id)}">${escapeHtml(ownerName)}</a>
-        <span class="version-badge">v${version}</span>
+      <div class="hero-meta">
+        <a href="${ownerProfileUrl}">by ${escapeHtml(ownerName)}</a>
+        <span class="sep">·</span>
+        <span class="badge">v${version}</span>
+        ${isUnlisted ? '<span class="badge unlisted">Unlisted</span>' : ''}
+        ${category ? `<span class="badge category">${category}</span>` : ''}
       </div>
+      <div class="hero-stats">
+        <span>&#128077; ${likes.toLocaleString()}</span>
+        <span class="sep">·</span>
+        <span>${runs.toLocaleString()} ${runs === 1 ? 'run' : 'runs'}</span>
+      </div>
+      ${tags.length > 0 ? `<div class="tag-row">${tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
     </div>
   </div>
 
+  <!-- CTA area — populated by client bootstrap -->
+  <div id="appStoreCTA"
+       class="cta-area"
+       data-app-id="${escapeHtml(app.id)}"
+       data-app-name="${escapeHtml(app.name || app.slug)}"
+       data-is-embed="${isEmbed ? 'true' : 'false'}">
+    <div class="cta-row">
+      <button class="btn btn-primary btn-lg" disabled>
+        <span class="spinner"></span> Loading...
+      </button>
+    </div>
+  </div>
+
+  <!-- Description -->
   ${description ? `<p class="app-desc">${description}</p>` : ''}
 
-  <div class="endpoint-box">
-    <div class="endpoint-label">MCP Endpoint</div>
-    <div class="endpoint-row">
-      <div class="endpoint-url" id="mcpUrl">${escapeHtml(mcpEndpoint)}</div>
-      <button class="btn btn-secondary" onclick="copyUrl()" id="copyUrlBtn">Copy</button>
+  <!-- Screenshots carousel (Phase 2) — horizontal scroll with snap points -->
+  ${hasScreenshots ? `
+  <section class="app-screenshots">
+    <div class="screenshots-scroller">
+      ${screenshots.map((_, idx) => `
+        <a class="screenshot-item" href="/api/apps/${escapeHtml(app.id)}/screenshots/${idx}" target="_blank" rel="noopener">
+          <img src="/api/apps/${escapeHtml(app.id)}/screenshots/${idx}" alt="Screenshot ${idx + 1}" loading="lazy">
+        </a>
+      `).join('')}
     </div>
+  </section>` : ''}
+
+  <!-- Long description (Phase 2) — markdown-rendered body -->
+  ${longDescriptionHtml ? `
+  <section class="section app-long-desc">
+    <div class="docs-content">${longDescriptionHtml}</div>
+  </section>` : ''}
+
+  <!-- Functions -->
+  <section class="section">
+    <div class="section-title">Functions</div>
+    <div class="docs-content">${skillsHtml}</div>
+  </section>
+
+  <!-- MCP endpoint (demoted) -->
+  <details class="mcp-details">
+    <summary>Connect directly via MCP</summary>
+    <div class="endpoint-url" id="mcpUrl">${escapeHtml(mcpEndpoint)}</div>
     <div class="endpoint-actions">
-      <button class="btn btn-primary" onclick="copyInstructions()" id="copyInstructionsBtn">Copy Agent Instructions</button>
+      <button class="btn btn-secondary" onclick="copyUrl()" id="copyUrlBtn">Copy URL</button>
+      <button class="btn btn-secondary" onclick="copyInstructions()" id="copyInstructionsBtn">Copy Agent Instructions</button>
     </div>
-  </div>
+  </details>
 
-  <div class="docs-section">
-    <div class="docs-title">Documentation</div>
-    <div class="docs-content">
-      ${skillsHtml}
-    </div>
-  </div>
-
+  <!-- Footer with share -->
   <div class="footer-bar">
-    Powered by <a href="https://ultralight-api.rgn4jz429m.workers.dev">Ultralight</a>
+    <span>Powered by <a href="${escapeHtml(baseUrl)}">Ultralight</a></span>
+    <button class="btn btn-ghost" onclick="copyShareLink()" id="shareLinkBtn">
+      <span>Copy share link</span>
+    </button>
   </div>
 </div>
+
+<!-- Toast container -->
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
 <script>
-function copyUrl() {
-  var url = document.getElementById('mcpUrl').textContent;
-  navigator.clipboard.writeText(url).then(function() {
-    var btn = document.getElementById('copyUrlBtn');
-    btn.className = 'btn btn-secondary copied';
-    btn.textContent = 'Copied';
-    setTimeout(function() {
-      btn.className = 'btn btn-secondary';
-      btn.textContent = 'Copy';
-    }, 2000);
-  });
-}
-function copyInstructions() {
-  var btn = document.getElementById('copyInstructionsBtn');
-  btn.textContent = '...';
-  fetch('/api/apps/${app.id}/instructions')
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      return navigator.clipboard.writeText(data.instructions).then(function() {
-        btn.className = 'btn btn-primary copied';
-        btn.textContent = 'Copied. Paste to agent';
-        setTimeout(function() {
-          btn.className = 'btn btn-primary';
-          btn.textContent = 'Copy Agent Instructions';
-        }, 3000);
+(function() {
+  var APP_ID = ${JSON.stringify(app.id)};
+  var APP_NAME = ${JSON.stringify(app.name || app.slug)};
+  var SHARE_URL = ${JSON.stringify(shareUrl)};
+  var DEEP_LINK = ${JSON.stringify(deepLink)};
+  var DOWNLOAD_URL = ${JSON.stringify(dlUrl)};
+  var IS_EMBED_SSR = ${isEmbed ? 'true' : 'false'};
+
+  var ctaEl = document.getElementById('appStoreCTA');
+  var ownerBannerEl = document.getElementById('ownerBanner');
+  var toastEl = document.getElementById('toast');
+
+  // Detect embed via SSR hint OR parent frame (handles token-only refreshes)
+  var inDesktop = IS_EMBED_SSR || (window.parent && window.parent !== window);
+
+  // ── Token discovery ───────────────────────────────────────────
+  // Priority: URL hash (#token=) → URL query (?token=, desktop iframe) →
+  //           localStorage (standard web session).
+  function readToken() {
+    try {
+      if (location.hash) {
+        var m = location.hash.match(/[#&]token=([^&]*)/);
+        if (m) return decodeURIComponent(m[1]);
+      }
+      var qs = new URLSearchParams(location.search);
+      var q = qs.get('token');
+      if (q) return q;
+      return localStorage.getItem('ultralight_token') || '';
+    } catch (e) { return ''; }
+  }
+  function stripTokenFromUrl() {
+    try {
+      var cleaned = location.search
+        .replace(/[?&]token=[^&]*/g, '')
+        .replace(/^\\?&/, '?')
+        .replace(/^\\?$/, '');
+      var newHash = location.hash.replace(/[#&]token=[^&]*/g, '').replace(/^#&/, '#').replace(/^#$/, '');
+      history.replaceState(null, '', location.pathname + cleaned + newHash);
+    } catch (e) {}
+  }
+
+  var token = readToken();
+  if (token) {
+    try { localStorage.setItem('ultralight_token', token); } catch (e) {}
+    stripTokenFromUrl();
+  }
+
+  var installingFlag = new URLSearchParams(location.search).get('installing') === '1';
+
+  // ── State machine ─────────────────────────────────────────────
+  // 'anonymous' | 'not-in-library' | 'in-library' | 'owner'
+  var state = 'anonymous';
+  var status = { inLibrary: false, isOwner: false };
+
+  async function fetchStatus() {
+    if (!token) return { inLibrary: false, isOwner: false };
+    try {
+      var res = await fetch('/api/apps/' + encodeURIComponent(APP_ID) + '/library-status', {
+        headers: { 'Authorization': 'Bearer ' + token },
       });
-    })
-    .catch(function() {
-      btn.textContent = 'Error';
-      setTimeout(function() { btn.textContent = 'Copy Agent Instructions'; }, 2000);
+      if (!res.ok) return { inLibrary: false, isOwner: false };
+      return await res.json();
+    } catch (e) {
+      return { inLibrary: false, isOwner: false };
+    }
+  }
+
+  function pickState(s) {
+    if (s.isOwner) return 'owner';
+    if (!token) return 'anonymous';
+    return s.inLibrary ? 'in-library' : 'not-in-library';
+  }
+
+  // ── Button rendering ──────────────────────────────────────────
+  function renderCTA() {
+    var html;
+    // Owner banner: only visible when state === 'owner'
+    if (state === 'owner') {
+      ownerBannerEl.classList.add('show');
+    } else {
+      ownerBannerEl.classList.remove('show');
+    }
+    if (state === 'owner') {
+      // Owner sees banner at top; CTA area is empty for their own app.
+      html = '';
+    } else if (state === 'anonymous') {
+      // Big primary Install + small secondary download link.
+      html =
+        '<div class="cta-row">' +
+          '<button class="btn btn-primary btn-lg" onclick="window.__ul.installAnon()">Install this app</button>' +
+        '</div>' +
+        '<a class="cta-secondary-link" href="' + escAttr(DOWNLOAD_URL) + '">Download Ultralight Desktop &rarr;</a>';
+    } else if (state === 'not-in-library') {
+      html =
+        '<div class="cta-row">' +
+          '<button class="btn btn-primary btn-lg" onclick="window.__ul.installApp()">Install</button>' +
+        '</div>';
+    } else if (state === 'in-library') {
+      if (inDesktop) {
+        // Inside desktop: no "Open in Ultralight" (redundant), only uninstall.
+        html =
+          '<div class="cta-row">' +
+            '<button class="btn btn-secondary" onclick="window.__ul.uninstallApp()">Uninstall</button>' +
+          '</div>';
+      } else {
+        // Web + in library: prompt to open in desktop + uninstall fallback.
+        html =
+          '<div class="cta-row">' +
+            '<button class="btn btn-primary btn-lg" onclick="window.__ul.openInDesktop()">Open in Ultralight</button>' +
+            '<button class="btn btn-secondary" onclick="window.__ul.uninstallApp()">Uninstall</button>' +
+          '</div>';
+      }
+    }
+    ctaEl.innerHTML = html || '';
+  }
+
+  function renderInstalling() {
+    ctaEl.innerHTML =
+      '<div class="cta-row">' +
+        '<button class="btn btn-primary btn-lg" disabled><span class="spinner"></span> Installing...</button>' +
+      '</div>';
+  }
+  function renderUninstalling() {
+    ctaEl.innerHTML =
+      '<div class="cta-row">' +
+        '<button class="btn btn-secondary" disabled><span class="spinner"></span> Uninstalling...</button>' +
+      '</div>';
+  }
+
+  // ── Actions ───────────────────────────────────────────────────
+  async function installApp() {
+    if (!token) { return installAnon(); }
+    renderInstalling();
+    try {
+      var res = await fetch('/api/apps/' + encodeURIComponent(APP_ID) + '/save', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token },
+      });
+      if (res.ok) {
+        status.inLibrary = true;
+        state = pickState(status);
+        renderCTA();
+        showToast('\\u2713 Installed');
+        if (inDesktop) {
+          try { window.parent.postMessage({ type: 'library-changed', appId: APP_ID, action: 'install' }, '*'); } catch (e) {}
+        }
+      } else {
+        state = 'not-in-library';
+        renderCTA();
+        showToast('Could not install. Try again.', { error: true });
+      }
+    } catch (e) {
+      state = 'not-in-library';
+      renderCTA();
+      showToast('Network error. Try again.', { error: true });
+    }
+  }
+
+  async function uninstallApp() {
+    if (!token) return;
+    if (!confirm('Remove ' + APP_NAME + ' from your library?')) return;
+    renderUninstalling();
+    try {
+      var res = await fetch('/api/apps/' + encodeURIComponent(APP_ID) + '/save', {
+        method: 'DELETE',
+        headers: { 'Authorization': 'Bearer ' + token },
+      });
+      if (res.ok) {
+        status.inLibrary = false;
+        state = pickState(status);
+        renderCTA();
+        showToast('Uninstalled');
+        if (inDesktop) {
+          try { window.parent.postMessage({ type: 'library-changed', appId: APP_ID, action: 'uninstall' }, '*'); } catch (e) {}
+        }
+      } else {
+        state = 'in-library';
+        renderCTA();
+        showToast('Could not uninstall. Try again.', { error: true });
+      }
+    } catch (e) {
+      state = 'in-library';
+      renderCTA();
+      showToast('Network error. Try again.', { error: true });
+    }
+  }
+
+  function installAnon() {
+    // Kick off Google OAuth. Supabase flow uses return_to to redirect back
+    // with installing=1 so the callback auto-saves once the token lands.
+    var next = '/app/' + encodeURIComponent(APP_ID) + '?installing=1';
+    location.href = '/auth/login?return_to=' + encodeURIComponent(next);
+  }
+
+  function openInDesktop() {
+    var start = Date.now();
+    var opened = false;
+    var onBlur = function() { opened = true; };
+    window.addEventListener('blur', onBlur, { once: true });
+    location.href = DEEP_LINK;
+
+    setTimeout(function() {
+      window.removeEventListener('blur', onBlur);
+      if (!opened && Date.now() - start < 2000 && !document.hidden) {
+        showFallbackToast();
+      } else {
+        try { localStorage.setItem('ul_last_open_success', String(Date.now())); } catch (e) {}
+      }
+    }, 1500);
+  }
+
+  function copyShareLink() {
+    navigator.clipboard.writeText(SHARE_URL).then(function() {
+      var btn = document.getElementById('shareLinkBtn');
+      if (btn) {
+        var originalHTML = btn.innerHTML;
+        btn.innerHTML = '<span>Copied</span>';
+        setTimeout(function() { btn.innerHTML = originalHTML; }, 1500);
+      }
+    }, function() { showToast('Copy failed', { error: true }); });
+  }
+
+  // ── Toast ─────────────────────────────────────────────────────
+  var toastTimer;
+  function showToast(msg, opts) {
+    opts = opts || {};
+    clearTimeout(toastTimer);
+    toastEl.className = 'toast show' + (opts.error ? ' error' : '');
+    toastEl.innerHTML = '<span>' + escHtml(msg) + '</span>' +
+      (opts.action ? '<span class="toast-action" id="toastAction">' + escHtml(opts.actionLabel) + '</span>' : '') +
+      '<span class="toast-dismiss" onclick="document.getElementById(\\'toast\\').className=\\'toast\\';">&times;</span>';
+    if (opts.action) {
+      var a = document.getElementById('toastAction');
+      if (a) a.onclick = opts.action;
+    }
+    if (!opts.sticky) {
+      toastTimer = setTimeout(function() { toastEl.className = 'toast'; }, opts.duration || 3200);
+    }
+  }
+  function showFallbackToast() {
+    showToast('Did not open?', {
+      sticky: true,
+      action: function() { location.href = DOWNLOAD_URL; },
+      actionLabel: 'Get Ultralight',
     });
-}
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────
+  function escHtml(s) {
+    if (s == null) return '';
+    var d = document.createElement('div');
+    d.textContent = String(s);
+    return d.innerHTML;
+  }
+  function escAttr(s) {
+    return String(s == null ? '' : s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // ── Legacy helpers used by the <details> block ────────────────
+  window.copyUrl = function() {
+    var url = document.getElementById('mcpUrl').textContent;
+    navigator.clipboard.writeText(url).then(function() {
+      var btn = document.getElementById('copyUrlBtn');
+      btn.className = 'btn btn-secondary copied';
+      btn.textContent = 'Copied';
+      setTimeout(function() {
+        btn.className = 'btn btn-secondary';
+        btn.textContent = 'Copy URL';
+      }, 2000);
+    });
+  };
+  window.copyInstructions = function() {
+    var btn = document.getElementById('copyInstructionsBtn');
+    var original = btn.textContent;
+    btn.textContent = '...';
+    fetch('/api/apps/' + encodeURIComponent(APP_ID) + '/instructions')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        return navigator.clipboard.writeText(data.instructions).then(function() {
+          btn.className = 'btn btn-secondary copied';
+          btn.textContent = 'Copied. Paste to agent';
+          setTimeout(function() {
+            btn.className = 'btn btn-secondary';
+            btn.textContent = original;
+          }, 3000);
+        });
+      })
+      .catch(function() {
+        btn.textContent = 'Error';
+        setTimeout(function() { btn.textContent = original; }, 2000);
+      });
+  };
+  window.copyShareLink = copyShareLink;
+
+  // Expose for inline onclicks inside renderCTA
+  window.__ul = {
+    installApp: installApp,
+    uninstallApp: uninstallApp,
+    installAnon: installAnon,
+    openInDesktop: openInDesktop,
+  };
+
+  // ── Bootstrap ─────────────────────────────────────────────────
+  async function bootstrap() {
+    status = await fetchStatus();
+    state = pickState(status);
+    renderCTA();
+
+    // Post-OAuth auto-install: the user landed here with ?installing=1
+    // after completing Google sign-in. Silently save to library.
+    if (installingFlag && state === 'not-in-library') {
+      await installApp();
+      // Clean query param so refresh doesn't re-trigger
+      try {
+        var clean = location.pathname + location.search.replace(/[?&]installing=1/, '').replace(/^\\?$/, '');
+        history.replaceState(null, '', clean);
+      } catch (e) {}
+    }
+  }
+
+  // Refresh library state when tab regains focus (catches cross-window changes).
+  document.addEventListener('visibilitychange', async function() {
+    if (document.hidden) return;
+    if (state === 'anonymous' || state === 'owner') return;
+    var fresh = await fetchStatus();
+    if (fresh.inLibrary !== status.inLibrary || fresh.isOwner !== status.isOwner) {
+      status = fresh;
+      state = pickState(status);
+      renderCTA();
+    }
+  });
+
+  bootstrap();
+})();
 </script>
 </body>
 </html>`;

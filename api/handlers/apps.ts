@@ -235,6 +235,39 @@ export async function handleApps(request: Request): Promise<Response> {
     if (subPath === '/save' && method === 'DELETE') {
       return handleUnsaveApp(request, appId);
     }
+
+    // GET /api/apps/:appId/library-status - Per-app { inLibrary, isOwner } for CTAs
+    if (subPath === '/library-status' && method === 'GET') {
+      return handleGetLibraryStatus(request, appId);
+    }
+
+    // ============================================
+    // APP STORE LISTING — screenshots (Phase 2)
+    // ============================================
+
+    // POST /api/apps/:appId/screenshots - Upload a new screenshot (owner)
+    if (subPath === '/screenshots' && method === 'POST') {
+      return handleUploadScreenshot(request, appId);
+    }
+
+    // PUT /api/apps/:appId/screenshots/order - Reorder screenshots (owner)
+    // Body: { order: number[] } — new index sequence
+    if (subPath === '/screenshots/order' && method === 'PUT') {
+      return handleReorderScreenshots(request, appId);
+    }
+
+    // DELETE /api/apps/:appId/screenshots/:index - Delete a screenshot by index (owner)
+    const screenshotDeleteMatch = subPath.match(/^\/screenshots\/(\d+)$/);
+    if (screenshotDeleteMatch && method === 'DELETE') {
+      const idx = parseInt(screenshotDeleteMatch[1], 10);
+      return handleDeleteScreenshot(request, appId, idx);
+    }
+
+    // GET /api/apps/:appId/screenshots/:index - Serve a screenshot by index (public if app is)
+    if (screenshotDeleteMatch && method === 'GET') {
+      const idx = parseInt(screenshotDeleteMatch[1], 10);
+      return handleGetScreenshot(request, appId, idx);
+    }
   }
 
   return error('Not found', 404);
@@ -572,6 +605,293 @@ async function handleUnsaveApp(request: Request, appId: string): Promise<Respons
 }
 
 /**
+ * GET /api/apps/:appId/library-status
+ *
+ * Returns { inLibrary: boolean, isOwner: boolean } for the authenticated
+ * user + given app. Used by the public store page's client-side bootstrap
+ * to decide which CTA buttons to render.
+ *
+ * This is intentionally a per-app endpoint (not "list my library") —
+ * O(1) regardless of library size, never paginates.
+ *
+ * Auth required: returns 401 if the caller is anonymous. The store page
+ * JS treats missing token as "anonymous" state without even calling this.
+ */
+async function handleGetLibraryStatus(request: Request, appId: string): Promise<Response> {
+  let user;
+  try {
+    user = await authenticate(request);
+  } catch {
+    return error('Authentication required', 401);
+  }
+
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+  const headers = {
+    'apikey': supabaseKey,
+    'Authorization': `Bearer ${supabaseKey}`,
+  };
+
+  try {
+    // Two cheap parallel queries: owner check + library membership check.
+    const [appRes, libRes] = await Promise.all([
+      fetch(
+        `${supabaseUrl}/rest/v1/apps?id=eq.${appId}&select=owner_id&limit=1`,
+        { headers }
+      ),
+      fetch(
+        `${supabaseUrl}/rest/v1/user_app_library?user_id=eq.${user.id}&app_id=eq.${appId}&select=app_id&limit=1`,
+        { headers }
+      ),
+    ]);
+
+    if (!appRes.ok) return error('App not found', 404);
+    const appRows = await appRes.json() as Array<{ owner_id: string }>;
+    if (appRows.length === 0) return error('App not found', 404);
+
+    const isOwner = appRows[0].owner_id === user.id;
+    const libRows = libRes.ok ? await libRes.json() as unknown[] : [];
+    const inLibrary = libRows.length > 0;
+
+    return json({ inLibrary, isOwner });
+  } catch (err) {
+    console.error('[library-status] failed:', err);
+    return error('Failed to get library status', 500);
+  }
+}
+
+// ============================================
+// APP STORE LISTING — screenshot handlers (Phase 2)
+// ============================================
+
+/** Max screenshots per app. Client UI enforces this too. */
+const MAX_SCREENSHOTS = 6;
+/** Max screenshot file size. */
+const MAX_SCREENSHOT_BYTES = 2 * 1024 * 1024; // 2MB
+
+/**
+ * POST /api/apps/:appId/screenshots — Owner uploads a new screenshot.
+ *
+ * Multipart form with field "screenshot". Appends to apps.screenshots JSONB
+ * array. Rejects if app already has MAX_SCREENSHOTS. R2 key includes a
+ * timestamp so replacing/reordering doesn't hit a stale CDN cache.
+ *
+ * Returns the updated screenshots array so the client can re-render the grid.
+ */
+async function handleUploadScreenshot(request: Request, appId: string): Promise<Response> {
+  try {
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+    const r2Service = createR2Service();
+
+    const app = await appsService.findById(appId);
+    if (!app) return error('App not found', 404);
+    if (app.owner_id !== user.id) return error('Unauthorized', 403);
+
+    const existing = Array.isArray(app.screenshots) ? app.screenshots : [];
+    if (existing.length >= MAX_SCREENSHOTS) {
+      return error(`Maximum ${MAX_SCREENSHOTS} screenshots per app`, 400);
+    }
+
+    const formData = await request.formData();
+    const file = formData.get('screenshot') as File | null;
+    if (!file) return error('No screenshot file provided', 400);
+
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      return error('Invalid file type. Use PNG, JPG, or WebP.', 400);
+    }
+    if (file.size > MAX_SCREENSHOT_BYTES) {
+      return error(`Screenshot must be less than ${MAX_SCREENSHOT_BYTES / 1024 / 1024}MB`, 400);
+    }
+
+    const ext = file.type === 'image/png' ? 'png' : file.type === 'image/jpeg' ? 'jpg' : 'webp';
+    // Timestamped key busts cache when files rotate. Index in key is purely
+    // informational — the authoritative order comes from the JSONB array.
+    const ts = Date.now();
+    const newIndex = existing.length;
+    const key = `apps/${appId}/media/screenshot-${newIndex}-${ts}.${ext}`;
+
+    const content = new Uint8Array(await file.arrayBuffer());
+    await r2Service.uploadFile(key, {
+      name: `screenshot-${newIndex}.${ext}`,
+      content,
+      contentType: file.type,
+    });
+
+    const updated = [...existing, key];
+    await appsService.update(appId, { screenshots: updated });
+
+    return json({ screenshots: updated });
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Authentication')) {
+      return error('Authentication required', 401);
+    }
+    console.error('[screenshots] upload failed:', err);
+    return error('Failed to upload screenshot', 500);
+  }
+}
+
+/**
+ * DELETE /api/apps/:appId/screenshots/:index — Owner removes a screenshot.
+ *
+ * Deletes the R2 object best-effort and removes the entry from the JSONB
+ * array. R2 cleanup failure is logged but doesn't fail the request — the
+ * DB is the source of truth.
+ */
+async function handleDeleteScreenshot(request: Request, appId: string, index: number): Promise<Response> {
+  try {
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+    const r2Service = createR2Service();
+
+    const app = await appsService.findById(appId);
+    if (!app) return error('App not found', 404);
+    if (app.owner_id !== user.id) return error('Unauthorized', 403);
+
+    const existing = Array.isArray(app.screenshots) ? app.screenshots : [];
+    if (!Number.isInteger(index) || index < 0 || index >= existing.length) {
+      return error('Screenshot index out of range', 400);
+    }
+
+    const keyToDelete = existing[index];
+    const updated = existing.filter((_, i) => i !== index);
+    await appsService.update(appId, { screenshots: updated });
+
+    // Best-effort R2 cleanup — don't block the response on it.
+    if (typeof keyToDelete === 'string') {
+      r2Service.deleteFile(keyToDelete).catch(cleanupErr =>
+        console.warn('[screenshots] R2 cleanup failed for', keyToDelete, cleanupErr)
+      );
+    }
+
+    return json({ screenshots: updated });
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Authentication')) {
+      return error('Authentication required', 401);
+    }
+    console.error('[screenshots] delete failed:', err);
+    return error('Failed to delete screenshot', 500);
+  }
+}
+
+/**
+ * PUT /api/apps/:appId/screenshots/order — Owner reorders screenshots.
+ *
+ * Body: { order: number[] } — a permutation of the current indices.
+ * Must contain exactly the existing indices (0..n-1) once each. We rebuild
+ * the array in the new order and PATCH the app record.
+ */
+async function handleReorderScreenshots(request: Request, appId: string): Promise<Response> {
+  try {
+    const user = await authenticate(request);
+    const appsService = createAppsService();
+
+    const app = await appsService.findById(appId);
+    if (!app) return error('App not found', 404);
+    if (app.owner_id !== user.id) return error('Unauthorized', 403);
+
+    const body = await request.json() as { order?: unknown };
+    const order = body.order;
+    if (!Array.isArray(order)) return error('order must be an array of numbers', 400);
+
+    const existing = Array.isArray(app.screenshots) ? app.screenshots : [];
+    if (order.length !== existing.length) {
+      return error('order length must match existing screenshot count', 400);
+    }
+
+    // Validate: must be a permutation of [0..n-1]
+    const seen = new Set<number>();
+    for (const idx of order) {
+      if (typeof idx !== 'number' || !Number.isInteger(idx) || idx < 0 || idx >= existing.length) {
+        return error('order contains invalid index', 400);
+      }
+      if (seen.has(idx)) return error('order contains duplicate index', 400);
+      seen.add(idx);
+    }
+
+    const updated = (order as number[]).map(i => existing[i]);
+    await appsService.update(appId, { screenshots: updated });
+
+    return json({ screenshots: updated });
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Authentication')) {
+      return error('Authentication required', 401);
+    }
+    console.error('[screenshots] reorder failed:', err);
+    return error('Failed to reorder screenshots', 500);
+  }
+}
+
+/**
+ * GET /api/apps/:appId/screenshots/:index — Serve a screenshot by its index.
+ *
+ * Public for public/unlisted apps; private apps require owner auth.
+ * R2 keys are timestamped so we can serve with a long immutable cache —
+ * when the developer replaces a screenshot the key changes.
+ */
+async function handleGetScreenshot(request: Request, appId: string, index: number): Promise<Response> {
+  try {
+    const appsService = createAppsService();
+    const r2Service = createR2Service();
+
+    const app = await appsService.findById(appId);
+    if (!app || app.deleted_at) return error('Not found', 404);
+
+    // Private apps: owner only
+    if (app.visibility === 'private') {
+      try {
+        const user = await authenticate(request);
+        if (user.id !== app.owner_id) return error('Not found', 404);
+      } catch {
+        return error('Not found', 404);
+      }
+    }
+
+    const screenshots = Array.isArray(app.screenshots) ? app.screenshots : [];
+    if (!Number.isInteger(index) || index < 0 || index >= screenshots.length) {
+      return error('Screenshot not found', 404);
+    }
+
+    const key = screenshots[index];
+    if (typeof key !== 'string') return error('Screenshot not found', 404);
+
+    // Infer content type from the file extension embedded in the key.
+    const extMatch = key.match(/\.(png|jpg|jpeg|webp)$/i);
+    const contentType = extMatch && extMatch[1].toLowerCase() === 'png' ? 'image/png'
+      : extMatch && extMatch[1].toLowerCase() === 'webp' ? 'image/webp'
+      : 'image/jpeg';
+
+    let content: Uint8Array;
+    try {
+      content = await r2Service.fetchFile(key);
+    } catch {
+      return error('Screenshot file missing', 404);
+    }
+
+    // Use the R2 key as an ETag so replacements bust cache naturally even
+    // though the URL stays the same (URL is index-based, R2 key has a
+    // timestamp). Short max-age keeps dev iteration snappy.
+    const etag = '"' + key.split('/').pop() + '"';
+    const ifNoneMatch = request.headers.get('If-None-Match');
+    if (ifNoneMatch === etag) {
+      return new Response(null, { status: 304, headers: { 'ETag': etag } });
+    }
+
+    return new Response(content, {
+      headers: {
+        'Content-Type': contentType,
+        'Cache-Control': 'public, max-age=300, must-revalidate',
+        'ETag': etag,
+      },
+    });
+  } catch (err) {
+    console.error('[screenshots] get failed:', err);
+    return error('Failed to get screenshot', 500);
+  }
+}
+
+/**
  * Extract function count from an app record.
  */
 function getFnCount(app: Record<string, unknown>): number {
@@ -849,12 +1169,23 @@ async function handleUpdateApp(request: Request, appId: string): Promise<Respons
     const updates = await request.json();
 
     // Whitelist allowed updates
-    const allowedFields = ['name', 'description', 'visibility', 'icon_url', 'tags', 'category', 'download_access', 'pricing_config'];
+    const allowedFields = ['name', 'description', 'visibility', 'icon_url', 'tags', 'category', 'download_access', 'pricing_config', 'long_description'];
     const filteredUpdates: Record<string, unknown> = {};
 
     for (const field of allowedFields) {
       if (field in updates) {
         filteredUpdates[field] = updates[field];
+      }
+    }
+
+    // Validate long_description (Phase 2): markdown, must be string or null, max 50KB
+    if ('long_description' in filteredUpdates) {
+      const ld = filteredUpdates.long_description;
+      if (ld !== null && typeof ld !== 'string') {
+        return error('long_description must be a string or null', 400);
+      }
+      if (typeof ld === 'string' && ld.length > 50000) {
+        return error('long_description exceeds 50KB limit', 400);
       }
     }
 
@@ -895,8 +1226,8 @@ async function handleUpdateApp(request: Request, appId: string): Promise<Respons
           return error('pricing_config must be an object or null', 400);
         }
         if (cfg.default_price_light !== undefined) {
-          if (typeof cfg.default_price_light !== 'number' || cfg.default_price_light < 0 || cfg.default_price_light > 80000) {
-            return error('default_price_light must be 0-80000 (max ✦80000 per call)', 400);
+          if (typeof cfg.default_price_light !== 'number' || cfg.default_price_light < 0 || cfg.default_price_light > 10000) {
+            return error('default_price_light must be 0-10000 (max ✦10000 per call)', 400);
           }
         }
         if (cfg.default_free_calls !== undefined) {
@@ -916,14 +1247,14 @@ async function handleUpdateApp(request: Request, appId: string): Promise<Respons
           for (const [fn, val] of Object.entries(cfg.functions as Record<string, unknown>)) {
             if (typeof val === 'number') {
               // Legacy format: plain number (Light)
-              if (val < 0 || val > 80000) {
-                return error(`Price for "${fn}" must be 0-80000 Light`, 400);
+              if (val < 0 || val > 10000) {
+                return error(`Price for "${fn}" must be 0-10000 Light`, 400);
               }
             } else if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
               // New format: FunctionPricing object
               const fp = val as Record<string, unknown>;
-              if (typeof fp.price_light !== 'number' || fp.price_light < 0 || fp.price_light > 80000) {
-                return error(`price_light for "${fn}" must be 0-80000 Light`, 400);
+              if (typeof fp.price_light !== 'number' || fp.price_light < 0 || fp.price_light > 10000) {
+                return error(`price_light for "${fn}" must be 0-10000 Light`, 400);
               }
               if (fp.free_calls !== undefined) {
                 if (typeof fp.free_calls !== 'number' || fp.free_calls < 0 || !Number.isInteger(fp.free_calls) || fp.free_calls > 1000000) {
@@ -1848,9 +2179,20 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
       }
     }
 
+    // Read manifest.json from the published files (if exists) to update manifest field
+    let publishedManifest: string | null = null;
+    try {
+      const manifestContent = await r2Service.fetchTextFile(`${newStorageKey}manifest.json`);
+      if (manifestContent) {
+        JSON.parse(manifestContent); // validate JSON
+        publishedManifest = manifestContent;
+        console.log('[PUBLISH] Found manifest.json in published files');
+      }
+    } catch { /* No manifest or invalid JSON */ }
+
     // Update app record with new version
     console.log('[PUBLISH] Updating app record...');
-    await appsService.update(appId, {
+    const updateFields: Record<string, unknown> = {
       storage_key: newStorageKey,
       current_version: newVersion,
       versions: [...(app.versions || []), newVersion],
@@ -1860,10 +2202,81 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
       draft_version: null,
       draft_uploaded_at: null,
       draft_exports: null,
-    });
+    };
+    if (publishedManifest) {
+      updateFields.manifest = publishedManifest;
+      // Also update name/description from manifest
+      try {
+        const m = JSON.parse(publishedManifest);
+        if (m.name) updateFields.name = m.name;
+        if (m.description) updateFields.description = m.description;
+      } catch {}
+    }
+    await appsService.update(appId, updateFields);
 
     // Invalidate code cache so next request fetches new version
     getCodeCache().invalidate(appId);
+
+    // Rebuild ESM bundle in KV so Dynamic Workers get the new code immediately
+    if (app.app_type !== 'skill') {
+      try {
+        const entryFiles = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
+        let sourceCode: string | null = null;
+        let entryFile = '';
+        for (const candidate of entryFiles) {
+          try {
+            sourceCode = await r2Service.fetchTextFile(`${newStorageKey}_source_${candidate}`);
+            entryFile = candidate;
+            break;
+          } catch { /* try next */ }
+        }
+        if (sourceCode && entryFile) {
+          const bundleResult = await bundleCode([{ name: entryFile, content: sourceCode }], entryFile);
+          if (bundleResult.success) {
+            // Upload rebuilt bundles to R2
+            const builtFiles = [{ name: entryFile, content: new TextEncoder().encode(bundleResult.code), contentType: 'application/javascript' }];
+            if (bundleResult.esmCode) builtFiles.push({ name: entryFile.replace(/\.(tsx?|jsx?)$/, '.esm.js'), content: new TextEncoder().encode(bundleResult.esmCode), contentType: 'application/javascript' });
+            await r2Service.uploadFiles(newStorageKey, builtFiles);
+            // Cache ESM in KV for Dynamic Worker loading
+            if (bundleResult.esmCode && globalThis.__env?.CODE_CACHE) {
+              await globalThis.__env.CODE_CACHE.put(`esm:${appId}:latest`, bundleResult.esmCode);
+            }
+            console.log(`[PUBLISH] ESM bundle rebuilt and cached (${bundleResult.esmCode?.length || 0} chars)`);
+          }
+        }
+      } catch (rebuildErr) {
+        console.warn('[PUBLISH] ESM rebuild failed (non-fatal):', rebuildErr);
+      }
+    }
+
+    // D1 provisioning — if app has no D1 but published files include migrations, provision now
+    if (!app.d1_database_id && app.app_type !== 'skill') {
+      try {
+        // List all files in the published storage and find migration SQL files
+        const allFiles = await r2Service.listFiles(newStorageKey);
+        const sqlFiles = allFiles.filter((f: string) => f.includes('migrations/') && f.endsWith('.sql')).sort();
+        console.log(`[PUBLISH] Found ${sqlFiles.length} migration file(s) in R2:`, sqlFiles);
+
+        if (sqlFiles.length > 0) {
+          const { parseMigrationFiles } = await import('../services/d1-migrations.ts');
+          const migrationContents: Record<string, string> = {};
+          for (const key of sqlFiles) {
+            const name = key.split('/').pop() || '';
+            try {
+              migrationContents[name] = await r2Service.fetchTextFile(key);
+            } catch { /* skip unreadable files */ }
+          }
+          const parsed = parseMigrationFiles(migrationContents);
+          if (parsed.length > 0) {
+            const { provisionAndMigrate } = await import('../services/upload-pipeline.ts');
+            const d1Result = await provisionAndMigrate(appId, parsed);
+            console.log(`[PUBLISH] D1 provisioned: ${d1Result.status}, ${d1Result.migrations_applied} migration(s) applied`);
+          }
+        }
+      } catch (d1Err) {
+        console.warn('[PUBLISH] D1 provisioning failed (non-fatal):', d1Err);
+      }
+    }
 
     // Optionally regenerate docs
     let docsResult = null;
@@ -1937,6 +2350,17 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
     }
 
     console.log('[PUBLISH] Publish complete!');
+
+    // Rebuild library + function index synchronously so app appears immediately
+    try {
+      await rebuildUserLibrary(user.id);
+      console.log('[PUBLISH] Library rebuilt');
+    } catch (err) { console.error('Library rebuild after publish failed:', err); }
+    try {
+      const { rebuildFunctionIndex } = await import('../services/function-index.ts');
+      await rebuildFunctionIndex(user.id);
+      console.log('[PUBLISH] Function index rebuilt');
+    } catch (err) { console.error('Function index rebuild after publish failed:', err); }
 
     return json({
       success: true,

@@ -94,6 +94,11 @@ export interface App {
   weighted_dislikes: number;
   category: string | null;
   tags: string[];
+  // App Store public listing (Phase 2)
+  //   screenshots: ordered array of R2 storage keys rendered on /app/:id
+  //   long_description: markdown body rendered below the hero
+  screenshots: string[];
+  long_description: string | null;
   // Environment variables (encrypted, keys only exposed to owner)
   env_vars: Record<string, string>;
   // Per-user env var schema: declares which keys are per_user with descriptions
@@ -110,7 +115,7 @@ export interface App {
   supabase_config_id: string | null;
   // Manifest-based configuration (v2 architecture)
   manifest: string | null;  // JSON stringified AppManifest
-  app_type: 'mcp' | null;  // null means legacy auto-detect; ui/hybrid removed
+  app_type: 'mcp' | 'skill' | null;  // null means legacy auto-detect; 'skill' = .md context file
   // GPU compute runtime
   runtime: 'deno' | 'gpu' | null;           // null = legacy deno
   gpu_type: string | null;                   // GpuType identifier (e.g. 'A100-80GB-SXM')
@@ -297,11 +302,26 @@ export interface SDKContext {
   aiBudgetRemaining: number | null; // Light, null if unlimited (BYOK)
 }
 
+// ── AI Content Parts (multimodal) ──
+
+export type AIContentPart = AITextPart | AIFilePart;
+
+export interface AITextPart {
+  type: 'text';
+  text: string;
+}
+
+export interface AIFilePart {
+  type: 'file';
+  data: string;       // base64 data URL or raw text
+  filename?: string;   // e.g. "notes.pdf" — used to detect type
+}
+
 export interface AIRequest {
   model?: string;
   messages: Array<{
     role: 'system' | 'user' | 'assistant';
-    content: string;
+    content: string | AIContentPart[];
     cache_control?: { type: 'ephemeral' };
   }>;
   temperature?: number;
@@ -693,15 +713,15 @@ export interface MemoryShare {
 // Platform Limits & Billing Constants
 //
 // No tiers. Everyone gets the same generous limits for development.
-// Publishing (going live) requires ✦400 deposit, then pay-as-you-go.
-// All published content costs ✦18/MB/hr from the first byte.
+// Publishing (going live) requires ✦50 deposit, then pay-as-you-go.
+// All published content costs ✦2.25/MB/hr from the first byte.
 // The Tier type is retained for backward compatibility with the DB column
 // but all values map to the same PLATFORM_LIMITS.
 //
 // Light (✦) is the platform's virtual currency.
-//   - Web purchase: 720 Light per $1 USD
-//   - Desktop purchase: 800 Light per $1 USD
-//   - Publisher payout: $1 USD per 800 Light
+//   - Web purchase: 95 Light per $1 USD
+//   - Desktop purchase: 100 Light per $1 USD  (1 Light ≈ 1¢)
+//   - Publisher payout: $1 USD per 100 Light
 //   - 10% platform fee on every transfer (compounding)
 //   - Light is divisible to 8 decimal places
 
@@ -713,13 +733,13 @@ export type Tier = 'free' | 'fun' | 'pro' | 'scale' | 'enterprise';
 export const LIGHT_SYMBOL = '✦';
 
 /** Exchange rate: Light credited per $1 USD when purchasing on web. */
-export const LIGHT_PER_DOLLAR_WEB = 720;
+export const LIGHT_PER_DOLLAR_WEB = 95;
 
 /** Exchange rate: Light credited per $1 USD when purchasing on desktop app. */
-export const LIGHT_PER_DOLLAR_DESKTOP = 800;
+export const LIGHT_PER_DOLLAR_DESKTOP = 100;
 
 /** Exchange rate: $1 USD per this many Light when publishers withdraw. */
-export const LIGHT_PER_DOLLAR_PAYOUT = 800;
+export const LIGHT_PER_DOLLAR_PAYOUT = 100;
 
 /** Platform fee rate applied on every transfer_balance (10%). */
 export const PLATFORM_FEE_RATE = 0.10;
@@ -727,30 +747,30 @@ export const PLATFORM_FEE_RATE = 0.10;
 // ── Billing Constants (in Light) ──
 
 /** Minimum Light balance required to publish an app. */
-export const MIN_PUBLISH_DEPOSIT_LIGHT = 400; // ✦400
+export const MIN_PUBLISH_DEPOSIT_LIGHT = 50; // ✦50
 
 /** Hosting rate for published content in Light per MB per hour (publisher pays). */
-export const HOSTING_RATE_LIGHT_PER_MB_PER_HOUR = 18.0; // ✦18/MB/hr
+export const HOSTING_RATE_LIGHT_PER_MB_PER_HOUR = 2.25; // ✦2.25/MB/hr
 
 /** Data storage overage rate in Light per MB per hour (user pays).
  *  Charged hourly for combined storage exceeding the free tier (100MB).
- *  ✦0.36/MB/hr — 50x cheaper than publisher hosting rate. */
-export const DATA_RATE_LIGHT_PER_MB_PER_HOUR = 0.36;
+ *  ✦0.045/MB/hr — 50x cheaper than publisher hosting rate. */
+export const DATA_RATE_LIGHT_PER_MB_PER_HOUR = 0.045;
 
 /** Combined free tier storage limit (source code + user data). 100MB. */
 export const COMBINED_FREE_TIER_BYTES = 104_857_600;
 
 /** Default auto top-up threshold (Light). When balance drops below this, auto-charge triggers. */
-export const AUTO_TOPUP_DEFAULT_THRESHOLD_LIGHT = 800; // ✦800
+export const AUTO_TOPUP_DEFAULT_THRESHOLD_LIGHT = 100; // ✦100
 
 /** Default auto top-up charge amount (Light). */
-export const AUTO_TOPUP_DEFAULT_AMOUNT_LIGHT = 8_000; // ✦8,000
+export const AUTO_TOPUP_DEFAULT_AMOUNT_LIGHT = 1_000; // ✦1,000
 
 /** Minimum auto top-up amount (Light). */
-export const AUTO_TOPUP_MIN_AMOUNT_LIGHT = 4_000; // ✦4,000
+export const AUTO_TOPUP_MIN_AMOUNT_LIGHT = 500; // ✦500
 
 /** Minimum withdrawal amount (Light). */
-export const MIN_WITHDRAWAL_LIGHT = 40_000; // ✦40,000
+export const MIN_WITHDRAWAL_LIGHT = 5_000; // ✦5,000
 
 /**
  * Stripe processing fee pass-through (still in USD cents — Stripe boundary only).
@@ -1518,7 +1538,7 @@ export interface ChatBillingResult {
 }
 
 /** Minimum balance in Light required to start a chat stream */
-export const CHAT_MIN_BALANCE_LIGHT = 400; // ✦400
+export const CHAT_MIN_BALANCE_LIGHT = 50; // ✦50
 
 /** Platform markup multiplier on OpenRouter costs */
 export const CHAT_PLATFORM_MARKUP = 1.2; // 20% margin

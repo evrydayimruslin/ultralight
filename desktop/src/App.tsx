@@ -2,11 +2,14 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { getToken, getApiBase } from './lib/storage';
+import { getToken, getApiBase, isOnboardingComplete, setOnboardingComplete, resetOnboarding } from './lib/storage';
 import { useAppState } from './hooks/useAppState';
+import { useDeepLink } from './hooks/useDeepLink';
 import { useAgentFleet, type Agent } from './hooks/useAgentFleet';
 import { SYSTEM_AGENTS, deriveSystemAgentId } from './lib/systemAgents';
+import { openViewWindow } from './lib/multiWindow';
 import AuthGate from './components/AuthGate';
+import OnboardingWizard, { type OnboardingHighlight } from './components/OnboardingWizard';
 import ChatView from './components/ChatView';
 import HomeView from './components/HomeView';
 import NavSidebar from './components/NavSidebar';
@@ -43,12 +46,15 @@ export default function App() {
   const [authenticated, setAuthenticated] = useState(false);
   const [checking, setChecking] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [onboardingHighlight, setOnboardingHighlight] = useState<OnboardingHighlight>('none');
   const {
     view,
     navigateHome,
     navigateToAgent,
     navigateToNewChat,
     navigateToCapabilities,
+    navigateToAppStore,
     navigateToProfile,
     navigateToWallet,
     navigateToSettings,
@@ -162,6 +168,32 @@ export default function App() {
     setChecking(false);
   }, [provisionSystemAgents]);
 
+  // ── postMessage bridge from embedded web iframes ──
+  // The unified /app/:id store page (loaded in WebPanel) and the Market
+  // tab (loaded via /capabilities) both post messages to us. We handle:
+  //   - { type: 'navigate', to: 'app-store', appId, appName? }
+  //       → flip the current view to the store page for that app
+  //   - { type: 'library-changed', ... }
+  //       → no-op for now (v2 may refresh cached library state)
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      const data = e.data;
+      if (!data || typeof data !== 'object') return;
+      if (data.type === 'navigate' && data.to === 'app-store' && typeof data.appId === 'string') {
+        navigateToAppStore(data.appId, typeof data.appName === 'string' ? data.appName : undefined);
+      }
+      // Future: library-changed could invalidate cached state in other iframes
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, [navigateToAppStore]);
+
+  // ── Deep-link routing (Phase 3) ──
+  // Listens for `ultralight://app/:id` URLs delivered by the Rust side,
+  // routes them to the app-store view. URLs received before auth is ready
+  // are queued and drained once `authenticated && !checking` flips true.
+  useDeepLink({ navigateToAppStore }, authenticated && !checking);
+
   // All hooks must be declared before any early returns
   const handleAuthenticated = useCallback(() => {
     setAuthenticated(true);
@@ -170,7 +202,33 @@ export default function App() {
       provisionKeyInBackground(token);
       provisionSystemAgents();
     }
+    // Show onboarding for first-time users
+    if (!isOnboardingComplete()) {
+      setShowOnboarding(true);
+    }
   }, []);
+
+  const handleOnboardingComplete = useCallback((navigateTo?: 'chat' | 'tools') => {
+    setOnboardingComplete();
+    setShowOnboarding(false);
+    setOnboardingHighlight('none');
+    if (navigateTo === 'tools') navigateToCapabilities();
+    else if (navigateTo === 'chat') navigateToNewChat();
+  }, [navigateToCapabilities, navigateToNewChat]);
+
+  const handleShowTutorial = useCallback(() => {
+    resetOnboarding();
+    setShowOnboarding(true);
+  }, []);
+
+  // Dismiss tutorial when user navigates via sidebar
+  const dismissTutorial = useCallback(() => {
+    if (showOnboarding) {
+      setOnboardingComplete();
+      setShowOnboarding(false);
+      setOnboardingHighlight('none');
+    }
+  }, [showOnboarding]);
 
   const handleSelectAgent = useCallback((agentId: string) => {
     navigateToAgent(agentId);
@@ -209,6 +267,50 @@ export default function App() {
     await refreshAgents();
   }, [refreshAgents]);
 
+  // Create a new independent session of a system agent and open it in a window
+  const handleNewSystemAgentSession = useCallback(async (agentType: string, agentName: string) => {
+    try {
+      const id = crypto.randomUUID();
+      const conversationId = crypto.randomUUID();
+      const config = SYSTEM_AGENTS.find(c => c.type === agentType);
+      if (!config) return;
+
+      // Copy model from the canonical agent if it exists
+      const canonical = agents.find(a => a.is_system === 1 && a.system_agent_type === agentType);
+      const model = canonical?.model || 'anthropic/claude-sonnet-4-20250514';
+
+      // Auto-increment instance number
+      const instanceCount = agents.filter(a => a.system_agent_type === agentType).length;
+      const instanceName = `${agentName} (${instanceCount})`;
+
+      await invoke('db_create_agent', {
+        id,
+        conversationId,
+        name: instanceName,
+        role: config.role,
+        systemPrompt: null,
+        initialTask: null,
+        projectDir: canonical?.project_dir || null,
+        model,
+        parentAgentId: null,
+        permissionLevel: 'auto_edit',
+        adminNotes: null,
+        endGoal: null,
+        context: null,
+        launchMode: 'discuss_first',
+        connectedAppIds: null,
+        connectedApps: null,
+        isSystem: 1,
+        systemAgentType: agentType,
+      });
+
+      await refreshAgents();
+      openViewWindow({ kind: 'chat', agentId: id, agentName: instanceName });
+    } catch (err) {
+      console.warn('[App] Failed to create system agent session:', err);
+    }
+  }, [agents, refreshAgents]);
+
   // ── View caching: keep visited views mounted but hidden ──
   // Track which singleton views have been visited so we mount them once
   // and hide with CSS instead of unmounting. Agent views are cached by ID.
@@ -226,6 +328,10 @@ export default function App() {
         return new Set(prev).add(view.agentId);
       });
     }
+    // 'app-store' is intentionally NOT cached — we unmount each visit so
+    // switching between different apps always loads a fresh iframe. Visits
+    // are short-lived (info pages) so there's no perf cost.
+    if (view.kind === 'app-store') return;
     setMountedViews(prev => {
       if (prev.has(view.kind)) return prev;
       return new Set(prev).add(view.kind);
@@ -271,19 +377,26 @@ export default function App() {
           agents={agents}
           activeView={view}
           isOpen={sidebarOpen}
-          onNavigateHome={navigateHome}
-          onNavigateToCapabilities={navigateToCapabilities}
-          onNavigateToProfile={navigateToProfile}
-          onNavigateToWallet={navigateToWallet}
-          onNavigateToSettings={navigateToSettings}
-          onSelectAgent={handleSelectAgent}
-          onNewAgent={handleNewAgent}
+          onboardingHighlight={onboardingHighlight}
+          onShowTutorial={handleShowTutorial}
+          onNavigateHome={() => { dismissTutorial(); navigateHome(); }}
+          onNavigateToCapabilities={() => { dismissTutorial(); navigateToCapabilities(); }}
+          onNavigateToProfile={() => { dismissTutorial(); navigateToProfile(); }}
+          onNavigateToWallet={() => { dismissTutorial(); navigateToWallet(); }}
+          onNavigateToSettings={() => { dismissTutorial(); navigateToSettings(); }}
+          onSelectAgent={(id) => { dismissTutorial(); handleSelectAgent(id); }}
+          onNewAgent={() => { dismissTutorial(); handleNewAgent(); }}
           onDeleteAgent={handleDeleteAgent}
           onStopAgent={handleStopAgent}
           onNewSession={handleNewSession}
           onRenameAgent={handleRenameAgent}
           isAgentRunning={isAgentRunning}
+          onOpenInNewWindow={openViewWindow}
+          onNewSystemAgentSession={handleNewSystemAgentSession}
         />
+
+        {/* Content area — relative container so onboarding overlay stays within */}
+        <div className="relative flex-1 flex flex-col min-w-0 min-h-0">
 
         {/* Cached singleton views — mounted once, then shown/hidden */}
         {mountedViews.has('home') && (
@@ -297,6 +410,21 @@ export default function App() {
         {mountedViews.has('capabilities') && (
           <div style={paneStyle(view.kind === 'capabilities')}>
             <WebPanel path="/capabilities" title="Tools" />
+          </div>
+        )}
+
+        {/*
+          App store detail view — NOT cached in mountedViews. Only rendered
+          while the current view is 'app-store', so it unmounts on navigation
+          away. Key on appId so switching between apps forces a fresh iframe.
+        */}
+        {view.kind === 'app-store' && (
+          <div style={paneStyle(true)}>
+            <WebPanel
+              key={view.appId}
+              path={`/app/${view.appId}`}
+              title={view.appName ?? 'App'}
+            />
           </div>
         )}
 
@@ -337,9 +465,19 @@ export default function App() {
               initialMessage={view.kind === 'agent' && view.agentId === agentId ? view.initialMessage : undefined}
               onNavigateHome={navigateHome}
               onNavigateToAgent={navigateToAgent}
+              onShowTutorial={handleShowTutorial}
             />
           </div>
         ))}
+
+        {/* Onboarding wizard overlay — inside content area, beside sidebar */}
+        {showOnboarding && (
+          <OnboardingWizard
+            onComplete={handleOnboardingComplete}
+            onHighlight={setOnboardingHighlight}
+          />
+        )}
+        </div>
       </div>
     </div>
   );

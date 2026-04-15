@@ -2950,9 +2950,13 @@ export function getLayoutHTML(options: {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
             Data
           </div>
-          <div class="settings-sidebar-item" data-app-section="market">
+          <div class="settings-sidebar-item" data-app-section="offers">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 002 1.61h9.72a2 2 0 002-1.61L23 6H6"/></svg>
-            Market
+            Offers
+          </div>
+          <div class="settings-sidebar-item" data-app-section="store-listing">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+            App Store
           </div>
         </nav>
 
@@ -2999,13 +3003,20 @@ export function getLayoutHTML(options: {
             <div id="appHealthSection" style="margin-top:var(--space-6);"></div>
           </section>
 
-          <!-- Market Panel -->
-          <section id="appMarketPanel" class="settings-panel" style="display:none;">
+          <!-- Offers Panel — incoming/outgoing bids on this app -->
+          <section id="appOffersPanel" class="settings-panel" style="display:none;">
             <div class="app-panel-name"></div>
-            <h2 class="app-section-title">Market</h2>
-            <div id="appMarketContent"></div>
-            <div id="appMarketBids" style="margin-top:var(--space-6);"></div>
-            <div id="appMarketHistory" style="margin-top:var(--space-6);"></div>
+            <h2 class="app-section-title">Offers</h2>
+            <div id="appOffersContent"></div>
+            <div id="appOffersBids" style="margin-top:var(--space-6);"></div>
+            <div id="appOffersHistory" style="margin-top:var(--space-6);"></div>
+          </section>
+
+          <!-- App Store Listing Panel — public-facing store page editor (Phase 2) -->
+          <section id="appStoreListingPanel" class="settings-panel" style="display:none;">
+            <div class="app-panel-name"></div>
+            <h2 class="app-section-title">App Store Listing</h2>
+            <div id="appStoreListingContent"></div>
           </section>
         </div>
       </div>
@@ -4016,7 +4027,7 @@ export function getLayoutHTML(options: {
             var border = i > 0 ? 'border-top:1px solid var(--border);' : '';
             var price = formatLight(sale.sale_price_light || 0);
             var timeAgo = formatTimeAgo(sale.created_at);
-            var color = sale.sale_price_light >= 3000000 ? '#ef4444' : sale.sale_price_light >= 1000000 ? '#3b82f6' : '#22c55e';
+            var color = sale.sale_price_light >= 375000 ? '#ef4444' : sale.sale_price_light >= 125000 ? '#3b82f6' : '#22c55e';
             return '<div class="market-list-link" style="cursor:pointer;' + border + '" onclick="navigateToApp(\\\'' + (sale.app_id || '') + '\\\')">'
               + '<div style="display:flex;align-items:center;gap:var(--space-2);">'
               + '<span style="width:6px;height:6px;border-radius:50%;background:' + color + ';"></span>'
@@ -4409,30 +4420,16 @@ export function getLayoutHTML(options: {
           + '</div>';
       }
 
-      // Apps: expandable accordion
-      var copyIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
-      var wasTruncated = desc.length > 120;
-      var showOffersBtn = item.type === 'app' && !item.had_external_db;
-      var detailHtml = '<div class="marketplace-card-detail" style="display:none">'
-        + (wasTruncated ? '<div class="marketplace-card-full-desc">' + escapeHtml(desc) + '</div>' : '')
-        + '<div class="marketplace-card-functions" id="mp-fns-' + item.id + '"><span class="btn-spinner" style="width:12px;height:12px;border-width:1.5px;"></span></div>'
-        + '<div style="display:flex;gap:8px;margin-top:var(--space-3)">'
-        + '<button class="btn btn-primary" style="gap:var(--space-2);border-radius:0;" onclick="event.stopPropagation(); copyMarketplaceInstructions(\\\'' + item.id + '\\\', this)">'
-        + copyIcon
-        + '<span>Copy Agent Instructions</span>'
-        + '</button>'
-        + (showOffersBtn
-          ? '<button class="offers-btn-outline" onclick="event.stopPropagation(); openOffersPopup(\\\'' + item.id + '\\\')">Offer</button>'
-          : '')
-        + '</div>'
-        + '</div>';
-
+      // Apps: click-through to unified /app/:id store page.
+      // Heart button remains for quick Save without leaving the list.
       var heartSaved = savedAppIds.has(item.id) ? ' saved' : '';
       var heartSvg = '<span class="marketplace-heart' + heartSaved + '" data-app-id="' + item.id + '" onclick="event.stopPropagation(); toggleSaveApp(\\\'' + item.id + '\\\', this)" title="Save to Library">'
         + '<svg width="16" height="16" viewBox="0 0 24 24" fill="' + (heartSaved ? 'currentColor' : 'none') + '" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>'
         + '</span>';
 
-      return '<div class="marketplace-card" data-app-id="' + item.id + '" onclick="toggleMarketplaceCard(\\\'' + item.id + '\\\')">'
+      // data-app-name held as an attribute (auto-escaped by escapeHtml) so
+      // we don't have to escape into an inline onclick handler.
+      return '<div class="marketplace-card" data-app-id="' + item.id + '" data-app-name="' + escapeHtml(item.name || item.slug || '') + '" onclick="navigateToAppStore(this)">'
         + '<div class="marketplace-card-header">'
         + '<span class="marketplace-card-name">' + escapeHtml(item.name || item.slug) + '</span>'
         + '<span class="marketplace-badge">' + badge + '</span>'
@@ -4440,7 +4437,6 @@ export function getLayoutHTML(options: {
         + '</div>'
         + (shortDesc ? '<div class="marketplace-card-desc">' + escapeHtml(shortDesc) + '</div>' : '')
         + stats
-        + detailHtml
         + '</div>';
     }
 
@@ -4490,75 +4486,28 @@ export function getLayoutHTML(options: {
         });
     }
 
-    // Expandable marketplace cards — one open at a time
-    var expandedMarketplaceCard = null;
-
-    function toggleMarketplaceCard(appId) {
-      // Collapse previously expanded card
-      if (expandedMarketplaceCard && expandedMarketplaceCard !== appId) {
-        var prev = document.querySelector('[data-app-id="' + expandedMarketplaceCard + '"]');
-        if (prev) {
-          var prevDetail = prev.querySelector('.marketplace-card-detail');
-          if (prevDetail) prevDetail.style.display = 'none';
-          prev.classList.remove('expanded');
+    // Market card click → navigate to unified /app/:id store page.
+    // Inside desktop (embed iframe), we postMessage to the parent which
+    // flips the in-app view to 'app-store'. Outside desktop, we hard-nav.
+    function navigateToAppStore(cardEl) {
+      if (!cardEl || !cardEl.dataset) return;
+      var appId = cardEl.dataset.appId;
+      var appName = cardEl.dataset.appName || '';
+      if (!appId) return;
+      try {
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage({
+            type: 'navigate',
+            to: 'app-store',
+            appId: appId,
+            appName: appName,
+          }, '*');
+          return;
         }
-      }
-
-      var card = document.querySelector('[data-app-id="' + appId + '"]');
-      if (!card) return;
-      var detail = card.querySelector('.marketplace-card-detail');
-      if (!detail) return;
-
-      var isExpanding = detail.style.display === 'none';
-      detail.style.display = isExpanding ? 'block' : 'none';
-      card.classList.toggle('expanded', isExpanding);
-      expandedMarketplaceCard = isExpanding ? appId : null;
-
-      // Fetch functions on first expand
-      if (isExpanding) {
-        var fnsEl = document.getElementById('mp-fns-' + appId);
-        if (fnsEl && fnsEl.dataset.loaded !== 'true') {
-          fetch('/api/apps/' + appId + '/instructions')
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-              fnsEl.dataset.loaded = 'true';
-              var text = data.instructions || '';
-              var fnStart = text.indexOf('## Available Functions');
-              var fnEnd = text.indexOf('## Connect');
-              if (fnStart === -1) { fnsEl.innerHTML = ''; return; }
-              var fnBlock = text.substring(fnStart + '## Available Functions'.length, fnEnd !== -1 ? fnEnd : text.length).trim();
-              var lines = fnBlock.split('\\n').filter(function(l) { return l.trim().indexOf('- ') === 0; });
-              var html = '';
-              for (var li = 0; li < lines.length; li++) {
-                var line = lines[li].trim().substring(2); // remove "- "
-                var fnName = '';
-                var fnDesc = '';
-                var parenIdx = line.indexOf('(');
-                var dashIdx = line.indexOf(' \\u2014 ');
-                var dashLen = 3;
-                if (dashIdx === -1) { dashIdx = line.indexOf(' -- '); dashLen = 4; }
-                if (parenIdx !== -1) {
-                  fnName = line.substring(0, parenIdx);
-                } else if (dashIdx !== -1) {
-                  fnName = line.substring(0, dashIdx);
-                } else {
-                  fnName = line;
-                }
-                if (dashIdx !== -1) {
-                  fnDesc = line.substring(dashIdx + dashLen).trim();
-                }
-                html += '<div class="marketplace-fn-item">'
-                  + '<span class="marketplace-fn-name">' + escapeHtml(fnName) + '</span>'
-                  + (fnDesc ? '<span class="marketplace-fn-desc">\\u2014 ' + escapeHtml(fnDesc) + '</span>' : '')
-                  + '</div>';
-              }
-              fnsEl.innerHTML = html || '';
-            })
-            .catch(function() { fnsEl.innerHTML = ''; });
-        }
-      }
+      } catch (e) { /* cross-origin parent — fall through to hard nav */ }
+      window.location.href = '/app/' + encodeURIComponent(appId);
     }
-    window.toggleMarketplaceCard = toggleMarketplaceCard;
+    window.navigateToAppStore = navigateToAppStore;
 
     // Fetch the user's API key from the server (stored as plaintext in DB)
     async function ensureApiKey() {
@@ -4759,7 +4708,8 @@ export function getLayoutHTML(options: {
         environment: 'appEnvironmentPanel',
         payments: 'appPaymentsPanel',
         logs: 'appLogsPanel',
-        market: 'appMarketPanel'
+        offers: 'appOffersPanel',
+        'store-listing': 'appStoreListingPanel'
       };
 
       Object.values(panelMap).forEach(function(id) {
@@ -4778,15 +4728,20 @@ export function getLayoutHTML(options: {
       }
     }
 
-    // Toggle Payments & Market tabs based on app visibility
+    // Toggle Payments, Offers, and App Store tabs based on app visibility.
+    // "Published" here means the app is publicly discoverable — matches
+    // both legacy 'published' value and canonical 'public' value.
     function updatePublicTabVisibility() {
-      var isPublished = window._currentApp && window._currentApp.visibility === 'published';
+      var vis = window._currentApp && window._currentApp.visibility;
+      var isPublished = vis === 'published' || vis === 'public';
       var paymentsTab = document.querySelector('[data-app-section="payments"]');
-      var marketTab = document.querySelector('[data-app-section="market"]');
+      var offersTab = document.querySelector('[data-app-section="offers"]');
+      var storeListingTab = document.querySelector('[data-app-section="store-listing"]');
       if (paymentsTab) paymentsTab.style.display = isPublished ? '' : 'none';
-      if (marketTab) marketTab.style.display = isPublished ? '' : 'none';
+      if (offersTab) offersTab.style.display = isPublished ? '' : 'none';
+      if (storeListingTab) storeListingTab.style.display = isPublished ? '' : 'none';
       // If on a hidden tab, redirect to overview
-      if (!isPublished && (activeAppSection === 'payments' || activeAppSection === 'market')) {
+      if (!isPublished && (activeAppSection === 'payments' || activeAppSection === 'offers' || activeAppSection === 'store-listing')) {
         switchAppSection('overview');
       }
     }
@@ -5231,8 +5186,8 @@ export function getLayoutHTML(options: {
         // Toggle Payments/Market tabs based on visibility
         updatePublicTabVisibility();
         // If requested section is hidden, fall back to overview
-        if (sec === 'payments' || sec === 'market') {
-          if (app.visibility !== 'published') sec = 'overview';
+        if (sec === 'payments' || sec === 'offers' || sec === 'store-listing') {
+          if (app.visibility !== 'published' && app.visibility !== 'public') sec = 'overview';
         }
         switchAppSection(sec);
 
@@ -5248,7 +5203,8 @@ export function getLayoutHTML(options: {
         try { loadAppEnvironment(app); } catch (e) { console.error('loadAppEnvironment:', e); }
         try { loadAppPayments(appId, app); } catch (e) { console.error('loadAppPayments:', e); }
         try { loadAppLogsSection(appId); } catch (e) { console.error('loadAppLogsSection:', e); }
-        try { loadAppMarket(appId, app); } catch (e) { console.error('loadAppMarket:', e); }
+        try { loadAppOffers(appId, app); } catch (e) { console.error('loadAppOffers:', e); }
+        try { loadAppStoreListing(appId, app); } catch (e) { console.error('loadAppStoreListing:', e); }
 
       } catch (err) {
         showToast('Error loading app: ' + (err.message || ''), 'error');
@@ -5723,11 +5679,259 @@ export function getLayoutHTML(options: {
       }
     }
 
-    // ===== Market Tab =====
-    function loadAppMarket(appId, app) {
-      const contentEl = document.getElementById('appMarketContent');
-      const bidsEl = document.getElementById('appMarketBids');
-      const historyEl = document.getElementById('appMarketHistory');
+    // ===== App Store Listing Tab (Phase 2) =====
+    // The developer-facing editor for the public /app/:id store page:
+    // screenshots (up to 6), long description (markdown), and a live
+    // preview of the public URL with copy button.
+    //
+    // Gated on published visibility — updatePublicTabVisibility() hides
+    // the sidebar entry when the app is private/unlisted.
+    function loadAppStoreListing(appId, app) {
+      var contentEl = document.getElementById('appStoreListingContent');
+      if (!contentEl) return;
+
+      var vis = app && app.visibility;
+      var isPublished = vis === 'published' || vis === 'public';
+      if (!isPublished) {
+        contentEl.innerHTML =
+          '<div class="section-card">' +
+            '<h3 class="section-title">Not Published</h3>' +
+            '<p style="font-size:13px;color:var(--text-muted);">Set visibility to <strong>Published</strong> to edit your App Store listing.</p>' +
+          '</div>';
+        return;
+      }
+
+      var origin = window.location.origin;
+      var publicUrl = origin + '/app/' + encodeURIComponent(app.id);
+      var screenshots = Array.isArray(app.screenshots) ? app.screenshots : [];
+      var longDesc = typeof app.long_description === 'string' ? app.long_description : '';
+
+      contentEl.innerHTML =
+        // Public URL preview
+        '<div class="section-card">' +
+          '<h3 class="section-title">Public URL</h3>' +
+          '<div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap;">' +
+            '<code style="flex:1;min-width:200px;font-size:12px;padding:6px 10px;background:var(--bg-active);border:1px solid var(--border);word-break:break-all;">' + escapeHtml(publicUrl) + '</code>' +
+            '<button class="btn btn-ghost btn-sm" onclick="copyStoreListingUrl()" id="storeListingUrlBtn">Copy</button>' +
+            '<a href="' + escapeHtml(publicUrl) + '" target="_blank" class="btn btn-ghost btn-sm">Open &rarr;</a>' +
+          '</div>' +
+          '<p style="font-size:11px;color:var(--text-muted);margin-top:var(--space-2);">Share this link to give anyone a rich preview and one-click install.</p>' +
+        '</div>' +
+
+        // Screenshots
+        '<div class="section-card" style="margin-top:var(--space-4);">' +
+          '<h3 class="section-title">Screenshots</h3>' +
+          '<p style="font-size:12px;color:var(--text-muted);margin-bottom:var(--space-3);">Up to 6 images, max 2MB each. PNG, JPG, or WebP. The first screenshot is used as the share preview.</p>' +
+          '<div id="storeListingScreenshots" class="screenshots-grid" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(160px, 1fr));gap:var(--space-3);margin-bottom:var(--space-3);"></div>' +
+          '<input type="file" id="storeListingFileInput" accept="image/png,image/jpeg,image/webp" style="display:none;">' +
+          '<button class="btn btn-secondary btn-sm" id="storeListingAddBtn" onclick="document.getElementById(\\'storeListingFileInput\\').click()">+ Add Screenshot</button>' +
+          '<span id="storeListingUploadStatus" style="margin-left:var(--space-2);font-size:12px;color:var(--text-muted);"></span>' +
+        '</div>' +
+
+        // Long description
+        '<div class="section-card" style="margin-top:var(--space-4);">' +
+          '<h3 class="section-title">Long Description</h3>' +
+          '<p style="font-size:12px;color:var(--text-muted);margin-bottom:var(--space-3);">Supports markdown. Rendered below the hero on your public store page. Max 50KB.</p>' +
+          '<textarea id="storeListingLongDesc" class="form-input" rows="12" placeholder="Describe what your app does, how to use it, example workflows...&#10;&#10;**Markdown** is supported.">' + escapeHtml(longDesc) + '</textarea>' +
+          '<div style="display:flex;gap:var(--space-2);align-items:center;margin-top:var(--space-3);">' +
+            '<button class="btn btn-primary btn-sm" onclick="saveStoreListing()" id="storeListingSaveBtn">Save listing</button>' +
+            '<span id="storeListingSaveStatus" style="font-size:12px;color:var(--text-muted);"></span>' +
+          '</div>' +
+        '</div>';
+
+      renderStoreListingScreenshots(screenshots);
+
+      // Wire file input
+      var fileInput = document.getElementById('storeListingFileInput');
+      if (fileInput) {
+        fileInput.onchange = function() {
+          var f = fileInput.files && fileInput.files[0];
+          if (f) uploadStoreListingScreenshot(f);
+          fileInput.value = ''; // reset so same filename can re-trigger
+        };
+      }
+    }
+
+    // Render the screenshot thumbnail grid from the current app.screenshots array
+    function renderStoreListingScreenshots(screenshots) {
+      var grid = document.getElementById('storeListingScreenshots');
+      if (!grid) return;
+      if (!screenshots || screenshots.length === 0) {
+        grid.innerHTML = '<div style="grid-column:1/-1;padding:var(--space-4);text-align:center;color:var(--text-muted);font-size:12px;border:1px dashed var(--border);">No screenshots yet. Click "Add Screenshot" to upload your first.</div>';
+        return;
+      }
+      var appId = (window._currentApp && window._currentApp.id) || '';
+      // Cache-bust per app snapshot (regenerate on mount) so replaced
+      // screenshots show without a manual refresh.
+      var cacheBust = '?v=' + Date.now();
+      grid.innerHTML = screenshots.map(function(_, i) {
+        return '<div class="screenshot-tile" data-idx="' + i + '" style="position:relative;aspect-ratio:16/10;background:var(--bg-active);border:1px solid var(--border);overflow:hidden;">' +
+          '<img src="/api/apps/' + encodeURIComponent(appId) + '/screenshots/' + i + cacheBust + '" style="width:100%;height:100%;object-fit:cover;display:block;" alt="Screenshot ' + (i + 1) + '">' +
+          '<div style="position:absolute;top:4px;right:4px;display:flex;gap:4px;">' +
+            (i > 0 ? '<button class="btn btn-ghost btn-sm" title="Move left" onclick="moveStoreListingScreenshot(' + i + ', -1)" style="padding:2px 6px;background:rgba(0,0,0,0.6);color:#fff;font-size:11px;">&larr;</button>' : '') +
+            (i < screenshots.length - 1 ? '<button class="btn btn-ghost btn-sm" title="Move right" onclick="moveStoreListingScreenshot(' + i + ', 1)" style="padding:2px 6px;background:rgba(0,0,0,0.6);color:#fff;font-size:11px;">&rarr;</button>' : '') +
+            '<button class="btn btn-ghost btn-sm" title="Delete" onclick="deleteStoreListingScreenshot(' + i + ')" style="padding:2px 6px;background:rgba(220,38,38,0.85);color:#fff;font-size:11px;">&times;</button>' +
+          '</div>' +
+          '<div style="position:absolute;bottom:4px;left:4px;padding:2px 6px;background:rgba(0,0,0,0.6);color:#fff;font-size:10px;">' + (i + 1) + '</div>' +
+        '</div>';
+      }).join('');
+    }
+
+    // Upload a new screenshot via multipart POST
+    async function uploadStoreListingScreenshot(file) {
+      var statusEl = document.getElementById('storeListingUploadStatus');
+      var addBtn = document.getElementById('storeListingAddBtn');
+      var appId = window._currentApp && window._currentApp.id;
+      if (!appId || !authToken) return;
+
+      if (statusEl) statusEl.textContent = 'Uploading...';
+      if (addBtn) addBtn.disabled = true;
+
+      try {
+        var fd = new FormData();
+        fd.append('screenshot', file);
+        var res = await fetch('/api/apps/' + encodeURIComponent(appId) + '/screenshots', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + authToken },
+          body: fd,
+        });
+        if (!res.ok) {
+          var err = await res.json().catch(function() { return {}; });
+          throw new Error(err.error || ('Upload failed (' + res.status + ')'));
+        }
+        var data = await res.json();
+        // Sync local state + re-render
+        window._currentApp.screenshots = data.screenshots;
+        renderStoreListingScreenshots(data.screenshots);
+        if (statusEl) statusEl.textContent = '\\u2713 Uploaded';
+        setTimeout(function() { if (statusEl) statusEl.textContent = ''; }, 2000);
+      } catch (err) {
+        if (statusEl) statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'Upload failed');
+        showToast('Upload failed', 'error');
+      } finally {
+        if (addBtn) addBtn.disabled = false;
+      }
+    }
+
+    // Delete a screenshot by index
+    async function deleteStoreListingScreenshot(index) {
+      var appId = window._currentApp && window._currentApp.id;
+      if (!appId || !authToken) return;
+      if (!confirm('Delete this screenshot? This cannot be undone.')) return;
+      try {
+        var res = await fetch('/api/apps/' + encodeURIComponent(appId) + '/screenshots/' + index, {
+          method: 'DELETE',
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) throw new Error('Delete failed');
+        var data = await res.json();
+        window._currentApp.screenshots = data.screenshots;
+        renderStoreListingScreenshots(data.screenshots);
+      } catch (err) {
+        showToast('Failed to delete screenshot', 'error');
+      }
+    }
+
+    // Move a screenshot left (-1) or right (+1) in the order
+    async function moveStoreListingScreenshot(index, delta) {
+      var appId = window._currentApp && window._currentApp.id;
+      if (!appId || !authToken) return;
+      var current = (window._currentApp.screenshots || []).slice();
+      var target = index + delta;
+      if (target < 0 || target >= current.length) return;
+
+      // Build the new permutation of indices
+      var order = current.map(function(_, i) { return i; });
+      var tmp = order[index];
+      order[index] = order[target];
+      order[target] = tmp;
+
+      try {
+        var res = await fetch('/api/apps/' + encodeURIComponent(appId) + '/screenshots/order', {
+          method: 'PUT',
+          headers: {
+            'Authorization': 'Bearer ' + authToken,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ order: order }),
+        });
+        if (!res.ok) throw new Error('Reorder failed');
+        var data = await res.json();
+        window._currentApp.screenshots = data.screenshots;
+        renderStoreListingScreenshots(data.screenshots);
+      } catch (err) {
+        showToast('Failed to reorder', 'error');
+      }
+    }
+
+    // Save long description via PATCH /api/apps/:id
+    async function saveStoreListing() {
+      var appId = window._currentApp && window._currentApp.id;
+      if (!appId || !authToken) return;
+      var taEl = document.getElementById('storeListingLongDesc');
+      var statusEl = document.getElementById('storeListingSaveStatus');
+      var saveBtn = document.getElementById('storeListingSaveBtn');
+      if (!taEl) return;
+      var longDesc = taEl.value;
+
+      if (longDesc.length > 50000) {
+        if (statusEl) statusEl.textContent = 'Too long (max 50KB)';
+        return;
+      }
+
+      if (saveBtn) saveBtn.disabled = true;
+      if (statusEl) statusEl.textContent = 'Saving...';
+
+      try {
+        var res = await fetch('/api/apps/' + encodeURIComponent(appId), {
+          method: 'PATCH',
+          headers: {
+            'Authorization': 'Bearer ' + authToken,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ long_description: longDesc }),
+        });
+        if (!res.ok) {
+          var err = await res.json().catch(function() { return {}; });
+          throw new Error(err.error || 'Save failed');
+        }
+        var data = await res.json();
+        window._currentApp.long_description = data.long_description;
+        if (statusEl) statusEl.textContent = '\\u2713 Saved';
+        setTimeout(function() { if (statusEl) statusEl.textContent = ''; }, 2000);
+      } catch (err) {
+        if (statusEl) statusEl.textContent = 'Error: ' + (err && err.message ? err.message : 'Save failed');
+      } finally {
+        if (saveBtn) saveBtn.disabled = false;
+      }
+    }
+
+    // Copy public URL to clipboard
+    function copyStoreListingUrl() {
+      var appId = window._currentApp && window._currentApp.id;
+      if (!appId) return;
+      var url = window.location.origin + '/app/' + encodeURIComponent(appId);
+      navigator.clipboard.writeText(url).then(function() {
+        var btn = document.getElementById('storeListingUrlBtn');
+        if (btn) {
+          var orig = btn.textContent;
+          btn.textContent = 'Copied';
+          setTimeout(function() { btn.textContent = orig; }, 1500);
+        }
+      });
+    }
+
+    // Expose for inline onclicks
+    window.copyStoreListingUrl = copyStoreListingUrl;
+    window.deleteStoreListingScreenshot = deleteStoreListingScreenshot;
+    window.moveStoreListingScreenshot = moveStoreListingScreenshot;
+    window.saveStoreListing = saveStoreListing;
+
+    // ===== Offers Tab =====
+    function loadAppOffers(appId, app) {
+      const contentEl = document.getElementById('appOffersContent');
+      const bidsEl = document.getElementById('appOffersBids');
+      const historyEl = document.getElementById('appOffersHistory');
       if (!contentEl) return;
 
       // Apps that have ever used an external database are permanently ineligible
@@ -5980,7 +6184,7 @@ export function getLayoutHTML(options: {
       }).then(function(res) {
         if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
         showToast('Listing updated!');
-        loadAppMarket(appId, window._currentApp);
+        loadAppOffers(appId, window._currentApp);
       }).catch(function(err) {
         showToast(err.message || 'Failed to save listing', 'error');
       });
@@ -5994,7 +6198,7 @@ export function getLayoutHTML(options: {
       }).then(function(res) {
         if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
         showToast('Ask price removed');
-        loadAppMarket(appId, window._currentApp);
+        loadAppOffers(appId, window._currentApp);
       }).catch(function(err) {
         showToast(err.message || 'Failed to remove ask price', 'error');
       });
@@ -6039,7 +6243,7 @@ export function getLayoutHTML(options: {
       }).then(function(res) {
         if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
         showToast('Bid rejected');
-        loadAppMarket(appId, window._currentApp);
+        loadAppOffers(appId, window._currentApp);
         loadMyOffers(); // Refresh offers dashboard if visible
       }).catch(function(err) {
         showToast(err.message || 'Failed to reject bid', 'error');
@@ -6062,7 +6266,7 @@ export function getLayoutHTML(options: {
       }).then(function(res) {
         if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
         showToast('Bid placed! ' + formatLight(amount) + ' escrowed from your balance.');
-        loadAppMarket(appId, window._currentApp);
+        loadAppOffers(appId, window._currentApp);
       }).catch(function(err) {
         showToast(err.message || 'Failed to place bid', 'error');
       });
@@ -6076,7 +6280,7 @@ export function getLayoutHTML(options: {
       }).then(function(res) {
         if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
         showToast('Bid cancelled. Escrow refunded.');
-        loadAppMarket(appId, window._currentApp);
+        loadAppOffers(appId, window._currentApp);
         loadMyOffers(); // Refresh offers dashboard if visible
       }).catch(function(err) {
         showToast(err.message || 'Failed to cancel bid', 'error');
@@ -7544,15 +7748,15 @@ export function getLayoutHTML(options: {
 
         const thresholdEl = document.getElementById('autoTopupThreshold');
         const amountEl = document.getElementById('autoTopupAmount');
-        if (thresholdEl) thresholdEl.value = String(autoTopup.threshold_light || 800);
-        if (amountEl) amountEl.value = String(autoTopup.amount_light || 8000);
+        if (thresholdEl) thresholdEl.value = String(autoTopup.threshold_light || 100);
+        if (amountEl) amountEl.value = String(autoTopup.amount_light || 1000);
       } catch {}
     }
 
     window.startDeposit = async function() {
       const amountCents = parseInt(document.getElementById('depositAmount')?.value || '2500', 10);
-      var lightReceived = Math.round(amountCents / 100 * 720);
-      if (!confirm('Deposit $' + (amountCents / 100).toFixed(2) + ' \\u2192 \\u2726' + lightReceived.toLocaleString() + ' (720 Light per $1)\\n\\nProceed?')) return;
+      var lightReceived = Math.round(amountCents / 100 * 95);
+      if (!confirm('Deposit $' + (amountCents / 100).toFixed(2) + ' \\u2192 \\u2726' + lightReceived.toLocaleString() + ' (95 Light per $1)\\n\\nProceed?')) return;
       try {
         const res = await fetch('/api/user/hosting/checkout', {
           method: 'POST',
@@ -7673,9 +7877,9 @@ export function getLayoutHTML(options: {
       var withdrawable = _connectData && _connectData.withdrawable_earnings_light ? _connectData.withdrawable_earnings_light : 0;
       var isCrossBorder = _connectData && _connectData.is_cross_border;
 
-      var promptMsg = 'Enter withdrawal amount in Light (minimum \\u272640,000):' +
+      var promptMsg = 'Enter withdrawal amount in Light (minimum \\u27265,000):' +
         '\\n\\nWithdrawable earnings: ' + formatLight(withdrawable) +
-        '\\n\\nConversion rate: 800 Light = $1 USD' +
+        '\\n\\nConversion rate: 100 Light = $1 USD' +
         '\\nFees: Stripe payout fee (0.25% + $0.25)';
       if (isCrossBorder) promptMsg += ' + 2% FX conversion';
       promptMsg += '\\nHold period: 14 days before payout is released to your bank.' +
@@ -7684,15 +7888,15 @@ export function getLayoutHTML(options: {
       var input = prompt(promptMsg);
       if (!input) return;
       var lightAmount = parseInt(input, 10);
-      if (isNaN(lightAmount) || lightAmount < 40000) { showToast('Minimum withdrawal is \\u272640,000', 'error'); return; }
+      if (isNaN(lightAmount) || lightAmount < 5000) { showToast('Minimum withdrawal is \\u27265,000', 'error'); return; }
 
       if (lightAmount > withdrawable) {
         showToast('Amount exceeds withdrawable earnings (' + formatLight(withdrawable) + '). Only earned funds can be withdrawn.', 'error');
         return;
       }
 
-      // Convert Light to USD at 800:1
-      var usdAmount = lightAmount / 800;
+      // Convert Light to USD at 100:1
+      var usdAmount = lightAmount / 100;
       // Calculate Stripe fee
       var stripeFee = Math.ceil(usdAmount * 100 * 0.0025 + 25) / 100;
       if (isCrossBorder) stripeFee += Math.ceil(usdAmount * 100 * 0.02) / 100;
@@ -7865,7 +8069,7 @@ export function getLayoutHTML(options: {
       var topup = params.get('topup');
       if (topup === 'success') {
         var amountCents = parseInt(params.get('amount') || '0', 10);
-        var lightReceived = Math.round(amountCents / 100 * 720);
+        var lightReceived = Math.round(amountCents / 100 * 95);
         var lightStr = amountCents > 0 ? ' (\\u2726' + lightReceived.toLocaleString() + ')' : '';
         showToast('Deposit successful' + lightStr + '! Balance will update shortly.');
         history.replaceState({}, '', window.location.pathname);

@@ -42,5 +42,13 @@
         "installMode": "currentUser"
       }
     }
+  },
+  "plugins": {
+    "deep-link": {
+      "mobile": [],
+      "desktop": {
+        "schemes": ["ultralight"]
+      }
+    }
   }
 }
