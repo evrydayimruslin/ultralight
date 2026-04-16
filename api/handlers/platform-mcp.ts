@@ -17,7 +17,6 @@ import { getPermissionsForUser } from './user.ts';
 import { getPermissionCache } from '../services/permission-cache.ts';
 import {
   type Tier,
-  MIN_PUBLISH_DEPOSIT_CENTS,
   formatLight,
   LIGHT_PER_DOLLAR_PAYOUT,
   MIN_WITHDRAWAL_LIGHT,
@@ -56,6 +55,8 @@ import {
   resolveManifestEnvSchema,
 } from '../../shared/types/index.ts';
 import { getEnv } from '../lib/env.ts';
+import type { AppForCodemode, ToolMapping } from '../services/codemode-tools.ts';
+import type { PublicDiscoveryApp } from '../services/public-apps.ts';
 
 // ============================================
 // TYPES
@@ -77,6 +78,47 @@ interface JsonRpcResponse {
     message: string;
     data?: unknown;
   };
+}
+
+type JsonRpcRequestId = JsonRpcRequest['id'];
+type JsonRpcResponseId = JsonRpcResponse['id'];
+type AppSearchResult = App & { similarity: number };
+type PublicSearchApp = PublicDiscoveryApp & { similarity: number; gpu_type?: string | null };
+
+interface JsonRpcErrorPayload {
+  code?: number;
+  message?: string;
+}
+
+interface RpcToolCallResultEnvelope {
+  result?: MCPToolCallResponse;
+  error?: JsonRpcErrorPayload;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+async function readJsonArray<T>(response: Response): Promise<T[]> {
+  const value = await response.json();
+  return Array.isArray(value) ? value as T[] : [];
+}
+
+function toTier(value: string): Tier {
+  switch (value) {
+    case 'free':
+    case 'fun':
+    case 'pro':
+    case 'scale':
+    case 'enterprise':
+      return value;
+    default:
+      return 'free';
+  }
+}
+
+function toJsonRpcResponseId(id: JsonRpcRequestId | null): JsonRpcResponseId {
+  return id ?? null;
 }
 
 // JSON-RPC error codes
@@ -363,7 +405,15 @@ const PLATFORM_TOOLS: MCPTool[] = [
             },
             budget_limit: { type: 'number' }, budget_period: { type: 'string', enum: ['hour', 'day', 'week', 'month'] },
             expires_at: { type: 'string' },
-            allowed_args: { type: 'object', additionalProperties: { type: 'array', items: { type: ['string', 'number', 'boolean'] } } },
+            allowed_args: {
+              type: 'object',
+              additionalProperties: {
+                type: 'array',
+                items: {
+                  oneOf: [{ type: 'string' }, { type: 'number' }, { type: 'boolean' }],
+                },
+              },
+            },
           },
         },
         emails: { type: 'array', items: { type: 'string' }, description: 'Filter by users. For list.' },
@@ -674,7 +724,7 @@ export async function handlePlatformMcp(request: Request): Promise<Response> {
       email: authUser.email,
       displayName,
       avatarUrl,
-      tier: authUser.tier as Tier,
+      tier: toTier(authUser.tier),
       provisional: authUser.provisional || false,
     };
   } catch (authErr) {
@@ -712,7 +762,7 @@ export async function handlePlatformMcp(request: Request): Promise<Response> {
 
   // Weekly call limit for tool calls
   if (rpcRequest.method === 'tools/call') {
-    const weeklyResult = await checkAndIncrementWeeklyCalls(userId, user.tier);
+    const weeklyResult = await checkAndIncrementWeeklyCalls(userId, toTier(user.tier));
     if (!weeklyResult.allowed) {
       return jsonRpcErrorResponse(
         rpcRequest.id,
@@ -1197,7 +1247,7 @@ ${platformDocs}`;
 /**
  * Handle initialize — async, fetches user context for rich instructions.
  */
-async function handleInitialize(id: string | number, userId: string): Promise<Response> {
+async function handleInitialize(id: JsonRpcRequestId, userId: string): Promise<Response> {
   // Fetch desk + library context (best-effort, graceful degradation)
   let instructions: string;
   try {
@@ -1229,7 +1279,7 @@ async function handleInitialize(id: string | number, userId: string): Promise<Re
 /**
  * Handle resources/list — return platform skills.md + user's library.md
  */
-function handleResourcesList(id: string | number, _userId: string): Response {
+function handleResourcesList(id: JsonRpcRequestId, _userId: string): Response {
   const resources: MCPResourceDescriptor[] = [
     {
       uri: 'ultralight://platform/skills.md',
@@ -1264,7 +1314,7 @@ function handleResourcesList(id: string | number, _userId: string): Response {
  * Handle resources/read — return content for a platform resource
  */
 async function handleResourcesRead(
-  id: string | number,
+  id: JsonRpcRequestId,
   userId: string,
   params: unknown
 ): Promise<Response> {
@@ -1376,12 +1426,12 @@ async function handleResourcesRead(
   return jsonRpcErrorResponse(id, NOT_FOUND, `Resource not found: ${uri}`);
 }
 
-function handleToolsList(id: string | number): Response {
+function handleToolsList(id: JsonRpcRequestId): Response {
   return jsonRpcResponse(id, { tools: PLATFORM_TOOLS } as MCPToolsListResponse);
 }
 
 async function handleToolsCall(
-  id: string | number,
+  id: JsonRpcRequestId,
   params: unknown,
   userId: string,
   user: UserContext,
@@ -1400,6 +1450,7 @@ async function handleToolsCall(
   const toolArgs = cleanArgs;
 
   const execStart = Date.now();
+  let toolMapForLogging: Record<string, ToolMapping> | undefined;
 
   try {
     let result: unknown;
@@ -1536,7 +1587,7 @@ async function handleToolsCall(
       case 'ul.rate': {
         // Handle shortcoming report if present (fire-and-forget)
         if (toolArgs.shortcoming) {
-          executeShortcomings(userId, toolArgs.shortcoming, sessionId);
+          executeShortcomings(userId, toolArgs.shortcoming as Record<string, unknown>, sessionId);
         }
         // Handle rating if present
         if (toolArgs.app_id && toolArgs.rating) {
@@ -1595,7 +1646,7 @@ async function handleToolsCall(
           throw new ToolError(INTERNAL_ERROR, `Call failed (${callResponse.status}): ${errText}`);
         }
 
-        const rpcResponse = await callResponse.json();
+        const rpcResponse = await callResponse.json() as RpcToolCallResultEnvelope;
         if (rpcResponse.error) {
           throw new ToolError(rpcResponse.error.code || INTERNAL_ERROR, rpcResponse.error.message || JSON.stringify(rpcResponse.error));
         }
@@ -2152,7 +2203,7 @@ async function handleToolsCall(
 
         // Try cached index first, rebuild if missing
         let fnIndex = await getFunctionIndex(userId);
-        let toolMap: Record<string, { appId: string; appSlug: string; appName: string; fnName: string }>;
+        let toolMap: Record<string, ToolMapping>;
         let availableTypes: string;
         let widgets: Array<{ name: string; appId: string; label: string }>;
 
@@ -2162,6 +2213,7 @@ async function handleToolsCall(
           for (const [name, fn] of Object.entries(fnIndex.functions)) {
             toolMap[name] = { appId: fn.appId, appSlug: fn.appSlug, appName: '', fnName: fn.fnName };
           }
+          toolMapForLogging = toolMap;
           availableTypes = fnIndex.types;
           widgets = fnIndex.widgets;
         } else {
@@ -2171,13 +2223,13 @@ async function handleToolsCall(
             `${cmSbUrl}/rest/v1/apps?owner_id=eq.${userId}&deleted_at=is.null&select=id,name,slug,manifest`,
             { headers: { 'apikey': cmSbKey, 'Authorization': `Bearer ${cmSbKey}` } }
           );
-          const ownedApps = ownedRes.ok ? await ownedRes.json() as Array<{ id: string; name: string; slug: string; manifest: string | null }> : [];
+          const ownedApps = ownedRes.ok ? await readJsonArray<{ id: string; name: string; slug: string; manifest: string | null }>(ownedRes) : [];
 
           const likedRes = await fetch(
             `${cmSbUrl}/rest/v1/user_app_likes?user_id=eq.${userId}&liked=eq.true&select=app_id`,
             { headers: { 'apikey': cmSbKey, 'Authorization': `Bearer ${cmSbKey}` } }
           );
-          const likedIds = likedRes.ok ? (await likedRes.json() as Array<{ app_id: string }>).map(l => l.app_id) : [];
+          const likedIds = likedRes.ok ? (await readJsonArray<{ app_id: string }>(likedRes)).map(l => l.app_id) : [];
 
           let likedApps: typeof ownedApps = [];
           if (likedIds.length > 0) {
@@ -2185,19 +2237,25 @@ async function handleToolsCall(
               `${cmSbUrl}/rest/v1/apps?id=in.(${likedIds.join(',')})&deleted_at=is.null&select=id,name,slug,manifest`,
               { headers: { 'apikey': cmSbKey, 'Authorization': `Bearer ${cmSbKey}` } }
             );
-            likedApps = likedAppsRes.ok ? await likedAppsRes.json() as typeof ownedApps : [];
+            likedApps = likedAppsRes.ok ? await readJsonArray<typeof ownedApps[number]>(likedAppsRes) : [];
           }
 
-          const allAppsMap = new Map<string, { id: string; name: string; slug: string; manifest: unknown }>();
+          const allAppsMap = new Map<string, AppForCodemode>();
           for (const app of [...ownedApps, ...likedApps]) {
             if (!allAppsMap.has(app.id) && app.manifest) {
               const manifest = typeof app.manifest === 'string' ? JSON.parse(app.manifest) : app.manifest;
-              allAppsMap.set(app.id, { id: app.id, name: app.name, slug: app.slug, manifest });
+              allAppsMap.set(app.id, {
+                id: app.id,
+                name: app.name,
+                slug: app.slug,
+                manifest: isRecord(manifest) ? manifest as AppForCodemode['manifest'] : {},
+              });
             }
           }
 
           const descriptorsResult = buildJsonSchemaDescriptors(Array.from(allAppsMap.values()));
           toolMap = descriptorsResult.toolMap;
+          toolMapForLogging = toolMap;
           widgets = descriptorsResult.widgets;
           availableTypes = generateTypes(descriptorsResult.descriptors);
 
@@ -2292,7 +2350,7 @@ async function handleToolsCall(
     // Log the call — resolve app info from toolMap if available
     let logAppId: string | undefined;
     let logAppName: string | undefined;
-    try { const ti = toolMap?.[name]; logAppId = ti?.appId; logAppName = ti?.appName || ti?.appSlug; } catch {}
+    try { const ti = toolMapForLogging?.[name]; logAppId = ti?.appId; logAppName = ti?.appName || ti?.appSlug; } catch {}
     const { logMcpCall } = await import('../services/call-logger.ts');
     logMcpCall({
       userId,
@@ -2317,7 +2375,7 @@ async function handleToolsCall(
 
     let errLogAppId: string | undefined;
     let errLogAppName: string | undefined;
-    try { const ti = toolMap?.[name]; errLogAppId = ti?.appId; errLogAppName = ti?.appName || ti?.appSlug; } catch {}
+    try { const ti = toolMapForLogging?.[name]; errLogAppId = ti?.appId; errLogAppName = ti?.appName || ti?.appSlug; } catch {}
     const { logMcpCall } = await import('../services/call-logger.ts');
     logMcpCall({
       userId,
@@ -2362,7 +2420,7 @@ class ToolError extends Error {
 /** Resolve app from ID or slug, verify ownership */
 async function resolveApp(userId: string, appIdOrSlug: string): Promise<App> {
   const appsService = createAppsService();
-  let app = await appsService.findById(appIdOrSlug);
+  let app: App | null = await appsService.findById(appIdOrSlug);
   if (!app) {
     app = await appsService.findBySlug(userId, appIdOrSlug);
   }
@@ -2390,7 +2448,7 @@ async function resolveAppIdForMarketplace(appIdOrSlug: string): Promise<string> 
       },
     }
   );
-  const rows = res.ok ? await res.json() : [];
+  const rows = res.ok ? await readJsonArray<{ id: string }>(res) : [];
   if (rows[0]?.id) return rows[0].id;
   throw new ToolError(NOT_FOUND, `App not found: ${appIdOrSlug}`);
 }
@@ -2457,7 +2515,7 @@ async function executeUpload(
     }
 
     // ── GPU existing app version ──
-    if ((app as Record<string, unknown>).runtime === 'gpu' || gpuYamlContent) {
+    if (app.runtime === 'gpu' || gpuYamlContent) {
       // Validate GPU config if present (new config overrides existing)
       let gpuConfig: { gpu_type: string; python?: string; max_duration_ms?: number } | null = null;
       if (gpuYamlContent) {
@@ -2518,7 +2576,7 @@ async function executeUpload(
       await appsService.update(app.id, updatePayload as Partial<App>);
 
       // Fire-and-forget: trigger GPU build for new version
-      const buildConfig = gpuConfig || (app as Record<string, unknown>).gpu_config as { gpu_type: string; python?: string; max_duration_ms?: number; runtime: string };
+      const buildConfig = gpuConfig || app.gpu_config as { gpu_type: string; python?: string; max_duration_ms?: number; runtime: string };
       import('../services/gpu/builder.ts').then(({ triggerGpuBuild }) => {
         triggerGpuBuild(app.id, newVersion, validatedFiles, buildConfig as import('../services/gpu/types.ts').GpuConfig).catch(err =>
           console.error(`[GPU-BUILD] Build failed for ${app.id}:`, err)
@@ -2534,7 +2592,7 @@ async function executeUpload(
         exports: gpuExports,
         runtime: 'gpu',
         gpu_status: 'building',
-        gpu_type: gpuConfig?.gpu_type || (app as Record<string, unknown>).gpu_type,
+        gpu_type: gpuConfig?.gpu_type || app.gpu_type,
         message: `GPU version ${newVersion} uploaded. Container build started — gpu_status will transition to 'live' when ready. Use ul.set.version to make it live.`,
       };
     }
@@ -2697,7 +2755,7 @@ async function executeUpload(
     // Skills generation — update in-memory app with uploaded manifest so
     // generateSkillsForVersion sees the rich descriptions from manifest.json
     if (pipeline.manifest) {
-      (app as Record<string, unknown>).manifest = JSON.stringify(pipeline.manifest);
+      app.manifest = JSON.stringify(pipeline.manifest);
     }
     const skills = await generateSkillsForVersion(app, storageKey, newVersion);
 
@@ -2724,7 +2782,7 @@ async function executeUpload(
       const appsService = createAppsService();
       const existingApps = await appsService.listByOwner(userId);
       const existingApp = existingApps.find(
-        (a: App) => a.name.toLowerCase() === appName.toLowerCase() && !(a as Record<string, unknown>).deleted_at
+        (a: App) => a.name.toLowerCase() === appName.toLowerCase() && !a.deleted_at
       );
       if (existingApp) {
         // Recurse with app_id set — this triggers the "existing app: new version" path
@@ -2936,7 +2994,7 @@ export async function executeDownload(
   if (!appIdOrSlug) throw new ToolError(INVALID_PARAMS, 'app_id is required');
 
   const appsService = createAppsService();
-  let app = await appsService.findById(appIdOrSlug);
+  let app: App | null = await appsService.findById(appIdOrSlug);
   if (!app) app = await appsService.findBySlug(userId, appIdOrSlug);
   if (!app) throw new ToolError(NOT_FOUND, `App not found: ${appIdOrSlug}`);
 
@@ -3070,12 +3128,14 @@ async function executeTest(
       {
         appId: testAppId,
         userId: userId,
+        ownerId: userId,
         executionId: crypto.randomUUID(),
         code: bundledCode,
         permissions: ['memory:read', 'memory:write', 'net:fetch'],
         userApiKey: null,
         user: user,
         appDataService: appDataService,
+        d1DataService: null,
         memoryService: memoryAdapter,
         aiService: aiServiceStub as unknown as import('../runtime/sandbox.ts').RuntimeConfig['aiService'],
         envVars: {},
@@ -3195,7 +3255,7 @@ async function executeGaps(
     return { gaps: [], total: 0, error: 'Failed to fetch gaps' };
   }
 
-  const gaps = await res.json();
+  const gaps = await readJsonArray<Record<string, unknown>>(res);
   return {
     gaps: gaps,
     total: gaps.length,
@@ -4031,8 +4091,8 @@ async function executeSetVisibility(
   const appsService = createAppsService();
 
   // Gate: GPU apps must be 'live' before publishing
-  if (dbVisibility !== 'private' && (app as Record<string, unknown>).runtime === 'gpu') {
-    const gpuStatus = (app as Record<string, unknown>).gpu_status as string | null;
+  if (dbVisibility !== 'private' && app.runtime === 'gpu') {
+    const gpuStatus = app.gpu_status;
     if (gpuStatus !== 'live') {
       const statusMsg = gpuStatus === 'building' ? 'Container is still building.'
         : gpuStatus === 'benchmarking' ? 'Benchmark is in progress.'
@@ -4264,7 +4324,7 @@ async function executePermissionsGrant(
     { headers: { 'apikey': SUPABASE_SERVICE_ROLE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` } }
   );
   if (!userRes.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to look up user');
-  const userRows = await userRes.json();
+  const userRows = await readJsonArray<{ id: string; tier: Tier }>(userRes);
 
   // If user doesn't exist yet, create a pending invite
   if (userRows.length === 0) {
@@ -4440,7 +4500,7 @@ async function executePermissionsRevoke(
     { headers }
   );
   if (!userRes.ok) throw new ToolError(INTERNAL_ERROR, 'Failed to look up user');
-  const userRows = await userRes.json();
+  const userRows = await readJsonArray<{ id: string; tier: Tier }>(userRes);
 
   // User doesn't exist — try revoking pending invite
   if (userRows.length === 0) {
@@ -4539,7 +4599,7 @@ async function executePermissionsList(
       { headers: { 'apikey': SUPABASE_SERVICE_ROLE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` } }
     );
     if (usersRes.ok) {
-      for (const u of await usersRes.json()) {
+      for (const u of await readJsonArray<{ id: string; email: string; display_name: string | null }>(usersRes)) {
         usersMap.set(u.id, { email: u.email, display_name: u.display_name });
       }
     }
@@ -4626,11 +4686,11 @@ async function executePermissionsExport(
     if (!altRes.ok) {
       throw new ToolError(INTERNAL_ERROR, 'Failed to fetch audit logs. Ensure call logging is enabled.');
     }
-    const entries = await altRes.json();
+    const entries = await readJsonArray<Record<string, unknown>>(altRes);
     return formatExport(app.id, entries, format);
   }
 
-  const entries = await response.json();
+  const entries = await readJsonArray<Record<string, unknown>>(response);
   return formatExport(app.id, entries, format);
 }
 
@@ -5017,6 +5077,10 @@ async function executeRate(
     return executeRateContent(userId, contentIdOrSlug, rating);
   }
 
+  if (!appIdOrSlug) {
+    throw new ToolError(INVALID_PARAMS, 'app_id is required');
+  }
+
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   const headers = {
     'apikey': SUPABASE_SERVICE_ROLE_KEY,
@@ -5025,15 +5089,16 @@ async function executeRate(
 
   // Look up the app (don't use resolveApp which checks ownership)
   const appsService = createAppsService();
-  let app = await appsService.findById(appIdOrSlug);
+  let app: App | { id: string; owner_id: string; name: string; slug: string; visibility: string; likes: number; dislikes: number } | null =
+    await appsService.findById(appIdOrSlug);
   if (!app) {
     const slugRes = await fetch(
       `${SUPABASE_URL}/rest/v1/apps?slug=eq.${encodeURIComponent(appIdOrSlug)}&deleted_at=is.null&select=id,owner_id,name,slug,visibility,likes,dislikes&limit=1`,
       { headers }
     );
     if (slugRes.ok) {
-      const rows = await slugRes.json();
-      if (rows.length > 0) app = rows[0] as App;
+      const rows = await readJsonArray<{ id: string; owner_id: string; name: string; slug: string; visibility: string; likes: number; dislikes: number }>(slugRes);
+      if (rows.length > 0) app = rows[0];
     }
   }
   if (!app) throw new ToolError(NOT_FOUND, `App not found: ${appIdOrSlug}`);
@@ -5074,7 +5139,7 @@ async function executeRate(
     `${SUPABASE_URL}/rest/v1/app_likes?user_id=eq.${userId}&app_id=eq.${app.id}&select=positive&limit=1`,
     { headers }
   );
-  const existingRows = existingRes.ok ? await existingRes.json() : [];
+  const existingRows = existingRes.ok ? await readJsonArray<{ positive: boolean }>(existingRes) : [];
   const existing = existingRows.length > 0 ? existingRows[0] : null;
 
   // If already set to the same value, it's a no-op
@@ -5177,7 +5242,7 @@ async function executeRateContent(
     { headers }
   );
   if (uuidRes.ok) {
-    const rows = await uuidRes.json();
+    const rows = await readJsonArray<{ id: string; owner_id: string; title: string | null; slug: string; type: string; likes: number; dislikes: number }>(uuidRes);
     if (rows.length > 0) content = rows[0];
   }
 
@@ -5188,7 +5253,7 @@ async function executeRateContent(
       { headers }
     );
     if (slugRes.ok) {
-      const rows = await slugRes.json();
+      const rows = await readJsonArray<{ id: string; owner_id: string; title: string | null; slug: string; type: string; likes: number; dislikes: number }>(slugRes);
       if (rows.length > 0) content = rows[0];
     }
   }
@@ -5220,7 +5285,7 @@ async function executeRateContent(
       `${SUPABASE_URL}/rest/v1/content?id=eq.${content.id}&select=likes,dislikes`,
       { headers }
     );
-    const updatedRows = updatedRes.ok ? await updatedRes.json() : [];
+    const updatedRows = updatedRes.ok ? await readJsonArray<{ likes: number; dislikes: number }>(updatedRes) : [];
 
     return {
       content_id: content.id,
@@ -5238,7 +5303,7 @@ async function executeRateContent(
     `${SUPABASE_URL}/rest/v1/content_likes?user_id=eq.${userId}&content_id=eq.${content.id}&select=positive&limit=1`,
     { headers }
   );
-  const existingRows = existingRes.ok ? await existingRes.json() : [];
+  const existingRows = existingRes.ok ? await readJsonArray<{ positive: boolean }>(existingRes) : [];
   const existing = existingRows.length > 0 ? existingRows[0] : null;
 
   if (existing && existing.positive === positive) {
@@ -5279,7 +5344,7 @@ async function executeRateContent(
     `${SUPABASE_URL}/rest/v1/content?id=eq.${content.id}&select=likes,dislikes`,
     { headers }
   );
-  const updatedRows = updatedRes.ok ? await updatedRes.json() : [];
+  const updatedRows = updatedRes.ok ? await readJsonArray<{ likes: number; dislikes: number }>(updatedRes) : [];
 
   // ── SIDE-EFFECTS: LIBRARY SAVE / BLOCK ──
   try {
@@ -5470,7 +5535,8 @@ async function executeConnect(
 
   // Look up the app (anyone can connect to a public/unlisted app, or a private app they have permissions on)
   const appsService = createAppsService();
-  let app = await appsService.findById(appIdOrSlug);
+  let app: App | { id: string; owner_id: string; name: string; slug: string; visibility: App['visibility']; env_schema: Record<string, EnvSchemaEntry>; manifest: string | null } | null =
+    await appsService.findById(appIdOrSlug);
   if (!app) {
     // Try slug lookup across all apps
     const slugRes = await fetch(
@@ -5478,8 +5544,16 @@ async function executeConnect(
       { headers }
     );
     if (slugRes.ok) {
-      const rows = await slugRes.json();
-      if (rows.length > 0) app = rows[0] as App;
+      const rows = await readJsonArray<{
+        id: string;
+        owner_id: string;
+        name: string;
+        slug: string;
+        visibility: App['visibility'];
+        env_schema: Record<string, EnvSchemaEntry>;
+        manifest: string | null;
+      }>(slugRes);
+      if (rows.length > 0) app = rows[0];
     }
   }
   if (!app) throw new ToolError(NOT_FOUND, `App not found: ${appIdOrSlug}`);
@@ -5645,15 +5719,24 @@ async function executeConnections(
 
   // ── With app_id: show detail for one app ──
   const appsService = createAppsService();
-  let app = await appsService.findById(appIdOrSlug);
+  let app: App | { id: string; owner_id: string; name: string; slug: string; visibility: App['visibility']; env_schema: Record<string, EnvSchemaEntry>; manifest: string | null } | null =
+    await appsService.findById(appIdOrSlug);
   if (!app) {
     const slugRes = await fetch(
       `${SUPABASE_URL}/rest/v1/apps?slug=eq.${encodeURIComponent(appIdOrSlug)}&deleted_at=is.null&select=id,owner_id,name,slug,visibility,env_schema,manifest&limit=1`,
       { headers }
     );
     if (slugRes.ok) {
-      const rows = await slugRes.json();
-      if (rows.length > 0) app = rows[0] as App;
+      const rows = await readJsonArray<{
+        id: string;
+        owner_id: string;
+        name: string;
+        slug: string;
+        visibility: App['visibility'];
+        env_schema: Record<string, EnvSchemaEntry>;
+        manifest: string | null;
+      }>(slugRes);
+      if (rows.length > 0) app = rows[0];
     }
   }
   if (!app) throw new ToolError(NOT_FOUND, `App not found: ${appIdOrSlug}`);
@@ -5863,7 +5946,7 @@ async function executeDiscoverInspect(
   // Resolve app — unlike resolveApp(), inspect allows non-owners to view
   // public/unlisted apps or apps they have permissions for
   const appsService = createAppsService();
-  let app = await appsService.findById(appIdOrSlug);
+  let app: App | null = await appsService.findById(appIdOrSlug);
   if (!app) {
     // Try slug lookup — first try user's own, then global
     app = await appsService.findBySlug(userId, appIdOrSlug);
@@ -6094,7 +6177,7 @@ async function executeDiscoverInspect(
   });
 
   // ── 9. App metadata ──
-  const appRuntime = (app as Record<string, unknown>).runtime as string | null;
+  const appRuntime = app.runtime;
   const metadata = {
     app_id: app.id,
     name: app.name,
@@ -6115,12 +6198,12 @@ async function executeDiscoverInspect(
     // GPU runtime metadata
     runtime: appRuntime || 'deno',
     ...(appRuntime === 'gpu' ? {
-      gpu_type: (app as Record<string, unknown>).gpu_type,
-      gpu_status: (app as Record<string, unknown>).gpu_status,
-      gpu_benchmark: (app as Record<string, unknown>).gpu_benchmark,
-      gpu_pricing_config: (app as Record<string, unknown>).gpu_pricing_config,
-      gpu_max_duration_ms: (app as Record<string, unknown>).gpu_max_duration_ms,
-      gpu_concurrency_limit: (app as Record<string, unknown>).gpu_concurrency_limit,
+      gpu_type: app.gpu_type,
+      gpu_status: app.gpu_status,
+      gpu_benchmark: app.gpu_benchmark,
+      gpu_pricing_config: app.gpu_pricing_config,
+      gpu_max_duration_ms: app.gpu_max_duration_ms,
+      gpu_concurrency_limit: app.gpu_concurrency_limit,
     } : {}),
   };
 
@@ -6167,7 +6250,7 @@ async function executeDiscoverInspect(
       cachedSummary ? 'This app has a cached summary from a previous agent session — review it for context.' : null,
       storageBackend === 'kv' ? 'KV storage detected. Use the app\'s query/get functions to load data.' : null,
       isOwner ? 'You own this app. You can upload new versions, set permissions, and view all caller logs.' : null,
-      appRuntime === 'gpu' ? `GPU function running on ${(app as Record<string, unknown>).gpu_type}. Calls are billed per-execution.` : null,
+      appRuntime === 'gpu' ? `GPU function running on ${app.gpu_type}. Calls are billed per-execution.` : null,
     ].filter(Boolean),
   };
 }
@@ -6349,7 +6432,7 @@ async function executeDiscoverLibrary(
 
   if (searchApps) {
     const appsService = createAppsService();
-    let libraryResults: App[] = [];
+    let libraryResults: Array<App | AppSearchResult> = [];
 
     try {
       const results = await appsService.searchByEmbedding(
@@ -6383,12 +6466,12 @@ async function executeDiscoverLibrary(
       name: r.name,
       slug: r.slug,
       description: r.description,
-      similarity: (r as Record<string, unknown>).similarity as number || 0,
+      similarity: 'similarity' in r ? r.similarity : 0,
       source: r.owner_id === userId ? 'owned' : 'saved',
       type: 'app',
       mcp_endpoint: `/mcp/${r.id}`,
       runtime: r.runtime || 'deno',
-      gpu_type: r.runtime === 'gpu' ? (r as Record<string, unknown>).gpu_type as string : undefined,
+      gpu_type: r.runtime === 'gpu' ? r.gpu_type : undefined,
     }));
   }
 
@@ -6572,7 +6655,7 @@ async function executeDiscoverAppstore(
     // Filter blocked + non-live GPU apps, truncate to limit
     const filtered = topApps.filter(a =>
       !blockedAppIds.has(a.id) &&
-      !(a.runtime === 'gpu' && (a as Record<string, unknown>).gpu_status !== 'live')
+      !(a.runtime === 'gpu' && a.gpu_status !== 'live')
     ).slice(0, limit);
 
     // Fetch user connections for these apps
@@ -6614,7 +6697,7 @@ async function executeDiscoverAppstore(
         likes: a.likes ?? 0,
         dislikes: a.dislikes ?? 0,
         runtime: a.runtime || 'deno',
-        gpu_type: a.runtime === 'gpu' ? (a as Record<string, unknown>).gpu_type as string : undefined,
+        gpu_type: a.runtime === 'gpu' ? a.gpu_type : undefined,
         required_secrets: requiredSecrets.length > 0 ? requiredSecrets : undefined,
         connected: connectedKeys.length > 0,
         fully_connected: requiredSecrets.length === 0 || missingRequired.length === 0,
@@ -6655,7 +6738,7 @@ async function executeDiscoverAppstore(
     const allPublicApps = await appsService.listPublic(limit);
     const matches = allPublicApps.filter(a =>
       !blockedAppIds.has(a.id) &&
-      !(a as unknown as Record<string, unknown>).hosting_suspended &&
+      !a.hosting_suspended &&
       (a.name.toLowerCase().includes(searchLower) ||
        (a.description || '').toLowerCase().includes(searchLower) ||
        (a.tags || []).some(t => t.toLowerCase().includes(searchLower)))
@@ -6686,7 +6769,7 @@ async function executeDiscoverAppstore(
 
   if (searchApps) {
     const appsService = createAppsService();
-    let filteredResults: App[] = [];
+    let filteredResults: Array<PublicSearchApp | AppSearchResult> = [];
 
     try {
       const results = await appsService.searchByEmbedding(
@@ -6699,21 +6782,23 @@ async function executeDiscoverAppstore(
 
       filteredResults = results.filter(r =>
         !blockedAppIds.has(r.id) &&
-        !(r as Record<string, unknown>).hosting_suspended &&
-        !(r.runtime === 'gpu' && (r as Record<string, unknown>).gpu_status !== 'live')
+        !r.hosting_suspended &&
+        !(r.runtime === 'gpu' && r.gpu_status !== 'live')
       );
     } catch (rpcErr) {
       console.error('[DISCOVER:appstore] searchByEmbedding RPC failed, falling back to text search:', rpcErr);
       const searchTerm = query || task || '';
       const searchLower = searchTerm.toLowerCase();
       const allPublicApps = await appsService.listPublic(overFetchLimit);
-      filteredResults = allPublicApps.filter(a =>
-        !blockedAppIds.has(a.id) &&
-        !(a as unknown as Record<string, unknown>).hosting_suspended &&
-        (a.name.toLowerCase().includes(searchLower) ||
-         (a.description || '').toLowerCase().includes(searchLower) ||
-         (a.tags || []).some(t => t.toLowerCase().includes(searchLower)))
-      );
+      filteredResults = allPublicApps
+        .filter(a =>
+          !blockedAppIds.has(a.id) &&
+          !a.hosting_suspended &&
+          (a.name.toLowerCase().includes(searchLower) ||
+           (a.description || '').toLowerCase().includes(searchLower) ||
+           (a.tags || []).some(t => t.toLowerCase().includes(searchLower)))
+        )
+        .map(a => ({ ...a, similarity: 0 }));
     }
 
     // Fetch env_schema and user connection status for re-ranking
@@ -6756,7 +6841,7 @@ async function executeDiscoverAppstore(
     // ── COMPOSITE RE-RANKING ──
     // final_score = (similarity * 0.7) + (native_boost * 0.15) + (like_signal * 0.15)
     scored = filteredResults.map(r => {
-      const rr = r as App & { similarity: number; weighted_likes?: number; weighted_dislikes?: number };
+      const rr = r;
 
       const schema = envSchemas.get(rr.id) || {};
       const perUserEntries = Object.entries(schema).filter(([, v]) => v.scope === 'per_user');
@@ -6797,7 +6882,7 @@ async function executeDiscoverAppstore(
         finalScore: finalScore,
         type: 'app',
         runtime: rr.runtime || 'deno',
-        gpu_type: rr.runtime === 'gpu' ? (rr as Record<string, unknown>).gpu_type as string : undefined,
+        gpu_type: rr.runtime === 'gpu' ? rr.gpu_type : undefined,
         requiredSecrets: requiredSecrets,
         connected: connectedKeys.length > 0,
         fullyConnected: requiredSecrets.length === 0 || missingRequired.length === 0,
@@ -7011,20 +7096,20 @@ function formatToolError(err: unknown): MCPToolCallResponse {
   return { content: [{ type: 'text', text: `Error: ${message}` }], isError: true };
 }
 
-function jsonRpcResponse(id: string | number | null, result: unknown): Response {
-  return new Response(JSON.stringify({ jsonrpc: '2.0', id, result }), {
+function jsonRpcResponse(id: JsonRpcRequestId | null, result: unknown): Response {
+  return new Response(JSON.stringify({ jsonrpc: '2.0', id: toJsonRpcResponseId(id), result }), {
     headers: { 'Content-Type': 'application/json' },
   });
 }
 
 function jsonRpcErrorResponse(
-  id: string | number | null,
+  id: JsonRpcRequestId | null,
   code: number,
   message: string,
   data?: unknown
 ): Response {
   return new Response(
-    JSON.stringify({ jsonrpc: '2.0', id, error: { code, message, data } }),
+    JSON.stringify({ jsonrpc: '2.0', id: toJsonRpcResponseId(id), error: { code, message, data } }),
     {
       status: code === RATE_LIMITED ? 429 : code < 0 ? 400 : 500,
       headers: { 'Content-Type': 'application/json' },
@@ -7772,9 +7857,11 @@ async function executeMarkdown(
   if (shouldPublish) {
     try {
       const embService = createEmbeddingService();
-      embeddingText = generatePageEmbeddingText(title, content, tags);
-      const embResult = await embService.embed(embeddingText);
-      embeddingArr = embResult.embedding;
+      if (embService) {
+        embeddingText = generatePageEmbeddingText(title, content, tags);
+        const embResult = await embService.embed(embeddingText);
+        embeddingArr = embResult.embedding;
+      }
     } catch (err) {
       console.error('Page embedding generation failed:', err);
       // Non-fatal — page still publishes, just not discoverable via search
@@ -7808,7 +7895,7 @@ async function executeMarkdown(
   );
   let contentId: string | null = null;
   if (upsertRes.ok) {
-    const rows = await upsertRes.json();
+    const rows = await readJsonArray<{ id: string }>(upsertRes);
     if (rows.length > 0) contentId = rows[0].id;
   }
 
@@ -7828,7 +7915,7 @@ async function executeMarkdown(
           { headers: sbHeaders }
         );
         if (userRes.ok) {
-          const users = await userRes.json();
+          const users = await readJsonArray<{ id: string }>(userRes);
           if (users.length > 0) {
             (shareRow as Record<string, unknown>).shared_with_user_id = users[0].id;
           }
