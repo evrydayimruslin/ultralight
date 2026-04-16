@@ -4,12 +4,18 @@
 import { error, json } from './app.ts';
 import { isApiToken, getUserFromToken } from '../services/tokens.ts';
 import { getUserTier } from '../services/tier-enforcement.ts';
-import { createProvisionalUser, isProvisionalUser, mergeProvisionalUser, markOnboardingProvisionalCreated } from '../services/provisional.ts';
+import { createProvisionalUser, isProvisionalUser, mergeProvisionalUser, markOnboardingProvisionalCreated, type MergeMethod } from '../services/provisional.ts';
 import {
   consumeDesktopOAuthSession,
   createDesktopOAuthSession,
   storeDesktopOAuthSessionToken,
 } from '../services/desktop-oauth-sessions.ts';
+import {
+  appendAuthSessionCookies,
+  clearAuthSessionCookies,
+  getAuthAccessTokenFromRequest,
+  getAuthRefreshTokenFromRequest,
+} from '../services/auth-cookies.ts';
 // Base64 URL encoding for PKCE (replaces Deno std encodeBase64Url)
 function encodeBase64Url(data: Uint8Array): string {
   const base64 = btoa(String.fromCharCode(...data));
@@ -30,6 +36,92 @@ async function generateCodeChallenge(verifier: string): Promise<string> {
   const data = encoder.encode(verifier);
   const digest = await crypto.subtle.digest('SHA-256', data);
   return encodeBase64Url(new Uint8Array(digest));
+}
+
+function getSupabaseAuthHeaders(): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    'apikey': (getEnv('SUPABASE_ANON_KEY') || getEnv('SUPABASE_SERVICE_ROLE_KEY')),
+  };
+}
+
+async function exchangeRefreshToken(refreshToken: string): Promise<{
+  access_token: string;
+  refresh_token?: string;
+  expires_in?: number;
+}> {
+  const tokenResponse = await fetch(
+    `${getEnv('SUPABASE_URL')}/auth/v1/token?grant_type=refresh_token`,
+    {
+      method: 'POST',
+      headers: getSupabaseAuthHeaders(),
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    },
+  );
+
+  if (!tokenResponse.ok) {
+    throw new Error('Token refresh failed');
+  }
+
+  return await tokenResponse.json();
+}
+
+async function verifySupabaseAccessToken(token: string): Promise<{
+  id: string;
+  email: string;
+  user_metadata?: Record<string, string>;
+} | null> {
+  const verifyResponse = await fetch(`${getEnv('SUPABASE_URL')}/auth/v1/user`, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'apikey': (getEnv('SUPABASE_ANON_KEY') || getEnv('SUPABASE_SERVICE_ROLE_KEY')),
+    },
+  });
+
+  if (!verifyResponse.ok) {
+    return null;
+  }
+
+  const verifiedUser = await verifyResponse.json() as {
+    id?: string;
+    email?: string;
+    user_metadata?: Record<string, string>;
+  };
+  if (!verifiedUser?.id || !verifiedUser?.email) {
+    return null;
+  }
+
+  return {
+    id: verifiedUser.id as string,
+    email: verifiedUser.email as string,
+    user_metadata: (verifiedUser.user_metadata || {}) as Record<string, string>,
+  };
+}
+
+function extractBearerToken(request: Request): string | null {
+  const authHeader = request.headers.get('Authorization');
+  if (!authHeader?.startsWith('Bearer ')) {
+    return null;
+  }
+
+  const token = authHeader.slice(7).trim();
+  if (!token || token === 'null' || token === 'undefined') {
+    return null;
+  }
+
+  return token;
+}
+
+function appendBrowserSession(
+  response: Response,
+  session: {
+    accessToken: string;
+    refreshToken?: string | null;
+    accessTokenTtlSeconds?: number | null;
+  },
+): Response {
+  appendAuthSessionCookies(response.headers, session);
+  return response;
 }
 
 export async function handleAuth(request: Request): Promise<Response> {
@@ -93,10 +185,7 @@ export async function handleAuth(request: Request): Promise<Response> {
       // Exchange code + verifier for tokens (Supabase PKCE grant)
       const tokenResponse = await fetch(`${getEnv('SUPABASE_URL')}/auth/v1/token?grant_type=pkce`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': (getEnv('SUPABASE_ANON_KEY') || getEnv('SUPABASE_SERVICE_ROLE_KEY')),
-        },
+        headers: getSupabaseAuthHeaders(),
         body: JSON.stringify({
           auth_code: code,
           code_verifier: codeVerifier,
@@ -104,7 +193,11 @@ export async function handleAuth(request: Request): Promise<Response> {
       });
 
       if (tokenResponse.ok) {
-        const tokens = await tokenResponse.json();
+        const tokens = await tokenResponse.json() as {
+          access_token: string;
+          refresh_token?: string;
+          expires_in?: number;
+        };
         const desktopSession = url.searchParams.get('desktop_session');
 
         // Desktop OAuth flow: store token for polling, show "close this tab" page
@@ -121,8 +214,12 @@ export async function handleAuth(request: Request): Promise<Response> {
         }
 
         const returnTo = url.searchParams.get('return_to') || undefined;
-        return new Response(getCallbackSuccessHTML(tokens.access_token, tokens.refresh_token, returnTo), {
+        return appendBrowserSession(new Response(getCallbackSuccessHTML(returnTo), {
           headers: { 'Content-Type': 'text/html' },
+        }), {
+          accessToken: tokens.access_token,
+          refreshToken: tokens.refresh_token,
+          accessTokenTtlSeconds: tokens.expires_in,
         });
       }
 
@@ -156,44 +253,75 @@ export async function handleAuth(request: Request): Promise<Response> {
     }
   }
 
-  // Sign out - just returns instruction to clear local storage
-  if (path === '/auth/signout') {
-    return json({ message: 'Clear localStorage.ultralight_token to sign out' });
+  // Establish or migrate a browser session into HttpOnly cookies.
+  if (path === '/auth/session' && request.method === 'POST') {
+    try {
+      const body = await request.json().catch(() => ({})) as {
+        access_token?: string;
+        refresh_token?: string;
+      };
+      let accessToken = typeof body.access_token === 'string' ? body.access_token.trim() : '';
+      let refreshToken = typeof body.refresh_token === 'string' ? body.refresh_token.trim() : '';
+      let expiresIn: number | undefined;
+
+      let verifiedUser = accessToken ? await verifySupabaseAccessToken(accessToken) : null;
+      if (!verifiedUser && refreshToken) {
+        const refreshed = await exchangeRefreshToken(refreshToken);
+        accessToken = refreshed.access_token;
+        refreshToken = refreshed.refresh_token || refreshToken;
+        expiresIn = refreshed.expires_in;
+        verifiedUser = await verifySupabaseAccessToken(accessToken);
+      }
+
+      if (!verifiedUser || !accessToken) {
+        return error('Invalid or expired session tokens', 401);
+      }
+
+      await ensureUserExists(verifiedUser).catch(() => {});
+
+      return appendBrowserSession(json({ ok: true }), {
+        accessToken,
+        refreshToken,
+        accessTokenTtlSeconds: expiresIn,
+      });
+    } catch (err) {
+      console.error('[auth] Session establishment failed:', err);
+      return error('Failed to establish session', 500);
+    }
   }
 
-  // Refresh token - exchange refresh_token for new access_token
+  // Sign out - clears browser cookies and legacy browser storage.
+  if (path === '/auth/signout') {
+    const response = json({ ok: true });
+    clearAuthSessionCookies(response.headers);
+    return response;
+  }
+
+  // Refresh token - exchange refresh_token for a new access_token.
+  // Body-based refresh remains for non-cookie clients; cookie refresh powers browser sessions.
   if (path === '/auth/refresh' && request.method === 'POST') {
     try {
-      const body = await request.json();
-      const refreshToken = body.refresh_token;
+      const body = await request.json().catch(() => ({})) as { refresh_token?: string };
+      const refreshToken = (typeof body.refresh_token === 'string' && body.refresh_token.trim())
+        ? body.refresh_token.trim()
+        : getAuthRefreshTokenFromRequest(request);
 
       if (!refreshToken) {
         return error('Missing refresh_token', 400);
       }
 
-      const tokenResponse = await fetch(
-        `${getEnv('SUPABASE_URL')}/auth/v1/token?grant_type=refresh_token`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': (getEnv('SUPABASE_ANON_KEY') || getEnv('SUPABASE_SERVICE_ROLE_KEY')),
-          },
-          body: JSON.stringify({ refresh_token: refreshToken }),
-        }
-      );
-
-      if (!tokenResponse.ok) {
-        return error('Token refresh failed', 401);
-      }
-
-      const tokens = await tokenResponse.json();
-
-      return json({
+      const tokens = await exchangeRefreshToken(refreshToken);
+      const response = json({
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
         expires_in: tokens.expires_in,
       });
+      appendAuthSessionCookies(response.headers, {
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token || refreshToken,
+        accessTokenTtlSeconds: tokens.expires_in,
+      });
+      return response;
     } catch {
       return error('Token refresh failed', 500);
     }
@@ -242,9 +370,12 @@ export async function handleAuth(request: Request): Promise<Response> {
   if (path === '/auth/merge' && request.method === 'POST') {
     try {
       const user = await authenticate(request);
-      const body = await request.json();
+      const body = await request.json() as {
+        provisional_user_id?: string;
+        merge_method?: string;
+      };
       const provisionalUserId = body.provisional_user_id;
-      const mergeMethod = body.merge_method || 'api_merge';
+      const mergeMethod = (body.merge_method || 'api_merge') as MergeMethod;
 
       if (!provisionalUserId) {
         return error('Missing provisional_user_id', 400);
@@ -300,13 +431,10 @@ export function hasScope(scopes: string[] | undefined, required: string): boolea
 }
 
 export async function authenticate(request: Request): Promise<{ id: string; email: string; tier: string; provisional?: boolean; tokenId?: string; tokenAppIds?: string[] | null; tokenFunctionNames?: string[] | null; scopes?: string[] }> {
-  const authHeader = request.headers.get('Authorization');
-
-  if (!authHeader?.startsWith('Bearer ')) {
+  const token = extractBearerToken(request) || getAuthAccessTokenFromRequest(request);
+  if (!token) {
     throw new Error('Missing or invalid authorization header');
   }
-
-  const token = authHeader.slice(7);
 
   // Check if this is an API token (starts with "ul_")
   if (isApiToken(token)) {
@@ -323,28 +451,10 @@ export async function authenticate(request: Request): Promise<{ id: string; emai
   }
 
   // Otherwise, treat as JWT — verify via Supabase Auth API
-  const verifyResponse = await fetch(`${getEnv('SUPABASE_URL')}/auth/v1/user`, {
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'apikey': (getEnv('SUPABASE_ANON_KEY') || getEnv('SUPABASE_SERVICE_ROLE_KEY')),
-    },
-  });
-
-  if (!verifyResponse.ok) {
-    const status = verifyResponse.status;
-    if (status === 401) {
-      throw new Error('Invalid or expired token');
-    }
-    throw new Error('Token verification failed');
+  const user = await verifySupabaseAccessToken(token);
+  if (!user) {
+    throw new Error('Invalid or expired token');
   }
-
-  const verifiedUser = await verifyResponse.json();
-
-  const user = {
-    id: verifiedUser.id as string,
-    email: verifiedUser.email as string,
-    user_metadata: (verifiedUser.user_metadata || {}) as Record<string, string>,
-  };
 
   if (!user.id || !user.email) {
     throw new Error('Invalid token payload');
@@ -541,11 +651,7 @@ async function resolvePendingPermissions(userId: string, email: string): Promise
 }
 
 // Callback page HTML - handles Supabase's hash-based token return
-// TODO: Post-MVP — migrate from localStorage to HttpOnly Secure cookies for token storage.
-// This requires: (1) server-side Set-Cookie on callback, (2) API authenticate() reading cookies,
-// (3) frontend fetch calls using credentials:'include', (4) CORS origin whitelist (not *).
-// For now, XSS is mitigated by: HTML entity escaping on error_description, token sanitization,
-// CSP headers blocking external resource loads, and HTTPS-only in production.
+// and stores it in HttpOnly cookies via POST /auth/session.
 function getCallbackHTML(): string {
   return `<!DOCTYPE html>
 <html>
@@ -579,16 +685,25 @@ function getCallbackHTML(): string {
     var returnTo = queryParams.get('return_to');
     var redirectTarget = (returnTo && returnTo.startsWith('/')) ? returnTo : '/';
 
-    // Debug info
-    debugEl.textContent = 'hash: ' + (hash ? hash.substring(0, 80) + '...' : '(empty)') + ' | query: ' + window.location.search;
-
     if (accessToken) {
-      statusEl.textContent = 'Success! Redirecting...';
-      localStorage.setItem('ultralight_token', accessToken);
-      if (refreshToken) {
-        localStorage.setItem('ultralight_refresh_token', refreshToken);
-      }
-      window.location.href = redirectTarget;
+      statusEl.textContent = 'Finalizing sign-in...';
+      fetch('/auth/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          access_token: accessToken,
+          refresh_token: refreshToken
+        })
+      }).then(function(res) {
+        if (!res.ok) throw new Error('session_failed');
+        localStorage.removeItem('ultralight_token');
+        localStorage.removeItem('ultralight_refresh_token');
+        window.location.href = redirectTarget;
+      }).catch(function() {
+        statusEl.textContent = 'Authentication failed. Please try again.';
+        debugEl.textContent = 'We could not establish a browser session.';
+      });
     } else {
       var error = queryParams.get('error_description');
       if (error) {
@@ -596,20 +711,32 @@ function getCallbackHTML(): string {
         document.body.innerHTML = '<div class="container"><p style="color: #ef4444;">Error: ' + safe + '</p><a href="/" style="color: #0a0a0a;">Go back</a></div>';
       } else {
         statusEl.textContent = 'No token received. Waiting 3s then retrying...';
-        debugEl.textContent += ' | full URL: ' + window.location.href;
         // Wait a moment — sometimes the hash is set after page load
         setTimeout(function() {
           var retryHash = window.location.hash.substring(1);
           var retryParams = new URLSearchParams(retryHash);
           var retryToken = retryParams.get('access_token');
           if (retryToken) {
-            localStorage.setItem('ultralight_token', retryToken);
             var retryRefresh = retryParams.get('refresh_token');
-            if (retryRefresh) localStorage.setItem('ultralight_refresh_token', retryRefresh);
-            window.location.href = redirectTarget;
+            fetch('/auth/session', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify({
+                access_token: retryToken,
+                refresh_token: retryRefresh
+              })
+            }).then(function(res) {
+              if (!res.ok) throw new Error('session_failed');
+              localStorage.removeItem('ultralight_token');
+              localStorage.removeItem('ultralight_refresh_token');
+              window.location.href = redirectTarget;
+            }).catch(function() {
+              statusEl.textContent = 'Authentication failed. Please try again.';
+              debugEl.textContent = 'We could not establish a browser session.';
+            });
           } else {
             statusEl.textContent = 'Authentication failed. No tokens found.';
-            debugEl.textContent += ' | retry hash: ' + (retryHash ? retryHash.substring(0, 80) : '(empty)');
             document.body.innerHTML += '<div style="text-align:center;margin-top:20px;"><a href="/" style="color:#0a0a0a;">Go back</a> &nbsp; <a href="/auth/login" style="color:#0a0a0a;">Try again</a></div>';
           }
         }, 3000);
@@ -620,10 +747,7 @@ function getCallbackHTML(): string {
 </html>`;
 }
 
-function getCallbackSuccessHTML(token: string, refreshToken?: string, returnTo?: string): string {
-  // Sanitize tokens to prevent injection via template interpolation
-  const safeToken = token.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/</g, '\\x3c');
-  const safeRefresh = refreshToken ? refreshToken.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/</g, '\\x3c') : '';
+function getCallbackSuccessHTML(returnTo?: string): string {
   // Validate return_to is a relative path (prevent open redirect)
   const redirectTarget = (returnTo && returnTo.startsWith('/')) ? returnTo : '/';
   const safeRedirect = redirectTarget.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/</g, '\\x3c');
@@ -632,18 +756,15 @@ function getCallbackSuccessHTML(token: string, refreshToken?: string, returnTo?:
 <head><title>Signed in!</title></head>
 <body>
   <script>
-    localStorage.setItem('ultralight_token', '${safeToken}');
-    ${safeRefresh ? `localStorage.setItem('ultralight_refresh_token', '${safeRefresh}');` : ''}
-
     // Check for provisional user to merge (same-device path)
     var provUserId = localStorage.getItem('ultralight_provisional_user_id');
     if (provUserId) {
       fetch('/auth/merge', {
         method: 'POST',
         headers: {
-          'Authorization': 'Bearer ' + '${safeToken}',
           'Content-Type': 'application/json'
         },
+        credentials: 'same-origin',
         body: JSON.stringify({ provisional_user_id: provUserId, merge_method: 'oauth_callback' })
       }).then(function() {
         localStorage.removeItem('ultralight_provisional_token_id');
@@ -654,9 +775,13 @@ function getCallbackSuccessHTML(token: string, refreshToken?: string, returnTo?:
         // Merge failed — proceed anyway (user still gets authenticated)
         localStorage.removeItem('ultralight_provisional_token_id');
         localStorage.removeItem('ultralight_provisional_user_id');
+        localStorage.removeItem('ultralight_token');
+        localStorage.removeItem('ultralight_refresh_token');
         window.location.href = '${safeRedirect}';
       });
     } else {
+      localStorage.removeItem('ultralight_token');
+      localStorage.removeItem('ultralight_refresh_token');
       window.location.href = '${safeRedirect}';
     }
   </script>

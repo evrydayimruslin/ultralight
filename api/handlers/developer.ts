@@ -128,7 +128,7 @@ async function handleCreateApp(request: Request): Promise<Response> {
       logo_url: logoUrl,
       description: description,
       is_developer_app: true,
-    });
+    } as any);
 
   if (insertErr) {
     console.error('Failed to create developer app:', insertErr);
@@ -201,8 +201,8 @@ async function handleUpdateApp(request: Request, clientId: string): Promise<Resp
     return error('No fields to update', 400);
   }
 
-  const { error: updateErr } = await getSupabase()
-    .from('oauth_clients')
+  const { error: updateErr } = await (getSupabase()
+    .from('oauth_clients') as any)
     .update(updates)
     .eq('client_id', clientId)
     .eq('owner_user_id', user.id);
@@ -258,8 +258,8 @@ async function handleRotateSecret(request: Request, clientId: string): Promise<R
   const secretSalt = generateSecretSalt();
   const secretHash = await hashClientSecret(clientSecret, secretSalt);
 
-  const { error: updateErr } = await getSupabase()
-    .from('oauth_clients')
+  const { error: updateErr } = await (getSupabase()
+    .from('oauth_clients') as any)
     .update({
       client_secret_hash: secretHash,
       client_secret_salt: secretSalt,
@@ -502,37 +502,78 @@ export const { handlers, auth } = NextAuth({
       <div class="login-prompt">
         <h1>Developer Portal</h1>
         <p class="subtitle" style="margin-bottom:1rem;">Sign in to manage your OAuth applications.</p>
-        <a href="${apiOrigin}/auth/login?redirect=${encodeURIComponent(baseUrl.origin.replace('http://', 'https://') + '/')}">Sign in with Google</a>
+        <a href="${apiOrigin}/auth/login?return_to=${encodeURIComponent('/developer')}">Sign in with Google</a>
       </div>
     </div>
   </div>
 
   <script>
     const API_BASE = '${apiOrigin}';
+    const COOKIE_AUTH_SENTINEL = '__cookie_session__';
     let currentApps = [];
     let currentAppId = null;
+    let authToken = localStorage.getItem('ul_token') || null;
+    if (authToken && !authToken.startsWith('ul_')) authToken = null;
 
-    // Get token from cookie or localStorage
-    function getToken() {
-      // Check for ul_ token in cookie
-      const cookies = document.cookie.split(';').map(c => c.trim());
-      for (const c of cookies) {
-        if (c.startsWith('ul_token=')) return c.slice(9);
+    function hasRealBearerToken() {
+      return !!authToken && authToken !== COOKIE_AUTH_SENTINEL;
+    }
+
+    async function migrateLegacyBrowserSession() {
+      const legacyToken = localStorage.getItem('ultralight_token') || '';
+      if (!legacyToken) return;
+
+      try {
+        const res = await fetch(API_BASE + '/auth/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            access_token: legacyToken,
+            refresh_token: localStorage.getItem('ultralight_refresh_token') || '',
+          }),
+        });
+        if (res.ok) {
+          localStorage.removeItem('ultralight_token');
+          localStorage.removeItem('ultralight_refresh_token');
+          authToken = COOKIE_AUTH_SENTINEL;
+        }
+      } catch (e) {}
+    }
+
+    async function detectBrowserSession() {
+      if (hasRealBearerToken()) return true;
+      try {
+        const res = await fetch(API_BASE + '/auth/user', { credentials: 'include' });
+        if (!res.ok) {
+          authToken = null;
+          return false;
+        }
+        const data = await res.json();
+        authToken = data && data.id ? COOKIE_AUTH_SENTINEL : null;
+        return authToken === COOKIE_AUTH_SENTINEL;
+      } catch {
+        authToken = null;
+        return false;
       }
-      // Check localStorage
-      return localStorage.getItem('ul_token');
     }
 
     async function apiFetch(path, options = {}) {
-      const token = getToken();
-      if (!token) { showView('login'); throw new Error('Not authenticated'); }
+      if (!hasRealBearerToken()) {
+        const ok = await detectBrowserSession();
+        if (!ok) { showView('login'); throw new Error('Not authenticated'); }
+      }
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      };
+      if (hasRealBearerToken()) {
+        headers['Authorization'] = 'Bearer ' + authToken;
+      }
       const res = await fetch(API_BASE + path, {
         ...options,
-        headers: {
-          'Authorization': 'Bearer ' + token,
-          'Content-Type': 'application/json',
-          ...(options.headers || {}),
-        },
+        credentials: 'include',
+        headers,
       });
       if (res.status === 401 || res.status === 403) {
         showView('login');
@@ -650,20 +691,8 @@ export const { handlers, auth } = NextAuth({
 
     // Check auth on load — try to get user info
     async function init() {
-      const token = getToken();
-      if (!token) {
-        // Check URL hash for token from auth redirect
-        const hash = window.location.hash.substring(1);
-        const params = new URLSearchParams(hash);
-        const t = params.get('access_token');
-        if (t && t.startsWith('ul_')) {
-          localStorage.setItem('ul_token', t);
-          window.location.hash = '';
-        } else {
-          showView('login');
-          return;
-        }
-      }
+      await migrateLegacyBrowserSession();
+      await detectBrowserSession();
       try {
         const res = await apiFetch('/api/developer/apps');
         if (res.ok) {
@@ -672,7 +701,8 @@ export const { handlers, auth } = NextAuth({
           // Show email if available
           try {
             const uiRes = await fetch(API_BASE + '/oauth/userinfo', {
-              headers: { 'Authorization': 'Bearer ' + getToken() },
+              credentials: 'include',
+              headers: hasRealBearerToken() ? { 'Authorization': 'Bearer ' + authToken } : {},
             });
             if (uiRes.ok) {
               const ui = await uiRes.json();

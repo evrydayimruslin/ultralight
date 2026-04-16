@@ -37,13 +37,16 @@ const securityHeaders: Record<string, string> = {
   'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
 };
 
-const corsHeaders: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
-
-const standardHeaders = { ...securityHeaders, ...corsHeaders };
+function buildCorsHeaders(request: Request): Record<string, string> {
+  const origin = request.headers.get('Origin');
+  return {
+    'Access-Control-Allow-Origin': origin || '*',
+    'Access-Control-Allow-Credentials': origin ? 'true' : 'false',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Vary': 'Origin',
+  };
+}
 
 // ============================================
 // WORKER EXPORT
@@ -59,6 +62,7 @@ export default {
     globalThis.__ctx = ctx;
 
     const url = new URL(request.url);
+    const standardHeaders = { ...securityHeaders, ...buildCorsHeaders(request) };
     console.log(`[REQ] ${request.method} ${url.pathname}`);
 
     // Reject oversized request bodies early (50 MB limit)

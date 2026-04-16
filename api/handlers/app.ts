@@ -2351,17 +2351,22 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
   // ── Token discovery ───────────────────────────────────────────
   // Priority: URL hash (#token=) → URL query (?token=, desktop iframe) →
   //           localStorage (standard web session).
-  function readToken() {
+  function readTokenState() {
     try {
       if (location.hash) {
         var m = location.hash.match(/[#&]token=([^&]*)/);
-        if (m) return decodeURIComponent(m[1]);
+        if (m) return { token: decodeURIComponent(m[1]), source: 'hash' };
       }
       var qs = new URLSearchParams(location.search);
       var q = qs.get('token');
-      if (q) return q;
-      return localStorage.getItem('ultralight_token') || '';
-    } catch (e) { return ''; }
+      if (q) return { token: q, source: 'query' };
+      return {
+        token: localStorage.getItem('ultralight_token') || '',
+        source: 'storage',
+      };
+    } catch (e) {
+      return { token: '', source: 'none' };
+    }
   }
   function stripTokenFromUrl() {
     try {
@@ -2374,13 +2379,106 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
     } catch (e) {}
   }
 
-  var token = readToken();
-  if (token) {
-    try { localStorage.setItem('ultralight_token', token); } catch (e) {}
+  var tokenState = readTokenState();
+  var token = tokenState.token;
+  var isAuthenticated = !!token;
+  if (token && (tokenState.source === 'query' || tokenState.source === 'hash')) {
     stripTokenFromUrl();
   }
 
   var installingFlag = new URLSearchParams(location.search).get('installing') === '1';
+
+  var nativeFetch = window.fetch.bind(window);
+  function toAbsoluteUrl(input) {
+    try {
+      if (typeof input === 'string' || input instanceof URL) return new URL(String(input), location.href);
+      if (input && input.url) return new URL(input.url, location.href);
+    } catch (e) {}
+    return null;
+  }
+  function shouldStripAuthHeader(value) {
+    return /^Bearer\\s*(null|undefined)?\\s*$/i.test(value || '');
+  }
+  function shouldRetryAfterRefresh(url) {
+    return !/^\\/auth\\/(refresh|session|login|callback|signout)/.test(url.pathname);
+  }
+  window.fetch = async function(input, init) {
+    var absoluteUrl = toAbsoluteUrl(input);
+    var sameOrigin = !!absoluteUrl && absoluteUrl.origin === location.origin;
+    var nextInit = Object.assign({}, init || {});
+    var headers = new Headers(nextInit.headers || ((input && input.headers) ? input.headers : undefined));
+
+    if (sameOrigin) {
+      if (token && !headers.has('Authorization')) {
+        headers.set('Authorization', 'Bearer ' + token);
+      } else if (!token && shouldStripAuthHeader(headers.get('Authorization') || '')) {
+        headers.delete('Authorization');
+      }
+      if (!nextInit.credentials) nextInit.credentials = 'same-origin';
+    }
+
+    nextInit.headers = headers;
+
+    var response = await nativeFetch(input, nextInit);
+    if (
+      response.status === 401 &&
+      sameOrigin &&
+      !token &&
+      absoluteUrl &&
+      shouldRetryAfterRefresh(absoluteUrl)
+    ) {
+      var refreshResponse = await nativeFetch('/auth/refresh', {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      if (refreshResponse.ok) {
+        response = await nativeFetch(input, nextInit);
+      }
+    }
+    return response;
+  };
+
+  async function migrateLegacyBrowserSession() {
+    if (inDesktop) return;
+    if (tokenState.source !== 'storage' || !token || token.startsWith('ul_')) return;
+
+    try {
+      var legacyRefresh = localStorage.getItem('ultralight_refresh_token') || '';
+      var res = await nativeFetch('/auth/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          access_token: token,
+          refresh_token: legacyRefresh,
+        }),
+      });
+      if (res.ok) {
+        localStorage.removeItem('ultralight_token');
+        localStorage.removeItem('ultralight_refresh_token');
+        token = '';
+        isAuthenticated = true;
+      }
+    } catch (e) {}
+  }
+
+  async function detectBrowserSession() {
+    if (token) {
+      isAuthenticated = true;
+      return;
+    }
+    try {
+      var res = await fetch('/auth/user');
+      if (!res.ok) {
+        isAuthenticated = false;
+        return;
+      }
+      var data = await res.json();
+      isAuthenticated = !!(data && data.id);
+    } catch (e) {
+      isAuthenticated = false;
+    }
+  }
 
   // ── State machine ─────────────────────────────────────────────
   // 'anonymous' | 'not-in-library' | 'in-library' | 'owner'
@@ -2405,11 +2503,9 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
   var settingsMessage = 'Install this app to configure your own settings.';
 
   async function fetchStatus() {
-    if (!token) return emptyStatus();
+    if (!isAuthenticated) return emptyStatus();
     try {
-      var res = await fetch('/api/apps/' + encodeURIComponent(APP_ID) + '/library-status', {
-        headers: { 'Authorization': 'Bearer ' + token },
-      });
+      var res = await fetch('/api/apps/' + encodeURIComponent(APP_ID) + '/library-status');
       if (!res.ok) return emptyStatus();
       var next = await res.json();
       return Object.assign(emptyStatus(), next || {});
@@ -2420,7 +2516,7 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
 
   function pickState(s) {
     if (s.isOwner) return 'owner';
-    if (!token) return 'anonymous';
+    if (!isAuthenticated) return 'anonymous';
     return s.inLibrary ? 'in-library' : 'not-in-library';
   }
 
@@ -2547,16 +2643,14 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
   }
 
   async function loadSettings(force) {
-    if (!token || !canShowSettings()) return;
+    if (!isAuthenticated || !canShowSettings()) return;
     if (settingsLoaded && !force) return;
 
     settingsLoading = true;
     renderSettingsContent();
 
     try {
-      var res = await fetch('/api/apps/' + encodeURIComponent(APP_ID) + '/settings', {
-        headers: { 'Authorization': 'Bearer ' + token },
-      });
+      var res = await fetch('/api/apps/' + encodeURIComponent(APP_ID) + '/settings');
 
       if (!res.ok) {
         settingsLoaded = false;
@@ -2599,7 +2693,7 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
 
   async function saveUserSettings(event) {
     event.preventDefault();
-    if (!token) {
+    if (!isAuthenticated) {
       showToast('Sign in to save settings.', { error: true });
       return;
     }
@@ -2632,7 +2726,6 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
       var res = await fetch('/api/apps/' + encodeURIComponent(APP_ID) + '/settings', {
         method: 'PUT',
         headers: {
-          'Authorization': 'Bearer ' + token,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ values: values }),
@@ -2744,12 +2837,11 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
 
   // ── Actions ───────────────────────────────────────────────────
   async function installApp() {
-    if (!token) { return installAnon(); }
+    if (!isAuthenticated) { return installAnon(); }
     renderInstalling();
     try {
       var res = await fetch('/api/apps/' + encodeURIComponent(APP_ID) + '/save', {
         method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + token },
       });
       if (res.ok) {
         resetSettingsState();
@@ -2781,13 +2873,12 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
   }
 
   async function uninstallApp() {
-    if (!token) return;
+    if (!isAuthenticated) return;
     if (!confirm('Remove ' + APP_NAME + ' from your library?')) return;
     renderUninstalling();
     try {
       var res = await fetch('/api/apps/' + encodeURIComponent(APP_ID) + '/save', {
         method: 'DELETE',
-        headers: { 'Authorization': 'Bearer ' + token },
       });
       if (res.ok) {
         resetSettingsState();
@@ -2930,6 +3021,8 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
 
   // ── Bootstrap ─────────────────────────────────────────────────
   async function bootstrap() {
+    await migrateLegacyBrowserSession();
+    await detectBrowserSession();
     status = await fetchStatus();
     state = pickState(status);
     renderCTA();
@@ -2955,6 +3048,7 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
   // Refresh library state when tab regains focus (catches cross-window changes).
   document.addEventListener('visibilitychange', async function() {
     if (document.hidden) return;
+    await detectBrowserSession();
     var fresh = await fetchStatus();
     var changed =
       fresh.inLibrary !== status.inLibrary ||

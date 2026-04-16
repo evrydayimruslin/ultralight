@@ -3104,11 +3104,6 @@ export function getLayoutHTML(options: {
     var _embedParams = new URLSearchParams(window.location.search);
     var _isEmbed = _embedParams.get('embed') === '1';
 
-    // Auto-login from ?token=xxx (desktop app passes auth token via URL)
-    if (_embedParams.get('token')) {
-      localStorage.setItem('ultralight_token', _embedParams.get('token'));
-    }
-
     // Hide chrome in embed mode (desktop app provides its own nav)
     if (_isEmbed) {
       var _embedStyle = document.createElement('style');
@@ -3117,7 +3112,11 @@ export function getLayoutHTML(options: {
     }
 
     // ===== Global State =====
-    let authToken = localStorage.getItem('ultralight_token');
+    const COOKIE_AUTH_SENTINEL = '__cookie_session__';
+    const legacyBrowserToken = !_isEmbed ? (localStorage.getItem('ultralight_token') || '') : '';
+    let authToken = _isEmbed
+      ? (_embedParams.get('token') || localStorage.getItem('ultralight_token'))
+      : (legacyBrowserToken && legacyBrowserToken.startsWith('ul_') ? legacyBrowserToken : null);
     let currentUser = null;
     let userProfile = null;
     let apps = [];
@@ -3150,6 +3149,60 @@ export function getLayoutHTML(options: {
     let byokData = null;
     let draftFiles = [];
     let skillsValidationTimeout = null;
+
+    const nativeFetch = window.fetch.bind(window);
+    function hasRealBearerToken() {
+      return !!authToken && authToken !== COOKIE_AUTH_SENTINEL;
+    }
+    function shouldStripAuthHeader(value) {
+      return /^Bearer\\s*(__cookie_session__|null|undefined)?\\s*$/i.test(value || '');
+    }
+    function toAbsoluteUrl(input) {
+      try {
+        if (typeof input === 'string' || input instanceof URL) return new URL(String(input), window.location.href);
+        if (input && input.url) return new URL(input.url, window.location.href);
+      } catch (e) {}
+      return null;
+    }
+    function shouldRetryAfterRefresh(url) {
+      return !/^\\/auth\\/(refresh|session|login|callback|signout)/.test(url.pathname);
+    }
+    window.fetch = async function(input, init) {
+      const absoluteUrl = toAbsoluteUrl(input);
+      const sameOrigin = !!absoluteUrl && absoluteUrl.origin === window.location.origin;
+      const nextInit = Object.assign({}, init || {});
+      const headers = new Headers(nextInit.headers || ((input && input.headers) ? input.headers : undefined));
+
+      if (sameOrigin) {
+        if (hasRealBearerToken() && !headers.has('Authorization')) {
+          headers.set('Authorization', 'Bearer ' + authToken);
+        } else if (!hasRealBearerToken() && shouldStripAuthHeader(headers.get('Authorization') || '')) {
+          headers.delete('Authorization');
+        }
+        if (!nextInit.credentials) nextInit.credentials = 'same-origin';
+      }
+
+      nextInit.headers = headers;
+
+      let response = await nativeFetch(input, nextInit);
+      if (
+        response.status === 401 &&
+        sameOrigin &&
+        !hasRealBearerToken() &&
+        absoluteUrl &&
+        shouldRetryAfterRefresh(absoluteUrl)
+      ) {
+        const refreshRes = await nativeFetch('/auth/refresh', {
+          method: 'POST',
+          credentials: 'same-origin',
+        });
+        if (refreshRes.ok) {
+          authToken = COOKIE_AUTH_SENTINEL;
+          response = await nativeFetch(input, nextInit);
+        }
+      }
+      return response;
+    };
 
     // ===== Utilities =====
     function escapeHtml(str) {
@@ -3360,10 +3413,50 @@ export function getLayoutHTML(options: {
     // Close button
     document.getElementById('authCloseBtn')?.addEventListener('click', hideAuthOverlay);
 
-    // Auth is same-window redirect — token is stored in localStorage by callback page
-    // On page load, authToken is already read from localStorage above
+    // Browser auth now lives in HttpOnly cookies. localStorage is only read here
+    // so we can migrate older browser sessions without logging people out.
+
+    async function migrateLegacyBrowserSession() {
+      if (_isEmbed) return;
+      if (!legacyBrowserToken || legacyBrowserToken.startsWith('ul_')) return;
+
+      try {
+        const res = await nativeFetch('/auth/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            access_token: legacyBrowserToken,
+            refresh_token: localStorage.getItem('ultralight_refresh_token') || '',
+          }),
+        });
+        if (res.ok) {
+          localStorage.removeItem('ultralight_token');
+          localStorage.removeItem('ultralight_refresh_token');
+          authToken = COOKIE_AUTH_SENTINEL;
+        }
+      } catch (e) {}
+    }
+
+    async function detectAuthenticatedSession() {
+      if (hasRealBearerToken()) return;
+      try {
+        const res = await fetch('/auth/user');
+        if (!res.ok) {
+          if (authToken === COOKIE_AUTH_SENTINEL) authToken = null;
+          return;
+        }
+        const data = await res.json();
+        authToken = data && data.id ? COOKIE_AUTH_SENTINEL : null;
+      } catch (e) {
+        if (authToken === COOKIE_AUTH_SENTINEL) authToken = null;
+      }
+    }
 
     async function updateAuthUI() {
+      await migrateLegacyBrowserSession();
+      await detectAuthenticatedSession();
+
       // Always set up hero CTA (handles both pre-auth and post-auth paths)
       setupHeroCTA();
       setupBottomCTA();
@@ -3385,7 +3478,15 @@ export function getLayoutHTML(options: {
       localStorage.removeItem('ultralight_provisional_user_id');
 
       // API tokens (ul_...) skip JWT decode — verify via API instead
-      if (authToken.startsWith('ul_')) {
+      if (authToken === COOKIE_AUTH_SENTINEL) {
+        try {
+          const authRes = await fetch('/auth/user');
+          const authData = await authRes.json();
+          if (!authRes.ok || !authData?.id) { signOut(); return; }
+          currentUser = authData;
+          if (authData.id) { window._currentUserId = authData.id; currentUserId = authData.id; }
+        } catch { signOut(); return; }
+      } else if (authToken.startsWith('ul_')) {
         try {
           const res = await fetch('/api/user', {
             headers: { 'Authorization': 'Bearer ' + authToken },
@@ -3546,6 +3647,10 @@ export function getLayoutHTML(options: {
       localStorage.removeItem('ultralight_token');
       localStorage.removeItem('ultralight_refresh_token');
       localStorage.removeItem('ultralight_setup_v4');
+      nativeFetch('/auth/signout', {
+        method: 'POST',
+        credentials: 'same-origin',
+      }).catch(function() {});
       if (connectionPollInterval) clearInterval(connectionPollInterval);
       if (_isEmbed) return; // Don't redirect in embed mode
       window.location.href = '/';
