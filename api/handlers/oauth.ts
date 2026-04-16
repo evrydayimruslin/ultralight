@@ -19,6 +19,64 @@ function getSupabase() {
   return _supabase;
 }
 
+interface OAuthClientRow {
+  client_id: string;
+  client_name: string | null;
+  redirect_uris: string[];
+  grant_types: string[];
+  response_types: string[];
+  token_endpoint_auth_method: string;
+  owner_user_id: string | null;
+  client_secret_hash: string | null;
+  client_secret_salt: string | null;
+  logo_url: string | null;
+  description: string | null;
+  is_developer_app: boolean | null;
+}
+
+interface OAuthConsentRow {
+  scopes: string[] | null;
+}
+
+interface OAuthAuthorizationCodeRow {
+  code: string;
+  client_id: string;
+  redirect_uri: string;
+  code_challenge: string;
+  code_challenge_method: string;
+  supabase_access_token: string;
+  supabase_refresh_token: string | null;
+  user_id: string;
+  user_email: string;
+  scope: string;
+  created_at: string;
+}
+
+interface SupabaseAuthUser {
+  id: string;
+  email: string;
+}
+
+interface SupabaseTokenExchangeResponse {
+  access_token: string;
+  refresh_token?: string;
+}
+
+// The repo still lacks a shared generated Supabase schema, so isolated handlers
+// can collapse query results to `never`. Keep the typing boundary local here
+// until the broader schema work is done.
+function oauthClientsTable() {
+  return getSupabase().from('oauth_clients' as never) as any;
+}
+
+function oauthConsentsTable() {
+  return getSupabase().from('oauth_consents' as never) as any;
+}
+
+function oauthAuthorizationCodesTable() {
+  return getSupabase().from('oauth_authorization_codes' as never) as any;
+}
+
 // ============================================
 // OAUTH CLIENT PERSISTENCE (Supabase)
 // ============================================
@@ -45,8 +103,7 @@ interface OAuthClientFull extends OAuthClient {
  * Save an OAuth client to the database.
  */
 async function saveOAuthClient(client: OAuthClient): Promise<void> {
-  const { error: err } = await getSupabase()
-    .from('oauth_clients')
+  const { error: err } = await oauthClientsTable()
     .insert({
       client_id: client.client_id,
       client_name: client.client_name || null,
@@ -66,21 +123,22 @@ async function saveOAuthClient(client: OAuthClient): Promise<void> {
  * Look up an OAuth client by client_id from the database.
  */
 async function getOAuthClient(clientId: string): Promise<OAuthClient | null> {
-  const { data, error: err } = await getSupabase()
-    .from('oauth_clients')
+  const { data, error: err } = await oauthClientsTable()
     .select('client_id, client_name, redirect_uris, grant_types, response_types, token_endpoint_auth_method')
     .eq('client_id', clientId)
     .single();
 
   if (err || !data) return null;
 
+  const client = data as OAuthClientRow;
+
   return {
-    client_id: data.client_id,
-    client_name: data.client_name || undefined,
-    redirect_uris: data.redirect_uris,
-    grant_types: data.grant_types,
-    response_types: data.response_types,
-    token_endpoint_auth_method: data.token_endpoint_auth_method,
+    client_id: client.client_id,
+    client_name: client.client_name || undefined,
+    redirect_uris: client.redirect_uris,
+    grant_types: client.grant_types,
+    response_types: client.response_types,
+    token_endpoint_auth_method: client.token_endpoint_auth_method,
   };
 }
 
@@ -88,27 +146,28 @@ async function getOAuthClient(clientId: string): Promise<OAuthClient | null> {
  * Look up full OAuth client including developer app fields.
  */
 async function getOAuthClientFull(clientId: string): Promise<OAuthClientFull | null> {
-  const { data, error: err } = await getSupabase()
-    .from('oauth_clients')
+  const { data, error: err } = await oauthClientsTable()
     .select('client_id, client_name, redirect_uris, grant_types, response_types, token_endpoint_auth_method, owner_user_id, client_secret_hash, client_secret_salt, logo_url, description, is_developer_app')
     .eq('client_id', clientId)
     .single();
 
   if (err || !data) return null;
 
+  const client = data as OAuthClientRow;
+
   return {
-    client_id: data.client_id,
-    client_name: data.client_name || undefined,
-    redirect_uris: data.redirect_uris,
-    grant_types: data.grant_types,
-    response_types: data.response_types,
-    token_endpoint_auth_method: data.token_endpoint_auth_method,
-    owner_user_id: data.owner_user_id || undefined,
-    client_secret_hash: data.client_secret_hash || undefined,
-    client_secret_salt: data.client_secret_salt || undefined,
-    logo_url: data.logo_url || undefined,
-    description: data.description || undefined,
-    is_developer_app: data.is_developer_app || false,
+    client_id: client.client_id,
+    client_name: client.client_name || undefined,
+    redirect_uris: client.redirect_uris,
+    grant_types: client.grant_types,
+    response_types: client.response_types,
+    token_endpoint_auth_method: client.token_endpoint_auth_method,
+    owner_user_id: client.owner_user_id || undefined,
+    client_secret_hash: client.client_secret_hash || undefined,
+    client_secret_salt: client.client_secret_salt || undefined,
+    logo_url: client.logo_url || undefined,
+    description: client.description || undefined,
+    is_developer_app: client.is_developer_app || false,
   };
 }
 
@@ -116,8 +175,7 @@ async function getOAuthClientFull(clientId: string): Promise<OAuthClientFull | n
  * Get existing consent record for a user/client pair.
  */
 async function getExistingConsent(userId: string, clientId: string): Promise<{ scopes: string[] } | null> {
-  const { data, error: err } = await getSupabase()
-    .from('oauth_consents')
+  const { data, error: err } = await oauthConsentsTable()
     .select('scopes')
     .eq('user_id', userId)
     .eq('client_id', clientId)
@@ -125,15 +183,14 @@ async function getExistingConsent(userId: string, clientId: string): Promise<{ s
     .single();
 
   if (err || !data) return null;
-  return { scopes: data.scopes || [] };
+  return { scopes: ((data as OAuthConsentRow).scopes) || [] };
 }
 
 /**
  * Save or update consent record.
  */
 async function saveConsent(userId: string, clientId: string, scopes: string[]): Promise<void> {
-  await getSupabase()
-    .from('oauth_consents')
+  await oauthConsentsTable()
     .upsert({
       user_id: userId,
       client_id: clientId,
@@ -180,8 +237,7 @@ async function saveAuthorizationCode(entry: AuthorizationCode): Promise<void> {
     ? await encryptToken(entry.supabase_refresh_token)
     : null;
 
-  const { error: err } = await getSupabase()
-    .from('oauth_authorization_codes')
+  const { error: err } = await oauthAuthorizationCodesTable()
     .insert({
       code: entry.code,
       client_id: entry.client_id,
@@ -206,8 +262,7 @@ async function saveAuthorizationCode(entry: AuthorizationCode): Promise<void> {
  */
 async function getAndDeleteAuthorizationCode(code: string): Promise<AuthorizationCode | null> {
   // Select the code (only if not expired)
-  const { data, error: selectErr } = await getSupabase()
-    .from('oauth_authorization_codes')
+  const { data, error: selectErr } = await oauthAuthorizationCodesTable()
     .select('*')
     .eq('code', code)
     .gt('expires_at', new Date().toISOString())
@@ -216,14 +271,15 @@ async function getAndDeleteAuthorizationCode(code: string): Promise<Authorizatio
   if (selectErr || !data) return null;
 
   // Delete immediately (one-time use)
-  await getSupabase()
-    .from('oauth_authorization_codes')
+  await oauthAuthorizationCodesTable()
     .delete()
     .eq('code', code);
 
   // Decrypt Supabase tokens, with backward compat for legacy plaintext rows
-  let accessToken = data.supabase_access_token;
-  let refreshToken = data.supabase_refresh_token || undefined;
+  const authCode = data as OAuthAuthorizationCodeRow;
+
+  let accessToken = authCode.supabase_access_token;
+  let refreshToken = authCode.supabase_refresh_token || undefined;
 
   if (accessToken && isEncryptedBlob(accessToken)) {
     accessToken = await decryptToken(accessToken);
@@ -233,17 +289,17 @@ async function getAndDeleteAuthorizationCode(code: string): Promise<Authorizatio
   }
 
   return {
-    code: data.code,
-    client_id: data.client_id,
-    redirect_uri: data.redirect_uri,
-    code_challenge: data.code_challenge,
-    code_challenge_method: data.code_challenge_method,
+    code: authCode.code,
+    client_id: authCode.client_id,
+    redirect_uri: authCode.redirect_uri,
+    code_challenge: authCode.code_challenge,
+    code_challenge_method: authCode.code_challenge_method,
     supabase_access_token: accessToken,
     supabase_refresh_token: refreshToken,
-    user_id: data.user_id,
-    user_email: data.user_email,
-    scope: data.scope,
-    created_at: new Date(data.created_at).getTime(),
+    user_id: authCode.user_id,
+    user_email: authCode.user_email,
+    scope: authCode.scope,
+    created_at: new Date(authCode.created_at).getTime(),
   };
 }
 
@@ -253,8 +309,7 @@ async function getAndDeleteAuthorizationCode(code: string): Promise<Authorizatio
  */
 async function cleanupExpiredCodes(): Promise<void> {
   try {
-    await getSupabase()
-      .from('oauth_authorization_codes')
+    await oauthAuthorizationCodesTable()
       .delete()
       .lt('expires_at', new Date().toISOString());
   } catch (err) {
@@ -275,11 +330,12 @@ const TOKEN_IV_LENGTH = 12;
 
 async function deriveTokenEncryptionKey(salt: Uint8Array): Promise<CryptoKey> {
   const encoder = new TextEncoder();
+  const normalizedSalt = Uint8Array.from(salt);
   // Domain-separated key derivation from the service role key
   const keyData = encoder.encode(`oauth-token-encryption:${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`);
   const keyMaterial = await crypto.subtle.importKey('raw', keyData, 'PBKDF2', false, ['deriveKey']);
   return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt: normalizedSalt, iterations: 100000, hash: 'SHA-256' },
     keyMaterial,
     { name: 'AES-GCM', length: 256 },
     false,
@@ -423,7 +479,7 @@ async function verifySupabaseToken(accessToken: string): Promise<{ id: string; e
     },
   });
   if (!res.ok) return null;
-  const user = await res.json();
+  const user = await res.json() as Partial<SupabaseAuthUser>;
   if (!user.id || !user.email) return null;
   return { id: user.id, email: user.email };
 }
@@ -1081,7 +1137,10 @@ async function handleOAuthCallback(request: Request): Promise<Response> {
     });
 
     if (tokenResponse.ok) {
-      const tokens = await tokenResponse.json();
+      const tokens = await tokenResponse.json() as Partial<SupabaseTokenExchangeResponse>;
+      if (!tokens.access_token) {
+        return error('Supabase token exchange succeeded without an access token', 500);
+      }
       return checkAndRenderConsent(tokens.access_token, tokens.refresh_token, oauthState, signedState);
     }
   }
