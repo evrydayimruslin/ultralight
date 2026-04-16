@@ -58,6 +58,15 @@ export interface RuntimeConfig {
   timeoutMs?: number;
 }
 
+interface RpcToolCallEnvelope {
+  result?: {
+    content?: Array<{ type: string; text?: string }>;
+  };
+  error?: {
+    message?: string;
+  };
+}
+
 export interface AppDataService {
   store(key: string, value: unknown): Promise<void>;
   load(key: string): Promise<unknown>;
@@ -1608,8 +1617,9 @@ export async function executeInSandbox(
         // If BYOK is not configured, the service will return an error in the response
         const response = await config.aiService.call(request, config.userApiKey || '');
         // Check for error in response (returned by placeholder service when BYOK not configured)
-        if ((response as { error?: string }).error) {
-          throw new Error((response as { error: string }).error);
+        const aiError = (response as AIResponse & { error?: string }).error;
+        if (aiError) {
+          throw new Error(aiError);
         }
         return response;
       },
@@ -1652,7 +1662,7 @@ export async function executeInSandbox(
           throw new Error(`ultralight.call failed (${response.status}): ${text}`);
         }
 
-        const rpcResponse = await response.json();
+        const rpcResponse = await response.json() as RpcToolCallEnvelope;
 
         if (rpcResponse.error) {
           throw new Error(`ultralight.call RPC error: ${rpcResponse.error.message || JSON.stringify(rpcResponse.error)}`);

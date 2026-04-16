@@ -36,7 +36,7 @@ export async function checkChatBalance(userId: string): Promise<number> {
     { headers: dbHeaders() }
   );
   if (!res.ok) throw new Error('Failed to query user balance');
-  const rows = await res.json();
+  const rows = await res.json() as Array<{ balance_light: number | null }>;
   if (!rows || rows.length === 0) throw new Error('User not found');
   return rows[0].balance_light ?? 0;
 }

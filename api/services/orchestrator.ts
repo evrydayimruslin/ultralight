@@ -623,6 +623,7 @@ async function retrieveConversationHistory(searchQuery: string, userId: string):
   try {
     const { createEmbeddingService, searchConversationEmbeddings } = await import('./embedding.ts');
     const svc = createEmbeddingService();
+    if (!svc) return '';
     const { embedding } = await svc.embed(searchQuery);
     const matches = await searchConversationEmbeddings(embedding, userId, { limit: 3, threshold: 0.55 });
     if (matches.length === 0) return '';

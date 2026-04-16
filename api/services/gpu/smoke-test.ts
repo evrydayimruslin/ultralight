@@ -33,6 +33,14 @@ import {
 } from './types.ts';
 import type { GpuType, GpuConfig } from './types.ts';
 
+function exitProcess(code: number): never {
+  const deno = (globalThis as typeof globalThis & { Deno?: { exit(exitCode: number): never } }).Deno;
+  if (deno) {
+    return deno.exit(code);
+  }
+  throw new Error(`Process exit requested with code ${code}`);
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -297,7 +305,7 @@ async function main(): Promise<void> {
 
   if (failed > 0) {
     console.log(`\n${FAIL} Some tests failed. Review output above.`);
-    Deno.exit(1);
+    exitProcess(1);
   } else {
     console.log(`\n${PASS} All tests passed!`);
   }

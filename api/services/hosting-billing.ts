@@ -407,7 +407,7 @@ export async function unsuspendContent(userId: string): Promise<{ apps: number; 
       body: JSON.stringify({ hosting_suspended: false, hosting_last_billed_at: nowStr }),
     }
   );
-  const appsUnsuspended = appsRes.ok ? (await appsRes.json()).length : 0;
+  const appsUnsuspended = appsRes.ok ? (await appsRes.json() as Array<{ id: string }>).length : 0;
 
   // Unsuspend pages and reset per-page billing clocks
   const pagesRes = await fetch(
@@ -418,7 +418,7 @@ export async function unsuspendContent(userId: string): Promise<{ apps: number; 
       body: JSON.stringify({ hosting_suspended: false, hosting_last_billed_at: nowStr }),
     }
   );
-  const pagesUnsuspended = pagesRes.ok ? (await pagesRes.json()).length : 0;
+  const pagesUnsuspended = pagesRes.ok ? (await pagesRes.json() as Array<{ id: string }>).length : 0;
 
   if (appsUnsuspended > 0 || pagesUnsuspended > 0) {
     console.log(`[BILLING] Unsuspended ${appsUnsuspended} app(s), ${pagesUnsuspended} page(s) for user ${userId}`);

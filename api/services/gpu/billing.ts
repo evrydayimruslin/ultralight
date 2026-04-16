@@ -10,6 +10,7 @@ import { computeGpuCostLight, classifyFailure } from './types.ts';
 import type { GpuExecuteResult } from './executor.ts';
 import type { App } from '../../../shared/types/index.ts';
 import { formatLight } from '../../../shared/types/index.ts';
+import { getEnv } from '../../lib/env.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -206,8 +207,8 @@ export async function settleGpuExecution(
   }
 
   // ── Supabase config ──
-  const supabaseUrl = globalThis.Deno?.env?.get('SUPABASE_URL') || '';
-  const supabaseKey = globalThis.Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!supabaseUrl || !supabaseKey) {
     console.error('[GPU-BILLING] Supabase not configured, skipping billing');

@@ -12,6 +12,7 @@ import { checkRateLimit } from '../services/ratelimit.ts';
 import { checkChatBalance, deductChatCost } from '../services/chat-billing.ts';
 import { getOrCreateOpenRouterKey } from '../services/openrouter-keys.ts';
 import { createUserService } from '../services/user.ts';
+import type { SystemAgentContext } from '../services/flash-broker.ts';
 import {
   CHAT_MIN_BALANCE_LIGHT,
   type ChatStreamRequest,
@@ -484,7 +485,7 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
     interpreterModel?: string;
     heavyModel?: string;
     scope?: Record<string, { access: 'all' | 'functions' | 'data'; functions?: string[] }>;
-    systemAgentContext?: { type: string; persona: string; skillsPath: string };
+    systemAgentContext?: SystemAgentContext;
     projectContext?: string;
     conversationId?: string;
     files?: Array<{ name: string; size: number; mimeType: string; content: string }>;

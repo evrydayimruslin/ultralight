@@ -34,6 +34,22 @@ export interface ToolMapping {
   fnName: string;
 }
 
+interface RpcToolCallEnvelope {
+  result?: {
+    content?: Array<{ type: string; text?: string }>;
+  };
+  error?: {
+    message?: string;
+  };
+}
+
+function normalizeToolArgs(args: unknown[]): Record<string, unknown> {
+  const firstArg = args[0];
+  return typeof firstArg === 'object' && firstArg !== null && !Array.isArray(firstArg)
+    ? firstArg as Record<string, unknown>
+    : {};
+}
+
 // ── Tool Name Sanitization ──
 
 const JS_RESERVED = new Set([
@@ -269,7 +285,8 @@ export function buildToolFunctions(
   const fns: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
 
   for (const [sanitizedName, mapping] of Object.entries(toolMap)) {
-    fns[sanitizedName] = async (args?: Record<string, unknown>): Promise<unknown> => {
+    fns[sanitizedName] = async (...incomingArgs: unknown[]): Promise<unknown> => {
+      const args = normalizeToolArgs(incomingArgs);
       const rpcPayload = {
         jsonrpc: '2.0',
         id: crypto.randomUUID(),
@@ -291,7 +308,7 @@ export function buildToolFunctions(
         throw new Error(`${mapping.fnName} failed (${resp.status}): ${errText}`);
       }
 
-      const rpcResp = await resp.json();
+      const rpcResp = await resp.json() as RpcToolCallEnvelope;
       if (rpcResp.error) {
         throw new Error(rpcResp.error.message || JSON.stringify(rpcResp.error));
       }
@@ -309,12 +326,12 @@ export function buildToolFunctions(
   }
 
   // Discovery functions
-  fns['discover_library'] = async (args?: Record<string, unknown>) => {
-    return await discoverLibrary(args || {});
+  fns['discover_library'] = async (...incomingArgs: unknown[]) => {
+    return await discoverLibrary(normalizeToolArgs(incomingArgs));
   };
 
-  fns['discover_appstore'] = async (args?: Record<string, unknown>) => {
-    return await discoverAppstore(args || {});
+  fns['discover_appstore'] = async (...incomingArgs: unknown[]) => {
+    return await discoverAppstore(normalizeToolArgs(incomingArgs));
   };
 
   return fns;

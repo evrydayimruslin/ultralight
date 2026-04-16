@@ -20,6 +20,10 @@ const TIER_ALIASES: Record<string, Tier> = {
   enterprise: 'pro',
 };
 
+function readJsonArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? value as T[] : [];
+}
+
 /**
  * Handle tier change requests.
  * POST /api/tier/change
@@ -74,7 +78,7 @@ export async function handleTierChange(request: Request): Promise<Response> {
     return error('Failed to fetch user', 500);
   }
 
-  const users = await userResponse.json();
+  const users = readJsonArray<{ id: string; tier: Tier | null; email: string | null }>(await userResponse.json());
   if (!users || users.length === 0) {
     return error('User not found', 404);
   }
@@ -112,7 +116,7 @@ export async function handleTierChange(request: Request): Promise<Response> {
     );
 
     if (appsResponse.ok) {
-      const publicApps = await appsResponse.json();
+      const publicApps = readJsonArray<{ id: string; name: string; visibility: string }>(await appsResponse.json());
 
       if (publicApps.length > 0) {
         // Soft degradation: public → unlisted (NOT private)

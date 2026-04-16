@@ -86,7 +86,7 @@ export async function processExpiredSubscriptions(): Promise<ExpiryResult> {
         let appsChanged = 0;
 
         if (appsResponse.ok) {
-          const publicApps = await appsResponse.json();
+          const publicApps = await appsResponse.json() as Array<{ name: string }>;
 
           if (publicApps.length > 0) {
             const updateResponse = await fetch(

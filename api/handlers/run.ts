@@ -2,7 +2,7 @@
 // Executes user code in sandbox
 
 import { error, json } from './app.ts';
-import type { RunRequest, RunResponse } from '../../shared/types/index.ts';
+import type { LogEntry, RunRequest, RunResponse } from '../../shared/types/index.ts';
 import { executeInSandbox, type UserContext } from '../runtime/sandbox.ts';
 import { createR2Service } from '../services/storage.ts';
 import { createAppsService } from '../services/apps.ts';
@@ -77,6 +77,14 @@ function extractUserContext(request: Request): { userId: string; user: UserConte
   return { userId, user };
 }
 
+function toLogEntries(lines: string[]): LogEntry[] {
+  return lines.map(message => ({
+    time: new Date().toISOString(),
+    level: 'log',
+    message,
+  }));
+}
+
 export async function handleRun(request: Request, appId: string): Promise<Response> {
   try {
     const body: RunRequest = await request.json();
@@ -127,7 +135,7 @@ export async function handleRun(request: Request, appId: string): Promise<Respon
     }
 
     // Decrypt environment variables for the app
-    const encryptedEnvVars = (app as Record<string, unknown>).env_vars as Record<string, string> || {};
+    const encryptedEnvVars = app.env_vars || {};
     let envVars: Record<string, string> = {};
     try {
       envVars = await decryptEnvVars(encryptedEnvVars);
@@ -219,7 +227,7 @@ export async function handleRun(request: Request, appId: string): Promise<Respon
         const gpuResponse: RunResponse = {
           success: gpuResult.success,
           result: gpuResult.result,
-          logs: gpuResult.logs,
+          logs: toLogEntries(gpuResult.logs),
           duration_ms: gpuResult.durationMs,
           error: gpuResult.error,
         };
@@ -231,7 +239,7 @@ export async function handleRun(request: Request, appId: string): Promise<Respon
 
     // ── Deno Sandbox Path (existing, unchanged) ──
     // D1 Data Service (lazy-provisioned)
-    const d1DatabaseId = (app as any).d1_database_id || await getD1DatabaseId(appId);
+    const d1DatabaseId = app.d1_database_id || await getD1DatabaseId(appId);
     const d1DataService = createD1DataService(appId, d1DatabaseId);
 
     // Execute in sandbox — AI-capable apps get 120s timeout
@@ -241,6 +249,7 @@ export async function handleRun(request: Request, appId: string): Promise<Respon
       {
         appId,
         userId,
+        ownerId: app.owner_id,
         executionId: crypto.randomUUID(),
         code,
         permissions: ['memory:read', 'memory:write', 'ai:call', 'net:fetch'],

@@ -406,7 +406,7 @@ export async function* runFlashBroker(
   const mode = analyzeResult.mode || (analyzeResult.needsTool === false ? 'direct' : 'write');
 
   // Capture system agent delegations from Flash analysis
-  const systemAgentDelegations: Array<{ agentType: string; task: string }> =
+  const systemAgentDelegations: Array<{ agentType: string; task: string; originalPrompt: string }> =
     (analyzeResult.systemAgentDelegations || [])
       .filter((d: any) => d.agentType && d.task)
       .map((d: any) => ({ agentType: d.agentType, task: d.task, originalPrompt: message }));
@@ -430,7 +430,7 @@ export async function* runFlashBroker(
         summary: updatedSummary,
         lastMessageIndex: conversationHistory?.length || 0,
         updatedAt: Date.now(),
-      } as ConversationSummary)).catch(err =>
+      } as ConversationSummary)).catch((err: unknown) =>
         console.warn('[FLASH-BROKER] Summary KV write failed:', err)
       );
     }
@@ -625,6 +625,7 @@ export async function* runFlashBroker(
       try {
         const { createEmbeddingService, searchConversationEmbeddings } = await import('./embedding.ts');
         const svc = createEmbeddingService();
+        if (!svc) throw new Error('Embedding service unavailable');
         const { embedding } = await svc.embed(conversationSearch);
         const matches = await searchConversationEmbeddings(embedding, userId, { limit: 3, threshold: 0.55 });
         if (matches.length > 0) {
@@ -1276,7 +1277,7 @@ async function loadSystemAgentStates(userId: string): Promise<SystemAgentState[]
     const kv = env.FN_INDEX;
     if (!kv) return [];
     const data = await kv.get(`system-agents:${userId}`, 'json');
-    return (data as SystemAgentState[]) || [];
+    return Array.isArray(data) ? data as SystemAgentState[] : [];
   } catch {
     return [];
   }

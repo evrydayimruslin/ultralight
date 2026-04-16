@@ -6,6 +6,7 @@ import { getEnv } from '../lib/env.ts';
 import { createR2Service } from './storage.ts';
 import { createAppsService } from './apps.ts';
 import { buildJsonSchemaDescriptors, generateTypes, sanitizeToolName } from './codemode-tools.ts';
+import type { AppForCodemode } from './codemode-tools.ts';
 import { createD1DataService } from './d1-data.ts';
 
 // ── Types ──
@@ -24,6 +25,15 @@ export interface FunctionIndex {
   widgets: Array<{ name: string; appId: string; label: string }>;
   types: string;
   updatedAt: string;
+}
+
+type IndexedApp = AppForCodemode & {
+  skills_parsed: unknown;
+  d1_database_id: string | null;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 // ── Build Index ──
@@ -68,12 +78,19 @@ export async function rebuildFunctionIndex(userId: string): Promise<FunctionInde
   }
 
   // Deduplicate and parse manifests
-  const allAppsMap = new Map<string, { id: string; name: string; slug: string; manifest: unknown; skills_parsed: unknown; d1_database_id: string | null }>();
+  const allAppsMap = new Map<string, IndexedApp>();
   for (const app of [...ownedApps, ...likedApps]) {
     if (!allAppsMap.has(app.id) && app.manifest) {
       const manifest = typeof app.manifest === 'string' ? JSON.parse(app.manifest) : app.manifest;
       const skillsParsed = typeof app.skills_parsed === 'string' ? JSON.parse(app.skills_parsed) : app.skills_parsed;
-      allAppsMap.set(app.id, { id: app.id, name: app.name, slug: app.slug, manifest, skills_parsed: skillsParsed, d1_database_id: app.d1_database_id });
+      allAppsMap.set(app.id, {
+        id: app.id,
+        name: app.name,
+        slug: app.slug,
+        manifest: isRecord(manifest) ? manifest as AppForCodemode['manifest'] : {},
+        skills_parsed: skillsParsed,
+        d1_database_id: app.d1_database_id,
+      });
     }
   }
   const apps = Array.from(allAppsMap.values());

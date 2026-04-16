@@ -29,6 +29,15 @@ export interface EmbeddingResult {
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/embeddings';
 const DEFAULT_MODEL = 'openai/text-embedding-3-small';
 
+interface EmbeddingApiResponse {
+  data?: Array<{ embedding: number[]; index: number }>;
+  model?: string;
+  usage?: {
+    prompt_tokens?: number;
+    total_tokens?: number;
+  };
+}
+
 // ============================================
 // EMBEDDING SERVICE
 // ============================================
@@ -65,7 +74,7 @@ export class EmbeddingService {
       throw new Error(`Embedding API error: ${response.status} - ${error}`);
     }
 
-    const result = await response.json();
+    const result = await response.json() as EmbeddingApiResponse;
 
     if (!result.data?.[0]?.embedding) {
       throw new Error('Invalid embedding response: missing embedding data');
@@ -74,7 +83,10 @@ export class EmbeddingService {
     return {
       embedding: result.data[0].embedding,
       model: result.model || this.model,
-      usage: result.usage || { prompt_tokens: 0, total_tokens: 0 },
+      usage: {
+        prompt_tokens: result.usage?.prompt_tokens ?? 0,
+        total_tokens: result.usage?.total_tokens ?? 0,
+      },
     };
   }
 
@@ -102,7 +114,7 @@ export class EmbeddingService {
       throw new Error(`Embedding API error: ${response.status} - ${error}`);
     }
 
-    const result = await response.json();
+    const result = await response.json() as EmbeddingApiResponse;
 
     if (!result.data || !Array.isArray(result.data)) {
       throw new Error('Invalid embedding response: missing data array');

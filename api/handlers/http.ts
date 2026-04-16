@@ -100,7 +100,7 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
     }
 
     // Check if HTTP endpoints are enabled for this app
-    const httpEnabled = (app as Record<string, unknown>).http_enabled !== false;
+    const httpEnabled = app.http_enabled !== false;
     if (!httpEnabled) {
       return json({ error: 'HTTP endpoints are disabled for this app' }, 403);
     }
@@ -109,7 +109,7 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
     const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
       || request.headers.get('x-real-ip')
       || 'unknown';
-    const appRateLimit = (app as Record<string, unknown>).http_rate_limit as number || 1000;
+    const appRateLimit = app.http_rate_limit || 1000;
     const httpRateResult = checkHttpRateLimit(clientIp, appId, appRateLimit);
 
     if (!httpRateResult.allowed) {
@@ -170,7 +170,7 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
     const appDataService = createAppDataService(appId);
 
     // Decrypt environment variables
-    const encryptedEnvVars = (app as Record<string, unknown>).env_vars as Record<string, string> || {};
+    const encryptedEnvVars = app.env_vars || {};
     let envVars: Record<string, string> = {};
     try {
       envVars = await decryptEnvVars(encryptedEnvVars);
@@ -429,7 +429,7 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
 
     // ── Deno Sandbox Path (existing, unchanged) ──
     // D1 Data Service (lazy-provisioned)
-    const d1DatabaseId = (app as any).d1_database_id || await getD1DatabaseId(app.id);
+    const d1DatabaseId = app.d1_database_id || await getD1DatabaseId(app.id);
     const d1DataService = createD1DataService(app.id, d1DatabaseId);
 
     // Execute the function in sandbox — AI-capable apps get 120s timeout
@@ -453,6 +453,7 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
       {
         appId: app.id,
         userId: user?.id || 'anonymous',
+        ownerId: app.owner_id,
         executionId: crypto.randomUUID(),
         code,
         permissions: httpPermissions,

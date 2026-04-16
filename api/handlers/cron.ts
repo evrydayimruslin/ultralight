@@ -29,6 +29,10 @@ import {
   CRON_PRESETS,
 } from '../services/cron.ts';
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /**
  * Get the base URL for the server (for job execution)
  */
@@ -59,15 +63,17 @@ export async function handleCron(request: Request): Promise<Response> {
 
     // POST /api/cron/validate - Validate a cron expression
     if (path === '/api/cron/validate' && method === 'POST') {
-      let body;
+      let body: { expression?: string };
       try {
-        body = await request.json();
+        const payload = await request.json();
+        if (!isRecord(payload)) return error('Invalid JSON body', 400);
+        body = payload;
       } catch {
         return error('Invalid JSON body', 400);
       }
       const { expression } = body;
 
-      if (!expression) {
+      if (!expression || typeof expression !== 'string') {
         return error('Expression required', 400);
       }
 
@@ -130,15 +136,21 @@ export async function handleCron(request: Request): Promise<Response> {
 
       // POST - Create job for app
       if (method === 'POST') {
-        let body;
+        let body: { name?: string; schedule?: string; handler?: string };
         try {
-          body = await request.json();
+          const payload = await request.json();
+          if (!isRecord(payload)) return error('Invalid JSON body', 400);
+          body = payload;
         } catch {
           return error('Invalid JSON body', 400);
         }
         const { name, schedule, handler } = body;
 
-        if (!name || !schedule || !handler) {
+        if (
+          !name || typeof name !== 'string' ||
+          !schedule || typeof schedule !== 'string' ||
+          !handler || typeof handler !== 'string'
+        ) {
           return error('name, schedule, and handler are required', 400);
         }
 
@@ -195,18 +207,29 @@ export async function handleCron(request: Request): Promise<Response> {
 
       // PATCH - Update job
       if (method === 'PATCH') {
-        let body;
+        let body: { schedule?: string; handler?: string; enabled?: boolean };
         try {
-          body = await request.json();
+          const payload = await request.json();
+          if (!isRecord(payload)) return error('Invalid JSON body', 400);
+          body = payload;
         } catch {
           return error('Invalid JSON body', 400);
         }
         const { schedule, handler, enabled } = body;
 
         const updates: Partial<{ schedule: string; handler: string; enabled: boolean }> = {};
-        if (schedule !== undefined) updates.schedule = schedule;
-        if (handler !== undefined) updates.handler = handler;
-        if (enabled !== undefined) updates.enabled = enabled;
+        if (schedule !== undefined) {
+          if (typeof schedule !== 'string') return error('schedule must be a string', 400);
+          updates.schedule = schedule;
+        }
+        if (handler !== undefined) {
+          if (typeof handler !== 'string') return error('handler must be a string', 400);
+          updates.handler = handler;
+        }
+        if (enabled !== undefined) {
+          if (typeof enabled !== 'boolean') return error('enabled must be a boolean', 400);
+          updates.enabled = enabled;
+        }
 
         try {
           const updated = await updateCronJob(jobId, updates);

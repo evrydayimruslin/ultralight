@@ -157,7 +157,7 @@ async function checkExactFingerprint(
       return [];
     }
 
-    const matches = await res.json();
+    const matches = await res.json() as Array<{ id: string; name: string }>;
     return matches.map((m: { id: string; name: string }) => ({
       app_id: m.id,
       name: m.name || 'Unknown',

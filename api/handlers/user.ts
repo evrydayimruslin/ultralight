@@ -2810,7 +2810,7 @@ export async function handleUser(request: Request): Promise<Response> {
       const { app_id, price_light, floor_light, instant_buy, note } = body;
       if (!app_id) return error('Missing app_id', 400);
       const { setAskPrice } = await import('../services/marketplace.ts');
-      const result = await setAskPrice(userId, app_id, price_light ?? null, floor_light, instant_buy, note);
+      const result = await setAskPrice(userId, app_id, price_light ?? null, floor_light, instant_buy, note ?? undefined);
       return json(result);
     } catch (err) {
       const status = (err as Error & { status?: number }).status || 500;

@@ -3,6 +3,7 @@
 
 import type { GPUProvider } from './provider.ts';
 import { RunPodProvider } from './runpod.ts';
+import { getEnv } from '../../lib/env.ts';
 
 // ---------------------------------------------------------------------------
 // Provider Singleton
@@ -18,7 +19,7 @@ let _provider: GPUProvider | null = null;
  */
 export function getGPUProvider(): GPUProvider {
   if (!_provider) {
-    const apiKey = globalThis.Deno?.env?.get('RUNPOD_API_KEY');
+    const apiKey = getEnv('RUNPOD_API_KEY');
     if (!apiKey) {
       throw Object.assign(
         new Error('GPU compute is not configured. RUNPOD_API_KEY environment variable is required.'),

@@ -182,7 +182,7 @@ export async function getJob(jobId: string, userId: string): Promise<AsyncJob | 
   );
 
   if (!res.ok) return null;
-  const rows = await res.json();
+  const rows = await res.json() as AsyncJob[];
   const job = rows[0];
   if (!job) return null;
 

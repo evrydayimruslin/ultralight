@@ -66,7 +66,7 @@ export async function executeDynamicCodeMode(
     // Note: authToken would need to be passed in; for fallback this is acceptable
     const fns: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
     for (const [name, mapping] of Object.entries(toolMap)) {
-      fns[name] = async (args?: Record<string, unknown>) => {
+      fns[name] = async (..._incomingArgs: unknown[]) => {
         throw new Error(`Dynamic Worker fallback: ${mapping.fnName} not available without LOADER`);
       };
     }

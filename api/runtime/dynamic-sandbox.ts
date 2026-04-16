@@ -246,7 +246,7 @@ export default {
     const data = (await response.json()) as {
       success: boolean;
       result: unknown;
-      logs: Array<{ time: string; level: string; message: string }>;
+      logs: Array<{ time: string; level: 'log' | 'error' | 'warn' | 'info'; message: string }>;
       error?: { type: string; message: string };
     };
 

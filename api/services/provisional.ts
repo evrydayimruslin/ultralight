@@ -161,7 +161,7 @@ export async function isProvisionalUser(userId: string): Promise<boolean> {
 
   if (!response.ok) return false;
 
-  const data = await response.json();
+  const data = await response.json() as Array<{ provisional?: boolean }>;
   return data?.[0]?.provisional === true;
 }
 
@@ -255,7 +255,12 @@ export async function mergeProvisionalUser(
     throw new Error('Failed to merge provisional user');
   }
 
-  const result = await rpcResponse.json();
+  const result = await rpcResponse.json() as {
+    error?: string;
+    apps_moved?: number;
+    tokens_moved?: number;
+    storage_transferred_bytes?: number;
+  };
 
   // Check for RPC-level error
   if (result?.error) {
@@ -388,7 +393,10 @@ async function getProvisionalMetadata(userId: string): Promise<{
       }
     );
     if (!response.ok) return null;
-    const data = await response.json();
+    const data = await response.json() as Array<{
+      provisional_created_at: string | null;
+      provisional_created_ip: string | null;
+    }>;
     return data?.[0] || null;
   } catch {
     return null;

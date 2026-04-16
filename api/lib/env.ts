@@ -43,6 +43,22 @@ export interface Env {
   [key: string]: unknown;
 }
 
+interface WorkerCode {
+  compatibilityDate: string;
+  mainModule: string;
+  modules: Record<string, string>;
+  env: Record<string, unknown>;
+  globalOutbound?: unknown;
+}
+
+interface WorkerEntrypoint {
+  fetch(request: Request, init?: RequestInit): Promise<Response>;
+}
+
+interface WorkerStub {
+  getEntrypoint(): WorkerEntrypoint;
+}
+
 // ============================================
 // GLOBAL DECLARATIONS
 // ============================================
@@ -63,7 +79,12 @@ declare global {
  *
  * Replaces all 175 occurrences of Deno.env.get() across the codebase.
  */
-export function getEnv(key: string): string {
+export function getEnv(): Env;
+export function getEnv(key: string): string;
+export function getEnv(key?: string): Env | string {
+  if (key === undefined) {
+    return globalThis.__env;
+  }
   const val = globalThis.__env?.[key];
   if (typeof val === 'string') return val;
   return '';

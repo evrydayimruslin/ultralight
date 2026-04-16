@@ -7,6 +7,7 @@ import type { App } from '../../../shared/types/index.ts';
 import { getGPUProvider } from './index.ts';
 import { createAppsService } from '../apps.ts';
 import { createR2Service } from '../storage.ts';
+import { getEnv } from '../../lib/env.ts';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -224,8 +225,8 @@ async function insertGpuEndpoint(
   gpuType: string,
   buildLogs: string[],
 ): Promise<void> {
-  const supabaseUrl = globalThis.Deno?.env?.get('SUPABASE_URL') || '';
-  const supabaseKey = globalThis.Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!supabaseUrl || !supabaseKey) {
     console.error('[GPU-BUILD] Supabase not configured, skipping gpu_endpoints insert');

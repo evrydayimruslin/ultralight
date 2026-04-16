@@ -188,13 +188,14 @@ function parseManifest(files: PipelineFile[], options: PipelineOptions): AppMani
 
   // Apply option overrides
   if (options.appType || options.functionsEntry) {
+    const appType = options.appType === 'mcp' ? 'mcp' : 'mcp';
     const base: AppManifest = manifest ? { ...manifest } : {
       name: options.name || 'Untitled App',
       version: '1.0.0',
-      type: options.appType || 'mcp',
+      type: appType,
       entry: {},
     };
-    if (options.appType) base.type = options.appType;
+    if (options.appType === 'mcp') base.type = 'mcp';
     if (options.functionsEntry) base.entry.functions = options.functionsEntry;
     if (options.description) base.description = options.description;
     manifest = base;

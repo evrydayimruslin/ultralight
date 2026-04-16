@@ -29,6 +29,7 @@ const IV_LENGTH = 12;
  */
 async function deriveKey(masterKey: string, salt: Uint8Array): Promise<CryptoKey> {
   const encoder = new TextEncoder();
+  const saltBytes = new Uint8Array(salt);
   const keyMaterial = await crypto.subtle.importKey(
     'raw',
     encoder.encode(masterKey),
@@ -40,7 +41,7 @@ async function deriveKey(masterKey: string, salt: Uint8Array): Promise<CryptoKey
   return crypto.subtle.deriveKey(
     {
       name: 'PBKDF2',
-      salt,
+      salt: saltBytes,
       iterations: 100000,
       hash: 'SHA-256',
     },

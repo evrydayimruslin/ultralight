@@ -80,10 +80,10 @@ export async function checkAndIncrementWeeklyCalls(
       return unavailableResult(await response.text());
     }
 
-    const results = await response.json();
+    const results = await response.json() as Array<{ current_count: number | string | null }> | { current_count: number | string | null } | null;
     const currentCount = Array.isArray(results) && results.length > 0
       ? Number(results[0].current_count)
-      : typeof results === 'object' && 'current_count' in results
+      : results !== null && typeof results === 'object' && 'current_count' in results
         ? Number(results.current_count)
         : 0;
 

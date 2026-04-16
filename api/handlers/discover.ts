@@ -80,6 +80,10 @@ interface ScoredApp {
 
 const DISCOVER_VERSION = '1.1.0';
 
+function readJsonArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? value as T[] : [];
+}
+
 // ============================================
 // STRUCTURED ERROR HELPER
 // ============================================
@@ -636,7 +640,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
           );
 
           const filteredApps = appResults.filter(r =>
-            !blockedAppIds.has(r.id) && !(r as Record<string, unknown>).hosting_suspended
+            !blockedAppIds.has(r.id) && !r.hosting_suspended
           );
 
           // Fetch env schemas + metadata
@@ -994,7 +998,7 @@ async function executeSearch(
 
     // Filter blocked/suspended
     const filteredResults = results.filter(r =>
-      !blockedAppIds.has(r.id) && !(r as Record<string, unknown>).hosting_suspended
+      !blockedAppIds.has(r.id) && !r.hosting_suspended
     );
 
     // Fetch env schemas for native_boost calculation
@@ -1533,7 +1537,14 @@ async function handleNewlyPublished(url: URL): Promise<Response> {
       { headers: dbHeaders }
     );
     if (!res.ok) return error('Failed to fetch', 500);
-    const rows = await res.json();
+    const rows = readJsonArray<{
+      id: string;
+      name: string;
+      slug: string;
+      description: string | null;
+      first_published_at: string | null;
+      app_type: string | null;
+    }>(await res.json());
     const results = rows.map((r: Record<string, unknown>) => ({
       id: r.id,
       name: r.name,
@@ -1573,7 +1584,13 @@ async function handleNewlyAcquired(url: URL): Promise<Response> {
       { headers: dbHeaders }
     );
     if (!res.ok) return error('Failed to fetch', 500);
-    const rows = await res.json();
+    const rows = readJsonArray<Array<{
+      id: string;
+      app_id: string | null;
+      sale_price_light: number | null;
+      created_at: string | null;
+      apps: { name?: string; slug?: string } | null;
+    }>[number]>(await res.json());
     const results = rows.map((r: Record<string, unknown>) => {
       const app = r.apps as Record<string, unknown> | null;
       return {
@@ -1632,7 +1649,7 @@ async function handleLeaderboard(url: URL): Promise<Response> {
       body: JSON.stringify({ p_interval: period, p_limit: limit }),
     });
     if (!res.ok) return error('Failed to fetch leaderboard', 500);
-    const rows = await res.json();
+    const rows = readJsonArray<Record<string, unknown>>(await res.json());
     const results = rows.map((r: Record<string, unknown>, i: number) => ({
       rank: i + 1,
       user_id: r.user_id,

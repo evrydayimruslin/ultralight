@@ -19,6 +19,14 @@ import { acquireGpuSlot, releaseGpuSlot, getGpuConcurrency } from './concurrency
 import { computeGpuCostLight } from './types.ts';
 import type { App } from '../../../shared/types/index.ts';
 
+function exitProcess(code: number): never {
+  const deno = (globalThis as typeof globalThis & { Deno?: { exit(exitCode: number): never } }).Deno;
+  if (deno) {
+    return deno.exit(code);
+  }
+  throw new Error(`Process exit requested with code ${code}`);
+}
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -49,7 +57,7 @@ function section(name: string): void {
 const TEST_USER_ID = 'test-gpu-pipeline-user';
 const TEST_OWNER_ID = 'test-gpu-pipeline-owner';
 
-const fakeApp: App = {
+const fakeApp = {
   id: 'test-gpu-pipeline-app',
   owner_id: TEST_OWNER_ID,
   name: 'GPU Pipeline Test',
@@ -67,7 +75,7 @@ const fakeApp: App = {
   updated_at: new Date().toISOString(),
   visibility: 'private',
   exports: ['hello', 'add', 'slow', 'fail', 'echo', 'compute'],
-} as App;
+} as unknown as App;
 
 // ---------------------------------------------------------------------------
 // Test 1: Concurrency Slot Acquisition
@@ -366,7 +374,7 @@ async function main(): Promise<void> {
   const apiKey = getEnv('RUNPOD_API_KEY');
   if (!apiKey) {
     console.error(`${FAIL} RUNPOD_API_KEY not set`);
-    Deno.exit(1);
+    exitProcess(1);
   }
 
   // Offline tests (no API calls)
@@ -394,7 +402,7 @@ async function main(): Promise<void> {
 
   if (failed > 0) {
     console.log(`\n${FAIL} Some tests failed.`);
-    Deno.exit(1);
+    exitProcess(1);
   } else {
     console.log(`\n${PASS} All tests passed!`);
   }

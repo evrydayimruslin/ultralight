@@ -149,7 +149,7 @@ export class NetworkBinding extends WorkerEntrypoint<unknown, NetworkBindingProp
     host: string, port: number, user: string, pass: string,
     lastUid: number, businessEmail: string, processedFlag: string, limit: number,
   ): Promise<{ emails: FetchedEmail[]; maxUid: number; hasMore: boolean }> {
-    const socket = connect({ hostname: host, port }, { secureTransport: 'on' });
+    const socket = connect({ hostname: host, port }, { secureTransport: 'on', allowHalfOpen: false });
     const lr = new LineReader(socket.readable);
     const writer = socket.writable.getWriter();
     let tagNum = 0;
@@ -264,7 +264,7 @@ export class NetworkBinding extends WorkerEntrypoint<unknown, NetworkBindingProp
     host: string, port: number, user: string, pass: string,
     from: string, fromName: string, to: string, subject: string, body: string, inReplyTo?: string,
   ): Promise<{ success: boolean; error?: string }> {
-    const socket = connect({ hostname: host, port }, { secureTransport: 'on' });
+    const socket = connect({ hostname: host, port }, { secureTransport: 'on', allowHalfOpen: false });
     const lr = new LineReader(socket.readable);
     const writer = socket.writable.getWriter();
 
