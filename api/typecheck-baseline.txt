@@ -1,26 +1,3 @@
-handlers/admin.ts(140,24): error TS2488: Type '{}' must have a '[Symbol.iterator]()' method that returns an iterator.
-handlers/admin.ts(578,24): error TS18046: 'appCalls' is of type 'unknown'.
-handlers/admin.ts(602,21): error TS18046: 'searches' is of type 'unknown'.
-handlers/admin.ts(620,21): error TS18046: 'unmetSearches' is of type 'unknown'.
-handlers/admin.ts(639,21): error TS18046: 'conversions' is of type 'unknown'.
-handlers/admin.ts(650,21): error TS18046: 'conversions' is of type 'unknown'.
-handlers/admin.ts(662,27): error TS18046: 'templateFetches' is of type 'unknown'.
-handlers/admin.ts(663,35): error TS18046: 'templateFetches' is of type 'unknown'.
-handlers/admin.ts(667,24): error TS18046: 'onboardingCalls' is of type 'unknown'.
-handlers/admin.ts(685,28): error TS18046: 'allCalls' is of type 'unknown'.
-handlers/admin.ts(686,33): error TS18046: 'allCalls' is of type 'unknown'.
-handlers/admin.ts(687,25): error TS18046: 'allCalls' is of type 'unknown'.
-handlers/admin.ts(698,29): error TS18046: 'provisionals' is of type 'unknown'.
-handlers/admin.ts(699,28): error TS18046: 'provisionals' is of type 'unknown'.
-handlers/admin.ts(704,26): error TS18046: 'conversions' is of type 'unknown'.
-handlers/admin.ts(707,33): error TS18046: 'conversions' is of type 'unknown'.
-handlers/admin.ts(707,95): error TS18046: 'conversions' is of type 'unknown'.
-handlers/admin.ts(708,24): error TS18046: 'provisionals' is of type 'unknown'.
-handlers/admin.ts(709,23): error TS18046: 'conversions' is of type 'unknown'.
-handlers/admin.ts(709,45): error TS18046: 'provisionals' is of type 'unknown'.
-handlers/admin.ts(709,67): error TS18046: 'conversions' is of type 'unknown'.
-handlers/admin.ts(761,64): error TS18046: 'updated' is of type 'unknown'.
-handlers/admin.ts(787,92): error TS18046: 'updated' is of type 'unknown'.
 handlers/chat.ts(522,13): error TS2322: Type '{ type: string; persona: string; skillsPath: string; } | undefined' is not assignable to type 'SystemAgentContext | undefined'.
   Type '{ type: string; persona: string; skillsPath: string; }' is not assignable to type 'SystemAgentContext'.
     Types of property 'type' are incompatible.
@@ -372,40 +349,6 @@ services/gpu/test-pipeline.ts(369,5): error TS2304: Cannot find name 'Deno'.
 services/gpu/test-pipeline.ts(397,5): error TS2304: Cannot find name 'Deno'.
 services/hosting-billing.ts(410,40): error TS2571: Object is of type 'unknown'.
 services/hosting-billing.ts(421,42): error TS2571: Object is of type 'unknown'.
-services/marketplace.ts(162,7): error TS18046: 'appRows' is of type 'unknown'.
-services/marketplace.ts(201,5): error TS2322: Type 'unknown' is not assignable to type 'string'.
-services/marketplace.ts(226,8): error TS18046: 'apps' is of type 'unknown'.
-services/marketplace.ts(226,19): error TS18046: 'apps' is of type 'unknown'.
-services/marketplace.ts(229,7): error TS18046: 'apps' is of type 'unknown'.
-services/marketplace.ts(299,48): error TS18046: 'result' is of type 'unknown'.
-services/marketplace.ts(299,68): error TS18046: 'result' is of type 'unknown'.
-services/marketplace.ts(299,90): error TS18046: 'result' is of type 'unknown'.
-services/marketplace.ts(299,125): error TS18046: 'result' is of type 'unknown'.
-services/marketplace.ts(303,27): error TS18046: 'result' is of type 'unknown'.
-services/marketplace.ts(303,43): error TS18046: 'result' is of type 'unknown'.
-services/marketplace.ts(303,58): error TS18046: 'result' is of type 'unknown'.
-services/marketplace.ts(303,76): error TS18046: 'result' is of type 'unknown'.
-services/marketplace.ts(308,14): error TS18046: 'result' is of type 'unknown'.
-services/marketplace.ts(309,13): error TS18046: 'result' is of type 'unknown'.
-services/marketplace.ts(310,16): error TS18046: 'result' is of type 'unknown'.
-services/marketplace.ts(311,15): error TS18046: 'result' is of type 'unknown'.
-services/marketplace.ts(312,23): error TS18046: 'result' is of type 'unknown'.
-services/marketplace.ts(313,25): error TS18046: 'result' is of type 'unknown'.
-services/marketplace.ts(314,26): error TS18046: 'result' is of type 'unknown'.
-services/marketplace.ts(377,19): error TS18046: 'listings' is of type 'unknown'.
-services/marketplace.ts(421,31): error TS2339: Property 'map' does not exist on type '{}'.
-services/marketplace.ts(437,9): error TS18046: 'myApps' is of type 'unknown'.
-services/marketplace.ts(438,22): error TS18046: 'myApps' is of type 'unknown'.
-services/marketplace.ts(440,7): error TS18046: 'myApps' is of type 'unknown'.
-services/marketplace.ts(449,37): error TS18046: 'bidsData' is of type 'unknown'.
-services/marketplace.ts(457,9): error TS18046: 'emails' is of type 'unknown'.
-services/marketplace.ts(460,18): error TS18046: 'bidsData' is of type 'unknown'.
-services/marketplace.ts(476,32): error TS2339: Property 'map' does not exist on type '{}'.
-services/marketplace.ts(528,33): error TS18046: 'bids' is of type 'unknown'.
-services/marketplace.ts(536,5): error TS18046: 'emails' is of type 'unknown'.
-services/marketplace.ts(539,24): error TS18046: 'bids' is of type 'unknown'.
-services/marketplace.ts(545,14): error TS18046: 'listings' is of type 'unknown'.
-services/marketplace.ts(547,10): error TS18046: 'apps' is of type 'unknown'.
 services/memory.ts(72,12): error TS18046: 'results' is of type 'unknown'.
 services/orchestrator.ts(626,33): error TS18047: 'svc' is possibly 'null'.
 services/orchestrator.ts(662,25): error TS2554: Expected 1 arguments, but got 0.

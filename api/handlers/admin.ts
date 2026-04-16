@@ -16,6 +16,55 @@ import { json, error } from './app.ts';
 import { unsuspendContent } from '../services/hosting-billing.ts';
 import { getEnv } from '../lib/env.ts';
 
+interface UserIdRow {
+  id: string;
+}
+
+interface TopAppCallRow {
+  app_id: string | null;
+  app_name: string | null;
+  user_id: string;
+  success: boolean | null;
+}
+
+interface SearchQueryRow {
+  query: string;
+  top_similarity: number | null;
+  result_count: number | null;
+}
+
+interface ConversionEventRow {
+  merge_method: string;
+  time_to_convert_minutes: number | null;
+  calls_as_provisional: number | null;
+  first_app_id: string | null;
+  first_app_name: string | null;
+}
+
+interface ProvisionalAnalyticsRow {
+  id: string;
+  provisional_created_at?: string | null;
+  last_active_at: string | null;
+}
+
+interface TemplateFetchRow {
+  id: string;
+  provisional_created: boolean | null;
+  created_at: string;
+}
+
+interface CallSummaryRow {
+  user_id: string;
+  success: boolean | null;
+  source?: string | null;
+}
+
+interface UpdatedAppRow {
+  id: string;
+  category?: string | null;
+  featured_at?: string | null;
+}
+
 function getSupabaseEnv() {
   const SUPABASE_URL = getEnv('SUPABASE_URL');
   const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
@@ -124,7 +173,7 @@ async function cleanupProvisionals(): Promise<Response> {
       { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
     );
 
-    const toDelete = listRes.ok ? await listRes.json() : [];
+    const toDelete = listRes.ok ? await listRes.json() as UserIdRow[] : [];
 
     // Run the cleanup RPC (deletes from public.users, cascades to tokens)
     const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/cleanup_expired_provisionals`, {
@@ -133,7 +182,7 @@ async function cleanupProvisionals(): Promise<Response> {
       body: '{}',
     });
 
-    const deletedCount = rpcRes.ok ? await rpcRes.json() : 0;
+    const deletedCount = rpcRes.ok ? await rpcRes.json() as number : 0;
 
     // Delete from auth.users (best-effort, non-blocking)
     let authDeleted = 0;
@@ -217,7 +266,7 @@ async function createGap(request: Request): Promise<Response> {
     return error(`Failed to create gap: ${err}`, 500);
   }
 
-  const rows = await res.json();
+  const rows = await res.json() as Record<string, unknown>[] | Record<string, unknown>;
   const created = Array.isArray(rows) ? rows[0] : rows;
   return json({ success: true, gap: created }, 201);
 }
@@ -258,7 +307,7 @@ async function updateGap(request: Request, gapId: string): Promise<Response> {
     return error(`Failed to update gap: ${err}`, 500);
   }
 
-  const rows = await res.json();
+  const rows = await res.json() as Record<string, unknown>[] | Record<string, unknown>;
   return json({ success: true, gap: Array.isArray(rows) ? rows[0] : rows });
 }
 
@@ -303,7 +352,7 @@ async function recordAssessment(request: Request, assessmentId: string): Promise
     return error(`Failed to update assessment: ${err}`, 500);
   }
 
-  const rows = await res.json();
+  const rows = await res.json() as Record<string, unknown>[] | Record<string, unknown>;
   return json({ success: true, assessment: Array.isArray(rows) ? rows[0] : rows });
 }
 
@@ -564,14 +613,14 @@ async function getAnalytics(days: number): Promise<Response> {
     ]);
 
     // Parse all responses
-    const provisionals = provisionalsRes.ok ? await provisionalsRes.json() : [];
-    const conversions = conversionsRes.ok ? await conversionsRes.json() : [];
-    const templateFetches = templateFetchesRes.ok ? await templateFetchesRes.json() : [];
-    const appCalls = topAppsRes.ok ? await topAppsRes.json() : [];
-    const searches = topSearchesRes.ok ? await topSearchesRes.json() : [];
-    const unmetSearches = unmetDemandRes.ok ? await unmetDemandRes.json() : [];
-    const allCalls = totalCallsRes.ok ? await totalCallsRes.json() : [];
-    const onboardingCalls = onboardingCallsRes.ok ? await onboardingCallsRes.json() : [];
+    const provisionals = provisionalsRes.ok ? await provisionalsRes.json() as ProvisionalAnalyticsRow[] : [];
+    const conversions = conversionsRes.ok ? await conversionsRes.json() as ConversionEventRow[] : [];
+    const templateFetches = templateFetchesRes.ok ? await templateFetchesRes.json() as TemplateFetchRow[] : [];
+    const appCalls = topAppsRes.ok ? await topAppsRes.json() as TopAppCallRow[] : [];
+    const searches = topSearchesRes.ok ? await topSearchesRes.json() as SearchQueryRow[] : [];
+    const unmetSearches = unmetDemandRes.ok ? await unmetDemandRes.json() as SearchQueryRow[] : [];
+    const allCalls = totalCallsRes.ok ? await totalCallsRes.json() as CallSummaryRow[] : [];
+    const onboardingCalls = onboardingCallsRes.ok ? await onboardingCallsRes.json() as TopAppCallRow[] : [];
 
     // Aggregate top apps
     const appUsage: Record<string, { app_name: string; calls: number; unique_users: Set<string>; successful: number }> = {};
@@ -660,7 +709,7 @@ async function getAnalytics(days: number): Promise<Response> {
 
     // Template fetch → provisional creation rate
     const templateTotal = templateFetches.length;
-    const templateToProvisional = templateFetches.filter((f: { provisional_created: boolean }) => f.provisional_created).length;
+    const templateToProvisional = templateFetches.filter((f) => f.provisional_created).length;
 
     // Onboarding template attribution
     const onboardingAppUsage: Record<string, { app_name: string; calls: number; unique_users: Set<string> }> = {};
@@ -683,8 +732,8 @@ async function getAnalytics(days: number): Promise<Response> {
 
     // Overall stats
     const totalCallCount = allCalls.length;
-    const uniqueUsers = new Set(allCalls.map((c: { user_id: string }) => c.user_id)).size;
-    const failedCalls = allCalls.filter((c: { success: boolean }) => !c.success).length;
+    const uniqueUsers = new Set(allCalls.map((c) => c.user_id)).size;
+    const failedCalls = allCalls.filter((c) => !c.success).length;
 
     const analytics = {
       period_days: periodDays,
@@ -696,7 +745,7 @@ async function getAnalytics(days: number): Promise<Response> {
 
       // Provisionals
       provisionals_created: provisionals.length,
-      provisionals_active: provisionals.filter((p: { last_active_at: string }) =>
+      provisionals_active: provisionals.filter((p) =>
         p.last_active_at && (Date.now() - new Date(p.last_active_at).getTime()) < 24 * 60 * 60 * 1000
       ).length,
 
@@ -757,7 +806,7 @@ async function setAppCategory(request: Request, appId: string): Promise<Response
       const text = await res.text();
       return error(`Failed to update category: ${text}`, 500);
     }
-    const updated = await res.json();
+    const updated = await res.json() as UpdatedAppRow[];
     return json({ success: true, app_id: appId, category, app: updated[0] || null });
   } catch (err) {
     console.error('[ADMIN] setAppCategory failed:', err);
@@ -783,7 +832,7 @@ async function setAppFeatured(request: Request, appId: string): Promise<Response
       const text = await res.text();
       return error(`Failed to update featured status: ${text}`, 500);
     }
-    const updated = await res.json();
+    const updated = await res.json() as UpdatedAppRow[];
     return json({ success: true, app_id: appId, featured: !!featured_at, featured_at, app: updated[0] || null });
   } catch (err) {
     console.error('[ADMIN] setAppFeatured failed:', err);
