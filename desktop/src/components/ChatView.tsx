@@ -975,10 +975,15 @@ export default function ChatView({
     stopAgent(id);
   }, [stopAgent]);
 
-  const handleSignOut = () => {
-    clearToken();
-    window.location.reload();
-  };
+  const handleSignOut = useCallback(async () => {
+    try {
+      await clearToken();
+      window.location.reload();
+    } catch (error) {
+      console.error('[auth] Failed to clear secure desktop token', error);
+      setDiagnostics('Unable to clear your saved sign-in token securely. Please try again.');
+    }
+  }, []);
 
   // Child agents of current active agent
   const childAgents = useMemo(() => {

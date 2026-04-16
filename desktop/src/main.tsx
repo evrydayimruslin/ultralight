@@ -5,6 +5,7 @@ import SubagentWindow from './components/SubagentWindow';
 import WidgetWindow from './components/WidgetWindow';
 import ViewWindow from './components/ViewWindow';
 import ChatWindow from './components/ChatWindow';
+import { hydrateSecureStorage } from './lib/storage';
 import './styles/globals.css';
 
 // Detect if this is a pop-out window (subagent, widget, or view)
@@ -21,8 +22,18 @@ function Root() {
   return <App />;
 }
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <Root />
-  </React.StrictMode>,
-);
+async function bootstrap() {
+  try {
+    await hydrateSecureStorage();
+  } catch (error) {
+    console.error('[storage] Failed to hydrate secure desktop storage', error);
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <Root />
+    </React.StrictMode>,
+  );
+}
+
+void bootstrap();

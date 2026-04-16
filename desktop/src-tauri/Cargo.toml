@@ -38,6 +38,7 @@ glob = "0.3"
 regex = "1"
 walkdir = "2"
 rusqlite = { version = "0.31", features = ["bundled"] }
+keyring = "2.3"
 
 [dev-dependencies]
 tempfile = "3"

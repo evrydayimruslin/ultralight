@@ -36,6 +36,8 @@ export default function AuthGate({ onAuthenticated }: AuthGateProps) {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sessionSecretRef = useRef<string>('');
 
+  const storageErrorMessage = 'Unable to save your sign-in token securely on this device. Please try again.';
+
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
       clearInterval(pollRef.current);
@@ -85,8 +87,14 @@ export default function AuthGate({ onAuthenticated }: AuthGateProps) {
           if (data.status === 'complete' && data.token) {
             stopPolling();
             sessionSecretRef.current = '';
-            storeToken(data.token);
-            onAuthenticated();
+            try {
+              await storeToken(data.token);
+              onAuthenticated();
+            } catch {
+              setLoading(false);
+              setError(storageErrorMessage);
+              setMode('choose');
+            }
           }
         } catch {
           // Network error — keep polling
@@ -140,12 +148,22 @@ export default function AuthGate({ onAuthenticated }: AuthGateProps) {
         return;
       }
 
-      storeToken(trimmed);
-      onAuthenticated();
+      try {
+        await storeToken(trimmed);
+        onAuthenticated();
+      } catch {
+        setError(storageErrorMessage);
+        setLoading(false);
+      }
     } catch {
       // Network error — store anyway, they might be offline temporarily
-      storeToken(trimmed);
-      onAuthenticated();
+      try {
+        await storeToken(trimmed);
+        onAuthenticated();
+      } catch {
+        setError(storageErrorMessage);
+        setLoading(false);
+      }
     }
   };
 

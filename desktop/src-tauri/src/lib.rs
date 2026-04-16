@@ -1,4 +1,5 @@
 mod db;
+mod secure_storage;
 mod tools;
 
 use std::sync::Mutex;
@@ -132,6 +133,10 @@ pub fn run() {
       db::db_create_card_report,
       db::db_list_card_reports,
       db::db_delete_card_report,
+      // Secure storage commands
+      secure_storage::secure_get_auth_token,
+      secure_storage::secure_set_auth_token,
+      secure_storage::secure_clear_auth_token,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
