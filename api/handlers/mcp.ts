@@ -13,7 +13,7 @@ import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
 import { checkProvisionalDailyLimit, updateLastActive } from '../services/provisional.ts';
 import { getPermissionsForUser } from './user.ts';
 import { type Tier, type AppPricingConfig, getCallPriceLight, getFreeCalls, getFreeCallsScope, formatLight, LIGHT_PER_DOLLAR_DESKTOP } from '../../shared/types/index.ts';
-import { executeInSandbox, type UserContext } from '../runtime/sandbox.ts';
+import { type UserContext } from '../runtime/sandbox.ts';
 import { createR2Service } from '../services/storage.ts';
 import { createUserService } from '../services/user.ts';
 import { createAIService } from '../services/ai.ts';
@@ -21,7 +21,7 @@ import { decryptEnvVars, decryptEnvVar } from '../services/envvars.ts';
 import { getCodeCache } from '../services/codecache.ts';
 import { getPermissionCache } from '../services/permission-cache.ts';
 import { createMemoryService, type MemoryService as MemoryServiceImpl } from '../services/memory.ts';
-import { executeGpuFunction, type GpuExecuteResult } from '../services/gpu/executor.ts';
+import { executeGpuFunction } from '../services/gpu/executor.ts';
 import { acquireGpuSlot } from '../services/gpu/concurrency.ts';
 import { settleGpuExecution } from '../services/gpu/billing.ts';
 import { createD1DataService } from '../services/d1-data.ts';
@@ -37,11 +37,12 @@ import type {
   MCPServerInfo,
   MCPResourceDescriptor,
   MCPResourceContent,
-  ParsedSkills,
   SkillFunction,
   BYOKProvider,
   AppManifest,
   App,
+  AIRequest,
+  AIContentPart,
 } from '../../shared/types/index.ts';
 import { manifestToMCPTools, normalizeManifestParameters } from '../../shared/types/index.ts';
 import { getEnv } from '../lib/env.ts';
@@ -215,6 +216,96 @@ interface JsonRpcError {
   code: number;
   message: string;
   data?: unknown;
+}
+
+type JsonRpcId = string | number | null | undefined;
+type AuthResult = Awaited<ReturnType<typeof authenticate>>;
+
+function normalizeJsonRpcId(id: JsonRpcId): string | number | null {
+  return id ?? null;
+}
+
+function toTier(value: string): Tier {
+  return value === 'free'
+    || value === 'fun'
+    || value === 'pro'
+    || value === 'scale'
+    || value === 'enterprise'
+    ? value
+    : 'free';
+}
+
+async function readJsonResponse<T>(response: Response): Promise<T> {
+  return await response.json() as T;
+}
+
+function isAiContentPartArray(value: unknown): value is AIContentPart[] {
+  return Array.isArray(value) && value.every((part) => {
+    if (!part || typeof part !== 'object') {
+      return false;
+    }
+    const candidate = part as Record<string, unknown>;
+    if (candidate.type === 'text') {
+      return typeof candidate.text === 'string';
+    }
+    if (candidate.type === 'file') {
+      return typeof candidate.data === 'string';
+    }
+    return false;
+  });
+}
+
+function toAiMessages(value: unknown): AIRequest['messages'] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const messages: AIRequest['messages'] = [];
+  for (const message of value) {
+    if (!message || typeof message !== 'object') {
+      return null;
+    }
+
+    const candidate = message as Record<string, unknown>;
+    if (candidate.role !== 'system' && candidate.role !== 'user' && candidate.role !== 'assistant') {
+      return null;
+    }
+
+    const content = candidate.content;
+    if (typeof content !== 'string' && !isAiContentPartArray(content)) {
+      return null;
+    }
+
+    messages.push({
+      role: candidate.role,
+      content,
+      ...(candidate.cache_control && typeof candidate.cache_control === 'object'
+        && (candidate.cache_control as Record<string, unknown>).type === 'ephemeral'
+        ? { cache_control: { type: 'ephemeral' as const } }
+        : {}),
+    });
+  }
+
+  return messages;
+}
+
+function parseIncrementCallerUsageCount(payload: unknown): number | null {
+  if (typeof payload === 'number') {
+    return payload;
+  }
+  if (!Array.isArray(payload) || payload.length === 0) {
+    return null;
+  }
+
+  const first = payload[0];
+  if (typeof first === 'number') {
+    return first;
+  }
+  if (first && typeof first === 'object' && 'call_count' in first && typeof first.call_count === 'number') {
+    return first.call_count;
+  }
+
+  return null;
 }
 
 // JSON-RPC error codes
@@ -587,9 +678,8 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
   }
 
   // Run auth and app lookup concurrently — they have no dependency on each other
-  type AuthResult = { id: string; email: string; tier: string; tokenId?: string; tokenAppIds?: string[] | null; tokenFunctionNames?: string[] | null; scopes?: string[] };
   let authUser: AuthResult;
-  let app: Awaited<ReturnType<typeof appsService.findById>>;
+  let app: App | null;
 
   try {
     [authUser, app] = await Promise.all([
@@ -665,7 +755,7 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
     email: authUser.email,
     displayName,
     avatarUrl,
-    tier: authUser.tier as Tier,
+    tier: toTier(authUser.tier),
     provisional: authUser.provisional || false,
   };
 
@@ -682,7 +772,7 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
   // Hosting suspension flag: suspended apps still serve calls, but revenue
   // goes to the owner's (negative) balance to recover hosting debt.
   // When enough per-call revenue pushes balance positive, auto-unsuspend.
-  const isSuspended = (app as Record<string, unknown>).hosting_suspended === true;
+  const isSuspended = app.hosting_suspended === true;
 
   // Token scoping: if the API token is scoped to specific apps, enforce it
   if (tokenAppIds && tokenAppIds.length > 0 && !tokenAppIds.includes('*')) {
@@ -723,7 +813,7 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
       checkRateLimit(userId, `mcp:${rpcRequest.method}`, undefined, undefined, endpointRateLimitOptions),
       // [1] Weekly call limit (tools/call only)
       isToolsCall
-        ? checkAndIncrementWeeklyCalls(userId, user.tier, {
+        ? checkAndIncrementWeeklyCalls(userId, toTier(user.tier), {
           mode: 'fail_closed',
           resource: 'MCP weekly call limit',
         })
@@ -872,9 +962,9 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
  * Handle initialize request - return server capabilities
  */
 function handleInitialize(
-  id: string | number,
+  id: JsonRpcId,
   appId: string,
-  app: { name: string; slug: string; description: string | null; skills_md?: string | null }
+  app: App,
 ): Response {
   // Level 2: Inline the app's Skills.md directly into the instructions field.
   // This guarantees agents receive function signatures, parameter types, and usage
@@ -915,9 +1005,9 @@ function handleInitialize(
  * Handle resources/list request - return available resources for this app
  */
 function handleResourcesList(
-  id: string | number,
+  id: JsonRpcId,
   appId: string,
-  app: { name: string; slug: string; skills_md?: string | null; manifest?: string | null }
+  app: App,
 ): Response {
   const resources: MCPResourceDescriptor[] = [];
 
@@ -954,9 +1044,9 @@ function handleResourcesList(
  * Handle resources/read request - return resource content
  */
 async function handleResourcesRead(
-  id: string | number,
+  id: JsonRpcId,
   appId: string,
-  app: { name: string; slug: string; skills_md?: string | null; manifest?: string | null; current_version?: string; visibility?: string; exports?: string[]; total_runs?: number },
+  app: App,
   params: unknown,
   userId?: string
 ): Promise<Response> {
@@ -1063,8 +1153,8 @@ async function handleResourcesRead(
  * Handle tools/list request - return available tools
  */
 async function handleToolsList(
-  id: string | number,
-  app: { id: string; slug: string; owner_id: string; visibility: string; skills_parsed: ParsedSkills | null; manifest?: string | null; runtime?: string; exports?: string[] },
+  id: JsonRpcId,
+  app: App,
   params?: { cursor?: string },
   callerUserId?: string
 ): Promise<Response> {
@@ -1091,9 +1181,8 @@ async function handleToolsList(
   }
 
   // GPU apps: generate tools from exports (Python function names)
-  const appAny = app as Record<string, unknown>;
-  if (tools.length === 0 && appAny.runtime === 'gpu' && Array.isArray(appAny.exports) && (appAny.exports as string[]).length > 0) {
-    for (const exportName of appAny.exports as string[]) {
+  if (tools.length === 0 && app.runtime === 'gpu' && app.exports.length > 0) {
+    for (const exportName of app.exports) {
       tools.push({
         name: exportName,
         description: `GPU function: ${exportName}`,
@@ -1125,9 +1214,9 @@ async function handleToolsList(
 
   // ── GPU tool enrichment ──
   // If this is a GPU app, annotate tools with cost + latency hints
-  if ((app as Record<string, unknown>).runtime === 'gpu') {
-    const gpuType = (app as Record<string, unknown>).gpu_type as string || 'GPU';
-    const benchmark = (app as Record<string, unknown>).gpu_benchmark as Record<string, unknown> | null;
+  if (app.runtime === 'gpu') {
+    const gpuType = app.gpu_type || 'GPU';
+    const benchmark = app.gpu_benchmark as Record<string, unknown> | null;
 
     for (const tool of tools) {
       // Skip SDK tools
@@ -1161,8 +1250,8 @@ async function handleToolsList(
  * Handle tools/call request - execute a tool
  */
 async function handleToolsCall(
-  id: string | number,
-  app: { id: string; slug: string; owner_id: string; visibility: string; storage_key: string; skills_parsed: ParsedSkills | null; manifest?: string | null },
+  id: JsonRpcId,
+  app: App,
   params: unknown,
   userId: string,
   user: UserContext | null,
@@ -1305,8 +1394,7 @@ async function handleToolsCall(
   if (!isManifestFunction) {
     const appFunction = app.skills_parsed?.functions.find(f => f.name === name);
     // GPU apps: allow any exported function name
-    const appR = app as Record<string, unknown>;
-    const isGpuExport = appR.runtime === 'gpu' && Array.isArray(appR.exports) && (appR.exports as string[]).includes(name);
+    const isGpuExport = app.runtime === 'gpu' && app.exports.includes(name);
     if (!appFunction && !isGpuExport) {
       return jsonRpcErrorResponse(id, INVALID_PARAMS, `Unknown tool: ${name}`);
     }
@@ -1331,7 +1419,7 @@ async function handleToolsCall(
  * Execute an SDK tool (ultralight.*)
  */
 async function executeSDKTool(
-  id: string | number,
+  id: JsonRpcId,
   toolName: string,
   args: Record<string, unknown>,
   appId: string,
@@ -1464,11 +1552,21 @@ async function executeSDKTool(
 
         // Create AI service with user's provider and key
         const aiService = createAIService(userProfile.byok_provider, apiKey);
+        const aiMessages = toAiMessages(args.messages);
+        if (!aiMessages) {
+          result = {
+            content: '',
+            model: 'none',
+            usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
+            error: 'Invalid messages payload. Expected an array of AI messages.',
+          };
+          break;
+        }
 
         // Make the AI call
         try {
           result = await aiService.call({
-            messages: args.messages as Array<{ role: 'system' | 'user' | 'assistant'; content: string | unknown[] }>,
+            messages: aiMessages,
             model: args.model as string | undefined,
             temperature: args.temperature as number | undefined,
             max_tokens: args.max_tokens as number | undefined,
@@ -1530,16 +1628,16 @@ async function executeSDKTool(
           break;
         }
 
-        const rpcResponse = await callResponse.json();
+        const rpcResponse = await readJsonResponse<JsonRpcResponse>(callResponse);
         if (rpcResponse.error) {
           result = { error: `RPC error: ${rpcResponse.error.message || JSON.stringify(rpcResponse.error)}` };
           break;
         }
 
         // Unwrap MCP tool result
-        const callResult = rpcResponse.result;
+        const callResult = rpcResponse.result as MCPToolCallResponse | undefined;
         if (callResult?.content && Array.isArray(callResult.content)) {
-          const textBlock = callResult.content.find((c: { type: string }) => c.type === 'text');
+          const textBlock = callResult.content.find((c) => c.type === 'text');
           if (textBlock?.text) {
             try {
               result = JSON.parse(textBlock.text);
@@ -1600,8 +1698,8 @@ async function executeSDKTool(
  * Called early in executeAppFunction before code fetching (GPU apps have no JS code).
  */
 async function handleGpuExecution(
-  id: string | number,
-  app: Record<string, unknown>,
+  id: JsonRpcId,
+  app: App,
   functionName: string,
   args: Record<string, unknown>,
   userId: string,
@@ -1636,7 +1734,7 @@ async function handleGpuExecution(
     // Execute on GPU
     const gpuExecStart = Date.now();
     const gpuResult = await executeGpuFunction({
-      app: app as unknown as Parameters<typeof executeGpuFunction>[0]['app'],
+      app,
       functionName,
       args,
       executionId: crypto.randomUUID(),
@@ -1716,10 +1814,10 @@ async function handleGpuExecution(
 }
 
 async function executeAppFunction(
-  id: string | number,
+  id: JsonRpcId,
   functionName: string,
   args: Record<string, unknown>,
-  app: { id: string; storage_key: string },
+  app: App,
   userId: string,
   user: UserContext | null,
   meta?: { userQuery?: string; sessionId?: string; authToken?: string }
@@ -1727,9 +1825,8 @@ async function executeAppFunction(
   try {
     // ── GPU Runtime Branch (early return) ──
     // Must check BEFORE code fetching since GPU apps don't have JS code in R2.
-    const appFull = app as Record<string, unknown>;
-    if (appFull.runtime === 'gpu') {
-      return await handleGpuExecution(id, appFull, functionName, args, userId, user, meta);
+    if (app.runtime === 'gpu') {
+      return await handleGpuExecution(id, app, functionName, args, userId, user, meta);
     }
 
     const r2Service = createR2Service();
@@ -1784,7 +1881,7 @@ async function executeAppFunction(
     }
 
     // --- Env var decryption (CPU-only) ---
-    const encryptedEnvVars = (app as Record<string, unknown>).env_vars as Record<string, string> || {};
+    const encryptedEnvVars = app.env_vars || {};
     const envVarsPromise = decryptEnvVars(encryptedEnvVars).catch(err => {
       console.error('Failed to decrypt env vars:', err);
       return {} as Record<string, string>;
@@ -1929,6 +2026,7 @@ async function executeAppFunction(
     // Execute in sandbox (local — Worker handles data layer only)
     const baseUrl = getEnv('BASE_URL') || undefined;
     // workerBaseUrl not needed — SELF service binding handles internal routing
+    const isSuspended = app.hosting_suspended === true;
 
     const memService = getMemoryService();
     const memoryAdapter = memService ? {
@@ -1997,7 +2095,7 @@ async function executeAppFunction(
       // ── Per-call pricing: charge caller → app owner ──
       let callChargeLight = 0;
       if (result.success && userId !== app.owner_id) {
-        const pricingConfig = (app as Record<string, unknown>).pricing_config as AppPricingConfig | null;
+        const pricingConfig = app.pricing_config as AppPricingConfig | null;
         callChargeLight = getCallPriceLight(pricingConfig, functionName);
 
         if (callChargeLight > 0) {
@@ -2025,8 +2123,8 @@ async function executeAppFunction(
                 }
               );
               if (usageRes.ok) {
-                const callCount = await usageRes.json();
-                if (callCount <= freeCalls) {
+                const callCount = parseIncrementCallerUsageCount(await readJsonResponse<unknown>(usageRes));
+                if (callCount !== null && callCount <= freeCalls) {
                   callChargeLight = 0;
                 }
               }
@@ -2301,7 +2399,7 @@ function skillFunctionToMCPTool(fn: SkillFunction): MCPTool {
 /**
  * Format successful tool result for MCP response
  */
-function formatToolResult(result: unknown, logs?: Array<{ message: string }>): MCPToolCallResponse {
+function formatToolResult(result: unknown, logs?: Array<{ message: string }> | string[]): MCPToolCallResponse {
   const content: MCPContent[] = [];
 
   // Add result as text
@@ -2313,10 +2411,11 @@ function formatToolResult(result: unknown, logs?: Array<{ message: string }>): M
   }
 
   // Add logs if present
-  if (logs && logs.length > 0) {
+  const logMessages = logs?.map((log) => typeof log === 'string' ? log : log.message) || [];
+  if (logMessages.length > 0) {
     content.push({
       type: 'text',
-      text: `\n--- Logs ---\n${logs.map(l => l.message).join('\n')}`,
+      text: `\n--- Logs ---\n${logMessages.join('\n')}`,
     });
   }
 
@@ -2347,10 +2446,10 @@ function formatToolError(err: unknown): MCPToolCallResponse {
 /**
  * Create JSON-RPC success response
  */
-function jsonRpcResponse(id: string | number | null, result: unknown): Response {
+function jsonRpcResponse(id: JsonRpcId, result: unknown): Response {
   const response: JsonRpcResponse = {
     jsonrpc: '2.0',
-    id,
+    id: normalizeJsonRpcId(id),
     result,
   };
 
@@ -2363,14 +2462,14 @@ function jsonRpcResponse(id: string | number | null, result: unknown): Response 
  * Create JSON-RPC error response
  */
 function jsonRpcErrorResponse(
-  id: string | number | null,
+  id: JsonRpcId,
   code: number,
   message: string,
   data?: unknown
 ): Response {
   const response: JsonRpcResponse = {
     jsonrpc: '2.0',
-    id,
+    id: normalizeJsonRpcId(id),
     error: { code, message, data },
   };
 
