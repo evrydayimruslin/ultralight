@@ -3,9 +3,21 @@
 
 import { json, error } from './app.ts';
 import { authenticate } from './auth.ts';
-import { createUserService } from '../services/user.ts';
+import { createUserService, type UserProfile } from '../services/user.ts';
 import { validateAPIKey } from '../services/ai.ts';
-import { BYOK_PROVIDERS, type BYOKProvider, formatLight, MIN_WITHDRAWAL_LIGHT, LIGHT_PER_DOLLAR_WEB, LIGHT_PER_DOLLAR_DESKTOP, LIGHT_PER_DOLLAR_PAYOUT, HOSTING_RATE_LIGHT_PER_MB_PER_HOUR, DATA_RATE_LIGHT_PER_MB_PER_HOUR } from '../../shared/types/index.ts';
+import {
+  BYOK_PROVIDERS,
+  type BYOKProvider,
+  type BYOKProviderInfo,
+  type Tier,
+  formatLight,
+  MIN_WITHDRAWAL_LIGHT,
+  LIGHT_PER_DOLLAR_WEB,
+  LIGHT_PER_DOLLAR_DESKTOP,
+  LIGHT_PER_DOLLAR_PAYOUT,
+  HOSTING_RATE_LIGHT_PER_MB_PER_HOUR,
+  DATA_RATE_LIGHT_PER_MB_PER_HOUR,
+} from '../../shared/types/index.ts';
 import {
   createToken,
   listTokens,
@@ -27,6 +39,226 @@ function cleanupProcessedEvents() {
   for (const [id, timestamp] of processedStripeEvents) {
     if (timestamp < cutoff) processedStripeEvents.delete(id);
   }
+}
+
+type JsonRecord = Record<string, unknown>;
+type UserProfileUpdates = Partial<Pick<UserProfile, 'display_name' | 'country' | 'featured_app_id' | 'profile_slug'>>;
+
+interface PublicProfileRow {
+  id: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  country: string | null;
+  tier: string;
+  featured_app_id: string | null;
+  created_at: string;
+}
+
+interface PublicProfileFeaturedAppRow {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+interface PublicProfileAcquisitionRow {
+  sale_price_light: number;
+  created_at: string;
+  apps: {
+    name?: string;
+    slug?: string;
+  } | null;
+}
+
+interface ConversationEmbeddingBody {
+  conversationId?: string;
+  conversationName?: string;
+  summary?: string;
+  metadata?: Record<string, unknown>;
+}
+
+interface SystemAgentStatesBody {
+  states?: unknown[];
+}
+
+interface UserProfilePatchBody {
+  display_name?: string | null;
+  country?: string | null;
+  featured_app_id?: string | null;
+}
+
+interface ByokCreateBody {
+  provider?: string;
+  api_key?: string;
+  model?: string;
+  validate?: boolean;
+}
+
+interface ByokUpdateBody {
+  api_key?: string;
+  model?: string;
+  validate?: boolean;
+}
+
+interface ByokPrimaryBody {
+  provider?: string;
+}
+
+interface TokenCreateBody {
+  name?: string;
+  expires_in_days?: number;
+  app_ids?: string[];
+  function_names?: string[];
+}
+
+interface SupabaseConfigCreateBody {
+  name?: string;
+  url?: string;
+  anon_key?: string;
+  service_key?: string;
+}
+
+interface SupabaseOauthConnectBody {
+  project_ref?: string;
+  app_id?: string;
+}
+
+interface PermissionGrant {
+  function_name: string;
+  allowed: boolean;
+  allowed_args?: Record<string, unknown> | null;
+}
+
+interface PermissionGrantBody {
+  email?: string;
+  user_id?: string;
+  permissions?: PermissionGrant[];
+}
+
+type GrantedUserSummary = JsonRecord & {
+  email: string | null;
+  display_name: string | null;
+  function_count: number;
+  status?: string;
+};
+
+interface HostingBalanceRow {
+  balance_light: number | null;
+  escrow_light: number | null;
+  hosting_last_billed_at: string | null;
+  auto_topup_enabled: boolean | null;
+  auto_topup_threshold_light: number | null;
+  auto_topup_amount_light: number | null;
+  auto_topup_last_failed_at: string | null;
+  stripe_customer_id: string | null;
+}
+
+interface StripeCustomerRow {
+  stripe_customer_id: string | null;
+  email: string;
+}
+
+interface StripeConnectStatusRow {
+  stripe_connect_account_id: string | null;
+  stripe_connect_onboarded: boolean;
+  stripe_connect_payouts_enabled: boolean;
+  total_earned_light: number;
+}
+
+interface StripeConnectWithdrawRow extends StripeConnectStatusRow {
+  balance_light: number;
+  escrow_light: number;
+}
+
+interface HostingCheckoutBody {
+  amount_cents?: number;
+  source?: 'web' | 'desktop';
+}
+
+interface ConnectOnboardBody {
+  country?: string;
+}
+
+interface WithdrawalBody {
+  amount_light?: number;
+}
+
+interface MarketplaceBidBody {
+  app_id?: string;
+  amount_light?: number;
+  message?: string;
+  expires_in_hours?: number;
+}
+
+interface MarketplaceAskBody {
+  app_id?: string;
+  price_light?: number | null;
+  floor_light?: number | null;
+  instant_buy?: boolean;
+  note?: string | null;
+}
+
+interface MarketplaceBidActionBody {
+  bid_id?: string;
+}
+
+interface MarketplaceBuyBody {
+  app_id?: string;
+}
+
+interface MarketplaceMetricsVisibilityBody {
+  app_id?: string;
+  show_metrics?: boolean;
+}
+
+async function readJsonBody<T>(request: Request): Promise<T> {
+  return await request.json() as T;
+}
+
+async function readJsonResponse<T>(response: Response): Promise<T> {
+  return await response.json() as T;
+}
+
+async function readJsonRows<T>(response: Response): Promise<T[]> {
+  const payload = await readJsonResponse<unknown>(response);
+  return Array.isArray(payload) ? payload as T[] : [];
+}
+
+async function readFirstJsonRow<T>(response: Response): Promise<T | null> {
+  const [row] = await readJsonRows<T>(response);
+  return row ?? null;
+}
+
+function isTier(value: unknown): value is Tier {
+  return value === 'free'
+    || value === 'fun'
+    || value === 'pro'
+    || value === 'scale'
+    || value === 'enterprise';
+}
+
+function toTier(value: unknown): Tier {
+  return isTier(value) ? value : 'free';
+}
+
+function isByokProvider(value: unknown): value is BYOKProvider {
+  return value === 'openrouter'
+    || value === 'openai'
+    || value === 'anthropic'
+    || value === 'deepseek'
+    || value === 'moonshot';
+}
+
+function getByokProviderEntry(value: unknown): { provider: BYOKProvider; info: BYOKProviderInfo } | null {
+  if (!isByokProvider(value)) {
+    return null;
+  }
+
+  const info = BYOK_PROVIDERS[value];
+  return info ? { provider: value, info } : null;
+}
+
+function getFnIndexBinding(): KVNamespace | null {
+  return globalThis.__env?.FN_INDEX ?? null;
 }
 
 export async function handleUser(request: Request): Promise<Response> {
@@ -380,7 +612,7 @@ export async function handleUser(request: Request): Promise<Response> {
         { headers }
       );
       if (!userRes.ok) return error('Failed to fetch profile', 500);
-      const users = await userRes.json();
+      const users = await readJsonRows<PublicProfileRow>(userRes);
       if (!users.length) return error('Profile not found', 404);
       const profile = users[0];
 
@@ -407,17 +639,31 @@ export async function handleUser(request: Request): Promise<Response> {
           : Promise.resolve(null),
       ]);
 
-      const stats = statsRes.ok ? await statsRes.json() : { lifetime_gross_light: 0, published_count: 0, acquired_count: 0 };
-      const published = publishedRes.ok ? await publishedRes.json() : [];
-      const acquisitionsRaw = acquisitionsRes.ok ? await acquisitionsRes.json() : [];
+      const stats = statsRes.ok
+        ? await readJsonResponse<{ lifetime_gross_light: number; published_count: number; acquired_count: number }>(statsRes)
+        : { lifetime_gross_light: 0, published_count: 0, acquired_count: 0 };
+      const published = publishedRes.ok
+        ? await readJsonRows<{
+            id: string;
+            name: string;
+            slug: string;
+            description: string | null;
+            runs_30d: number;
+            current_version: string;
+            first_published_at: string | null;
+          }>(publishedRes)
+        : [];
+      const acquisitionsRaw = acquisitionsRes.ok
+        ? await readJsonRows<PublicProfileAcquisitionRow>(acquisitionsRes)
+        : [];
       let featuredApp = null;
       if (featuredRes && featuredRes.ok) {
-        const fa = await featuredRes.json();
+        const fa = await readJsonRows<PublicProfileFeaturedAppRow>(featuredRes);
         if (fa.length) featuredApp = { id: fa[0].id, name: fa[0].name, slug: fa[0].slug };
       }
 
-      const acquisitions = acquisitionsRaw.map((a: Record<string, unknown>) => {
-        const app = a.apps as Record<string, unknown> | null;
+      const acquisitions = acquisitionsRaw.map((a) => {
+        const app = a.apps;
         return {
           app_name: app?.name || 'Unknown',
           app_slug: app?.slug || '',
@@ -464,12 +710,7 @@ export async function handleUser(request: Request): Promise<Response> {
   // ============================================
   if (path === '/api/user/conversation-embedding' && method === 'POST') {
     try {
-      const body = await request.json() as {
-        conversationId?: string;
-        conversationName?: string;
-        summary?: string;
-        metadata?: Record<string, unknown>;
-      };
+      const body = await readJsonBody<ConversationEmbeddingBody>(request);
       const { conversationId, conversationName, summary, metadata } = body;
 
       if (!conversationId || !summary || summary.length < 20) {
@@ -479,6 +720,9 @@ export async function handleUser(request: Request): Promise<Response> {
       // Generate embedding
       const { createEmbeddingService, storeConversationEmbedding } = await import('../services/embedding.ts');
       const embeddingService = createEmbeddingService();
+      if (!embeddingService) {
+        return error('Embedding service unavailable', 503);
+      }
       const { embedding } = await embeddingService.embed(summary.slice(0, 4000));
 
       // Store in Supabase
@@ -488,7 +732,7 @@ export async function handleUser(request: Request): Promise<Response> {
       );
 
       // Update topics hint in KV
-      const fnIndex = getEnv('FN_INDEX');
+      const fnIndex = getFnIndexBinding();
       if (fnIndex) {
         try {
           const existing = (await fnIndex.get(`conversation-topics:${userId}`, 'json') as {
@@ -523,12 +767,12 @@ export async function handleUser(request: Request): Promise<Response> {
   // ============================================
   if (path === '/api/user/system-agent-states' && method === 'PUT') {
     try {
-      const body = await request.json();
+      const body = await readJsonBody<SystemAgentStatesBody>(request);
       const states = body.states;
       if (!Array.isArray(states)) {
         return error('states must be an array', 400);
       }
-      const fnIndex = getEnv('FN_INDEX');
+      const fnIndex = getFnIndexBinding();
       if (fnIndex) {
         await fnIndex.put(`system-agents:${userId}`, JSON.stringify(states));
       }
@@ -560,10 +804,10 @@ export async function handleUser(request: Request): Promise<Response> {
   // ============================================
   if (path === '/api/user' && method === 'PATCH') {
     try {
-      const body = await request.json();
+      const body = await readJsonBody<UserProfilePatchBody>(request);
       const { display_name, country, featured_app_id } = body;
 
-      const updates: Record<string, unknown> = {};
+      const updates: UserProfileUpdates = {};
       if (display_name !== undefined) {
         updates.display_name = display_name;
         // Auto-generate profile_slug from display_name
@@ -590,14 +834,15 @@ export async function handleUser(request: Request): Promise<Response> {
             `${sbUrl}/rest/v1/apps?id=eq.${featured_app_id}&owner_id=eq.${userId}&deleted_at=is.null&select=id`,
             { headers: { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` } }
           );
-          if (!appRes.ok || (await appRes.json()).length === 0) {
+          const ownedApps = appRes.ok ? await readJsonRows<{ id: string }>(appRes) : [];
+          if (!appRes.ok || ownedApps.length === 0) {
             return error('Featured app must be an app you own', 400);
           }
         }
         updates.featured_app_id = featured_app_id;
       }
 
-      const user = await userService.updateUser(userId, updates as any);
+      const user = await userService.updateUser(userId, updates);
       return json(user);
     } catch (err) {
       console.error('Update user error:', err);
@@ -640,11 +885,12 @@ export async function handleUser(request: Request): Promise<Response> {
   // ============================================
   if (path === '/api/user/byok' && method === 'POST') {
     try {
-      const body = await request.json();
+      const body = await readJsonBody<ByokCreateBody>(request);
       const { provider, api_key, model, validate = true } = body;
+      const providerEntry = getByokProviderEntry(provider);
 
       // Validate provider
-      if (!provider || !BYOK_PROVIDERS[provider as BYOKProvider]) {
+      if (!providerEntry) {
         return error('Invalid provider. Must be one of: ' + Object.keys(BYOK_PROVIDERS).join(', '), 400);
       }
 
@@ -656,7 +902,7 @@ export async function handleUser(request: Request): Promise<Response> {
       // Optionally validate the API key works
       if (validate) {
         try {
-          await validateAPIKey(provider as BYOKProvider, api_key.trim());
+          await validateAPIKey(providerEntry.provider, api_key.trim());
         } catch (validationErr) {
           return error(`API key validation failed: ${validationErr instanceof Error ? validationErr.message : 'Invalid key'}`, 400);
         }
@@ -665,7 +911,7 @@ export async function handleUser(request: Request): Promise<Response> {
       // Add the provider
       const config = await userService.addBYOKProvider(
         userId,
-        provider as BYOKProvider,
+        providerEntry.provider,
         api_key.trim(),
         model
       );
@@ -673,7 +919,7 @@ export async function handleUser(request: Request): Promise<Response> {
       return json({
         success: true,
         config,
-        message: `${BYOK_PROVIDERS[provider as BYOKProvider].name} configured successfully`,
+        message: `${providerEntry.info.name} configured successfully`,
       });
     } catch (err) {
       console.error('Add BYOK error:', err);
@@ -687,13 +933,14 @@ export async function handleUser(request: Request): Promise<Response> {
   const byokMatch = path.match(/^\/api\/user\/byok\/([a-z]+)$/);
   if (byokMatch && method === 'PATCH') {
     const provider = byokMatch[1] as BYOKProvider;
+    const providerInfo = BYOK_PROVIDERS[provider];
 
-    if (!BYOK_PROVIDERS[provider]) {
+    if (!providerInfo) {
       return error('Invalid provider', 400);
     }
 
     try {
-      const body = await request.json();
+      const body = await readJsonBody<ByokUpdateBody>(request);
       const { api_key, model, validate = true } = body;
 
       // If updating API key, validate it
@@ -713,7 +960,7 @@ export async function handleUser(request: Request): Promise<Response> {
       return json({
         success: true,
         config,
-        message: `${BYOK_PROVIDERS[provider].name} updated successfully`,
+        message: `${providerInfo.name} updated successfully`,
       });
     } catch (err) {
       console.error('Update BYOK error:', err);
@@ -726,8 +973,9 @@ export async function handleUser(request: Request): Promise<Response> {
   // ============================================
   if (byokMatch && method === 'DELETE') {
     const provider = byokMatch[1] as BYOKProvider;
+    const providerInfo = BYOK_PROVIDERS[provider];
 
-    if (!BYOK_PROVIDERS[provider]) {
+    if (!providerInfo) {
       return error('Invalid provider', 400);
     }
 
@@ -736,7 +984,7 @@ export async function handleUser(request: Request): Promise<Response> {
 
       return json({
         success: true,
-        message: `${BYOK_PROVIDERS[provider].name} removed`,
+        message: `${providerInfo.name} removed`,
       });
     } catch (err) {
       console.error('Remove BYOK error:', err);
@@ -749,18 +997,18 @@ export async function handleUser(request: Request): Promise<Response> {
   // ============================================
   if (path === '/api/user/byok/primary' && method === 'POST') {
     try {
-      const body = await request.json();
-      const { provider } = body;
+      const body = await readJsonBody<ByokPrimaryBody>(request);
+      const providerEntry = getByokProviderEntry(body.provider);
 
-      if (!provider || !BYOK_PROVIDERS[provider as BYOKProvider]) {
+      if (!providerEntry) {
         return error('Invalid provider', 400);
       }
 
-      await userService.setPrimaryProvider(userId, provider as BYOKProvider);
+      await userService.setPrimaryProvider(userId, providerEntry.provider);
 
       return json({
         success: true,
-        message: `${BYOK_PROVIDERS[provider as BYOKProvider].name} set as primary provider`,
+        message: `${providerEntry.info.name} set as primary provider`,
       });
     } catch (err) {
       console.error('Set primary provider error:', err);
@@ -799,7 +1047,7 @@ export async function handleUser(request: Request): Promise<Response> {
   // POST /api/user/tokens - Create a new token
   if (path === '/api/user/tokens' && method === 'POST') {
     try {
-      const body = await request.json();
+      const body = await readJsonBody<TokenCreateBody>(request);
       const { name, expires_in_days, app_ids, function_names } = body;
 
       if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -908,7 +1156,7 @@ export async function handleUser(request: Request): Promise<Response> {
   // POST /api/user/supabase - Create a new saved Supabase server
   if (path === '/api/user/supabase' && method === 'POST') {
     try {
-      const body = await request.json();
+      const body = await readJsonBody<SupabaseConfigCreateBody>(request);
       const { name, url: supabaseUrl, anon_key, service_key } = body;
 
       if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -958,7 +1206,22 @@ export async function handleUser(request: Request): Promise<Response> {
         throw new Error(`Failed to create: ${text}`);
       }
 
-      const created = await response.json();
+      const created = await readJsonResponse<
+        | {
+            id: string;
+            name: string;
+            supabase_url: string;
+            service_key_encrypted: string | null;
+            created_at: string;
+          }
+        | Array<{
+            id: string;
+            name: string;
+            supabase_url: string;
+            service_key_encrypted: string | null;
+            created_at: string;
+          }>
+      >(response);
       const config = Array.isArray(created) ? created[0] : created;
 
       return json({
@@ -992,7 +1255,7 @@ export async function handleUser(request: Request): Promise<Response> {
         `${SB_URL}/rest/v1/user_supabase_configs?id=eq.${configId}&user_id=eq.${userId}&select=id`,
         { headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` } }
       );
-      const checkData = await checkRes.json();
+      const checkData = await readJsonRows<{ id: string }>(checkRes);
       if (!Array.isArray(checkData) || checkData.length === 0) {
         return error('Configuration not found', 404);
       }
@@ -1090,7 +1353,7 @@ export async function handleUser(request: Request): Promise<Response> {
         `${SB_URL}/rest/v1/user_supabase_oauth?user_id=eq.${userId}&select=id,token_expires_at`,
         { headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` } }
       );
-      const rows = await res.json();
+      const rows = await readJsonRows<{ id: string; token_expires_at: string }>(res);
       const connected = Array.isArray(rows) && rows.length > 0;
       return json({ connected: connected });
     } catch {
@@ -1144,7 +1407,7 @@ export async function handleUser(request: Request): Promise<Response> {
   // POST /api/user/supabase/oauth/connect — Wire a Supabase project to an app
   if (path === '/api/user/supabase/oauth/connect' && method === 'POST') {
     try {
-      const body = await request.json();
+      const body = await readJsonBody<SupabaseOauthConnectBody>(request);
       const { project_ref, app_id } = body;
 
       if (!project_ref || typeof project_ref !== 'string') {
@@ -1203,7 +1466,7 @@ export async function handleUser(request: Request): Promise<Response> {
         `${SB_URL}/rest/v1/user_supabase_configs?user_id=eq.${userId}&supabase_url=eq.${encodeURIComponent(supabaseUrl)}&select=id`,
         { headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` } }
       );
-      const existing = await existingRes.json();
+      const existing = await readJsonRows<{ id: string }>(existingRes);
       let configId: string;
 
       if (Array.isArray(existing) && existing.length > 0) {
@@ -1245,7 +1508,7 @@ export async function handleUser(request: Request): Promise<Response> {
           throw new Error(`Failed to create config: ${await createRes.text()}`);
         }
 
-        const created = await createRes.json();
+        const created = await readJsonResponse<{ id: string } | Array<{ id: string }>>(createRes);
         configId = Array.isArray(created) ? created[0].id : created.id;
       }
 
@@ -1296,7 +1559,7 @@ export async function handleUser(request: Request): Promise<Response> {
     try {
       const { getWeeklyUsage } = await import('../services/weekly-calls.ts');
       const user = await userService.getUser(userId);
-      const tier = user?.tier || 'free';
+      const tier = toTier(user?.tier);
       const usage = await getWeeklyUsage(userId, tier);
       return json({
         count: usage.count,
@@ -1373,7 +1636,7 @@ export async function handleUser(request: Request): Promise<Response> {
           }
         );
         if (!rpcRes.ok) throw new Error(await rpcRes.text());
-        const users = await rpcRes.json();
+        const users = await readJsonRows<GrantedUserSummary>(rpcRes);
 
         // Also fetch pending invites
         const pendingRes = await fetch(
@@ -1410,11 +1673,17 @@ export async function handleUser(request: Request): Promise<Response> {
   if (permsMatch && method === 'PUT') {
     try {
       const appId = permsMatch[1];
-      const body = await request.json();
+      const body = await readJsonBody<PermissionGrantBody>(request);
       const { email, user_id: targetUserId, permissions: permsList } = body;
 
       if (!Array.isArray(permsList)) {
         return error('permissions array required', 400);
+      }
+      if (email !== undefined && typeof email !== 'string') {
+        return error('email must be a string', 400);
+      }
+      if (targetUserId !== undefined && typeof targetUserId !== 'string') {
+        return error('user_id must be a string', 400);
       }
 
       const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
@@ -1439,7 +1708,7 @@ export async function handleUser(request: Request): Promise<Response> {
           }
         );
         if (!userRes.ok) throw new Error(await userRes.text());
-        const userRows = await userRes.json();
+        const userRows = await readJsonRows<{ id: string; tier: string }>(userRes);
         if (userRows.length === 0) {
           // User doesn't exist — create pending invite
           const pendingRows = permsList.map((p: { function_name: string; allowed: boolean }) => ({
@@ -1650,9 +1919,9 @@ export async function handleUser(request: Request): Promise<Response> {
         ]),
       ]);
 
-      const transactions = txRes.ok ? await txRes.json() : [];
+      const typedTransactions = txRes.ok ? await readJsonRows<JsonRecord>(txRes) : [];
       const totalHeader = txRes.headers.get('content-range');
-      const total = totalHeader ? parseInt(totalHeader.split('/')[1] || '0', 10) : transactions.length;
+      const total = totalHeader ? parseInt(totalHeader.split('/')[1] || '0', 10) : typedTransactions.length;
 
       // Calculate current hourly rate
       const [appsRes, pagesRes, userDataRes] = countRes;
@@ -1682,7 +1951,7 @@ export async function handleUser(request: Request): Promise<Response> {
       const dataOverageLightPerHour = dataOverageMb * DATA_RATE_LIGHT_PER_MB_PER_HOUR;
 
       return json({
-        transactions,
+        transactions: typedTransactions,
         total,
         current_rate: {
           hosting_mb: Math.round(hostingMb * 100) / 100,
@@ -1719,7 +1988,7 @@ export async function handleUser(request: Request): Promise<Response> {
         }
       );
       if (!userRes.ok) throw new Error('Failed to read user');
-      const rows = await userRes.json();
+      const rows = await readJsonRows<HostingBalanceRow>(userRes);
       if (rows.length === 0) return error('User not found', 404);
       const ud = rows[0];
 
@@ -1764,7 +2033,7 @@ export async function handleUser(request: Request): Promise<Response> {
             },
           }
         );
-        const custRows = await custRes.json();
+        const custRows = await readJsonRows<{ stripe_customer_id: string | null }>(custRes);
         if (!custRows[0]?.stripe_customer_id) {
           return error(
             'No saved payment method. Make a deposit first to save your card, then enable auto top-up.',
@@ -1826,7 +2095,7 @@ export async function handleUser(request: Request): Promise<Response> {
   if (path === '/api/user/hosting/checkout' && method === 'POST') {
     try {
       const user = await authenticate(request);
-      const body = await request.json() as { amount_cents?: number; source?: 'web' | 'desktop' };
+      const body = await readJsonBody<HostingCheckoutBody>(request);
       const amountCents = body.amount_cents;
       const source = body.source || 'web';
 
@@ -1857,7 +2126,7 @@ export async function handleUser(request: Request): Promise<Response> {
         }
       );
       if (!userDataRes.ok) throw new Error('Failed to read user');
-      const userData = (await userDataRes.json())[0] as { stripe_customer_id: string | null; email: string };
+      const userData = await readFirstJsonRow<StripeCustomerRow>(userDataRes);
       let stripeCustomerId = userData?.stripe_customer_id;
 
       if (!stripeCustomerId) {
@@ -1869,7 +2138,7 @@ export async function handleUser(request: Request): Promise<Response> {
             'Content-Type': 'application/x-www-form-urlencoded',
           },
           body: new URLSearchParams({
-            'email': userData.email || '',
+            'email': userData?.email || '',
             'metadata[user_id]': user.id,
             'metadata[platform]': 'ultralight',
           }).toString(),
@@ -2080,10 +2349,7 @@ export async function handleUser(request: Request): Promise<Response> {
         { headers: { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` } }
       );
       if (!userRes.ok) throw new Error('Failed to read user');
-      const userData = (await userRes.json())[0] as {
-        stripe_connect_account_id: string | null;
-        email: string;
-      };
+      const userData = await readFirstJsonRow<StripeCustomerRow & { stripe_connect_account_id: string | null }>(userRes);
 
       const {
         createConnectedAccount, createOnboardingLink
@@ -2096,13 +2362,13 @@ export async function handleUser(request: Request): Promise<Response> {
         // Accept optional country for international developers (defaults to US)
         let country = 'US';
         try {
-          const body = await request.json() as { country?: string };
+          const body = await readJsonBody<ConnectOnboardBody>(request);
           if (body.country && /^[A-Z]{2}$/.test(body.country)) {
             country = body.country;
           }
         } catch { /* no body or invalid JSON — use default */ }
 
-        const result = await createConnectedAccount(userData.email, user.id, country);
+        const result = await createConnectedAccount(userData?.email || '', user.id, country);
         accountId = result.account_id;
 
         // Save the account ID to DB
@@ -2149,12 +2415,7 @@ export async function handleUser(request: Request): Promise<Response> {
         { headers: sbHeaders }
       );
       if (!userRes.ok) throw new Error('Failed to read user');
-      const userData = (await userRes.json())[0] as {
-        stripe_connect_account_id: string | null;
-        stripe_connect_onboarded: boolean;
-        stripe_connect_payouts_enabled: boolean;
-        total_earned_light: number;
-      };
+      const userData = await readFirstJsonRow<StripeConnectStatusRow>(userRes);
 
       if (!userData?.stripe_connect_account_id) {
         return json({
@@ -2265,7 +2526,7 @@ export async function handleUser(request: Request): Promise<Response> {
   if (path === '/api/user/connect/withdraw' && method === 'POST') {
     try {
       const user = await authenticate(request);
-      const body = await request.json() as { amount_light?: number };
+      const body = await readJsonBody<WithdrawalBody>(request);
       const amountLight = body.amount_light;
 
       const {
@@ -2289,14 +2550,7 @@ export async function handleUser(request: Request): Promise<Response> {
         { headers: sbHeaders }
       );
       if (!userRes.ok) throw new Error('Failed to read user');
-      const userData = (await userRes.json())[0] as {
-        stripe_connect_account_id: string | null;
-        stripe_connect_onboarded: boolean;
-        stripe_connect_payouts_enabled: boolean;
-        balance_light: number;
-        escrow_light: number;
-        total_earned_light: number;
-      };
+      const userData = await readFirstJsonRow<StripeConnectWithdrawRow>(userRes);
 
       if (!userData?.stripe_connect_account_id || !userData?.stripe_connect_payouts_enabled) {
         return error(
@@ -2537,7 +2791,7 @@ export async function handleUser(request: Request): Promise<Response> {
   // POST /api/marketplace/bid — place a bid
   if (path === '/api/marketplace/bid' && method === 'POST') {
     try {
-      const body = await request.json();
+      const body = await readJsonBody<MarketplaceBidBody>(request);
       const { app_id, amount_light, message, expires_in_hours } = body;
       if (!app_id || !amount_light) return error('Missing app_id or amount_light', 400);
       const { placeBid } = await import('../services/marketplace.ts');
@@ -2552,7 +2806,7 @@ export async function handleUser(request: Request): Promise<Response> {
   // POST /api/marketplace/ask — set ask price
   if (path === '/api/marketplace/ask' && method === 'POST') {
     try {
-      const body = await request.json();
+      const body = await readJsonBody<MarketplaceAskBody>(request);
       const { app_id, price_light, floor_light, instant_buy, note } = body;
       if (!app_id) return error('Missing app_id', 400);
       const { setAskPrice } = await import('../services/marketplace.ts');
@@ -2567,7 +2821,7 @@ export async function handleUser(request: Request): Promise<Response> {
   // POST /api/marketplace/accept — accept a bid
   if (path === '/api/marketplace/accept' && method === 'POST') {
     try {
-      const body = await request.json();
+      const body = await readJsonBody<MarketplaceBidActionBody>(request);
       const { bid_id } = body;
       if (!bid_id) return error('Missing bid_id', 400);
       const { acceptBid } = await import('../services/marketplace.ts');
@@ -2582,7 +2836,7 @@ export async function handleUser(request: Request): Promise<Response> {
   // POST /api/marketplace/reject — reject a bid
   if (path === '/api/marketplace/reject' && method === 'POST') {
     try {
-      const body = await request.json();
+      const body = await readJsonBody<MarketplaceBidActionBody>(request);
       const { bid_id } = body;
       if (!bid_id) return error('Missing bid_id', 400);
       const { rejectBid } = await import('../services/marketplace.ts');
@@ -2597,7 +2851,7 @@ export async function handleUser(request: Request): Promise<Response> {
   // POST /api/marketplace/cancel — cancel own bid
   if (path === '/api/marketplace/cancel' && method === 'POST') {
     try {
-      const body = await request.json();
+      const body = await readJsonBody<MarketplaceBidActionBody>(request);
       const { bid_id } = body;
       if (!bid_id) return error('Missing bid_id', 400);
       const { cancelBid } = await import('../services/marketplace.ts');
@@ -2612,7 +2866,7 @@ export async function handleUser(request: Request): Promise<Response> {
   // POST /api/marketplace/buy — instant buy
   if (path === '/api/marketplace/buy' && method === 'POST') {
     try {
-      const body = await request.json();
+      const body = await readJsonBody<MarketplaceBuyBody>(request);
       const { app_id } = body;
       if (!app_id) return error('Missing app_id', 400);
       const { buyNow } = await import('../services/marketplace.ts');
@@ -2653,7 +2907,7 @@ export async function handleUser(request: Request): Promise<Response> {
   // PATCH /api/marketplace/metrics-visibility — toggle show_metrics on a listing (owner only)
   if (path === '/api/marketplace/metrics-visibility' && method === 'PATCH') {
     try {
-      const body = await request.json();
+      const body = await readJsonBody<MarketplaceMetricsVisibilityBody>(request);
       const appId = body.app_id;
       const showMetrics = body.show_metrics;
 
@@ -2671,7 +2925,7 @@ export async function handleUser(request: Request): Promise<Response> {
         `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}&owner_id=eq.${userId}&select=id`,
         { headers }
       );
-      const appRows = appCheck.ok ? await appCheck.json() : [];
+      const appRows = appCheck.ok ? await readJsonRows<{ id: string }>(appCheck) : [];
       if (appRows.length === 0) return error('App not found or not owned by you', 403);
 
       // Update listing
@@ -2727,8 +2981,8 @@ export async function handleUser(request: Request): Promise<Response> {
         ),
       ]);
 
-      const listings = listingRes.ok ? await listingRes.json() : [];
-      const apps = appRes.ok ? await appRes.json() : [];
+      const listings = listingRes.ok ? await readJsonRows<{ show_metrics: boolean | null }>(listingRes) : [];
+      const apps = appRes.ok ? await readJsonRows<{ owner_id: string }>(appRes) : [];
       const isOwner = apps[0]?.owner_id === userId;
       const metricsEnabled = listings[0]?.show_metrics === true;
 

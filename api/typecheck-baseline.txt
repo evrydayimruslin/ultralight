@@ -382,76 +382,8 @@ handlers/upload.ts(1057,7): error TS2353: Object literal may only specify known 
 handlers/upload.ts(1333,23): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
   Index signature for type 'string' is missing in type 'App'.
 handlers/upload.ts(1461,5): error TS2353: Object literal may only specify known properties, and 'draft_storage_key' does not exist in type 'Partial<App>'.
-handlers/user.ts(384,12): error TS18046: 'users' is of type 'unknown'.
-handlers/user.ts(385,23): error TS18046: 'users' is of type 'unknown'.
-handlers/user.ts(416,13): error TS18046: 'fa' is of type 'unknown'.
-handlers/user.ts(416,44): error TS18046: 'fa' is of type 'unknown'.
-handlers/user.ts(416,60): error TS18046: 'fa' is of type 'unknown'.
-handlers/user.ts(416,78): error TS18046: 'fa' is of type 'unknown'.
-handlers/user.ts(419,28): error TS18046: 'acquisitionsRaw' is of type 'unknown'.
-handlers/user.ts(482,35): error TS18047: 'embeddingService' is possibly 'null'.
-handlers/user.ts(494,43): error TS2339: Property 'get' does not exist on type 'string'.
-handlers/user.ts(505,25): error TS2339: Property 'put' does not exist on type 'string'.
-handlers/user.ts(527,22): error TS18046: 'body' is of type 'unknown'.
-handlers/user.ts(533,23): error TS2339: Property 'put' does not exist on type 'string'.
-handlers/user.ts(564,15): error TS2339: Property 'display_name' does not exist on type 'unknown'.
-handlers/user.ts(564,29): error TS2339: Property 'country' does not exist on type 'unknown'.
-handlers/user.ts(564,38): error TS2339: Property 'featured_app_id' does not exist on type 'unknown'.
-handlers/user.ts(593,29): error TS2571: Object is of type 'unknown'.
-handlers/user.ts(644,15): error TS2339: Property 'provider' does not exist on type 'unknown'.
-handlers/user.ts(644,25): error TS2339: Property 'api_key' does not exist on type 'unknown'.
-handlers/user.ts(644,34): error TS2339: Property 'model' does not exist on type 'unknown'.
-handlers/user.ts(644,41): error TS2339: Property 'validate' does not exist on type 'unknown'.
-handlers/user.ts(676,21): error TS2532: Object is possibly 'undefined'.
-handlers/user.ts(697,15): error TS2339: Property 'api_key' does not exist on type 'unknown'.
-handlers/user.ts(697,24): error TS2339: Property 'model' does not exist on type 'unknown'.
-handlers/user.ts(697,31): error TS2339: Property 'validate' does not exist on type 'unknown'.
-handlers/user.ts(753,15): error TS2339: Property 'provider' does not exist on type 'unknown'.
-handlers/user.ts(763,21): error TS2532: Object is possibly 'undefined'.
-handlers/user.ts(803,15): error TS2339: Property 'name' does not exist on type 'unknown'.
-handlers/user.ts(803,21): error TS2339: Property 'expires_in_days' does not exist on type 'unknown'.
-handlers/user.ts(803,38): error TS2339: Property 'app_ids' does not exist on type 'unknown'.
-handlers/user.ts(803,47): error TS2339: Property 'function_names' does not exist on type 'unknown'.
-handlers/user.ts(912,15): error TS2339: Property 'name' does not exist on type 'unknown'.
-handlers/user.ts(912,21): error TS2339: Property 'url' does not exist on type 'unknown'.
-handlers/user.ts(912,39): error TS2339: Property 'anon_key' does not exist on type 'unknown'.
-handlers/user.ts(912,49): error TS2339: Property 'service_key' does not exist on type 'unknown'.
-handlers/user.ts(1148,15): error TS2339: Property 'project_ref' does not exist on type 'unknown'.
-handlers/user.ts(1148,28): error TS2339: Property 'app_id' does not exist on type 'unknown'.
-handlers/user.ts(1249,61): error TS18046: 'created' is of type 'unknown'.
-handlers/user.ts(1300,50): error TS2345: Argument of type 'string' is not assignable to parameter of type 'Tier'.
-handlers/user.ts(1401,34): error TS2488: Type 'unknown' must have a '[Symbol.iterator]()' method that returns an iterator.
-handlers/user.ts(1414,15): error TS2339: Property 'email' does not exist on type 'unknown'.
-handlers/user.ts(1414,22): error TS2339: Property 'user_id' does not exist on type 'unknown'.
-handlers/user.ts(1414,45): error TS2339: Property 'permissions' does not exist on type 'unknown'.
-handlers/user.ts(1443,13): error TS18046: 'userRows' is of type 'unknown'.
-handlers/user.ts(1484,26): error TS18046: 'userRows' is of type 'unknown'.
-handlers/user.ts(1655,84): error TS18046: 'transactions' is of type 'unknown'.
-handlers/user.ts(1723,11): error TS18046: 'rows' is of type 'unknown'.
-handlers/user.ts(1724,18): error TS18046: 'rows' is of type 'unknown'.
-handlers/user.ts(1768,14): error TS18046: 'custRows' is of type 'unknown'.
-handlers/user.ts(1860,24): error TS2571: Object is of type 'unknown'.
-handlers/user.ts(2083,24): error TS2571: Object is of type 'unknown'.
-handlers/user.ts(2152,24): error TS2571: Object is of type 'unknown'.
-handlers/user.ts(2292,24): error TS2571: Object is of type 'unknown'.
-handlers/user.ts(2541,15): error TS2339: Property 'app_id' does not exist on type 'unknown'.
-handlers/user.ts(2541,23): error TS2339: Property 'amount_light' does not exist on type 'unknown'.
-handlers/user.ts(2541,37): error TS2339: Property 'message' does not exist on type 'unknown'.
-handlers/user.ts(2541,46): error TS2339: Property 'expires_in_hours' does not exist on type 'unknown'.
-handlers/user.ts(2556,15): error TS2339: Property 'app_id' does not exist on type 'unknown'.
-handlers/user.ts(2556,23): error TS2339: Property 'price_light' does not exist on type 'unknown'.
-handlers/user.ts(2556,36): error TS2339: Property 'floor_light' does not exist on type 'unknown'.
-handlers/user.ts(2556,49): error TS2339: Property 'instant_buy' does not exist on type 'unknown'.
-handlers/user.ts(2556,62): error TS2339: Property 'note' does not exist on type 'unknown'.
-handlers/user.ts(2571,15): error TS2339: Property 'bid_id' does not exist on type 'unknown'.
-handlers/user.ts(2586,15): error TS2339: Property 'bid_id' does not exist on type 'unknown'.
-handlers/user.ts(2601,15): error TS2339: Property 'bid_id' does not exist on type 'unknown'.
-handlers/user.ts(2616,15): error TS2339: Property 'app_id' does not exist on type 'unknown'.
-handlers/user.ts(2657,21): error TS18046: 'body' is of type 'unknown'.
-handlers/user.ts(2658,27): error TS18046: 'body' is of type 'unknown'.
-handlers/user.ts(2675,11): error TS18046: 'appRows' is of type 'unknown'.
-handlers/user.ts(2732,23): error TS18046: 'apps' is of type 'unknown'.
-handlers/user.ts(2733,30): error TS18046: 'listings' is of type 'unknown'.
+handlers/user.ts(2813,103): error TS2345: Argument of type 'string | null | undefined' is not assignable to parameter of type 'string | undefined'.
+  Type 'null' is not assignable to type 'string | undefined'.
 lib/env.ts(19,16): error TS2552: Cannot find name 'WorkerCode'. Did you mean 'WorkerLoader'?
 lib/env.ts(20,45): error TS2552: Cannot find name 'WorkerCode'. Did you mean 'WorkerLoader'?
 runtime/dynamic-executor.ts(69,7): error TS2322: Type '(args?: Record<string, unknown>) => Promise<never>' is not assignable to type '(...args: unknown[]) => Promise<unknown>'.
