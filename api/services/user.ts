@@ -2,97 +2,9 @@
 // Handles user settings, BYOK configuration, and preferences
 
 import type { BYOKProvider, BYOKConfig, User } from '../../shared/types/index.ts';
+import { BYOK_PROVIDERS } from '../../shared/types/index.ts';
 import { getEnv } from '../lib/env.ts';
-
-// ============================================
-// ENCRYPTION HELPERS
-// ============================================
-
-// Salt sizes: old format used a global string salt, new format uses a random 16-byte per-record salt.
-// Blob format v2: [salt(16) + IV(12) + ciphertext] — detected by checking total length.
-// Blob format v1 (legacy): [IV(12) + ciphertext] — uses global 'ultralight-salt' for backward compat.
-const LEGACY_SALT = 'ultralight-salt';
-const PER_RECORD_SALT_LENGTH = 16;
-const IV_LENGTH = 12;
-
-async function deriveEncryptionKey(salt: Uint8Array): Promise<CryptoKey> {
-  const encryptionKey = getEnv('BYOK_ENCRYPTION_KEY');
-  if (!encryptionKey) {
-    throw new Error('BYOK_ENCRYPTION_KEY is not configured');
-  }
-  const encoder = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(encryptionKey),
-    'PBKDF2',
-    false,
-    ['deriveKey']
-  );
-
-  return crypto.subtle.deriveKey(
-    {
-      name: 'PBKDF2',
-      salt,
-      iterations: 100000,
-      hash: 'SHA-256',
-    },
-    keyMaterial,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt']
-  );
-}
-
-async function encryptApiKey(apiKey: string): Promise<string> {
-  const salt = crypto.getRandomValues(new Uint8Array(PER_RECORD_SALT_LENGTH));
-  const key = await deriveEncryptionKey(salt);
-  const encoder = new TextEncoder();
-  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
-
-  const encrypted = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv },
-    key,
-    encoder.encode(apiKey)
-  );
-
-  // Blob v2: salt + IV + ciphertext
-  const combined = new Uint8Array(PER_RECORD_SALT_LENGTH + IV_LENGTH + encrypted.byteLength);
-  combined.set(salt);
-  combined.set(iv, PER_RECORD_SALT_LENGTH);
-  combined.set(new Uint8Array(encrypted), PER_RECORD_SALT_LENGTH + IV_LENGTH);
-
-  return btoa(String.fromCharCode(...combined));
-}
-
-async function decryptApiKey(encryptedKey: string): Promise<string> {
-  const combined = Uint8Array.from(atob(encryptedKey), c => c.charCodeAt(0));
-
-  // Detect format: AES-GCM adds a 16-byte auth tag, so minimum ciphertext is 1+16=17 bytes.
-  // Legacy v1 blob: IV(12) + ciphertext(>=17) = minimum 29 bytes
-  // New v2 blob: salt(16) + IV(12) + ciphertext(>=17) = minimum 45 bytes
-  // We can distinguish by trying v2 first (extract salt), fall back to v1 on failure.
-  // However, a simpler heuristic: v1 blobs encrypted before this change will all have
-  // total length < 45 only for very short plaintext. Instead, try v2 first, fall back to v1.
-
-  let decrypted: ArrayBuffer;
-  try {
-    // Try v2: per-record salt
-    const salt = combined.slice(0, PER_RECORD_SALT_LENGTH);
-    const iv = combined.slice(PER_RECORD_SALT_LENGTH, PER_RECORD_SALT_LENGTH + IV_LENGTH);
-    const data = combined.slice(PER_RECORD_SALT_LENGTH + IV_LENGTH);
-    const key = await deriveEncryptionKey(salt);
-    decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
-  } catch {
-    // Fall back to v1: legacy global salt
-    const legacySalt = new TextEncoder().encode(LEGACY_SALT);
-    const iv = combined.slice(0, IV_LENGTH);
-    const data = combined.slice(IV_LENGTH);
-    const key = await deriveEncryptionKey(legacySalt);
-    decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
-  }
-
-  return new TextDecoder().decode(decrypted);
-}
+import { decryptApiKey, encryptApiKey } from './api-key-crypto.ts';
 
 // ============================================
 // USER SERVICE
@@ -138,7 +50,11 @@ interface UserRow {
   profile_slug: string | null;
   byok_enabled: boolean;
   byok_provider: string | null;
-  byok_keys: Record<string, { encrypted_key: string; model?: string; added_at: string }> | null;
+  byok_keys: Record<string, { encrypted_key?: string; model?: string; added_at?: string; [key: string]: unknown }> | null;
+}
+
+function isKnownByokProvider(provider: string): provider is BYOKProvider {
+  return provider in BYOK_PROVIDERS;
 }
 
 export function createUserService(): UserService {
@@ -163,6 +79,12 @@ export function createUserService(): UserService {
     if (users.length === 0) return null;
 
     const user = users[0];
+    const byokConfigs = parseByokConfigs(user.byok_keys);
+    const configProviders = new Set(byokConfigs.map(config => config.provider));
+    const primaryProvider = user.byok_provider && configProviders.has(user.byok_provider as BYOKProvider)
+      ? user.byok_provider as BYOKProvider
+      : byokConfigs[0]?.provider || null;
+
     return {
       id: user.id,
       email: user.email,
@@ -172,9 +94,9 @@ export function createUserService(): UserService {
       country: user.country || null,
       featured_app_id: user.featured_app_id || null,
       profile_slug: user.profile_slug || null,
-      byok_enabled: user.byok_enabled || false,
-      byok_provider: user.byok_provider as BYOKProvider | null,
-      byok_configs: parseByokConfigs(user.byok_keys),
+      byok_enabled: (user.byok_enabled || false) && byokConfigs.length > 0,
+      byok_provider: primaryProvider,
+      byok_configs: byokConfigs,
     };
   }
 
@@ -218,6 +140,7 @@ export function createUserService(): UserService {
   ): Promise<BYOKConfig> {
     // Encrypt the API key
     const encryptedKey = await encryptApiKey(apiKey);
+    const addedAt = new Date().toISOString();
 
     // Get current user to merge configs
     const user = await getUser(userId);
@@ -229,13 +152,13 @@ export function createUserService(): UserService {
       [provider]: {
         encrypted_key: encryptedKey,
         model,
-        added_at: new Date().toISOString(),
+        added_at: addedAt,
       },
     };
 
     // Update user with new config
     // If this is the first provider, set it as primary
-    const isPrimaryUpdate = !user?.byok_provider;
+    const isPrimaryUpdate = !user?.byok_provider || !isKnownByokProvider(user.byok_provider);
 
     await fetch(
       `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}`,
@@ -259,7 +182,7 @@ export function createUserService(): UserService {
       provider,
       has_key: true,
       model,
-      added_at: newKeys[provider].added_at,
+      added_at: addedAt,
     };
   }
 
@@ -305,7 +228,7 @@ export function createUserService(): UserService {
       provider,
       has_key: true,
       model: updatedConfig.model,
-      added_at: updatedConfig.added_at,
+      added_at: updatedConfig.added_at || new Date(0).toISOString(),
     };
   }
 
@@ -317,7 +240,9 @@ export function createUserService(): UserService {
     delete currentKeys[provider];
 
     // If this was the primary provider, clear it or set a new one
-    const remainingProviders = Object.keys(currentKeys) as BYOKProvider[];
+    const remainingProviders = Object.entries(currentKeys)
+      .filter(([provider, config]) => isKnownByokProvider(provider) && !!config.encrypted_key)
+      .map(([provider]) => provider as BYOKProvider);
     const newPrimary = remainingProviders[0] || null;
     const byokEnabled = remainingProviders.length > 0;
 
@@ -381,7 +306,7 @@ export function createUserService(): UserService {
   }
 
   // Helper to get raw byok_keys from database
-  async function getRawByokKeys(userId: string): Promise<Record<string, { encrypted_key: string; model?: string; added_at: string }>> {
+  async function getRawByokKeys(userId: string): Promise<Record<string, { encrypted_key?: string; model?: string; added_at?: string; [key: string]: unknown }>> {
     const response = await fetch(
       `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}&select=byok_keys`,
       {
@@ -396,20 +321,22 @@ export function createUserService(): UserService {
       throw new Error(`Failed to get user: ${await response.text()}`);
     }
 
-    const users = await response.json() as { byok_keys: Record<string, { encrypted_key: string; model?: string; added_at: string }> | null }[];
+    const users = await response.json() as { byok_keys: Record<string, { encrypted_key?: string; model?: string; added_at?: string; [key: string]: unknown }> | null }[];
     return users[0]?.byok_keys || {};
   }
 
   // Helper to parse byok_keys into BYOKConfig array
-  function parseByokConfigs(byokKeys: Record<string, { encrypted_key: string; model?: string; added_at: string }> | null): BYOKConfig[] {
+  function parseByokConfigs(byokKeys: Record<string, { encrypted_key?: string; model?: string; added_at?: string; [key: string]: unknown }> | null): BYOKConfig[] {
     if (!byokKeys) return [];
 
-    return Object.entries(byokKeys).map(([provider, config]) => ({
-      provider: provider as BYOKProvider,
-      has_key: !!config.encrypted_key,
-      model: config.model,
-      added_at: config.added_at,
-    }));
+    return Object.entries(byokKeys)
+      .filter(([provider]) => isKnownByokProvider(provider))
+      .map(([provider, config]) => ({
+        provider: provider as BYOKProvider,
+        has_key: !!config.encrypted_key,
+        model: config.model,
+        added_at: config.added_at || new Date(0).toISOString(),
+      }));
   }
 
   return {

@@ -34,7 +34,7 @@ function provisionKeyInBackground(token: string) {
     .then(res => res.json())
     .then(data => {
       if (data.ok) {
-        console.log('[App] OpenRouter key provisioned:', data.key_prefix);
+        console.log('[App] OpenRouter key provisioned');
       } else {
         console.warn('[App] Key provisioning failed:', data.error);
       }

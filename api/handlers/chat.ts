@@ -127,7 +127,7 @@ export async function handleChatStream(request: Request): Promise<Response> {
     } else {
       userOpenRouterKey = await getOrCreateOpenRouterKey(user.id, user.email);
     }
-    console.log(`[CHAT] OpenRouter key for ${user.id}: ${userOpenRouterKey.substring(0, 8)}...`);
+    console.log(`[CHAT] OpenRouter key ready for ${user.id}`);
   } catch (err) {
     console.error(`[CHAT] Failed to get/create OpenRouter key for ${user.id}:`, err);
     return json({
@@ -416,9 +416,9 @@ export async function handleProvisionKey(request: Request): Promise<Response> {
 
   // Get or create key
   try {
-    const key = await getOrCreateOpenRouterKey(user.id, user.email);
-    console.log(`[CHAT] Provisioned OpenRouter key for ${user.id}: ${key.substring(0, 8)}...`);
-    return json({ ok: true, provisioned: true, key_prefix: key.substring(0, 8) });
+    await getOrCreateOpenRouterKey(user.id, user.email);
+    console.log(`[CHAT] Provisioned OpenRouter key for ${user.id}`);
+    return json({ ok: true, provisioned: true });
   } catch (err) {
     console.error(`[CHAT] Key provisioning failed for ${user.id}:`, err);
     return json({

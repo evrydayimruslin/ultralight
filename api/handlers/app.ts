@@ -697,12 +697,12 @@ export function createApp() {
 
         // 3. OpenRouter management key (for provisioning per-user keys)
         const mgmtKey = getEnv('OPENROUTER_API_KEY');
-        checks.push({ check: 'openrouter_mgmt_key', result: mgmtKey ? `Set (${mgmtKey.substring(0, 8)}...${mgmtKey.substring(mgmtKey.length - 4)})` : 'NOT SET', ok: !!mgmtKey });
+        checks.push({ check: 'openrouter_mgmt_key', result: mgmtKey ? 'Configured' : 'NOT SET', ok: !!mgmtKey });
 
         // 4. Per-user OpenRouter key (created on first chat via management API)
         const { getStoredOpenRouterKey } = await import('../services/openrouter-keys.ts');
         const userOrKey = await getStoredOpenRouterKey(userId!);
-        checks.push({ check: 'user_openrouter_key', result: userOrKey ? `Provisioned (${userOrKey.substring(0, 8)}...)` : 'Not yet created (will be provisioned on first chat)', ok: true });
+        checks.push({ check: 'user_openrouter_key', result: userOrKey ? 'Provisioned' : 'Not yet created (will be provisioned on first chat)', ok: true });
 
         const allOk = checks.every(c => c.ok);
         return json({ ok: allOk, checks });
