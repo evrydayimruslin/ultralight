@@ -1,0 +1,909 @@
+handlers/admin.ts(140,24): error TS2488: Type '{}' must have a '[Symbol.iterator]()' method that returns an iterator.
+handlers/admin.ts(578,24): error TS18046: 'appCalls' is of type 'unknown'.
+handlers/admin.ts(602,21): error TS18046: 'searches' is of type 'unknown'.
+handlers/admin.ts(620,21): error TS18046: 'unmetSearches' is of type 'unknown'.
+handlers/admin.ts(639,21): error TS18046: 'conversions' is of type 'unknown'.
+handlers/admin.ts(650,21): error TS18046: 'conversions' is of type 'unknown'.
+handlers/admin.ts(662,27): error TS18046: 'templateFetches' is of type 'unknown'.
+handlers/admin.ts(663,35): error TS18046: 'templateFetches' is of type 'unknown'.
+handlers/admin.ts(667,24): error TS18046: 'onboardingCalls' is of type 'unknown'.
+handlers/admin.ts(685,28): error TS18046: 'allCalls' is of type 'unknown'.
+handlers/admin.ts(686,33): error TS18046: 'allCalls' is of type 'unknown'.
+handlers/admin.ts(687,25): error TS18046: 'allCalls' is of type 'unknown'.
+handlers/admin.ts(698,29): error TS18046: 'provisionals' is of type 'unknown'.
+handlers/admin.ts(699,28): error TS18046: 'provisionals' is of type 'unknown'.
+handlers/admin.ts(704,26): error TS18046: 'conversions' is of type 'unknown'.
+handlers/admin.ts(707,33): error TS18046: 'conversions' is of type 'unknown'.
+handlers/admin.ts(707,95): error TS18046: 'conversions' is of type 'unknown'.
+handlers/admin.ts(708,24): error TS18046: 'provisionals' is of type 'unknown'.
+handlers/admin.ts(709,23): error TS18046: 'conversions' is of type 'unknown'.
+handlers/admin.ts(709,45): error TS18046: 'provisionals' is of type 'unknown'.
+handlers/admin.ts(709,67): error TS18046: 'conversions' is of type 'unknown'.
+handlers/admin.ts(761,64): error TS18046: 'updated' is of type 'unknown'.
+handlers/admin.ts(787,92): error TS18046: 'updated' is of type 'unknown'.
+handlers/app.ts(233,31): error TS2345: Argument of type 'Uint8Array<ArrayBufferLike>' is not assignable to parameter of type 'BodyInit | null | undefined'.
+  Type 'Uint8Array<ArrayBufferLike>' is missing the following properties from type 'URLSearchParams': size, append, delete, get, and 2 more.
+handlers/app.ts(372,96): error TS2345: Argument of type '{ secureTransport: string; }' is not assignable to parameter of type 'SocketOptions'.
+  Property 'allowHalfOpen' is missing in type '{ secureTransport: string; }' but required in type 'SocketOptions'.
+handlers/app.ts(892,94): error TS2345: Argument of type 'ParsedSkills | never[]' is not assignable to parameter of type '{ name: string; description?: string | undefined; parameters?: unknown[] | undefined; }[]'.
+  Type 'ParsedSkills' is missing the following properties from type '{ name: string; description?: string | undefined; parameters?: unknown[] | undefined; }[]': length, pop, push, concat, and 29 more.
+handlers/app.ts(3475,43): error TS18046: 'gaps' is of type 'unknown'.
+handlers/app.ts(3483,63): error TS18046: 'ss' is of type 'unknown'.
+handlers/app.ts(3519,41): error TS18046: 'apps' is of type 'unknown'.
+handlers/app.ts(3564,20): error TS2339: Property 'hosting_suspended' does not exist on type 'never'.
+handlers/app.ts(3571,20): error TS2339: Property 'price_light' does not exist on type 'never'.
+handlers/app.ts(3571,46): error TS2339: Property 'price_light' does not exist on type 'never'.
+handlers/app.ts(3580,531): error TS2339: Property 'price_light' does not exist on type 'never'.
+handlers/app.ts(3596,44): error TS2339: Property 'price_light' does not exist on type 'never'.
+handlers/app.ts(3606,570): error TS2339: Property 'price_light' does not exist on type 'never'.
+handlers/app.ts(3617,42): error TS2339: Property 'price_light' does not exist on type 'never'.
+handlers/app.ts(3619,40): error TS2339: Property 'id' does not exist on type 'never'.
+handlers/app.ts(3630,20): error TS2339: Property 'visibility' does not exist on type 'never'.
+handlers/app.ts(3641,27): error TS2339: Property 'visibility' does not exist on type 'never'.
+handlers/app.ts(3649,36): error TS2339: Property 'access_token' does not exist on type 'never'.
+handlers/app.ts(3649,78): error TS2339: Property 'access_token' does not exist on type 'never'.
+handlers/app.ts(3665,82): error TS2339: Property 'id' does not exist on type 'never'.
+handlers/app.ts(3695,36): error TS2339: Property 'visibility' does not exist on type 'never'.
+handlers/app.ts(3695,76): error TS2339: Property 'visibility' does not exist on type 'never'.
+handlers/app.ts(3710,27): error TS2339: Property 'title' does not exist on type 'never'.
+handlers/app.ts(3712,31): error TS2339: Property 'title' does not exist on type 'never'.
+handlers/app.ts(3733,28): error TS2339: Property 'updated_at' does not exist on type 'never'.
+handlers/app.ts(3734,23): error TS2339: Property 'tags' does not exist on type 'never'.
+handlers/apps.ts(514,33): error TS18046: 'savedAppRows' is of type 'unknown'.
+handlers/apps.ts(531,37): error TS18046: 'savedContentRows' is of type 'unknown'.
+handlers/apps.ts(588,36): error TS18046: 'sharedPermRows' is of type 'unknown'.
+handlers/apps.ts(609,23): error TS18046: 'allShares' is of type 'unknown'.
+handlers/apps.ts(1232,25): error TS2345: Argument of type 'Uint8Array<ArrayBufferLike>' is not assignable to parameter of type 'BodyInit | null | undefined'.
+  Type 'Uint8Array<ArrayBufferLike>' is missing the following properties from type 'URLSearchParams': size, append, delete, get, and 2 more.
+handlers/apps.ts(1298,29): error TS2352: Conversion of type 'ManifestParameter' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'ManifestParameter'.
+handlers/apps.ts(1298,98): error TS2352: Conversion of type 'ManifestParameter' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'ManifestParameter'.
+handlers/apps.ts(1519,20): error TS18046: 'updates' is of type 'unknown'.
+handlers/apps.ts(1520,34): error TS18046: 'updates' is of type 'unknown'.
+handlers/apps.ts(1823,25): error TS2345: Argument of type 'Uint8Array<ArrayBufferLike>' is not assignable to parameter of type 'BodyInit | null | undefined'.
+  Type 'Uint8Array<ArrayBufferLike>' is missing the following properties from type 'URLSearchParams': size, append, delete, get, and 2 more.
+handlers/apps.ts(1898,25): error TS2345: Argument of type 'Uint8Array<ArrayBufferLike>' is not assignable to parameter of type 'BodyInit | null | undefined'.
+  Type 'Uint8Array<ArrayBufferLike>' is missing the following properties from type 'URLSearchParams': size, append, delete, get, and 2 more.
+handlers/apps.ts(2052,10): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/apps.ts(2057,39): error TS2353: Object literal may only specify known properties, and 'generation_in_progress' does not exist in type 'Partial<App>'.
+handlers/apps.ts(2064,33): error TS2698: Spread types may only be created from object types.
+handlers/apps.ts(2149,11): error TS2322: Type 'AppPricingConfig | undefined' is not assignable to type '{ default_price_light?: number | undefined; functions?: Record<string, number> | undefined; products?: { id: string; name: string; price_light: number; description?: string | undefined; }[] | undefined; } | undefined'.
+  Type 'AppPricingConfig' is not assignable to type '{ default_price_light?: number | undefined; functions?: Record<string, number> | undefined; products?: { id: string; name: string; price_light: number; description?: string | undefined; }[] | undefined; }'.
+    Types of property 'functions' are incompatible.
+      Type 'Record<string, number | FunctionPricing> | undefined' is not assignable to type 'Record<string, number> | undefined'.
+        Type 'Record<string, number | FunctionPricing>' is not assignable to type 'Record<string, number>'.
+          'string' index signatures are incompatible.
+            Type 'number | FunctionPricing' is not assignable to type 'number'.
+              Type 'FunctionPricing' is not assignable to type 'number'.
+handlers/apps.ts(2149,27): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/apps.ts(2184,19): error TS2339: Property 'openrouter_api_key' does not exist on type '{ id: string; email: string; tier: string; provisional?: boolean | undefined; tokenId?: string | undefined; tokenAppIds?: string[] | null | undefined; tokenFunctionNames?: string[] | null | undefined; scopes?: string[] | undefined; }'.
+handlers/apps.ts(2219,9): error TS2353: Object literal may only specify known properties, and 'docs_generated_at' does not exist in type 'Partial<App>'.
+handlers/apps.ts(2239,41): error TS2353: Object literal may only specify known properties, and 'generation_in_progress' does not exist in type 'Partial<App>'.
+handlers/apps.ts(2298,13): error TS2339: Property 'skills_md' does not exist on type 'unknown'.
+handlers/apps.ts(2386,26): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/apps.ts(2434,26): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/apps.ts(2485,31): error TS2698: Spread types may only be created from object types.
+handlers/apps.ts(2636,13): error TS2322: Type 'AppPricingConfig | undefined' is not assignable to type '{ default_price_light?: number | undefined; functions?: Record<string, number> | undefined; products?: { id: string; name: string; price_light: number; description?: string | undefined; }[] | undefined; } | undefined'.
+  Type 'AppPricingConfig' is not assignable to type '{ default_price_light?: number | undefined; functions?: Record<string, number> | undefined; products?: { id: string; name: string; price_light: number; description?: string | undefined; }[] | undefined; }'.
+    Types of property 'functions' are incompatible.
+      Type 'Record<string, number | FunctionPricing> | undefined' is not assignable to type 'Record<string, number> | undefined'.
+        Type 'Record<string, number | FunctionPricing>' is not assignable to type 'Record<string, number>'.
+          'string' index signatures are incompatible.
+            Type 'number | FunctionPricing' is not assignable to type 'number'.
+              Type 'FunctionPricing' is not assignable to type 'number'.
+handlers/apps.ts(2636,29): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/apps.ts(2660,13): error TS2353: Object literal may only specify known properties, and 'docs_generated_at' does not exist in type 'Partial<App>'.
+handlers/apps.ts(2846,26): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/apps.ts(2871,7): error TS2353: Object literal may only specify known properties, and 'draft_storage_key' does not exist in type 'Partial<App>'.
+handlers/apps.ts(2942,22): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/apps.ts(2992,13): error TS2339: Property 'env_vars' does not exist on type 'unknown'.
+handlers/apps.ts(3068,13): error TS2339: Property 'env_vars' does not exist on type 'unknown'.
+handlers/apps.ts(3075,30): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/apps.ts(3148,30): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/apps.ts(3236,13): error TS2339: Property 'config_id' does not exist on type 'unknown'.
+handlers/apps.ts(3539,23): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/apps.ts(3540,27): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/chat.ts(522,13): error TS2322: Type '{ type: string; persona: string; skillsPath: string; } | undefined' is not assignable to type 'SystemAgentContext | undefined'.
+  Type '{ type: string; persona: string; skillsPath: string; }' is not assignable to type 'SystemAgentContext'.
+    Types of property 'type' are incompatible.
+      Type 'string' is not assignable to type '"tool_builder" | "tool_marketer" | "platform_manager"'.
+handlers/cron.ts(68,15): error TS2339: Property 'expression' does not exist on type 'unknown'.
+handlers/cron.ts(139,17): error TS2339: Property 'name' does not exist on type 'unknown'.
+handlers/cron.ts(139,23): error TS2339: Property 'schedule' does not exist on type 'unknown'.
+handlers/cron.ts(139,33): error TS2339: Property 'handler' does not exist on type 'unknown'.
+handlers/cron.ts(204,17): error TS2339: Property 'schedule' does not exist on type 'unknown'.
+handlers/cron.ts(204,27): error TS2339: Property 'handler' does not exist on type 'unknown'.
+handlers/cron.ts(204,36): error TS2339: Property 'enabled' does not exist on type 'unknown'.
+handlers/discover.ts(639,43): error TS2352: Conversion of type 'App & { similarity: number; }' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App & { similarity: number; }'.
+handlers/discover.ts(997,37): error TS2352: Conversion of type 'App & { similarity: number; }' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App & { similarity: number; }'.
+handlers/discover.ts(1537,21): error TS18046: 'rows' is of type 'unknown'.
+handlers/discover.ts(1577,21): error TS18046: 'rows' is of type 'unknown'.
+handlers/discover.ts(1636,21): error TS18046: 'rows' is of type 'unknown'.
+handlers/http.ts(103,26): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/http.ts(112,27): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/http.ts(173,31): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/http.ts(453,7): error TS2345: Argument of type '{ appId: string; userId: string; executionId: `${string}-${string}-${string}-${string}-${string}`; code: string; permissions: string[]; userApiKey: string | null; user: UserContext | null; appDataService: AppDataService; ... 5 more ...; timeoutMs: number; }' is not assignable to parameter of type 'RuntimeConfig'.
+  Property 'ownerId' is missing in type '{ appId: string; userId: string; executionId: `${string}-${string}-${string}-${string}-${string}`; code: string; permissions: string[]; userApiKey: string | null; user: UserContext | null; appDataService: AppDataService; ... 5 more ...; timeoutMs: number; }' but required in type 'RuntimeConfig'.
+handlers/mcp.ts(626,7): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/mcp.ts(669,27): error TS2339: Property 'provisional' does not exist on type 'AuthResult'.
+handlers/mcp.ts(673,16): error TS2339: Property 'provisional' does not exist on type 'AuthResult'.
+handlers/mcp.ts(679,33): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/mcp.ts(685,24): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/mcp.ts(691,9): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/mcp.ts(703,9): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/mcp.ts(726,48): error TS2345: Argument of type 'string' is not assignable to parameter of type 'Tier'.
+handlers/mcp.ts(757,11): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/mcp.ts(763,9): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/mcp.ts(770,11): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/mcp.ts(776,9): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/mcp.ts(783,11): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/mcp.ts(789,9): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/mcp.ts(796,11): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/mcp.ts(802,9): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/mcp.ts(807,35): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/mcp.ts(812,11): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/mcp.ts(818,9): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/mcp.ts(830,43): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number'.
+  Type 'undefined' is not assignable to type 'string | number'.
+handlers/mcp.ts(843,38): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number'.
+  Type 'undefined' is not assignable to type 'string | number'.
+handlers/mcp.ts(846,38): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number'.
+  Type 'undefined' is not assignable to type 'string | number'.
+handlers/mcp.ts(849,36): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number'.
+  Type 'undefined' is not assignable to type 'string | number'.
+handlers/mcp.ts(852,42): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number'.
+  Type 'undefined' is not assignable to type 'string | number'.
+handlers/mcp.ts(855,37): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/mcp.ts(860,7): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/mcp.ts(1471,13): error TS2322: Type '{ role: "system" | "user" | "assistant"; content: string | unknown[]; }[]' is not assignable to type '{ role: "system" | "user" | "assistant"; content: string | AIContentPart[]; cache_control?: { type: "ephemeral"; } | undefined; }[]'.
+  Type '{ role: "system" | "user" | "assistant"; content: string | unknown[]; }' is not assignable to type '{ role: "system" | "user" | "assistant"; content: string | AIContentPart[]; cache_control?: { type: "ephemeral"; } | undefined; }'.
+    Types of property 'content' are incompatible.
+      Type 'string | unknown[]' is not assignable to type 'string | AIContentPart[]'.
+        Type 'unknown[]' is not assignable to type 'string | AIContentPart[]'.
+          Type 'unknown[]' is not assignable to type 'AIContentPart[]'.
+            Type 'unknown' is not assignable to type 'AIContentPart'.
+handlers/mcp.ts(1534,13): error TS18046: 'rpcResponse' is of type 'unknown'.
+handlers/mcp.ts(1535,43): error TS18046: 'rpcResponse' is of type 'unknown'.
+handlers/mcp.ts(1535,87): error TS18046: 'rpcResponse' is of type 'unknown'.
+handlers/mcp.ts(1540,28): error TS18046: 'rpcResponse' is of type 'unknown'.
+handlers/mcp.ts(1709,69): error TS2345: Argument of type 'string[]' is not assignable to parameter of type '{ message: string; }[]'.
+  Type 'string' is not assignable to type '{ message: string; }'.
+handlers/mcp.ts(1794,43): error TS2559: Type '{ id: string; storage_key: string; }' has no properties in common with type '{ env_schema?: unknown; manifest?: unknown; }'.
+handlers/mcp.ts(1812,15): error TS2339: Property 'supabase_config_id' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(1815,63): error TS2339: Property 'supabase_config_id' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(1822,15): error TS2339: Property 'supabase_enabled' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(1822,39): error TS2339: Property 'supabase_url' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(1822,59): error TS2339: Property 'supabase_anon_key_encrypted' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(1824,51): error TS2339: Property 'supabase_anon_key_encrypted' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(1825,92): error TS2339: Property 'supabase_url' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(1826,19): error TS2339: Property 'supabase_service_key_encrypted' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(1827,57): error TS2339: Property 'supabase_service_key_encrypted' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(1835,15): error TS2339: Property 'supabase_enabled' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(1838,73): error TS2339: Property 'owner_id' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(1944,30): error TS2339: Property 'd1_database_id' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(1944,51): error TS2339: Property 'd1_database_id' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(1975,20): error TS2339: Property 'owner_id' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(1999,44): error TS2339: Property 'owner_id' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(2029,21): error TS18046: 'callCount' is of type 'unknown'.
+handlers/mcp.ts(2055,34): error TS2339: Property 'owner_id' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(2066,40): error TS2304: Cannot find name 'isSuspended'.
+handlers/mcp.ts(2077,37): error TS2339: Property 'owner_id' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(2085,21): error TS2304: Cannot find name 'isSuspended'.
+handlers/mcp.ts(2086,68): error TS2339: Property 'owner_id' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(2100,78): error TS2339: Property 'owner_id' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(2122,22): error TS2339: Property 'name' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(2122,34): error TS2339: Property 'slug' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(2132,25): error TS2339: Property 'current_version' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(2179,50): error TS2339: Property 'current_version' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(2190,24): error TS2339: Property 'owner_id' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/mcp.ts(2252,48): error TS2339: Property 'current_version' does not exist on type '{ id: string; storage_key: string; }'.
+handlers/oauth.ts(50,6): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(values: never, options?: { count?: "exact" | "planned" | "estimated" | undefined; } | undefined): PostgrestFilterBuilder<{ PostgrestVersion: string; }, never, never, null, "oauth_clients", never, "POST">', gave the following error.
+    Argument of type '{ client_id: string; client_name: string | null; redirect_uris: string[]; grant_types: string[]; response_types: string[]; token_endpoint_auth_method: string; }' is not assignable to parameter of type 'never'.
+  Overload 2 of 2, '(values: never[], options?: { count?: "exact" | "planned" | "estimated" | undefined; defaultToNull?: boolean | undefined; } | undefined): PostgrestFilterBuilder<{ PostgrestVersion: string; }, never, never, null, "oauth_clients", never, "POST">', gave the following error.
+    Object literal may only specify known properties, and 'client_id' does not exist in type 'never[]'.
+handlers/oauth.ts(78,21): error TS2339: Property 'client_id' does not exist on type 'never'.
+handlers/oauth.ts(79,23): error TS2339: Property 'client_name' does not exist on type 'never'.
+handlers/oauth.ts(80,25): error TS2339: Property 'redirect_uris' does not exist on type 'never'.
+handlers/oauth.ts(81,23): error TS2339: Property 'grant_types' does not exist on type 'never'.
+handlers/oauth.ts(82,26): error TS2339: Property 'response_types' does not exist on type 'never'.
+handlers/oauth.ts(83,38): error TS2339: Property 'token_endpoint_auth_method' does not exist on type 'never'.
+handlers/oauth.ts(100,21): error TS2339: Property 'client_id' does not exist on type 'never'.
+handlers/oauth.ts(101,23): error TS2339: Property 'client_name' does not exist on type 'never'.
+handlers/oauth.ts(102,25): error TS2339: Property 'redirect_uris' does not exist on type 'never'.
+handlers/oauth.ts(103,23): error TS2339: Property 'grant_types' does not exist on type 'never'.
+handlers/oauth.ts(104,26): error TS2339: Property 'response_types' does not exist on type 'never'.
+handlers/oauth.ts(105,38): error TS2339: Property 'token_endpoint_auth_method' does not exist on type 'never'.
+handlers/oauth.ts(106,25): error TS2339: Property 'owner_user_id' does not exist on type 'never'.
+handlers/oauth.ts(107,30): error TS2339: Property 'client_secret_hash' does not exist on type 'never'.
+handlers/oauth.ts(108,30): error TS2339: Property 'client_secret_salt' does not exist on type 'never'.
+handlers/oauth.ts(109,20): error TS2339: Property 'logo_url' does not exist on type 'never'.
+handlers/oauth.ts(110,23): error TS2339: Property 'description' does not exist on type 'never'.
+handlers/oauth.ts(111,28): error TS2339: Property 'is_developer_app' does not exist on type 'never'.
+handlers/oauth.ts(128,25): error TS2339: Property 'scopes' does not exist on type 'never'.
+handlers/oauth.ts(137,6): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(values: never, options?: { onConflict?: string | undefined; ignoreDuplicates?: boolean | undefined; count?: "exact" | "planned" | "estimated" | undefined; } | undefined): PostgrestFilterBuilder<{ ...; }, ... 5 more ..., "POST">', gave the following error.
+    Argument of type '{ user_id: string; client_id: string; scopes: string[]; created_at: string; revoked_at: null; }' is not assignable to parameter of type 'never'.
+  Overload 2 of 2, '(values: never[], options?: { onConflict?: string | undefined; ignoreDuplicates?: boolean | undefined; count?: "exact" | "planned" | "estimated" | undefined; defaultToNull?: boolean | undefined; } | undefined): PostgrestFilterBuilder<...>', gave the following error.
+    Object literal may only specify known properties, and 'user_id' does not exist in type 'never[]'.
+handlers/oauth.ts(185,6): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(values: never, options?: { count?: "exact" | "planned" | "estimated" | undefined; } | undefined): PostgrestFilterBuilder<{ PostgrestVersion: string; }, never, never, null, "oauth_authorization_codes", never, "POST">', gave the following error.
+    Argument of type '{ code: string; client_id: string; redirect_uri: string; code_challenge: string; code_challenge_method: string; supabase_access_token: string; supabase_refresh_token: string | null; user_id: string; user_email: string; scope: string; }' is not assignable to parameter of type 'never'.
+  Overload 2 of 2, '(values: never[], options?: { count?: "exact" | "planned" | "estimated" | undefined; defaultToNull?: boolean | undefined; } | undefined): PostgrestFilterBuilder<{ PostgrestVersion: string; }, never, never, null, "oauth_authorization_codes", never, "POST">', gave the following error.
+    Object literal may only specify known properties, and 'code' does not exist in type 'never[]'.
+handlers/oauth.ts(225,26): error TS2339: Property 'supabase_access_token' does not exist on type 'never'.
+handlers/oauth.ts(226,27): error TS2339: Property 'supabase_refresh_token' does not exist on type 'never'.
+handlers/oauth.ts(236,16): error TS2339: Property 'code' does not exist on type 'never'.
+handlers/oauth.ts(237,21): error TS2339: Property 'client_id' does not exist on type 'never'.
+handlers/oauth.ts(238,24): error TS2339: Property 'redirect_uri' does not exist on type 'never'.
+handlers/oauth.ts(239,26): error TS2339: Property 'code_challenge' does not exist on type 'never'.
+handlers/oauth.ts(240,33): error TS2339: Property 'code_challenge_method' does not exist on type 'never'.
+handlers/oauth.ts(243,19): error TS2339: Property 'user_id' does not exist on type 'never'.
+handlers/oauth.ts(244,22): error TS2339: Property 'user_email' does not exist on type 'never'.
+handlers/oauth.ts(245,17): error TS2339: Property 'scope' does not exist on type 'never'.
+handlers/oauth.ts(246,31): error TS2339: Property 'created_at' does not exist on type 'never'.
+handlers/oauth.ts(282,23): error TS2769: No overload matches this call.
+  Overload 1 of 3, '(algorithm: AlgorithmIdentifier | EcdhKeyDeriveParams | HkdfParams | Pbkdf2Params, baseKey: CryptoKey, derivedKeyType: AlgorithmIdentifier | ... 3 more ... | AesDerivedKeyParams, extractable: boolean, keyUsages: KeyUsage[]): Promise<...>', gave the following error.
+    Type 'Uint8Array<ArrayBufferLike>' is not assignable to type 'BufferSource'.
+      Type 'Uint8Array<ArrayBufferLike>' is not assignable to type 'ArrayBufferView<ArrayBuffer>'.
+        Types of property 'buffer' are incompatible.
+          Type 'ArrayBufferLike' is not assignable to type 'ArrayBuffer'.
+            Type 'SharedArrayBuffer' is not assignable to type 'ArrayBuffer'.
+              Types of property '[Symbol.toStringTag]' are incompatible.
+                Type '"SharedArrayBuffer"' is not assignable to type '"ArrayBuffer"'.
+  Overload 2 of 3, '(algorithm: AlgorithmIdentifier | EcdhKeyDeriveParams | HkdfParams | Pbkdf2Params, baseKey: CryptoKey, derivedKeyType: AlgorithmIdentifier | ... 3 more ... | AesDerivedKeyParams, extractable: boolean, keyUsages: Iterable<...>): Promise<...>', gave the following error.
+    Type 'Uint8Array<ArrayBufferLike>' is not assignable to type 'BufferSource'.
+      Type 'Uint8Array<ArrayBufferLike>' is not assignable to type 'ArrayBufferView<ArrayBuffer>'.
+        Types of property 'buffer' are incompatible.
+          Type 'ArrayBufferLike' is not assignable to type 'ArrayBuffer'.
+            Type 'SharedArrayBuffer' is not assignable to type 'ArrayBuffer'.
+              Types of property '[Symbol.toStringTag]' are incompatible.
+                Type '"SharedArrayBuffer"' is not assignable to type '"ArrayBuffer"'.
+  Overload 3 of 3, '(algorithm: AlgorithmIdentifier | EcdhKeyDeriveParams | HkdfParams | Pbkdf2Params, baseKey: CryptoKey, derivedKeyType: AlgorithmIdentifier | ... 3 more ... | AesDerivedKeyParams, extractable: boolean, keyUsages: KeyUsage[]): Promise<...>', gave the following error.
+    Type 'Uint8Array<ArrayBufferLike>' is not assignable to type 'BufferSource'.
+      Type 'Uint8Array<ArrayBufferLike>' is not assignable to type 'ArrayBufferView<ArrayBuffer>'.
+        Types of property 'buffer' are incompatible.
+          Type 'ArrayBufferLike' is not assignable to type 'ArrayBuffer'.
+            Type 'SharedArrayBuffer' is not assignable to type 'ArrayBuffer'.
+              Types of property '[Symbol.toStringTag]' are incompatible.
+                Type '"SharedArrayBuffer"' is not assignable to type '"ArrayBuffer"'.
+handlers/oauth.ts(427,8): error TS18046: 'user' is of type 'unknown'.
+handlers/oauth.ts(427,20): error TS18046: 'user' is of type 'unknown'.
+handlers/oauth.ts(428,16): error TS18046: 'user' is of type 'unknown'.
+handlers/oauth.ts(428,32): error TS18046: 'user' is of type 'unknown'.
+handlers/oauth.ts(1085,36): error TS18046: 'tokens' is of type 'unknown'.
+handlers/oauth.ts(1085,57): error TS18046: 'tokens' is of type 'unknown'.
+handlers/platform-mcp.ts(20,3): error TS2724: '"../../shared/types/index.ts"' has no exported member named 'MIN_PUBLISH_DEPOSIT_CENTS'. Did you mean 'MIN_PUBLISH_DEPOSIT_LIGHT'?
+handlers/platform-mcp.ts(366,93): error TS2322: Type 'string[]' is not assignable to type 'string'.
+handlers/platform-mcp.ts(691,52): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/platform-mcp.ts(707,7): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/platform-mcp.ts(715,69): error TS2345: Argument of type 'string' is not assignable to parameter of type 'Tier'.
+handlers/platform-mcp.ts(718,9): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/platform-mcp.ts(731,49): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number'.
+  Type 'undefined' is not assignable to type 'string | number'.
+handlers/platform-mcp.ts(739,32): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number'.
+  Type 'undefined' is not assignable to type 'string | number'.
+handlers/platform-mcp.ts(741,38): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number'.
+  Type 'undefined' is not assignable to type 'string | number'.
+handlers/platform-mcp.ts(743,36): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number'.
+  Type 'undefined' is not assignable to type 'string | number'.
+handlers/platform-mcp.ts(745,42): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number'.
+  Type 'undefined' is not assignable to type 'string | number'.
+handlers/platform-mcp.ts(747,37): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/platform-mcp.ts(752,7): error TS2345: Argument of type 'string | number | undefined' is not assignable to parameter of type 'string | number | null'.
+  Type 'undefined' is not assignable to type 'string | number | null'.
+handlers/platform-mcp.ts(1539,39): error TS2345: Argument of type '{}' is not assignable to parameter of type 'Record<string, unknown>'.
+  Index signature for type 'string' is missing in type '{}'.
+handlers/platform-mcp.ts(1599,13): error TS18046: 'rpcResponse' is of type 'unknown'.
+handlers/platform-mcp.ts(1600,31): error TS18046: 'rpcResponse' is of type 'unknown'.
+handlers/platform-mcp.ts(1600,73): error TS18046: 'rpcResponse' is of type 'unknown'.
+handlers/platform-mcp.ts(1600,117): error TS18046: 'rpcResponse' is of type 'unknown'.
+handlers/platform-mcp.ts(1604,28): error TS18046: 'rpcResponse' is of type 'unknown'.
+handlers/platform-mcp.ts(2199,64): error TS2345: Argument of type '{ id: string; name: string; slug: string; manifest: unknown; }[]' is not assignable to parameter of type 'AppForCodemode[]'.
+  Type '{ id: string; name: string; slug: string; manifest: unknown; }' is not assignable to type 'AppForCodemode'.
+    Types of property 'manifest' are incompatible.
+      Type 'unknown' is not assignable to type '{ functions?: Record<string, ManifestFunction> | undefined; widgets?: { id: string; label: string; }[] | undefined; }'.
+handlers/platform-mcp.ts(2295,22): error TS2304: Cannot find name 'toolMap'.
+handlers/platform-mcp.ts(2320,22): error TS2304: Cannot find name 'toolMap'.
+handlers/platform-mcp.ts(2394,7): error TS18046: 'rows' is of type 'unknown'.
+handlers/platform-mcp.ts(2394,27): error TS18046: 'rows' is of type 'unknown'.
+handlers/platform-mcp.ts(2460,10): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/platform-mcp.ts(2521,41): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/platform-mcp.ts(2537,43): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/platform-mcp.ts(2700,8): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/platform-mcp.ts(2727,73): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/platform-mcp.ts(3070,7): error TS2345: Argument of type '{ appId: string; userId: string; executionId: `${string}-${string}-${string}-${string}-${string}`; code: string; permissions: string[]; userApiKey: null; user: UserContext; appDataService: AppDataService; memoryService: { ...; } | null; aiService: import("../runtime/sandbox.ts").RuntimeConfig["aiService"]; envVars: ...' is not assignable to parameter of type 'RuntimeConfig'.
+  Type '{ appId: string; userId: string; executionId: `${string}-${string}-${string}-${string}-${string}`; code: string; permissions: string[]; userApiKey: null; user: UserContext; appDataService: AppDataService; memoryService: { ...; } | null; aiService: AIService; envVars: {}; }' is missing the following properties from type 'RuntimeConfig': ownerId, d1DataService
+handlers/platform-mcp.ts(3201,12): error TS18046: 'gaps' is of type 'unknown'.
+handlers/platform-mcp.ts(4034,38): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/platform-mcp.ts(4035,24): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/platform-mcp.ts(4270,7): error TS18046: 'userRows' is of type 'unknown'.
+handlers/platform-mcp.ts(4309,24): error TS18046: 'userRows' is of type 'unknown'.
+handlers/platform-mcp.ts(4446,7): error TS18046: 'userRows' is of type 'unknown'.
+handlers/platform-mcp.ts(4452,24): error TS18046: 'userRows' is of type 'unknown'.
+handlers/platform-mcp.ts(4542,23): error TS2571: Object is of type 'unknown'.
+handlers/platform-mcp.ts(4630,33): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'unknown[]'.
+handlers/platform-mcp.ts(4634,31): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'unknown[]'.
+handlers/platform-mcp.ts(5028,40): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+  Type 'undefined' is not assignable to type 'string'.
+handlers/platform-mcp.ts(5031,66): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string | number | boolean'.
+  Type 'undefined' is not assignable to type 'string | number | boolean'.
+handlers/platform-mcp.ts(5036,11): error TS18046: 'rows' is of type 'unknown'.
+handlers/platform-mcp.ts(5036,34): error TS18046: 'rows' is of type 'unknown'.
+handlers/platform-mcp.ts(5078,20): error TS18046: 'existingRows' is of type 'unknown'.
+handlers/platform-mcp.ts(5078,46): error TS18046: 'existingRows' is of type 'unknown'.
+handlers/platform-mcp.ts(5181,9): error TS18046: 'rows' is of type 'unknown'.
+handlers/platform-mcp.ts(5181,36): error TS18046: 'rows' is of type 'unknown'.
+handlers/platform-mcp.ts(5192,11): error TS18046: 'rows' is of type 'unknown'.
+handlers/platform-mcp.ts(5192,38): error TS18046: 'rows' is of type 'unknown'.
+handlers/platform-mcp.ts(5229,14): error TS18046: 'updatedRows' is of type 'unknown'.
+handlers/platform-mcp.ts(5230,17): error TS18046: 'updatedRows' is of type 'unknown'.
+handlers/platform-mcp.ts(5242,20): error TS18046: 'existingRows' is of type 'unknown'.
+handlers/platform-mcp.ts(5242,46): error TS18046: 'existingRows' is of type 'unknown'.
+handlers/platform-mcp.ts(5319,12): error TS18046: 'updatedRows' is of type 'unknown'.
+handlers/platform-mcp.ts(5320,15): error TS18046: 'updatedRows' is of type 'unknown'.
+handlers/platform-mcp.ts(5482,11): error TS18046: 'rows' is of type 'unknown'.
+handlers/platform-mcp.ts(5482,34): error TS18046: 'rows' is of type 'unknown'.
+handlers/platform-mcp.ts(5656,11): error TS18046: 'rows' is of type 'unknown'.
+handlers/platform-mcp.ts(5656,34): error TS18046: 'rows' is of type 'unknown'.
+handlers/platform-mcp.ts(6097,23): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/platform-mcp.ts(6118,18): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/platform-mcp.ts(6119,20): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/platform-mcp.ts(6120,23): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/platform-mcp.ts(6121,28): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/platform-mcp.ts(6122,29): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/platform-mcp.ts(6123,31): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/platform-mcp.ts(6170,58): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/platform-mcp.ts(6386,20): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/platform-mcp.ts(6391,40): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/platform-mcp.ts(6575,33): error TS2352: Conversion of type 'App & { weighted_likes: number; weighted_dislikes: number; env_schema: Record<string, EnvSchemaEntry> | null; manifest?: unknown; }' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App & { weighted_likes: number; weighted_dislikes: number; env_schema: Record<string, EnvSchemaEntry> | null; manifest?: unknown; }'.
+handlers/platform-mcp.ts(6617,42): error TS2352: Conversion of type 'App & { weighted_likes: number; weighted_dislikes: number; env_schema: Record<string, EnvSchemaEntry> | null; manifest?: unknown; }' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App & { weighted_likes: number; weighted_dislikes: number; env_schema: Record<string, EnvSchemaEntry> | null; manifest?: unknown; }'.
+handlers/platform-mcp.ts(6702,11): error TS2352: Conversion of type 'App & { similarity: number; }' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App & { similarity: number; }'.
+handlers/platform-mcp.ts(6703,35): error TS2352: Conversion of type 'App & { similarity: number; }' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App & { similarity: number; }'.
+handlers/platform-mcp.ts(6710,7): error TS2322: Type 'PublicDiscoveryApp[]' is not assignable to type 'App[]'.
+  Type 'PublicDiscoveryApp' is missing the following properties from type 'App': icon_url, visibility, download_access, current_version, and 49 more.
+handlers/platform-mcp.ts(6800,43): error TS2352: Conversion of type 'App & { similarity: number; weighted_likes?: number | undefined; weighted_dislikes?: number | undefined; }' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App & { similarity: number; weighted_likes?: number | undefined; weighted_dislikes?: number | undefined; }'.
+handlers/platform-mcp.ts(7776,31): error TS18047: 'embService' is possibly 'null'.
+handlers/platform-mcp.ts(7812,9): error TS18046: 'rows' is of type 'unknown'.
+handlers/platform-mcp.ts(7812,38): error TS18046: 'rows' is of type 'unknown'.
+handlers/platform-mcp.ts(7832,15): error TS18046: 'users' is of type 'unknown'.
+handlers/platform-mcp.ts(7833,73): error TS18046: 'users' is of type 'unknown'.
+handlers/run.ts(130,31): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/run.ts(222,11): error TS2322: Type 'string[]' is not assignable to type 'LogEntry[]'.
+  Type 'string' is not assignable to type 'LogEntry'.
+handlers/run.ts(241,7): error TS2345: Argument of type '{ appId: string; userId: string; executionId: `${string}-${string}-${string}-${string}-${string}`; code: string; permissions: string[]; userApiKey: null; user: UserContext | null; appDataService: AppDataService; ... 5 more ...; timeoutMs: number; }' is not assignable to parameter of type 'RuntimeConfig'.
+  Property 'ownerId' is missing in type '{ appId: string; userId: string; executionId: `${string}-${string}-${string}-${string}-${string}`; code: string; permissions: string[]; userApiKey: null; user: UserContext | null; appDataService: AppDataService; ... 5 more ...; timeoutMs: number; }' but required in type 'RuntimeConfig'.
+handlers/tier.ts(78,23): error TS2339: Property 'length' does not exist on type '{}'.
+handlers/tier.ts(82,23): error TS7053: Element implicitly has an 'any' type because expression of type '0' can't be used to index type '{}'.
+  Property '0' does not exist on type '{}'.
+handlers/tier.ts(117,11): error TS18046: 'publicApps' is of type 'unknown'.
+handlers/tier.ts(136,28): error TS18046: 'publicApps' is of type 'unknown'.
+handlers/tier.ts(138,25): error TS18046: 'publicApps' is of type 'unknown'.
+handlers/tier.ts(141,27): error TS18046: 'publicApps' is of type 'unknown'.
+handlers/upload.ts(398,13): error TS2322: Type '{ name: string; version: string; description?: string | undefined; author?: string | undefined; icon?: string | undefined; type: "mcp"; entry: { functions?: string | undefined; }; functions?: Record<...> | undefined; permissions?: string[] | undefined; env?: Record<...> | undefined; env_vars?: Record<...> | undefine...' is not assignable to type 'AppManifest'.
+  Type '{ name: string; version: string; type: "mcp" | "skill"; entry: {}; }' is not assignable to type 'AppManifest'.
+    Types of property 'type' are incompatible.
+      Type '"mcp" | "skill"' is not assignable to type '"mcp"'.
+        Type '"skill"' is not assignable to type '"mcp"'.
+handlers/upload.ts(407,9): error TS2322: Type '"mcp" | "skill"' is not assignable to type '"mcp"'.
+  Type '"skill"' is not assignable to type '"mcp"'.
+handlers/upload.ts(474,33): error TS2345: Argument of type 'null' is not assignable to parameter of type 'string | undefined'.
+handlers/upload.ts(490,47): error TS2345: Argument of type '{ name: string; content: Uint8Array<ArrayBuffer>; }[]' is not assignable to parameter of type 'FileUpload[]'.
+  Property 'contentType' is missing in type '{ name: string; content: Uint8Array<ArrayBuffer>; }' but required in type 'FileUpload'.
+handlers/upload.ts(874,25): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/upload.ts(1057,7): error TS2353: Object literal may only specify known properties, and 'draft_storage_key' does not exist in type 'Partial<App>'.
+handlers/upload.ts(1333,23): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'App'.
+handlers/upload.ts(1461,5): error TS2353: Object literal may only specify known properties, and 'draft_storage_key' does not exist in type 'Partial<App>'.
+handlers/user.ts(384,12): error TS18046: 'users' is of type 'unknown'.
+handlers/user.ts(385,23): error TS18046: 'users' is of type 'unknown'.
+handlers/user.ts(416,13): error TS18046: 'fa' is of type 'unknown'.
+handlers/user.ts(416,44): error TS18046: 'fa' is of type 'unknown'.
+handlers/user.ts(416,60): error TS18046: 'fa' is of type 'unknown'.
+handlers/user.ts(416,78): error TS18046: 'fa' is of type 'unknown'.
+handlers/user.ts(419,28): error TS18046: 'acquisitionsRaw' is of type 'unknown'.
+handlers/user.ts(482,35): error TS18047: 'embeddingService' is possibly 'null'.
+handlers/user.ts(494,43): error TS2339: Property 'get' does not exist on type 'string'.
+handlers/user.ts(505,25): error TS2339: Property 'put' does not exist on type 'string'.
+handlers/user.ts(527,22): error TS18046: 'body' is of type 'unknown'.
+handlers/user.ts(533,23): error TS2339: Property 'put' does not exist on type 'string'.
+handlers/user.ts(564,15): error TS2339: Property 'display_name' does not exist on type 'unknown'.
+handlers/user.ts(564,29): error TS2339: Property 'country' does not exist on type 'unknown'.
+handlers/user.ts(564,38): error TS2339: Property 'featured_app_id' does not exist on type 'unknown'.
+handlers/user.ts(593,29): error TS2571: Object is of type 'unknown'.
+handlers/user.ts(644,15): error TS2339: Property 'provider' does not exist on type 'unknown'.
+handlers/user.ts(644,25): error TS2339: Property 'api_key' does not exist on type 'unknown'.
+handlers/user.ts(644,34): error TS2339: Property 'model' does not exist on type 'unknown'.
+handlers/user.ts(644,41): error TS2339: Property 'validate' does not exist on type 'unknown'.
+handlers/user.ts(676,21): error TS2532: Object is possibly 'undefined'.
+handlers/user.ts(697,15): error TS2339: Property 'api_key' does not exist on type 'unknown'.
+handlers/user.ts(697,24): error TS2339: Property 'model' does not exist on type 'unknown'.
+handlers/user.ts(697,31): error TS2339: Property 'validate' does not exist on type 'unknown'.
+handlers/user.ts(753,15): error TS2339: Property 'provider' does not exist on type 'unknown'.
+handlers/user.ts(763,21): error TS2532: Object is possibly 'undefined'.
+handlers/user.ts(803,15): error TS2339: Property 'name' does not exist on type 'unknown'.
+handlers/user.ts(803,21): error TS2339: Property 'expires_in_days' does not exist on type 'unknown'.
+handlers/user.ts(803,38): error TS2339: Property 'app_ids' does not exist on type 'unknown'.
+handlers/user.ts(803,47): error TS2339: Property 'function_names' does not exist on type 'unknown'.
+handlers/user.ts(912,15): error TS2339: Property 'name' does not exist on type 'unknown'.
+handlers/user.ts(912,21): error TS2339: Property 'url' does not exist on type 'unknown'.
+handlers/user.ts(912,39): error TS2339: Property 'anon_key' does not exist on type 'unknown'.
+handlers/user.ts(912,49): error TS2339: Property 'service_key' does not exist on type 'unknown'.
+handlers/user.ts(1148,15): error TS2339: Property 'project_ref' does not exist on type 'unknown'.
+handlers/user.ts(1148,28): error TS2339: Property 'app_id' does not exist on type 'unknown'.
+handlers/user.ts(1249,61): error TS18046: 'created' is of type 'unknown'.
+handlers/user.ts(1300,50): error TS2345: Argument of type 'string' is not assignable to parameter of type 'Tier'.
+handlers/user.ts(1401,34): error TS2488: Type 'unknown' must have a '[Symbol.iterator]()' method that returns an iterator.
+handlers/user.ts(1414,15): error TS2339: Property 'email' does not exist on type 'unknown'.
+handlers/user.ts(1414,22): error TS2339: Property 'user_id' does not exist on type 'unknown'.
+handlers/user.ts(1414,45): error TS2339: Property 'permissions' does not exist on type 'unknown'.
+handlers/user.ts(1443,13): error TS18046: 'userRows' is of type 'unknown'.
+handlers/user.ts(1484,26): error TS18046: 'userRows' is of type 'unknown'.
+handlers/user.ts(1655,84): error TS18046: 'transactions' is of type 'unknown'.
+handlers/user.ts(1723,11): error TS18046: 'rows' is of type 'unknown'.
+handlers/user.ts(1724,18): error TS18046: 'rows' is of type 'unknown'.
+handlers/user.ts(1768,14): error TS18046: 'custRows' is of type 'unknown'.
+handlers/user.ts(1860,24): error TS2571: Object is of type 'unknown'.
+handlers/user.ts(2083,24): error TS2571: Object is of type 'unknown'.
+handlers/user.ts(2152,24): error TS2571: Object is of type 'unknown'.
+handlers/user.ts(2292,24): error TS2571: Object is of type 'unknown'.
+handlers/user.ts(2541,15): error TS2339: Property 'app_id' does not exist on type 'unknown'.
+handlers/user.ts(2541,23): error TS2339: Property 'amount_light' does not exist on type 'unknown'.
+handlers/user.ts(2541,37): error TS2339: Property 'message' does not exist on type 'unknown'.
+handlers/user.ts(2541,46): error TS2339: Property 'expires_in_hours' does not exist on type 'unknown'.
+handlers/user.ts(2556,15): error TS2339: Property 'app_id' does not exist on type 'unknown'.
+handlers/user.ts(2556,23): error TS2339: Property 'price_light' does not exist on type 'unknown'.
+handlers/user.ts(2556,36): error TS2339: Property 'floor_light' does not exist on type 'unknown'.
+handlers/user.ts(2556,49): error TS2339: Property 'instant_buy' does not exist on type 'unknown'.
+handlers/user.ts(2556,62): error TS2339: Property 'note' does not exist on type 'unknown'.
+handlers/user.ts(2571,15): error TS2339: Property 'bid_id' does not exist on type 'unknown'.
+handlers/user.ts(2586,15): error TS2339: Property 'bid_id' does not exist on type 'unknown'.
+handlers/user.ts(2601,15): error TS2339: Property 'bid_id' does not exist on type 'unknown'.
+handlers/user.ts(2616,15): error TS2339: Property 'app_id' does not exist on type 'unknown'.
+handlers/user.ts(2657,21): error TS18046: 'body' is of type 'unknown'.
+handlers/user.ts(2658,27): error TS18046: 'body' is of type 'unknown'.
+handlers/user.ts(2675,11): error TS18046: 'appRows' is of type 'unknown'.
+handlers/user.ts(2732,23): error TS18046: 'apps' is of type 'unknown'.
+handlers/user.ts(2733,30): error TS18046: 'listings' is of type 'unknown'.
+lib/env.ts(19,16): error TS2552: Cannot find name 'WorkerCode'. Did you mean 'WorkerLoader'?
+lib/env.ts(20,45): error TS2552: Cannot find name 'WorkerCode'. Did you mean 'WorkerLoader'?
+runtime/dynamic-executor.ts(69,7): error TS2322: Type '(args?: Record<string, unknown>) => Promise<never>' is not assignable to type '(...args: unknown[]) => Promise<unknown>'.
+  Types of parameters 'args' and 'args' are incompatible.
+    Type 'unknown' is not assignable to type 'Record<string, unknown> | undefined'.
+runtime/dynamic-sandbox.ts(256,7): error TS2322: Type '{ time: string; level: string; message: string; }[]' is not assignable to type 'LogEntry[]'.
+  Type '{ time: string; level: string; message: string; }' is not assignable to type 'LogEntry'.
+    Types of property 'level' are incompatible.
+      Type 'string' is not assignable to type '"error" | "info" | "warn" | "log"'.
+runtime/sandbox.ts(1612,28): error TS2352: Conversion of type 'AIResponse' to type '{ error: string; }' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Property 'error' is missing in type 'AIResponse' but required in type '{ error: string; }'.
+runtime/sandbox.ts(1657,13): error TS18046: 'rpcResponse' is of type 'unknown'.
+runtime/sandbox.ts(1658,57): error TS18046: 'rpcResponse' is of type 'unknown'.
+runtime/sandbox.ts(1658,101): error TS18046: 'rpcResponse' is of type 'unknown'.
+runtime/sandbox.ts(1662,24): error TS18046: 'rpcResponse' is of type 'unknown'.
+services/apps.ts(44,12): error TS18046: 'results' is of type 'unknown'.
+services/apps.ts(70,12): error TS18046: 'results' is of type 'unknown'.
+services/apps.ts(165,12): error TS18046: 'results' is of type 'unknown'.
+services/apps.ts(240,12): error TS18046: 'results' is of type 'unknown'.
+services/apps.ts(376,12): error TS18046: 'results' is of type 'unknown'.
+services/async-jobs.ts(186,15): error TS18046: 'rows' is of type 'unknown'.
+services/chat-billing.ts(40,21): error TS2339: Property 'length' does not exist on type '{}'.
+services/chat-billing.ts(41,10): error TS7053: Element implicitly has an 'any' type because expression of type '0' can't be used to index type '{}'.
+  Property '0' does not exist on type '{}'.
+services/codemode-tools.ts(272,5): error TS2322: Type '(args?: Record<string, unknown>) => Promise<unknown>' is not assignable to type '(...args: unknown[]) => Promise<unknown>'.
+  Types of parameters 'args' and 'args' are incompatible.
+    Type 'unknown' is not assignable to type 'Record<string, unknown> | undefined'.
+services/codemode-tools.ts(295,11): error TS18046: 'rpcResp' is of type 'unknown'.
+services/codemode-tools.ts(296,25): error TS18046: 'rpcResp' is of type 'unknown'.
+services/codemode-tools.ts(296,65): error TS18046: 'rpcResp' is of type 'unknown'.
+services/codemode-tools.ts(300,22): error TS18046: 'rpcResp' is of type 'unknown'.
+services/codemode-tools.ts(312,3): error TS2322: Type '(args?: Record<string, unknown>) => Promise<unknown>' is not assignable to type '(...args: unknown[]) => Promise<unknown>'.
+  Types of parameters 'args' and 'args' are incompatible.
+    Type 'unknown' is not assignable to type 'Record<string, unknown> | undefined'.
+services/codemode-tools.ts(316,3): error TS2322: Type '(args?: Record<string, unknown>) => Promise<unknown>' is not assignable to type '(...args: unknown[]) => Promise<unknown>'.
+  Types of parameters 'args' and 'args' are incompatible.
+    Type 'unknown' is not assignable to type 'Record<string, unknown> | undefined'.
+services/cron.ts(406,9): error TS18046: 'data' is of type 'unknown'.
+services/cron.ts(408,16): error TS18046: 'data' is of type 'unknown'.
+services/cron.ts(412,15): error TS18046: 'data' is of type 'unknown'.
+services/embedding.ts(70,10): error TS18046: 'result' is of type 'unknown'.
+services/embedding.ts(75,18): error TS18046: 'result' is of type 'unknown'.
+services/embedding.ts(76,14): error TS18046: 'result' is of type 'unknown'.
+services/embedding.ts(77,14): error TS18046: 'result' is of type 'unknown'.
+services/embedding.ts(107,10): error TS18046: 'result' is of type 'unknown'.
+services/embedding.ts(107,40): error TS18046: 'result' is of type 'unknown'.
+services/embedding.ts(112,24): error TS18046: 'result' is of type 'unknown'.
+services/embedding.ts(116,14): error TS18046: 'result' is of type 'unknown'.
+services/embedding.ts(118,36): error TS18046: 'result' is of type 'unknown'.
+services/embedding.ts(119,35): error TS18046: 'result' is of type 'unknown'.
+services/envvars.ts(43,7): error TS2769: No overload matches this call.
+  Overload 1 of 3, '(algorithm: AlgorithmIdentifier | EcdhKeyDeriveParams | HkdfParams | Pbkdf2Params, baseKey: CryptoKey, derivedKeyType: AlgorithmIdentifier | ... 3 more ... | AesDerivedKeyParams, extractable: boolean, keyUsages: KeyUsage[]): Promise<...>', gave the following error.
+    Type 'Uint8Array<ArrayBufferLike>' is not assignable to type 'BufferSource'.
+      Type 'Uint8Array<ArrayBufferLike>' is not assignable to type 'ArrayBufferView<ArrayBuffer>'.
+        Types of property 'buffer' are incompatible.
+          Type 'ArrayBufferLike' is not assignable to type 'ArrayBuffer'.
+            Type 'SharedArrayBuffer' is not assignable to type 'ArrayBuffer'.
+              Types of property '[Symbol.toStringTag]' are incompatible.
+                Type '"SharedArrayBuffer"' is not assignable to type '"ArrayBuffer"'.
+  Overload 2 of 3, '(algorithm: AlgorithmIdentifier | EcdhKeyDeriveParams | HkdfParams | Pbkdf2Params, baseKey: CryptoKey, derivedKeyType: AlgorithmIdentifier | ... 3 more ... | AesDerivedKeyParams, extractable: boolean, keyUsages: Iterable<...>): Promise<...>', gave the following error.
+    Type 'Uint8Array<ArrayBufferLike>' is not assignable to type 'BufferSource'.
+      Type 'Uint8Array<ArrayBufferLike>' is not assignable to type 'ArrayBufferView<ArrayBuffer>'.
+        Types of property 'buffer' are incompatible.
+          Type 'ArrayBufferLike' is not assignable to type 'ArrayBuffer'.
+            Type 'SharedArrayBuffer' is not assignable to type 'ArrayBuffer'.
+              Types of property '[Symbol.toStringTag]' are incompatible.
+                Type '"SharedArrayBuffer"' is not assignable to type '"ArrayBuffer"'.
+  Overload 3 of 3, '(algorithm: AlgorithmIdentifier | EcdhKeyDeriveParams | HkdfParams | Pbkdf2Params, baseKey: CryptoKey, derivedKeyType: AlgorithmIdentifier | ... 3 more ... | AesDerivedKeyParams, extractable: boolean, keyUsages: KeyUsage[]): Promise<...>', gave the following error.
+    Type 'Uint8Array<ArrayBufferLike>' is not assignable to type 'BufferSource'.
+      Type 'Uint8Array<ArrayBufferLike>' is not assignable to type 'ArrayBufferView<ArrayBuffer>'.
+        Types of property 'buffer' are incompatible.
+          Type 'ArrayBufferLike' is not assignable to type 'ArrayBuffer'.
+            Type 'SharedArrayBuffer' is not assignable to type 'ArrayBuffer'.
+              Types of property '[Symbol.toStringTag]' are incompatible.
+                Type '"SharedArrayBuffer"' is not assignable to type '"ArrayBuffer"'.
+services/flash-broker.ts(426,17): error TS2554: Expected 1 arguments, but got 0.
+services/flash-broker.ts(427,20): error TS2339: Property 'FN_INDEX' does not exist on type 'string'.
+services/flash-broker.ts(433,40): error TS7006: Parameter 'err' implicitly has an 'any' type.
+services/flash-broker.ts(448,7): error TS2322: Type '{ agentType: string; task: string; }[] | undefined' is not assignable to type '{ agentType: string; task: string; originalPrompt: string; }[] | undefined'.
+  Type '{ agentType: string; task: string; }[]' is not assignable to type '{ agentType: string; task: string; originalPrompt: string; }[]'.
+    Property 'originalPrompt' is missing in type '{ agentType: string; task: string; }' but required in type '{ agentType: string; task: string; originalPrompt: string; }'.
+services/flash-broker.ts(628,37): error TS18047: 'svc' is possibly 'null'.
+services/flash-broker.ts(760,5): error TS2322: Type '{ agentType: string; task: string; }[] | undefined' is not assignable to type '{ agentType: string; task: string; originalPrompt: string; }[] | undefined'.
+  Type '{ agentType: string; task: string; }[]' is not assignable to type '{ agentType: string; task: string; originalPrompt: string; }[]'.
+    Property 'originalPrompt' is missing in type '{ agentType: string; task: string; }' but required in type '{ agentType: string; task: string; originalPrompt: string; }'.
+services/flash-broker.ts(1213,17): error TS2554: Expected 1 arguments, but got 0.
+services/flash-broker.ts(1214,20): error TS2339: Property 'FN_INDEX' does not exist on type 'string'.
+services/flash-broker.ts(1235,17): error TS2554: Expected 1 arguments, but got 0.
+services/flash-broker.ts(1236,20): error TS2339: Property 'FN_INDEX' does not exist on type 'string'.
+services/flash-broker.ts(1275,17): error TS2554: Expected 1 arguments, but got 0.
+services/flash-broker.ts(1276,20): error TS2339: Property 'FN_INDEX' does not exist on type 'string'.
+services/function-index.ts(105,72): error TS2345: Argument of type '{ id: string; name: string; slug: string; manifest: unknown; skills_parsed: unknown; d1_database_id: string | null; }[]' is not assignable to parameter of type 'AppForCodemode[]'.
+  Type '{ id: string; name: string; slug: string; manifest: unknown; skills_parsed: unknown; d1_database_id: string | null; }' is not assignable to type 'AppForCodemode'.
+    Types of property 'manifest' are incompatible.
+      Type 'unknown' is not assignable to type '{ functions?: Record<string, ManifestFunction> | undefined; widgets?: { id: string; label: string; }[] | undefined; }'.
+services/gpu/benchmark.ts(362,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
+services/gpu/benchmark.ts(363,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
+services/gpu/benchmark.ts(392,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
+services/gpu/benchmark.ts(393,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
+services/gpu/benchmark.ts(419,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
+services/gpu/benchmark.ts(420,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
+services/gpu/benchmark.ts(448,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
+services/gpu/benchmark.ts(449,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
+services/gpu/billing.ts(209,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
+services/gpu/billing.ts(210,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
+services/gpu/builder.ts(227,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
+services/gpu/builder.ts(228,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
+services/gpu/index.ts(21,31): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
+services/gpu/runpod.ts(308,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
+services/gpu/runpod.ts(309,36): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
+services/gpu/runpod.ts(309,81): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
+services/gpu/runpod.ts(310,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
+services/gpu/runpod.ts(345,35): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
+services/gpu/runpod.ts(591,11): error TS18046: 'json' is of type 'unknown'.
+services/gpu/runpod.ts(591,26): error TS18046: 'json' is of type 'unknown'.
+services/gpu/runpod.ts(592,26): error TS18046: 'json' is of type 'unknown'.
+services/gpu/runpod.ts(596,14): error TS18046: 'json' is of type 'unknown'.
+services/gpu/smoke-test.ts(300,5): error TS2304: Cannot find name 'Deno'.
+services/gpu/test-endpoint.ts(15,21): error TS2304: Cannot find name 'Deno'.
+services/gpu/test-endpoint.ts(20,3): error TS2304: Cannot find name 'Deno'.
+services/gpu/test-endpoint.ts(63,44): error TS18046: 'health' is of type 'unknown'.
+services/gpu/test-endpoint.ts(63,80): error TS18046: 'health' is of type 'unknown'.
+services/gpu/test-endpoint.ts(63,119): error TS18046: 'health' is of type 'unknown'.
+services/gpu/test-endpoint.ts(64,44): error TS18046: 'health' is of type 'unknown'.
+services/gpu/test-endpoint.ts(64,85): error TS18046: 'health' is of type 'unknown'.
+services/gpu/test-endpoint.ts(95,36): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(96,44): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(97,40): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(99,10): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(99,50): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(101,7): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(102,53): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(103,12): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(103,61): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(104,12): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(104,70): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(106,7): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(107,25): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(109,12): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(109,65): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(129,10): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(129,50): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(131,7): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(132,12): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(132,54): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(133,12): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(133,59): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(134,53): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(155,10): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(155,50): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(157,7): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(158,12): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(158,54): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(160,24): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(164,52): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(185,36): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(187,7): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(188,12): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(188,55): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(189,12): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(189,65): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(191,9): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(192,14): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(192,70): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(197,37): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(199,67): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(221,10): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(221,50): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(223,7): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(224,12): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(224,54): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(225,12): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(225,62): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(226,12): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(226,63): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(227,53): error TS18046: 'data' is of type 'unknown'.
+services/gpu/test-endpoint.ts(243,5): error TS2304: Cannot find name 'Deno'.
+services/gpu/test-endpoint.ts(260,5): error TS2304: Cannot find name 'Deno'.
+services/gpu/test-pipeline.ts(52,22): error TS2352: Conversion of type '{ id: string; owner_id: string; name: string; slug: string; runtime: "gpu"; gpu_status: string; gpu_endpoint_id: string; gpu_type: string; gpu_max_duration_ms: number; gpu_concurrency_limit: number; ... 5 more ...; exports: string[]; }' to type 'App' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Type '{ id: string; owner_id: string; name: string; slug: string; runtime: "gpu"; gpu_status: string; gpu_endpoint_id: string; gpu_type: string; gpu_max_duration_ms: number; gpu_concurrency_limit: number; ... 5 more ...; exports: string[]; }' is missing the following properties from type 'App': description, icon_url, download_access, current_version, and 46 more.
+services/gpu/test-pipeline.ts(369,5): error TS2304: Cannot find name 'Deno'.
+services/gpu/test-pipeline.ts(397,5): error TS2304: Cannot find name 'Deno'.
+services/hosting-billing.ts(410,40): error TS2571: Object is of type 'unknown'.
+services/hosting-billing.ts(421,42): error TS2571: Object is of type 'unknown'.
+services/marketplace.ts(162,7): error TS18046: 'appRows' is of type 'unknown'.
+services/marketplace.ts(201,5): error TS2322: Type 'unknown' is not assignable to type 'string'.
+services/marketplace.ts(226,8): error TS18046: 'apps' is of type 'unknown'.
+services/marketplace.ts(226,19): error TS18046: 'apps' is of type 'unknown'.
+services/marketplace.ts(229,7): error TS18046: 'apps' is of type 'unknown'.
+services/marketplace.ts(299,48): error TS18046: 'result' is of type 'unknown'.
+services/marketplace.ts(299,68): error TS18046: 'result' is of type 'unknown'.
+services/marketplace.ts(299,90): error TS18046: 'result' is of type 'unknown'.
+services/marketplace.ts(299,125): error TS18046: 'result' is of type 'unknown'.
+services/marketplace.ts(303,27): error TS18046: 'result' is of type 'unknown'.
+services/marketplace.ts(303,43): error TS18046: 'result' is of type 'unknown'.
+services/marketplace.ts(303,58): error TS18046: 'result' is of type 'unknown'.
+services/marketplace.ts(303,76): error TS18046: 'result' is of type 'unknown'.
+services/marketplace.ts(308,14): error TS18046: 'result' is of type 'unknown'.
+services/marketplace.ts(309,13): error TS18046: 'result' is of type 'unknown'.
+services/marketplace.ts(310,16): error TS18046: 'result' is of type 'unknown'.
+services/marketplace.ts(311,15): error TS18046: 'result' is of type 'unknown'.
+services/marketplace.ts(312,23): error TS18046: 'result' is of type 'unknown'.
+services/marketplace.ts(313,25): error TS18046: 'result' is of type 'unknown'.
+services/marketplace.ts(314,26): error TS18046: 'result' is of type 'unknown'.
+services/marketplace.ts(377,19): error TS18046: 'listings' is of type 'unknown'.
+services/marketplace.ts(421,31): error TS2339: Property 'map' does not exist on type '{}'.
+services/marketplace.ts(437,9): error TS18046: 'myApps' is of type 'unknown'.
+services/marketplace.ts(438,22): error TS18046: 'myApps' is of type 'unknown'.
+services/marketplace.ts(440,7): error TS18046: 'myApps' is of type 'unknown'.
+services/marketplace.ts(449,37): error TS18046: 'bidsData' is of type 'unknown'.
+services/marketplace.ts(457,9): error TS18046: 'emails' is of type 'unknown'.
+services/marketplace.ts(460,18): error TS18046: 'bidsData' is of type 'unknown'.
+services/marketplace.ts(476,32): error TS2339: Property 'map' does not exist on type '{}'.
+services/marketplace.ts(528,33): error TS18046: 'bids' is of type 'unknown'.
+services/marketplace.ts(536,5): error TS18046: 'emails' is of type 'unknown'.
+services/marketplace.ts(539,24): error TS18046: 'bids' is of type 'unknown'.
+services/marketplace.ts(545,14): error TS18046: 'listings' is of type 'unknown'.
+services/marketplace.ts(547,10): error TS18046: 'apps' is of type 'unknown'.
+services/memory.ts(72,12): error TS18046: 'results' is of type 'unknown'.
+services/orchestrator.ts(626,33): error TS18047: 'svc' is possibly 'null'.
+services/orchestrator.ts(662,25): error TS2554: Expected 1 arguments, but got 0.
+services/orchestrator.ts(663,37): error TS2339: Property 'CF_ACCOUNT_ID' does not exist on type 'string'.
+services/orchestrator.ts(664,36): error TS2339: Property 'CF_API_TOKEN' does not exist on type 'string'.
+services/originality.ts(161,12): error TS18046: 'matches' is of type 'unknown'.
+services/parser.ts(82,18): error TS2339: Property 'default' does not exist on type 'typeof ts'.
+services/parser.ts(110,33): error TS7006: Parameter 'node' implicitly has an 'any' type.
+services/parser.ts(151,33): error TS7006: Parameter 'node' implicitly has an 'any' type.
+services/parser.ts(194,27): error TS2503: Cannot find namespace 'ts'.
+services/parser.ts(195,8): error TS2304: Cannot find name 'ts'.
+services/parser.ts(196,21): error TS2304: Cannot find name 'ts'.
+services/parser.ts(197,26): error TS7006: Parameter 'm' implicitly has an 'any' type.
+services/parser.ts(197,42): error TS2304: Cannot find name 'ts'.
+services/parser.ts(203,38): error TS2503: Cannot find namespace 'ts'.
+services/parser.ts(203,68): error TS2503: Cannot find namespace 'ts'.
+services/parser.ts(204,14): error TS2503: Cannot find namespace 'ts'.
+services/parser.ts(206,3): error TS2304: Cannot find name 'ts'.
+services/parser.ts(206,31): error TS7006: Parameter 'node' implicitly has an 'any' type.
+services/parser.ts(207,9): error TS2304: Cannot find name 'ts'.
+services/parser.ts(210,9): error TS2304: Cannot find name 'ts'.
+services/parser.ts(212,13): error TS2304: Cannot find name 'ts'.
+services/parser.ts(225,41): error TS2503: Cannot find namespace 'ts'.
+services/parser.ts(225,77): error TS2503: Cannot find namespace 'ts'.
+services/parser.ts(230,40): error TS7006: Parameter 'm' implicitly has an 'any' type.
+services/parser.ts(230,56): error TS2304: Cannot find name 'ts'.
+services/parser.ts(233,42): error TS7006: Parameter 'param' implicitly has an 'any' type.
+services/parser.ts(258,9): error TS2503: Cannot find namespace 'ts'.
+services/parser.ts(259,14): error TS2503: Cannot find namespace 'ts'.
+services/parser.ts(260,15): error TS2503: Cannot find namespace 'ts'.
+services/parser.ts(262,8): error TS2304: Cannot find name 'ts'.
+services/parser.ts(264,8): error TS2304: Cannot find name 'ts'.
+services/parser.ts(264,49): error TS2304: Cannot find name 'ts'.
+services/parser.ts(269,38): error TS7006: Parameter 'm' implicitly has an 'any' type.
+services/parser.ts(269,54): error TS2304: Cannot find name 'ts'.
+services/parser.ts(272,40): error TS7006: Parameter 'param' implicitly has an 'any' type.
+services/parser.ts(276,23): error TS2503: Cannot find namespace 'ts'.
+services/parser.ts(278,20): error TS2304: Cannot find name 'ts'.
+services/parser.ts(308,32): error TS2503: Cannot find namespace 'ts'.
+services/parser.ts(308,94): error TS2503: Cannot find namespace 'ts'.
+services/parser.ts(346,42): error TS2503: Cannot find namespace 'ts'.
+services/parser.ts(346,79): error TS2503: Cannot find namespace 'ts'.
+services/parser.ts(351,9): error TS2304: Cannot find name 'ts'.
+services/parser.ts(377,31): error TS2503: Cannot find namespace 'ts'.
+services/parser.ts(377,68): error TS2503: Cannot find namespace 'ts'.
+services/parser.ts(388,41): error TS2503: Cannot find namespace 'ts'.
+services/parser.ts(388,78): error TS2503: Cannot find namespace 'ts'.
+services/parser.ts(394,7): error TS2304: Cannot find name 'ts'.
+services/parser.ts(437,7): error TS2304: Cannot find name 'ts'.
+services/parser.ts(439,9): error TS2304: Cannot find name 'ts'.
+services/parser.ts(442,9): error TS2304: Cannot find name 'ts'.
+services/parser.ts(445,26): error TS2304: Cannot find name 'ts'.
+services/parser.ts(448,26): error TS2304: Cannot find name 'ts'.
+services/parser.ts(451,26): error TS2304: Cannot find name 'ts'.
+services/parser.ts(457,25): error TS2304: Cannot find name 'ts'.
+services/parser.ts(462,25): error TS2304: Cannot find name 'ts'.
+services/parser.ts(467,25): error TS2304: Cannot find name 'ts'.
+services/parser.ts(472,25): error TS2304: Cannot find name 'ts'.
+services/parser.ts(477,25): error TS2304: Cannot find name 'ts'.
+services/parser.ts(482,25): error TS2304: Cannot find name 'ts'.
+services/parser.ts(487,25): error TS2304: Cannot find name 'ts'.
+services/parser.ts(487,71): error TS2304: Cannot find name 'ts'.
+services/parser.ts(492,7): error TS2304: Cannot find name 'ts'.
+services/parser.ts(500,7): error TS2304: Cannot find name 'ts'.
+services/parser.ts(503,36): error TS7006: Parameter 'el' implicitly has an 'any' type.
+services/parser.ts(508,7): error TS2304: Cannot find name 'ts'.
+services/parser.ts(513,11): error TS2304: Cannot find name 'ts'.
+services/parser.ts(530,7): error TS2304: Cannot find name 'ts'.
+services/parser.ts(531,38): error TS7006: Parameter 't' implicitly has an 'any' type.
+services/parser.ts(534,37): error TS7006: Parameter 't' implicitly has an 'any' type.
+services/parser.ts(536,40): error TS7006: Parameter 't' implicitly has an 'any' type.
+services/parser.ts(538,23): error TS7006: Parameter 't' implicitly has an 'any' type.
+services/parser.ts(544,39): error TS7006: Parameter 't' implicitly has an 'any' type.
+services/parser.ts(545,32): error TS7006: Parameter 't' implicitly has an 'any' type.
+services/parser.ts(554,7): error TS2304: Cannot find name 'ts'.
+services/parser.ts(555,38): error TS7006: Parameter 't' implicitly has an 'any' type.
+services/parser.ts(570,32): error TS2503: Cannot find namespace 'ts'.
+services/parser.ts(570,53): error TS2503: Cannot find namespace 'ts'.
+services/parser.ts(573,25): error TS2304: Cannot find name 'ts'.
+services/provisional.ts(165,10): error TS7053: Element implicitly has an 'any' type because expression of type '0' can't be used to index type '{}'.
+  Property '0' does not exist on type '{}'.
+services/provisional.ts(261,15): error TS2339: Property 'error' does not exist on type '{}'.
+services/provisional.ts(262,28): error TS2339: Property 'error' does not exist on type '{}'.
+services/provisional.ts(269,17): error TS18046: 'result' is of type 'unknown'.
+services/provisional.ts(270,19): error TS18046: 'result' is of type 'unknown'.
+services/provisional.ts(271,32): error TS18046: 'result' is of type 'unknown'.
+services/provisional.ts(392,12): error TS7053: Element implicitly has an 'any' type because expression of type '0' can't be used to index type '{}'.
+  Property '0' does not exist on type '{}'.
+services/subscription-expiry.ts(91,15): error TS18046: 'publicApps' is of type 'unknown'.
+services/subscription-expiry.ts(110,29): error TS18046: 'publicApps' is of type 'unknown'.
+services/subscription-expiry.ts(114,17): error TS18046: 'publicApps' is of type 'unknown'.
+services/tcp-protocols.ts(241,52): error TS2345: Argument of type '{ secureTransport: string; }' is not assignable to parameter of type 'SocketOptions'.
+  Property 'allowHalfOpen' is missing in type '{ secureTransport: string; }' but required in type 'SocketOptions'.
+services/tcp-protocols.ts(334,52): error TS2345: Argument of type '{ secureTransport: string; }' is not assignable to parameter of type 'SocketOptions'.
+  Property 'allowHalfOpen' is missing in type '{ secureTransport: string; }' but required in type 'SocketOptions'.
+services/tier-enforcement.ts(148,13): error TS18046: 'users' is of type 'unknown'.
+services/tokens.ts(175,13): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(values: never, options?: { count?: "exact" | "planned" | "estimated" | undefined; } | undefined): PostgrestFilterBuilder<{ PostgrestVersion: string; }, never, never, null, "user_api_tokens", never, "POST">', gave the following error.
+    Argument of type 'Record<string, unknown>' is not assignable to parameter of type 'never'.
+  Overload 2 of 2, '(values: never[], options?: { count?: "exact" | "planned" | "estimated" | undefined; defaultToNull?: boolean | undefined; } | undefined): PostgrestFilterBuilder<{ PostgrestVersion: string; }, never, never, null, "user_api_tokens", never, "POST">', gave the following error.
+    Argument of type 'Record<string, unknown>' is not assignable to parameter of type 'never[]'.
+      Type 'Record<string, unknown>' is missing the following properties from type 'never[]': length, pop, push, concat, and 29 more.
+services/tokens.ts(184,15): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(values: never, options?: { count?: "exact" | "planned" | "estimated" | undefined; } | undefined): PostgrestFilterBuilder<{ PostgrestVersion: string; }, never, never, null, "user_api_tokens", never, "POST">', gave the following error.
+    Argument of type 'Record<string, unknown>' is not assignable to parameter of type 'never'.
+  Overload 2 of 2, '(values: never[], options?: { count?: "exact" | "planned" | "estimated" | undefined; defaultToNull?: boolean | undefined; } | undefined): PostgrestFilterBuilder<{ PostgrestVersion: string; }, never, never, null, "user_api_tokens", never, "POST">', gave the following error.
+    Argument of type 'Record<string, unknown>' is not assignable to parameter of type 'never[]'.
+      Type 'Record<string, unknown>' is missing the following properties from type 'never[]': length, pop, push, concat, and 29 more.
+services/tokens.ts(194,5): error TS2322: Type 'null' is not assignable to type 'ApiToken'.
+services/tokens.ts(283,26): error TS2339: Property 'token_salt' does not exist on type 'never'.
+services/tokens.ts(284,43): error TS2339: Property 'token_salt' does not exist on type 'never'.
+services/tokens.ts(287,31): error TS2339: Property 'token_hash' does not exist on type 'never'.
+services/tokens.ts(295,20): error TS2339: Property 'id' does not exist on type 'never'.
+services/tokens.ts(338,23): error TS2339: Property 'id' does not exist on type 'never'.
+services/tokens.ts(342,31): error TS2339: Property 'name' does not exist on type 'never'.
+services/tokens.ts(344,73): error TS2339: Property 'id' does not exist on type 'never'.
+services/tokens.ts(387,60): error TS2339: Property 'id' does not exist on type 'never'.
+services/tokens.ts(387,81): error TS2339: Property 'user_id' does not exist on type 'never'.
+services/tokens.ts(387,110): error TS2339: Property 'token_salt' does not exist on type 'never'.
+services/tokens.ts(390,26): error TS2339: Property 'token_salt' does not exist on type 'never'.
+services/tokens.ts(391,43): error TS2339: Property 'token_salt' does not exist on type 'never'.
+services/tokens.ts(395,31): error TS2339: Property 'token_hash' does not exist on type 'never'.
+services/tokens.ts(396,61): error TS2339: Property 'id' does not exist on type 'never'.
+services/tokens.ts(396,81): error TS2339: Property 'token_salt' does not exist on type 'never'.
+services/tokens.ts(399,62): error TS2339: Property 'id' does not exist on type 'never'.
+services/tokens.ts(402,12): error TS2339: Property 'expires_at' does not exist on type 'never'.
+services/tokens.ts(402,40): error TS2339: Property 'expires_at' does not exist on type 'never'.
+services/tokens.ts(403,53): error TS2339: Property 'id' does not exist on type 'never'.
+services/tokens.ts(403,77): error TS2339: Property 'expires_at' does not exist on type 'never'.
+services/tokens.ts(410,13): error TS2345: Argument of type '{ last_used_at: string; last_used_ip: string | null; }' is not assignable to parameter of type 'never'.
+services/tokens.ts(414,20): error TS2339: Property 'id' does not exist on type 'never'.
+services/tokens.ts(417,62): error TS2339: Property 'id' does not exist on type 'never'.
+services/tokens.ts(417,83): error TS2339: Property 'user_id' does not exist on type 'never'.
+services/tokens.ts(419,19): error TS2339: Property 'user_id' does not exist on type 'never'.
+services/tokens.ts(420,20): error TS2339: Property 'id' does not exist on type 'never'.
+services/tokens.ts(421,18): error TS2339: Property 'scopes' does not exist on type 'never'.
+services/tokens.ts(422,19): error TS2339: Property 'app_ids' does not exist on type 'never'.
+services/tokens.ts(423,26): error TS2339: Property 'function_names' does not exist on type 'never'.
+services/tokens.ts(460,69): error TS2339: Property 'email' does not exist on type 'never'.
+services/tokens.ts(460,90): error TS2339: Property 'tier' does not exist on type 'never'.
+services/tokens.ts(460,117): error TS2339: Property 'provisional' does not exist on type 'never'.
+services/tokens.ts(463,12): error TS2339: Property 'provisional' does not exist on type 'never'.
+services/tokens.ts(463,32): error TS2339: Property 'last_active_at' does not exist on type 'never'.
+services/tokens.ts(464,38): error TS2339: Property 'last_active_at' does not exist on type 'never'.
+services/tokens.ts(467,93): error TS2339: Property 'last_active_at' does not exist on type 'never'.
+services/tokens.ts(472,64): error TS2339: Property 'id' does not exist on type 'never'.
+services/tokens.ts(472,82): error TS2339: Property 'tier' does not exist on type 'never'.
+services/tokens.ts(474,14): error TS2339: Property 'id' does not exist on type 'never'.
+services/tokens.ts(475,17): error TS2339: Property 'email' does not exist on type 'never'.
+services/tokens.ts(476,16): error TS2339: Property 'tier' does not exist on type 'never'.
+services/tokens.ts(477,23): error TS2339: Property 'provisional' does not exist on type 'never'.
+services/upload-pipeline.ts(191,11): error TS2322: Type '{ name: string; version: string; description?: string | undefined; author?: string | undefined; icon?: string | undefined; type: "mcp"; entry: { functions?: string | undefined; }; functions?: Record<...> | undefined; permissions?: string[] | undefined; env?: Record<...> | undefined; env_vars?: Record<...> | undefine...' is not assignable to type 'AppManifest'.
+  Type '{ name: string; version: string; type: string; entry: {}; }' is not assignable to type 'AppManifest'.
+    Types of property 'type' are incompatible.
+      Type 'string' is not assignable to type '"mcp"'.
+services/upload-pipeline.ts(197,26): error TS2322: Type 'string' is not assignable to type '"mcp"'.
+services/weekly-calls.ts(86,59): error TS18047: 'results' is possibly 'null'.
+src/bindings/network-binding.ts(152,54): error TS2345: Argument of type '{ secureTransport: string; }' is not assignable to parameter of type 'SocketOptions'.
+  Property 'allowHalfOpen' is missing in type '{ secureTransport: string; }' but required in type 'SocketOptions'.
+src/bindings/network-binding.ts(267,54): error TS2345: Argument of type '{ secureTransport: string; }' is not assignable to parameter of type 'SocketOptions'.
+  Property 'allowHalfOpen' is missing in type '{ secureTransport: string; }' but required in type 'SocketOptions'.
