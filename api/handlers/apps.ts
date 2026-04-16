@@ -37,6 +37,9 @@ import {
   resolveAppEnvSchema,
 } from '../services/app-settings.ts';
 import {
+  type PublicAppServing,
+} from '../services/public-apps.ts';
+import {
   checkVisibilityAllowed,
   checkPublishDeposit,
   getUserTier,
@@ -54,20 +57,49 @@ interface UserAppSecretRow {
   updated_at?: string | null;
 }
 
-function sanitizeAppForPublicResponse(app: App): Record<string, unknown> {
-  const sanitized: Record<string, unknown> = { ...app };
-  delete sanitized.env_vars;
-  delete sanitized.supabase_anon_key_encrypted;
-  delete sanitized.supabase_service_key_encrypted;
-  delete sanitized.supabase_config_id;
-  delete sanitized.storage_key;
-  delete sanitized.draft_storage_key;
-  delete sanitized.draft_version;
-  delete sanitized.draft_uploaded_at;
-  delete sanitized.draft_exports;
-  delete sanitized.last_build_logs;
-  delete sanitized.last_build_error;
-  return sanitized;
+async function resolvePublicAppAccess(
+  request: Request,
+  appId: string,
+  options: {
+    allowPrivateOwner?: boolean;
+    requireFullOwnerApp?: boolean;
+  } = {},
+): Promise<{
+  app: App | PublicAppServing | null;
+  isOwner: boolean;
+}> {
+  const appsService = createAppsService();
+  const publicApp = await appsService.findPublicServingById(appId);
+
+  let userId: string | null = null;
+  try {
+    const user = await authenticate(request);
+    userId = user.id;
+  } catch {
+    userId = null;
+  }
+
+  if (publicApp) {
+    if (userId && publicApp.owner_id === userId && options.requireFullOwnerApp) {
+      const ownerApp = await appsService.findById(appId);
+      if (ownerApp) {
+        return { app: ownerApp, isOwner: true };
+      }
+    }
+
+    return { app: publicApp, isOwner: userId === publicApp.owner_id };
+  }
+
+  if (!options.allowPrivateOwner || !userId) {
+    return { app: null, isOwner: false };
+  }
+
+  const ownerApp = await appsService.findById(appId);
+  if (!ownerApp || ownerApp.owner_id !== userId || ownerApp.visibility !== 'private') {
+    return { app: null, isOwner: false };
+  }
+
+  return { app: ownerApp, isOwner: true };
 }
 
 function buildPerUserSettingsStatus(
@@ -1163,21 +1195,9 @@ async function handleReorderScreenshots(request: Request, appId: string): Promis
  */
 async function handleGetScreenshot(request: Request, appId: string, index: number): Promise<Response> {
   try {
-    const appsService = createAppsService();
     const r2Service = createR2Service();
-
-    const app = await appsService.findById(appId);
-    if (!app || app.deleted_at) return error('Not found', 404);
-
-    // Private apps: owner only
-    if (app.visibility === 'private') {
-      try {
-        const user = await authenticate(request);
-        if (user.id !== app.owner_id) return error('Not found', 404);
-      } catch {
-        return error('Not found', 404);
-      }
-    }
+    const { app } = await resolvePublicAppAccess(request, appId, { allowPrivateOwner: true });
+    if (!app) return error('Not found', 404);
 
     const screenshots = Array.isArray(app.screenshots) ? app.screenshots : [];
     if (!Number.isInteger(index) || index < 0 || index >= screenshots.length) {
@@ -1247,9 +1267,8 @@ function getFnCount(app: Record<string, unknown>): number {
  */
 async function handleGetAppInstructions(request: Request, appId: string): Promise<Response> {
   try {
-    const appsService = createAppsService();
-    const app = await appsService.findById(appId);
-    if (!app || app.visibility === 'private') {
+    const { app } = await resolvePublicAppAccess(request, appId, { allowPrivateOwner: true });
+    if (!app) {
       return error('App not found', 404);
     }
 
@@ -1356,26 +1375,36 @@ async function handleGetAppInstructions(request: Request, appId: string): Promis
 async function handleGetApp(request: Request, appId: string): Promise<Response> {
   try {
     const appsService = createAppsService();
-    const app = await appsService.findById(appId);
+    const publicApp = await appsService.findPublicById(appId);
 
-    if (!app) {
-      return error('App not found', 404);
-    }
-
-    let isOwner = false;
+    let userId: string | null = null;
     try {
       const user = await authenticate(request);
-      isOwner = user.id === app.owner_id;
+      userId = user.id;
     } catch {
-      isOwner = false;
+      userId = null;
     }
 
-    // Check visibility - only owner can see private apps
-    if (app.visibility === 'private' && !isOwner) {
+    if (publicApp) {
+      if (userId && publicApp.owner_id === userId) {
+        const ownerApp = await appsService.findById(appId);
+        if (!ownerApp) return error('App not found', 404);
+        return json(ownerApp);
+      }
+
+      return json(publicApp);
+    }
+
+    if (!userId) {
       return error('App not found', 404);
     }
 
-    return json(isOwner ? app : sanitizeAppForPublicResponse(app));
+    const ownerApp = await appsService.findById(appId);
+    if (!ownerApp || ownerApp.owner_id !== userId || ownerApp.visibility !== 'private') {
+      return error('App not found', 404);
+    }
+
+    return json(ownerApp);
   } catch (err) {
     console.error('Failed to get app:', err);
     return error('Failed to get app', 500);
@@ -1388,31 +1417,13 @@ async function handleGetApp(request: Request, appId: string): Promise<Response> 
 async function handleGetAppCode(request: Request, appId: string): Promise<Response> {
   try {
     console.log('handleGetAppCode: fetching app', appId);
-    const appsService = createAppsService();
     const r2Service = createR2Service();
-
-    const app = await appsService.findById(appId);
+    const { app } = await resolvePublicAppAccess(request, appId, { allowPrivateOwner: true });
     console.log('handleGetAppCode: app found:', !!app, app?.visibility);
 
     if (!app) {
       console.log('handleGetAppCode: app not found in database');
       return error('App not found', 404);
-    }
-
-    // Check visibility - only owner can access private apps
-    if (app.visibility === 'private') {
-      console.log('handleGetAppCode: app is private, checking auth');
-      try {
-        const user = await authenticate(request);
-        console.log('handleGetAppCode: authenticated user:', user.id, 'owner:', app.owner_id);
-        if (user.id !== app.owner_id) {
-          console.log('handleGetAppCode: user is not owner');
-          return error('App not found', 404);
-        }
-      } catch (authErr) {
-        console.log('handleGetAppCode: auth failed for private app:', authErr);
-        return error('App not found', 404);
-      }
     }
 
     // Fetch code from R2 - try different entry file extensions
@@ -1783,6 +1794,11 @@ async function handleUploadIcon(request: Request, appId: string): Promise<Respon
  */
 async function handleGetIcon(request: Request, appId: string): Promise<Response> {
   try {
+    const { app } = await resolvePublicAppAccess(request, appId, { allowPrivateOwner: true });
+    if (!app) {
+      return error('Not found', 404);
+    }
+
     const r2Service = createR2Service();
 
     // Try different extensions
@@ -1821,11 +1837,11 @@ async function handleGetIcon(request: Request, appId: string): Promise<Response>
  */
 async function handleDownloadCode(request: Request, appId: string): Promise<Response> {
   try {
-    const appsService = createAppsService();
     const r2Service = createR2Service();
-
-    const app = await appsService.findById(appId);
-
+    const { app, isOwner } = await resolvePublicAppAccess(request, appId, {
+      allowPrivateOwner: true,
+      requireFullOwnerApp: true,
+    });
     if (!app) {
       return error('App not found', 404);
     }
@@ -1834,14 +1850,15 @@ async function handleDownloadCode(request: Request, appId: string): Promise<Resp
     const downloadAccess = (app as Record<string, unknown>).download_access || 'owner';
 
     if (downloadAccess === 'owner') {
-      // Only owner can download
-      try {
-        const user = await authenticate(request);
-        if (user.id !== app.owner_id) {
-          return error('Download not allowed', 403);
+      if (!isOwner) {
+        try {
+          const user = await authenticate(request);
+          if (user.id !== app.owner_id) {
+            return error('Download not allowed', 403);
+          }
+        } catch {
+          return error('Authentication required', 401);
         }
-      } catch {
-        return error('Authentication required', 401);
       }
     }
     // If download_access is 'public', anyone can download
@@ -2237,24 +2254,8 @@ async function handleGenerateDocs(request: Request, appId: string): Promise<Resp
  */
 async function handleGetSkillsMd(request: Request, appId: string): Promise<Response> {
   try {
-    const appsService = createAppsService();
-    const app = await appsService.findById(appId);
-
-    if (!app) {
-      return error('App not found', 404);
-    }
-
-    // Check visibility - only owner can access private app docs
-    if (app.visibility === 'private') {
-      try {
-        const user = await authenticate(request);
-        if (user.id !== app.owner_id) {
-          return error('App not found', 404);
-        }
-      } catch {
-        return error('App not found', 404);
-      }
-    }
+    const { app } = await resolvePublicAppAccess(request, appId, { allowPrivateOwner: true });
+    if (!app) return error('App not found', 404);
 
     if (!app.skills_md) {
       return error('Skills documentation not generated yet. Use POST /api/apps/:appId/generate-docs to generate.', 404);

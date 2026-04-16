@@ -3,6 +3,14 @@
 
 import { getEnv } from '../lib/env.ts';
 import type { App } from '../../shared/types/index.ts';
+import {
+  PUBLIC_APP_RESPONSE_SELECT,
+  PUBLIC_APP_SERVING_SELECT,
+  PUBLIC_DISCOVERY_APP_SELECT,
+  type PublicAppResponse,
+  type PublicAppServing,
+  type PublicDiscoveryApp,
+} from './public-apps.ts';
 
 export interface SupabaseConfig {
   url: string;
@@ -16,6 +24,24 @@ export class AppsService {
   constructor(config: SupabaseConfig) {
     this.supabaseUrl = config.url;
     this.supabaseKey = config.serviceKey;
+  }
+
+  private async fetchSingle<T>(url: URL): Promise<T | null> {
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${this.supabaseKey}`,
+        'apikey': this.supabaseKey,
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`App fetch failed: ${error}`);
+    }
+
+    const results = await response.json();
+    return results[0] ?? null;
   }
 
   /**
@@ -53,22 +79,34 @@ export class AppsService {
     url.searchParams.set('deleted_at', 'is.null');
     url.searchParams.set('select', '*');
     url.searchParams.set('limit', '1');
+    return this.fetchSingle<App>(url);
+  }
 
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${this.supabaseKey}`,
-        'apikey': this.supabaseKey,
-      },
-    });
+  /**
+   * Find a public or unlisted app by ID using an explicit safe public response shape.
+   */
+  async findPublicById(appId: string): Promise<PublicAppResponse | null> {
+    const url = new URL(`${this.supabaseUrl}/rest/v1/apps`);
+    url.searchParams.set('id', `eq.${appId}`);
+    url.searchParams.set('deleted_at', 'is.null');
+    url.searchParams.set('visibility', 'in.(public,unlisted)');
+    url.searchParams.set('select', PUBLIC_APP_RESPONSE_SELECT);
+    url.searchParams.set('limit', '1');
+    return this.fetchSingle<PublicAppResponse>(url);
+  }
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`App fetch failed: ${error}`);
-    }
-
-    const results = await response.json();
-    return results[0] ?? null;
+  /**
+   * Find a public or unlisted app by ID using the safe serving shape used by
+   * public page, docs, dashboard, and download/code routes.
+   */
+  async findPublicServingById(appId: string): Promise<PublicAppServing | null> {
+    const url = new URL(`${this.supabaseUrl}/rest/v1/apps`);
+    url.searchParams.set('id', `eq.${appId}`);
+    url.searchParams.set('deleted_at', 'is.null');
+    url.searchParams.set('visibility', 'in.(public,unlisted)');
+    url.searchParams.set('select', PUBLIC_APP_SERVING_SELECT);
+    url.searchParams.set('limit', '1');
+    return this.fetchSingle<PublicAppServing>(url);
   }
 
   /**
@@ -205,10 +243,11 @@ export class AppsService {
   /**
    * List public apps
    */
-  async listPublic(limit = 100): Promise<App[]> {
+  async listPublic(limit = 100): Promise<PublicDiscoveryApp[]> {
     const url = new URL(`${this.supabaseUrl}/rest/v1/apps`);
     url.searchParams.set('visibility', 'eq.public');
-    url.searchParams.set('select', '*');
+    url.searchParams.set('deleted_at', 'is.null');
+    url.searchParams.set('select', PUBLIC_DISCOVERY_APP_SELECT);
     url.searchParams.set('order', 'runs_30d.desc');
     url.searchParams.set('limit', String(limit));
 

@@ -4,6 +4,7 @@
 import { handleUpload } from './upload.ts';
 import { handleRun } from './run.ts';
 import { handleAuth } from './auth.ts';
+import { authenticate } from './auth.ts';
 import { appStoreUrl, downloadUrl, deepLinkAppUrl } from '../lib/urls.ts';
 import { handleApps } from './apps.ts';
 import { handleUser } from './user.ts';
@@ -795,16 +796,18 @@ export function createApp() {
 
         // SPA routes for app detail sidebar sections
         if (['/permissions', '/environment', '/payments', '/logs'].includes(subPath) && method === 'GET') {
+          const { app } = await resolvePublicFacingApp(request, appId, { allowPrivateOwner: true });
+          if (!app) {
+            return json({ error: 'App not found' }, 404);
+          }
           return new Response(getLayoutHTML({ initialView: 'app', activeAppId: appId }), {
             headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' },
           });
         }
 
         try {
-          const appsService = createAppsService();
           const r2Service = createR2Service();
-
-          const app = await appsService.findById(appId);
+          const { app } = await resolvePublicFacingApp(request, appId, { allowPrivateOwner: true });
           if (!app) {
             return json({ error: 'App not found' }, 404);
           }
@@ -1119,6 +1122,44 @@ function getMcpAppInfoHTML(appId: string, appName: string, skills: Array<{ name:
 </html>`;
 }
 
+async function resolvePublicFacingApp(
+  request: Request,
+  appId: string,
+  options: { allowPrivateOwner?: boolean } = {},
+) {
+  const appsService = createAppsService();
+  const publicApp = await appsService.findPublicServingById(appId);
+
+  let userId: string | null = null;
+  try {
+    const user = await authenticate(request);
+    userId = user.id;
+  } catch {
+    userId = null;
+  }
+
+  if (publicApp) {
+    return {
+      app: publicApp,
+      isOwner: userId === publicApp.owner_id,
+    };
+  }
+
+  if (!options.allowPrivateOwner || !userId) {
+    return { app: null, isOwner: false };
+  }
+
+  const ownerApp = await appsService.findById(appId);
+  if (!ownerApp || ownerApp.owner_id !== userId || ownerApp.visibility !== 'private') {
+    return { app: null, isOwner: false };
+  }
+
+  return {
+    app: ownerApp,
+    isOwner: true,
+  };
+}
+
 /**
  * Serve a generic auto-generated dashboard for any MCP app.
  * Reads skills_parsed/manifest to discover tools and renders an interactive UI.
@@ -1126,9 +1167,7 @@ function getMcpAppInfoHTML(appId: string, appName: string, skills: Array<{ name:
  */
 async function handleGenericDashboard(request: Request, appId: string): Promise<Response> {
   try {
-    const appsService = createAppsService();
-    const app = await appsService.findById(appId);
-
+    const { app } = await resolvePublicFacingApp(request, appId, { allowPrivateOwner: true });
     if (!app) {
       return json({ error: 'App not found' }, 404);
     }
@@ -1498,14 +1537,8 @@ const BOT_UA_PATTERN = /bot|crawler|spider|facebookexternalhit|slackbot|whatsapp
 async function handlePublicAppPage(request: Request, appId: string): Promise<Response> {
   try {
     const appsService = createAppsService();
-    const app = await appsService.findById(appId);
-
-    if (!app || app.deleted_at) {
-      return new Response('Not found', { status: 404 });
-    }
-
-    // Only show public or unlisted apps
-    if (app.visibility === 'private') {
+    const app = await appsService.findPublicServingById(appId);
+    if (!app) {
       return new Response('Not found', { status: 404 });
     }
 
