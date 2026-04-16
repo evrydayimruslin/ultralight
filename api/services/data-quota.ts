@@ -5,6 +5,7 @@
 
 import { getEnv } from '../lib/env.ts';
 import { COMBINED_FREE_TIER_BYTES } from '../../shared/types/index.ts';
+import { resolveEnforcementOptions, type EnforcementOptions } from './enforcement.ts';
 
 // ============================================
 // TYPES
@@ -18,6 +19,7 @@ export interface DataQuotaResult {
   limit_bytes: number;
   remaining_bytes: number;
   has_hosting_balance: boolean;
+  reason?: 'quota_exceeded' | 'service_unavailable';
 }
 
 export interface DataStorageAdjustResult {
@@ -25,6 +27,33 @@ export interface DataStorageAdjustResult {
   combined_bytes: number;
   storage_limit: number;
   over_limit: boolean;
+}
+
+function unavailableDataQuotaResult(
+  additionalBytes: number,
+  options?: EnforcementOptions,
+  detail?: unknown,
+): DataQuotaResult {
+  const enforcement = resolveEnforcementOptions(options, 'data quota check');
+  const suffix = enforcement.mode === 'fail_closed'
+    ? 'blocking write (fail-closed)'
+    : 'allowing write (fail-open)';
+
+  console.error(
+    `[DATA-QUOTA] Backend unavailable for ${enforcement.resource}, ${suffix}. Additional bytes=${additionalBytes}:`,
+    detail,
+  );
+
+  return {
+    allowed: enforcement.mode !== 'fail_closed',
+    source_used_bytes: 0,
+    data_used_bytes: 0,
+    combined_used_bytes: 0,
+    limit_bytes: COMBINED_FREE_TIER_BYTES,
+    remaining_bytes: enforcement.mode === 'fail_closed' ? 0 : COMBINED_FREE_TIER_BYTES,
+    has_hosting_balance: false,
+    reason: 'service_unavailable',
+  };
 }
 
 // ============================================
@@ -35,26 +64,17 @@ export interface DataStorageAdjustResult {
  * Check whether a user has enough data storage quota.
  * Combined budget: storage_used_bytes (source code) + data_storage_used_bytes (user data) <= 100MB.
  * Allowed if under limit OR user has hosting balance to cover overage.
- * Fails open on DB errors (same pattern as storage-quota.ts).
  */
 export async function checkDataQuota(
   userId: string,
-  additionalBytes: number
+  additionalBytes: number,
+  options?: EnforcementOptions,
 ): Promise<DataQuotaResult> {
   const SUPABASE_URL = getEnv('SUPABASE_URL');
   const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    // Can't check — fail open
-    return {
-      allowed: true,
-      source_used_bytes: 0,
-      data_used_bytes: 0,
-      combined_used_bytes: 0,
-      limit_bytes: COMBINED_FREE_TIER_BYTES,
-      remaining_bytes: COMBINED_FREE_TIER_BYTES,
-      has_hosting_balance: false,
-    };
+    return unavailableDataQuotaResult(additionalBytes, options, 'Supabase credentials not configured');
   }
 
   try {
@@ -72,44 +92,21 @@ export async function checkDataQuota(
     });
 
     if (!res.ok) {
-      console.warn('[DATA-QUOTA] RPC check_data_storage_quota failed, allowing:', await res.text());
-      return {
-        allowed: true,
-        source_used_bytes: 0,
-        data_used_bytes: 0,
-        combined_used_bytes: 0,
-        limit_bytes: COMBINED_FREE_TIER_BYTES,
-        remaining_bytes: COMBINED_FREE_TIER_BYTES,
-        has_hosting_balance: false,
-      };
+      return unavailableDataQuotaResult(additionalBytes, options, await res.text());
     }
 
     const rows = await res.json() as DataQuotaResult[];
     if (!rows || rows.length === 0) {
-      // User not found — fail open
-      return {
-        allowed: true,
-        source_used_bytes: 0,
-        data_used_bytes: 0,
-        combined_used_bytes: 0,
-        limit_bytes: COMBINED_FREE_TIER_BYTES,
-        remaining_bytes: COMBINED_FREE_TIER_BYTES,
-        has_hosting_balance: false,
-      };
+      return unavailableDataQuotaResult(additionalBytes, options, 'Quota RPC returned no rows');
     }
 
-    return rows[0];
-  } catch (err) {
-    console.error('[DATA-QUOTA] Error checking data quota, allowing:', err);
+    const row = rows[0];
     return {
-      allowed: true,
-      source_used_bytes: 0,
-      data_used_bytes: 0,
-      combined_used_bytes: 0,
-      limit_bytes: COMBINED_FREE_TIER_BYTES,
-      remaining_bytes: COMBINED_FREE_TIER_BYTES,
-      has_hosting_balance: false,
+      ...row,
+      reason: row.allowed ? undefined : 'quota_exceeded',
     };
+  } catch (err) {
+    return unavailableDataQuotaResult(additionalBytes, options, err);
   }
 }
 

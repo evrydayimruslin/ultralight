@@ -29,6 +29,49 @@ function isValidModelId(model: string): boolean {
   return /^[a-z0-9_-]+\/[a-z0-9._-]+(:[a-z0-9_-]+)?$/i.test(model);
 }
 
+async function enforceChatGuards(
+  userId: string,
+  resource: string,
+): Promise<{ balance: number } | Response> {
+  const rateResult = await checkRateLimit(userId, 'chat:stream', undefined, undefined, {
+    mode: 'fail_closed',
+    resource,
+  });
+  if (!rateResult.allowed) {
+    if (rateResult.reason === 'service_unavailable') {
+      return json({
+        error: 'Chat is temporarily unavailable while usage controls recover. Please try again shortly.',
+      }, 503);
+    }
+
+    return json(
+      { error: 'Rate limit exceeded', resetAt: rateResult.resetAt.toISOString() },
+      429,
+    );
+  }
+
+  try {
+    const balance = await checkChatBalance(userId);
+    console.log(`[CHAT] Balance for ${userId}: ${balance} cents (min: ${CHAT_MIN_BALANCE_LIGHT})`);
+
+    if (balance < CHAT_MIN_BALANCE_LIGHT) {
+      return json({
+        error: 'Insufficient balance',
+        balance_light: balance,
+        minimum_light: CHAT_MIN_BALANCE_LIGHT,
+        topup_url: '/settings/billing',
+      }, 402);
+    }
+
+    return { balance };
+  } catch (err) {
+    console.error(`[CHAT] Balance check unavailable for ${userId}, blocking ${resource}:`, err);
+    return json({
+      error: 'Billing service temporarily unavailable. Please try again shortly.',
+    }, 503);
+  }
+}
+
 // ============================================
 // POST /chat/stream — Streaming proxy
 // ============================================
@@ -82,28 +125,11 @@ export async function handleChatStream(request: Request): Promise<Response> {
     }
   }
 
-  // ── 3. Rate limit ──
-  const rateResult = await checkRateLimit(user.id, 'chat:stream');
-  if (!rateResult.allowed) {
-    return json(
-      { error: 'Rate limit exceeded', resetAt: rateResult.resetAt.toISOString() },
-      429,
-    );
+  // ── 3. Rate limit + balance gate ──
+  const guardResult = await enforceChatGuards(user.id, 'chat stream');
+  if (guardResult instanceof Response) {
+    return guardResult;
   }
-
-  // ── 4. Balance pre-check (temporarily bypassed for development) ──
-  let balance: number;
-  try {
-    balance = await checkChatBalance(user.id);
-    console.log(`[CHAT] Balance for ${user.id}: ${balance} cents (min: ${CHAT_MIN_BALANCE_LIGHT})`);
-  } catch (err) {
-    console.error('[CHAT] Balance check failed:', err);
-    balance = 0; // Don't block on balance check failure during dev
-  }
-  // TODO: Re-enable balance gate after billing is wired up
-  // if (balance < CHAT_MIN_BALANCE_LIGHT) {
-  //   return json({ error: 'Insufficient balance', balance_light: balance, minimum_light: CHAT_MIN_BALANCE_LIGHT, topup_url: '/settings/billing' }, 402);
-  // }
 
   // ── 5. Get API key — prefer BYOK if configured, fallback to platform key ──
   let userOpenRouterKey: string;
@@ -473,10 +499,10 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
     return error('message is required', 400);
   }
 
-  // ── 3. Rate limit ──
-  const rateResult = await checkRateLimit(user.id, 'chat:stream');
-  if (!rateResult.allowed) {
-    return json({ error: 'Rate limit exceeded', resetAt: rateResult.resetAt.toISOString() }, 429);
+  // ── 3. Rate limit + balance gate ──
+  const guardResult = await enforceChatGuards(user.id, 'chat orchestration');
+  if (guardResult instanceof Response) {
+    return guardResult;
   }
 
   // ── 4. Stream orchestration events as SSE ──

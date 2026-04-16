@@ -713,19 +713,33 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
     const isToolsCall = rpcRequest.method === 'tools/call';
     const isNonOwner = app.owner_id !== userId;
     const rlConfig = app.rate_limit_config as { calls_per_minute?: number; calls_per_day?: number } | null;
+    const endpointRateLimitOptions = isToolsCall
+      ? { mode: 'fail_closed' as const, resource: 'MCP tools/call rate limit' }
+      : undefined;
 
     // Build array of gate checks to run in parallel
     const gateChecks = await Promise.all([
       // [0] Per-endpoint rate limit (always)
-      checkRateLimit(userId, `mcp:${rpcRequest.method}`),
+      checkRateLimit(userId, `mcp:${rpcRequest.method}`, undefined, undefined, endpointRateLimitOptions),
       // [1] Weekly call limit (tools/call only)
-      isToolsCall ? checkAndIncrementWeeklyCalls(userId, user.tier) : null,
+      isToolsCall
+        ? checkAndIncrementWeeklyCalls(userId, user.tier, {
+          mode: 'fail_closed',
+          resource: 'MCP weekly call limit',
+        })
+        : null,
       // [2] Per-app minute rate limit (tools/call, non-owner, if configured)
       isToolsCall && isNonOwner && rlConfig?.calls_per_minute
-        ? checkRateLimit(userId, `app:${appId}:minute`, rlConfig.calls_per_minute, 1) : null,
+        ? checkRateLimit(userId, `app:${appId}:minute`, rlConfig.calls_per_minute, 1, {
+          mode: 'fail_closed',
+          resource: 'MCP app minute rate limit',
+        }) : null,
       // [3] Per-app daily rate limit (tools/call, non-owner, if configured)
       isToolsCall && isNonOwner && rlConfig?.calls_per_day
-        ? checkRateLimit(userId, `app:${appId}:day`, rlConfig.calls_per_day, 1440) : null,
+        ? checkRateLimit(userId, `app:${appId}:day`, rlConfig.calls_per_day, 1440, {
+          mode: 'fail_closed',
+          resource: 'MCP app daily rate limit',
+        }) : null,
       // [4] Visibility/permissions (private apps, non-owner)
       app.visibility === 'private' && isNonOwner
         ? getPermissionsForUser(userId, app.id, app.owner_id, app.visibility) : undefined,
@@ -738,24 +752,52 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
     const [endpointRL, weeklyRL, appMinuteRL, appDayRL, perms, provisionalRL] = gateChecks;
 
     if (!endpointRL.allowed) {
+      if (endpointRL.reason === 'service_unavailable') {
+        return jsonRpcErrorResponse(
+          rpcRequest.id,
+          INTERNAL_ERROR,
+          'Usage controls are temporarily unavailable. Please try again shortly.',
+        );
+      }
       return jsonRpcErrorResponse(
         rpcRequest.id, RATE_LIMITED,
         `Rate limit exceeded. Try again after ${endpointRL.resetAt.toISOString()}`
       );
     }
     if (weeklyRL && !weeklyRL.allowed) {
+      if (weeklyRL.reason === 'service_unavailable') {
+        return jsonRpcErrorResponse(
+          rpcRequest.id,
+          INTERNAL_ERROR,
+          'Usage controls are temporarily unavailable. Please try again shortly.',
+        );
+      }
       return jsonRpcErrorResponse(
         rpcRequest.id, RATE_LIMITED,
         `Too many requests. Please try again later or upgrade to Pro.`
       );
     }
     if (appMinuteRL && !appMinuteRL.allowed) {
+      if (appMinuteRL.reason === 'service_unavailable') {
+        return jsonRpcErrorResponse(
+          rpcRequest.id,
+          INTERNAL_ERROR,
+          'App usage controls are temporarily unavailable. Please try again shortly.',
+        );
+      }
       return jsonRpcErrorResponse(
         rpcRequest.id, RATE_LIMITED,
         `App rate limit exceeded (${rlConfig!.calls_per_minute}/min). Try again after ${appMinuteRL.resetAt.toISOString()}`
       );
     }
     if (appDayRL && !appDayRL.allowed) {
+      if (appDayRL.reason === 'service_unavailable') {
+        return jsonRpcErrorResponse(
+          rpcRequest.id,
+          INTERNAL_ERROR,
+          'App usage controls are temporarily unavailable. Please try again shortly.',
+        );
+      }
       return jsonRpcErrorResponse(
         rpcRequest.id, RATE_LIMITED,
         `App daily limit exceeded (${rlConfig!.calls_per_day}/day). Try again tomorrow.`
@@ -765,6 +807,13 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
       return jsonRpcErrorResponse(rpcRequest.id, -32002, 'App not found');
     }
     if (provisionalRL && !provisionalRL.allowed) {
+      if (provisionalRL.reason === 'service_unavailable') {
+        return jsonRpcErrorResponse(
+          rpcRequest.id,
+          INTERNAL_ERROR,
+          'Provisional usage controls are temporarily unavailable. Please try again shortly.',
+        );
+      }
       return jsonRpcErrorResponse(
         rpcRequest.id, RATE_LIMITED,
         `Provisional account daily limit reached (50 calls/day). Sign in at ultralight-api.rgn4jz429m.workers.dev to unlock full access.`

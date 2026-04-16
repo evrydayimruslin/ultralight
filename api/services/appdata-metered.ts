@@ -70,8 +70,14 @@ export function createMeteredAppDataService(
       const newSize = computeStoreSize(key, value);
 
       // Pre-flight quota check
-      const quota = await checkDataQuota(userId, newSize);
+      const quota = await checkDataQuota(userId, newSize, {
+        mode: 'fail_closed',
+        resource: 'app data write',
+      });
       if (!quota.allowed) {
+        if (quota.reason === 'service_unavailable') {
+          throw new Error('Storage quota service unavailable. Please try again shortly.');
+        }
         const usedMb = (quota.combined_used_bytes / (1024 * 1024)).toFixed(1);
         const limitMb = (quota.limit_bytes / (1024 * 1024)).toFixed(0);
         throw new Error(
@@ -142,8 +148,14 @@ export function createMeteredAppDataService(
       );
 
       // Pre-flight quota check for the full batch
-      const quota = await checkDataQuota(userId, totalNewBytes);
+      const quota = await checkDataQuota(userId, totalNewBytes, {
+        mode: 'fail_closed',
+        resource: 'app data batch write',
+      });
       if (!quota.allowed) {
+        if (quota.reason === 'service_unavailable') {
+          throw new Error('Storage quota service unavailable. Please try again shortly.');
+        }
         const usedMb = (quota.combined_used_bytes / (1024 * 1024)).toFixed(1);
         const limitMb = (quota.limit_bytes / (1024 * 1024)).toFixed(0);
         throw new Error(

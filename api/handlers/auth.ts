@@ -361,6 +361,12 @@ export async function handleAuth(request: Request): Promise<Response> {
           headers: { 'Content-Type': 'application/json' },
         });
       }
+      if (err.status === 503) {
+        return new Response(JSON.stringify({ error: err.message }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
       console.error('[AUTH] Provisional creation failed:', err);
       return error('Failed to create provisional account', 500);
     }

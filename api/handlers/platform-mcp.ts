@@ -2782,8 +2782,14 @@ async function executeUpload(
       const { checkStorageQuota, recordUploadStorage } = await import('../services/storage-quota.ts');
       const validatedFiles = uploadFiles.map(f => ({ name: f.name, content: f.content }));
       const totalUploadBytes = validatedFiles.reduce((sum, f) => sum + new TextEncoder().encode(f.content).byteLength, 0);
-      const quotaCheck = await checkStorageQuota(userId, totalUploadBytes);
+      const quotaCheck = await checkStorageQuota(userId, totalUploadBytes, {
+        mode: 'fail_closed',
+        resource: 'Platform MCP GPU upload',
+      });
       if (!quotaCheck.allowed) {
+        if (quotaCheck.reason === 'service_unavailable') {
+          throw new ToolError(INTERNAL_ERROR, 'Storage quota service unavailable. Please try again shortly.');
+        }
         throw new ToolError(VALIDATION_ERROR, `Storage limit exceeded. This upload requires ${totalUploadBytes} bytes but only ${quotaCheck.remaining_bytes} remaining.`);
       }
 
@@ -2850,13 +2856,27 @@ async function executeUpload(
 
     // ── Deno new app (original path) ──
     const gapId = args.gap_id as string | undefined;
-    const result = await handleUploadFiles(userId, uploadFiles, {
-      name: args.name as string,
-      description: args.description as string,
-      visibility: requestedVisibility as 'private' | 'unlisted' | 'public',
-      app_type: 'mcp',
-      gap_id: gapId,
-    });
+    let result: Awaited<ReturnType<typeof handleUploadFiles>>;
+    try {
+      result = await handleUploadFiles(userId, uploadFiles, {
+        name: args.name as string,
+        description: args.description as string,
+        visibility: requestedVisibility as 'private' | 'unlisted' | 'public',
+        app_type: 'mcp',
+        gap_id: gapId,
+      });
+    } catch (err) {
+      const status = typeof err === 'object' && err !== null && 'status' in err
+        ? Number((err as { status?: number }).status) || 500
+        : 500;
+      if (status === 503) {
+        throw new ToolError(INTERNAL_ERROR, err instanceof Error ? err.message : 'Storage quota service unavailable. Please try again shortly.');
+      }
+      if (status === 413) {
+        throw new ToolError(VALIDATION_ERROR, err instanceof Error ? err.message : 'Storage limit exceeded.');
+      }
+      throw err;
+    }
 
     // Auto-generate Skills.md + embedding
     if (result.app_id) {

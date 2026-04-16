@@ -55,6 +55,34 @@ interface DraftUploadResponse {
   message: string;
 }
 
+function createHttpError(message: string, status: number): Error & { status: number } {
+  const err = new Error(message) as Error & { status: number };
+  err.status = status;
+  return err;
+}
+
+function assertUploadQuota(quotaCheck: {
+  allowed: boolean;
+  used_bytes: number;
+  limit_bytes: number;
+  remaining_bytes: number;
+  reason?: 'quota_exceeded' | 'service_unavailable';
+}, totalUploadBytes: number): void {
+  if (quotaCheck.allowed) {
+    return;
+  }
+
+  if (quotaCheck.reason === 'service_unavailable') {
+    throw createHttpError('Storage quota service unavailable. Please try again shortly.', 503);
+  }
+
+  throw createHttpError(
+    `Storage limit exceeded. Using ${formatBytes(quotaCheck.used_bytes)} of ${formatBytes(quotaCheck.limit_bytes)}. ` +
+      `This upload requires ${formatBytes(totalUploadBytes)}, but only ${formatBytes(quotaCheck.remaining_bytes)} remaining.`,
+    413,
+  );
+}
+
 export async function handleUpload(request: Request): Promise<Response> {
   try {
     // Debug: Log all headers
@@ -298,13 +326,11 @@ export async function handleUpload(request: Request): Promise<Response> {
 
       // Check storage quota
       const totalUploadBytes = filesToUpload.reduce((sum, f) => sum + f.content.byteLength, 0);
-      const quotaCheck = await checkStorageQuota(userId, totalUploadBytes);
-      if (!quotaCheck.allowed) {
-        throw new Error(
-          `Storage limit exceeded. Using ${formatBytes(quotaCheck.used_bytes)} of ${formatBytes(quotaCheck.limit_bytes)}. ` +
-          `This upload requires ${formatBytes(totalUploadBytes)}, but only ${formatBytes(quotaCheck.remaining_bytes)} remaining.`
-        );
-      }
+      const quotaCheck = await checkStorageQuota(userId, totalUploadBytes, {
+        mode: 'fail_closed',
+        resource: 'GPU app upload',
+      });
+      assertUploadQuota(quotaCheck, totalUploadBytes);
 
       // Upload raw files to R2 (no bundling for GPU functions)
       log('info', 'Uploading GPU function files to storage...');
@@ -634,13 +660,11 @@ export async function handleUpload(request: Request): Promise<Response> {
 
     // Check storage quota before uploading (25MB platform limit)
     const totalUploadBytes = filesToUpload.reduce((sum, f) => sum + f.content.byteLength, 0);
-    const quotaCheck = await checkStorageQuota(userId, totalUploadBytes);
-    if (!quotaCheck.allowed) {
-      throw new Error(
-        `Storage limit exceeded. Using ${formatBytes(quotaCheck.used_bytes)} of ${formatBytes(quotaCheck.limit_bytes)}. ` +
-        `This upload requires ${formatBytes(totalUploadBytes)}, but only ${formatBytes(quotaCheck.remaining_bytes)} remaining.`
-      );
-    }
+    const quotaCheck = await checkStorageQuota(userId, totalUploadBytes, {
+      mode: 'fail_closed',
+      resource: 'app upload',
+    });
+    assertUploadQuota(quotaCheck, totalUploadBytes);
 
     // Upload files to R2
     log('info', 'Uploading to storage...');
@@ -743,7 +767,10 @@ export async function handleUpload(request: Request): Promise<Response> {
     return json(response, 201);
   } catch (err) {
     console.error('Upload error:', err);
-    return error(err instanceof Error ? err.message : 'Upload failed', 500);
+    const status = typeof err === 'object' && err !== null && 'status' in err
+      ? Number((err as { status?: number }).status) || 500
+      : 500;
+    return error(err instanceof Error ? err.message : 'Upload failed', status);
   }
 }
 
@@ -1049,7 +1076,10 @@ export async function handleDraftUpload(request: Request, appId: string): Promis
     return json(response, 200);
   } catch (err) {
     console.error('Draft upload error:', err);
-    return error(err instanceof Error ? err.message : 'Draft upload failed', 500);
+    const status = typeof err === 'object' && err !== null && 'status' in err
+      ? Number((err as { status?: number }).status) || 500
+      : 500;
+    return error(err instanceof Error ? err.message : 'Draft upload failed', status);
   }
 }
 
@@ -1131,13 +1161,11 @@ export async function handleUploadFiles(
 
   // Check storage quota
   const totalUploadSizeBytes = pipeline.filesToUpload.reduce((sum, f) => sum + f.content.byteLength, 0);
-  const uploadQuotaCheck = await checkStorageQuota(userId, totalUploadSizeBytes);
-  if (!uploadQuotaCheck.allowed) {
-    throw new Error(
-      `Storage limit exceeded. Using ${formatBytes(uploadQuotaCheck.used_bytes)} of ${formatBytes(uploadQuotaCheck.limit_bytes)}. ` +
-      `This upload requires ${formatBytes(totalUploadSizeBytes)}, but only ${formatBytes(uploadQuotaCheck.remaining_bytes)} remaining.`
-    );
-  }
+  const uploadQuotaCheck = await checkStorageQuota(userId, totalUploadSizeBytes, {
+    mode: 'fail_closed',
+    resource: 'draft upload',
+  });
+  assertUploadQuota(uploadQuotaCheck, totalUploadSizeBytes);
 
   // Upload files to R2
   const r2Service = createR2Service();

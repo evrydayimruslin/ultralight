@@ -4,12 +4,14 @@
 
 import { TIER_LIMITS, type Tier } from '../../shared/types/index.ts';
 import { getEnv } from '../lib/env.ts';
+import { resolveEnforcementOptions, type EnforcementOptions } from './enforcement.ts';
 
 export interface WeeklyCallResult {
   allowed: boolean;
   count: number;
   limit: number;
   isOverage: boolean;
+  reason?: 'limit_exceeded' | 'service_unavailable';
 }
 
 /**
@@ -36,13 +38,29 @@ export function getWeekStart(): Date {
  */
 export async function checkAndIncrementWeeklyCalls(
   userId: string,
-  tier: Tier
+  tier: Tier,
+  options?: EnforcementOptions,
 ): Promise<WeeklyCallResult> {
   const supabaseUrl = getEnv('SUPABASE_URL');
   const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   const tierLimits = TIER_LIMITS[tier];
   const weekStart = getWeekStart();
+  const enforcement = resolveEnforcementOptions(options, 'weekly call limit');
+
+  const unavailableResult = (detail: unknown): WeeklyCallResult => {
+    const suffix = enforcement.mode === 'fail_closed'
+      ? 'blocking request (fail-closed)'
+      : 'allowing request (fail-open)';
+    console.error(`[WEEKLY-CALLS] Backend unavailable for ${enforcement.resource}, ${suffix}:`, detail);
+    return {
+      allowed: enforcement.mode !== 'fail_closed',
+      count: 0,
+      limit: tierLimits.weekly_call_limit,
+      isOverage: false,
+      reason: 'service_unavailable',
+    };
+  };
 
   try {
     const response = await fetch(`${supabaseUrl}/rest/v1/rpc/increment_weekly_calls`, {
@@ -59,8 +77,7 @@ export async function checkAndIncrementWeeklyCalls(
     });
 
     if (!response.ok) {
-      console.warn('increment_weekly_calls RPC failed, allowing request:', await response.text());
-      return { allowed: true, count: 0, limit: tierLimits.weekly_call_limit, isOverage: false };
+      return unavailableResult(await response.text());
     }
 
     const results = await response.json();
@@ -75,15 +92,13 @@ export async function checkAndIncrementWeeklyCalls(
 
     // Hard cap for free and fun tiers
     if (isOverage && tierLimits.overage_cost_per_100k_light === 0) {
-      return { allowed: false, count: currentCount, limit, isOverage: true };
+      return { allowed: false, count: currentCount, limit, isOverage: true, reason: 'limit_exceeded' };
     }
 
     // Paid tiers with overage: allow but flag
     return { allowed: true, count: currentCount, limit, isOverage };
   } catch (err) {
-    console.error('Weekly call check error:', err);
-    // Fail open
-    return { allowed: true, count: 0, limit: tierLimits.weekly_call_limit, isOverage: false };
+    return unavailableResult(err);
   }
 }
 

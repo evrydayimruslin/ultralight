@@ -16,6 +16,12 @@ const PROVISIONAL_DAILY_CALL_LIMIT = 50;  // 50 MCP calls/day hard limit
 const PROVISIONAL_STORAGE_LIMIT = 5 * 1024 * 1024; // 5MB
 const INACTIVITY_EXPIRY_MS = 24 * 60 * 60 * 1000;  // 24 hours
 
+function withStatus(message: string, status: number): Error & { status: number } {
+  const err = new Error(message) as Error & { status: number };
+  err.status = status;
+  return err;
+}
+
 // ============================================
 // TYPES
 // ============================================
@@ -59,15 +65,14 @@ export interface ConversionEventData {
  * Rate limited to 3 per IP per 24 hours.
  */
 export async function createProvisionalUser(clientIp: string): Promise<ProvisionalCreateResult> {
-  // IP rate limit temporarily disabled for debugging
-  // TODO: Re-enable after testing — limit is 3 provisionals per IP per day
   const ipCount = await countProvisionalsByIp(clientIp);
   console.log(`[PROVISIONAL] IP ${clientIp} has ${ipCount} provisionals in last 24h (limit: ${MAX_PROVISIONALS_PER_IP})`);
-  // if (ipCount >= MAX_PROVISIONALS_PER_IP) {
-  //   const err = new Error(`Rate limit: ${MAX_PROVISIONALS_PER_IP} provisional accounts per IP per day`);
-  //   (err as any).status = 429;
-  //   throw err;
-  // }
+  if (ipCount >= MAX_PROVISIONALS_PER_IP) {
+    throw withStatus(
+      `Rate limit: ${MAX_PROVISIONALS_PER_IP} provisional accounts per IP per day`,
+      429,
+    );
+  }
 
   // Generate a stable UUID for the provisional user
   const userId = crypto.randomUUID();
@@ -165,7 +170,13 @@ export async function isProvisionalUser(userId: string): Promise<boolean> {
  * Uses a custom bucket "provisional_daily:{userId}" with 50 calls/day window.
  */
 export async function checkProvisionalDailyLimit(userId: string) {
-  return checkRateLimit(userId, `provisional_daily:${userId}`, PROVISIONAL_DAILY_CALL_LIMIT, 1440);
+  return checkRateLimit(
+    userId,
+    `provisional_daily:${userId}`,
+    PROVISIONAL_DAILY_CALL_LIMIT,
+    1440,
+    { mode: 'fail_closed', resource: 'provisional daily call limit' },
+  );
 }
 
 /**
@@ -308,23 +319,37 @@ export function getProvisionalDailyCallLimit(): number {
  * Count how many provisional users were created from this IP in the last 24 hours.
  */
 async function countProvisionalsByIp(ip: string): Promise<number> {
-  const response = await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/rpc/count_provisional_by_ip`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
-      'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ p_ip: ip }),
-  });
+  try {
+    const response = await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/rpc/count_provisional_by_ip`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
+        'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ p_ip: ip }),
+    });
 
-  if (!response.ok) {
-    console.warn('[PROVISIONAL] IP count RPC failed, defaulting to 0');
-    return 0; // Fail-open: allow creation if RPC fails
+    if (!response.ok) {
+      const detail = await response.text();
+      console.error('[PROVISIONAL] IP count RPC unavailable, blocking provisional creation:', detail);
+      throw withStatus('Provisional signup is temporarily unavailable. Please try again shortly.', 503);
+    }
+
+    const count = await response.json();
+    if (typeof count !== 'number') {
+      console.error('[PROVISIONAL] IP count RPC returned invalid payload, blocking provisional creation:', count);
+      throw withStatus('Provisional signup is temporarily unavailable. Please try again shortly.', 503);
+    }
+
+    return count;
+  } catch (err) {
+    if (typeof err === 'object' && err !== null && 'status' in err) {
+      throw err;
+    }
+    console.error('[PROVISIONAL] IP count check failed, blocking provisional creation:', err);
+    throw withStatus('Provisional signup is temporarily unavailable. Please try again shortly.', 503);
   }
-
-  const count = await response.json();
-  return typeof count === 'number' ? count : 0;
 }
 
 /**
