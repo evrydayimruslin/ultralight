@@ -260,89 +260,12 @@ services/function-index.ts(105,72): error TS2345: Argument of type '{ id: string
   Type '{ id: string; name: string; slug: string; manifest: unknown; skills_parsed: unknown; d1_database_id: string | null; }' is not assignable to type 'AppForCodemode'.
     Types of property 'manifest' are incompatible.
       Type 'unknown' is not assignable to type '{ functions?: Record<string, ManifestFunction> | undefined; widgets?: { id: string; label: string; }[] | undefined; }'.
-services/gpu/benchmark.ts(362,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
-services/gpu/benchmark.ts(363,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
-services/gpu/benchmark.ts(392,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
-services/gpu/benchmark.ts(393,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
-services/gpu/benchmark.ts(419,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
-services/gpu/benchmark.ts(420,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
-services/gpu/benchmark.ts(448,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
-services/gpu/benchmark.ts(449,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
 services/gpu/billing.ts(209,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
 services/gpu/billing.ts(210,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
 services/gpu/builder.ts(227,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
 services/gpu/builder.ts(228,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
 services/gpu/index.ts(21,31): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
-services/gpu/runpod.ts(308,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
-services/gpu/runpod.ts(309,36): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
-services/gpu/runpod.ts(309,81): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
-services/gpu/runpod.ts(310,34): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
-services/gpu/runpod.ts(345,35): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
-services/gpu/runpod.ts(591,11): error TS18046: 'json' is of type 'unknown'.
-services/gpu/runpod.ts(591,26): error TS18046: 'json' is of type 'unknown'.
-services/gpu/runpod.ts(592,26): error TS18046: 'json' is of type 'unknown'.
-services/gpu/runpod.ts(596,14): error TS18046: 'json' is of type 'unknown'.
 services/gpu/smoke-test.ts(300,5): error TS2304: Cannot find name 'Deno'.
-services/gpu/test-endpoint.ts(15,21): error TS2304: Cannot find name 'Deno'.
-services/gpu/test-endpoint.ts(20,3): error TS2304: Cannot find name 'Deno'.
-services/gpu/test-endpoint.ts(63,44): error TS18046: 'health' is of type 'unknown'.
-services/gpu/test-endpoint.ts(63,80): error TS18046: 'health' is of type 'unknown'.
-services/gpu/test-endpoint.ts(63,119): error TS18046: 'health' is of type 'unknown'.
-services/gpu/test-endpoint.ts(64,44): error TS18046: 'health' is of type 'unknown'.
-services/gpu/test-endpoint.ts(64,85): error TS18046: 'health' is of type 'unknown'.
-services/gpu/test-endpoint.ts(95,36): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(96,44): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(97,40): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(99,10): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(99,50): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(101,7): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(102,53): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(103,12): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(103,61): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(104,12): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(104,70): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(106,7): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(107,25): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(109,12): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(109,65): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(129,10): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(129,50): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(131,7): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(132,12): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(132,54): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(133,12): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(133,59): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(134,53): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(155,10): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(155,50): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(157,7): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(158,12): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(158,54): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(160,24): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(164,52): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(185,36): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(187,7): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(188,12): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(188,55): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(189,12): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(189,65): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(191,9): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(192,14): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(192,70): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(197,37): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(199,67): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(221,10): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(221,50): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(223,7): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(224,12): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(224,54): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(225,12): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(225,62): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(226,12): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(226,63): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(227,53): error TS18046: 'data' is of type 'unknown'.
-services/gpu/test-endpoint.ts(243,5): error TS2304: Cannot find name 'Deno'.
-services/gpu/test-endpoint.ts(260,5): error TS2304: Cannot find name 'Deno'.
 services/gpu/test-pipeline.ts(52,22): error TS2352: Conversion of type '{ id: string; owner_id: string; name: string; slug: string; runtime: "gpu"; gpu_status: string; gpu_endpoint_id: string; gpu_type: string; gpu_max_duration_ms: number; gpu_concurrency_limit: number; ... 5 more ...; exports: string[]; }' to type 'App' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
   Type '{ id: string; owner_id: string; name: string; slug: string; runtime: "gpu"; gpu_status: string; gpu_endpoint_id: string; gpu_type: string; gpu_max_duration_ms: number; gpu_concurrency_limit: number; ... 5 more ...; exports: string[]; }' is missing the following properties from type 'App': description, icon_url, download_access, current_version, and 46 more.
 services/gpu/test-pipeline.ts(369,5): error TS2304: Cannot find name 'Deno'.

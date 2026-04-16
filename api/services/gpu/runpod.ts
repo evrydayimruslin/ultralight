@@ -16,6 +16,7 @@ import type {
   ExecuteParams,
   EndpointStatus,
 } from './provider.ts';
+import { getEnv } from '../../lib/env.ts';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -119,6 +120,15 @@ interface RunPodHealthResponse {
     running: number;
     throttled: number;
   };
+}
+
+interface RunPodGraphQLError {
+  message: string;
+}
+
+interface RunPodGraphQLResponse<T> {
+  data?: T;
+  errors?: RunPodGraphQLError[];
 }
 
 // ---------------------------------------------------------------------------
@@ -305,9 +315,9 @@ export class RunPodProvider implements GPUProvider {
     params: BuildContainerParams,
     buildLogs: string[],
   ): Promise<string> {
-    const baseImage = globalThis.Deno?.env?.get('RUNPOD_BASE_IMAGE') || '';
-    const platformUrl = globalThis.Deno?.env?.get('PLATFORM_URL') || globalThis.Deno?.env?.get('APP_URL') || '';
-    const gpuSecret = globalThis.Deno?.env?.get('GPU_INTERNAL_SECRET') || '';
+    const baseImage = getEnv('RUNPOD_BASE_IMAGE');
+    const platformUrl = getEnv('PLATFORM_URL') || getEnv('APP_URL');
+    const gpuSecret = getEnv('GPU_INTERNAL_SECRET');
 
     // If we have the base image configured, create a per-app template
     if (baseImage && platformUrl) {
@@ -342,7 +352,7 @@ export class RunPodProvider implements GPUProvider {
     }
 
     // Fallback: use shared RUNPOD_TEMPLATE_ID (Phase 1 behavior)
-    const templateId = globalThis.Deno?.env?.get('RUNPOD_TEMPLATE_ID') || '';
+    const templateId = getEnv('RUNPOD_TEMPLATE_ID');
     if (!templateId) {
       buildLogs.push('[build] ERROR: No RUNPOD_BASE_IMAGE or RUNPOD_TEMPLATE_ID configured.');
       throw new Error(
@@ -586,14 +596,18 @@ export class RunPodProvider implements GPUProvider {
         signal: controller.signal,
       });
 
-      const json = await response.json();
+      const json = await response.json() as RunPodGraphQLResponse<T>;
 
       if (json.errors && json.errors.length > 0) {
         const messages = json.errors.map((e: { message: string }) => e.message).join('; ');
         throw new Error(`RunPod GraphQL error: ${messages}`);
       }
 
-      return json.data as T;
+      if (json.data === undefined) {
+        throw new Error('RunPod GraphQL response missing data');
+      }
+
+      return json.data;
     } finally {
       clearTimeout(timer);
     }

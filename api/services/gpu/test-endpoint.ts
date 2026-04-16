@@ -12,6 +12,52 @@
 
 import { getEnv } from '../../lib/env.ts';
 
+declare const Deno: {
+  args: string[];
+  exit(code?: number): never;
+};
+
+interface RunPodHealthResponse {
+  jobs?: {
+    inQueue?: number;
+    inProgress?: number;
+  };
+  workers?: {
+    idle?: number;
+    ready?: number;
+    running?: number;
+  };
+}
+
+interface TestHarnessError {
+  type?: string;
+  message?: string;
+}
+
+interface TestHarnessOutput {
+  success: boolean;
+  exit_code: string;
+  result?: unknown;
+  duration_ms: number;
+  error?: TestHarnessError;
+}
+
+interface RunPodSyncResponse {
+  status: string;
+  executionTime?: number;
+  delayTime?: number;
+  output?: TestHarnessOutput | null;
+  error?: string;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
+
 const ENDPOINT_ID = Deno.args[0] || '6oszl95nvl9bns';
 
 const RUNPOD_API_KEY = getEnv('RUNPOD_API_KEY');
@@ -59,7 +105,7 @@ async function testHealth(): Promise<boolean> {
       assert(false, 'Endpoint is healthy');
       return false;
     }
-    const health = await res.json();
+    const health = await res.json() as RunPodHealthResponse;
     console.log(`  ${INFO} Workers: idle=${health.workers?.idle || 0}, ready=${health.workers?.ready || 0}, running=${health.workers?.running || 0}`);
     console.log(`  ${INFO} Jobs: inQueue=${health.jobs?.inQueue || 0}, inProgress=${health.jobs?.inProgress || 0}`);
     assert(true, 'Endpoint is healthy');
@@ -91,7 +137,7 @@ async function testHello(): Promise<void> {
   });
 
   assert(res.ok, `POST /runsync returned ${res.status}`);
-  const data = await res.json();
+  const data = await res.json() as RunPodSyncResponse;
   console.log(`  ${INFO} Status: ${data.status}`);
   console.log(`  ${INFO} Execution time: ${data.executionTime}ms`);
   console.log(`  ${INFO} Delay time: ${data.delayTime}ms`);
@@ -125,12 +171,13 @@ async function testAdd(): Promise<void> {
     }),
   });
 
-  const data = await res.json();
+  const data = await res.json() as RunPodSyncResponse;
   assert(data.status === 'COMPLETED', `Status: ${data.status}`);
 
   if (data.output) {
+    const result = asRecord(data.output.result);
     assert(data.output.success === true, `success: ${data.output.success}`);
-    assert(data.output.result?.sum === 42, `result.sum: ${data.output.result?.sum} (expected 42)`);
+    assert(result?.sum === 42, `result.sum: ${String(result?.sum)} (expected 42)`);
     console.log(`  ${INFO} Result:`, JSON.stringify(data.output.result));
   }
 }
@@ -151,7 +198,7 @@ async function testSlow(): Promise<void> {
     }),
   });
 
-  const data = await res.json();
+  const data = await res.json() as RunPodSyncResponse;
   assert(data.status === 'COMPLETED', `Status: ${data.status}`);
 
   if (data.output) {
@@ -180,7 +227,7 @@ async function testFail(): Promise<void> {
     }),
   });
 
-  const data = await res.json();
+  const data = await res.json() as RunPodSyncResponse;
   // RunPod may return COMPLETED (harness caught it) or FAILED
   console.log(`  ${INFO} Status: ${data.status}`);
 
@@ -217,13 +264,14 @@ async function testEcho(): Promise<void> {
     }),
   });
 
-  const data = await res.json();
+  const data = await res.json() as RunPodSyncResponse;
   assert(data.status === 'COMPLETED', `Status: ${data.status}`);
 
   if (data.output) {
+    const result = asRecord(data.output.result);
     assert(data.output.success === true, `success: ${data.output.success}`);
-    assert(data.output.result?.foo === 'bar', `result.foo: ${data.output.result?.foo}`);
-    assert(data.output.result?.count === 42, `result.count: ${data.output.result?.count}`);
+    assert(result?.foo === 'bar', `result.foo: ${String(result?.foo)}`);
+    assert(result?.count === 42, `result.count: ${String(result?.count)}`);
     console.log(`  ${INFO} Result:`, JSON.stringify(data.output.result));
   }
 }
