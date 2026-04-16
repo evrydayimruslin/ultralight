@@ -2,7 +2,7 @@
 // Handles app CRUD operations via Supabase
 
 import { getEnv } from '../lib/env.ts';
-import type { App } from '../../shared/types/index.ts';
+import type { App, AppWithDraft } from '../../shared/types/index.ts';
 import {
   PUBLIC_APP_RESPONSE_SELECT,
   PUBLIC_APP_SERVING_SELECT,
@@ -40,14 +40,14 @@ export class AppsService {
       throw new Error(`App fetch failed: ${error}`);
     }
 
-    const results = await response.json();
+    const results = await response.json() as T[];
     return results[0] ?? null;
   }
 
   /**
    * Create a new app record
    */
-  async create(app: Partial<App>): Promise<App> {
+  async create(app: Partial<AppWithDraft>): Promise<App> {
     const url = `${this.supabaseUrl}/rest/v1/apps`;
 
     const response = await fetch(url, {
@@ -66,20 +66,20 @@ export class AppsService {
       throw new Error(`App create failed: ${error}`);
     }
 
-    const results = await response.json();
+    const results = await response.json() as App[];
     return results[0];
   }
 
   /**
    * Find app by ID
    */
-  async findById(appId: string): Promise<App | null> {
+  async findById(appId: string): Promise<AppWithDraft | null> {
     const url = new URL(`${this.supabaseUrl}/rest/v1/apps`);
     url.searchParams.set('id', `eq.${appId}`);
     url.searchParams.set('deleted_at', 'is.null');
     url.searchParams.set('select', '*');
     url.searchParams.set('limit', '1');
-    return this.fetchSingle<App>(url);
+    return this.fetchSingle<AppWithDraft>(url);
   }
 
   /**
@@ -132,13 +132,13 @@ export class AppsService {
       throw new Error(`App list failed: ${error}`);
     }
 
-    return await response.json();
+    return await response.json() as App[];
   }
 
   /**
    * Update app
    */
-  async update(appId: string, updates: Partial<App>): Promise<App> {
+  async update(appId: string, updates: Partial<AppWithDraft>): Promise<App> {
     const url = new URL(`${this.supabaseUrl}/rest/v1/apps`);
     url.searchParams.set('id', `eq.${appId}`);
 
@@ -161,7 +161,7 @@ export class AppsService {
       throw new Error(`App update failed: ${error}`);
     }
 
-    const results = await response.json();
+    const results = await response.json() as App[];
     return results[0];
   }
 
@@ -236,7 +236,7 @@ export class AppsService {
       throw new Error(`App fetch by slug failed: ${error}`);
     }
 
-    const results = await response.json();
+    const results = await response.json() as App[];
     return results[0] ?? null;
   }
 
@@ -264,7 +264,7 @@ export class AppsService {
       throw new Error(`App list public failed: ${error}`);
     }
 
-    return await response.json();
+    return await response.json() as PublicDiscoveryApp[];
   }
 
   /**
@@ -370,7 +370,7 @@ export class AppsService {
       throw new Error(`Search failed: ${error}`);
     }
 
-    const results = await response.json();
+    const results = await response.json() as Array<App & { similarity: number }>;
 
     // Filter by similarity threshold
     return results.filter((r: { similarity: number }) => r.similarity >= minSimilarity);

@@ -21,100 +21,6 @@ handlers/admin.ts(709,45): error TS18046: 'provisionals' is of type 'unknown'.
 handlers/admin.ts(709,67): error TS18046: 'conversions' is of type 'unknown'.
 handlers/admin.ts(761,64): error TS18046: 'updated' is of type 'unknown'.
 handlers/admin.ts(787,92): error TS18046: 'updated' is of type 'unknown'.
-handlers/app.ts(233,31): error TS2345: Argument of type 'Uint8Array<ArrayBufferLike>' is not assignable to parameter of type 'BodyInit | null | undefined'.
-  Type 'Uint8Array<ArrayBufferLike>' is missing the following properties from type 'URLSearchParams': size, append, delete, get, and 2 more.
-handlers/app.ts(372,96): error TS2345: Argument of type '{ secureTransport: string; }' is not assignable to parameter of type 'SocketOptions'.
-  Property 'allowHalfOpen' is missing in type '{ secureTransport: string; }' but required in type 'SocketOptions'.
-handlers/app.ts(892,94): error TS2345: Argument of type 'ParsedSkills | never[]' is not assignable to parameter of type '{ name: string; description?: string | undefined; parameters?: unknown[] | undefined; }[]'.
-  Type 'ParsedSkills' is missing the following properties from type '{ name: string; description?: string | undefined; parameters?: unknown[] | undefined; }[]': length, pop, push, concat, and 29 more.
-handlers/app.ts(3475,43): error TS18046: 'gaps' is of type 'unknown'.
-handlers/app.ts(3483,63): error TS18046: 'ss' is of type 'unknown'.
-handlers/app.ts(3519,41): error TS18046: 'apps' is of type 'unknown'.
-handlers/app.ts(3564,20): error TS2339: Property 'hosting_suspended' does not exist on type 'never'.
-handlers/app.ts(3571,20): error TS2339: Property 'price_light' does not exist on type 'never'.
-handlers/app.ts(3571,46): error TS2339: Property 'price_light' does not exist on type 'never'.
-handlers/app.ts(3580,531): error TS2339: Property 'price_light' does not exist on type 'never'.
-handlers/app.ts(3596,44): error TS2339: Property 'price_light' does not exist on type 'never'.
-handlers/app.ts(3606,570): error TS2339: Property 'price_light' does not exist on type 'never'.
-handlers/app.ts(3617,42): error TS2339: Property 'price_light' does not exist on type 'never'.
-handlers/app.ts(3619,40): error TS2339: Property 'id' does not exist on type 'never'.
-handlers/app.ts(3630,20): error TS2339: Property 'visibility' does not exist on type 'never'.
-handlers/app.ts(3641,27): error TS2339: Property 'visibility' does not exist on type 'never'.
-handlers/app.ts(3649,36): error TS2339: Property 'access_token' does not exist on type 'never'.
-handlers/app.ts(3649,78): error TS2339: Property 'access_token' does not exist on type 'never'.
-handlers/app.ts(3665,82): error TS2339: Property 'id' does not exist on type 'never'.
-handlers/app.ts(3695,36): error TS2339: Property 'visibility' does not exist on type 'never'.
-handlers/app.ts(3695,76): error TS2339: Property 'visibility' does not exist on type 'never'.
-handlers/app.ts(3710,27): error TS2339: Property 'title' does not exist on type 'never'.
-handlers/app.ts(3712,31): error TS2339: Property 'title' does not exist on type 'never'.
-handlers/app.ts(3733,28): error TS2339: Property 'updated_at' does not exist on type 'never'.
-handlers/app.ts(3734,23): error TS2339: Property 'tags' does not exist on type 'never'.
-handlers/apps.ts(514,33): error TS18046: 'savedAppRows' is of type 'unknown'.
-handlers/apps.ts(531,37): error TS18046: 'savedContentRows' is of type 'unknown'.
-handlers/apps.ts(588,36): error TS18046: 'sharedPermRows' is of type 'unknown'.
-handlers/apps.ts(609,23): error TS18046: 'allShares' is of type 'unknown'.
-handlers/apps.ts(1232,25): error TS2345: Argument of type 'Uint8Array<ArrayBufferLike>' is not assignable to parameter of type 'BodyInit | null | undefined'.
-  Type 'Uint8Array<ArrayBufferLike>' is missing the following properties from type 'URLSearchParams': size, append, delete, get, and 2 more.
-handlers/apps.ts(1298,29): error TS2352: Conversion of type 'ManifestParameter' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'ManifestParameter'.
-handlers/apps.ts(1298,98): error TS2352: Conversion of type 'ManifestParameter' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'ManifestParameter'.
-handlers/apps.ts(1519,20): error TS18046: 'updates' is of type 'unknown'.
-handlers/apps.ts(1520,34): error TS18046: 'updates' is of type 'unknown'.
-handlers/apps.ts(1823,25): error TS2345: Argument of type 'Uint8Array<ArrayBufferLike>' is not assignable to parameter of type 'BodyInit | null | undefined'.
-  Type 'Uint8Array<ArrayBufferLike>' is missing the following properties from type 'URLSearchParams': size, append, delete, get, and 2 more.
-handlers/apps.ts(1898,25): error TS2345: Argument of type 'Uint8Array<ArrayBufferLike>' is not assignable to parameter of type 'BodyInit | null | undefined'.
-  Type 'Uint8Array<ArrayBufferLike>' is missing the following properties from type 'URLSearchParams': size, append, delete, get, and 2 more.
-handlers/apps.ts(2052,10): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/apps.ts(2057,39): error TS2353: Object literal may only specify known properties, and 'generation_in_progress' does not exist in type 'Partial<App>'.
-handlers/apps.ts(2064,33): error TS2698: Spread types may only be created from object types.
-handlers/apps.ts(2149,11): error TS2322: Type 'AppPricingConfig | undefined' is not assignable to type '{ default_price_light?: number | undefined; functions?: Record<string, number> | undefined; products?: { id: string; name: string; price_light: number; description?: string | undefined; }[] | undefined; } | undefined'.
-  Type 'AppPricingConfig' is not assignable to type '{ default_price_light?: number | undefined; functions?: Record<string, number> | undefined; products?: { id: string; name: string; price_light: number; description?: string | undefined; }[] | undefined; }'.
-    Types of property 'functions' are incompatible.
-      Type 'Record<string, number | FunctionPricing> | undefined' is not assignable to type 'Record<string, number> | undefined'.
-        Type 'Record<string, number | FunctionPricing>' is not assignable to type 'Record<string, number>'.
-          'string' index signatures are incompatible.
-            Type 'number | FunctionPricing' is not assignable to type 'number'.
-              Type 'FunctionPricing' is not assignable to type 'number'.
-handlers/apps.ts(2149,27): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/apps.ts(2184,19): error TS2339: Property 'openrouter_api_key' does not exist on type '{ id: string; email: string; tier: string; provisional?: boolean | undefined; tokenId?: string | undefined; tokenAppIds?: string[] | null | undefined; tokenFunctionNames?: string[] | null | undefined; scopes?: string[] | undefined; }'.
-handlers/apps.ts(2219,9): error TS2353: Object literal may only specify known properties, and 'docs_generated_at' does not exist in type 'Partial<App>'.
-handlers/apps.ts(2239,41): error TS2353: Object literal may only specify known properties, and 'generation_in_progress' does not exist in type 'Partial<App>'.
-handlers/apps.ts(2298,13): error TS2339: Property 'skills_md' does not exist on type 'unknown'.
-handlers/apps.ts(2386,26): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/apps.ts(2434,26): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/apps.ts(2485,31): error TS2698: Spread types may only be created from object types.
-handlers/apps.ts(2636,13): error TS2322: Type 'AppPricingConfig | undefined' is not assignable to type '{ default_price_light?: number | undefined; functions?: Record<string, number> | undefined; products?: { id: string; name: string; price_light: number; description?: string | undefined; }[] | undefined; } | undefined'.
-  Type 'AppPricingConfig' is not assignable to type '{ default_price_light?: number | undefined; functions?: Record<string, number> | undefined; products?: { id: string; name: string; price_light: number; description?: string | undefined; }[] | undefined; }'.
-    Types of property 'functions' are incompatible.
-      Type 'Record<string, number | FunctionPricing> | undefined' is not assignable to type 'Record<string, number> | undefined'.
-        Type 'Record<string, number | FunctionPricing>' is not assignable to type 'Record<string, number>'.
-          'string' index signatures are incompatible.
-            Type 'number | FunctionPricing' is not assignable to type 'number'.
-              Type 'FunctionPricing' is not assignable to type 'number'.
-handlers/apps.ts(2636,29): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/apps.ts(2660,13): error TS2353: Object literal may only specify known properties, and 'docs_generated_at' does not exist in type 'Partial<App>'.
-handlers/apps.ts(2846,26): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/apps.ts(2871,7): error TS2353: Object literal may only specify known properties, and 'draft_storage_key' does not exist in type 'Partial<App>'.
-handlers/apps.ts(2942,22): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/apps.ts(2992,13): error TS2339: Property 'env_vars' does not exist on type 'unknown'.
-handlers/apps.ts(3068,13): error TS2339: Property 'env_vars' does not exist on type 'unknown'.
-handlers/apps.ts(3075,30): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/apps.ts(3148,30): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/apps.ts(3236,13): error TS2339: Property 'config_id' does not exist on type 'unknown'.
-handlers/apps.ts(3539,23): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/apps.ts(3540,27): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
 handlers/chat.ts(522,13): error TS2322: Type '{ type: string; persona: string; skillsPath: string; } | undefined' is not assignable to type 'SystemAgentContext | undefined'.
   Type '{ type: string; persona: string; skillsPath: string; }' is not assignable to type 'SystemAgentContext'.
     Types of property 'type' are incompatible.
@@ -133,12 +39,12 @@ handlers/discover.ts(997,37): error TS2352: Conversion of type 'App & { similari
 handlers/discover.ts(1537,21): error TS18046: 'rows' is of type 'unknown'.
 handlers/discover.ts(1577,21): error TS18046: 'rows' is of type 'unknown'.
 handlers/discover.ts(1636,21): error TS18046: 'rows' is of type 'unknown'.
-handlers/http.ts(103,26): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/http.ts(112,27): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/http.ts(173,31): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
+handlers/http.ts(103,26): error TS2352: Conversion of type 'AppWithDraft' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'AppWithDraft'.
+handlers/http.ts(112,27): error TS2352: Conversion of type 'AppWithDraft' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'AppWithDraft'.
+handlers/http.ts(173,31): error TS2352: Conversion of type 'AppWithDraft' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'AppWithDraft'.
 handlers/http.ts(453,7): error TS2345: Argument of type '{ appId: string; userId: string; executionId: `${string}-${string}-${string}-${string}-${string}`; code: string; permissions: string[]; userApiKey: string | null; user: UserContext | null; appDataService: AppDataService; ... 5 more ...; timeoutMs: number; }' is not assignable to parameter of type 'RuntimeConfig'.
   Property 'ownerId' is missing in type '{ appId: string; userId: string; executionId: `${string}-${string}-${string}-${string}-${string}`; code: string; permissions: string[]; userApiKey: string | null; user: UserContext | null; appDataService: AppDataService; ... 5 more ...; timeoutMs: number; }' but required in type 'RuntimeConfig'.
 handlers/platform-mcp.ts(20,3): error TS2724: '"../../shared/types/index.ts"' has no exported member named 'MIN_PUBLISH_DEPOSIT_CENTS'. Did you mean 'MIN_PUBLISH_DEPOSIT_LIGHT'?
@@ -177,6 +83,8 @@ handlers/platform-mcp.ts(2199,64): error TS2345: Argument of type '{ id: string;
       Type 'unknown' is not assignable to type '{ functions?: Record<string, ManifestFunction> | undefined; widgets?: { id: string; label: string; }[] | undefined; }'.
 handlers/platform-mcp.ts(2295,22): error TS2304: Cannot find name 'toolMap'.
 handlers/platform-mcp.ts(2320,22): error TS2304: Cannot find name 'toolMap'.
+handlers/platform-mcp.ts(2367,5): error TS2322: Type 'App | null' is not assignable to type 'AppWithDraft | null'.
+  Type 'App' is missing the following properties from type 'AppWithDraft': draft_storage_key, draft_version, draft_uploaded_at, draft_exports, and 3 more.
 handlers/platform-mcp.ts(2394,7): error TS18046: 'rows' is of type 'unknown'.
 handlers/platform-mcp.ts(2394,27): error TS18046: 'rows' is of type 'unknown'.
 handlers/platform-mcp.ts(2460,10): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
@@ -189,6 +97,8 @@ handlers/platform-mcp.ts(2700,8): error TS2352: Conversion of type 'App' to type
   Index signature for type 'string' is missing in type 'App'.
 handlers/platform-mcp.ts(2727,73): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
   Index signature for type 'string' is missing in type 'App'.
+handlers/platform-mcp.ts(2940,13): error TS2322: Type 'App | null' is not assignable to type 'AppWithDraft | null'.
+  Type 'App' is missing the following properties from type 'AppWithDraft': draft_storage_key, draft_version, draft_uploaded_at, draft_exports, and 3 more.
 handlers/platform-mcp.ts(3070,7): error TS2345: Argument of type '{ appId: string; userId: string; executionId: `${string}-${string}-${string}-${string}-${string}`; code: string; permissions: string[]; userApiKey: null; user: UserContext; appDataService: AppDataService; memoryService: { ...; } | null; aiService: import("../runtime/sandbox.ts").RuntimeConfig["aiService"]; envVars: ...' is not assignable to parameter of type 'RuntimeConfig'.
   Type '{ appId: string; userId: string; executionId: `${string}-${string}-${string}-${string}-${string}`; code: string; permissions: string[]; userApiKey: null; user: UserContext; appDataService: AppDataService; memoryService: { ...; } | null; aiService: AIService; envVars: {}; }' is missing the following properties from type 'RuntimeConfig': ownerId, d1DataService
 handlers/platform-mcp.ts(3201,12): error TS18046: 'gaps' is of type 'unknown'.
@@ -208,6 +118,7 @@ handlers/platform-mcp.ts(5028,40): error TS2345: Argument of type 'string | unde
 handlers/platform-mcp.ts(5031,66): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string | number | boolean'.
   Type 'undefined' is not assignable to type 'string | number | boolean'.
 handlers/platform-mcp.ts(5036,11): error TS18046: 'rows' is of type 'unknown'.
+handlers/platform-mcp.ts(5036,28): error TS2740: Type 'App' is missing the following properties from type 'AppWithDraft': draft_storage_key, draft_version, draft_uploaded_at, draft_exports, and 3 more.
 handlers/platform-mcp.ts(5036,34): error TS18046: 'rows' is of type 'unknown'.
 handlers/platform-mcp.ts(5078,20): error TS18046: 'existingRows' is of type 'unknown'.
 handlers/platform-mcp.ts(5078,46): error TS18046: 'existingRows' is of type 'unknown'.
@@ -222,25 +133,30 @@ handlers/platform-mcp.ts(5242,46): error TS18046: 'existingRows' is of type 'unk
 handlers/platform-mcp.ts(5319,12): error TS18046: 'updatedRows' is of type 'unknown'.
 handlers/platform-mcp.ts(5320,15): error TS18046: 'updatedRows' is of type 'unknown'.
 handlers/platform-mcp.ts(5482,11): error TS18046: 'rows' is of type 'unknown'.
+handlers/platform-mcp.ts(5482,28): error TS2740: Type 'App' is missing the following properties from type 'AppWithDraft': draft_storage_key, draft_version, draft_uploaded_at, draft_exports, and 3 more.
 handlers/platform-mcp.ts(5482,34): error TS18046: 'rows' is of type 'unknown'.
 handlers/platform-mcp.ts(5656,11): error TS18046: 'rows' is of type 'unknown'.
+handlers/platform-mcp.ts(5656,28): error TS2740: Type 'App' is missing the following properties from type 'AppWithDraft': draft_storage_key, draft_version, draft_uploaded_at, draft_exports, and 3 more.
 handlers/platform-mcp.ts(5656,34): error TS18046: 'rows' is of type 'unknown'.
-handlers/platform-mcp.ts(6097,23): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/platform-mcp.ts(6118,18): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/platform-mcp.ts(6119,20): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/platform-mcp.ts(6120,23): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/platform-mcp.ts(6121,28): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/platform-mcp.ts(6122,29): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/platform-mcp.ts(6123,31): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/platform-mcp.ts(6170,58): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
+handlers/platform-mcp.ts(5869,5): error TS2322: Type 'App | null' is not assignable to type 'AppWithDraft | null'.
+  Type 'App' is missing the following properties from type 'AppWithDraft': draft_storage_key, draft_version, draft_uploaded_at, draft_exports, and 3 more.
+handlers/platform-mcp.ts(5878,9): error TS2740: Type 'App' is missing the following properties from type 'AppWithDraft': draft_storage_key, draft_version, draft_uploaded_at, draft_exports, and 3 more.
+handlers/platform-mcp.ts(6097,23): error TS2352: Conversion of type 'AppWithDraft' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'AppWithDraft'.
+handlers/platform-mcp.ts(6118,18): error TS2352: Conversion of type 'AppWithDraft' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'AppWithDraft'.
+handlers/platform-mcp.ts(6119,20): error TS2352: Conversion of type 'AppWithDraft' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'AppWithDraft'.
+handlers/platform-mcp.ts(6120,23): error TS2352: Conversion of type 'AppWithDraft' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'AppWithDraft'.
+handlers/platform-mcp.ts(6121,28): error TS2352: Conversion of type 'AppWithDraft' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'AppWithDraft'.
+handlers/platform-mcp.ts(6122,29): error TS2352: Conversion of type 'AppWithDraft' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'AppWithDraft'.
+handlers/platform-mcp.ts(6123,31): error TS2352: Conversion of type 'AppWithDraft' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'AppWithDraft'.
+handlers/platform-mcp.ts(6170,58): error TS2352: Conversion of type 'AppWithDraft' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'AppWithDraft'.
 handlers/platform-mcp.ts(6386,20): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
   Index signature for type 'string' is missing in type 'App'.
 handlers/platform-mcp.ts(6391,40): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
@@ -262,8 +178,8 @@ handlers/platform-mcp.ts(7812,9): error TS18046: 'rows' is of type 'unknown'.
 handlers/platform-mcp.ts(7812,38): error TS18046: 'rows' is of type 'unknown'.
 handlers/platform-mcp.ts(7832,15): error TS18046: 'users' is of type 'unknown'.
 handlers/platform-mcp.ts(7833,73): error TS18046: 'users' is of type 'unknown'.
-handlers/run.ts(130,31): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
+handlers/run.ts(130,31): error TS2352: Conversion of type 'AppWithDraft' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'AppWithDraft'.
 handlers/run.ts(222,11): error TS2322: Type 'string[]' is not assignable to type 'LogEntry[]'.
   Type 'string' is not assignable to type 'LogEntry'.
 handlers/run.ts(241,7): error TS2345: Argument of type '{ appId: string; userId: string; executionId: `${string}-${string}-${string}-${string}-${string}`; code: string; permissions: string[]; userApiKey: null; user: UserContext | null; appDataService: AppDataService; ... 5 more ...; timeoutMs: number; }' is not assignable to parameter of type 'RuntimeConfig'.
@@ -275,22 +191,6 @@ handlers/tier.ts(117,11): error TS18046: 'publicApps' is of type 'unknown'.
 handlers/tier.ts(136,28): error TS18046: 'publicApps' is of type 'unknown'.
 handlers/tier.ts(138,25): error TS18046: 'publicApps' is of type 'unknown'.
 handlers/tier.ts(141,27): error TS18046: 'publicApps' is of type 'unknown'.
-handlers/upload.ts(398,13): error TS2322: Type '{ name: string; version: string; description?: string | undefined; author?: string | undefined; icon?: string | undefined; type: "mcp"; entry: { functions?: string | undefined; }; functions?: Record<...> | undefined; permissions?: string[] | undefined; env?: Record<...> | undefined; env_vars?: Record<...> | undefine...' is not assignable to type 'AppManifest'.
-  Type '{ name: string; version: string; type: "mcp" | "skill"; entry: {}; }' is not assignable to type 'AppManifest'.
-    Types of property 'type' are incompatible.
-      Type '"mcp" | "skill"' is not assignable to type '"mcp"'.
-        Type '"skill"' is not assignable to type '"mcp"'.
-handlers/upload.ts(407,9): error TS2322: Type '"mcp" | "skill"' is not assignable to type '"mcp"'.
-  Type '"skill"' is not assignable to type '"mcp"'.
-handlers/upload.ts(474,33): error TS2345: Argument of type 'null' is not assignable to parameter of type 'string | undefined'.
-handlers/upload.ts(490,47): error TS2345: Argument of type '{ name: string; content: Uint8Array<ArrayBuffer>; }[]' is not assignable to parameter of type 'FileUpload[]'.
-  Property 'contentType' is missing in type '{ name: string; content: Uint8Array<ArrayBuffer>; }' but required in type 'FileUpload'.
-handlers/upload.ts(874,25): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/upload.ts(1057,7): error TS2353: Object literal may only specify known properties, and 'draft_storage_key' does not exist in type 'Partial<App>'.
-handlers/upload.ts(1333,23): error TS2352: Conversion of type 'App' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
-  Index signature for type 'string' is missing in type 'App'.
-handlers/upload.ts(1461,5): error TS2353: Object literal may only specify known properties, and 'draft_storage_key' does not exist in type 'Partial<App>'.
 handlers/user.ts(2813,103): error TS2345: Argument of type 'string | null | undefined' is not assignable to parameter of type 'string | undefined'.
   Type 'null' is not assignable to type 'string | undefined'.
 lib/env.ts(19,16): error TS2552: Cannot find name 'WorkerCode'. Did you mean 'WorkerLoader'?
@@ -308,11 +208,6 @@ runtime/sandbox.ts(1657,13): error TS18046: 'rpcResponse' is of type 'unknown'.
 runtime/sandbox.ts(1658,57): error TS18046: 'rpcResponse' is of type 'unknown'.
 runtime/sandbox.ts(1658,101): error TS18046: 'rpcResponse' is of type 'unknown'.
 runtime/sandbox.ts(1662,24): error TS18046: 'rpcResponse' is of type 'unknown'.
-services/apps.ts(44,12): error TS18046: 'results' is of type 'unknown'.
-services/apps.ts(70,12): error TS18046: 'results' is of type 'unknown'.
-services/apps.ts(165,12): error TS18046: 'results' is of type 'unknown'.
-services/apps.ts(240,12): error TS18046: 'results' is of type 'unknown'.
-services/apps.ts(376,12): error TS18046: 'results' is of type 'unknown'.
 services/async-jobs.ts(186,15): error TS18046: 'rows' is of type 'unknown'.
 services/chat-billing.ts(40,21): error TS2339: Property 'length' does not exist on type '{}'.
 services/chat-billing.ts(41,10): error TS7053: Element implicitly has an 'any' type because expression of type '0' can't be used to index type '{}'.

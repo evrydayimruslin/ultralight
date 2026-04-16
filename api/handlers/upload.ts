@@ -11,7 +11,7 @@ import {
   resolveManifestEnvSchema,
   validateManifest,
 } from '../../shared/types/index.ts';
-import { createR2Service } from '../services/storage.ts';
+import { createR2Service, type FileUpload } from '../services/storage.ts';
 import { createAppsService } from '../services/apps.ts';
 import { bundleCode, quickBundle } from '../services/bundler.ts';
 import { authenticate } from './auth.ts';
@@ -394,20 +394,20 @@ export async function handleUpload(request: Request): Promise<Response> {
 
     // Override manifest with form fields if provided (form fields take precedence)
     // This allows users to specify entry points without creating a manifest.json
-    if (providedAppType || providedFunctionsEntry) {
+    if (providedAppType === 'mcp' || providedFunctionsEntry) {
       const formManifest: AppManifest = manifest ? { ...manifest } : {
         name: providedName || 'Untitled App',
         version: '1.0.0',
-        type: providedAppType || 'mcp',
+        type: 'mcp',
         entry: {},
       };
 
       // Override with form field values
-      if (providedAppType) {
-        formManifest.type = providedAppType;
-      }
       if (providedFunctionsEntry) {
         formManifest.entry.functions = providedFunctionsEntry;
+      }
+      if (providedName) {
+        formManifest.name = providedName;
       }
       if (providedDescription) {
         formManifest.description = providedDescription;
@@ -471,7 +471,7 @@ export async function handleUpload(request: Request): Promise<Response> {
     if (providedAppType === 'skill') {
       const appId = crypto.randomUUID();
       const version = '1.0.0';
-      const slug = generateSlug(null);
+      const slug = generateSlug();
       const appName = providedName || validatedFiles[0]?.name.replace(/\.\w+$/, '') || slug;
       // Summary: first 200 chars of the primary .md file content
       const mdFile = validatedFiles.find(f => f.name.endsWith('.md')) || validatedFiles[0];
@@ -483,9 +483,10 @@ export async function handleUpload(request: Request): Promise<Response> {
 
       // Store files in R2
       const storageKey = `apps/${appId}/${version}/`;
-      const filesToUpload = validatedFiles.map(f => ({
+      const filesToUpload: FileUpload[] = validatedFiles.map(f => ({
         name: f.name,
         content: new TextEncoder().encode(f.content),
+        contentType: getContentType(f.name),
       }));
       await r2Service.uploadFiles(storageKey, filesToUpload);
       log('success', 'Skill files uploaded to R2');
@@ -871,7 +872,7 @@ export async function handleDraftUpload(request: Request, appId: string): Promis
     }
 
     // Check if there's already a draft - warn but allow overwrite
-    const hasDraft = !!(app as Record<string, unknown>).draft_storage_key;
+    const hasDraft = !!app.draft_storage_key;
 
     // Parse multipart form data
     const formData = await request.formData();
@@ -1330,7 +1331,7 @@ export async function handleDraftUploadFiles(
     buildLogs.push({ time: new Date().toISOString(), level, message });
   };
 
-  const hasDraft = !!(app as Record<string, unknown>).draft_storage_key;
+  const hasDraft = !!app.draft_storage_key;
   if (hasDraft) {
     log('warn', 'Overwriting existing draft');
   }

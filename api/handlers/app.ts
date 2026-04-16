@@ -89,6 +89,10 @@ function addCacheHeaders(headers: Record<string, string>, etag: string, immutabl
 
 import { getEnv } from '../lib/env.ts';
 
+export function toResponseBody(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
 /**
  * GPU Code Proxy — serves developer code bundles to RunPod workers.
  *
@@ -230,7 +234,7 @@ export function createApp() {
         try {
           const r2 = createR2Service();
           const dmgData = await r2.fetchFile('desktop/Ultralight_0.1.0_x64.dmg');
-          return new Response(dmgData, {
+          return new Response(toResponseBody(dmgData), {
             headers: {
               'Content-Type': 'application/x-apple-diskimage',
               'Content-Disposition': 'attachment; filename="Ultralight_0.1.0_x64.dmg"',
@@ -369,7 +373,10 @@ export function createApp() {
           await authenticate(request);
           const body = await request.json() as Record<string, unknown>;
           const { connect } = await import('cloudflare:sockets');
-          const socket = connect({ hostname: body.host as string, port: body.port as number }, { secureTransport: 'on' });
+          const socket = connect(
+            { hostname: body.host as string, port: body.port as number },
+            { secureTransport: 'on', allowHalfOpen: false },
+          );
           const reader = socket.readable.getReader();
           const writer = socket.writable.getWriter();
           const d = new TextDecoder();
@@ -889,7 +896,7 @@ export function createApp() {
 
             if (isEmbed) {
               // Return an info page for the iframe showing MCP tools
-              return new Response(getMcpAppInfoHTML(appId, escapeHtml(app.name || app.slug), app.skills_parsed || []), {
+              return new Response(getMcpAppInfoHTML(appId, escapeHtml(app.name || app.slug), app.skills_parsed?.functions || []), {
                 headers: {
                   ...cacheHeaders,
                   'Content-Security-Policy': "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'none'",
@@ -986,7 +993,7 @@ async function executeServerApp(
  * Generate an info page for MCP-only apps
  * Shows available tools and how to use them
  */
-function getMcpAppInfoHTML(appId: string, appName: string, skills: Array<{ name: string; description?: string; parameters?: unknown[] }>): string {
+function getMcpAppInfoHTML(appId: string, appName: string, skills: Array<{ name: string; description?: string }>): string {
   const toolsList = skills.length > 0
     ? skills.map(s => `
       <div class="tool-item">
@@ -3471,7 +3478,18 @@ async function handleHomepageApi(request: Request): Promise<Response> {
       if (status !== 'all') query += `&status=eq.${status}`;
       query += `&order=points_value.desc,created_at.desc&limit=${limitParam}`;
       const res = await fetch(query, { headers });
-      const gaps = res.ok ? await res.json() : [];
+      const gaps = res.ok
+        ? await res.json() as Array<{
+          id: string;
+          title: string;
+          description: string | null;
+          severity: string | null;
+          points_value: number;
+          season: string | number | null;
+          status: string;
+          created_at: string;
+        }>
+        : [];
       return json({ results: gaps, total: gaps.length });
     }
 
@@ -3480,7 +3498,10 @@ async function handleHomepageApi(request: Request): Promise<Response> {
       let season: { id: number; name: string } | null = null;
       try {
         const sRes = await fetch(`${SUPABASE_URL}/rest/v1/seasons?active=eq.true&select=id,name&limit=1`, { headers });
-        if (sRes.ok) { const ss = await sRes.json(); season = ss[0] || null; }
+        if (sRes.ok) {
+          const seasons = await sRes.json() as Array<{ id: number; name: string }>;
+          season = seasons[0] || null;
+        }
       } catch {}
 
       // Aggregate points
@@ -3515,7 +3536,16 @@ async function handleHomepageApi(request: Request): Promise<Response> {
       `&order=weighted_likes.desc,runs_30d.desc&limit=${limitParam}`,
       { headers }
     );
-    const apps = appsRes.ok ? await appsRes.json() : [];
+    const apps = appsRes.ok
+      ? await appsRes.json() as Array<{
+        id: string;
+        name: string | null;
+        slug: string;
+        description: string | null;
+        weighted_likes: number | null;
+        runs_30d: number | null;
+      }>
+      : [];
     return json({ results: apps, total: apps.length });
   } catch (err) {
     console.error('[HOMEPAGE API]', err);
@@ -3546,14 +3576,25 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
     'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
   };
 
-  let contentRow: { id: string; visibility: string; access_token: string | null; title: string | null; tags: string[] | null; updated_at: string | null; hosting_suspended: boolean | null; price_light: number | null } | null = null;
+  interface PublishedContentRow {
+    id: string;
+    visibility: 'private' | 'shared' | 'public' | string;
+    access_token: string | null;
+    title: string | null;
+    tags: string[] | null;
+    updated_at: string | null;
+    hosting_suspended: boolean | null;
+    price_light: number | null;
+  }
+
+  let contentRow: PublishedContentRow | null = null;
   try {
     const contentRes = await fetch(
       `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${userId}&type=eq.page&slug=eq.${encodeURIComponent(slug)}&select=id,visibility,access_token,title,tags,updated_at,hosting_suspended,price_light&limit=1`,
       { headers: dbHeaders }
     );
     if (contentRes.ok) {
-      const rows = await contentRes.json() as Array<typeof contentRow>;
+      const rows = await contentRes.json() as PublishedContentRow[];
       contentRow = rows.length > 0 ? rows[0] : null;
     }
   } catch { /* if DB fails, fall through to public serving */ }

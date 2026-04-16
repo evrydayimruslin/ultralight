@@ -1,7 +1,7 @@
 // Apps Handler
 // Handles app listing, discovery, and app-specific operations
 
-import { json, error } from './app.ts';
+import { json, error, toResponseBody } from './app.ts';
 import { authenticate } from './auth.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
@@ -46,15 +46,88 @@ import {
 } from '../services/tier-enforcement.ts';
 import { getEnv } from '../lib/env.ts';
 
-// Type for user with optional API key
-interface User {
-  id: string;
+type EmbeddingUser = Awaited<ReturnType<typeof authenticate>> & {
   openrouter_api_key?: string;
-}
+};
 
 interface UserAppSecretRow {
   key: string;
   updated_at?: string | null;
+}
+
+interface LibraryAppIdRow {
+  app_id: string;
+}
+
+interface LibraryContentIdRow {
+  content_id: string;
+}
+
+interface LibraryAppRow {
+  id: string;
+  name: string | null;
+  slug: string;
+  description: string | null;
+  current_version: string | null;
+  exports: string[] | null;
+  skills_parsed: unknown;
+  manifest: unknown;
+  owner_id: string;
+}
+
+interface LibraryContentRow {
+  id: string;
+  type: string;
+  slug: string;
+  title: string | null;
+  description: string | null;
+  owner_id: string;
+}
+
+interface ContentShareRow {
+  content_id: string;
+  expires_at: string | null;
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+async function readJsonObject(request: Request): Promise<Record<string, unknown>> {
+  const body = await request.json();
+  return isObjectRecord(body) ? body : {};
+}
+
+function toDocgenPricingConfig(
+  pricingConfig: AppPricingConfig | null | undefined,
+): {
+  default_price_light?: number;
+  functions?: Record<string, number>;
+  products?: Array<{ id: string; name: string; price_light: number; description?: string }>;
+} | undefined {
+  if (!pricingConfig) {
+    return undefined;
+  }
+
+  const functions = pricingConfig.functions
+    ? Object.fromEntries(
+      Object.entries(pricingConfig.functions).map(([name, config]) => [
+        name,
+        typeof config === 'number' ? config : config.price_light,
+      ]),
+    )
+    : undefined;
+
+  return {
+    default_price_light: pricingConfig.default_price_light,
+    functions,
+    products: pricingConfig.products?.map(product => ({
+      id: product.id,
+      name: product.name,
+      price_light: product.price_light,
+      description: product.description,
+    })),
+  };
 }
 
 async function resolvePublicAppAccess(
@@ -73,7 +146,7 @@ async function resolvePublicAppAccess(
 
   let userId: string | null = null;
   try {
-    const user = await authenticate(request);
+    const user: EmbeddingUser = await authenticate(request);
     userId = user.id;
   } catch {
     userId = null;
@@ -510,16 +583,16 @@ async function handleSavedTab(
     `${supabaseUrl}/rest/v1/user_app_library?user_id=eq.${userId}&select=app_id&limit=100`,
     { headers }
   );
-  const savedAppRows = savedAppsRes.ok ? await savedAppsRes.json() : [];
-  const savedAppIds: string[] = savedAppRows.map((r: { app_id: string }) => r.app_id);
+  const savedAppRows = savedAppsRes.ok ? await savedAppsRes.json() as LibraryAppIdRow[] : [];
+  const savedAppIds = savedAppRows.map(row => row.app_id);
 
-  let savedApps: Array<Record<string, unknown>> = [];
+  let savedApps: LibraryAppRow[] = [];
   if (savedAppIds.length > 0) {
     const appsRes = await fetch(
       `${supabaseUrl}/rest/v1/apps?id=in.(${savedAppIds.join(',')})&deleted_at=is.null&select=id,name,slug,description,current_version,exports,skills_parsed,manifest,owner_id`,
       { headers }
     );
-    if (appsRes.ok) savedApps = await appsRes.json();
+    if (appsRes.ok) savedApps = await appsRes.json() as LibraryAppRow[];
   }
 
   // Saved content (pages)
@@ -527,16 +600,16 @@ async function handleSavedTab(
     `${supabaseUrl}/rest/v1/user_content_library?user_id=eq.${userId}&select=content_id&limit=100`,
     { headers }
   );
-  const savedContentRows = savedContentRes.ok ? await savedContentRes.json() : [];
-  const savedContentIds: string[] = savedContentRows.map((r: { content_id: string }) => r.content_id);
+  const savedContentRows = savedContentRes.ok ? await savedContentRes.json() as LibraryContentIdRow[] : [];
+  const savedContentIds = savedContentRows.map(row => row.content_id);
 
-  let savedContent: Array<Record<string, unknown>> = [];
+  let savedContent: LibraryContentRow[] = [];
   if (savedContentIds.length > 0) {
     const contentRes = await fetch(
       `${supabaseUrl}/rest/v1/content?id=in.(${savedContentIds.join(',')})&type=eq.page&select=id,type,slug,title,description,owner_id`,
       { headers }
     );
-    if (contentRes.ok) savedContent = await contentRes.json();
+    if (contentRes.ok) savedContent = await contentRes.json() as LibraryContentRow[];
   }
 
   // Resolve owner emails
@@ -584,17 +657,17 @@ async function handleSharedTab(
     `${supabaseUrl}/rest/v1/user_app_permissions?granted_to_user_id=eq.${userId}&allowed=eq.true&select=app_id&limit=200`,
     { headers }
   );
-  const sharedPermRows = sharedPermsRes.ok ? await sharedPermsRes.json() : [];
-  const sharedAppIds = [...new Set(sharedPermRows.map((r: { app_id: string }) => r.app_id))];
+  const sharedPermRows = sharedPermsRes.ok ? await sharedPermsRes.json() as LibraryAppIdRow[] : [];
+  const sharedAppIds = [...new Set(sharedPermRows.map(row => row.app_id))];
 
-  let sharedApps: Array<Record<string, unknown>> = [];
+  let sharedApps: LibraryAppRow[] = [];
   if (sharedAppIds.length > 0) {
     // Exclude own apps
     const appsRes = await fetch(
       `${supabaseUrl}/rest/v1/apps?id=in.(${sharedAppIds.join(',')})&owner_id=neq.${userId}&deleted_at=is.null&select=id,name,slug,description,current_version,exports,skills_parsed,manifest,owner_id`,
       { headers }
     );
-    if (appsRes.ok) sharedApps = await appsRes.json();
+    if (appsRes.ok) sharedApps = await appsRes.json() as LibraryAppRow[];
   }
 
   // Shared content (via content_shares)
@@ -603,21 +676,21 @@ async function handleSharedTab(
     `${supabaseUrl}/rest/v1/content_shares?or=(shared_with_user_id.eq.${userId},shared_with_email.eq.${encodedEmail})&select=content_id,expires_at&limit=200`,
     { headers }
   );
-  const allShares = sharedContentRes.ok ? await sharedContentRes.json() : [];
+  const allShares = sharedContentRes.ok ? await sharedContentRes.json() as ContentShareRow[] : [];
   // Filter out expired shares
   const now = new Date();
-  const validShares = allShares.filter((s: { expires_at: string | null }) =>
+  const validShares = allShares.filter((s) =>
     !s.expires_at || new Date(s.expires_at) > now
   );
-  const sharedContentIds = [...new Set(validShares.map((s: { content_id: string }) => s.content_id))];
+  const sharedContentIds = [...new Set(validShares.map((s) => s.content_id))];
 
-  let sharedContent: Array<Record<string, unknown>> = [];
+  let sharedContent: LibraryContentRow[] = [];
   if (sharedContentIds.length > 0) {
     const contentRes = await fetch(
       `${supabaseUrl}/rest/v1/content?id=in.(${sharedContentIds.join(',')})&type=eq.page&select=id,type,slug,title,description,owner_id`,
       { headers }
     );
-    if (contentRes.ok) sharedContent = await contentRes.json();
+    if (contentRes.ok) sharedContent = await contentRes.json() as LibraryContentRow[];
   }
 
   // Resolve owner emails
@@ -1043,7 +1116,7 @@ const MAX_SCREENSHOT_BYTES = 2 * 1024 * 1024; // 2MB
  */
 async function handleUploadScreenshot(request: Request, appId: string): Promise<Response> {
   try {
-    const user = await authenticate(request);
+    const user: EmbeddingUser = await authenticate(request);
     const appsService = createAppsService();
     const r2Service = createR2Service();
 
@@ -1104,7 +1177,7 @@ async function handleUploadScreenshot(request: Request, appId: string): Promise<
  */
 async function handleDeleteScreenshot(request: Request, appId: string, index: number): Promise<Response> {
   try {
-    const user = await authenticate(request);
+    const user: EmbeddingUser = await authenticate(request);
     const appsService = createAppsService();
     const r2Service = createR2Service();
 
@@ -1147,7 +1220,7 @@ async function handleDeleteScreenshot(request: Request, appId: string, index: nu
  */
 async function handleReorderScreenshots(request: Request, appId: string): Promise<Response> {
   try {
-    const user = await authenticate(request);
+    const user: EmbeddingUser = await authenticate(request);
     const appsService = createAppsService();
 
     const app = await appsService.findById(appId);
@@ -1229,7 +1302,7 @@ async function handleGetScreenshot(request: Request, appId: string, index: numbe
       return new Response(null, { status: 304, headers: { 'ETag': etag } });
     }
 
-    return new Response(content, {
+    return new Response(toResponseBody(content), {
       headers: {
         'Content-Type': contentType,
         'Cache-Control': 'public, max-age=300, must-revalidate',
@@ -1245,7 +1318,7 @@ async function handleGetScreenshot(request: Request, appId: string, index: numbe
 /**
  * Extract function count from an app record.
  */
-function getFnCount(app: Record<string, unknown>): number {
+function getFnCount(app: { manifest: unknown; skills_parsed: unknown; exports: string[] | null }): number {
   const manifest = app.manifest as Record<string, unknown> | null;
   if (manifest && typeof manifest === 'object') {
     const fns = manifest.functions as Record<string, unknown> | undefined;
@@ -1295,7 +1368,7 @@ async function handleGetAppInstructions(request: Request, appId: string): Promis
           if (normalizedParams) {
             paramStr = Object.entries(normalizedParams)
               .map(([pName, pMeta]) =>
-                `${pName}${(pMeta as Record<string, unknown>).required === false ? '?' : ''}: ${(pMeta as Record<string, unknown>).type || 'any'}`
+                `${pName}${pMeta.required === false ? '?' : ''}: ${pMeta.type || 'any'}`
               ).join(', ');
           }
           const fnDesc = fnMeta.description ? ` — ${fnMeta.description}` : '';
@@ -1450,7 +1523,7 @@ async function handleGetAppCode(request: Request, appId: string): Promise<Respon
 
     // Generate ETag for code endpoint caching
     const version = app.current_version || '0';
-    const updated = (app as Record<string, unknown>).updated_at || '0';
+    const updated = app.updated_at || '0';
     let hashVal = 0;
     const hashStr = `code:${version}:${updated}:${app.storage_key}`;
     for (let i = 0; i < hashStr.length; i++) {
@@ -1495,7 +1568,7 @@ async function handleGetAppCode(request: Request, appId: string): Promise<Respon
  */
 async function handleUpdateApp(request: Request, appId: string): Promise<Response> {
   try {
-    const user = await authenticate(request);
+    const user: EmbeddingUser = await authenticate(request);
     const appsService = createAppsService();
 
     const app = await appsService.findById(appId);
@@ -1509,7 +1582,7 @@ async function handleUpdateApp(request: Request, appId: string): Promise<Respons
       return error('Unauthorized', 403);
     }
 
-    const updates = await request.json();
+    const updates = await readJsonObject(request);
 
     // Whitelist allowed updates
     const allowedFields = ['name', 'description', 'visibility', 'icon_url', 'tags', 'category', 'download_access', 'pricing_config', 'long_description'];
@@ -1629,7 +1702,7 @@ async function handleUpdateApp(request: Request, appId: string): Promise<Respons
  */
 async function handleDeleteApp(request: Request, appId: string): Promise<Response> {
   try {
-    const user = await authenticate(request);
+    const user: EmbeddingUser = await authenticate(request);
     const appsService = createAppsService();
 
     const app = await appsService.findById(appId);
@@ -1670,7 +1743,7 @@ async function handleDeleteApp(request: Request, appId: string): Promise<Respons
  */
 async function handleDeleteVersion(request: Request, appId: string, version: string): Promise<Response> {
   try {
-    const user = await authenticate(request);
+    const user: EmbeddingUser = await authenticate(request);
     const appsService = createAppsService();
     const r2Service = createR2Service();
 
@@ -1727,7 +1800,7 @@ async function handleDeleteVersion(request: Request, appId: string, version: str
  */
 async function handleUploadIcon(request: Request, appId: string): Promise<Response> {
   try {
-    const user = await authenticate(request);
+    const user: EmbeddingUser = await authenticate(request);
     const appsService = createAppsService();
     const r2Service = createR2Service();
 
@@ -1820,7 +1893,7 @@ async function handleGetIcon(request: Request, appId: string): Promise<Response>
       return error('Icon not found', 404);
     }
 
-    return new Response(iconContent, {
+    return new Response(toResponseBody(iconContent), {
       headers: {
         'Content-Type': contentType,
         'Cache-Control': 'public, max-age=86400', // Cache for 1 day
@@ -1847,7 +1920,7 @@ async function handleDownloadCode(request: Request, appId: string): Promise<Resp
     }
 
     // Check download access
-    const downloadAccess = (app as Record<string, unknown>).download_access || 'owner';
+    const downloadAccess = app.download_access || 'owner';
 
     if (downloadAccess === 'owner') {
       if (!isOwner) {
@@ -1895,7 +1968,7 @@ async function handleDownloadCode(request: Request, appId: string): Promise<Resp
     // Build ZIP file
     const zipContent = buildZip(files);
 
-    return new Response(zipContent, {
+    return new Response(toResponseBody(zipContent), {
       headers: {
         'Content-Type': 'application/zip',
         'Content-Disposition': `attachment; filename="${app.name || app.slug}.zip"`,
@@ -2035,7 +2108,7 @@ async function handleGenerateDocs(request: Request, appId: string): Promise<Resp
 
   try {
     // Authenticate - only owner can generate docs
-    const user = await authenticate(request);
+    const user: EmbeddingUser = await authenticate(request);
     const appsService = createAppsService();
     const r2Service = createR2Service();
 
@@ -2049,7 +2122,7 @@ async function handleGenerateDocs(request: Request, appId: string): Promise<Resp
     }
 
     // Check if generation is already in progress (debounce/lock)
-    if ((app as Record<string, unknown>).generation_in_progress) {
+    if (app.generation_in_progress) {
       return error('Documentation generation already in progress', 409);
     }
 
@@ -2060,7 +2133,7 @@ async function handleGenerateDocs(request: Request, appId: string): Promise<Resp
       // Parse request body for options
       let options = { ai_enhance: false };
       try {
-        const body = await request.json();
+        const body = await readJsonObject(request);
         options = { ...options, ...body };
       } catch {
         // No body or invalid JSON - use defaults
@@ -2146,7 +2219,7 @@ async function handleGenerateDocs(request: Request, appId: string): Promise<Resp
         skills_md = generateSkillsMd(app.name || app.slug, parseResult, {
           includeExamples: true,
           includePermissions: true,
-          pricingConfig: (app as Record<string, unknown>).pricing_config as AppPricingConfig | undefined,
+          pricingConfig: toDocgenPricingConfig(app.pricing_config),
         });
       } catch (genErr) {
         errors.push({
@@ -2192,7 +2265,7 @@ async function handleGenerateDocs(request: Request, appId: string): Promise<Resp
       // Phase 6: Generate and store embedding
       console.log('[GENERATE] Generating embedding...');
       let embeddingGenerated = false;
-      const embeddingService = createEmbeddingService((user as User).openrouter_api_key);
+      const embeddingService = createEmbeddingService(user.openrouter_api_key);
 
       if (embeddingService && embedding_text) {
         try {
@@ -2281,7 +2354,7 @@ async function handleGetSkillsMd(request: Request, appId: string): Promise<Respo
 async function handleUpdateSkills(request: Request, appId: string): Promise<Response> {
   try {
     // Authenticate - only owner can update
-    const user = await authenticate(request);
+    const user: EmbeddingUser = await authenticate(request);
     const appsService = createAppsService();
 
     const app = await appsService.findById(appId);
@@ -2294,7 +2367,7 @@ async function handleUpdateSkills(request: Request, appId: string): Promise<Resp
     }
 
     // Parse request body
-    const body = await request.json();
+    const body = await readJsonObject(request);
     const { skills_md } = body;
 
     if (!skills_md || typeof skills_md !== 'string') {
@@ -2320,7 +2393,7 @@ async function handleUpdateSkills(request: Request, appId: string): Promise<Resp
 
     // Regenerate embedding if embedding text changed
     let embeddingGenerated = false;
-    const embeddingService = createEmbeddingService((user as User).openrouter_api_key);
+    const embeddingService = createEmbeddingService(user.openrouter_api_key);
 
     if (embeddingService && embedding_text) {
       try {
@@ -2371,7 +2444,7 @@ async function handleUpdateSkills(request: Request, appId: string): Promise<Resp
  */
 async function handleGetDraft(request: Request, appId: string): Promise<Response> {
   try {
-    const user = await authenticate(request);
+    const user: EmbeddingUser = await authenticate(request);
     const appsService = createAppsService();
 
     const app = await appsService.findById(appId);
@@ -2383,9 +2456,7 @@ async function handleGetDraft(request: Request, appId: string): Promise<Response
       return error('Unauthorized', 403);
     }
 
-    const appWithDraft = app as Record<string, unknown>;
-
-    if (!appWithDraft.draft_storage_key) {
+    if (!app.draft_storage_key) {
       return json({
         has_draft: false,
         message: 'No draft available',
@@ -2394,9 +2465,9 @@ async function handleGetDraft(request: Request, appId: string): Promise<Response
 
     return json({
       has_draft: true,
-      draft_version: appWithDraft.draft_version,
-      draft_uploaded_at: appWithDraft.draft_uploaded_at,
-      draft_exports: appWithDraft.draft_exports,
+      draft_version: app.draft_version,
+      draft_uploaded_at: app.draft_uploaded_at,
+      draft_exports: app.draft_exports,
       published_version: app.current_version,
       published_storage_key: app.storage_key,
     });
@@ -2418,7 +2489,7 @@ async function handleGetDraft(request: Request, appId: string): Promise<Response
  */
 async function handlePublishDraft(request: Request, appId: string): Promise<Response> {
   try {
-    const user = await authenticate(request);
+    const user: EmbeddingUser = await authenticate(request);
     const appsService = createAppsService();
     const r2Service = createR2Service();
 
@@ -2431,9 +2502,7 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
       return error('Unauthorized', 403);
     }
 
-    const appWithDraft = app as Record<string, unknown>;
-
-    if (!appWithDraft.draft_storage_key) {
+    if (!app.draft_storage_key) {
       return error('No draft to publish', 400);
     }
 
@@ -2450,7 +2519,7 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
       }
 
       // Layer 2: Originality gate (publish only)
-      const draftKey = appWithDraft.draft_storage_key as string;
+      const draftKey = app.draft_storage_key;
       let draftSource = '';
       for (const name of ['_source_index.ts', '_source_index.tsx', 'index.ts', 'index.tsx', 'index.js']) {
         try { draftSource = await r2Service.fetchTextFile(`${draftKey}${name}`); break; } catch {}
@@ -2481,7 +2550,7 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
     // Parse request options
     let options = { regenerate_docs: true };
     try {
-      const body = await request.json();
+      const body = await readJsonObject(request);
       options = { ...options, ...body };
     } catch {
       // Use defaults
@@ -2496,7 +2565,7 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
 
     // Copy draft files to new version location, tracking total size
     console.log('[PUBLISH] Copying draft files to new version...');
-    const draftStorageKey = appWithDraft.draft_storage_key as string;
+    const draftStorageKey = app.draft_storage_key;
     const draftFiles = await r2Service.listFiles(draftStorageKey);
     let publishedSizeBytes = 0;
 
@@ -2530,7 +2599,7 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
       storage_key: newStorageKey,
       current_version: newVersion,
       versions: [...(app.versions || []), newVersion],
-      exports: appWithDraft.draft_exports,
+      exports: app.draft_exports,
       // Clear draft fields
       draft_storage_key: null,
       draft_version: null,
@@ -2633,14 +2702,14 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
         if (code) {
           const parseResult = await parseTypeScript(code, 'index.ts');
           const skills_md = generateSkillsMd(app.name || app.slug, parseResult, {
-            pricingConfig: (app as Record<string, unknown>).pricing_config as AppPricingConfig | undefined,
+            pricingConfig: toDocgenPricingConfig(app.pricing_config),
           });
           const skills_parsed = toSkillsParsed(parseResult);
           const embedding_text = generateEmbeddingText(app.name || app.slug, app.description, skills_parsed);
 
           // Generate embedding
           let embeddingGenerated = false;
-          const embeddingService = createEmbeddingService((user as User).openrouter_api_key);
+          const embeddingService = createEmbeddingService(user.openrouter_api_key);
           if (embeddingService && embedding_text) {
             try {
               const embeddingResult = await embeddingService.embed(embedding_text);
@@ -2843,9 +2912,7 @@ async function handleDiscardDraft(request: Request, appId: string): Promise<Resp
       return error('Unauthorized', 403);
     }
 
-    const appWithDraft = app as Record<string, unknown>;
-
-    if (!appWithDraft.draft_storage_key) {
+    if (!app.draft_storage_key) {
       return json({
         success: true,
         message: 'No draft to discard',
@@ -2855,7 +2922,7 @@ async function handleDiscardDraft(request: Request, appId: string): Promise<Resp
     console.log('[DISCARD] Discarding draft for app:', appId);
 
     // Delete draft files from R2
-    const draftStorageKey = appWithDraft.draft_storage_key as string;
+    const draftStorageKey = app.draft_storage_key;
     try {
       const draftFiles = await r2Service.listFiles(draftStorageKey);
       for (const fileKey of draftFiles) {
@@ -2939,7 +3006,7 @@ async function handleGetEnvVars(request: Request, appId: string): Promise<Respon
       return error('Unauthorized', 403);
     }
 
-    const envVars = (app as Record<string, unknown>).env_vars as Record<string, string> || {};
+    const envVars = app.env_vars || {};
 
     // Decrypt for summary (to get actual lengths)
     let decrypted: Record<string, string> = {};
@@ -2988,7 +3055,7 @@ async function handleSetEnvVars(request: Request, appId: string): Promise<Respon
       return error('Unauthorized', 403);
     }
 
-    const body = await request.json();
+    const body = await readJsonObject(request);
     const { env_vars } = body;
 
     if (!env_vars || typeof env_vars !== 'object') {
@@ -3064,7 +3131,7 @@ async function handleUpdateEnvVars(request: Request, appId: string): Promise<Res
       return error('Unauthorized', 403);
     }
 
-    const body = await request.json();
+    const body = await readJsonObject(request);
     const { env_vars } = body;
 
     if (!env_vars || typeof env_vars !== 'object') {
@@ -3072,7 +3139,7 @@ async function handleUpdateEnvVars(request: Request, appId: string): Promise<Res
     }
 
     // Get existing env vars
-    const existingEnvVars = (app as Record<string, unknown>).env_vars as Record<string, string> || {};
+    const existingEnvVars = app.env_vars || {};
 
     // Validate new keys and values
     const errors: string[] = [];
@@ -3145,7 +3212,7 @@ async function handleDeleteEnvVar(request: Request, appId: string, key: string):
     }
 
     // Get existing env vars
-    const existingEnvVars = (app as Record<string, unknown>).env_vars as Record<string, string> || {};
+    const existingEnvVars = app.env_vars || {};
 
     // Check if key exists
     if (!(key in existingEnvVars)) {
@@ -3232,17 +3299,17 @@ async function handleSetSupabaseConfig(request: Request, appId: string): Promise
       return error('Unauthorized', 403);
     }
 
-    const body = await request.json();
-    const { config_id } = body;
+    const body = await readJsonObject(request);
+    const configId = typeof body.config_id === 'string' && body.config_id ? body.config_id : null;
 
     // Update app to reference the saved server (or null to disable)
     await appsService.update(appId, {
-      supabase_config_id: config_id || null,
-      supabase_enabled: !!config_id,
+      supabase_config_id: configId,
+      supabase_enabled: !!configId,
     });
 
     // If connecting Supabase, permanently flag app as ineligible for trading
-    if (config_id) {
+    if (configId) {
       try {
         const { flagExternalDb } = await import('../services/marketplace.ts');
         await flagExternalDb(appId);
@@ -3253,7 +3320,7 @@ async function handleSetSupabaseConfig(request: Request, appId: string): Promise
 
     return json({
       success: true,
-      message: config_id ? 'Supabase server assigned' : 'Supabase disabled',
+      message: configId ? 'Supabase server assigned' : 'Supabase disabled',
     });
 
   } catch (err) {
@@ -3536,8 +3603,8 @@ async function handleGetHealth(request: Request, appId: string): Promise<Respons
     })).sort((a, b) => b.error_rate - a.error_rate);
 
     return json({
-      health_status: (app as Record<string, unknown>).health_status || 'healthy',
-      auto_heal_enabled: (app as Record<string, unknown>).auto_heal_enabled !== false,
+      health_status: app.health_status || 'healthy',
+      auto_heal_enabled: app.auto_heal_enabled !== false,
       function_health: functionHealth,
       events,
     });
@@ -3571,7 +3638,7 @@ async function handleUpdateHealth(request: Request, appId: string): Promise<Resp
 
     await appsService.update(appId, {
       auto_heal_enabled: body.auto_heal_enabled,
-    } as Record<string, unknown>);
+    });
 
     return json({
       success: true,
