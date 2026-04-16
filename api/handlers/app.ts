@@ -1870,6 +1870,140 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
     margin-bottom: 1.5rem;
   }
 
+  .tab-bar {
+    display: none;
+    gap: 0.5rem;
+    margin: 0 0 1.25rem;
+    border-bottom: 1px solid rgba(0,0,0,0.08);
+    padding-bottom: 0.5rem;
+  }
+  .tab-btn {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: #666;
+    font-size: 0.875rem;
+    font-weight: 600;
+    padding: 0.4rem 0.65rem;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .tab-btn.active {
+    background: #0a0a0a;
+    color: #fff;
+  }
+  .tab-btn .badge-inline {
+    margin-left: 0.35rem;
+    font-size: 0.6875rem;
+    color: inherit;
+    opacity: 0.8;
+  }
+  .tab-panel.is-hidden {
+    display: none;
+  }
+
+  .settings-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+  .settings-status {
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    padding: 0.8rem 0.95rem;
+    border-radius: 6px;
+    border: 1px solid rgba(0,0,0,0.08);
+    background: #fafafa;
+    color: #444;
+  }
+  .settings-status.warning {
+    background: #fff7ed;
+    border-color: #fed7aa;
+    color: #9a3412;
+  }
+  .settings-note {
+    font-size: 0.8125rem;
+    color: #666;
+  }
+  .settings-note a {
+    color: #0a0a0a;
+    text-decoration: underline;
+  }
+  .settings-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+  }
+  .settings-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .settings-label-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .settings-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #111;
+  }
+  .settings-required,
+  .settings-configured {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    border: 1px solid rgba(0,0,0,0.08);
+    background: #fafafa;
+    color: #555;
+  }
+  .settings-configured {
+    background: #f0fdf4;
+    border-color: #bbf7d0;
+    color: #166534;
+  }
+  .settings-help {
+    font-size: 0.8125rem;
+    color: #666;
+    line-height: 1.5;
+  }
+  .settings-input,
+  .settings-textarea {
+    width: 100%;
+    padding: 0.72rem 0.8rem;
+    border-radius: 6px;
+    border: 1px solid rgba(0,0,0,0.12);
+    background: #fff;
+    color: #111;
+    font: inherit;
+  }
+  .settings-textarea {
+    min-height: 120px;
+    resize: vertical;
+  }
+  .settings-input:focus,
+  .settings-textarea:focus {
+    outline: none;
+    border-color: #0a0a0a;
+    box-shadow: 0 0 0 3px rgba(10,10,10,0.08);
+  }
+  .settings-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-top: 0.35rem;
+  }
+  .settings-meta {
+    font-size: 0.75rem;
+    color: #777;
+  }
+
   /* Screenshots carousel — horizontal snap scroller, bleeds to edges on mobile */
   .app-screenshots {
     margin: 0 -1rem 1.5rem;
@@ -2134,31 +2268,42 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
     </div>
   </div>
 
-  <!-- Description -->
-  ${description ? `<p class="app-desc">${description}</p>` : ''}
+  <div id="appTabBar" class="tab-bar" role="tablist" aria-label="App page sections"></div>
 
-  <!-- Screenshots carousel (Phase 2) — horizontal scroll with snap points -->
-  ${hasScreenshots ? `
-  <section class="app-screenshots">
-    <div class="screenshots-scroller">
-      ${screenshots.map((_, idx) => `
-        <a class="screenshot-item" href="/api/apps/${escapeHtml(app.id)}/screenshots/${idx}" target="_blank" rel="noopener">
-          <img src="/api/apps/${escapeHtml(app.id)}/screenshots/${idx}" alt="Screenshot ${idx + 1}" loading="lazy">
-        </a>
-      `).join('')}
+  <section id="overviewPanel" class="tab-panel">
+    <!-- Description -->
+    ${description ? `<p class="app-desc">${description}</p>` : ''}
+
+    <!-- Screenshots carousel (Phase 2) — horizontal scroll with snap points -->
+    ${hasScreenshots ? `
+    <section class="app-screenshots">
+      <div class="screenshots-scroller">
+        ${screenshots.map((_, idx) => `
+          <a class="screenshot-item" href="/api/apps/${escapeHtml(app.id)}/screenshots/${idx}" target="_blank" rel="noopener">
+            <img src="/api/apps/${escapeHtml(app.id)}/screenshots/${idx}" alt="Screenshot ${idx + 1}" loading="lazy">
+          </a>
+        `).join('')}
+      </div>
+    </section>` : ''}
+
+    <!-- Long description (Phase 2) — markdown-rendered body -->
+    ${longDescriptionHtml ? `
+    <section class="section app-long-desc">
+      <div class="docs-content">${longDescriptionHtml}</div>
+    </section>` : ''}
+
+    <!-- Functions -->
+    <section class="section">
+      <div class="section-title">Functions</div>
+      <div class="docs-content">${skillsHtml}</div>
+    </section>
+  </section>
+
+  <section id="settingsPanel" class="section tab-panel is-hidden" aria-live="polite">
+    <div class="section-title">Settings</div>
+    <div id="settingsContent" class="settings-shell">
+      <p class="no-docs">Install this app to configure your own settings.</p>
     </div>
-  </section>` : ''}
-
-  <!-- Long description (Phase 2) — markdown-rendered body -->
-  ${longDescriptionHtml ? `
-  <section class="section app-long-desc">
-    <div class="docs-content">${longDescriptionHtml}</div>
-  </section>` : ''}
-
-  <!-- Functions -->
-  <section class="section">
-    <div class="section-title">Functions</div>
-    <div class="docs-content">${skillsHtml}</div>
   </section>
 
   <!-- MCP endpoint (demoted) -->
@@ -2195,6 +2340,10 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
   var ctaEl = document.getElementById('appStoreCTA');
   var ownerBannerEl = document.getElementById('ownerBanner');
   var toastEl = document.getElementById('toast');
+  var tabBarEl = document.getElementById('appTabBar');
+  var overviewPanelEl = document.getElementById('overviewPanel');
+  var settingsPanelEl = document.getElementById('settingsPanel');
+  var settingsContentEl = document.getElementById('settingsContent');
 
   // Detect embed via SSR hint OR parent frame (handles token-only refreshes)
   var inDesktop = IS_EMBED_SSR || (window.parent && window.parent !== window);
@@ -2235,19 +2384,37 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
 
   // ── State machine ─────────────────────────────────────────────
   // 'anonymous' | 'not-in-library' | 'in-library' | 'owner'
+  function emptyStatus() {
+    return {
+      inLibrary: false,
+      isOwner: false,
+      hasUserSettings: false,
+      connectedKeys: [],
+      missingRequired: [],
+      fullyConnected: true,
+      requiresSetup: false,
+    };
+  }
+
   var state = 'anonymous';
-  var status = { inLibrary: false, isOwner: false };
+  var status = emptyStatus();
+  var activeTab = 'overview';
+  var settingsData = null;
+  var settingsLoaded = false;
+  var settingsLoading = false;
+  var settingsMessage = 'Install this app to configure your own settings.';
 
   async function fetchStatus() {
-    if (!token) return { inLibrary: false, isOwner: false };
+    if (!token) return emptyStatus();
     try {
       var res = await fetch('/api/apps/' + encodeURIComponent(APP_ID) + '/library-status', {
         headers: { 'Authorization': 'Bearer ' + token },
       });
-      if (!res.ok) return { inLibrary: false, isOwner: false };
-      return await res.json();
+      if (!res.ok) return emptyStatus();
+      var next = await res.json();
+      return Object.assign(emptyStatus(), next || {});
     } catch (e) {
-      return { inLibrary: false, isOwner: false };
+      return emptyStatus();
     }
   }
 
@@ -2255,6 +2422,257 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
     if (s.isOwner) return 'owner';
     if (!token) return 'anonymous';
     return s.inLibrary ? 'in-library' : 'not-in-library';
+  }
+
+  function canShowSettings() {
+    return (state === 'owner' || state === 'in-library') && !!status.hasUserSettings;
+  }
+
+  function resetSettingsState() {
+    settingsData = null;
+    settingsLoaded = false;
+    settingsLoading = false;
+    settingsMessage = 'Install this app to configure your own settings.';
+  }
+
+  function setSettingsPlaceholder(message) {
+    settingsMessage = message;
+    settingsContentEl.innerHTML = '<p class="no-docs">' + escHtml(message) + '</p>';
+  }
+
+  function renderTabs() {
+    if (!canShowSettings()) {
+      activeTab = 'overview';
+      tabBarEl.style.display = 'none';
+      return;
+    }
+
+    tabBarEl.style.display = 'flex';
+    tabBarEl.innerHTML =
+      '<button class="tab-btn' + (activeTab === 'overview' ? ' active' : '') + '" role="tab" aria-selected="' + (activeTab === 'overview' ? 'true' : 'false') + '" onclick="window.__ul.setActiveTab(\\'overview\\')">Overview</button>' +
+      '<button class="tab-btn' + (activeTab === 'settings' ? ' active' : '') + '" role="tab" aria-selected="' + (activeTab === 'settings' ? 'true' : 'false') + '" onclick="window.__ul.setActiveTab(\\'settings\\')">Settings' +
+        (status.requiresSetup ? '<span class="badge-inline">Setup required</span>' : '') +
+      '</button>';
+  }
+
+  function renderPanels() {
+    overviewPanelEl.classList.toggle('is-hidden', activeTab !== 'overview');
+    settingsPanelEl.classList.toggle('is-hidden', activeTab !== 'settings' || !canShowSettings());
+  }
+
+  function renderSettingsContent() {
+    if (!canShowSettings()) {
+      setSettingsPlaceholder('Install this app to configure your own settings.');
+      return;
+    }
+
+    if (settingsLoading) {
+      settingsContentEl.innerHTML =
+        '<div class="settings-status"><span class="spinner"></span> Loading your settings...</div>';
+      return;
+    }
+
+    if (!settingsLoaded || !settingsData) {
+      settingsContentEl.innerHTML = '<p class="no-docs">' + escHtml(settingsMessage || 'Open Settings to load your saved configuration.') + '</p>';
+      return;
+    }
+
+    var settings = Array.isArray(settingsData.settings) ? settingsData.settings : [];
+    if (settings.length === 0) {
+      setSettingsPlaceholder('This app does not declare any User Settings yet.');
+      return;
+    }
+
+    var statusText = settingsData.fully_connected
+      ? 'Your User Settings are ready.'
+      : 'Setup required. Add: ' + (settingsData.missing_required || []).join(', ');
+    var statusClass = 'settings-status' + (settingsData.fully_connected ? '' : ' warning');
+    var ownerNote = '';
+    if (settingsData.app_settings_count > 0) {
+      if (settingsData.owner_manage_url) {
+        ownerNote = '<p class="settings-note">App Settings are managed in <a href="' + escAttr(settingsData.owner_manage_url) + '">Manage</a>. User Settings on this page belong to the current installer.</p>';
+      } else {
+        ownerNote = '<p class="settings-note">This app also has App Settings managed by the app owner. The fields here are only your own User Settings.</p>';
+      }
+    }
+
+    settingsContentEl.innerHTML =
+      '<div class="' + statusClass + '">' + escHtml(statusText) + '</div>' +
+      ownerNote +
+      '<form id="userSettingsForm" class="settings-form">' +
+        settings.map(function(setting) {
+          var inputHtml;
+          var placeholder = setting.placeholder || (setting.configured ? 'Saved. Enter a new value to replace it.' : '');
+          if (setting.input === 'textarea') {
+            inputHtml =
+              '<textarea class="settings-textarea" data-setting-key="' + escAttr(setting.key) + '" placeholder="' + escAttr(placeholder) + '"></textarea>';
+          } else {
+            var inputType = setting.input || 'text';
+            inputHtml =
+              '<input class="settings-input" data-setting-key="' + escAttr(setting.key) + '" type="' + escAttr(inputType) + '" placeholder="' + escAttr(placeholder) + '"' +
+              (inputType === 'password' ? ' autocomplete="new-password"' : '') +
+              '>';
+          }
+
+          var badges =
+            (setting.required ? '<span class="settings-required">Required</span>' : '') +
+            (setting.configured ? '<span class="settings-configured">Saved</span>' : '');
+          var updatedMeta = setting.updated_at
+            ? '<div class="settings-meta">Last updated ' + escHtml(new Date(setting.updated_at).toLocaleString()) + '</div>'
+            : '';
+
+          return (
+            '<label class="settings-field">' +
+              '<span class="settings-label-row">' +
+                '<span class="settings-label">' + escHtml(setting.label || setting.key) + '</span>' +
+                badges +
+              '</span>' +
+              (setting.description ? '<span class="settings-help">' + escHtml(setting.description) + '</span>' : '') +
+              (setting.help ? '<span class="settings-help">' + escHtml(setting.help) + '</span>' : '') +
+              inputHtml +
+              updatedMeta +
+            '</label>'
+          );
+        }).join('') +
+        '<div class="settings-actions">' +
+          '<button class="btn btn-primary" type="submit" id="saveSettingsBtn">Save Settings</button>' +
+          '<span class="settings-meta">Only fields you fill in will be updated.</span>' +
+        '</div>' +
+      '</form>';
+
+    var formEl = document.getElementById('userSettingsForm');
+    if (formEl) {
+      formEl.addEventListener('submit', saveUserSettings);
+    }
+  }
+
+  async function loadSettings(force) {
+    if (!token || !canShowSettings()) return;
+    if (settingsLoaded && !force) return;
+
+    settingsLoading = true;
+    renderSettingsContent();
+
+    try {
+      var res = await fetch('/api/apps/' + encodeURIComponent(APP_ID) + '/settings', {
+        headers: { 'Authorization': 'Bearer ' + token },
+      });
+
+      if (!res.ok) {
+        settingsLoaded = false;
+        settingsData = null;
+        setSettingsPlaceholder(res.status === 403
+          ? 'Install this app to configure your own settings.'
+          : 'Could not load settings right now.');
+        return;
+      }
+
+      settingsData = await res.json();
+      settingsLoaded = true;
+      renderSettingsContent();
+    } catch (e) {
+      settingsLoaded = false;
+      settingsData = null;
+      setSettingsPlaceholder('Network error while loading settings.');
+    } finally {
+      settingsLoading = false;
+      renderSettingsContent();
+    }
+  }
+
+  function setActiveTab(nextTab) {
+    activeTab = canShowSettings() && nextTab === 'settings' ? 'settings' : 'overview';
+    if (activeTab === 'settings' && !settingsLoaded && !settingsLoading) {
+      settingsMessage = 'Open Settings to load your saved configuration.';
+    }
+    renderTabs();
+    renderPanels();
+    renderSettingsContent();
+    if (activeTab === 'settings') {
+      loadSettings(false);
+    }
+  }
+
+  function openSettings() {
+    setActiveTab('settings');
+  }
+
+  async function saveUserSettings(event) {
+    event.preventDefault();
+    if (!token) {
+      showToast('Sign in to save settings.', { error: true });
+      return;
+    }
+
+    var formEl = event.currentTarget;
+    var values = {};
+    var inputs = formEl.querySelectorAll('[data-setting-key]');
+    for (var i = 0; i < inputs.length; i++) {
+      var input = inputs[i];
+      var key = input.getAttribute('data-setting-key');
+      var value = typeof input.value === 'string' ? input.value.trim() : '';
+      if (key && value) {
+        values[key] = value;
+      }
+    }
+
+    if (Object.keys(values).length === 0) {
+      showToast('Enter at least one setting to save.', { error: true });
+      return;
+    }
+
+    var saveBtn = document.getElementById('saveSettingsBtn');
+    var originalBtnHtml = saveBtn ? saveBtn.innerHTML : '';
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = '<span class="spinner"></span> Saving...';
+    }
+
+    try {
+      var res = await fetch('/api/apps/' + encodeURIComponent(APP_ID) + '/settings', {
+        method: 'PUT',
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ values: values }),
+      });
+
+      if (!res.ok) {
+        var errMessage = 'Could not save settings. Try again.';
+        try {
+          var errData = await res.json();
+          if (errData && typeof errData.error === 'string') {
+            errMessage = errData.error;
+          } else if (errData && Array.isArray(errData.errors) && errData.errors.length > 0) {
+            errMessage = errData.errors[0];
+          }
+        } catch (e) {}
+        showToast(errMessage, { error: true });
+        return;
+      }
+
+      await res.json();
+      status = await fetchStatus();
+      state = pickState(status);
+      settingsLoaded = false;
+      settingsData = null;
+      renderCTA();
+      if (status.requiresSetup) {
+        await loadSettings(true);
+        showToast('Saved. Finish the remaining required settings to activate the app.');
+      } else {
+        await loadSettings(true);
+        showToast('Settings saved');
+      }
+    } catch (e) {
+      showToast('Network error while saving settings.', { error: true });
+    } finally {
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = originalBtnHtml;
+      }
+    }
   }
 
   // ── Button rendering ──────────────────────────────────────────
@@ -2282,10 +2700,17 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
           '<button class="btn btn-primary btn-lg" onclick="window.__ul.installApp()">Install</button>' +
         '</div>';
     } else if (state === 'in-library') {
-      if (inDesktop) {
-        // Inside desktop: no "Open in Ultralight" (redundant), only uninstall.
+      if (status.hasUserSettings && status.requiresSetup) {
         html =
           '<div class="cta-row">' +
+            '<button class="btn btn-primary btn-lg" onclick="window.__ul.openSettings()">Finish setup</button>' +
+            '<button class="btn btn-secondary" onclick="window.__ul.uninstallApp()">Uninstall</button>' +
+          '</div>';
+      } else if (inDesktop) {
+        // Inside desktop: opening the app page is already the desktop context.
+        html =
+          '<div class="cta-row">' +
+            (status.hasUserSettings ? '<button class="btn btn-secondary" onclick="window.__ul.openSettings()">Settings</button>' : '') +
             '<button class="btn btn-secondary" onclick="window.__ul.uninstallApp()">Uninstall</button>' +
           '</div>';
       } else {
@@ -2293,11 +2718,15 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
         html =
           '<div class="cta-row">' +
             '<button class="btn btn-primary btn-lg" onclick="window.__ul.openInDesktop()">Open in Ultralight</button>' +
+            (status.hasUserSettings ? '<button class="btn btn-secondary" onclick="window.__ul.openSettings()">Settings</button>' : '') +
             '<button class="btn btn-secondary" onclick="window.__ul.uninstallApp()">Uninstall</button>' +
           '</div>';
       }
     }
     ctaEl.innerHTML = html || '';
+    renderTabs();
+    renderPanels();
+    renderSettingsContent();
   }
 
   function renderInstalling() {
@@ -2323,19 +2752,28 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
         headers: { 'Authorization': 'Bearer ' + token },
       });
       if (res.ok) {
-        status.inLibrary = true;
+        resetSettingsState();
+        status = await fetchStatus();
         state = pickState(status);
         renderCTA();
-        showToast('\\u2713 Installed');
+        if (status.requiresSetup) {
+          openSettings();
+          await loadSettings(true);
+          showToast('\\u2713 Installed. Finish setup in Settings.');
+        } else {
+          showToast('\\u2713 Installed');
+        }
         if (inDesktop) {
           try { window.parent.postMessage({ type: 'library-changed', appId: APP_ID, action: 'install' }, '*'); } catch (e) {}
         }
       } else {
+        status = Object.assign(emptyStatus(), status, { inLibrary: false });
         state = 'not-in-library';
         renderCTA();
         showToast('Could not install. Try again.', { error: true });
       }
     } catch (e) {
+      status = Object.assign(emptyStatus(), status, { inLibrary: false });
       state = 'not-in-library';
       renderCTA();
       showToast('Network error. Try again.', { error: true });
@@ -2352,20 +2790,22 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
         headers: { 'Authorization': 'Bearer ' + token },
       });
       if (res.ok) {
-        status.inLibrary = false;
+        resetSettingsState();
+        status = await fetchStatus();
         state = pickState(status);
+        activeTab = 'overview';
         renderCTA();
         showToast('Uninstalled');
         if (inDesktop) {
           try { window.parent.postMessage({ type: 'library-changed', appId: APP_ID, action: 'uninstall' }, '*'); } catch (e) {}
         }
       } else {
-        state = 'in-library';
+        state = pickState(status);
         renderCTA();
         showToast('Could not uninstall. Try again.', { error: true });
       }
     } catch (e) {
-      state = 'in-library';
+      state = pickState(status);
       renderCTA();
       showToast('Network error. Try again.', { error: true });
     }
@@ -2484,6 +2924,8 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
     uninstallApp: uninstallApp,
     installAnon: installAnon,
     openInDesktop: openInDesktop,
+    openSettings: openSettings,
+    setActiveTab: setActiveTab,
   };
 
   // ── Bootstrap ─────────────────────────────────────────────────
@@ -2491,6 +2933,12 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
     status = await fetchStatus();
     state = pickState(status);
     renderCTA();
+    if (status.requiresSetup) {
+      activeTab = 'settings';
+      renderTabs();
+      renderPanels();
+      await loadSettings(false);
+    }
 
     // Post-OAuth auto-install: the user landed here with ?installing=1
     // after completing Google sign-in. Silently save to library.
@@ -2507,12 +2955,24 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
   // Refresh library state when tab regains focus (catches cross-window changes).
   document.addEventListener('visibilitychange', async function() {
     if (document.hidden) return;
-    if (state === 'anonymous' || state === 'owner') return;
     var fresh = await fetchStatus();
-    if (fresh.inLibrary !== status.inLibrary || fresh.isOwner !== status.isOwner) {
+    var changed =
+      fresh.inLibrary !== status.inLibrary ||
+      fresh.isOwner !== status.isOwner ||
+      fresh.hasUserSettings !== status.hasUserSettings ||
+      fresh.requiresSetup !== status.requiresSetup ||
+      fresh.fullyConnected !== status.fullyConnected;
+    if (changed) {
       status = fresh;
       state = pickState(status);
+      if (!canShowSettings()) {
+        activeTab = 'overview';
+        resetSettingsState();
+      }
       renderCTA();
+      if (activeTab === 'settings' && canShowSettings()) {
+        await loadSettings(true);
+      }
     }
   });
 

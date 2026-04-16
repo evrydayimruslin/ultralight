@@ -16,6 +16,7 @@ import {
 } from './docgen.ts';
 import { createEmbeddingService } from './embedding.ts';
 import type { App, AppWithDraft, AppManifest, ManifestFunction, ManifestParameter, ManifestReturn, ParsedSkills } from '../../shared/types/index.ts';
+import { resolveManifestEnvSchema } from '../../shared/types/index.ts';
 import type { ParseResult } from './parser.ts';
 
 // ============================================
@@ -564,6 +565,7 @@ export async function generateSkillsForVersion(
       skills_md: skillsMd,
       skills_parsed: skillsParsed,
       manifest: manifestJson,
+      env_schema: resolveManifestEnvSchema(manifest),
       docs_generated_at: new Date().toISOString(),
     } as Partial<AppWithDraft>);
 

@@ -1,7 +1,8 @@
 // Platform MCP Handler — v4
 // Implements JSON-RPC 2.0 for the ul.* tool namespace
 // Endpoint: POST /mcp/platform
-// 12 tools: discover, download, test, upload, set, memory, permissions, logs, rate, call, auth.link, marketplace
+// 17 tools: discover, download, test, upload, set, memory, permissions, connect,
+// connections, logs, rate, call, job, auth.link, marketplace, codemode, wallet
 // + 27 backward-compat aliases for pre-consolidation tool names
 
 import { json, error } from './app.ts';
@@ -14,7 +15,14 @@ import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
 import { isProvisionalUser, mergeProvisionalUser } from '../services/provisional.ts';
 import { getPermissionsForUser } from './user.ts';
 import { getPermissionCache } from '../services/permission-cache.ts';
-import { type Tier, MIN_PUBLISH_DEPOSIT_CENTS, formatLight, LIGHT_PER_DOLLAR_PAYOUT, MIN_WITHDRAWAL_LIGHT, PLATFORM_FEE_RATE } from '../../shared/types/index.ts';
+import {
+  type Tier,
+  MIN_PUBLISH_DEPOSIT_CENTS,
+  formatLight,
+  LIGHT_PER_DOLLAR_PAYOUT,
+  MIN_WITHDRAWAL_LIGHT,
+  PLATFORM_FEE_RATE,
+} from '../../shared/types/index.ts';
 import { checkPublishDeposit } from '../services/tier-enforcement.ts';
 import { handleUploadFiles, type UploadFile } from './upload.ts';
 import { validateAndParseSkillsMd } from '../services/docgen.ts';
@@ -29,6 +37,7 @@ import {
 import { createMemoryService } from '../services/memory.ts';
 import { encryptEnvVar, decryptEnvVar } from '../services/envvars.ts';
 import { type UserContext } from '../runtime/sandbox.ts';
+import { getScopedEnvSchemaEntries, resolveAppEnvSchema } from '../services/app-settings.ts';
 import type {
   EnvSchemaEntry,
   MCPTool,
@@ -41,6 +50,10 @@ import type {
   MCPResourceContent,
   App,
   AppWithDraft,
+} from '../../shared/types/index.ts';
+import {
+  getManifestEnvVars,
+  resolveManifestEnvSchema,
 } from '../../shared/types/index.ts';
 import { getEnv } from '../lib/env.ts';
 
@@ -363,7 +376,43 @@ const PLATFORM_TOOLS: MCPTool[] = [
     },
   },
 
-  // ── 8. ul.logs ──────────────────────────
+  // ── 8. ul.connect ──────────────────────────
+  {
+    name: 'ul.connect',
+    description:
+      'Save your per-user User Settings for an installed app. ' +
+      'Use this for secrets or credentials that belong to the current user, not the app owner.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        app_id: { type: 'string', description: 'App ID or slug.' },
+        secrets: {
+          type: 'object',
+          description: 'Map of User Setting keys to values. Use null to remove a saved value.',
+          additionalProperties: true,
+        },
+      },
+      required: ['app_id', 'secrets'],
+    },
+  },
+
+  // ── 9. ul.connections ──────────────────────────
+  {
+    name: 'ul.connections',
+    description:
+      'Inspect saved per-user User Settings. ' +
+      'Without app_id: list apps you have connected. With app_id: show the required User Settings and which ones are configured.',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        app_id: { type: 'string', description: 'Optional app ID or slug to inspect one app.' },
+      },
+    },
+  },
+
+  // ── 10. ul.logs ──────────────────────────
   {
     name: 'ul.logs',
     description:
@@ -389,7 +438,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     },
   },
 
-  // ── 9. ul.rate ──────────────────────────
+  // ── 11. ul.rate ──────────────────────────
   {
     name: 'ul.rate',
     description:
@@ -417,7 +466,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     },
   },
 
-  // ── 10. ul.call ──────────────────────────
+  // ── 12. ul.call ──────────────────────────
   {
     name: 'ul.call',
     description:
@@ -435,7 +484,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     },
   },
 
-  // ── 11. ul.job ──────────────────────────
+  // ── 13. ul.job ──────────────────────────
   {
     name: 'ul.job',
     description:
@@ -452,7 +501,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     },
   },
 
-  // ── 12. ul.auth.link ──────────────────────────
+  // ── 14. ul.auth.link ──────────────────────────
   {
     name: 'ul.auth.link',
     description:
@@ -468,7 +517,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     },
   },
 
-  // ── 12. ul.marketplace ──────────────────────────
+  // ── 15. ul.marketplace ──────────────────────────
   {
     name: 'ul.marketplace',
     description:
@@ -499,7 +548,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
       required: ['action'],
     },
   },
-  // ── 13. ul.codemode ──────────────────────────
+  // ── 16. ul.codemode ──────────────────────────
   {
     name: 'ul.codemode',
     description:
@@ -524,7 +573,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     },
   },
 
-  // ── 14. ul.wallet ──────────────────────────
+  // ── 17. ul.wallet ──────────────────────────
   {
     name: 'ul.wallet',
     description:
@@ -803,6 +852,17 @@ Access control for private apps.
 - \`action: "list"\` — List permissions. Filter by \`emails\` or \`functions\`.
 - \`action: "export"\` — Export audit data as JSON/CSV.
 
+### ul.connect({ app_id, secrets })
+Save your own User Settings for an app.
+- Use this for per-user credentials like API keys, IMAP logins, inbox passwords, or webhook tokens.
+- This is distinct from owner-managed App Settings on the developer dashboard.
+- Provide \`secrets\` as an object: \`{ "KEY": "value" }\`. Use \`null\` to remove a saved value.
+
+### ul.connections({ app_id? })
+Inspect saved User Settings connections.
+- Without \`app_id\`: list every app where you have saved User Settings.
+- With \`app_id\`: show which required User Settings are declared and which ones are configured.
+
 ### ul.logs({ app_id?, emails?, functions?, since?, health?, status?, resolve_event_id?, limit? })
 View call logs and health events.
 - Default: call logs for an app. Filter by caller emails and/or function names.
@@ -816,7 +876,7 @@ View call logs and health events.
 
 **Workflow:** \`ul.download\` (scaffold) → implement → \`ul.test\` → \`ul.upload\` → \`ul.set\`
 
-**Always include a manifest.json** alongside index.ts. The manifest enables per-function pricing in the dashboard, typed parameter schemas for better agent tool use, and per-function permission grants. Without it, functions are auto-detected from exports but lack parameter/return metadata. Structure: \`{ "functions": { "fnName": { "description": "...", "parameters": { "paramName": { "type": "string", "required": true, "description": "What this param does" } } } } }\`. Parameters must be an object keyed by parameter name (NOT an array). \`ul.download\` scaffolds this automatically.
+**Always include a manifest.json** alongside index.ts. The manifest enables per-function pricing in the dashboard, typed parameter schemas for better agent tool use, permission grants, and Settings surfaces on public app pages. Without it, functions are auto-detected from exports but lack parameter/return metadata. Structure: \`{ "functions": { "fnName": { "description": "...", "parameters": { "paramName": { "type": "string", "required": true, "description": "What this param does" } } } }, "env_vars": { "MY_KEY": { "scope": "per_user", "input": "password", "description": "..." } } }\`. Parameters must be an object keyed by parameter name (NOT an array). \`ul.download\` scaffolds this automatically.
 
 ### Critical Rules
 1. **FUNCTION SIGNATURE:** Single args object. \`function search(args: { query: string })\` NOT \`function search(query: string)\`. The sandbox passes args as a single object.
@@ -2503,6 +2563,7 @@ async function executeUpload(
     if (gapId) updatePayload.gap_id = gapId;
     if (pipeline.manifest) {
       updatePayload.manifest = JSON.stringify(pipeline.manifest);
+      updatePayload.env_schema = resolveManifestEnvSchema(pipeline.manifest);
     }
     updatePayload.exports = pipeline.exports;
     await appsService.update(app.id, updatePayload as Partial<App>);
@@ -3542,13 +3603,13 @@ function executeLint(args: Record<string, unknown>): unknown {
       }
     }
 
-    // Env vars check
-    if (code.includes('supabase') && !manifest.env) {
+    // Env vars / settings check
+    if (code.includes('supabase') && !getManifestEnvVars(manifest as { env?: unknown; env_vars?: unknown })) {
       issues.push({
         severity: strict ? 'error' : 'warning',
         rule: 'manifest-env',
-        message: 'Code uses Supabase but manifest does not declare "env" with SUPABASE_URL and SUPABASE_SERVICE_KEY.',
-        suggestion: 'Add "env": { "SUPABASE_URL": { "description": "...", "required": true }, "SUPABASE_SERVICE_KEY": { "description": "...", "required": true } }',
+        message: 'Code uses Supabase but manifest does not declare "env_vars" with SUPABASE_URL and SUPABASE_SERVICE_KEY.',
+        suggestion: 'Add "env_vars": { "SUPABASE_URL": { "scope": "universal", "input": "url", "description": "...", "required": true }, "SUPABASE_SERVICE_KEY": { "scope": "universal", "input": "password", "description": "...", "required": true } }',
       });
     }
 
@@ -3765,9 +3826,9 @@ function executeScaffold(args: Record<string, unknown>): unknown {
     author: '',
     entry: { functions: 'index.ts' },
     permissions: detectedPerms.length > 0 ? detectedPerms : undefined,
-    env: storage === 'supabase' ? {
-      SUPABASE_URL: { description: 'Supabase project URL', required: true },
-      SUPABASE_SERVICE_KEY: { description: 'Supabase service role key', required: true },
+    env_vars: storage === 'supabase' ? {
+      SUPABASE_URL: { scope: 'universal', input: 'url', description: 'Supabase project URL', required: true },
+      SUPABASE_SERVICE_KEY: { scope: 'universal', input: 'password', description: 'Supabase service role key', required: true },
     } : undefined,
     functions: manifestFunctions,
   };
@@ -5393,7 +5454,7 @@ async function executeConnect(
   if (!app) {
     // Try slug lookup across all apps
     const slugRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/apps?slug=eq.${encodeURIComponent(appIdOrSlug)}&deleted_at=is.null&select=id,owner_id,name,slug,visibility,env_schema&limit=1`,
+      `${SUPABASE_URL}/rest/v1/apps?slug=eq.${encodeURIComponent(appIdOrSlug)}&deleted_at=is.null&select=id,owner_id,name,slug,visibility,env_schema,manifest&limit=1`,
       { headers }
     );
     if (slugRes.ok) {
@@ -5403,8 +5464,20 @@ async function executeConnect(
   }
   if (!app) throw new ToolError(NOT_FOUND, `App not found: ${appIdOrSlug}`);
 
+  const isOwner = app.owner_id === userId;
+  if (!isOwner && app.visibility === 'private') {
+    const permRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/user_app_permissions?app_id=eq.${app.id}&granted_to_user_id=eq.${userId}&allowed=eq.true&select=id&limit=1`,
+      { headers }
+    );
+    const permRows = permRes.ok ? await permRes.json() as Array<{ id: string }> : [];
+    if (permRows.length === 0) {
+      throw new ToolError(FORBIDDEN, 'This app is private and you do not have access');
+    }
+  }
+
   // Get env_schema to validate keys
-  const envSchema = ((app as Record<string, unknown>).env_schema || {}) as Record<string, EnvSchemaEntry>;
+  const envSchema = resolveAppEnvSchema(app);
   const perUserKeys = Object.entries(envSchema)
     .filter(([, v]) => v.scope === 'per_user')
     .map(([k]) => k);
@@ -5521,14 +5594,16 @@ async function executeConnections(
     // Fetch app details
     const appIds = [...appSecrets.keys()];
     const appsRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/apps?id=in.(${appIds.join(',')})&deleted_at=is.null&select=id,name,slug,env_schema`,
+      `${SUPABASE_URL}/rest/v1/apps?id=in.(${appIds.join(',')})&deleted_at=is.null&select=id,name,slug,env_schema,manifest`,
       { headers }
     );
-    const apps = appsRes.ok ? await appsRes.json() as Array<{ id: string; name: string; slug: string; env_schema: Record<string, EnvSchemaEntry> | null }> : [];
+    const apps = appsRes.ok
+      ? await appsRes.json() as Array<{ id: string; name: string; slug: string; env_schema: Record<string, EnvSchemaEntry> | null; manifest?: unknown }>
+      : [];
 
     const connections = apps.map(a => {
       const connectedKeys = appSecrets.get(a.id) || [];
-      const schema = a.env_schema || {};
+      const schema = resolveAppEnvSchema(a);
       const requiredKeys = Object.entries(schema)
         .filter(([, v]) => v.scope === 'per_user' && v.required)
         .map(([k]) => k);
@@ -5553,7 +5628,7 @@ async function executeConnections(
   let app = await appsService.findById(appIdOrSlug);
   if (!app) {
     const slugRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/apps?slug=eq.${encodeURIComponent(appIdOrSlug)}&deleted_at=is.null&select=id,owner_id,name,slug,visibility,env_schema&limit=1`,
+      `${SUPABASE_URL}/rest/v1/apps?slug=eq.${encodeURIComponent(appIdOrSlug)}&deleted_at=is.null&select=id,owner_id,name,slug,visibility,env_schema,manifest&limit=1`,
       { headers }
     );
     if (slugRes.ok) {
@@ -5563,14 +5638,18 @@ async function executeConnections(
   }
   if (!app) throw new ToolError(NOT_FOUND, `App not found: ${appIdOrSlug}`);
 
-  const envSchema = ((app as Record<string, unknown>).env_schema || {}) as Record<string, EnvSchemaEntry>;
+  const envSchema = resolveAppEnvSchema(app);
 
   // Get per_user schema entries
   const perUserSchema = Object.entries(envSchema)
     .filter(([, v]) => v.scope === 'per_user')
     .map(([key, v]) => ({
       key,
+      label: v.label || key,
       description: v.description || null,
+      help: v.help || null,
+      input: v.input || 'text',
+      placeholder: v.placeholder || null,
       required: v.required ?? false,
     }));
 
@@ -5591,7 +5670,11 @@ async function executeConnections(
 
   const secretStatus = perUserSchema.map(s => ({
     key: s.key,
+    label: s.label,
     description: s.description,
+    help: s.help,
+    input: s.input,
+    placeholder: s.placeholder,
     required: s.required,
     connected: connectedKeys.includes(s.key),
     updated_at: keyDates.get(s.key) || null,
@@ -5603,7 +5686,11 @@ async function executeConnections(
   for (const key of extraKeys) {
     secretStatus.push({
       key,
+      label: key,
       description: null,
+      help: null,
+      input: 'text',
+      placeholder: null,
       required: false,
       connected: true,
       updated_at: keyDates.get(key) || null,
@@ -5804,6 +5891,7 @@ async function executeDiscoverInspect(
 
   // Also include exports list as fallback if manifest is sparse
   const exportedFunctions = app.exports || [];
+  const envSchema = resolveAppEnvSchema(app);
 
   // ── 2. Storage architecture detection ──
   let storageBackend: 'kv' | 'supabase' | 'none' = 'none';
@@ -5891,7 +5979,45 @@ async function executeDiscoverInspect(
     }
   } catch { /* best effort */ }
 
-  // ── 4. Caller permissions (owner sees all, non-owner sees own) ──
+  // ── 4. Settings metadata ──
+  const universalSettings = getScopedEnvSchemaEntries(envSchema, 'universal')
+    .map(({ key, entry }) => ({
+      key,
+      label: entry.label || key,
+      description: entry.description || null,
+      help: entry.help || null,
+      input: entry.input || 'text',
+      required: entry.required ?? false,
+    }));
+
+  const perUserSettings = getScopedEnvSchemaEntries(envSchema, 'per_user')
+    .map(({ key, entry }) => ({
+      key,
+      label: entry.label || key,
+      description: entry.description || null,
+      help: entry.help || null,
+      input: entry.input || 'text',
+      placeholder: entry.placeholder || null,
+      required: entry.required ?? false,
+    }));
+
+  let connectedKeys: string[] = [];
+  if (perUserSettings.length > 0) {
+    try {
+      const secretsRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/user_app_secrets?user_id=eq.${userId}&app_id=eq.${app.id}&select=key`,
+        { headers }
+      );
+      if (secretsRes.ok) {
+        const rows = await secretsRes.json() as Array<{ key: string }>;
+        connectedKeys = rows.map(row => row.key);
+      }
+    } catch { /* best effort */ }
+  }
+  const requiredPerUserKeys = perUserSettings.filter(s => s.required).map(s => s.key);
+  const missingRequired = requiredPerUserKeys.filter(key => !connectedKeys.includes(key));
+
+  // ── 5. Caller permissions (owner sees all, non-owner sees own) ──
   let permissions: unknown = null;
   try {
     if (isOwner) {
@@ -5913,10 +6039,10 @@ async function executeDiscoverInspect(
     }
   } catch { /* best effort */ }
 
-  // ── 5. Skills.md (full content) ──
+  // ── 6. Skills.md (full content) ──
   const skillsMd = app.skills_md || null;
 
-  // ── 6. Cached app summary from last agent session ──
+  // ── 7. Cached app summary from last agent session ──
   let cachedSummary: string | null = null;
   if (isOwner) {
     try {
@@ -5930,7 +6056,7 @@ async function executeDiscoverInspect(
     }
   }
 
-  // ── 7. Suggested queries based on functions ──
+  // ── 8. Suggested queries based on functions ──
   const suggestedQueries = functions.map(f => {
     const paramEntries = Object.entries(f.parameters?.properties || {});
     const exampleArgs: Record<string, string> = {};
@@ -5947,7 +6073,7 @@ async function executeDiscoverInspect(
     };
   });
 
-  // ── 8. App metadata ──
+  // ── 9. App metadata ──
   const appRuntime = (app as Record<string, unknown>).runtime as string | null;
   const metadata = {
     app_id: app.id,
@@ -5978,7 +6104,7 @@ async function executeDiscoverInspect(
     } : {}),
   };
 
-  // ── 9. GPU pricing & reliability (GPU apps only) ──
+  // ── 10. GPU pricing & reliability (GPU apps only) ──
   let gpuPricing: Record<string, unknown> | null = null;
   let gpuReliability: Record<string, unknown> | null = null;
   if (appRuntime === 'gpu') {
@@ -5999,6 +6125,15 @@ async function executeDiscoverInspect(
     storage: {
       backend: storageBackend,
       details: storageDetails,
+    },
+    settings: {
+      app_settings: universalSettings,
+      user_settings: perUserSettings,
+      connected_keys: connectedKeys,
+      missing_required: missingRequired,
+      fully_connected: missingRequired.length === 0,
+      app_settings_manage_url: isOwner && universalSettings.length > 0 ? `/a/${app.id}` : null,
+      public_page_settings_url: `/app/${app.id}`,
     },
     recent_calls: recentCalls,
     permissions: permissions,
@@ -6404,7 +6539,7 @@ async function executeDiscoverAppstore(
     const overFetchLimit = limit + blockedAppIds.size + 5; // over-fetch to cover filtered-out blocks
     const topRes = await fetch(
       `${SUPABASE_URL}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&hosting_suspended=eq.false` +
-      `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,runs_30d,runtime,gpu_type,gpu_status` +
+      `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,manifest,runs_30d,runtime,gpu_type,gpu_status` +
       `&order=weighted_likes.desc,likes.desc,runs_30d.desc` +
       `&limit=${overFetchLimit}`,
       { headers }
@@ -6412,7 +6547,7 @@ async function executeDiscoverAppstore(
     if (!topRes.ok) {
       throw new ToolError(INTERNAL_ERROR, 'Failed to fetch featured apps');
     }
-    const topApps = await topRes.json() as Array<App & { weighted_likes: number; weighted_dislikes: number; env_schema: Record<string, EnvSchemaEntry> | null }>;
+    const topApps = await topRes.json() as Array<App & { weighted_likes: number; weighted_dislikes: number; env_schema: Record<string, EnvSchemaEntry> | null; manifest?: unknown }>;
 
     // Filter blocked + non-live GPU apps, truncate to limit
     const filtered = topApps.filter(a =>
@@ -6440,7 +6575,7 @@ async function executeDiscoverAppstore(
     }
 
     const featuredResults = filtered.map(a => {
-      const schema = a.env_schema || {};
+      const schema = resolveAppEnvSchema(a);
       const requiredSecrets = Object.entries(schema)
         .filter(([, v]) => v.scope === 'per_user')
         .map(([key, v]) => ({ key, description: v.description || null, required: v.required ?? false }));
@@ -6568,13 +6703,14 @@ async function executeDiscoverAppstore(
     if (appIds.length > 0) {
       try {
         const schemaRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,env_schema`,
+          `${SUPABASE_URL}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,env_schema,manifest`,
           { headers }
         );
         if (schemaRes.ok) {
-          const rows = await schemaRes.json() as Array<{ id: string; env_schema: Record<string, EnvSchemaEntry> | null }>;
+          const rows = await schemaRes.json() as Array<{ id: string; env_schema: Record<string, EnvSchemaEntry> | null; manifest?: unknown }>;
           for (const row of rows) {
-            if (row.env_schema) envSchemas.set(row.id, row.env_schema);
+            const schema = resolveAppEnvSchema(row);
+            if (Object.keys(schema).length > 0) envSchemas.set(row.id, schema);
           }
         }
       } catch { /* best effort */ }

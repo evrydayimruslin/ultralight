@@ -8,6 +8,7 @@ import {
   ALLOWED_EXTENSIONS,
   MAX_FILES_PER_UPLOAD,
   MAX_UPLOAD_SIZE_BYTES,
+  resolveManifestEnvSchema,
   validateManifest,
 } from '../../shared/types/index.ts';
 import { createR2Service } from '../services/storage.ts';
@@ -322,6 +323,7 @@ export async function handleUpload(request: Request): Promise<Response> {
         storage_key: storageKey,
         exports: gpuExports,
         manifest: manifest ? JSON.stringify(manifest) : null,
+        env_schema: manifest ? resolveManifestEnvSchema(manifest) : {},
         app_type: null,
         // GPU-specific fields
         runtime: 'gpu',
@@ -669,6 +671,7 @@ export async function handleUpload(request: Request): Promise<Response> {
       exports,
       // Store manifest data for later use
       manifest: manifest ? JSON.stringify(manifest) : null,
+      env_schema: manifest ? resolveManifestEnvSchema(manifest) : {},
       app_type: appType,
     });
     log('success', 'App record created');
@@ -1174,6 +1177,7 @@ export async function handleUploadFiles(
     storage_key: storageKey,
     exports,
     manifest: manifest ? JSON.stringify(manifest) : null,
+    env_schema: manifest ? resolveManifestEnvSchema(manifest) : {},
     app_type: appType,
   };
   if (options.gap_id) createPayload.gap_id = options.gap_id;

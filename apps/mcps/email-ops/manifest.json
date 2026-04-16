@@ -7,16 +7,16 @@
   "permissions": ["ai:call", "net:fetch", "net:connect"],
   "storage": "d1",
   "env_vars": {
-    "IMAP_HOST": { "type": "universal", "required": true, "description": "IMAP server hostname (e.g. imap.titan.email)" },
-    "IMAP_PORT": { "type": "universal", "required": true, "description": "IMAP port (993 for TLS)" },
-    "IMAP_USER": { "type": "universal", "required": true, "description": "IMAP login (full email address)" },
-    "IMAP_PASS": { "type": "universal", "required": true, "description": "IMAP password" },
-    "SMTP_HOST": { "type": "universal", "required": true, "description": "SMTP server hostname (e.g. smtp.titan.email)" },
-    "SMTP_PORT": { "type": "universal", "required": true, "description": "SMTP port (465 for TLS)" },
-    "SMTP_USER": { "type": "universal", "required": true, "description": "SMTP login (full email address)" },
-    "SMTP_PASS": { "type": "universal", "required": true, "description": "SMTP password" },
-    "BUSINESS_EMAIL": { "type": "universal", "required": true, "description": "From address for outbound emails (e.g. info@rockwoodhotel.com)" },
-    "BUSINESS_NAME": { "type": "universal", "required": true, "description": "Display name for outbound emails (e.g. Rockwood Hotel)" }
+    "IMAP_HOST": { "scope": "per_user", "input": "text", "label": "IMAP host", "required": true, "description": "IMAP server hostname (e.g. imap.titan.email)" },
+    "IMAP_PORT": { "scope": "per_user", "input": "number", "label": "IMAP port", "required": true, "description": "IMAP port (993 for TLS)" },
+    "IMAP_USER": { "scope": "per_user", "input": "email", "label": "IMAP login", "required": true, "description": "IMAP login (full email address)" },
+    "IMAP_PASS": { "scope": "per_user", "input": "password", "label": "IMAP password", "required": true, "description": "IMAP password" },
+    "SMTP_HOST": { "scope": "per_user", "input": "text", "label": "SMTP host", "required": true, "description": "SMTP server hostname (e.g. smtp.titan.email)" },
+    "SMTP_PORT": { "scope": "per_user", "input": "number", "label": "SMTP port", "required": true, "description": "SMTP port (465 for TLS)" },
+    "SMTP_USER": { "scope": "per_user", "input": "email", "label": "SMTP login", "required": true, "description": "SMTP login (full email address)" },
+    "SMTP_PASS": { "scope": "per_user", "input": "password", "label": "SMTP password", "required": true, "description": "SMTP password" },
+    "BUSINESS_EMAIL": { "scope": "per_user", "input": "email", "label": "From email", "required": true, "description": "From address for outbound emails (e.g. info@rockwoodhotel.com)" },
+    "BUSINESS_NAME": { "scope": "per_user", "input": "text", "label": "Business name", "required": true, "description": "Display name for outbound emails (e.g. Rockwood Hotel)" }
   },
   "widgets": [
     {

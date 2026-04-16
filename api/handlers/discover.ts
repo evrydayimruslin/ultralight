@@ -20,6 +20,7 @@ import {
 } from '../services/embedding.ts';
 import { createAppsService } from '../services/apps.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
+import { resolveAppEnvSchema } from '../services/app-settings.ts';
 import type { EnvSchemaEntry } from '../../shared/types/index.ts';
 import { getEnv } from '../lib/env.ts';
 
@@ -45,6 +46,7 @@ interface AppRow {
   weighted_dislikes: number;
   runs_30d: number;
   env_schema: Record<string, EnvSchemaEntry> | null;
+  manifest?: unknown;
   had_external_db?: boolean;
   similarity?: number;
   hosting_suspended?: boolean;
@@ -301,7 +303,7 @@ async function handleFeatured(request: Request, url: URL): Promise<Response> {
 
   const topRes = await fetch(
     `${supabaseUrl}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&hosting_suspended=eq.false` +
-    `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,runs_30d` +
+    `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,manifest,runs_30d` +
     `&order=weighted_likes.desc,likes.desc,runs_30d.desc` +
     `&limit=${overFetchLimit}`,
     { headers }
@@ -315,7 +317,7 @@ async function handleFeatured(request: Request, url: URL): Promise<Response> {
   const filtered = topApps.filter(a => !blockedAppIds.has(a.id)).slice(0, limit);
 
   const results = filtered.map(a => {
-    const schema = a.env_schema || {};
+    const schema = resolveAppEnvSchema(a);
     const perUserEntries = Object.entries(schema).filter(([, v]) => v.scope === 'per_user');
     const fullyNative = perUserEntries.length === 0;
 
@@ -431,7 +433,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
 
     // Helper: convert AppRow to result object
     function appToResult(a: AppRow) {
-      const schema = a.env_schema || {};
+      const schema = resolveAppEnvSchema(a);
       const perUserEntries = Object.entries(schema).filter(([, v]) => v.scope === 'per_user');
       return {
         id: a.id,
@@ -456,7 +458,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
         const overFetchLimit = limit * 5 + blockedAppIds.size + 10;
         let browseQuery =
           `${supabaseUrl}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&hosting_suspended=eq.false` +
-          `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,runs_30d,category,featured_at,had_external_db,runtime,gpu_type,gpu_status` +
+          `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,manifest,runs_30d,category,featured_at,had_external_db,runtime,gpu_type,gpu_status` +
           `&order=weighted_likes.desc,likes.desc,runs_30d.desc` +
           `&limit=${overFetchLimit}`;
         // Runtime filter
@@ -645,13 +647,14 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
           if (appIds.length > 0) {
             try {
               const metaRes = await fetch(
-                `${supabaseUrl}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,env_schema,weighted_likes,weighted_dislikes,runs_30d,likes,dislikes,had_external_db,runtime,gpu_type,gpu_status`,
+                `${supabaseUrl}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,env_schema,manifest,weighted_likes,weighted_dislikes,runs_30d,likes,dislikes,had_external_db,runtime,gpu_type,gpu_status`,
                 { headers: dbHeaders }
               );
               if (metaRes.ok) {
                 const rows = await metaRes.json() as AppRow[];
                 for (const row of rows) {
-                  if (row.env_schema) envSchemas.set(row.id, row.env_schema);
+                  const schema = resolveAppEnvSchema(row);
+                  if (Object.keys(schema).length > 0) envSchemas.set(row.id, schema);
                   appMeta.set(row.id, {
                     weighted_likes: row.weighted_likes ?? 0,
                     weighted_dislikes: row.weighted_dislikes ?? 0,
@@ -780,7 +783,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
         let keywordQuery =
           `${supabaseUrl}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&hosting_suspended=eq.false` +
           `&or=(name.ilike.*${encodeURIComponent(escapedQuery)}*,description.ilike.*${encodeURIComponent(escapedQuery)}*)` +
-          `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,runs_30d,had_external_db,runtime,gpu_type,gpu_status` +
+          `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,manifest,runs_30d,had_external_db,runtime,gpu_type,gpu_status` +
           `&order=weighted_likes.desc,likes.desc` +
           `&limit=${overFetchLimit}`;
         if (runtimeFilter === 'gpu') {
@@ -795,7 +798,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
             if (blockedAppIds.has(a.id) || scoredAppIds.has(a.id)) continue;
             // Exclude non-live GPU apps
             if (a.runtime === 'gpu' && a.gpu_status !== 'live') continue;
-            const schema = a.env_schema || {};
+            const schema = resolveAppEnvSchema(a);
             const perUserEntries = Object.entries(schema).filter(([, v]) => v.scope === 'per_user');
             scored.push({
               id: a.id,
@@ -1001,13 +1004,14 @@ async function executeSearch(
     if (appIds.length > 0) {
       try {
         const schemaRes = await fetch(
-          `${supabaseUrl}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,env_schema,likes,dislikes,weighted_likes,weighted_dislikes,runs_30d`,
+          `${supabaseUrl}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,env_schema,manifest,likes,dislikes,weighted_likes,weighted_dislikes,runs_30d`,
           { headers: dbHeaders }
         );
         if (schemaRes.ok) {
           const rows = await schemaRes.json() as AppRow[];
           for (const row of rows) {
-            if (row.env_schema) envSchemas.set(row.id, row.env_schema);
+            const schema = resolveAppEnvSchema(row);
+            if (Object.keys(schema).length > 0) envSchemas.set(row.id, schema);
           }
         }
       } catch { /* best effort */ }

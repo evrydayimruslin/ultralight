@@ -26,6 +26,7 @@ import { acquireGpuSlot } from '../services/gpu/concurrency.ts';
 import { settleGpuExecution } from '../services/gpu/billing.ts';
 import { createD1DataService } from '../services/d1-data.ts';
 import { getD1DatabaseId } from '../services/d1-provisioning.ts';
+import { resolveAppEnvSchema } from '../services/app-settings.ts';
 import type {
   MCPTool,
   MCPJsonSchema,
@@ -1741,7 +1742,7 @@ async function executeAppFunction(
     });
 
     // --- Per-user secrets fetch (conditional) ---
-    const envSchema = (app.env_schema || {}) as Record<string, { scope: string; required?: boolean; description?: string }>;
+    const envSchema = resolveAppEnvSchema(app);
     const perUserKeys = Object.entries(envSchema)
       .filter(([, v]) => v.scope === 'per_user')
       .map(([k]) => k);
@@ -1847,34 +1848,32 @@ async function executeAppFunction(
     const argsArray = [args];
 
     // Merge per-user secrets into envVars (per-user overrides universal)
-    if (userSecrets.length > 0) {
-      for (const secret of userSecrets) {
-        try {
-          envVars[secret.key] = await decryptEnvVar(secret.value_encrypted);
-        } catch (err) {
-          console.error(`Failed to decrypt per-user secret ${secret.key}:`, err);
+    for (const secret of userSecrets) {
+      try {
+        envVars[secret.key] = await decryptEnvVar(secret.value_encrypted);
+      } catch (err) {
+        console.error(`Failed to decrypt per-user secret ${secret.key}:`, err);
+      }
+    }
+
+    // Check for missing required per-user secrets
+    const requiredPerUser = Object.entries(envSchema)
+      .filter(([, v]) => v.scope === 'per_user' && v.required)
+      .map(([k]) => k);
+    const missingSecrets = requiredPerUser.filter(k => !envVars[k]);
+
+    if (missingSecrets.length > 0) {
+      return jsonRpcErrorResponse(
+        id,
+        -32006,
+        `Missing required secrets: ${missingSecrets.join(', ')}. Use ul.connect to provide them.`,
+        {
+          type: 'MISSING_SECRETS',
+          missing_secrets: missingSecrets,
+          app_id: app.id,
+          hint: `Call ul.connect with app_id="${app.id}" and provide: ${missingSecrets.join(', ')}`,
         }
-      }
-
-      // Check for missing required per-user secrets
-      const requiredPerUser = Object.entries(envSchema)
-        .filter(([, v]) => v.scope === 'per_user' && v.required)
-        .map(([k]) => k);
-      const missingSecrets = requiredPerUser.filter(k => !envVars[k]);
-
-      if (missingSecrets.length > 0) {
-        return jsonRpcErrorResponse(
-          id,
-          -32006,
-          `Missing required secrets: ${missingSecrets.join(', ')}. Use ul.connect to provide them.`,
-          {
-            type: 'MISSING_SECRETS',
-            missing_secrets: missingSecrets,
-            app_id: app.id,
-            hint: `Call ul.connect with app_id="${app.id}" and provide: ${missingSecrets.join(', ')}`,
-          }
-        );
-      }
+      );
     }
 
     // ── Deno Sandbox Path (existing, unchanged) ──

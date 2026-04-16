@@ -37,8 +37,13 @@ Every app needs a `manifest.json`. Functions are **object-keyed** (not arrays):
     }
   },
   "permissions": ["ai:call", "net:fetch"],
-  "env": {
-    "MY_API_KEY": { "description": "API key for service X", "required": true }
+  "env_vars": {
+    "MY_API_KEY": {
+      "scope": "per_user",
+      "input": "password",
+      "description": "API key for service X",
+      "required": true
+    }
   }
 }
 ```
@@ -54,7 +59,35 @@ Set these on each function to help agents use tools correctly:
 `string`, `number`, `boolean`, `object`, `array`. For arrays use `items`, for objects use `properties`.
 
 ### Environment Variables
-Declare in `env` key. Each entry: `{ description, required? }`. Users set values via Settings. Use `scope: "per_user"` in env_schema for per-caller keys.
+Declare settings in `env_vars`. Each entry can define:
+- `scope: "universal"` for App Settings managed by the app owner in `/a/:id`
+- `scope: "per_user"` for User Settings shown on the public app page `/app/:id` after install
+- `input: "text" | "password" | "email" | "number" | "url" | "textarea"` so the public Settings tab renders the right field
+
+Example:
+```json
+"env_vars": {
+  "IMAP_USER": {
+    "scope": "per_user",
+    "input": "email",
+    "label": "Inbox email",
+    "description": "Full email address for this user's inbox",
+    "required": true
+  },
+  "IMAP_PASS": {
+    "scope": "per_user",
+    "input": "password",
+    "label": "Inbox password",
+    "required": true
+  },
+  "SMTP_HOST": {
+    "scope": "universal",
+    "input": "text",
+    "description": "Shared SMTP hostname for the app owner setup",
+    "required": true
+  }
+}
+```
 
 ## Ultralight SDK
 
@@ -86,7 +119,7 @@ const { id, email, displayName, avatarUrl, tier } = ultralight.user;
 
 ### Environment Variables
 ```js
-const apiKey = ultralight.env.MY_API_KEY; // declared in manifest.env
+const apiKey = ultralight.env.MY_API_KEY; // declared in manifest.env_vars
 ```
 
 ### AI (LLM)

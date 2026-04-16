@@ -19,18 +19,23 @@ import {
   isEmbeddingAvailable,
   storeAppEmbedding
 } from '../services/embedding.ts';
-import type { GenerationResult, GenerationError, AppPricingConfig } from '../../shared/types/index.ts';
+import type { App, GenerationResult, GenerationError, AppPricingConfig, EnvSchemaEntry } from '../../shared/types/index.ts';
 import {
   validateEnvVarKey,
   validateEnvVarValue,
   ENV_VAR_LIMITS,
   normalizeManifestParameters,
+  resolveManifestEnvSchema,
 } from '../../shared/types/index.ts';
 import {
   encryptEnvVar,
   decryptEnvVars,
   getEnvVarsSummary,
 } from '../services/envvars.ts';
+import {
+  getScopedEnvSchemaEntries,
+  resolveAppEnvSchema,
+} from '../services/app-settings.ts';
 import {
   checkVisibilityAllowed,
   checkPublishDeposit,
@@ -42,6 +47,75 @@ import { getEnv } from '../lib/env.ts';
 interface User {
   id: string;
   openrouter_api_key?: string;
+}
+
+interface UserAppSecretRow {
+  key: string;
+  updated_at?: string | null;
+}
+
+function sanitizeAppForPublicResponse(app: App): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = { ...app };
+  delete sanitized.env_vars;
+  delete sanitized.supabase_anon_key_encrypted;
+  delete sanitized.supabase_service_key_encrypted;
+  delete sanitized.supabase_config_id;
+  delete sanitized.storage_key;
+  delete sanitized.draft_storage_key;
+  delete sanitized.draft_version;
+  delete sanitized.draft_uploaded_at;
+  delete sanitized.draft_exports;
+  delete sanitized.last_build_logs;
+  delete sanitized.last_build_error;
+  return sanitized;
+}
+
+function buildPerUserSettingsStatus(
+  schema: Record<string, EnvSchemaEntry>,
+  secretRows: UserAppSecretRow[],
+): {
+  settings: Array<{
+    key: string;
+    label: string;
+    description: string | null;
+    help: string | null;
+    input: string;
+    placeholder: string | null;
+    required: boolean;
+    configured: boolean;
+    updated_at: string | null;
+  }>;
+  connectedKeys: string[];
+  missingRequired: string[];
+  fullyConnected: boolean;
+} {
+  const perUserEntries = getScopedEnvSchemaEntries(schema, 'per_user');
+  const connectedKeys = secretRows.map(row => row.key);
+  const connectedKeySet = new Set(connectedKeys);
+  const updatedAtByKey = new Map(secretRows.map(row => [row.key, row.updated_at || null]));
+
+  const settings = perUserEntries.map(({ key, entry }) => ({
+    key,
+    label: entry.label || key,
+    description: entry.description || null,
+    help: entry.help || null,
+    input: entry.input || 'text',
+    placeholder: entry.placeholder || null,
+    required: entry.required ?? false,
+    configured: connectedKeySet.has(key),
+    updated_at: updatedAtByKey.get(key) || null,
+  }));
+
+  const missingRequired = settings
+    .filter(setting => setting.required && !setting.configured)
+    .map(setting => setting.key);
+
+  return {
+    settings,
+    connectedKeys,
+    missingRequired,
+    fullyConnected: missingRequired.length === 0,
+  };
 }
 
 /**
@@ -239,6 +313,16 @@ export async function handleApps(request: Request): Promise<Response> {
     // GET /api/apps/:appId/library-status - Per-app { inLibrary, isOwner } for CTAs
     if (subPath === '/library-status' && method === 'GET') {
       return handleGetLibraryStatus(request, appId);
+    }
+
+    // GET /api/apps/:appId/settings - Current user's per-user settings schema + status
+    if (subPath === '/settings' && method === 'GET') {
+      return handleGetUserSettings(request, appId);
+    }
+
+    // PUT /api/apps/:appId/settings - Upsert current user's per-user settings
+    if (subPath === '/settings' && method === 'PUT') {
+      return handleUpdateUserSettings(request, appId);
     }
 
     // ============================================
@@ -607,7 +691,7 @@ async function handleUnsaveApp(request: Request, appId: string): Promise<Respons
 /**
  * GET /api/apps/:appId/library-status
  *
- * Returns { inLibrary: boolean, isOwner: boolean } for the authenticated
+ * Returns install state plus per-user settings readiness for the authenticated
  * user + given app. Used by the public store page's client-side bootstrap
  * to decide which CTA buttons to render.
  *
@@ -633,10 +717,10 @@ async function handleGetLibraryStatus(request: Request, appId: string): Promise<
   };
 
   try {
-    // Two cheap parallel queries: owner check + library membership check.
+    // Cheap parallel queries: owner check + library membership check.
     const [appRes, libRes] = await Promise.all([
       fetch(
-        `${supabaseUrl}/rest/v1/apps?id=eq.${appId}&select=owner_id&limit=1`,
+        `${supabaseUrl}/rest/v1/apps?id=eq.${appId}&select=owner_id,env_schema,manifest&limit=1`,
         { headers }
       ),
       fetch(
@@ -646,17 +730,264 @@ async function handleGetLibraryStatus(request: Request, appId: string): Promise<
     ]);
 
     if (!appRes.ok) return error('App not found', 404);
-    const appRows = await appRes.json() as Array<{ owner_id: string }>;
+    const appRows = await appRes.json() as Array<{ owner_id: string; env_schema?: unknown; manifest?: unknown }>;
     if (appRows.length === 0) return error('App not found', 404);
 
     const isOwner = appRows[0].owner_id === user.id;
     const libRows = libRes.ok ? await libRes.json() as unknown[] : [];
     const inLibrary = libRows.length > 0;
+    const resolvedSchema = resolveAppEnvSchema(appRows[0]);
+    const perUserEntries = getScopedEnvSchemaEntries(resolvedSchema, 'per_user');
 
-    return json({ inLibrary, isOwner });
+    let settingsStatus = {
+      hasUserSettings: perUserEntries.length > 0,
+      connectedKeys: [] as string[],
+      missingRequired: [] as string[],
+      fullyConnected: true,
+      requiresSetup: false,
+    };
+
+    if (perUserEntries.length > 0 && (isOwner || inLibrary)) {
+      const secretsRes = await fetch(
+        `${supabaseUrl}/rest/v1/user_app_secrets?user_id=eq.${user.id}&app_id=eq.${appId}&select=key,updated_at`,
+        { headers }
+      );
+      const secretRows = secretsRes.ok ? await secretsRes.json() as UserAppSecretRow[] : [];
+      const perUserStatus = buildPerUserSettingsStatus(resolvedSchema, secretRows);
+      settingsStatus = {
+        hasUserSettings: true,
+        connectedKeys: perUserStatus.connectedKeys,
+        missingRequired: perUserStatus.missingRequired,
+        fullyConnected: perUserStatus.fullyConnected,
+        requiresSetup: perUserStatus.missingRequired.length > 0,
+      };
+    }
+
+    return json({
+      inLibrary,
+      isOwner,
+      hasUserSettings: settingsStatus.hasUserSettings,
+      connectedKeys: settingsStatus.connectedKeys,
+      missingRequired: settingsStatus.missingRequired,
+      fullyConnected: settingsStatus.fullyConnected,
+      requiresSetup: settingsStatus.requiresSetup,
+    });
   } catch (err) {
     console.error('[library-status] failed:', err);
     return error('Failed to get library status', 500);
+  }
+}
+
+/**
+ * GET /api/apps/:appId/settings
+ *
+ * Returns the authenticated user's per-user Settings schema + connection
+ * status for an installed app. Owner-only app-wide settings stay on /a/:id.
+ */
+async function handleGetUserSettings(request: Request, appId: string): Promise<Response> {
+  let user;
+  try {
+    user = await authenticate(request);
+  } catch {
+    return error('Authentication required', 401);
+  }
+
+  const appsService = createAppsService();
+  const app = await appsService.findById(appId);
+  if (!app) {
+    return error('App not found', 404);
+  }
+
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+  const headers = {
+    'apikey': supabaseKey,
+    'Authorization': `Bearer ${supabaseKey}`,
+  };
+
+  try {
+    const isOwner = app.owner_id === user.id;
+    let inLibrary = false;
+
+    if (!isOwner) {
+      const libRes = await fetch(
+        `${supabaseUrl}/rest/v1/user_app_library?user_id=eq.${user.id}&app_id=eq.${appId}&select=app_id&limit=1`,
+        { headers }
+      );
+      const libRows = libRes.ok ? await libRes.json() as Array<{ app_id: string }> : [];
+      inLibrary = libRows.length > 0;
+      if (!inLibrary) {
+        return error('Install this app to configure your own settings', 403);
+      }
+    }
+
+    const resolvedSchema = resolveAppEnvSchema(app);
+    const universalSettings = getScopedEnvSchemaEntries(resolvedSchema, 'universal');
+
+    const secretsRes = await fetch(
+      `${supabaseUrl}/rest/v1/user_app_secrets?user_id=eq.${user.id}&app_id=eq.${appId}&select=key,updated_at`,
+      { headers }
+    );
+    const secretRows = secretsRes.ok ? await secretsRes.json() as UserAppSecretRow[] : [];
+    const perUserStatus = buildPerUserSettingsStatus(resolvedSchema, secretRows);
+
+    return json({
+      app_id: app.id,
+      app_name: app.name,
+      inLibrary,
+      isOwner,
+      app_settings_count: universalSettings.length,
+      owner_manage_url: isOwner ? `/a/${app.id}` : null,
+      settings: perUserStatus.settings,
+      connected_keys: perUserStatus.connectedKeys,
+      missing_required: perUserStatus.missingRequired,
+      fully_connected: perUserStatus.fullyConnected,
+    });
+  } catch (err) {
+    console.error('[app-settings:get] failed:', err);
+    return error('Failed to load app settings', 500);
+  }
+}
+
+/**
+ * PUT /api/apps/:appId/settings
+ *
+ * Upserts the authenticated user's per-user Settings values.
+ */
+async function handleUpdateUserSettings(request: Request, appId: string): Promise<Response> {
+  let user;
+  try {
+    user = await authenticate(request);
+  } catch {
+    return error('Authentication required', 401);
+  }
+
+  const appsService = createAppsService();
+  const app = await appsService.findById(appId);
+  if (!app) {
+    return error('App not found', 404);
+  }
+
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+  const headers = {
+    'apikey': supabaseKey,
+    'Authorization': `Bearer ${supabaseKey}`,
+    'Content-Type': 'application/json',
+  };
+
+  try {
+    const isOwner = app.owner_id === user.id;
+    if (!isOwner) {
+      const libRes = await fetch(
+        `${supabaseUrl}/rest/v1/user_app_library?user_id=eq.${user.id}&app_id=eq.${appId}&select=app_id&limit=1`,
+        { headers }
+      );
+      const libRows = libRes.ok ? await libRes.json() as Array<{ app_id: string }> : [];
+      if (libRows.length === 0) {
+        return error('Install this app to configure your own settings', 403);
+      }
+    }
+
+    const resolvedSchema = resolveAppEnvSchema(app);
+    const perUserSettings = getScopedEnvSchemaEntries(resolvedSchema, 'per_user');
+    const allowedKeys = new Set(perUserSettings.map(({ key }) => key));
+
+    if (allowedKeys.size === 0) {
+      return error('This app has no per-user settings', 400);
+    }
+
+    const body = await request.json() as { values?: unknown };
+    const values = body.values;
+    if (!values || typeof values !== 'object' || Array.isArray(values)) {
+      return error('values object is required', 400);
+    }
+
+    const entries = Object.entries(values as Record<string, string | null>);
+    if (entries.length === 0) {
+      return error('Provide at least one setting to update', 400);
+    }
+
+    const validationErrors: string[] = [];
+    for (const [key, value] of entries) {
+      if (!allowedKeys.has(key)) {
+        validationErrors.push(`${key}: not a declared User Setting for this app`);
+        continue;
+      }
+
+      if (value !== null) {
+        const valueValidation = validateEnvVarValue(value);
+        if (!valueValidation.valid) {
+          validationErrors.push(`${key}: ${valueValidation.error}`);
+        }
+      }
+    }
+
+    if (validationErrors.length > 0) {
+      return json({ success: false, errors: validationErrors }, 400);
+    }
+
+    const updatedAt = new Date().toISOString();
+    const keysSaved: string[] = [];
+    const keysRemoved: string[] = [];
+
+    for (const [key, value] of entries) {
+      if (value === null) {
+        const deleteRes = await fetch(
+          `${supabaseUrl}/rest/v1/user_app_secrets?user_id=eq.${user.id}&app_id=eq.${app.id}&key=eq.${encodeURIComponent(key)}`,
+          { method: 'DELETE', headers }
+        );
+        if (!deleteRes.ok) {
+          return error(`Failed to clear setting "${key}"`, 500);
+        }
+        keysRemoved.push(key);
+        continue;
+      }
+
+      const encryptedValue = await encryptEnvVar(value);
+      const upsertRes = await fetch(
+        `${supabaseUrl}/rest/v1/user_app_secrets`,
+        {
+          method: 'POST',
+          headers: {
+            ...headers,
+            'Prefer': 'resolution=merge-duplicates',
+          },
+          body: JSON.stringify({
+            user_id: user.id,
+            app_id: app.id,
+            key,
+            value_encrypted: encryptedValue,
+            updated_at: updatedAt,
+          }),
+        }
+      );
+
+      if (!upsertRes.ok) {
+        return error(`Failed to save setting "${key}"`, 500);
+      }
+
+      keysSaved.push(key);
+    }
+
+    const secretsRes = await fetch(
+      `${supabaseUrl}/rest/v1/user_app_secrets?user_id=eq.${user.id}&app_id=eq.${appId}&select=key,updated_at`,
+      { headers }
+    );
+    const secretRows = secretsRes.ok ? await secretsRes.json() as UserAppSecretRow[] : [];
+    const perUserStatus = buildPerUserSettingsStatus(resolvedSchema, secretRows);
+
+    return json({
+      success: true,
+      keys_saved: keysSaved,
+      keys_removed: keysRemoved,
+      connected_keys: perUserStatus.connectedKeys,
+      missing_required: perUserStatus.missingRequired,
+      fully_connected: perUserStatus.fullyConnected,
+    });
+  } catch (err) {
+    console.error('[app-settings:update] failed:', err);
+    return error('Failed to update app settings', 500);
   }
 }
 
@@ -1031,19 +1362,20 @@ async function handleGetApp(request: Request, appId: string): Promise<Response> 
       return error('App not found', 404);
     }
 
-    // Check visibility - only owner can see private apps
-    if (app.visibility === 'private') {
-      try {
-        const user = await authenticate(request);
-        if (user.id !== app.owner_id) {
-          return error('App not found', 404);
-        }
-      } catch {
-        return error('App not found', 404);
-      }
+    let isOwner = false;
+    try {
+      const user = await authenticate(request);
+      isOwner = user.id === app.owner_id;
+    } catch {
+      isOwner = false;
     }
 
-    return json(app);
+    // Check visibility - only owner can see private apps
+    if (app.visibility === 'private' && !isOwner) {
+      return error('App not found', 404);
+    }
+
+    return json(isOwner ? app : sanitizeAppForPublicResponse(app));
   } catch (err) {
     console.error('Failed to get app:', err);
     return error('Failed to get app', 500);
@@ -1866,6 +2198,7 @@ async function handleGenerateDocs(request: Request, appId: string): Promise<Resp
         skills_md,
         skills_parsed,
         manifest: JSON.stringify(manifest),
+        env_schema: resolveManifestEnvSchema(manifest),
         docs_generated_at: new Date().toISOString(),
         generation_in_progress: false,
       });
@@ -2210,6 +2543,7 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
         const m = JSON.parse(publishedManifest);
         if (m.name) updateFields.name = m.name;
         if (m.description) updateFields.description = m.description;
+        updateFields.env_schema = resolveManifestEnvSchema(m);
       } catch {}
     }
     await appsService.update(appId, updateFields);
@@ -2321,6 +2655,7 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
             skills_md,
             skills_parsed,
             manifest: JSON.stringify(manifest),
+            env_schema: resolveManifestEnvSchema(manifest),
             docs_generated_at: new Date().toISOString(),
           });
 
