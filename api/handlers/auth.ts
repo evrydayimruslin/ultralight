@@ -5,36 +5,17 @@ import { error, json } from './app.ts';
 import { isApiToken, getUserFromToken } from '../services/tokens.ts';
 import { getUserTier } from '../services/tier-enforcement.ts';
 import { createProvisionalUser, isProvisionalUser, mergeProvisionalUser, markOnboardingProvisionalCreated } from '../services/provisional.ts';
+import {
+  consumeDesktopOAuthSession,
+  createDesktopOAuthSession,
+  storeDesktopOAuthSessionToken,
+} from '../services/desktop-oauth-sessions.ts';
 // Base64 URL encoding for PKCE (replaces Deno std encodeBase64Url)
 function encodeBase64Url(data: Uint8Array): string {
   const base64 = btoa(String.fromCharCode(...data));
   return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 import { getEnv } from '../lib/env.ts';
-
-// ── Desktop OAuth session store ──
-// Temporary in-memory store for desktop OAuth polling.
-// Sessions expire after 5 minutes. This is safe because the API runs as a
-// single Deno process on DigitalOcean — all poll requests hit the same instance.
-const desktopSessions = new Map<string, { token: string; createdAt: number }>();
-
-function storeDesktopSession(sessionId: string, token: string) {
-  desktopSessions.set(sessionId, { token, createdAt: Date.now() });
-  // Auto-cleanup after 5 minutes
-  setTimeout(() => desktopSessions.delete(sessionId), 5 * 60 * 1000);
-}
-
-function consumeDesktopSession(sessionId: string): string | null {
-  const entry = desktopSessions.get(sessionId);
-  if (!entry) return null;
-  // Expired check (belt-and-suspenders with setTimeout)
-  if (Date.now() - entry.createdAt > 5 * 60 * 1000) {
-    desktopSessions.delete(sessionId);
-    return null;
-  }
-  desktopSessions.delete(sessionId); // one-time use
-  return entry.token;
-}
 
 
 // PKCE helpers
@@ -51,17 +32,6 @@ async function generateCodeChallenge(verifier: string): Promise<string> {
   return encodeBase64Url(new Uint8Array(digest));
 }
 
-// Supabase client for database operations (service role bypasses RLS)
-async function getSupabaseClient() {
-  const { createClient } = await import('@supabase/supabase-js');
-  return createClient(getEnv('SUPABASE_URL'), getEnv('SUPABASE_SERVICE_ROLE_KEY'), {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
-}
-
 export async function handleAuth(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -72,6 +42,18 @@ export async function handleAuth(request: Request): Promise<Response> {
     const origin = url.origin.replace('http://', 'https://');
     const returnTo = url.searchParams.get('return_to');
     const desktopSession = url.searchParams.get('desktop_session');
+    const desktopPollSecretHash = url.searchParams.get('desktop_poll_secret_hash');
+
+    if (desktopSession) {
+      try {
+        await createDesktopOAuthSession(desktopSession, desktopPollSecretHash);
+      } catch (err) {
+        console.error('[auth] Failed to create desktop OAuth session:', err);
+        return new Response(getCallbackErrorHTML('Unable to start desktop sign-in. Please try again.'), {
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+    }
 
     // Generate PKCE code verifier and challenge (S256)
     const codeVerifier = generateCodeVerifier();
@@ -127,7 +109,12 @@ export async function handleAuth(request: Request): Promise<Response> {
 
         // Desktop OAuth flow: store token for polling, show "close this tab" page
         if (desktopSession) {
-          storeDesktopSession(desktopSession, tokens.access_token);
+          const stored = await storeDesktopOAuthSessionToken(desktopSession, tokens.access_token);
+          if (!stored) {
+            return new Response(getCallbackErrorHTML('Desktop sign-in expired. Please return to the app and try again.'), {
+              headers: { 'Content-Type': 'text/html' },
+            });
+          }
           return new Response(getDesktopCallbackHTML(), {
             headers: { 'Content-Type': 'text/html' },
           });
@@ -288,7 +275,8 @@ export async function handleAuth(request: Request): Promise<Response> {
       return error('Missing session_id', 400);
     }
 
-    const token = consumeDesktopSession(sessionId);
+    const pollSecret = url.searchParams.get('session_secret');
+    const token = await consumeDesktopOAuthSession(sessionId, pollSecret);
     if (token) {
       return json({ status: 'complete', token });
     }

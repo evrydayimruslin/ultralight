@@ -10,13 +10,31 @@ interface AuthGateProps {
 
 type AuthMode = 'choose' | 'oauth-polling' | 'token';
 
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(value),
+  );
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function generateSessionSecret(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 export default function AuthGate({ onAuthenticated }: AuthGateProps) {
   const [mode, setMode] = useState<AuthMode>('choose');
   const [token, setTokenInput] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const sessionRef = useRef<string>('');
+  const sessionSecretRef = useRef<string>('');
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -26,47 +44,65 @@ export default function AuthGate({ onAuthenticated }: AuthGateProps) {
   }, []);
 
   // ── Google OAuth flow ──
-  const startOAuth = useCallback(() => {
-    const sessionId = crypto.randomUUID();
-    sessionRef.current = sessionId;
-    const base = getApiBase();
+  const startOAuth = useCallback(async () => {
+    try {
+      const sessionId = crypto.randomUUID();
+      const sessionSecret = generateSessionSecret();
+      const sessionSecretHash = await sha256Hex(sessionSecret);
+      sessionSecretRef.current = sessionSecret;
+      const base = getApiBase();
+      const loginUrl = new URL(`${base}/auth/login`);
+      loginUrl.searchParams.set('desktop_session', sessionId);
+      loginUrl.searchParams.set('desktop_poll_secret_hash', sessionSecretHash);
 
-    // Open system browser for Google OAuth
-    window.open(`${base}/auth/login?desktop_session=${sessionId}`, '_blank');
+      // Open system browser for Google OAuth
+      window.open(loginUrl.toString(), '_blank');
 
-    setMode('oauth-polling');
-    setError('');
-    setLoading(true);
+      setMode('oauth-polling');
+      setError('');
+      setLoading(true);
 
-    // Poll for token every 2 seconds, timeout after 5 minutes
-    const startTime = Date.now();
-    pollRef.current = setInterval(async () => {
-      // Timeout after 5 minutes
-      if (Date.now() - startTime > 5 * 60 * 1000) {
-        stopPolling();
-        setLoading(false);
-        setError('Sign-in timed out. Please try again.');
-        setMode('choose');
-        return;
-      }
-
-      try {
-        const res = await fetch(`${base}/auth/desktop-poll?session_id=${sessionId}`);
-        const data = await res.json();
-
-        if (data.status === 'complete' && data.token) {
+      // Poll for token every 2 seconds, timeout after 5 minutes
+      const startTime = Date.now();
+      pollRef.current = setInterval(async () => {
+        // Timeout after 5 minutes
+        if (Date.now() - startTime > 5 * 60 * 1000) {
           stopPolling();
-          storeToken(data.token);
-          onAuthenticated();
+          sessionSecretRef.current = '';
+          setLoading(false);
+          setError('Sign-in timed out. Please try again.');
+          setMode('choose');
+          return;
         }
-      } catch {
-        // Network error — keep polling
-      }
-    }, 2000);
+
+        try {
+          const pollUrl = new URL(`${base}/auth/desktop-poll`);
+          pollUrl.searchParams.set('session_id', sessionId);
+          pollUrl.searchParams.set('session_secret', sessionSecretRef.current);
+          const res = await fetch(pollUrl.toString());
+          const data = await res.json();
+
+          if (data.status === 'complete' && data.token) {
+            stopPolling();
+            sessionSecretRef.current = '';
+            storeToken(data.token);
+            onAuthenticated();
+          }
+        } catch {
+          // Network error — keep polling
+        }
+      }, 2000);
+    } catch {
+      sessionSecretRef.current = '';
+      setLoading(false);
+      setMode('choose');
+      setError('Unable to start Google sign-in. Please try again.');
+    }
   }, [onAuthenticated, stopPolling]);
 
   const cancelOAuth = useCallback(() => {
     stopPolling();
+    sessionSecretRef.current = '';
     setLoading(false);
     setError('');
     setMode('choose');
