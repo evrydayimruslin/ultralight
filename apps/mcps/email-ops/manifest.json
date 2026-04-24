@@ -20,9 +20,9 @@
   },
   "widgets": [
     {
-      "id": "approval_queue",
+      "id": "email_inbox",
       "label": "Email Approvals",
-      "data_tool": "widget_approval_queue",
+      "data_tool": "widget_email_inbox_data",
       "poll_interval_s": 30
     }
   ],
@@ -89,7 +89,23 @@
         { "name": "category", "type": "string", "required": false }
       ]
     },
-    "widget_approval_queue": { "description": "Legacy widget bridge.", "parameters": [] },
+    "approvals_list": {
+      "description": "Legacy approval bridge: list active conversations with draft replies for older approval UIs.",
+      "parameters": [
+        { "name": "status", "type": "string", "required": false },
+        { "name": "limit", "type": "number", "required": false }
+      ]
+    },
+    "approvals_act": {
+      "description": "Legacy approval bridge: approve, reject, or revise a pending conversation draft.",
+      "parameters": [
+        { "name": "approval_id", "type": "string", "required": true },
+        { "name": "action", "type": "string", "required": true },
+        { "name": "revision", "type": "string", "required": false },
+        { "name": "admin_notes", "type": "string", "required": false }
+      ]
+    },
+    "widget_approval_queue": { "description": "Legacy widget bridge for older desktop builds.", "parameters": [] },
     "widget_email_inbox_ui": { "description": "Email approvals deck UI.", "parameters": [] },
     "widget_email_inbox_data": { "description": "Email approvals data.", "parameters": [] },
     "widget_email_faqs_ui": { "description": "FAQ editor widget UI.", "parameters": [] },

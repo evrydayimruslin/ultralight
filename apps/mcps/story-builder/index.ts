@@ -3,13 +3,232 @@
 // All lookups by name (unique per world). No UUIDs needed by the caller.
 // Storage: Ultralight D1 | Permissions: ai:call
 
-const ultralight = (globalThis as any).ultralight;
+const ultralight = globalThis.ultralight;
+
+type EntityTable = 'characters' | 'locations' | 'themes' | 'arcs' | 'factions' | 'lore' | 'rules' | 'scenes';
+type SqlValue = string | number | null;
+type MutationResultValue = string | boolean | string[];
+
+interface MutationResultEntry {
+  [key: string]: MutationResultValue;
+}
+
+type MutationBuckets = Record<string, MutationResultEntry[]>;
+
+interface CountRow {
+  cnt: number;
+}
+
+interface WorldRow {
+  id: string;
+  name: string;
+  genre: string;
+  description: string;
+}
+
+interface CharacterRow {
+  id: string;
+  name: string;
+  role: string;
+  traits: string | null;
+  backstory: string;
+}
+
+interface CharacterNameRow {
+  id: string;
+  name: string;
+}
+
+interface LocationRow {
+  id: string;
+  name: string;
+  description: string;
+}
+
+interface ThemeRow {
+  id: string;
+  name: string;
+  description: string;
+}
+
+interface RelationshipLookupRow {
+  id: string;
+  type: string;
+  description: string;
+  a_name: string;
+  b_name: string;
+}
+
+interface RelationshipRow {
+  id: string;
+  type: string;
+  description: string;
+  character_a: string;
+  character_b: string;
+}
+
+interface ArcRow {
+  id: string;
+  name: string;
+  type: string;
+  description: string;
+  season: string;
+  episode_range: string;
+  character_ids: string | null;
+  arc_order: number;
+}
+
+interface FactionRow {
+  id: string;
+  name: string;
+  description: string;
+  member_ids: string | null;
+}
+
+interface TypedDescriptionRow {
+  id: string;
+  name: string;
+  type: string;
+  description: string;
+}
+
+interface SceneRow {
+  id: string;
+  title: string;
+  type: string;
+  content: string;
+  character_ids: string | null;
+  setting_id: string | null;
+  scene_order: number;
+  created_at: string;
+}
+
+interface ResolvedEntityRow {
+  id: string;
+  name: string;
+  description?: string;
+  type?: string;
+  member_ids?: string | null;
+  character_ids?: string | null;
+  season?: string;
+  episode_range?: string;
+  title?: string;
+  content?: string;
+  setting_id?: string | null;
+  scene_order?: number;
+}
+
+interface StoryWorldSummary {
+  id: string;
+  name: string;
+  genre: string;
+  description: string;
+}
+
+interface StoryCharacterSummary {
+  id: string;
+  name: string;
+  role: string;
+  traits: string[];
+  backstory: string;
+}
+
+interface StoryCharacterRelationship {
+  with: string;
+  type: string;
+  description: string;
+}
+
+interface StoryCharacterScene {
+  id: string;
+  title: string;
+  type: string;
+  scene_order: number;
+  content_preview: string;
+}
+
+interface StoryCharacterFaction {
+  name: string;
+  description: string;
+}
+
+interface StoryArcSummary {
+  id: string;
+  name: string;
+  type: string;
+  description: string;
+  season: string;
+  episode_range: string;
+  arc_order: number;
+  characters: string[];
+}
+
+interface StoryFactionSummary {
+  id: string;
+  name: string;
+  description: string;
+  members: string[];
+}
+
+interface StorySceneSummary {
+  id: string;
+  title: string;
+  type: string;
+  scene_order: number;
+  characters: string[];
+  setting: string | null;
+  content: string;
+  created_at: string;
+}
+
+interface StoryScenePage {
+  total: number;
+  offset: number;
+  limit: number;
+  items: StorySceneSummary[];
+}
+
+interface StoryReadSuccess {
+  success: true;
+  world: StoryWorldSummary;
+  character?: StoryCharacterSummary & {
+    relationships: StoryCharacterRelationship[];
+    scenes: StoryCharacterScene[];
+    factions: StoryCharacterFaction[];
+  };
+  characters?: StoryCharacterSummary[];
+  settings?: LocationRow[];
+  themes?: ThemeRow[];
+  relationships?: RelationshipRow[];
+  arcs?: StoryArcSummary[];
+  factions?: StoryFactionSummary[];
+  lore?: TypedDescriptionRow[];
+  rules?: TypedDescriptionRow[];
+  scenes?: StoryScenePage;
+}
+
+interface StoryReadFailure {
+  success: false;
+  error: string;
+}
+
+type StoryReadResult = StoryReadSuccess | StoryReadFailure;
+
+function parseStringArray(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
 
 function uuid() { return crypto.randomUUID(); }
 function now() { return new Date().toISOString(); }
 function uid() { return ultralight.user.id; }
 
-async function getWorld(world_id_or_name: string) {
+async function getWorld(world_id_or_name: string): Promise<WorldRow | null> {
   // Try by ID first, then by name
   return (
     await ultralight.db.first(
@@ -25,7 +244,7 @@ async function getWorld(world_id_or_name: string) {
 }
 
 // Resolve a character by name or ID within a world
-async function resolveChar(world_id: string, name_or_id: string): Promise<any> {
+async function resolveChar(world_id: string, name_or_id: string): Promise<CharacterRow | null> {
   return (
     await ultralight.db.first(
       'SELECT * FROM characters WHERE world_id = ? AND user_id = ? AND (id = ? OR name = ?)',
@@ -35,7 +254,7 @@ async function resolveChar(world_id: string, name_or_id: string): Promise<any> {
 }
 
 // Resolve any entity by name or ID in a table
-async function resolveEntity(table: string, world_id: string, name_or_id: string): Promise<any> {
+async function resolveEntity(table: EntityTable, world_id: string, name_or_id: string): Promise<ResolvedEntityRow | null> {
   return ultralight.db.first(
     `SELECT * FROM ${table} WHERE world_id = ? AND user_id = ? AND (id = ? OR name = ?)`,
     [world_id, uid(), name_or_id, name_or_id]
@@ -44,11 +263,27 @@ async function resolveEntity(table: string, world_id: string, name_or_id: string
 
 // Build a name→id map for characters in a world
 async function charNameMap(world_id: string): Promise<Map<string, string>> {
-  const chars = await ultralight.db.all(
+  const chars: CharacterNameRow[] = await ultralight.db.all(
     'SELECT id, name FROM characters WHERE world_id = ? AND user_id = ?',
     [world_id, uid()]
   );
-  return new Map(chars.map((c: any) => [c.name, c.id]));
+  return new Map(chars.map((char) => [char.name, char.id]));
+}
+
+async function fetchCharacterIdToName(world_id: string): Promise<Map<string, string>> {
+  const chars: CharacterNameRow[] = await ultralight.db.all(
+    'SELECT id, name FROM characters WHERE world_id = ? AND user_id = ?',
+    [world_id, uid()]
+  );
+  return new Map(chars.map((char) => [char.id, char.name]));
+}
+
+async function fetchLocationIdToName(world_id: string): Promise<Map<string, string>> {
+  const locations: Pick<LocationRow, 'id' | 'name'>[] = await ultralight.db.all(
+    'SELECT id, name FROM locations WHERE world_id = ? AND user_id = ?',
+    [world_id, uid()]
+  );
+  return new Map(locations.map((location) => [location.id, location.name]));
 }
 
 // ── CREATE WORLD ──
@@ -89,7 +324,7 @@ export async function add(args: {
   const world_id = world.id; // resolved ID (accepts name or ID)
 
   const ts = now();
-  const created: Record<string, any[]> = {};
+  const created: MutationBuckets = {};
 
   // Characters first (so relationships/factions can reference them by name)
   if (args.characters && args.characters.length > 0) {
@@ -234,14 +469,17 @@ export async function read(args: {
   character_name?: string;
   scene_limit?: number;
   scene_offset?: number;
-}): Promise<unknown> {
+}): Promise<StoryReadResult> {
   const world = await getWorld(args.world_id);
   if (!world) return { success: false, error: 'World not found: ' + args.world_id };
   const world_id = world.id; // resolved ID (accepts name or ID)
 
   const include = args.include || ['characters', 'settings', 'themes', 'relationships', 'arcs', 'factions', 'lore', 'rules', 'scenes'];
   const includeSet = new Set(include);
-  const result: Record<string, any> = { world: { id: world.id, name: world.name, genre: world.genre, description: world.description } };
+  const result: StoryReadSuccess = {
+    success: true,
+    world: { id: world.id, name: world.name, genre: world.genre, description: world.description },
+  };
 
   // If zooming into a single character
   if (args.character_name) {
@@ -250,51 +488,54 @@ export async function read(args: {
 
     result.character = {
       id: char.id, name: char.name, role: char.role,
-      traits: JSON.parse(char.traits || '[]'),
+      traits: parseStringArray(char.traits),
       backstory: char.backstory,
+      relationships: [],
+      scenes: [],
+      factions: [],
     };
 
     // Their relationships
-    const rels = await ultralight.db.all(
+    const rels: RelationshipLookupRow[] = await ultralight.db.all(
       'SELECT r.*, a.name as a_name, b.name as b_name FROM relationships r JOIN characters a ON r.character_a_id = a.id JOIN characters b ON r.character_b_id = b.id WHERE r.world_id = ? AND r.user_id = ? AND (r.character_a_id = ? OR r.character_b_id = ?)',
       [world_id, uid(), char.id, char.id]
     );
-    result.character.relationships = rels.map((r: any) => ({
-      with: r.a_name === char.name ? r.b_name : r.a_name,
-      type: r.type,
-      description: r.description,
+    result.character.relationships = rels.map((relationship) => ({
+      with: relationship.a_name === char.name ? relationship.b_name : relationship.a_name,
+      type: relationship.type,
+      description: relationship.description,
     }));
 
     // Scenes they appear in
-    const scenes = await ultralight.db.all(
+    const scenes: Pick<SceneRow, 'id' | 'title' | 'type' | 'content' | 'scene_order'>[] = await ultralight.db.all(
       'SELECT id, title, type, content, scene_order, created_at FROM scenes WHERE world_id = ? AND user_id = ? AND character_ids LIKE ? ORDER BY scene_order ASC',
       [world_id, uid(), '%' + char.id + '%']
     );
-    result.character.scenes = scenes.map((s: any) => ({
-      id: s.id, title: s.title, type: s.type, scene_order: s.scene_order,
-      content_preview: s.content.slice(0, 300),
+    result.character.scenes = scenes.map((scene) => ({
+      id: scene.id, title: scene.title, type: scene.type, scene_order: scene.scene_order,
+      content_preview: scene.content.slice(0, 300),
     }));
 
     // Factions they belong to
-    const factions = await ultralight.db.all(
+    const factions: Pick<FactionRow, 'id' | 'name' | 'description'>[] = await ultralight.db.all(
       'SELECT id, name, description, member_ids FROM factions WHERE world_id = ? AND user_id = ? AND member_ids LIKE ?',
       [world_id, uid(), '%' + char.id + '%']
     );
-    result.character.factions = factions.map((f: any) => ({ name: f.name, description: f.description }));
+    result.character.factions = factions.map((faction) => ({ name: faction.name, description: faction.description }));
 
-    return { success: true, ...result };
+    return result;
   }
 
   // Full world read with include filter
   if (includeSet.has('characters')) {
-    const chars = await ultralight.db.all(
+    const chars: CharacterRow[] = await ultralight.db.all(
       'SELECT id, name, role, traits, backstory FROM characters WHERE world_id = ? AND user_id = ?',
       [world_id, uid()]
     );
-    result.characters = chars.map((c: any) => ({
-      id: c.id, name: c.name, role: c.role,
-      traits: JSON.parse(c.traits || '[]'),
-      backstory: c.backstory,
+    result.characters = chars.map((character) => ({
+      id: character.id, name: character.name, role: character.role,
+      traits: parseStringArray(character.traits),
+      backstory: character.backstory,
     }));
   }
 
@@ -313,7 +554,7 @@ export async function read(args: {
   }
 
   if (includeSet.has('relationships')) {
-    const rels = await ultralight.db.all(
+    const rels: RelationshipRow[] = await ultralight.db.all(
       'SELECT r.id, r.type, r.description, a.name as character_a, b.name as character_b FROM relationships r JOIN characters a ON r.character_a_id = a.id JOIN characters b ON r.character_b_id = b.id WHERE r.world_id = ? AND r.user_id = ?',
       [world_id, uid()]
     );
@@ -321,42 +562,31 @@ export async function read(args: {
   }
 
   if (includeSet.has('arcs')) {
-    const arcs = await ultralight.db.all(
+    const arcs: ArcRow[] = await ultralight.db.all(
       'SELECT id, name, type, description, season, episode_range, character_ids, arc_order FROM arcs WHERE world_id = ? AND user_id = ? ORDER BY arc_order ASC',
       [world_id, uid()]
     );
-    const nameMapData = result.characters ? new Map(result.characters.map((c: any) => [c.id, c.name])) : await charNameMap(world_id).then(m => new Map([...m].map(([k, v]) => [v, k])));
-    // Build id→name map
-    const idToName = new Map<string, string>();
-    if (result.characters) {
-      for (const c of result.characters) idToName.set(c.id, c.name);
-    } else {
-      const chars = await ultralight.db.all('SELECT id, name FROM characters WHERE world_id = ? AND user_id = ?', [world_id, uid()]);
-      for (const c of chars) idToName.set(c.id, c.name);
-    }
-    result.arcs = arcs.map((a: any) => ({
-      id: a.id, name: a.name, type: a.type, description: a.description,
-      season: a.season, episode_range: a.episode_range, arc_order: a.arc_order,
-      characters: JSON.parse(a.character_ids || '[]').map((id: string) => idToName.get(id) || id),
+    const idToName = result.characters
+      ? new Map(result.characters.map((character) => [character.id, character.name]))
+      : await fetchCharacterIdToName(world_id);
+    result.arcs = arcs.map((arc) => ({
+      id: arc.id, name: arc.name, type: arc.type, description: arc.description,
+      season: arc.season, episode_range: arc.episode_range, arc_order: arc.arc_order,
+      characters: parseStringArray(arc.character_ids).map((id) => idToName.get(id) || id),
     }));
   }
 
   if (includeSet.has('factions')) {
-    const factions = await ultralight.db.all(
+    const factions: FactionRow[] = await ultralight.db.all(
       'SELECT id, name, description, member_ids FROM factions WHERE world_id = ? AND user_id = ?',
       [world_id, uid()]
     );
-    // Build id→name if not already done
-    let idToName: Map<string, string>;
-    if (result.characters) {
-      idToName = new Map(result.characters.map((c: any) => [c.id, c.name]));
-    } else {
-      const chars = await ultralight.db.all('SELECT id, name FROM characters WHERE world_id = ? AND user_id = ?', [world_id, uid()]);
-      idToName = new Map(chars.map((c: any) => [c.id, c.name]));
-    }
-    result.factions = factions.map((f: any) => ({
-      id: f.id, name: f.name, description: f.description,
-      members: JSON.parse(f.member_ids || '[]').map((id: string) => idToName.get(id) || id),
+    const idToName = result.characters
+      ? new Map(result.characters.map((character) => [character.id, character.name]))
+      : await fetchCharacterIdToName(world_id);
+    result.factions = factions.map((faction) => ({
+      id: faction.id, name: faction.name, description: faction.description,
+      members: parseStringArray(faction.member_ids).map((id) => idToName.get(id) || id),
     }));
   }
 
@@ -377,41 +607,32 @@ export async function read(args: {
   if (includeSet.has('scenes')) {
     const limit = args.scene_limit || 10;
     const offset = args.scene_offset || 0;
-    const scenes = await ultralight.db.all(
+    const scenes: SceneRow[] = await ultralight.db.all(
       'SELECT id, title, type, content, character_ids, setting_id, scene_order, created_at FROM scenes WHERE world_id = ? AND user_id = ? ORDER BY scene_order ASC LIMIT ? OFFSET ?',
       [world_id, uid(), limit, offset]
     );
-    // Resolve names
-    let idToName: Map<string, string>;
-    if (result.characters) {
-      idToName = new Map(result.characters.map((c: any) => [c.id, c.name]));
-    } else {
-      const chars = await ultralight.db.all('SELECT id, name FROM characters WHERE world_id = ? AND user_id = ?', [world_id, uid()]);
-      idToName = new Map(chars.map((c: any) => [c.id, c.name]));
-    }
-    const settingsMap = new Map<string, string>();
-    if (result.settings) {
-      for (const s of result.settings) settingsMap.set(s.id, s.name);
-    } else {
-      const locs = await ultralight.db.all('SELECT id, name FROM locations WHERE world_id = ? AND user_id = ?', [world_id, uid()]);
-      for (const l of locs) settingsMap.set(l.id, l.name);
-    }
-    const totalScenes = (await ultralight.db.first('SELECT COUNT(*) as cnt FROM scenes WHERE world_id = ? AND user_id = ?', [world_id, uid()]))?.cnt || 0;
+    const idToName = result.characters
+      ? new Map(result.characters.map((character) => [character.id, character.name]))
+      : await fetchCharacterIdToName(world_id);
+    const settingsMap = result.settings
+      ? new Map(result.settings.map((setting) => [setting.id, setting.name]))
+      : await fetchLocationIdToName(world_id);
+    const totalScenes = (await ultralight.db.first('SELECT COUNT(*) as cnt FROM scenes WHERE world_id = ? AND user_id = ?', [world_id, uid()]) as CountRow | null)?.cnt || 0;
     result.scenes = {
       total: totalScenes,
       offset,
       limit,
-      items: scenes.map((s: any) => ({
-        id: s.id, title: s.title, type: s.type, scene_order: s.scene_order,
-        characters: JSON.parse(s.character_ids || '[]').map((id: string) => idToName.get(id) || id),
-        setting: s.setting_id ? settingsMap.get(s.setting_id) || s.setting_id : null,
-        content: s.content,
-        created_at: s.created_at,
+      items: scenes.map((scene) => ({
+        id: scene.id, title: scene.title, type: scene.type, scene_order: scene.scene_order,
+        characters: parseStringArray(scene.character_ids).map((id) => idToName.get(id) || id),
+        setting: scene.setting_id ? settingsMap.get(scene.setting_id) || scene.setting_id : null,
+        content: scene.content,
+        created_at: scene.created_at,
       })),
     };
   }
 
-  return { success: true, ...result };
+  return result;
 }
 
 // ── UPDATE (batch update entities by name or ID) ──
@@ -433,12 +654,12 @@ export async function update(args: {
   const world_id = world.id; // resolved ID (accepts name or ID)
 
   const ts = now();
-  const updated: Record<string, any[]> = {};
+  const updated: MutationBuckets = {};
 
   // World metadata
   if (args.world) {
     const fields: string[] = [];
-    const values: any[] = [];
+    const values: SqlValue[] = [];
     if (args.world.name !== undefined) { fields.push('name = ?'); values.push(args.world.name); }
     if (args.world.genre !== undefined) { fields.push('genre = ?'); values.push(args.world.genre); }
     if (args.world.description !== undefined) { fields.push('description = ?'); values.push(args.world.description); }
@@ -458,13 +679,13 @@ export async function update(args: {
       if (!existing) { updated.characters.push({ error: 'Not found: ' + c.name_or_id }); continue; }
 
       const fields: string[] = [];
-      const values: any[] = [];
+      const values: SqlValue[] = [];
       if (c.name !== undefined) { fields.push('name = ?'); values.push(c.name); }
       if (c.role !== undefined) { fields.push('role = ?'); values.push(c.role); }
       if (c.backstory !== undefined) { fields.push('backstory = ?'); values.push(c.backstory); }
       if (c.traits !== undefined) {
         if (c.merge_traits) {
-          const existingTraits = JSON.parse(existing.traits || '[]');
+          const existingTraits = parseStringArray(existing.traits);
           const merged = [...new Set([...existingTraits, ...c.traits])];
           fields.push('traits = ?'); values.push(JSON.stringify(merged));
         } else {
@@ -487,7 +708,7 @@ export async function update(args: {
       const existing = await resolveEntity('locations', world_id, s.name_or_id);
       if (!existing) { updated.settings.push({ error: 'Not found: ' + s.name_or_id }); continue; }
       const fields: string[] = [];
-      const values: any[] = [];
+      const values: SqlValue[] = [];
       if (s.name !== undefined) { fields.push('name = ?'); values.push(s.name); }
       if (s.description !== undefined) { fields.push('description = ?'); values.push(s.description); }
       if (fields.length > 0) {
@@ -506,7 +727,7 @@ export async function update(args: {
       const existing = await resolveEntity('themes', world_id, t.name_or_id);
       if (!existing) { updated.themes.push({ error: 'Not found: ' + t.name_or_id }); continue; }
       const fields: string[] = [];
-      const values: any[] = [];
+      const values: SqlValue[] = [];
       if (t.name !== undefined) { fields.push('name = ?'); values.push(t.name); }
       if (t.description !== undefined) { fields.push('description = ?'); values.push(t.description); }
       if (fields.length > 0) {
@@ -532,11 +753,11 @@ export async function update(args: {
       const existing = await ultralight.db.first(
         'SELECT id FROM relationships WHERE world_id = ? AND user_id = ? AND ((character_a_id = ? AND character_b_id = ?) OR (character_a_id = ? AND character_b_id = ?))',
         [world_id, uid(), aId, bId, bId, aId]
-      );
+      ) as Pick<RelationshipRow, 'id'> | null;
       if (!existing) { updated.relationships.push({ error: 'No relationship between: ' + r.between.join(', ') }); continue; }
 
       const fields: string[] = [];
-      const values: any[] = [];
+      const values: SqlValue[] = [];
       if (r.type !== undefined) { fields.push('type = ?'); values.push(r.type); }
       if (r.description !== undefined) { fields.push('description = ?'); values.push(r.description); }
       if (fields.length > 0) {
@@ -556,7 +777,7 @@ export async function update(args: {
       const existing = await resolveEntity('arcs', world_id, a.name_or_id);
       if (!existing) { updated.arcs.push({ error: 'Not found: ' + a.name_or_id }); continue; }
       const fields: string[] = [];
-      const values: any[] = [];
+      const values: SqlValue[] = [];
       if (a.name !== undefined) { fields.push('name = ?'); values.push(a.name); }
       if (a.type !== undefined) { fields.push('type = ?'); values.push(a.type); }
       if (a.description !== undefined) { fields.push('description = ?'); values.push(a.description); }
@@ -583,13 +804,13 @@ export async function update(args: {
       const existing = await resolveEntity('factions', world_id, f.name_or_id);
       if (!existing) { updated.factions.push({ error: 'Not found: ' + f.name_or_id }); continue; }
       const fields: string[] = [];
-      const values: any[] = [];
+      const values: SqlValue[] = [];
       if (f.name !== undefined) { fields.push('name = ?'); values.push(f.name); }
       if (f.description !== undefined) { fields.push('description = ?'); values.push(f.description); }
 
       // Member management
       if (f.add_members || f.remove_members) {
-        let currentMembers: string[] = JSON.parse(existing.member_ids || '[]');
+        let currentMembers: string[] = parseStringArray(existing.member_ids);
         if (f.add_members) {
           const newIds = f.add_members.map(n => nameMapData.get(n)).filter(Boolean) as string[];
           currentMembers = [...new Set([...currentMembers, ...newIds])];
@@ -617,7 +838,7 @@ export async function update(args: {
       const existing = await resolveEntity('lore', world_id, l.name_or_id);
       if (!existing) { updated.lore.push({ error: 'Not found: ' + l.name_or_id }); continue; }
       const fields: string[] = [];
-      const values: any[] = [];
+      const values: SqlValue[] = [];
       if (l.name !== undefined) { fields.push('name = ?'); values.push(l.name); }
       if (l.type !== undefined) { fields.push('type = ?'); values.push(l.type); }
       if (l.description !== undefined) { fields.push('description = ?'); values.push(l.description); }
@@ -637,7 +858,7 @@ export async function update(args: {
       const existing = await resolveEntity('rules', world_id, r.name_or_id);
       if (!existing) { updated.rules.push({ error: 'Not found: ' + r.name_or_id }); continue; }
       const fields: string[] = [];
-      const values: any[] = [];
+      const values: SqlValue[] = [];
       if (r.name !== undefined) { fields.push('name = ?'); values.push(r.name); }
       if (r.type !== undefined) { fields.push('type = ?'); values.push(r.type); }
       if (r.description !== undefined) { fields.push('description = ?'); values.push(r.description); }
@@ -671,11 +892,11 @@ export async function remove(args: {
   if (!world) return { success: false, error: 'World not found: ' + args.world_id };
   const world_id = world.id; // resolved ID (accepts name or ID)
 
-  const deleted: Record<string, any[]> = {};
+  const deleted: MutationBuckets = {};
 
   // Helper: delete from table by name or ID
-  async function deleteEntities(table: string, items: string[], label: string) {
-    const results: any[] = [];
+  async function deleteEntities(table: EntityTable, items: string[], label: string) {
+    const results: MutationResultEntry[] = [];
     for (const nameOrId of items) {
       const entity = await resolveEntity(table, world_id, nameOrId);
       if (!entity) { results.push({ error: 'Not found: ' + nameOrId }); continue; }
@@ -719,13 +940,13 @@ export async function remove(args: {
         const rel = await ultralight.db.first(
           'SELECT id FROM relationships WHERE world_id = ? AND user_id = ? AND ((character_a_id = ? AND character_b_id = ?) OR (character_a_id = ? AND character_b_id = ?))',
           [world_id, uid(), aId, bId, bId, aId]
-        );
+        ) as Pick<RelationshipRow, 'id'> | null;
         if (!rel) { deleted.relationships.push({ error: 'No relationship: ' + item }); continue; }
         await ultralight.db.run('DELETE FROM relationships WHERE id = ? AND user_id = ?', [rel.id, uid()]);
         deleted.relationships.push({ between: item, success: true });
       } else {
         // By ID
-        const rel = await ultralight.db.first('SELECT id FROM relationships WHERE id = ? AND user_id = ?', [item, uid()]);
+        const rel = await ultralight.db.first('SELECT id FROM relationships WHERE id = ? AND user_id = ?', [item, uid()]) as Pick<RelationshipRow, 'id'> | null;
         if (!rel) { deleted.relationships.push({ error: 'Not found: ' + item }); continue; }
         await ultralight.db.run('DELETE FROM relationships WHERE id = ? AND user_id = ?', [item, uid()]);
         deleted.relationships.push({ id: item, success: true });
@@ -747,7 +968,8 @@ export async function get_context(args: {
   const world_id = world.id; // resolved ID (accepts name or ID)
 
   // Get everything
-  const fullRead = await read({ world_id, scene_limit: 100 }) as any;
+  const fullRead = await read({ world_id, scene_limit: 100 });
+  if (!fullRead.success) return fullRead;
 
   if (args.format === 'narrative') {
     // AI-generated handoff brief
@@ -839,12 +1061,12 @@ export async function get_context(args: {
       return { success: true, world: world.name, format: 'narrative', brief: response.content };
     } catch {
       // Fallback to structured if AI fails
-      return { success: true, world: world.name, format: 'structured', ...fullRead };
+      return { ...fullRead, format: 'structured' };
     }
   }
 
   // Default: structured
-  return { success: true, world: world.name, format: 'structured', ...fullRead };
+  return { ...fullRead, format: 'structured' };
 }
 
 // ── GENERATE (AI) ──
@@ -863,7 +1085,10 @@ export async function generate(args: {
   if (!world) return { success: false, error: 'World not found: ' + world_id };
 
   // Build context directly from structured data (single AI call, no narrative pre-summary)
-  const fullRead = await read({ world_id, scene_limit: 3 }) as any;
+  const fullRead = await read({ world_id, scene_limit: 3 });
+  if (!fullRead.success) {
+    return fullRead;
+  }
   let context = 'WORLD: ' + world.name + ' (' + world.genre + ')\n';
   if (world.description) context += world.description + '\n';
 

@@ -145,7 +145,7 @@ export async function send(args: {
       results.push({
         channel: 'web',
         success: true,
-        message: 'Markdown rendered. Use ul.markdown.publish to create the live page.',
+        message: 'Markdown rendered. Use ul.upload({ type: "page", ... }) to create the live page.',
         details: { slug: slug },
       });
     } catch (err) {

@@ -9,7 +9,226 @@
 // Network: Resend API for outbound email
 // Permissions: ai:call, net:fetch
 
-const ultralight = (globalThis as any).ultralight;
+const ultralight = globalThis.ultralight;
+
+type SqlValue = string | number | null;
+
+interface SqlStatement {
+  sql: string;
+  params: SqlValue[];
+}
+
+interface CountRow {
+  cnt: number;
+}
+
+interface NamedCountRow {
+  count: number;
+}
+
+interface TotalRow {
+  total: number;
+}
+
+interface RevenueRow {
+  rev: number;
+}
+
+interface CoversRow {
+  covers: number;
+}
+
+interface RoomRow {
+  id: string;
+  room_number: string;
+  building: number;
+  floor_room: number;
+  tier: string;
+  listed_price: number;
+  status: string;
+  current_reservation_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface RoomReservationRow {
+  id: string;
+  room_number: string;
+  guest_name: string;
+  num_guests: number;
+  nights_staying: number;
+  check_in_date: string;
+  check_out_date: string;
+  group_name: string | null;
+  payment_method: string | null;
+  payment_status: string;
+  payment_amount: number;
+  status: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface RoomNumberRow {
+  room_number: string;
+}
+
+interface PaymentAmountRow {
+  id: string;
+  payment_amount: number | null;
+  payment_status?: string;
+}
+
+interface SkiEquipmentRow {
+  id: string;
+  category: string;
+  brand: string | null;
+  product: string | null;
+  size: string | null;
+  gender: string | null;
+  qty_total: number;
+  qty_rented: number;
+  qty_available?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface EquipmentIdRow {
+  equipment_id: string;
+}
+
+interface TeeTimeRow {
+  id: string;
+  tee_date: string;
+  tee_time: string;
+  guest_name: string;
+  room_number: string | null;
+  starting_hole: number;
+  num_in_party: number;
+  payment_status: string;
+  payment_amount: number;
+  notes: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface LessonRow {
+  id: string;
+  lesson_date: string;
+  lesson_time: string;
+  instructor: string | null;
+  guest_name: string;
+  room_number: string | null;
+  num_students: number;
+  skill_level: string | null;
+  payment_status: string;
+  payment_amount: number;
+  notes: string | null;
+}
+
+interface RestaurantReservationRow {
+  id: string;
+  res_date: string;
+  res_time: string;
+  num_people: number;
+  set_menu: string | null;
+  allergies: string | null;
+  guest_name: string;
+  room_number: string | null;
+  payment_status: string;
+  payment_amount?: number | null;
+  notes: string | null;
+}
+
+interface StoreProductRow {
+  id: string;
+  name: string;
+  category: string | null;
+  brand: string | null;
+  price: number;
+  qty_available: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface StoreTransactionRow {
+  id: string;
+  product_id: string;
+  quantity: number;
+  guest_name: string | null;
+  room_number: string | null;
+  payment_method: string | null;
+  payment_status: string;
+  payment_amount: number;
+  product_name?: string | null;
+  product_category?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface GuidelineRow {
+  id?: string;
+  key: string;
+  value: string;
+  category: string | null;
+}
+
+interface ApprovalQueueRow {
+  id: string;
+  type: string;
+  status: string;
+  priority: string;
+  title: string;
+  summary: string;
+  payload: string | null;
+  original_email_id: string | null;
+  resolved_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface EmailClassificationChange {
+  table?: string;
+  action?: string;
+  data?: Record<string, unknown>;
+  reason?: string;
+}
+
+interface EmailClassificationResult {
+  classification: string;
+  should_reply: boolean;
+  reason: string;
+  priority: 'high' | 'normal' | 'low';
+  db_changes: EmailClassificationChange[];
+}
+
+interface ParsedApprovalQueueRow extends Omit<ApprovalQueueRow, 'payload'> {
+  payload: Record<string, unknown>;
+}
+
+interface ApprovalCounts {
+  pending: number;
+  approved_today: number;
+  rejected_today: number;
+}
+
+function sumPaymentAmounts<T extends { payment_amount?: number | null }>(items: T[]): number {
+  return items.reduce((sum, item) => sum + (item.payment_amount || 0), 0);
+}
+
+function parseJsonObject(value: string | null | undefined): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
 
 // ============================================
 // INTERNAL HELPERS
@@ -44,7 +263,7 @@ export async function rooms_initialize(args: {
   const { tier_map, price_map } = args;
 
   // Check if already initialized
-  const existing = await ultralight.db.first(
+  const existing: CountRow | null = await ultralight.db.first(
     'SELECT COUNT(*) as cnt FROM rooms WHERE user_id = ?',
     [uid()]
   );
@@ -70,7 +289,7 @@ export async function rooms_initialize(args: {
   const prices = price_map || defaultPrices;
 
   const now = nowISO();
-  const statements: Array<{ sql: string; params: any[] }> = [];
+  const statements: SqlStatement[] = [];
   const tierCounts: Record<string, number> = {};
 
   for (let building = 4; building <= 8; building++) {
@@ -112,7 +331,7 @@ export async function rooms_list(args: {
   const { status, tier, building, check_in, check_out, room_number } = args;
 
   let sql = 'SELECT * FROM rooms WHERE user_id = ?';
-  const params: any[] = [uid()];
+  const params: SqlValue[] = [uid()];
 
   if (room_number) {
     sql += ' AND room_number = ?';
@@ -133,16 +352,16 @@ export async function rooms_list(args: {
 
   sql += ' ORDER BY room_number ASC';
 
-  let rooms = await ultralight.db.all(sql, params);
+  let rooms: RoomRow[] = await ultralight.db.all(sql, params);
 
   // Filter by date availability if requested
   if (check_in && check_out) {
-    const booked = await ultralight.db.all(
+    const booked: RoomNumberRow[] = await ultralight.db.all(
       'SELECT DISTINCT room_number FROM room_reservations WHERE user_id = ? AND status != ? AND check_in_date < ? AND check_out_date > ?',
       [uid(), 'cancelled', check_out, check_in]
     );
-    const bookedSet = new Set(booked.map((r: any) => r.room_number));
-    rooms = rooms.filter((r: any) => !bookedSet.has(r.room_number));
+    const bookedSet = new Set(booked.map((reservation) => reservation.room_number));
+    rooms = rooms.filter((room) => !bookedSet.has(room.room_number));
   }
 
   return { rooms: rooms, total: rooms.length };
@@ -169,7 +388,7 @@ export async function rooms_book(args: {
   }
 
   // Verify room exists
-  const room = await ultralight.db.first(
+  const room: RoomRow | null = await ultralight.db.first(
     'SELECT * FROM rooms WHERE user_id = ? AND room_number = ?',
     [uid(), room_number]
   );
@@ -178,7 +397,7 @@ export async function rooms_book(args: {
   }
 
   // Check for conflicts
-  const conflict = await ultralight.db.first(
+  const conflict: Pick<RoomReservationRow, 'id' | 'guest_name' | 'check_in_date' | 'check_out_date'> | null = await ultralight.db.first(
     'SELECT id, guest_name, check_in_date, check_out_date FROM room_reservations WHERE user_id = ? AND room_number = ? AND status != ? AND check_in_date < ? AND check_out_date > ?',
     [uid(), room_number, 'cancelled', check_out_date, check_in_date]
   );
@@ -230,7 +449,7 @@ export async function rooms_update(args: {
   const { reservation_id } = args;
   if (!reservation_id) throw new Error('reservation_id is required');
 
-  const existing = await ultralight.db.first(
+  const existing: RoomReservationRow | null = await ultralight.db.first(
     'SELECT * FROM room_reservations WHERE id = ? AND user_id = ?',
     [reservation_id, uid()]
   );
@@ -238,9 +457,9 @@ export async function rooms_update(args: {
 
   const now = nowISO();
   const setClauses: string[] = ['updated_at = ?'];
-  const params: any[] = [now];
+  const params: SqlValue[] = [now];
 
-  const fields: Record<string, any> = {
+  const fields: Record<string, SqlValue | undefined> = {
     room_number: args.room_number,
     check_in_date: args.check_in_date,
     check_out_date: args.check_out_date,
@@ -268,7 +487,7 @@ export async function rooms_update(args: {
     params
   );
 
-  const updated = await ultralight.db.first(
+  const updated: RoomReservationRow | null = await ultralight.db.first(
     'SELECT * FROM room_reservations WHERE id = ? AND user_id = ?',
     [reservation_id, uid()]
   );
@@ -284,7 +503,7 @@ export async function rooms_checkin(args: {
   const { reservation_id } = args;
   if (!reservation_id) throw new Error('reservation_id is required');
 
-  const res = await ultralight.db.first(
+  const res: RoomReservationRow | null = await ultralight.db.first(
     'SELECT * FROM room_reservations WHERE id = ? AND user_id = ?',
     [reservation_id, uid()]
   );
@@ -304,7 +523,7 @@ export async function rooms_checkin(args: {
     },
   ]);
 
-  const room = await ultralight.db.first(
+  const room: RoomRow | null = await ultralight.db.first(
     'SELECT * FROM rooms WHERE room_number = ? AND user_id = ?',
     [res.room_number, uid()]
   );
@@ -324,7 +543,7 @@ export async function rooms_checkout(args: {
   const { reservation_id } = args;
   if (!reservation_id) throw new Error('reservation_id is required');
 
-  const res = await ultralight.db.first(
+  const res: RoomReservationRow | null = await ultralight.db.first(
     'SELECT * FROM room_reservations WHERE id = ? AND user_id = ?',
     [reservation_id, uid()]
   );
@@ -344,41 +563,39 @@ export async function rooms_checkout(args: {
   ]);
 
   // Gather all unpaid items for this room/guest
-  const unpaidRooms = await ultralight.db.all(
+  const unpaidRooms: PaymentAmountRow[] = await ultralight.db.all(
     'SELECT id, payment_amount FROM room_reservations WHERE user_id = ? AND room_number = ? AND payment_status = ? AND id = ?',
     [uid(), res.room_number, 'unpaid', reservation_id]
   );
-  const unpaidSki = await ultralight.db.all(
+  const unpaidSki: PaymentAmountRow[] = await ultralight.db.all(
     'SELECT id, payment_amount FROM ski_rentals WHERE user_id = ? AND room_number = ? AND payment_status = ?',
     [uid(), res.room_number, 'unpaid']
   );
-  const unpaidLessons = await ultralight.db.all(
+  const unpaidLessons: PaymentAmountRow[] = await ultralight.db.all(
     'SELECT id, payment_amount FROM ski_lessons WHERE user_id = ? AND room_number = ? AND payment_status = ?',
     [uid(), res.room_number, 'unpaid']
   );
-  const unpaidGolf = await ultralight.db.all(
+  const unpaidGolf: PaymentAmountRow[] = await ultralight.db.all(
     'SELECT id, payment_amount FROM tee_times WHERE user_id = ? AND room_number = ? AND payment_status = ?',
     [uid(), res.room_number, 'unpaid']
   );
-  const unpaidRestaurant = await ultralight.db.all(
+  const unpaidRestaurant: Pick<PaymentAmountRow, 'id'>[] = await ultralight.db.all(
     'SELECT id FROM restaurant_reservations WHERE user_id = ? AND room_number = ? AND payment_status = ?',
     [uid(), res.room_number, 'unpaid']
   );
-  const unpaidStore = await ultralight.db.all(
+  const unpaidStore: PaymentAmountRow[] = await ultralight.db.all(
     'SELECT id, payment_amount FROM store_transactions WHERE user_id = ? AND room_number = ? AND payment_status = ?',
     [uid(), res.room_number, 'unpaid']
   );
 
-  const sum = (items: any[]) => items.reduce((s: number, i: any) => s + (i.payment_amount || 0), 0);
-
   const unpaid_items = {
-    room: { count: unpaidRooms.length, subtotal: sum(unpaidRooms) },
-    ski_rentals: { count: unpaidSki.length, subtotal: sum(unpaidSki) },
-    ski_lessons: { count: unpaidLessons.length, subtotal: sum(unpaidLessons) },
-    golf: { count: unpaidGolf.length, subtotal: sum(unpaidGolf) },
+    room: { count: unpaidRooms.length, subtotal: sumPaymentAmounts(unpaidRooms) },
+    ski_rentals: { count: unpaidSki.length, subtotal: sumPaymentAmounts(unpaidSki) },
+    ski_lessons: { count: unpaidLessons.length, subtotal: sumPaymentAmounts(unpaidLessons) },
+    golf: { count: unpaidGolf.length, subtotal: sumPaymentAmounts(unpaidGolf) },
     restaurant: { count: unpaidRestaurant.length, subtotal: 0 },
-    store: { count: unpaidStore.length, subtotal: sum(unpaidStore) },
-    grand_total: sum(unpaidRooms) + sum(unpaidSki) + sum(unpaidLessons) + sum(unpaidGolf) + sum(unpaidStore),
+    store: { count: unpaidStore.length, subtotal: sumPaymentAmounts(unpaidStore) },
+    grand_total: sumPaymentAmounts(unpaidRooms) + sumPaymentAmounts(unpaidSki) + sumPaymentAmounts(unpaidLessons) + sumPaymentAmounts(unpaidGolf) + sumPaymentAmounts(unpaidStore),
   };
 
   return {
@@ -401,7 +618,7 @@ export async function ski_inventory(args: {
   const { category, available_only } = args;
 
   let sql = 'SELECT *, (qty_total - qty_rented) as qty_available FROM ski_equipment WHERE user_id = ?';
-  const params: any[] = [uid()];
+  const params: SqlValue[] = [uid()];
 
   if (category) {
     sql += ' AND category = ?';
@@ -412,7 +629,7 @@ export async function ski_inventory(args: {
   }
 
   sql += ' ORDER BY category, brand, size';
-  const equipment = await ultralight.db.all(sql, params);
+  const equipment: SkiEquipmentRow[] = await ultralight.db.all(sql, params);
 
   return { equipment: equipment, total: equipment.length };
 }
@@ -439,7 +656,7 @@ export async function ski_equipment_manage(args: {
       'INSERT INTO ski_equipment (id, user_id, category, brand, product, size, gender, qty_total, qty_rented, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [id, uid(), category.toLowerCase().trim(), brand || null, product || null, size || null, gender || null, qty_total || 0, 0, now, now]
     );
-    const created = await ultralight.db.first('SELECT *, (qty_total - qty_rented) as qty_available FROM ski_equipment WHERE id = ? AND user_id = ?', [id, uid()]);
+    const created: SkiEquipmentRow | null = await ultralight.db.first('SELECT *, (qty_total - qty_rented) as qty_available FROM ski_equipment WHERE id = ? AND user_id = ?', [id, uid()]);
     return { success: true, equipment: created };
   }
 
@@ -447,7 +664,7 @@ export async function ski_equipment_manage(args: {
     if (!equipment_id) throw new Error('equipment_id is required for update');
 
     const setClauses: string[] = ['updated_at = ?'];
-    const params: any[] = [now];
+    const params: SqlValue[] = [now];
     if (category !== undefined) { setClauses.push('category = ?'); params.push(category.toLowerCase().trim()); }
     if (brand !== undefined) { setClauses.push('brand = ?'); params.push(brand); }
     if (product !== undefined) { setClauses.push('product = ?'); params.push(product); }
@@ -460,7 +677,7 @@ export async function ski_equipment_manage(args: {
       'UPDATE ski_equipment SET ' + setClauses.join(', ') + ' WHERE id = ? AND user_id = ?',
       params
     );
-    const updated = await ultralight.db.first('SELECT *, (qty_total - qty_rented) as qty_available FROM ski_equipment WHERE id = ? AND user_id = ?', [equipment_id, uid()]);
+    const updated: SkiEquipmentRow | null = await ultralight.db.first('SELECT *, (qty_total - qty_rented) as qty_available FROM ski_equipment WHERE id = ? AND user_id = ?', [equipment_id, uid()]);
     return { success: true, equipment: updated };
   }
 
@@ -485,7 +702,7 @@ export async function ski_rent(args: {
 
   // Validate availability for all items
   for (const eqId of equipment_ids) {
-    const eq = await ultralight.db.first(
+    const eq: Pick<SkiEquipmentRow, 'id' | 'category' | 'qty_total' | 'qty_rented'> | null = await ultralight.db.first(
       'SELECT id, category, qty_total, qty_rented FROM ski_equipment WHERE id = ? AND user_id = ?',
       [eqId, uid()]
     );
@@ -499,7 +716,7 @@ export async function ski_rent(args: {
   const now = nowISO();
   const name = normalizeGuestName(guest_name);
 
-  const statements: Array<{ sql: string; params: any[] }> = [];
+  const statements: SqlStatement[] = [];
 
   // Create rental
   statements.push({
@@ -522,7 +739,7 @@ export async function ski_rent(args: {
   await ultralight.db.batch(statements);
 
   // Fetch the items for the response
-  const items = await ultralight.db.all(
+  const items: SkiEquipmentRow[] = await ultralight.db.all(
     'SELECT e.* FROM ski_equipment e INNER JOIN ski_rental_items ri ON ri.equipment_id = e.id AND ri.user_id = e.user_id WHERE ri.rental_id = ? AND ri.user_id = ?',
     [rentalId, uid()]
   );
@@ -543,20 +760,20 @@ export async function ski_return(args: {
   const { rental_id } = args;
   if (!rental_id) throw new Error('rental_id is required');
 
-  const rental = await ultralight.db.first(
+  const rental: { id: string; status: string } | null = await ultralight.db.first(
     'SELECT * FROM ski_rentals WHERE id = ? AND user_id = ?',
     [rental_id, uid()]
   );
   if (!rental) throw new Error('Rental not found: ' + rental_id);
   if (rental.status === 'returned') throw new Error('Rental already returned');
 
-  const items = await ultralight.db.all(
+  const items: EquipmentIdRow[] = await ultralight.db.all(
     'SELECT equipment_id FROM ski_rental_items WHERE rental_id = ? AND user_id = ?',
     [rental_id, uid()]
   );
 
   const now = nowISO();
-  const statements: Array<{ sql: string; params: any[] }> = [];
+  const statements: SqlStatement[] = [];
 
   statements.push({
     sql: 'UPDATE ski_rentals SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?',
@@ -621,7 +838,7 @@ export async function ski_lessons_list(args: {
   const { date, instructor, guest_name } = args;
 
   let sql = 'SELECT * FROM ski_lessons WHERE user_id = ?';
-  const params: any[] = [uid()];
+  const params: SqlValue[] = [uid()];
 
   if (date) {
     sql += ' AND lesson_date = ?';
@@ -637,7 +854,7 @@ export async function ski_lessons_list(args: {
   }
 
   sql += ' ORDER BY lesson_date ASC, lesson_time ASC';
-  const lessons = await ultralight.db.all(sql, params);
+  const lessons: LessonRow[] = await ultralight.db.all(sql, params);
 
   return { lessons: lessons, total: lessons.length };
 }
@@ -670,7 +887,7 @@ export async function golf_book_tee(args: {
   const now = nowISO();
   const name = normalizeGuestName(guest_name);
 
-  const statements: Array<{ sql: string; params: any[] }> = [];
+  const statements: SqlStatement[] = [];
 
   statements.push({
     sql: 'INSERT INTO tee_times (id, user_id, tee_date, tee_time, guest_name, room_number, starting_hole, num_in_party, payment_method, payment_status, payment_amount, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -705,7 +922,7 @@ export async function golf_availability(args: {
   if (!date) throw new Error('date is required');
 
   let sql = 'SELECT * FROM tee_times WHERE user_id = ? AND tee_date = ?';
-  const params: any[] = [uid(), date];
+  const params: SqlValue[] = [uid(), date];
 
   if (starting_hole) {
     sql += ' AND starting_hole = ?';
@@ -713,7 +930,7 @@ export async function golf_availability(args: {
   }
 
   sql += ' ORDER BY tee_time ASC';
-  const booked = await ultralight.db.all(sql, params);
+  const booked: TeeTimeRow[] = await ultralight.db.all(sql, params);
 
   // Generate all possible tee times (every 10 minutes from 06:00 to 16:00)
   const allTimes: string[] = [];
@@ -724,7 +941,7 @@ export async function golf_availability(args: {
     }
   }
 
-  const bookedTimes = new Set(booked.map((t: any) => t.tee_time));
+  const bookedTimes = new Set(booked.map((teeTime) => teeTime.tee_time));
   const available = allTimes.filter((t) => !bookedTimes.has(t));
 
   return { date: date, available_times: available, booked: booked, total_booked: booked.length };
@@ -738,7 +955,7 @@ export async function golf_cancel(args: {
   const { tee_time_id } = args;
   if (!tee_time_id) throw new Error('tee_time_id is required');
 
-  const tee = await ultralight.db.first(
+  const tee: TeeTimeRow | null = await ultralight.db.first(
     'SELECT * FROM tee_times WHERE id = ? AND user_id = ?',
     [tee_time_id, uid()]
   );
@@ -804,12 +1021,12 @@ export async function restaurant_today(args: {
 }): Promise<unknown> {
   const date = args.date || todayISO();
 
-  const reservations = await ultralight.db.all(
+  const reservations: RestaurantReservationRow[] = await ultralight.db.all(
     'SELECT * FROM restaurant_reservations WHERE user_id = ? AND res_date = ? ORDER BY res_time ASC',
     [uid(), date]
   );
 
-  const totalCovers = reservations.reduce((sum: number, r: any) => sum + (r.num_people || 0), 0);
+  const totalCovers = reservations.reduce((sum, reservation) => sum + (reservation.num_people || 0), 0);
 
   return { date: date, reservations: reservations, total_covers: totalCovers, total_reservations: reservations.length };
 }
@@ -822,7 +1039,7 @@ export async function restaurant_cancel(args: {
   const { reservation_id } = args;
   if (!reservation_id) throw new Error('reservation_id is required');
 
-  const res = await ultralight.db.first(
+  const res: RestaurantReservationRow | null = await ultralight.db.first(
     'SELECT * FROM restaurant_reservations WHERE id = ? AND user_id = ?',
     [reservation_id, uid()]
   );
@@ -854,7 +1071,7 @@ export async function store_sell(args: {
 
   if (!product_id) throw new Error('product_id is required');
 
-  const product = await ultralight.db.first(
+  const product: StoreProductRow | null = await ultralight.db.first(
     'SELECT * FROM store_products WHERE id = ? AND user_id = ?',
     [product_id, uid()]
   );
@@ -895,7 +1112,7 @@ export async function store_inventory(args: {
   const { category, low_stock_only } = args;
 
   let sql = 'SELECT * FROM store_products WHERE user_id = ?';
-  const params: any[] = [uid()];
+  const params: SqlValue[] = [uid()];
 
   if (category) {
     sql += ' AND category = ?';
@@ -906,7 +1123,7 @@ export async function store_inventory(args: {
   }
 
   sql += ' ORDER BY category, name';
-  const products = await ultralight.db.all(sql, params);
+  const products: StoreProductRow[] = await ultralight.db.all(sql, params);
 
   return { products: products, total: products.length };
 }
@@ -932,7 +1149,7 @@ export async function store_manage(args: {
       'INSERT INTO store_products (id, user_id, name, category, brand, price, qty_available, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [id, uid(), name, category ? category.toLowerCase().trim() : null, brand || null, price || 0, qty_add || 0, now, now]
     );
-    const created = await ultralight.db.first('SELECT * FROM store_products WHERE id = ? AND user_id = ?', [id, uid()]);
+    const created: StoreProductRow | null = await ultralight.db.first('SELECT * FROM store_products WHERE id = ? AND user_id = ?', [id, uid()]);
     return { success: true, product: created };
   }
 
@@ -942,7 +1159,7 @@ export async function store_manage(args: {
       'UPDATE store_products SET qty_available = qty_available + ?, updated_at = ? WHERE id = ? AND user_id = ?',
       [qty_add, now, product_id, uid()]
     );
-    const updated = await ultralight.db.first('SELECT * FROM store_products WHERE id = ? AND user_id = ?', [product_id, uid()]);
+    const updated: StoreProductRow | null = await ultralight.db.first('SELECT * FROM store_products WHERE id = ? AND user_id = ?', [product_id, uid()]);
     return { success: true, product: updated };
   }
 
@@ -952,7 +1169,7 @@ export async function store_manage(args: {
       'UPDATE store_products SET price = ?, updated_at = ? WHERE id = ? AND user_id = ?',
       [price, now, product_id, uid()]
     );
-    const updated = await ultralight.db.first('SELECT * FROM store_products WHERE id = ? AND user_id = ?', [product_id, uid()]);
+    const updated: StoreProductRow | null = await ultralight.db.first('SELECT * FROM store_products WHERE id = ? AND user_id = ?', [product_id, uid()]);
     return { success: true, product: updated };
   }
 
@@ -970,7 +1187,7 @@ export async function store_sales(args: {
   const { date, guest_name, product_id, limit } = args;
 
   let sql = 'SELECT t.*, p.name as product_name, p.category as product_category FROM store_transactions t LEFT JOIN store_products p ON p.id = t.product_id AND p.user_id = t.user_id WHERE t.user_id = ?';
-  const params: any[] = [uid()];
+  const params: SqlValue[] = [uid()];
 
   if (date) {
     sql += ' AND DATE(t.created_at) = ?';
@@ -988,8 +1205,8 @@ export async function store_sales(args: {
   sql += ' ORDER BY t.created_at DESC LIMIT ?';
   params.push(limit || 50);
 
-  const transactions = await ultralight.db.all(sql, params);
-  const totalRevenue = transactions.reduce((sum: number, t: any) => sum + (t.payment_amount || 0), 0);
+  const transactions: StoreTransactionRow[] = await ultralight.db.all(sql, params);
+  const totalRevenue = transactions.reduce((sum, transaction) => sum + (transaction.payment_amount || 0), 0);
 
   return { transactions: transactions, total_revenue: totalRevenue, count: transactions.length };
 }
@@ -1049,23 +1266,23 @@ export async function guest_summary(args: {
   const ski_rentals = want('ski_rentals') ? await ultralight.db.all(
     'SELECT * FROM ski_rentals WHERE user_id = ? AND ' + filterCol + ' ' + filterOp + ' ORDER BY created_at DESC LIMIT 20',
     [uid(), filterParam]
-  ) : [];
+  ) as PaymentAmountRow[] : [];
   const ski_lessons = want('ski_lessons') ? await ultralight.db.all(
     'SELECT * FROM ski_lessons WHERE user_id = ? AND ' + filterCol + ' ' + filterOp + ' ORDER BY lesson_date DESC LIMIT 20',
     [uid(), filterParam]
-  ) : [];
+  ) as PaymentAmountRow[] : [];
   const golf_tee_times = want('tee_times') ? await ultralight.db.all(
     'SELECT * FROM tee_times WHERE user_id = ? AND ' + filterCol + ' ' + filterOp + ' ORDER BY tee_date DESC LIMIT 20',
     [uid(), filterParam]
-  ) : [];
+  ) as PaymentAmountRow[] : [];
   const restaurant = want('restaurant') ? await ultralight.db.all(
     'SELECT * FROM restaurant_reservations WHERE user_id = ? AND ' + filterCol + ' ' + filterOp + ' ORDER BY res_date DESC LIMIT 20',
     [uid(), filterParam]
-  ) : [];
+  ) as RestaurantReservationRow[] : [];
   const store = want('store') ? await ultralight.db.all(
     'SELECT * FROM store_transactions WHERE user_id = ? AND ' + filterCol + ' ' + filterOp + ' ORDER BY created_at DESC LIMIT 20',
     [uid(), filterParam]
-  ) : [];
+  ) as PaymentAmountRow[] : [];
 
   // Always calculate unpaid total (lightweight — uses counts if full data not fetched)
   let total_unpaid = 0;
@@ -1075,14 +1292,15 @@ export async function guest_summary(args: {
 
   if (want('billing') || wantAll) {
     // If we already fetched the data, sum from it
-    const sumUnpaid = (items: any[]) => items.filter((i: any) => i.payment_status === 'unpaid').reduce((s: number, i: any) => s + (i.payment_amount || 0), 0);
+    const sumUnpaid = <T extends { payment_status?: string; payment_amount?: number | null }>(items: T[]) =>
+      items.filter((item) => item.payment_status === 'unpaid').reduce((sum, item) => sum + (item.payment_amount || 0), 0);
 
     if (ski_rentals.length || ski_lessons.length || golf_tee_times.length || store.length) {
       total_unpaid += sumUnpaid(ski_rentals) + sumUnpaid(ski_lessons) + sumUnpaid(golf_tee_times) + sumUnpaid(store);
     } else {
       // Fetch just unpaid totals via aggregate queries
       const unpaidSum = async (table: string) => {
-        const row = await ultralight.db.first(
+        const row: TotalRow | null = await ultralight.db.first(
           'SELECT COALESCE(SUM(payment_amount), 0) as total FROM ' + table + ' WHERE user_id = ? AND ' + filterCol + ' ' + filterOp + ' AND payment_status = ?',
           [uid(), filterParam, 'unpaid']
         );
@@ -1133,7 +1351,7 @@ export async function guest_billing(args: {
   if (!itemized) {
     // Totals-only mode (default) — fast aggregate queries, minimal response
     const sumFrom = async (table: string) => {
-      const row = await ultralight.db.first(
+      const row: (NamedCountRow & TotalRow) | null = await ultralight.db.first(
         'SELECT COUNT(*) as count, COALESCE(SUM(payment_amount), 0) as total FROM ' + table + ' WHERE user_id = ? AND ' + filterCol + ' ' + filterOp + ' AND payment_status = ?',
         [uid(), filterParam, payStatus]
       );
@@ -1155,41 +1373,39 @@ export async function guest_billing(args: {
   }
 
   // Itemized mode — full line items
-  const roomItems = await ultralight.db.all(
+  const roomItems: PaymentAmountRow[] = await ultralight.db.all(
     'SELECT id, room_number, guest_name, payment_amount, payment_status FROM room_reservations WHERE user_id = ? AND ' + filterCol + ' ' + filterOp + ' AND payment_status = ? LIMIT 50',
     [uid(), filterParam, payStatus]
   );
-  const skiItems = await ultralight.db.all(
+  const skiItems: PaymentAmountRow[] = await ultralight.db.all(
     'SELECT id, room_number, guest_name, payment_amount, payment_status FROM ski_rentals WHERE user_id = ? AND ' + filterCol + ' ' + filterOp + ' AND payment_status = ? LIMIT 50',
     [uid(), filterParam, payStatus]
   );
-  const lessonItems = await ultralight.db.all(
+  const lessonItems: PaymentAmountRow[] = await ultralight.db.all(
     'SELECT id, room_number, guest_name, payment_amount, payment_status FROM ski_lessons WHERE user_id = ? AND ' + filterCol + ' ' + filterOp + ' AND payment_status = ? LIMIT 50',
     [uid(), filterParam, payStatus]
   );
-  const golfItems = await ultralight.db.all(
+  const golfItems: PaymentAmountRow[] = await ultralight.db.all(
     'SELECT id, room_number, guest_name, payment_amount, payment_status FROM tee_times WHERE user_id = ? AND ' + filterCol + ' ' + filterOp + ' AND payment_status = ? LIMIT 50',
     [uid(), filterParam, payStatus]
   );
-  const restItems = await ultralight.db.all(
+  const restItems: Pick<PaymentAmountRow, 'id' | 'payment_status'>[] = await ultralight.db.all(
     'SELECT id, room_number, guest_name, payment_status FROM restaurant_reservations WHERE user_id = ? AND ' + filterCol + ' ' + filterOp + ' AND payment_status = ? LIMIT 50',
     [uid(), filterParam, payStatus]
   );
-  const storeItems = await ultralight.db.all(
+  const storeItems: PaymentAmountRow[] = await ultralight.db.all(
     'SELECT id, room_number, guest_name, payment_amount, payment_status FROM store_transactions WHERE user_id = ? AND ' + filterCol + ' ' + filterOp + ' AND payment_status = ? LIMIT 50',
     [uid(), filterParam, payStatus]
   );
 
-  const sum = (items: any[]) => items.reduce((s: number, i: any) => s + (i.payment_amount || 0), 0);
-
   return {
-    rooms: { items: roomItems, subtotal: sum(roomItems) },
-    ski_rentals: { items: skiItems, subtotal: sum(skiItems) },
-    ski_lessons: { items: lessonItems, subtotal: sum(lessonItems) },
-    golf: { items: golfItems, subtotal: sum(golfItems) },
+    rooms: { items: roomItems, subtotal: sumPaymentAmounts(roomItems) },
+    ski_rentals: { items: skiItems, subtotal: sumPaymentAmounts(skiItems) },
+    ski_lessons: { items: lessonItems, subtotal: sumPaymentAmounts(lessonItems) },
+    golf: { items: golfItems, subtotal: sumPaymentAmounts(golfItems) },
     restaurant: { items: restItems, subtotal: 0 },
-    store: { items: storeItems, subtotal: sum(storeItems) },
-    grand_total: sum(roomItems) + sum(skiItems) + sum(lessonItems) + sum(golfItems) + sum(storeItems),
+    store: { items: storeItems, subtotal: sumPaymentAmounts(storeItems) },
+    grand_total: sumPaymentAmounts(roomItems) + sumPaymentAmounts(skiItems) + sumPaymentAmounts(lessonItems) + sumPaymentAmounts(golfItems) + sumPaymentAmounts(storeItems),
   };
 }
 
@@ -1201,44 +1417,44 @@ export async function report_daily(args: {
   const date = args.date || todayISO();
 
   // Occupancy
-  const totalRooms = await ultralight.db.first('SELECT COUNT(*) as cnt FROM rooms WHERE user_id = ?', [uid()]);
-  const occupiedRooms = await ultralight.db.first('SELECT COUNT(*) as cnt FROM rooms WHERE user_id = ? AND status = ?', [uid(), 'occupied']);
+  const totalRooms: CountRow | null = await ultralight.db.first('SELECT COUNT(*) as cnt FROM rooms WHERE user_id = ?', [uid()]);
+  const occupiedRooms: CountRow | null = await ultralight.db.first('SELECT COUNT(*) as cnt FROM rooms WHERE user_id = ? AND status = ?', [uid(), 'occupied']);
   const total = totalRooms ? totalRooms.cnt : 0;
   const occupied = occupiedRooms ? occupiedRooms.cnt : 0;
 
   // Check-ins and check-outs for this date
-  const checkIns = await ultralight.db.all(
+  const checkIns: RoomReservationRow[] = await ultralight.db.all(
     'SELECT * FROM room_reservations WHERE user_id = ? AND check_in_date = ? AND status IN (?, ?)',
     [uid(), date, 'confirmed', 'checked_in']
   );
-  const checkOuts = await ultralight.db.all(
+  const checkOuts: RoomReservationRow[] = await ultralight.db.all(
     'SELECT * FROM room_reservations WHERE user_id = ? AND check_out_date = ? AND status IN (?, ?)',
     [uid(), date, 'checked_in', 'checked_out']
   );
 
   // Active ski rentals
-  const activeRentals = await ultralight.db.first('SELECT COUNT(*) as cnt FROM ski_rentals WHERE user_id = ? AND status = ?', [uid(), 'active']);
+  const activeRentals: CountRow | null = await ultralight.db.first('SELECT COUNT(*) as cnt FROM ski_rentals WHERE user_id = ? AND status = ?', [uid(), 'active']);
 
   // Today's lessons
-  const lessons = await ultralight.db.all('SELECT * FROM ski_lessons WHERE user_id = ? AND lesson_date = ? ORDER BY lesson_time', [uid(), date]);
+  const lessons: LessonRow[] = await ultralight.db.all('SELECT * FROM ski_lessons WHERE user_id = ? AND lesson_date = ? ORDER BY lesson_time', [uid(), date]);
 
   // Today's tee times
-  const teeTimes = await ultralight.db.all('SELECT * FROM tee_times WHERE user_id = ? AND tee_date = ? ORDER BY tee_time', [uid(), date]);
+  const teeTimes: TeeTimeRow[] = await ultralight.db.all('SELECT * FROM tee_times WHERE user_id = ? AND tee_date = ? ORDER BY tee_time', [uid(), date]);
 
   // Restaurant covers
-  const restRow = await ultralight.db.first('SELECT COALESCE(SUM(num_people), 0) as covers FROM restaurant_reservations WHERE user_id = ? AND res_date = ?', [uid(), date]);
+  const restRow: CoversRow | null = await ultralight.db.first('SELECT COALESCE(SUM(num_people), 0) as covers FROM restaurant_reservations WHERE user_id = ? AND res_date = ?', [uid(), date]);
 
   // Store revenue today
-  const storeRow = await ultralight.db.first('SELECT COALESCE(SUM(payment_amount), 0) as revenue FROM store_transactions WHERE user_id = ? AND DATE(created_at) = ?', [uid(), date]);
+  const storeRow: { revenue: number } | null = await ultralight.db.first('SELECT COALESCE(SUM(payment_amount), 0) as revenue FROM store_transactions WHERE user_id = ? AND DATE(created_at) = ?', [uid(), date]);
 
   // Pending approvals
-  const pendingRow = await ultralight.db.first('SELECT COUNT(*) as cnt FROM approval_queue WHERE user_id = ? AND status = ?', [uid(), 'pending']);
+  const pendingRow: CountRow | null = await ultralight.db.first('SELECT COUNT(*) as cnt FROM approval_queue WHERE user_id = ? AND status = ?', [uid(), 'pending']);
 
   // Revenue by service today
-  const roomRev = await ultralight.db.first('SELECT COALESCE(SUM(payment_amount), 0) as rev FROM room_reservations WHERE user_id = ? AND payment_status = ? AND DATE(updated_at) = ?', [uid(), 'paid', date]);
-  const skiRev = await ultralight.db.first('SELECT COALESCE(SUM(payment_amount), 0) as rev FROM ski_rentals WHERE user_id = ? AND payment_status = ? AND DATE(updated_at) = ?', [uid(), 'paid', date]);
-  const lessonRev = await ultralight.db.first('SELECT COALESCE(SUM(payment_amount), 0) as rev FROM ski_lessons WHERE user_id = ? AND payment_status = ? AND DATE(updated_at) = ?', [uid(), 'paid', date]);
-  const golfRev = await ultralight.db.first('SELECT COALESCE(SUM(payment_amount), 0) as rev FROM tee_times WHERE user_id = ? AND payment_status = ? AND DATE(updated_at) = ?', [uid(), 'paid', date]);
+  const roomRev: RevenueRow | null = await ultralight.db.first('SELECT COALESCE(SUM(payment_amount), 0) as rev FROM room_reservations WHERE user_id = ? AND payment_status = ? AND DATE(updated_at) = ?', [uid(), 'paid', date]);
+  const skiRev: RevenueRow | null = await ultralight.db.first('SELECT COALESCE(SUM(payment_amount), 0) as rev FROM ski_rentals WHERE user_id = ? AND payment_status = ? AND DATE(updated_at) = ?', [uid(), 'paid', date]);
+  const lessonRev: RevenueRow | null = await ultralight.db.first('SELECT COALESCE(SUM(payment_amount), 0) as rev FROM ski_lessons WHERE user_id = ? AND payment_status = ? AND DATE(updated_at) = ?', [uid(), 'paid', date]);
+  const golfRev: RevenueRow | null = await ultralight.db.first('SELECT COALESCE(SUM(payment_amount), 0) as rev FROM tee_times WHERE user_id = ? AND payment_status = ? AND DATE(updated_at) = ?', [uid(), 'paid', date]);
 
   return {
     date: date,
@@ -1276,20 +1492,20 @@ export async function report_revenue(args: {
   const { start_date, end_date } = args;
   if (!start_date || !end_date) throw new Error('start_date and end_date are required');
 
-  const roomRev = await ultralight.db.first('SELECT COALESCE(SUM(payment_amount), 0) as rev FROM room_reservations WHERE user_id = ? AND check_in_date >= ? AND check_in_date <= ?', [uid(), start_date, end_date]);
-  const skiRev = await ultralight.db.first('SELECT COALESCE(SUM(payment_amount), 0) as rev FROM ski_rentals WHERE user_id = ? AND DATE(created_at) >= ? AND DATE(created_at) <= ?', [uid(), start_date, end_date]);
-  const lessonRev = await ultralight.db.first('SELECT COALESCE(SUM(payment_amount), 0) as rev FROM ski_lessons WHERE user_id = ? AND lesson_date >= ? AND lesson_date <= ?', [uid(), start_date, end_date]);
-  const golfRev = await ultralight.db.first('SELECT COALESCE(SUM(payment_amount), 0) as rev FROM tee_times WHERE user_id = ? AND tee_date >= ? AND tee_date <= ?', [uid(), start_date, end_date]);
-  const storeRev = await ultralight.db.first('SELECT COALESCE(SUM(payment_amount), 0) as rev FROM store_transactions WHERE user_id = ? AND DATE(created_at) >= ? AND DATE(created_at) <= ?', [uid(), start_date, end_date]);
+  const roomRev: RevenueRow | null = await ultralight.db.first('SELECT COALESCE(SUM(payment_amount), 0) as rev FROM room_reservations WHERE user_id = ? AND check_in_date >= ? AND check_in_date <= ?', [uid(), start_date, end_date]);
+  const skiRev: RevenueRow | null = await ultralight.db.first('SELECT COALESCE(SUM(payment_amount), 0) as rev FROM ski_rentals WHERE user_id = ? AND DATE(created_at) >= ? AND DATE(created_at) <= ?', [uid(), start_date, end_date]);
+  const lessonRev: RevenueRow | null = await ultralight.db.first('SELECT COALESCE(SUM(payment_amount), 0) as rev FROM ski_lessons WHERE user_id = ? AND lesson_date >= ? AND lesson_date <= ?', [uid(), start_date, end_date]);
+  const golfRev: RevenueRow | null = await ultralight.db.first('SELECT COALESCE(SUM(payment_amount), 0) as rev FROM tee_times WHERE user_id = ? AND tee_date >= ? AND tee_date <= ?', [uid(), start_date, end_date]);
+  const storeRev: RevenueRow | null = await ultralight.db.first('SELECT COALESCE(SUM(payment_amount), 0) as rev FROM store_transactions WHERE user_id = ? AND DATE(created_at) >= ? AND DATE(created_at) <= ?', [uid(), start_date, end_date]);
 
   // By payment method
-  const byMethod = await ultralight.db.all(
+  const byMethod: Array<{ payment_method: string | null; total: number }> = await ultralight.db.all(
     'SELECT payment_method, SUM(payment_amount) as total FROM room_reservations WHERE user_id = ? AND check_in_date >= ? AND check_in_date <= ? AND payment_method IS NOT NULL GROUP BY payment_method',
     [uid(), start_date, end_date]
   );
 
   // Unpaid total
-  const unpaidRow = await ultralight.db.first(
+  const unpaidRow: TotalRow | null = await ultralight.db.first(
     'SELECT COALESCE(SUM(payment_amount), 0) as total FROM room_reservations WHERE user_id = ? AND check_in_date >= ? AND check_in_date <= ? AND payment_status = ?',
     [uid(), start_date, end_date, 'unpaid']
   );
@@ -1327,7 +1543,7 @@ export async function guidelines_get(args: {
   const { key, category } = args;
 
   if (key) {
-    const row = await ultralight.db.first(
+    const row: GuidelineRow | null = await ultralight.db.first(
       'SELECT * FROM guidelines WHERE user_id = ? AND key = ?',
       [uid(), key]
     );
@@ -1335,7 +1551,7 @@ export async function guidelines_get(args: {
   }
 
   let sql = 'SELECT * FROM guidelines WHERE user_id = ?';
-  const params: any[] = [uid()];
+  const params: SqlValue[] = [uid()];
 
   if (category) {
     sql += ' AND category = ?';
@@ -1343,7 +1559,7 @@ export async function guidelines_get(args: {
   }
 
   sql += ' ORDER BY category, key';
-  const rows = await ultralight.db.all(sql, params);
+  const rows: GuidelineRow[] = await ultralight.db.all(sql, params);
 
   return { guidelines: rows, total: rows.length };
 }
@@ -1359,7 +1575,7 @@ export async function guidelines_set(args: {
   if (!key || !value) throw new Error('key and value are required');
 
   const now = nowISO();
-  const existing = await ultralight.db.first(
+  const existing: Pick<GuidelineRow, 'id'> | null = await ultralight.db.first(
     'SELECT id FROM guidelines WHERE user_id = ? AND key = ?',
     [uid(), key]
   );
@@ -1418,17 +1634,17 @@ export async function email_process(args: {
   }
 
   const now = nowISO();
-  const results: any[] = [];
+  const results: Array<Record<string, unknown>> = [];
 
   // Load guidelines for AI context
-  const allGuidelines = await ultralight.db.all(
+  const allGuidelines: Pick<GuidelineRow, 'key' | 'value' | 'category'>[] = await ultralight.db.all(
     'SELECT key, value, category FROM guidelines WHERE user_id = ?',
     [uid()]
   );
-  const guidelinesText = allGuidelines.map((g: any) => g.key + ': ' + g.value).join('\n');
+  const guidelinesText = allGuidelines.map((guideline) => guideline.key + ': ' + guideline.value).join('\n');
 
   // Check room availability for context
-  const availableRooms = await ultralight.db.first(
+  const availableRooms: CountRow | null = await ultralight.db.first(
     'SELECT COUNT(*) as cnt FROM rooms WHERE user_id = ? AND status = ?',
     [uid(), 'available']
   );
@@ -1457,11 +1673,11 @@ export async function email_process(args: {
         ],
       });
 
-      let classification: any;
+      let classification: EmailClassificationResult;
       try {
         const content = classifyResponse.content || classifyResponse.text || '';
         const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, content];
-        classification = JSON.parse(jsonMatch[1] || content);
+        classification = JSON.parse(jsonMatch[1] || content) as EmailClassificationResult;
       } catch (e) {
         classification = { classification: 'other', should_reply: false, reason: 'Failed to parse AI classification', priority: 'normal', db_changes: [] };
       }
@@ -1476,7 +1692,7 @@ export async function email_process(args: {
       if (classification.should_reply) {
         // Look up guest data if we can identify them
         let guestContext = '';
-        const guestReservation = await ultralight.db.first(
+        const guestReservation: Pick<RoomReservationRow, 'guest_name' | 'room_number' | 'check_in_date' | 'check_out_date'> | null = await ultralight.db.first(
           'SELECT * FROM room_reservations WHERE user_id = ? AND status IN (?, ?) ORDER BY check_in_date DESC LIMIT 1',
           [uid(), 'confirmed', 'checked_in']
         );
@@ -1621,7 +1837,7 @@ export async function email_log_list(args: {
   const { direction, status, limit } = args;
 
   let sql = 'SELECT id, direction, from_address, to_address, subject, classification, status, sent_at, created_at FROM email_log WHERE user_id = ?';
-  const params: any[] = [uid()];
+  const params: SqlValue[] = [uid()];
 
   if (direction) {
     sql += ' AND direction = ?';
@@ -1654,7 +1870,7 @@ export async function approvals_list(args: {
   const { type, limit } = args;
 
   let sql = 'SELECT * FROM approval_queue WHERE user_id = ? AND status = ?';
-  const params: any[] = [uid(), targetStatus];
+  const params: SqlValue[] = [uid(), targetStatus];
 
   if (type) {
     sql += ' AND type = ?';
@@ -1664,18 +1880,18 @@ export async function approvals_list(args: {
   sql += ' ORDER BY CASE priority WHEN \'high\' THEN 1 WHEN \'normal\' THEN 2 WHEN \'low\' THEN 3 END, created_at ASC LIMIT ?';
   params.push(limit || 20);
 
-  const approvals = await ultralight.db.all(sql, params);
+  const approvals: ApprovalQueueRow[] = await ultralight.db.all(sql, params);
 
   // Parse payloads
-  const parsed = approvals.map((a: any) => ({
-    ...a,
-    payload: JSON.parse(a.payload || '{}'),
+  const parsed: ParsedApprovalQueueRow[] = approvals.map((approval) => ({
+    ...approval,
+    payload: parseJsonObject(approval.payload),
   }));
 
   // Counts
-  const pendingRow = await ultralight.db.first('SELECT COUNT(*) as cnt FROM approval_queue WHERE user_id = ? AND status = ?', [uid(), 'pending']);
-  const todayApproved = await ultralight.db.first('SELECT COUNT(*) as cnt FROM approval_queue WHERE user_id = ? AND status = ? AND DATE(resolved_at) = ?', [uid(), 'executed', todayISO()]);
-  const todayRejected = await ultralight.db.first('SELECT COUNT(*) as cnt FROM approval_queue WHERE user_id = ? AND status = ? AND DATE(resolved_at) = ?', [uid(), 'rejected', todayISO()]);
+  const pendingRow: CountRow | null = await ultralight.db.first('SELECT COUNT(*) as cnt FROM approval_queue WHERE user_id = ? AND status = ?', [uid(), 'pending']);
+  const todayApproved: CountRow | null = await ultralight.db.first('SELECT COUNT(*) as cnt FROM approval_queue WHERE user_id = ? AND status = ? AND DATE(resolved_at) = ?', [uid(), 'executed', todayISO()]);
+  const todayRejected: CountRow | null = await ultralight.db.first('SELECT COUNT(*) as cnt FROM approval_queue WHERE user_id = ? AND status = ? AND DATE(resolved_at) = ?', [uid(), 'rejected', todayISO()]);
 
   return {
     approvals: parsed,
@@ -1701,16 +1917,16 @@ export async function approvals_act(args: {
   if (!approval_id || !action) throw new Error('approval_id and action are required');
   if (!['approve', 'reject', 'revise'].includes(action)) throw new Error('action must be "approve", "reject", or "revise"');
 
-  const approval = await ultralight.db.first(
+  const approval: ApprovalQueueRow | null = await ultralight.db.first(
     'SELECT * FROM approval_queue WHERE id = ? AND user_id = ?',
     [approval_id, uid()]
   );
   if (!approval) throw new Error('Approval not found: ' + approval_id);
   if (approval.status !== 'pending') throw new Error('Approval already resolved: ' + approval.status);
 
-  const payload = JSON.parse(approval.payload || '{}');
+  const payload = parseJsonObject(approval.payload);
   const now = nowISO();
-  let result: any = null;
+  let result: unknown = null;
 
   if (action === 'reject') {
     await ultralight.db.run(
@@ -1722,13 +1938,15 @@ export async function approvals_act(args: {
 
   // Approve or revise
   if (approval.type === 'email_reply') {
-    const emailBody = revision || payload.draft_body;
+    const emailBody = revision || (typeof payload.draft_body === 'string' ? payload.draft_body : '');
+    const to = typeof payload.to === 'string' ? payload.to : '';
+    const subject = typeof payload.subject === 'string' ? payload.subject : '';
     try {
       result = await email_send({
-        to: payload.to,
-        subject: payload.subject,
+        to,
+        subject,
         body: emailBody,
-        in_reply_to: approval.original_email_id,
+        in_reply_to: approval.original_email_id || undefined,
       });
     } catch (err) {
       // Still mark as executed but record the error
@@ -1754,18 +1972,19 @@ export async function approvals_act(args: {
     // Execute the proposed DB change
     // Note: We reconstruct the SQL from the structured payload for safety
     try {
-      if (payload.action === 'insert' && payload.table && payload.data) {
-        const keys = Object.keys(payload.data);
-        const vals = Object.values(payload.data);
+      const data = asRecord(payload.data);
+      if (payload.action === 'insert' && payload.table && data) {
+        const keys = Object.keys(data);
+        const vals = Object.values(data);
         const placeholders = keys.map(() => '?').join(', ');
         await ultralight.db.run(
           'INSERT INTO ' + payload.table + ' (id, user_id, ' + keys.join(', ') + ', created_at, updated_at) VALUES (?, ?, ' + placeholders + ', ?, ?)',
           [crypto.randomUUID(), uid(), ...vals, now, now]
         );
-        result = { table: payload.table, action: 'inserted', data: payload.data };
-      } else if (payload.action === 'update' && payload.table && payload.data && payload.data.id) {
-        const id = payload.data.id;
-        const updates = Object.entries(payload.data).filter(([k]) => k !== 'id');
+        result = { table: payload.table, action: 'inserted', data };
+      } else if (payload.action === 'update' && payload.table && data && data.id) {
+        const id = data.id;
+        const updates = Object.entries(data).filter(([key]) => key !== 'id');
         const setClauses = updates.map(([k]) => k + ' = ?').join(', ');
         const vals = updates.map(([_, v]) => v);
         await ultralight.db.run(
@@ -1798,7 +2017,7 @@ export async function approvals_act(args: {
 
 export async function db_browse(args: {
   sql: string;
-  params?: any[];
+  params?: unknown[];
   mode?: string;
 }): Promise<unknown> {
   const { sql, params, mode } = args;
@@ -1816,7 +2035,7 @@ export async function db_browse(args: {
 
   // Auto-inject user_id filtering — the SDK requires it
   let finalSql = sql;
-  const queryParams = params ? [...params] : [];
+  const queryParams: unknown[] = params ? [...params] : [];
 
   // If query doesn't already reference user_id, inject it
   if (!sql.toLowerCase().includes('user_id')) {
@@ -1851,7 +2070,7 @@ export async function db_browse(args: {
       finalSql += ' LIMIT 100';
     }
 
-    const rows = await ultralight.db.all(finalSql, queryParams);
+    const rows: Array<Record<string, unknown>> = await ultralight.db.all(finalSql, queryParams);
     return {
       rows: rows,
       meta: {
@@ -1876,11 +2095,11 @@ export async function db_tables(args: {}): Promise<unknown> {
     'store_products', 'store_transactions', 'guidelines', 'approval_queue', 'email_log',
   ];
 
-  const result: any[] = [];
+  const result: Array<{ name: string; row_count: number; error?: string }> = [];
 
   for (const table of tables) {
     try {
-      const countRow = await ultralight.db.first(
+      const countRow: CountRow | null = await ultralight.db.first(
         'SELECT COUNT(*) as cnt FROM ' + table + ' WHERE user_id = ?',
         [uid()]
       );

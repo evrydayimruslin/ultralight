@@ -2,8 +2,235 @@
 // Your personal AI tutor with quizzes, custom lessons, and progress tracking.
 // Storage: Ultralight D1 | Permissions: ai:call
 
-const ultralight = (globalThis as any).ultralight;
+const ultralight = globalThis.ultralight;
 const AI_MODEL = 'meta-llama/llama-4-scout';
+
+type SqlValue = string | number | null;
+type JsonObject = Record<string, unknown>;
+type QuizQuestionType = 'mc' | 'open';
+
+interface SubjectRow {
+  id: string;
+  name: string;
+  description: string;
+  source_material?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface ConceptRow {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  description: string;
+  subject_id: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface RatingRow {
+  concept_id: string;
+  understanding: number;
+  date: string;
+  notes?: string | null;
+}
+
+interface StudentProfileRow {
+  id: string;
+  subject_id: string | null;
+  strengths: string | null;
+  weaknesses: string | null;
+  avg_score: number;
+  quiz_count: number;
+  learning_notes?: string | null;
+  updated_at?: string;
+}
+
+interface QuizSessionRow {
+  id: string;
+  subject_id: string | null;
+  status: string;
+  total_questions: number;
+  score_pct: number | null;
+  correct_count: number | null;
+  assessment_json?: string | null;
+  started_at?: string;
+  completed_at?: string | null;
+  generated_at?: string | null;
+}
+
+interface QuizSessionWithSubjectRow extends QuizSessionRow {
+  subject_name: string | null;
+}
+
+interface QuizAnswerRow {
+  id: string;
+  session_id: string;
+  concept_id: string | null;
+  question: string;
+  options: string | null;
+  correct_answer: string;
+  explanation: string;
+  question_type: QuizQuestionType | null;
+  rubric: string | null;
+  sort_order: number;
+  user_answer?: string | null;
+  is_correct?: number | null;
+  score?: number | null;
+  feedback?: string | null;
+  misconceptions?: string | null;
+  answered_at?: string | null;
+  time_seconds?: number | null;
+  target_words?: number | null;
+}
+
+interface QuizAnswerWithConceptRow extends QuizAnswerRow {
+  concept_name: string | null;
+  subject_id: string | null;
+}
+
+interface ConventionRow {
+  id?: string;
+  key: string;
+  value: string;
+  category: string | null;
+}
+
+interface LessonRow {
+  id: string;
+  subject_id: string | null;
+  quiz_session_id?: string | null;
+  title: string;
+  content?: string;
+  weak_concepts: string | null;
+  status: string | null;
+  created_at: string;
+  subject_name?: string | null;
+}
+
+interface CountRow {
+  count: number;
+}
+
+interface CntRow {
+  cnt: number;
+}
+
+interface ConceptStudyItem {
+  concept_id: string;
+  name: string;
+  description: string;
+  subject_id: string | null;
+  last_rating: number | null;
+  days_since_review: number | null;
+  priority: number;
+}
+
+interface ConceptTreeNode extends ConceptRow {
+  children: ConceptTreeNode[];
+}
+
+interface QuickStartConcept {
+  name: string;
+  description?: string;
+}
+
+interface QuickStartExtraction {
+  subject: string;
+  concepts: QuickStartConcept[];
+  summary?: string;
+}
+
+type QuickStartUserMessage =
+  | string
+  | Array<{ type: 'text'; text: string } | { type: 'file'; data: string; filename?: string }>;
+
+interface GeneratedQuizQuestion {
+  type?: QuizQuestionType;
+  question: string;
+  options?: string[];
+  correct?: string;
+  explanation?: string;
+  rubric?: string;
+  concept?: string;
+  target_words?: number;
+}
+
+interface FluencyAssessment {
+  level: string;
+  notes?: string;
+  sophistication: number;
+  above_quiz_level?: boolean;
+}
+
+interface OpenAnswerGrade {
+  q: number;
+  score: number;
+  is_correct: boolean;
+  feedback?: string;
+  misconceptions?: string[];
+}
+
+interface BatchGradingResponse {
+  grades?: OpenAnswerGrade[];
+  fluency?: FluencyAssessment;
+}
+
+interface PerConceptAssessment {
+  correct: number;
+  total: number;
+  mastery: number;
+  avg_score: number;
+  time_avg_s: number | null;
+  prev_mastery?: number;
+  delta?: number;
+}
+
+interface QuizAssessment {
+  per_concept: Record<string, PerConceptAssessment>;
+  timing: {
+    total_s: number;
+    avg_per_question_s: number | null;
+  };
+  improvement: {
+    prev_score: number;
+    delta: number;
+    improved: string[];
+    regressed: string[];
+  } | null;
+  misconceptions: string[];
+  overall_mastery: number;
+  fluency: FluencyAssessment | null;
+}
+
+interface WidgetProgressData extends Record<string, unknown> {
+  pending_quizzes: QuizSessionWithSubjectRow[];
+  unread_lessons: LessonRow[];
+}
+
+function parseStringArray(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function extractJsonText(raw: string): string {
+  return raw.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+}
+
+function parseJsonObject(value: string | null | undefined): JsonObject | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as JsonObject : null;
+  } catch {
+    return null;
+  }
+}
 
 function uid(): string { return ultralight.user.id; }
 function now(): string { return new Date().toISOString(); }
@@ -22,7 +249,7 @@ export async function add_concept(args: {
 
   let subjectId = null;
   if (subject) {
-    const existing = await ultralight.db.first(
+    const existing: Pick<SubjectRow, 'id'> | null = await ultralight.db.first(
       'SELECT id FROM subjects WHERE user_id = ? AND LOWER(name) = ?',
       [uid(), subject.toLowerCase()]
     );
@@ -49,7 +276,7 @@ export async function rate(args: {
   concept_id: string; understanding: number; notes?: string;
 }): Promise<unknown> {
   const { concept_id, understanding, notes } = args;
-  const concept = await ultralight.db.first(
+  const concept: ConceptRow | null = await ultralight.db.first(
     'SELECT * FROM concepts WHERE id = ? AND user_id = ?', [concept_id, uid()]
   );
   if (!concept) return { success: false, error: 'Concept not found: ' + concept_id };
@@ -69,15 +296,15 @@ export async function study(args: { subject_id?: string; limit?: number }): Prom
   const todayDate = new Date();
 
   let sql = 'SELECT * FROM concepts WHERE user_id = ?';
-  const params: any[] = [uid()];
+  const params: SqlValue[] = [uid()];
   if (subject_id) { sql += ' AND subject_id = ?'; params.push(subject_id); }
-  const concepts = await ultralight.db.all(sql, params);
+  const concepts: ConceptRow[] = await ultralight.db.all(sql, params);
 
-  const items: any[] = [];
-  for (const c of concepts) {
-    const last = await ultralight.db.first(
+  const items: ConceptStudyItem[] = [];
+  for (const concept of concepts) {
+    const last: RatingRow | null = await ultralight.db.first(
       'SELECT understanding, date FROM ratings WHERE user_id = ? AND concept_id = ? ORDER BY date DESC LIMIT 1',
-      [uid(), c.id]
+      [uid(), concept.id]
     );
     let priority = 100;
     let lastRating: number | null = null;
@@ -88,7 +315,7 @@ export async function study(args: { subject_id?: string; limit?: number }): Prom
       const ideal = Math.pow(2, lastRating! - 1);
       priority = Math.max(0, (daysSince / ideal) * (6 - lastRating!) * 10);
     }
-    items.push({ concept_id: c.id, name: c.name, description: c.description, subject_id: c.subject_id, last_rating: lastRating, days_since_review: daysSince, priority: Math.round(priority) });
+    items.push({ concept_id: concept.id, name: concept.name, description: concept.description, subject_id: concept.subject_id, last_rating: lastRating, days_since_review: daysSince, priority: Math.round(priority) });
   }
 
   items.sort((a, b) => b.priority - a.priority);
@@ -97,16 +324,16 @@ export async function study(args: { subject_id?: string; limit?: number }): Prom
 
 export async function tree(args: { subject_id?: string }): Promise<unknown> {
   let sql = 'SELECT * FROM concepts WHERE user_id = ?';
-  const params: any[] = [uid()];
+  const params: SqlValue[] = [uid()];
   if (args.subject_id) { sql += ' AND subject_id = ?'; params.push(args.subject_id); }
-  const concepts = await ultralight.db.all(sql, params);
+  const concepts: ConceptRow[] = await ultralight.db.all(sql, params);
 
-  const byId: Record<string, any> = {};
-  for (const c of concepts) byId[c.id] = { ...c, children: [] };
-  const roots: any[] = [];
-  for (const c of concepts) {
-    if (c.parent_id && byId[c.parent_id]) byId[c.parent_id].children.push(byId[c.id]);
-    else roots.push(byId[c.id]);
+  const byId: Record<string, ConceptTreeNode> = {};
+  for (const concept of concepts) byId[concept.id] = { ...concept, children: [] };
+  const roots: ConceptTreeNode[] = [];
+  for (const concept of concepts) {
+    if (concept.parent_id && byId[concept.parent_id]) byId[concept.parent_id].children.push(byId[concept.id]);
+    else roots.push(byId[concept.id]);
   }
   return { tree: roots, total_concepts: concepts.length, root_concepts: roots.length };
 }
@@ -136,7 +363,7 @@ export async function quick_start(args: {
   const extractInstruction = `Analyze this study material and extract a subject name and 3-8 key concepts with descriptions.\n\n${textInput}\nRespond with ONLY valid JSON, no markdown fences:\n{"subject":"subject name","concepts":[{"name":"concept name","description":"1-2 sentence description"}],"summary":"2-3 paragraph summary of the material for future reference"}`;
 
   // Build user message — multimodal for images, plain text otherwise
-  let userMessage: any;
+  let userMessage: QuickStartUserMessage;
   if (isImage && file_content) {
     // Multimodal: text instruction + image content
     const imageUrl = file_content.startsWith('data:') ? file_content : `data:image/${fileExt || 'png'};base64,${file_content}`;
@@ -148,7 +375,7 @@ export async function quick_start(args: {
     userMessage = extractInstruction;
   }
 
-  let extracted: any;
+  let extracted: QuickStartExtraction;
   try {
     const response = await ultralight.ai({
       model: AI_MODEL,
@@ -158,8 +385,8 @@ export async function quick_start(args: {
         { role: 'user', content: userMessage },
       ],
     });
-    const text = response.content.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
-    extracted = JSON.parse(text);
+    const text = extractJsonText(response.content || '');
+    extracted = JSON.parse(text) as QuickStartExtraction;
     if (!extracted.subject || !Array.isArray(extracted.concepts)) throw new Error('Bad format');
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e);
@@ -170,7 +397,7 @@ export async function quick_start(args: {
   const ts = now();
 
   // Create or find subject
-  const existingSubject = await ultralight.db.first(
+  const existingSubject: Pick<SubjectRow, 'id'> | null = await ultralight.db.first(
     'SELECT id FROM subjects WHERE user_id = ? AND LOWER(name) = ?',
     [uid(), extracted.subject.toLowerCase()]
   );
@@ -185,14 +412,14 @@ export async function quick_start(args: {
   }
 
   // Create concepts
-  const conceptList: any[] = [];
-  for (const c of extracted.concepts) {
+  const conceptList: Array<{ id: string; name: string; description?: string }> = [];
+  for (const concept of extracted.concepts) {
     const cId = crypto.randomUUID();
     await ultralight.db.run(
       'INSERT INTO concepts (id, user_id, name, parent_id, description, subject_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [cId, uid(), c.name, null, c.description || '', subjectId, ts, ts]
+      [cId, uid(), concept.name, null, concept.description || '', subjectId, ts, ts]
     );
-    conceptList.push({ id: cId, name: c.name, description: c.description });
+    conceptList.push({ id: cId, name: concept.name, description: concept.description });
   }
 
   return {
@@ -225,36 +452,36 @@ function decodeFileContent(content: string, filename: string): string | null {
 }
 
 export async function status(args: { subject_id?: string }): Promise<unknown> {
-  const subjects = await ultralight.db.all('SELECT * FROM subjects WHERE user_id = ?', [uid()]);
-  const conceptCount = await ultralight.db.first('SELECT COUNT(*) as count FROM concepts WHERE user_id = ?', [uid()]);
+  const subjects: SubjectRow[] = await ultralight.db.all('SELECT * FROM subjects WHERE user_id = ?', [uid()]);
+  const conceptCount: CountRow | null = await ultralight.db.first('SELECT COUNT(*) as count FROM concepts WHERE user_id = ?', [uid()]);
 
   // Per-subject mastery from student_profiles
-  const profiles = await ultralight.db.all('SELECT * FROM student_profiles WHERE user_id = ? ORDER BY updated_at DESC', [uid()]);
+  const profiles: StudentProfileRow[] = await ultralight.db.all('SELECT * FROM student_profiles WHERE user_id = ? ORDER BY updated_at DESC', [uid()]);
 
   // Recent quizzes
-  const recentQuizzes = await ultralight.db.all(
+  const recentQuizzes: QuizSessionWithSubjectRow[] = await ultralight.db.all(
     'SELECT qs.*, s.name as subject_name FROM quiz_sessions qs LEFT JOIN subjects s ON qs.subject_id = s.id WHERE qs.user_id = ? AND qs.status = ? ORDER BY qs.started_at DESC LIMIT 5',
     [uid(), 'completed']
   );
 
   // Overall average — most recent rating per concept
-  const lastRatings = await ultralight.db.all(
+  const lastRatings: Array<Pick<RatingRow, 'concept_id' | 'understanding'>> = await ultralight.db.all(
     'SELECT concept_id, understanding FROM ratings WHERE user_id = ? GROUP BY concept_id ORDER BY MAX(date) DESC',
     [uid()]
   );
   const ratedCount = lastRatings.length;
-  const avgUnderstanding = ratedCount > 0 ? Math.round((lastRatings.reduce((s: number, r: any) => s + r.understanding, 0) / ratedCount) * 10) / 10 : null;
+  const avgUnderstanding = ratedCount > 0 ? Math.round((lastRatings.reduce((sum, rating) => sum + rating.understanding, 0) / ratedCount) * 10) / 10 : null;
 
   return {
     total_subjects: subjects.length,
-    subjects: subjects.map((s: any) => {
-      const p = profiles.find((p: any) => p.subject_id === s.id);
-      return { id: s.id, name: s.name, mastery: p?.avg_score || null, quiz_count: p?.quiz_count || 0, strengths: p ? JSON.parse(p.strengths || '[]') : [], weaknesses: p ? JSON.parse(p.weaknesses || '[]') : [] };
+    subjects: subjects.map((subject) => {
+      const profile = profiles.find((item) => item.subject_id === subject.id);
+      return { id: subject.id, name: subject.name, mastery: profile?.avg_score || null, quiz_count: profile?.quiz_count || 0, strengths: profile ? parseStringArray(profile.strengths) : [], weaknesses: profile ? parseStringArray(profile.weaknesses) : [] };
     }),
     total_concepts: conceptCount?.count || 0,
     concepts_rated: ratedCount,
     average_understanding: avgUnderstanding,
-    recent_quizzes: recentQuizzes.map((q: any) => ({ id: q.id, subject: q.subject_name, score: q.score_pct, questions: q.total_questions, correct: q.correct_count, date: q.started_at })),
+    recent_quizzes: recentQuizzes.map((quiz) => ({ id: quiz.id, subject: quiz.subject_name, score: quiz.score_pct, questions: quiz.total_questions, correct: quiz.correct_count, date: quiz.started_at })),
     profiles,
   };
 }
@@ -265,19 +492,19 @@ export async function quiz(args: {
   subject_id?: string; concept_ids?: string[]; count?: number;
 }): Promise<unknown> {
   const { subject_id, concept_ids, count } = args;
-  let concepts: any[] = [];
+  let concepts: ConceptRow[] = [];
   if (concept_ids?.length) {
     const ph = concept_ids.map(() => '?').join(',');
     concepts = await ultralight.db.all(`SELECT * FROM concepts WHERE user_id = ? AND id IN (${ph})`, [uid(), ...concept_ids]);
   } else {
     let sql = 'SELECT * FROM concepts WHERE user_id = ?';
-    const params: any[] = [uid()];
+    const params: SqlValue[] = [uid()];
     if (subject_id) { sql += ' AND subject_id = ?'; params.push(subject_id); }
     concepts = await ultralight.db.all(sql, params);
   }
   if (concepts.length === 0) return { success: false, error: 'No concepts found to quiz on.' };
 
-  const conceptNames = concepts.slice(0, 10).map((c: any) => c.name + (c.description ? ' — ' + c.description : ''));
+  const conceptNames = concepts.slice(0, 10).map((concept) => concept.name + (concept.description ? ' — ' + concept.description : ''));
   const prompt = 'Generate ' + (count || 5) + ' quiz questions about these concepts:\n' + conceptNames.join('\n') +
     '\n\nFor each question provide: the question, 4 multiple-choice options, the correct answer, and a brief explanation. Respond with ONLY valid JSON, no markdown. Format: [{"question": "...", "options": ["A", "B", "C", "D"], "correct": "A", "explanation": "..."}]';
 
@@ -289,9 +516,9 @@ export async function quiz(args: {
         { role: 'user', content: prompt },
       ],
     });
-    const text = response.content.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
-    const questions = JSON.parse(text);
-    return { questions, count: questions.length, concepts_tested: concepts.slice(0, 10).map((c: any) => c.name) };
+    const text = extractJsonText(response.content || '');
+    const questions = JSON.parse(text) as GeneratedQuizQuestion[];
+    return { questions, count: questions.length, concepts_tested: concepts.slice(0, 10).map((concept) => concept.name) };
   } catch (e) {
     return { success: false, error: 'Could not generate quiz. Try again.' };
   }
@@ -302,13 +529,13 @@ export async function quiz(args: {
 // ════════════════════════════════════════════════════════════════════════════
 
 async function getStudentContext(subjectId?: string): Promise<string> {
-  const profile = subjectId
+  const profile: StudentProfileRow | null = subjectId
     ? await ultralight.db.first('SELECT * FROM student_profiles WHERE user_id = ? AND subject_id = ?', [uid(), subjectId])
     : await ultralight.db.first('SELECT * FROM student_profiles WHERE user_id = ? AND subject_id IS NULL', [uid()]);
 
   if (!profile) return '';
-  const strengths = JSON.parse(profile.strengths || '[]');
-  const weaknesses = JSON.parse(profile.weaknesses || '[]');
+  const strengths = parseStringArray(profile.strengths);
+  const weaknesses = parseStringArray(profile.weaknesses);
   let ctx = '';
   if (weaknesses.length) ctx += `Student struggles with: ${weaknesses.join(', ')}. Focus questions on these areas.\n`;
   if (strengths.length) ctx += `Student is strong in: ${strengths.join(', ')}. Include some challenging questions on these.\n`;
@@ -324,53 +551,55 @@ async function getStudentContext(subjectId?: string): Promise<string> {
 interface CourseContext {
   subject: { id: string; name: string; concept_count: number };
   student: { strengths: string[]; weaknesses: string[]; avg_score: number; quiz_count: number };
-  timeline: Array<{ type: string; date: string; score_pct?: number; title?: string; concepts?: string[] }>;
+  timeline: Array<{ type: string; date: string; score_pct?: number | null; title?: string; concepts?: string[] }>;
   concept_mastery: Record<string, { current_rating: number; times_tested: number; correct_pct: number; avg_time_s: number | null; misconceptions: string[] }>;
   prompt_text: string;
 }
 
 async function buildCourseContext(subjectId: string): Promise<CourseContext> {
   // Subject info
-  const subject = await ultralight.db.first('SELECT id, name, description FROM subjects WHERE id = ? AND user_id = ?', [subjectId, uid()]);
-  const concepts = await ultralight.db.all('SELECT id, name, description FROM concepts WHERE user_id = ? AND subject_id = ?', [uid(), subjectId]);
+  const subject: Pick<SubjectRow, 'id' | 'name' | 'description'> | null = await ultralight.db.first('SELECT id, name, description FROM subjects WHERE id = ? AND user_id = ?', [subjectId, uid()]);
+  const concepts: Array<Pick<ConceptRow, 'id' | 'name' | 'description'>> = await ultralight.db.all('SELECT id, name, description FROM concepts WHERE user_id = ? AND subject_id = ?', [uid(), subjectId]);
 
   // All completed quizzes chronologically
-  const quizzes = await ultralight.db.all(
+  const quizzes: QuizSessionRow[] = await ultralight.db.all(
     'SELECT id, score_pct, correct_count, total_questions, started_at, completed_at, assessment_json FROM quiz_sessions WHERE user_id = ? AND subject_id = ? AND status = ? ORDER BY completed_at ASC',
     [uid(), subjectId, 'completed']
   );
 
   // All lessons for subject
-  const lessons = await ultralight.db.all(
+  const lessons: Array<Pick<LessonRow, 'id' | 'title' | 'weak_concepts' | 'created_at' | 'status'>> = await ultralight.db.all(
     'SELECT id, title, weak_concepts, created_at, status FROM lessons WHERE user_id = ? AND subject_id = ? ORDER BY created_at ASC',
     [uid(), subjectId]
   );
 
   // Student profile
-  const profile = await ultralight.db.first('SELECT * FROM student_profiles WHERE user_id = ? AND subject_id = ?', [uid(), subjectId]);
-  const strengths = profile ? JSON.parse(profile.strengths || '[]') : [];
-  const weaknesses = profile ? JSON.parse(profile.weaknesses || '[]') : [];
+  const profile: StudentProfileRow | null = await ultralight.db.first('SELECT * FROM student_profiles WHERE user_id = ? AND subject_id = ?', [uid(), subjectId]);
+  const strengths = profile ? parseStringArray(profile.strengths) : [];
+  const weaknesses = profile ? parseStringArray(profile.weaknesses) : [];
 
   // Per-concept data: mastery, test frequency, misconceptions, timing
   const conceptMastery: CourseContext['concept_mastery'] = {};
   for (const c of concepts) {
-    const rating = await ultralight.db.first('SELECT understanding FROM ratings WHERE user_id = ? AND concept_id = ? ORDER BY date DESC LIMIT 1', [uid(), c.id]);
-    const answerStats = await ultralight.db.first(
+    const rating: Pick<RatingRow, 'understanding'> | null = await ultralight.db.first('SELECT understanding FROM ratings WHERE user_id = ? AND concept_id = ? ORDER BY date DESC LIMIT 1', [uid(), c.id]);
+    const answerStats: { total: number; correct: number; avg_time: number | null } | null = await ultralight.db.first(
       'SELECT COUNT(*) as total, SUM(CASE WHEN qa.is_correct = 1 THEN 1 ELSE 0 END) as correct, AVG(qa.time_seconds) as avg_time FROM quiz_answers qa JOIN quiz_sessions qs ON qa.session_id = qs.id WHERE qa.user_id = ? AND qa.concept_id = ? AND qs.subject_id = ?',
       [uid(), c.id, subjectId]
     );
     // Collect misconceptions for this concept
-    const misconceptionRows = await ultralight.db.all(
+    const misconceptionRows: Array<Pick<QuizAnswerRow, 'misconceptions'>> = await ultralight.db.all(
       'SELECT qa.misconceptions FROM quiz_answers qa JOIN quiz_sessions qs ON qa.session_id = qs.id WHERE qa.user_id = ? AND qa.concept_id = ? AND qa.misconceptions IS NOT NULL AND qs.subject_id = ? ORDER BY qa.answered_at DESC LIMIT 5',
       [uid(), c.id, subjectId]
     );
     const conceptMisconceptions: string[] = [];
-    for (const r of misconceptionRows) { try { conceptMisconceptions.push(...JSON.parse(r.misconceptions)); } catch {} }
+    for (const row of misconceptionRows) conceptMisconceptions.push(...parseStringArray(row.misconceptions));
+    const answerTotal = answerStats?.total || 0;
+    const answerCorrect = answerStats?.correct || 0;
 
     conceptMastery[c.name] = {
       current_rating: rating?.understanding || 0,
-      times_tested: answerStats?.total || 0,
-      correct_pct: answerStats?.total > 0 ? Math.round((answerStats.correct / answerStats.total) * 100) : 0,
+      times_tested: answerTotal,
+      correct_pct: answerTotal > 0 ? Math.round((answerCorrect / answerTotal) * 100) : 0,
       avg_time_s: answerStats?.avg_time ? Math.round(answerStats.avg_time) : null,
       misconceptions: [...new Set(conceptMisconceptions)].slice(0, 5),
     };
@@ -379,26 +608,22 @@ async function buildCourseContext(subjectId: string): Promise<CourseContext> {
   // Build timeline
   const timeline: CourseContext['timeline'] = [];
   for (const q of quizzes) {
-    let weak: string[] = [], strong: string[] = [];
-    try { const a = JSON.parse(q.assessment_json || '{}'); weak = a.improvement?.regressed || []; strong = a.improvement?.improved || []; } catch {}
-    timeline.push({ type: 'quiz', date: q.completed_at, score_pct: q.score_pct });
+    timeline.push({ type: 'quiz', date: q.completed_at || q.started_at || q.generated_at || '', score_pct: q.score_pct });
   }
   for (const l of lessons) {
-    let lc: string[] = [];
-    try { lc = JSON.parse(l.weak_concepts || '[]'); } catch {}
+    const lc = parseStringArray(l.weak_concepts);
     timeline.push({ type: 'lesson', date: l.created_at, title: l.title, concepts: lc });
   }
   timeline.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 
   // Build prompt text (concise summary for AI, ~1500 tokens max)
-  const scoreTrajectory = quizzes.map((q: any) => `${q.score_pct}%`).join(' → ');
+  const scoreTrajectory = quizzes.map((quiz) => `${quiz.score_pct}%`).join(' → ');
   // Extract latest fluency assessment from most recent quiz
-  let latestFluency: any = null;
+  let latestFluency: FluencyAssessment | null = null;
   for (let qi = quizzes.length - 1; qi >= 0; qi--) {
-    try {
-      const a = JSON.parse(quizzes[qi].assessment_json || '{}');
-      if (a.fluency) { latestFluency = a.fluency; break; }
-    } catch {}
+    const parsed = parseJsonObject(quizzes[qi].assessment_json);
+    const fluency = parsed?.fluency as FluencyAssessment | undefined;
+    if (fluency) { latestFluency = fluency; break; }
   }
 
   let prompt = `## Course: ${subject?.name || 'Unknown'}\n`;
@@ -431,8 +656,7 @@ async function buildCourseContext(subjectId: string): Promise<CourseContext> {
   if (lessons.length > 0) {
     prompt += `\n## Previous Lessons\n`;
     for (const l of lessons.slice(-5)) {
-      let lc: string[] = [];
-      try { lc = JSON.parse(l.weak_concepts || '[]'); } catch {}
+      const lc = parseStringArray(l.weak_concepts);
       prompt += `- ${l.title} (${l.created_at?.split('T')[0] || ''}): covered ${lc.join(', ')}\n`;
     }
   }
@@ -457,13 +681,13 @@ export async function start_quiz(args: {
   let qCount = Math.min(count || 5, 15);
 
   // Gather concepts (prefer weak ones via spaced repetition priority)
-  let concepts: any[] = [];
+  let concepts: ConceptRow[] = [];
   if (concept_ids?.length) {
     const ph = concept_ids.map(() => '?').join(',');
     concepts = await ultralight.db.all(`SELECT * FROM concepts WHERE user_id = ? AND id IN (${ph})`, [uid(), ...concept_ids]);
   } else {
-    const studyResult = await study({ subject_id, limit: qCount * 2 });
-    const ids = (studyResult as any).to_study.map((s: any) => s.concept_id);
+    const studyResult = await study({ subject_id, limit: qCount * 2 }) as { to_study?: ConceptStudyItem[] };
+    const ids = (studyResult.to_study || []).map((item) => item.concept_id);
     if (ids.length > 0) {
       const ph = ids.map(() => '?').join(',');
       concepts = await ultralight.db.all(`SELECT * FROM concepts WHERE user_id = ? AND id IN (${ph})`, [uid(), ...ids]);
@@ -476,10 +700,10 @@ export async function start_quiz(args: {
   let courseCtx = '';
   if (subject_id) {
     try {
-      const cached = await ultralight.db.first('SELECT value FROM conventions WHERE user_id = ? AND key = ?', [uid(), `course_context:${subject_id}`]);
+      const cached: Pick<ConventionRow, 'value'> | null = await ultralight.db.first('SELECT value FROM conventions WHERE user_id = ? AND key = ?', [uid(), `course_context:${subject_id}`]);
       if (cached?.value) {
-        const ctx = JSON.parse(cached.value);
-        courseCtx = ctx.prompt_text || '';
+        const ctx = parseJsonObject(cached.value);
+        courseCtx = typeof ctx?.prompt_text === 'string' ? ctx.prompt_text : '';
       }
     } catch {}
   }
@@ -487,16 +711,17 @@ export async function start_quiz(args: {
 
   // Adaptive difficulty based on mastery level
   let mastery = 0;
-  let parsedCtx: any = null;
+  let parsedCtx: JsonObject | null = null;
   if (subject_id) {
     try {
-      const cached = await ultralight.db.first('SELECT value FROM conventions WHERE user_id = ? AND key = ?', [uid(), `course_context:${subject_id}`]);
-      if (cached?.value) parsedCtx = JSON.parse(cached.value);
+      const cached: Pick<ConventionRow, 'value'> | null = await ultralight.db.first('SELECT value FROM conventions WHERE user_id = ? AND key = ?', [uid(), `course_context:${subject_id}`]);
+      if (cached?.value) parsedCtx = parseJsonObject(cached.value);
     } catch {}
   }
-  if (parsedCtx?.student?.avg_score) mastery = parsedCtx.student.avg_score;
+  const parsedStudent = parsedCtx?.student as { avg_score?: number } | undefined;
+  if (parsedStudent?.avg_score) mastery = parsedStudent.avg_score;
   else {
-    const profile = await ultralight.db.first('SELECT avg_score FROM student_profiles WHERE user_id = ? AND subject_id = ?', [uid(), subject_id]);
+    const profile: Pick<StudentProfileRow, 'avg_score'> | null = await ultralight.db.first('SELECT avg_score FROM student_profiles WHERE user_id = ? AND subject_id = ?', [uid(), subject_id]);
     if (profile?.avg_score) mastery = profile.avg_score;
   }
 
@@ -513,16 +738,16 @@ export async function start_quiz(args: {
     difficulty = 'introductory'; qCount = Math.min(qCount, 3); targetWordCount = 40;
   }
 
-  const conceptList = concepts.slice(0, 10).map((c: any) => {
-    const desc = c.description ? ` — ${c.description}` : '';
-    return `- ${c.name}${desc}`;
+  const conceptList = concepts.slice(0, 10).map((concept) => {
+    const desc = concept.description ? ` — ${concept.description}` : '';
+    return `- ${concept.name}${desc}`;
   }).join('\n');
 
   const mcCount = Math.max(2, Math.ceil(qCount * 0.5));
   const openCount = qCount - mcCount;
   const prompt = `${courseCtx}\n\nStudent mastery on this subject: ${Math.round(mastery)}%\n\nGenerate exactly ${qCount} quiz questions about these concepts:\n${conceptList}\n\nGenerate ${mcCount} multiple-choice and ${openCount} open-ended questions. Mix them together.\n\nCalibrate difficulty to this student's demonstrated level (see fluency profile above if available). Do NOT use a universal difficulty scale — a 30% score from a graduate student means very different questions than a 90% score from a middle schooler. Match the vocabulary, abstraction level, and reasoning demands to what THIS student has demonstrated they can handle.\n\nFor open-ended questions, include "target_words":${targetWordCount} in the JSON.\n\nAvoid repeating questions from previous quizzes.\n\nMultiple-choice format: {"type":"mc","question":"...","options":["A)...","B)...","C)...","D)..."],"correct":"A","explanation":"...","concept":"concept name"}\nOpen-ended format: {"type":"open","question":"...","rubric":"what a good answer includes","target_words":${targetWordCount},"concept":"concept name"}\n\nRespond with ONLY valid JSON array, no markdown fences.`;
 
-  let questions: any[];
+  let questions: GeneratedQuizQuestion[];
   try {
     const response = await ultralight.ai({
       model: AI_MODEL,
@@ -531,8 +756,8 @@ export async function start_quiz(args: {
         { role: 'user', content: prompt },
       ],
     });
-    const text = response.content.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
-    questions = JSON.parse(text);
+    const text = extractJsonText(response.content || '');
+    questions = JSON.parse(text) as GeneratedQuizQuestion[];
     if (!Array.isArray(questions)) throw new Error('Not an array');
     console.log('[start_quiz] Generated', questions.length, 'questions');
   } catch (e) {
@@ -551,7 +776,7 @@ export async function start_quiz(args: {
 
   // Insert all questions
   const conceptMap: Record<string, string> = {};
-  for (const c of concepts) conceptMap[c.name.toLowerCase()] = c.id;
+  for (const concept of concepts) conceptMap[concept.name.toLowerCase()] = concept.id;
 
   for (let i = 0; i < questions.length; i++) {
     const q = questions[i];
@@ -564,10 +789,11 @@ export async function start_quiz(args: {
   }
 
   // Return first question
-  const first = await ultralight.db.first(
+  const first: QuizAnswerRow | null = await ultralight.db.first(
     'SELECT * FROM quiz_answers WHERE session_id = ? AND user_id = ? ORDER BY sort_order ASC LIMIT 1',
     [sessionId, uid()]
   );
+  if (!first) return { success: false, error: 'Quiz generated without questions.' };
 
   return {
     session_id: sessionId,
@@ -586,13 +812,13 @@ export async function start_quiz(args: {
 // Pre-generate a quiz and save for later (no LLM call needed on start)
 async function pre_generate_quiz(subjectId: string, courseContext?: CourseContext): Promise<{ session_id: string; total_questions: number }> {
   const ctx = courseContext || await buildCourseContext(subjectId);
-  const concepts = await ultralight.db.all('SELECT * FROM concepts WHERE user_id = ? AND subject_id = ?', [uid(), subjectId]);
+  const concepts: ConceptRow[] = await ultralight.db.all('SELECT * FROM concepts WHERE user_id = ? AND subject_id = ?', [uid(), subjectId]);
   if (concepts.length === 0) throw new Error('No concepts to quiz on');
 
   const qCount = Math.min(5, concepts.length);
   const mcCount = Math.max(2, Math.ceil(qCount * 0.5));
   const openCount = qCount - mcCount;
-  const conceptList = concepts.slice(0, 10).map((c: any) => `- ${c.name}: ${c.description || 'No description'}`).join('\n');
+  const conceptList = concepts.slice(0, 10).map((concept) => `- ${concept.name}: ${concept.description || 'No description'}`).join('\n');
 
   const prompt = `${ctx.prompt_text}\n\nGenerate exactly ${qCount} quiz questions about these concepts:\n${conceptList}\n\nGenerate ${mcCount} multiple-choice and ${openCount} open-ended questions. Mix them together.\nAvoid repeating questions from previous quizzes.\nIncrease difficulty for concepts with mastery >= 4/5.\nFocus on misconceptions that keep recurring.\n\nMultiple-choice format: {"type":"mc","question":"...","options":["A)...","B)...","C)...","D)..."],"correct":"A","explanation":"...","concept":"concept name"}\nOpen-ended format: {"type":"open","question":"...","rubric":"what a good answer includes","concept":"concept name"}\n\nRespond with ONLY valid JSON array.`;
 
@@ -605,8 +831,8 @@ async function pre_generate_quiz(subjectId: string, courseContext?: CourseContex
     ],
   });
 
-  const text = response.content.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
-  const questions = JSON.parse(text);
+  const text = extractJsonText(response.content || '');
+  const questions = JSON.parse(text) as GeneratedQuizQuestion[];
   if (!Array.isArray(questions) || questions.length === 0) throw new Error('Invalid quiz format');
 
   const sessionId = crypto.randomUUID();
@@ -617,7 +843,7 @@ async function pre_generate_quiz(subjectId: string, courseContext?: CourseContex
   );
 
   const conceptMap: Record<string, string> = {};
-  for (const c of concepts) conceptMap[c.name.toLowerCase()] = c.id;
+  for (const concept of concepts) conceptMap[concept.name.toLowerCase()] = concept.id;
 
   for (let i = 0; i < questions.length; i++) {
     const q = questions[i];
@@ -634,7 +860,7 @@ async function pre_generate_quiz(subjectId: string, courseContext?: CourseContex
 
 // Start a pre-generated pending quiz (instant, no LLM call)
 async function start_pending_quiz(sessionId: string): Promise<unknown> {
-  const session = await ultralight.db.first(
+  const session: QuizSessionRow | null = await ultralight.db.first(
     'SELECT * FROM quiz_sessions WHERE id = ? AND user_id = ? AND status = ?',
     [sessionId, uid(), 'pending']
   );
@@ -645,7 +871,7 @@ async function start_pending_quiz(sessionId: string): Promise<unknown> {
     ['in_progress', now(), sessionId]
   );
 
-  const first = await ultralight.db.first(
+  const first: QuizAnswerRow | null = await ultralight.db.first(
     'SELECT * FROM quiz_answers WHERE session_id = ? AND user_id = ? ORDER BY sort_order ASC LIMIT 1',
     [sessionId, uid()]
   );
@@ -670,7 +896,7 @@ export async function submit_answer(args: {
 }): Promise<unknown> {
   const { session_id, answer_id, user_answer, time_seconds } = args;
 
-  const answer = await ultralight.db.first(
+  const answer: QuizAnswerRow | null = await ultralight.db.first(
     'SELECT * FROM quiz_answers WHERE id = ? AND session_id = ? AND user_id = ?',
     [answer_id, session_id, uid()]
   );
@@ -707,7 +933,7 @@ export async function submit_answer(args: {
 
   // Auto-update concept rating if linked
   if (answer.concept_id) {
-    const lastRating = await ultralight.db.first(
+    const lastRating: Pick<RatingRow, 'understanding'> | null = await ultralight.db.first(
       'SELECT understanding FROM ratings WHERE user_id = ? AND concept_id = ? ORDER BY date DESC LIMIT 1',
       [uid(), answer.concept_id]
     );
@@ -720,15 +946,15 @@ export async function submit_answer(args: {
   }
 
   // Get next unanswered question
-  const next = await ultralight.db.first(
+  const next: QuizAnswerRow | null = await ultralight.db.first(
     'SELECT * FROM quiz_answers WHERE session_id = ? AND user_id = ? AND user_answer IS NULL ORDER BY sort_order ASC LIMIT 1',
     [session_id, uid()]
   );
 
-  const answered = await ultralight.db.first(
+  const answered: { cnt: number } | null = await ultralight.db.first(
     'SELECT COUNT(*) as cnt FROM quiz_answers WHERE session_id = ? AND user_id = ? AND user_answer IS NOT NULL', [session_id, uid()]
   );
-  const total = await ultralight.db.first(
+  const total: Pick<QuizSessionRow, 'total_questions'> | null = await ultralight.db.first(
     'SELECT total_questions FROM quiz_sessions WHERE id = ? AND user_id = ?', [session_id, uid()]
   );
 
@@ -740,8 +966,8 @@ export async function submit_answer(args: {
     score: scoreVal,
     feedback: feedbackText,
     misconceptions: misconceptionsJson ? JSON.parse(misconceptionsJson) : null,
-    answered: answered.cnt,
-    total: total.total_questions,
+    answered: answered?.cnt || 0,
+    total: total?.total_questions || 0,
     next_question: next ? { id: next.id, text: next.question, type: next.question_type || 'mc', options: JSON.parse(next.options || '[]'), rubric: next.rubric || null, target_words: next.target_words || null } : null,
     quiz_complete: !next,
   };
@@ -751,25 +977,25 @@ export async function complete_quiz(args: { session_id: string }): Promise<unkno
   const { session_id } = args;
 
   // Idempotency: prevent double-completion
-  const session = await ultralight.db.first(
+  const session: Pick<QuizSessionRow, 'status'> | null = await ultralight.db.first(
     'SELECT status FROM quiz_sessions WHERE id = ? AND user_id = ?', [session_id, uid()]
   );
   if (!session) return { success: false, error: 'Session not found' };
   if (session.status === 'completed') return { success: false, error: 'Quiz already completed' };
 
-  const answers = await ultralight.db.all(
+  const answers: QuizAnswerWithConceptRow[] & { _fluency?: FluencyAssessment | null } = await ultralight.db.all(
     'SELECT qa.*, c.name as concept_name, c.subject_id FROM quiz_answers qa LEFT JOIN concepts c ON qa.concept_id = c.id WHERE qa.session_id = ? AND qa.user_id = ? ORDER BY qa.sort_order',
     [session_id, uid()]
   );
 
   // ── Batch grade all open-ended answers + fluency assessment in ONE LLM call ──
-  const openAnswers = answers.filter((a: any) => a.question_type === 'open' && a.user_answer && a.is_correct === null);
+  const openAnswers = answers.filter((answer) => answer.question_type === 'open' && answer.user_answer && answer.is_correct === null);
 
   // Gather context for fluency assessment
-  const quizSubjectId = answers.find((a: any) => a.subject_id)?.subject_id;
-  const quizSubject = quizSubjectId ? await ultralight.db.first('SELECT name FROM subjects WHERE id = ?', [quizSubjectId]) : null;
-  const mcAnswered = answers.filter((a: any) => a.question_type !== 'open');
-  const mcCorrect = mcAnswered.filter((a: any) => a.is_correct === 1).length;
+  const quizSubjectId = answers.find((answer) => answer.subject_id)?.subject_id;
+  const quizSubject: Pick<SubjectRow, 'name'> | null = quizSubjectId ? await ultralight.db.first('SELECT name FROM subjects WHERE id = ?', [quizSubjectId]) : null;
+  const mcAnswered = answers.filter((answer) => answer.question_type !== 'open');
+  const mcCorrect = mcAnswered.filter((answer) => answer.is_correct === 1).length;
   const mcTotal = mcAnswered.length;
   const mcPct = mcTotal > 0 ? Math.round((mcCorrect / mcTotal) * 100) : 0;
 
@@ -780,10 +1006,11 @@ export async function complete_quiz(args: { session_id: string }): Promise<unkno
       const prevQuiz = await ultralight.db.first(
         'SELECT assessment_json FROM quiz_sessions WHERE user_id = ? AND subject_id = ? AND status = ? AND id != ? ORDER BY completed_at DESC LIMIT 1',
         [uid(), quizSubjectId, 'completed', session_id]
-      );
-      if (prevQuiz?.assessment_json) {
-        const pa = JSON.parse(prevQuiz.assessment_json);
-        if (pa.fluency) prevFluency = `Previous fluency assessment: ${pa.fluency.level} (sophistication: ${pa.fluency.sophistication}/10). ${pa.fluency.notes || ''}`;
+      ) as Pick<QuizSessionRow, 'assessment_json'> | null;
+      const previousAssessment = parseJsonObject(prevQuiz?.assessment_json);
+      const previousFluency = previousAssessment?.fluency as FluencyAssessment | undefined;
+      if (previousFluency) {
+        prevFluency = `Previous fluency assessment: ${previousFluency.level} (sophistication: ${previousFluency.sophistication}/10). ${previousFluency.notes || ''}`;
       }
     } catch {}
   }
@@ -792,15 +1019,15 @@ export async function complete_quiz(args: { session_id: string }): Promise<unkno
   const shouldGrade = openAnswers.length > 0;
   {
     try {
-      const gradingItems = openAnswers.map((a: any, i: number) =>
-        `Q${i + 1}: ${a.question}\nRubric: ${a.rubric || 'complete, accurate response'}\nStudent answer: ${a.user_answer}`
+      const gradingItems = openAnswers.map((answer, i: number) =>
+        `Q${i + 1}: ${answer.question}\nRubric: ${answer.rubric || 'complete, accurate response'}\nStudent answer: ${answer.user_answer}`
       ).join('\n\n---\n\n');
 
       // Full answer context including MC for fluency signal
-      const allAnswerContext = answers.map((a: any, i: number) => {
-        const timeNote = a.time_seconds ? ` [${a.time_seconds}s]` : '';
-        if (a.question_type === 'open') return `Q${i + 1} (open)${timeNote}: ${a.question}\nAnswer: ${a.user_answer}`;
-        return `Q${i + 1} (MC)${timeNote}: ${a.question}\nChose: ${a.user_answer} ${a.is_correct ? '(correct)' : '(wrong, correct: ' + a.correct_answer + ')'}`;
+      const allAnswerContext = answers.map((answer, i: number) => {
+        const timeNote = answer.time_seconds ? ` [${answer.time_seconds}s]` : '';
+        if (answer.question_type === 'open') return `Q${i + 1} (open)${timeNote}: ${answer.question}\nAnswer: ${answer.user_answer}`;
+        return `Q${i + 1} (MC)${timeNote}: ${answer.question}\nChose: ${answer.user_answer} ${answer.is_correct ? '(correct)' : '(wrong, correct: ' + answer.correct_answer + ')'}`;
       }).join('\n\n');
 
       const fluencyInstructions = `\n\nFLUENCY ASSESSMENT INSTRUCTIONS:
@@ -822,14 +1049,14 @@ ${prevFluency ? '\n' + prevFluency + '\nCompare their current performance to the
       });
 
       if (gradeResponse?.content) {
-        const gradeText = gradeResponse.content.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
-        const parsed = JSON.parse(gradeText);
-        const grades = parsed.grades || parsed;
+        const gradeText = extractJsonText(gradeResponse.content);
+        const parsed = JSON.parse(gradeText) as BatchGradingResponse | OpenAnswerGrade[];
+        const grades = Array.isArray(parsed) ? parsed : parsed.grades || [];
         // Store fluency assessment for buildCourseContext
-        if (parsed.fluency) {
-          (answers as any)._fluency = parsed.fluency;
+        if (!Array.isArray(parsed) && parsed.fluency) {
+          answers._fluency = parsed.fluency;
         }
-        const gradeArray = Array.isArray(grades) ? grades : [];
+        const gradeArray = grades;
         for (let i = 0; i < openAnswers.length && i < gradeArray.length; i++) {
           const g = gradeArray[i];
           const a = openAnswers[i];
@@ -855,7 +1082,7 @@ ${prevFluency ? '\n' + prevFluency + '\nCompare their current performance to the
   }
 
   const total = answers.length;
-  const correct = answers.filter((a: any) => a.is_correct === 1).length;
+  const correct = answers.filter((answer) => answer.is_correct === 1).length;
   const scorePct = total > 0 ? Math.round((correct / total) * 100) : 0;
 
   // Update session
@@ -868,17 +1095,15 @@ ${prevFluency ? '\n' + prevFluency + '\nCompare their current performance to the
   const conceptResults: Record<string, { correct: number; total: number; name: string; avg_score: number; scores: number[] }> = {};
   let subjectId: string | null = null;
   const allMisconceptions: string[] = [];
-  for (const a of answers) {
-    if (a.concept_name) {
-      if (!conceptResults[a.concept_name]) conceptResults[a.concept_name] = { correct: 0, total: 0, name: a.concept_name, avg_score: 0, scores: [] };
-      conceptResults[a.concept_name].total++;
-      if (a.is_correct) conceptResults[a.concept_name].correct++;
-      if (a.score) conceptResults[a.concept_name].scores.push(a.score);
+  for (const answer of answers) {
+    if (answer.concept_name) {
+      if (!conceptResults[answer.concept_name]) conceptResults[answer.concept_name] = { correct: 0, total: 0, name: answer.concept_name, avg_score: 0, scores: [] };
+      conceptResults[answer.concept_name].total++;
+      if (answer.is_correct) conceptResults[answer.concept_name].correct++;
+      if (answer.score) conceptResults[answer.concept_name].scores.push(answer.score);
     }
-    if (a.subject_id) subjectId = a.subject_id;
-    if (a.misconceptions) {
-      try { allMisconceptions.push(...JSON.parse(a.misconceptions)); } catch {}
-    }
+    if (answer.subject_id) subjectId = answer.subject_id;
+    if (answer.misconceptions) allMisconceptions.push(...parseStringArray(answer.misconceptions));
   }
   for (const cr of Object.values(conceptResults)) {
     cr.avg_score = cr.scores.length ? Math.round((cr.scores.reduce((s, v) => s + v, 0) / cr.scores.length) * 10) / 10 : 0;
@@ -898,7 +1123,7 @@ ${prevFluency ? '\n' + prevFluency + '\nCompare their current performance to the
 
   // Update conventions for Flash context injection
   const subjectName = subjectId
-    ? (await ultralight.db.first('SELECT name FROM subjects WHERE id = ?', [subjectId]))?.name || 'General'
+    ? (await ultralight.db.first('SELECT name FROM subjects WHERE id = ?', [subjectId]) as Pick<SubjectRow, 'name'> | null)?.name || 'General'
     : 'General';
 
   const convValue = `Score: ${scorePct}%.${weakConcepts.length ? ' Weak: ' + weakConcepts.join(', ') + '.' : ''}${strongConcepts.length ? ' Strong: ' + strongConcepts.join(', ') + '.' : ''}`;
@@ -906,56 +1131,57 @@ ${prevFluency ? '\n' + prevFluency + '\nCompare their current performance to the
 
   // ── Comprehensive Assessment ──
   // Per-concept mastery rating (1-5 scale)
-  const perConceptAssessment: Record<string, any> = {};
+  const perConceptAssessment: Record<string, PerConceptAssessment> = {};
   for (const [name, cr] of Object.entries(conceptResults)) {
     const mastery = cr.total > 0 ? Math.round((cr.correct / cr.total) * 5 * 10) / 10 : 0;
-    const conceptAnswers = answers.filter((a: any) => a.concept_name === name);
-    const timings = conceptAnswers.map((a: any) => a.time_seconds).filter(Boolean);
+    const conceptAnswers = answers.filter((answer) => answer.concept_name === name);
+    const timings = conceptAnswers.map((answer) => answer.time_seconds).filter((value): value is number => Boolean(value));
     perConceptAssessment[name] = {
       correct: cr.correct, total: cr.total, mastery,
       avg_score: cr.avg_score,
-      time_avg_s: timings.length ? Math.round(timings.reduce((s: number, v: number) => s + v, 0) / timings.length) : null,
+      time_avg_s: timings.length ? Math.round(timings.reduce((sum, value) => sum + value, 0) / timings.length) : null,
     };
   }
 
   // Timing summary
-  const allTimings = answers.map((a: any) => a.time_seconds).filter(Boolean);
+  const allTimings = answers.map((answer) => answer.time_seconds).filter((value): value is number => Boolean(value));
   const timingSummary = {
-    total_s: allTimings.reduce((s: number, v: number) => s + v, 0),
-    avg_per_question_s: allTimings.length ? Math.round(allTimings.reduce((s: number, v: number) => s + v, 0) / allTimings.length) : null,
+    total_s: allTimings.reduce((sum, value) => sum + value, 0),
+    avg_per_question_s: allTimings.length ? Math.round(allTimings.reduce((sum, value) => sum + value, 0) / allTimings.length) : null,
   };
 
   // Compare with previous quiz on same subject
-  let improvement: any = null;
+  let improvement: QuizAssessment['improvement'] = null;
   if (subjectId) {
-    const prevQuiz = await ultralight.db.first(
+    const prevQuiz: Pick<QuizSessionRow, 'assessment_json' | 'score_pct'> | null = await ultralight.db.first(
       'SELECT assessment_json, score_pct FROM quiz_sessions WHERE user_id = ? AND subject_id = ? AND status = ? AND id != ? ORDER BY completed_at DESC LIMIT 1',
       [uid(), subjectId, 'completed', session_id]
     );
     if (prevQuiz?.assessment_json) {
       try {
-        const prev = JSON.parse(prevQuiz.assessment_json);
+        const prev = parseJsonObject(prevQuiz.assessment_json);
+        const prevPerConcept = (prev?.per_concept as Record<string, { mastery: number }> | undefined) || {};
         const improved: string[] = [];
         const regressed: string[] = [];
         for (const [name, cur] of Object.entries(perConceptAssessment)) {
-          const prevConcept = prev.per_concept?.[name];
+          const prevConcept = prevPerConcept[name];
           if (prevConcept) {
-            (perConceptAssessment[name] as any).prev_mastery = prevConcept.mastery;
-            (perConceptAssessment[name] as any).delta = Math.round(((cur as any).mastery - prevConcept.mastery) * 10) / 10;
-            if ((cur as any).mastery > prevConcept.mastery) improved.push(name);
-            else if ((cur as any).mastery < prevConcept.mastery) regressed.push(name);
+            perConceptAssessment[name].prev_mastery = prevConcept.mastery;
+            perConceptAssessment[name].delta = Math.round((cur.mastery - prevConcept.mastery) * 10) / 10;
+            if (cur.mastery > prevConcept.mastery) improved.push(name);
+            else if (cur.mastery < prevConcept.mastery) regressed.push(name);
           }
         }
-        improvement = { prev_score: prevQuiz.score_pct, delta: scorePct - prevQuiz.score_pct, improved, regressed };
+        improvement = { prev_score: prevQuiz.score_pct || 0, delta: scorePct - (prevQuiz.score_pct || 0), improved, regressed };
       } catch {}
     }
   }
 
   const overallMastery = Math.round((scorePct / 20) * 10) / 10; // 0-100% → 0-5 scale
   // Fluency from batch grading (if open-ended questions were graded)
-  const fluency = (answers as any)._fluency || null;
+  const fluency = answers._fluency || null;
 
-  const assessment = {
+  const assessment: QuizAssessment = {
     per_concept: perConceptAssessment,
     timing: timingSummary,
     improvement,
@@ -981,8 +1207,8 @@ ${prevFluency ? '\n' + prevFluency + '\nCompare their current performance to the
   // ── Always generate lesson with full course context ──
   let lesson = null;
   try {
-    const lessonResult = await generate_lesson({ quiz_session_id: session_id, assessment } as any);
-    if ((lessonResult as any).success !== false) lesson = lessonResult;
+    const lessonResult = await generate_lesson({ quiz_session_id: session_id, assessment });
+    if ((lessonResult as { success?: boolean }).success !== false) lesson = lessonResult;
   } catch (e) {
     console.error('[complete_quiz] Lesson generation failed:', e instanceof Error ? e.message : e);
   }
@@ -1017,13 +1243,13 @@ ${prevFluency ? '\n' + prevFluency + '\nCompare their current performance to the
 }
 
 async function updateStudentProfile(subjectId: string | null, score: number, strengths: string[], weaknesses: string[]) {
-  const existing = subjectId
+  const existing: StudentProfileRow | null = subjectId
     ? await ultralight.db.first('SELECT * FROM student_profiles WHERE user_id = ? AND subject_id = ?', [uid(), subjectId])
     : await ultralight.db.first('SELECT * FROM student_profiles WHERE user_id = ? AND subject_id IS NULL', [uid()]);
 
   if (existing) {
-    const oldStrengths = JSON.parse(existing.strengths || '[]');
-    const oldWeaknesses = JSON.parse(existing.weaknesses || '[]');
+    const oldStrengths = parseStringArray(existing.strengths);
+    const oldWeaknesses = parseStringArray(existing.weaknesses);
     // Merge: add new strengths, remove from weaknesses if now strong
     const mergedStrengths = [...new Set([...oldStrengths, ...strengths])].filter(s => !weaknesses.includes(s));
     const mergedWeaknesses = [...new Set([...oldWeaknesses, ...weaknesses])].filter(w => !strengths.includes(w));
@@ -1048,7 +1274,7 @@ async function updateStudentProfile(subjectId: string | null, score: number, str
 // ════════════════════════════════════════════════════════════════════════════
 
 export async function generate_lesson(args: {
-  subject_id?: string; concept_ids?: string[]; quiz_session_id?: string; assessment?: any;
+  subject_id?: string; concept_ids?: string[]; quiz_session_id?: string; assessment?: QuizAssessment;
 }): Promise<unknown> {
   const { subject_id, concept_ids, quiz_session_id, assessment } = args;
 
@@ -1059,31 +1285,31 @@ export async function generate_lesson(args: {
 
   // If from a quiz, fetch ALL answers (not just wrong ones) for rich context
   if (quiz_session_id) {
-    const allAnswers = await ultralight.db.all(
+    const allAnswers: Array<Pick<QuizAnswerWithConceptRow, 'question' | 'correct_answer' | 'user_answer' | 'explanation' | 'is_correct' | 'score' | 'feedback' | 'time_seconds' | 'question_type' | 'concept_name'>> = await ultralight.db.all(
       'SELECT qa.question, qa.correct_answer, qa.user_answer, qa.explanation, qa.is_correct, qa.score, qa.feedback, qa.time_seconds, qa.question_type, c.name as concept_name FROM quiz_answers qa LEFT JOIN concepts c ON qa.concept_id = c.id WHERE qa.session_id = ? AND qa.user_id = ? ORDER BY qa.sort_order',
       [quiz_session_id, uid()]
     );
-    for (const a of allAnswers) {
-      if (a.concept_name) targetConcepts.push(a.concept_name);
-      const status = a.is_correct ? '✓ CORRECT' : '✗ WRONG';
-      const timing = a.time_seconds ? ` [${a.time_seconds}s]` : '';
-      answerContext += `${status}${timing} — Q: ${a.question}\n  Student: ${a.user_answer}${a.is_correct ? '' : ' | Correct: ' + a.correct_answer}\n${a.feedback ? '  Feedback: ' + a.feedback + '\n' : ''}`;
+    for (const answer of allAnswers) {
+      if (answer.concept_name) targetConcepts.push(answer.concept_name);
+      const status = answer.is_correct ? '✓ CORRECT' : '✗ WRONG';
+      const timing = answer.time_seconds ? ` [${answer.time_seconds}s]` : '';
+      answerContext += `${status}${timing} — Q: ${answer.question}\n  Student: ${answer.user_answer}${answer.is_correct ? '' : ' | Correct: ' + answer.correct_answer}\n${answer.feedback ? '  Feedback: ' + answer.feedback + '\n' : ''}`;
     }
-    const session = await ultralight.db.first('SELECT subject_id, score_pct FROM quiz_sessions WHERE id = ?', [quiz_session_id]);
+    const session: Pick<QuizSessionRow, 'subject_id' | 'score_pct'> | null = await ultralight.db.first('SELECT subject_id, score_pct FROM quiz_sessions WHERE id = ?', [quiz_session_id]);
     if (session?.subject_id) resolvedSubjectId = session.subject_id;
-    scorePct = session?.score_pct;
+    scorePct = session?.score_pct ?? null;
   }
 
   // Or from explicit concept list
   if (concept_ids?.length) {
     const ph = concept_ids.map(() => '?').join(',');
-    const concepts = await ultralight.db.all(`SELECT name, description FROM concepts WHERE user_id = ? AND id IN (${ph})`, [uid(), ...concept_ids]);
-    targetConcepts = concepts.map((c: any) => c.name);
+    const concepts: Array<Pick<ConceptRow, 'name' | 'description'>> = await ultralight.db.all(`SELECT name, description FROM concepts WHERE user_id = ? AND id IN (${ph})`, [uid(), ...concept_ids]);
+    targetConcepts = concepts.map((concept) => concept.name);
   }
 
   // Fallback: get subject name as target if no concepts
   if (targetConcepts.length === 0 && resolvedSubjectId) {
-    const subj = await ultralight.db.first('SELECT name FROM subjects WHERE id = ?', [resolvedSubjectId]);
+    const subj: Pick<SubjectRow, 'name'> | null = await ultralight.db.first('SELECT name FROM subjects WHERE id = ?', [resolvedSubjectId]);
     if (subj?.name) targetConcepts.push(subj.name);
   }
   if (targetConcepts.length === 0) return { success: false, error: 'No concepts to generate a lesson for.' };
@@ -1092,10 +1318,10 @@ export async function generate_lesson(args: {
   let courseCtx = '';
   if (resolvedSubjectId) {
     try {
-      const cached = await ultralight.db.first('SELECT value FROM conventions WHERE user_id = ? AND key = ?', [uid(), `course_context:${resolvedSubjectId}`]);
+      const cached: Pick<ConventionRow, 'value'> | null = await ultralight.db.first('SELECT value FROM conventions WHERE user_id = ? AND key = ?', [uid(), `course_context:${resolvedSubjectId}`]);
       if (cached?.value) {
-        const ctx = JSON.parse(cached.value);
-        courseCtx = ctx.prompt_text || '';
+        const ctx = parseJsonObject(cached.value);
+        courseCtx = typeof ctx?.prompt_text === 'string' ? ctx.prompt_text : '';
       }
     } catch {}
   }
@@ -1154,7 +1380,7 @@ export async function generate_lesson(args: {
 
 async function setConvention(key: string, value: string, category: string) {
   const ts = now();
-  const existing = await ultralight.db.first('SELECT id FROM conventions WHERE user_id = ? AND key = ?', [uid(), key]);
+  const existing: Pick<ConventionRow, 'id'> | null = await ultralight.db.first('SELECT id FROM conventions WHERE user_id = ? AND key = ?', [uid(), key]);
   if (existing) {
     await ultralight.db.run('UPDATE conventions SET value = ?, category = ?, updated_at = ? WHERE id = ?', [value, category, ts, existing.id]);
   } else {
@@ -1167,13 +1393,13 @@ async function setConvention(key: string, value: string, category: string) {
 
 export async function conventions_get(args: { key?: string; category?: string }): Promise<unknown> {
   if (args.key) {
-    const row = await ultralight.db.first('SELECT * FROM conventions WHERE user_id = ? AND key = ?', [uid(), args.key]);
+    const row: ConventionRow | null = await ultralight.db.first('SELECT * FROM conventions WHERE user_id = ? AND key = ?', [uid(), args.key]);
     return row || { message: 'Convention not found' };
   }
   let sql = 'SELECT * FROM conventions WHERE user_id = ?';
-  const params: any[] = [uid()];
+  const params: SqlValue[] = [uid()];
   if (args.category) { sql += ' AND category = ?'; params.push(args.category); }
-  return { conventions: await ultralight.db.all(sql + ' ORDER BY category, key', params) };
+  return { conventions: await ultralight.db.all(sql + ' ORDER BY category, key', params) as ConventionRow[] };
 }
 
 export async function conventions_set(args: { key: string; value: string; category?: string }): Promise<unknown> {
@@ -1188,7 +1414,7 @@ export async function conventions_set(args: { key: string; value: string; catego
 export async function widget_quiz_ui(args: {}): Promise<unknown> {
   let badge = 0;
   try {
-    const needsReview = await ultralight.db.first(
+    const needsReview: CntRow | null = await ultralight.db.first(
       'SELECT COUNT(*) as cnt FROM concepts WHERE user_id = ?', [uid()]
     );
     badge = needsReview?.cnt || 0;
@@ -1200,17 +1426,17 @@ export async function widget_quiz_data(args: { action?: string; session_id?: str
   const { action } = args;
 
   if (action === 'subjects') {
-    const subjects = await ultralight.db.all('SELECT sub.*, (SELECT COUNT(*) FROM concepts WHERE subject_id = sub.id AND user_id = ?) as concept_count FROM subjects sub WHERE user_id = ?', [uid(), uid()]);
+    const subjects: Array<SubjectRow & { concept_count: number }> = await ultralight.db.all('SELECT sub.*, (SELECT COUNT(*) FROM concepts WHERE subject_id = sub.id AND user_id = ?) as concept_count FROM subjects sub WHERE user_id = ?', [uid(), uid()]);
     // Pending quizzes and unread lessons for "continue where you left off"
-    const pendingQuizzes = await ultralight.db.all(
+    const pendingQuizzes: QuizSessionWithSubjectRow[] = await ultralight.db.all(
       'SELECT qs.id, qs.subject_id, qs.total_questions, qs.generated_at, s.name as subject_name FROM quiz_sessions qs LEFT JOIN subjects s ON qs.subject_id = s.id WHERE qs.user_id = ? AND qs.status = ? ORDER BY qs.generated_at DESC',
       [uid(), 'pending']
     );
-    const unreadLessons = await ultralight.db.all(
+    const unreadLessons: LessonRow[] = await ultralight.db.all(
       'SELECT l.id, l.subject_id, l.title, l.created_at, s.name as subject_name FROM lessons l LEFT JOIN subjects s ON l.subject_id = s.id WHERE l.user_id = ? AND (l.status = ? OR l.status IS NULL) ORDER BY l.created_at DESC LIMIT 5',
       [uid(), 'unread']
     );
-    const lastSubject = await ultralight.db.first('SELECT value FROM conventions WHERE user_id = ? AND key = ?', [uid(), 'last_quiz_subject']);
+    const lastSubject: Pick<ConventionRow, 'value'> | null = await ultralight.db.first('SELECT value FROM conventions WHERE user_id = ? AND key = ?', [uid(), 'last_quiz_subject']);
     return { subjects, pending_quizzes: pendingQuizzes, unread_lessons: unreadLessons, last_subject_id: lastSubject?.value || null, _code_version: '7.0.0', _model: AI_MODEL };
   }
 
@@ -1660,7 +1886,7 @@ if (window.ulWidgetContext && window.ulWidgetContext.pending_session_id) {
 export async function widget_progress_ui(args: {}): Promise<unknown> {
   let badge = 0;
   try {
-    const quizCount = await ultralight.db.first(
+    const quizCount: CntRow | null = await ultralight.db.first(
       'SELECT COUNT(*) as cnt FROM quiz_sessions WHERE user_id = ? AND status = ?', [uid(), 'completed']
     );
     badge = quizCount?.cnt || 0;
@@ -1675,16 +1901,16 @@ export async function widget_progress_data(args: { action?: string; topic?: stri
   const statusData = await status({});
 
   // Add course dashboard data
-  const pendingQuizzes = await ultralight.db.all(
+  const pendingQuizzes: QuizSessionWithSubjectRow[] = await ultralight.db.all(
     'SELECT qs.id, qs.subject_id, qs.total_questions, qs.generated_at, s.name as subject_name FROM quiz_sessions qs LEFT JOIN subjects s ON qs.subject_id = s.id WHERE qs.user_id = ? AND qs.status = ? ORDER BY qs.generated_at DESC',
     [uid(), 'pending']
   );
-  const unreadLessons = await ultralight.db.all(
+  const unreadLessons: LessonRow[] = await ultralight.db.all(
     'SELECT l.id, l.subject_id, l.title, l.created_at, s.name as subject_name FROM lessons l LEFT JOIN subjects s ON l.subject_id = s.id WHERE l.user_id = ? AND (l.status = ? OR l.status IS NULL) ORDER BY l.created_at DESC LIMIT 5',
     [uid(), 'unread']
   );
 
-  return { ...(statusData as any), pending_quizzes: pendingQuizzes, unread_lessons: unreadLessons };
+  return { ...(statusData as Record<string, unknown>), pending_quizzes: pendingQuizzes, unread_lessons: unreadLessons } as WidgetProgressData;
 }
 
 const PROGRESS_WIDGET_HTML = `<!DOCTYPE html>
@@ -1864,7 +2090,7 @@ load();
 export async function widget_lessons_ui(args: {}): Promise<unknown> {
   let badge = 0;
   try {
-    const lessonCount = await ultralight.db.first(
+    const lessonCount: CntRow | null = await ultralight.db.first(
       'SELECT COUNT(*) as cnt FROM lessons WHERE user_id = ?', [uid()]
     );
     badge = lessonCount?.cnt || 0;
