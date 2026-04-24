@@ -2,9 +2,9 @@
 
 ## Overview
 
-Code Mode replaces verbose tool-call-per-function with a two-tool architecture inspired by Cloudflare's Dynamic Workers: `search()` discovers tools dynamically, `execute()` runs JS recipes that chain multiple MCP calls in a single sandbox invocation.
+Code Mode replaces verbose tool-call-per-function with a two-tool architecture inspired by Cloudflare's Dynamic Workers: `search()` discovers tools dynamically, `codemode()` runs JS recipes that chain multiple MCP calls in a single sandbox invocation.
 
-An agent becomes: `personality.md + search() + execute() + model choice`
+An agent becomes: `personality.md + search() + codemode() + model choice`
 
 ## Core Tools
 
@@ -25,7 +25,7 @@ Scopes (searched in order):
 2. Shared (apps granted access to) — free, permissioned
 3. Market (all published apps) — discovery free, use may cost
 
-### ul.execute (recipe execution)
+### ul.codemode (recipe execution)
 
 Agent writes JS that chains MCP calls, transforms data, and returns a composed response. Runs in a Cloudflare Dynamic Worker isolate (or Deno sandbox as fallback).
 
@@ -116,7 +116,7 @@ Code mode is a platform optimization layer. MCP endpoints don't change.
 
 ## Migration Phases
 
-1. **ul.execute tool** — new platform tool, runs JS in sandbox with ul.call binding
+1. **ul.codemode tool** — new platform tool, runs JS in sandbox with ul.call binding
 2. **Compact API mode** — system prompt uses search()/execute() instead of verbose schemas
 3. **personality.md** — agent creation becomes markdown-first
 4. **Remove connected apps** — agents discover tools dynamically

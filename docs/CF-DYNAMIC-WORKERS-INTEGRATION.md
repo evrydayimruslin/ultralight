@@ -2,7 +2,7 @@
 
 ## Overview
 
-Replace our homemade `ul_execute` with Cloudflare's actual `@cloudflare/codemode` package running on Dynamic Workers. The agent gets ONE tool (`codemode`) that lets it write JS recipes. All our MCP functions become typed methods inside the sandbox.
+Replace our older `ul.execute` / `ul_execute` codemode bridge with Cloudflare's actual `@cloudflare/codemode` package running on Dynamic Workers. The agent gets ONE canonical tool (`codemode`) that lets it write JS recipes. All our MCP functions become typed methods inside the sandbox.
 
 ## Architecture
 
@@ -200,7 +200,7 @@ ONE tool call. All approvals + listing in one execution.
 |--------|-------|
 | `ul_discover` (standalone tool) | `codemode.discover_library()` inside recipe |
 | `ul_call` (standalone tool) | `codemode.app_function()` inside recipe |
-| `ul_execute` (our homemade sandbox) | `@cloudflare/codemode` + Dynamic Workers |
+| `ul.execute` / `ul_execute` (legacy codemode bridge) | `@cloudflare/codemode` + Dynamic Workers |
 | 5+ tool call round-trips | 1 codemode call |
 | Agent sees 12+ tools | Agent sees 1 tool (+ memory) |
 

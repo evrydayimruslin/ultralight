@@ -946,7 +946,7 @@ The `ultralight-spec/` directory lives at the root of the Ultralight repo. When 
 
 2. **External Agents (Claude, Cursor, etc.):** When building Ultralight apps, the CLI's `ul scaffold` command generates a starter project that includes a `CONVENTIONS.md` file (symlinked or copied from the spec) that the agent reads.
 
-3. **Platform MCP (`ul.scaffold`):** The scaffold tool in `platform-mcp.ts` generates projects with the spec conventions baked in.
+3. **Platform MCP (`ul.download` scaffold mode):** The scaffold tool path in `platform-mcp.ts` generates projects with the spec conventions baked in.
 
 ### Files Created
 
@@ -988,7 +988,7 @@ You are an AI agent running inside Ultralight Desktop. When building or modifyin
 
 ### 11.2 Scaffold Tool Update
 
-The `ul.scaffold` platform MCP tool (in `platform-mcp.ts`) generates D1-native starter code:
+The `ul.download` scaffold mode (in `platform-mcp.ts`) generates D1-native starter code:
 
 ```typescript
 // Updated scaffold output:
@@ -1000,7 +1000,7 @@ The `ul.scaffold` platform MCP tool (in `platform-mcp.ts`) generates D1-native s
 
 ### 11.3 Lint Tool Update
 
-The `ul.lint` platform MCP tool validates:
+The `ul.test({ lint_only: true })` platform MCP path validates:
 - Every migration file has `user_id TEXT NOT NULL` on every table
 - Every `ultralight.db.*` call uses parameterized queries
 - No `ultralight.db.exec()` calls in app code
@@ -1010,7 +1010,7 @@ The `ul.lint` platform MCP tool validates:
 
 | File | Action | Description |
 |------|--------|-------------|
-| `api/handlers/platform-mcp.ts` | **MODIFY** | Update `ul.scaffold` output, add D1 lint checks |
+| `api/handlers/platform-mcp.ts` | **MODIFY** | Update scaffold output, add D1 lint checks |
 | `cli/mod.ts` | **MODIFY** | Update scaffold command to generate D1 patterns |
 | `cli/skills.md` | **MODIFY** | Update documentation for D1 API |
 

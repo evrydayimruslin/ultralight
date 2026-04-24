@@ -36,7 +36,7 @@ Returns ranked results with live `mcp_endpoint` for each app. The agent calls th
 ### MCP Discovery (agents with MCP client)
 
 ```
-POST /mcp/platform → ul.discover.appstore(query: "weather api")
+POST /mcp/platform → ul.discover({ scope: "appstore", query: "weather api" })
 ```
 
 Full platform access: 32 tools for discovery, upload, testing, permissions, and more. Agents authenticate once via OAuth 2.1, then access the entire ecosystem.
@@ -64,7 +64,7 @@ Agents that read API specs auto-discover our endpoints, parameters, and auth req
 Agents authenticate **once** with Ultralight and get access to every public app in the ecosystem:
 
 1. Agent obtains a `ul_` API token (via OAuth 2.1 or user settings)
-2. Agent discovers tools via `GET /api/discover?q=<need>` or `ul.discover.appstore`
+2. Agent discovers tools via `GET /api/discover?q=<need>` or `ul.discover({ scope: "appstore", query: "<need>" })`
 3. Agent calls any discovered app's `mcp_endpoint` with the same token
 4. No per-app auth, no per-app setup, no human intervention
 
@@ -165,40 +165,40 @@ const user = ultralight.user; // { email, name, tier, ... }
 
 ---
 
-## Platform MCP Tools (32 tools)
+## Platform MCP Canonical Tool Families
 
 The platform itself is an MCP server at `POST /mcp/platform`:
 
 ### Build & Deploy
 | Tool | Description |
 |------|-------------|
-| `ul.scaffold` | Generate a structured app skeleton |
+| `ul.download({ name, description, ... })` | Generate a structured app skeleton when `app_id` is omitted |
 | `ul.upload` | Upload code to create or update an app |
-| `ul.test` | Test functions in sandbox without deploying |
-| `ul.lint` | Validate code against platform conventions |
-| `ul.download` | Download source code |
+| `ul.test({ files, function_name, ... })` | Test functions in sandbox without deploying |
+| `ul.test({ files, lint_only: true, ... })` | Validate code against platform conventions |
+| `ul.download({ app_id, version? })` | Download source code |
 
 ### Discovery
 | Tool | Description |
 |------|-------------|
-| `ul.discover.desk` | Last 3 apps the user called |
-| `ul.discover.library` | Search owned + liked apps (with semantic search) |
-| `ul.discover.appstore` | Semantic search across all published apps |
+| `ul.discover({ scope: "desk" })` | Last apps the user called |
+| `ul.discover({ scope: "library", query? })` | Search owned + liked apps |
+| `ul.discover({ scope: "appstore", query?, task? })` | Semantic search across all published apps |
 
 ### Settings
 | Tool | Description |
 |------|-------------|
-| `ul.set.version` | Set the live version |
-| `ul.set.visibility` | Change visibility (private/unlisted/public) |
-| `ul.set.supabase` | Assign a Supabase server |
-| `ul.set.ratelimit` | Configure per-app rate limits |
+| `ul.set({ app_id, version })` | Set the live version |
+| `ul.set({ app_id, visibility })` | Change visibility (private/unlisted/public) |
+| `ul.set({ app_id, supabase_server })` | Assign a Supabase server |
+| `ul.set({ app_id, calls_per_minute?, calls_per_day? })` | Configure per-app rate limits |
 
 ### Permissions & Social
 | Tool | Description |
 |------|-------------|
-| `ul.permissions.grant` | Grant user access to a private app |
-| `ul.permissions.revoke` | Revoke access |
-| `ul.permissions.list` | List granted users |
+| `ul.permissions({ action: "grant", ... })` | Grant user access to a private app |
+| `ul.permissions({ action: "revoke", ... })` | Revoke access |
+| `ul.permissions({ action: "list", ... })` | List granted users |
 | `ul.like` / `ul.dislike` | Community signal (saves to library) |
 | `ul.connect` | Store per-user secrets for an app |
 

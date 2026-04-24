@@ -122,7 +122,7 @@ Six default agents ship with the Ultralight desktop app, turning it into a self-
 **Platform gaps to fill:**
 - `ul.trace` — detailed execution trace for a specific call (input → each step → output → timing)
 - `ul.test` with assertions — define expected outputs and check pass/fail
-- `ul.health.dashboard` — aggregate error rates, latency, call volumes across all apps
+- `ul.logs({ health: true })` dashboard mode — aggregate error rates, latency, call volumes across all apps
 - `ul.replay` — re-execute a logged call with the same inputs to reproduce issues
 
 ---

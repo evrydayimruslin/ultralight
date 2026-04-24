@@ -11,6 +11,7 @@ import { startEmbeddingProcessorJob } from './services/embedding-processor.ts';
 import { startGpuBuildProcessorJob } from './services/gpu/benchmark.ts';
 import { startD1BillingJob } from './services/d1-billing.ts';
 import { startAsyncJobCleanupJob } from './services/async-jobs.ts';
+import { applyCorsHeaders, buildCorsPreflightResponse } from './services/cors.ts';
 
 // Get port from environment or default to 8000
 // @ts-ignore
@@ -29,15 +30,7 @@ const securityHeaders: Record<string, string> = {
   'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
 };
 
-// CORS headers
-const corsHeaders: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
-
-// Merge security + CORS for convenience
-const standardHeaders = { ...securityHeaders, ...corsHeaders };
+const standardHeaders = securityHeaders;
 
 // Start background jobs
 startHostingBillingJob();
@@ -60,14 +53,25 @@ Deno.serve({ port, hostname: '0.0.0.0' }, async (request: Request) => {
       JSON.stringify({ error: 'Request body too large' }),
       {
         status: 413,
-        headers: { 'Content-Type': 'application/json', ...standardHeaders },
+        headers: (() => {
+          const headers = new Headers({
+            'Content-Type': 'application/json',
+            ...standardHeaders,
+          });
+          applyCorsHeaders(headers, request);
+          return headers;
+        })(),
       },
     );
   }
 
   // Handle preflight
   if (request.method === 'OPTIONS') {
-    return new Response(null, { headers: standardHeaders });
+    const response = buildCorsPreflightResponse(request);
+    for (const [key, value] of Object.entries(standardHeaders)) {
+      response.headers.set(key, value);
+    }
+    return response;
   }
 
   try {
@@ -80,6 +84,7 @@ Deno.serve({ port, hostname: '0.0.0.0' }, async (request: Request) => {
       if (key === 'X-Frame-Options' && url.searchParams.get('embed') === '1') continue;
       response.headers.set(key, value);
     }
+    applyCorsHeaders(response.headers, request);
 
     return response;
   } catch (err) {
@@ -90,10 +95,14 @@ Deno.serve({ port, hostname: '0.0.0.0' }, async (request: Request) => {
       JSON.stringify({ error: 'Internal server error' }),
       {
         status: 500,
-        headers: {
-          'Content-Type': 'application/json',
-          ...standardHeaders,
-        },
+        headers: (() => {
+          const headers = new Headers({
+            'Content-Type': 'application/json',
+            ...standardHeaders,
+          });
+          applyCorsHeaders(headers, request);
+          return headers;
+        })(),
       },
     );
   }

@@ -200,7 +200,8 @@ No code changes or redeployment needed.
 ## Future: Workers for Platforms
 
 When ready to move code execution to Workers ($25/month upgrade):
-- Files in `worker/src/_future-wfp/` contain the full sandbox engine
+- Archived reference files in `archive/experimental/future-wfp/` contain the
+  sandbox engine that was prototyped for this path
 - Provides true V8 isolate sandboxing (128MB memory, 30s CPU)
 - `UnsafeEval` binding enables `new Function()` in user worker isolates
 - Auto-scaling across Cloudflare's global edge network
