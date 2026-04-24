@@ -1144,6 +1144,55 @@ export function getLayoutHTML(options: {
       margin-bottom: var(--space-6);
     }
 
+    .shell-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-2);
+      padding: var(--space-8) var(--space-5);
+      text-align: center;
+      color: var(--text-muted);
+    }
+
+    .shell-state.shell-state-compact {
+      padding: var(--space-6) var(--space-4);
+    }
+
+    .shell-state-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 999px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-hover);
+      color: var(--text-secondary);
+    }
+
+    .shell-state-empty .shell-state-icon {
+      background: var(--bg-subtle);
+      color: var(--text-muted);
+    }
+
+    .shell-state-error .shell-state-icon {
+      background: var(--error-soft);
+      color: var(--error);
+    }
+
+    .shell-state-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+
+    .shell-state-desc {
+      font-size: 13px;
+      line-height: 1.5;
+      max-width: 360px;
+      color: var(--text-muted);
+    }
+
     /* ============================================
        APP LIST STYLES (replaces app-grid)
        ============================================ */
@@ -2713,7 +2762,7 @@ export function getLayoutHTML(options: {
               <!-- Ticker tape stats -->
               <div class="cap-carousel" style="margin-bottom:var(--space-6);">
                 <div class="cap-carousel-inner" id="marketTicker">
-                  <span>Loading platform stats...</span>
+                  <span>Loading market activity...</span>
                 </div>
               </div>
 
@@ -2723,14 +2772,14 @@ export function getLayoutHTML(options: {
                   <h3 style="font-size:14px;font-weight:600;margin-bottom:var(--space-3);color:var(--text-primary);">Newly Published</h3>
                   <div style="font-size:11px;color:var(--text-muted);margin-bottom:var(--space-3);">Latest tools shipping</div>
                   <div id="newlyPublishedList" style="display:flex;flex-direction:column;gap:var(--space-2);">
-                    <div style="font-size:13px;color:var(--text-muted);padding:var(--space-3) 0;">Loading...</div>
+                    <div style="font-size:13px;color:var(--text-muted);padding:var(--space-3) 0;">Loading new publications...</div>
                   </div>
                 </div>
                 <div>
                   <h3 style="font-size:14px;font-weight:600;margin-bottom:var(--space-3);color:var(--text-primary);">Newly Acquired</h3>
                   <div style="font-size:11px;color:var(--text-muted);margin-bottom:var(--space-3);">Latest MCP/markdown acquisitions</div>
                   <div id="newlyAcquiredList" style="display:flex;flex-direction:column;gap:var(--space-2);">
-                    <div style="font-size:13px;color:var(--text-muted);padding:var(--space-3) 0;">Loading...</div>
+                    <div style="font-size:13px;color:var(--text-muted);padding:var(--space-3) 0;">Loading acquisitions...</div>
                   </div>
                 </div>
               </div>
@@ -2829,14 +2878,14 @@ export function getLayoutHTML(options: {
             <!-- Transactions Tab -->
             <div id="walletTransactionsTab" style="display:none;margin-top:var(--space-4);">
               <div id="storageChargesSummary"></div>
-              <div id="transactionsList" style="font-size:13px;color:var(--text-muted);">Loading...</div>
+              <div id="transactionsList" style="font-size:13px;color:var(--text-muted);">Loading transactions...</div>
             </div>
 
             <!-- Earnings Tab -->
             <div id="walletEarningsTab" style="display:none;margin-top:var(--space-4);">
               <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);margin-bottom:var(--space-4);">
                 <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:var(--space-3);">Earnings Summary</div>
-                <div id="earningsSummary" style="font-size:13px;color:var(--text-muted);">Loading...</div>
+                <div id="earningsSummary" style="font-size:13px;color:var(--text-muted);">Loading earnings summary...</div>
               </div>
 
               <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);margin-bottom:var(--space-4);">
@@ -2852,7 +2901,7 @@ export function getLayoutHTML(options: {
 
               <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);">
                 <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:var(--space-3);">Payout History</div>
-                <div id="payoutsHistory" style="font-size:13px;color:var(--text-muted);">Loading...</div>
+                <div id="payoutsHistory" style="font-size:13px;color:var(--text-muted);">Loading payout history...</div>
               </div>
             </div>
 
@@ -2869,7 +2918,7 @@ export function getLayoutHTML(options: {
             <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Use this key to connect agents and CLI tools to your account.</p>
             <div id="apiKeyDisplay" style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-4);margin-bottom:var(--space-3);">
               <div style="display:flex;align-items:center;gap:var(--space-3);">
-                <code id="apiKeyValue" style="flex:1;font-size:13px;color:var(--text-primary);letter-spacing:0.5px;word-break:break-all;">Loading...</code>
+                <code id="apiKeyValue" style="flex:1;font-size:13px;color:var(--text-primary);letter-spacing:0.5px;word-break:break-all;">Loading API key...</code>
                 <button id="apiKeyCopyBtn" class="btn btn-primary btn-sm" style="border-radius:0;" onclick="copyApiKey()">Copy</button>
               </div>
               <div style="margin-top:var(--space-3);font-size:11px;color:var(--text-muted);">
@@ -2907,7 +2956,7 @@ export function getLayoutHTML(options: {
               <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Use your own API keys for model access. OpenRouter gives access to 100+ models from all providers with a single key.</p>
 
               <div id="byokProviderList" style="display:flex;flex-direction:column;gap:var(--space-2);">
-                <div style="font-size:12px;color:var(--text-muted);">Loading...</div>
+                <div style="font-size:12px;color:var(--text-muted);">Loading saved AI keys...</div>
               </div>
 
               <div style="margin-top:var(--space-4);">
@@ -3088,7 +3137,7 @@ export function getLayoutHTML(options: {
     <div id="profileView" style="display:${initialView === 'profile' ? 'block' : 'none'};">
       <div style="max-width:var(--content-max);margin:0 auto;padding:var(--space-3) var(--space-6);">
         <div id="profileContent">
-          <div style="font-size:13px;color:var(--text-muted);padding:var(--space-8) 0;text-align:center;">Loading profile...</div>
+          <div style="font-size:13px;color:var(--text-muted);padding:var(--space-8) 0;text-align:center;">Loading profile details...</div>
         </div>
       </div>
     </div>
@@ -3111,18 +3160,56 @@ export function getLayoutHTML(options: {
       document.head.appendChild(_embedStyle);
     }
 
+    function readHashParam(name) {
+      try {
+        if (!window.location.hash) return '';
+        var match = window.location.hash.match(new RegExp('[#&]' + name + '=([^&]*)'));
+        return match ? decodeURIComponent(match[1]) : '';
+      } catch (e) {
+        return '';
+      }
+    }
+
+    function stripEmbedAuthArtifactsFromUrl() {
+      try {
+        var cleanUrl = new URL(window.location.href);
+        var changed = false;
+        if (cleanUrl.searchParams.has('token')) {
+          cleanUrl.searchParams.delete('token');
+          changed = true;
+        }
+        if (window.location.hash && (
+          window.location.hash.indexOf('bridge_token=') !== -1 ||
+          window.location.hash.indexOf('token=') !== -1
+        )) {
+          cleanUrl.hash = '';
+          changed = true;
+        }
+        if (changed) {
+          history.replaceState(null, '', cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
+        }
+      } catch (e) {}
+    }
+
     // ===== Global State =====
     const COOKIE_AUTH_SENTINEL = '__cookie_session__';
-    const legacyBrowserToken = !_isEmbed ? (localStorage.getItem('ultralight_token') || '') : '';
-    let authToken = _isEmbed
-      ? (_embedParams.get('token') || localStorage.getItem('ultralight_token'))
-      : (legacyBrowserToken && legacyBrowserToken.startsWith('ul_') ? legacyBrowserToken : null);
+    const embedBridgeToken = _isEmbed ? readHashParam('bridge_token') : '';
+    let authToken = null;
     let currentUser = null;
     let userProfile = null;
     let apps = [];
     let currentAppId = null;
     let currentView = '${initialView}';
     let setupCommandStr = localStorage.getItem('ultralight_setup_v4') || '';
+
+    const hasLegacyEmbedAuthArtifact = _isEmbed && (
+      window.location.search.indexOf('token=') !== -1 ||
+      window.location.hash.indexOf('bridge_token=') !== -1 ||
+      window.location.hash.indexOf('token=') !== -1
+    );
+    if (hasLegacyEmbedAuthArtifact) {
+      stripEmbedAuthArtifactsFromUrl();
+    }
 
     // Instant auth nav switch — prevents flash of wrong nav state
     if (_isEmbed) {
@@ -3151,6 +3238,28 @@ export function getLayoutHTML(options: {
     let skillsValidationTimeout = null;
 
     const nativeFetch = window.fetch.bind(window);
+    const webLogSink = console;
+    function webDebugLogsEnabled() {
+      try {
+        return localStorage.getItem('ul_debug_logs') === '1';
+      } catch (e) {
+        return false;
+      }
+    }
+    function emitWebLog(level, scope, message, context) {
+      if (level === 'debug' && !webDebugLogsEnabled()) return;
+      var line = '[' + scope + '] ' + message;
+      var sinkMethod = level === 'error'
+        ? (webLogSink.error || webLogSink.log)
+        : level === 'warn'
+          ? (webLogSink.warn || webLogSink.log)
+          : (webLogSink.log || function() {});
+      if (context !== undefined) sinkMethod.call(webLogSink, line, context);
+      else sinkMethod.call(webLogSink, line);
+    }
+    function debugLog(scope, message, context) { emitWebLog('debug', scope, message, context); }
+    function warnLog(scope, message, context) { emitWebLog('warn', scope, message, context); }
+    function errorLog(scope, message, context) { emitWebLog('error', scope, message, context); }
     function hasRealBearerToken() {
       return !!authToken && authToken !== COOKIE_AUTH_SENTINEL;
     }
@@ -3204,6 +3313,28 @@ export function getLayoutHTML(options: {
       return response;
     };
 
+    async function bootstrapEmbedBridgeSession() {
+      if (!_isEmbed || !embedBridgeToken) return;
+
+      try {
+        const response = await nativeFetch('/auth/embed/exchange', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ bridge_token: embedBridgeToken }),
+        });
+        if (response.ok) {
+          authToken = COOKIE_AUTH_SENTINEL;
+          return;
+        }
+        authToken = null;
+        warnLog('embed', 'Failed to exchange desktop embed bridge token');
+      } catch (e) {
+        authToken = null;
+        warnLog('embed', 'Desktop embed bridge exchange failed', e);
+      }
+    }
+
     // ===== Utilities =====
     function escapeHtml(str) {
       if (!str) return '';
@@ -3211,10 +3342,65 @@ export function getLayoutHTML(options: {
     }
     const escHtml = escapeHtml;
 
-    // Resolve function list from best available source: manifest > skills_parsed > exports
-    // Returns: { functions: [{name, description?, parameters?}], source }
+    function getShellStateIcon(kind) {
+      if (kind === 'loading') {
+        return '<span class="btn-spinner" style="width:16px;height:16px;border-width:2px;"></span>';
+      }
+      if (kind === 'error') {
+        return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M9 9l6 6M15 9l-6 6"></path></svg>';
+      }
+      return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M8 10h8M8 14h5"></path></svg>';
+    }
+
+    function renderShellState(kind, title, description, options) {
+      options = options || {};
+      var actionHtml = '';
+      if (options.actionLabel && options.actionOnclick) {
+        actionHtml =
+          '<div style="margin-top:var(--space-2)">' +
+            '<button class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);" onclick="' + options.actionOnclick + '">' + escapeHtml(options.actionLabel) + '</button>' +
+          '</div>';
+      }
+
+      return '<div class="shell-state shell-state-' + escapeHtml(kind) + (options.compact ? ' shell-state-compact' : '') + '">' +
+        '<div class="shell-state-icon">' + getShellStateIcon(kind) + '</div>' +
+        '<div class="shell-state-title">' + escapeHtml(title) + '</div>' +
+        (description ? '<div class="shell-state-desc">' + escapeHtml(description) + '</div>' : '') +
+        actionHtml +
+      '</div>';
+    }
+
+    function renderSectionState(sectionTitle, kind, title, description, options) {
+      options = options || {};
+      return '<div class="section-card' + (options.cardClass ? ' ' + escapeHtml(options.cardClass) : '') + '">' +
+        (sectionTitle ? '<h3 class="section-title">' + escapeHtml(sectionTitle) + '</h3>' : '') +
+        renderShellState(kind, title, description, options) +
+      '</div>';
+    }
+
+    function renderTableState(colspan, kind, title, description) {
+      return '<tr><td colspan="' + String(colspan) + '" style="padding:0;">' +
+        renderShellState(kind, title, description, { compact: true }) +
+      '</td></tr>';
+    }
+
+    // Resolve function list from best available source: manifest first, then legacy metadata
+    // Returns: { functions: [{name, description?, parameters?}], source, migrationRequired, message }
     // Parameters are normalized to object-keyed format: { paramName: { type, description, required } }
     function getAppFunctions(app) {
+      function buildMigrationMessage(source) {
+        if (source === 'skills_parsed') {
+          return 'This app still relies on legacy code-analysis contracts. Publish a manifest-backed version before relying on stable runtime schemas.';
+        }
+        if (source === 'gpu_exports') {
+          return 'This GPU app still relies on export-name discovery. Publish a manifest-backed version before relying on stable runtime schemas.';
+        }
+        if (source === 'exports') {
+          return 'This app still relies on legacy export discovery. Publish a manifest-backed version before relying on stable runtime schemas.';
+        }
+        return 'This app does not have a manifest-backed function contract yet.';
+      }
+
       // 1. Manifest functions (richest: name, description, parameters)
       var manifest = app.manifest;
       if (typeof manifest === 'string') { try { manifest = JSON.parse(manifest); } catch(e) { manifest = null; } }
@@ -3232,20 +3418,39 @@ export function getLayoutHTML(options: {
             }
             return { name: fnName, description: fnDef.description || '', parameters: params || {} };
           });
-          return { functions: fns, source: 'manifest' };
+          return { functions: fns, source: 'manifest', migrationRequired: false, message: '' };
         }
       }
       // 2. skills_parsed functions (name + description + parameter schemas)
       var sp = app.skills_parsed;
       if (typeof sp === 'string') { try { sp = JSON.parse(sp); } catch(e) { sp = null; } }
       if (sp && sp.functions && sp.functions.length > 0) {
-        return { functions: sp.functions, source: 'skills_parsed' };
+        return {
+          functions: sp.functions,
+          source: 'skills_parsed',
+          migrationRequired: true,
+          message: buildMigrationMessage('skills_parsed')
+        };
       }
-      // 3. exports array (just names, always available after build)
+      // 3. GPU export fallback (legacy, read-only guidance only)
+      if (app.runtime === 'gpu' && app.exports && app.exports.length > 0) {
+        return {
+          functions: app.exports.map(function(name) { return { name: name }; }),
+          source: 'gpu_exports',
+          migrationRequired: true,
+          message: buildMigrationMessage('gpu_exports')
+        };
+      }
+      // 4. Plain export fallback (legacy, owner-facing migration guidance only)
       if (app.exports && app.exports.length > 0) {
-        return { functions: app.exports.map(function(name) { return { name: name }; }), source: 'exports' };
+        return {
+          functions: app.exports.map(function(name) { return { name: name }; }),
+          source: 'exports',
+          migrationRequired: true,
+          message: buildMigrationMessage('exports')
+        };
       }
-      return { functions: [], source: 'none' };
+      return { functions: [], source: 'none', migrationRequired: false, message: buildMigrationMessage('none') };
     }
 
     function relTime(d) {
@@ -3273,13 +3478,6 @@ export function getLayoutHTML(options: {
       let hash = 0;
       for (let i = 0; i < (name || '').length; i++) hash = ((hash << 5) - hash) + name.charCodeAt(i);
       return emojis[Math.abs(hash) % emojis.length];
-    }
-
-    function decodeJWT(token) {
-      try {
-        const payload = token.split('.')[1];
-        return JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
-      } catch { return null; }
     }
 
     // ===== Toast Notifications =====
@@ -3413,31 +3611,6 @@ export function getLayoutHTML(options: {
     // Close button
     document.getElementById('authCloseBtn')?.addEventListener('click', hideAuthOverlay);
 
-    // Browser auth now lives in HttpOnly cookies. localStorage is only read here
-    // so we can migrate older browser sessions without logging people out.
-
-    async function migrateLegacyBrowserSession() {
-      if (_isEmbed) return;
-      if (!legacyBrowserToken || legacyBrowserToken.startsWith('ul_')) return;
-
-      try {
-        const res = await nativeFetch('/auth/session', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({
-            access_token: legacyBrowserToken,
-            refresh_token: localStorage.getItem('ultralight_refresh_token') || '',
-          }),
-        });
-        if (res.ok) {
-          localStorage.removeItem('ultralight_token');
-          localStorage.removeItem('ultralight_refresh_token');
-          authToken = COOKIE_AUTH_SENTINEL;
-        }
-      } catch (e) {}
-    }
-
     async function detectAuthenticatedSession() {
       if (hasRealBearerToken()) return;
       try {
@@ -3454,7 +3627,6 @@ export function getLayoutHTML(options: {
     }
 
     async function updateAuthUI() {
-      await migrateLegacyBrowserSession();
       await detectAuthenticatedSession();
 
       // Always set up hero CTA (handles both pre-auth and post-auth paths)
@@ -3477,64 +3649,20 @@ export function getLayoutHTML(options: {
       localStorage.removeItem('ultralight_provisional_token_id');
       localStorage.removeItem('ultralight_provisional_user_id');
 
-      // API tokens (ul_...) skip JWT decode — verify via API instead
-      if (authToken === COOKIE_AUTH_SENTINEL) {
-        try {
-          const authRes = await fetch('/auth/user');
-          const authData = await authRes.json();
-          if (!authRes.ok || !authData?.id) { signOut(); return; }
-          currentUser = authData;
-          if (authData.id) { window._currentUserId = authData.id; currentUserId = authData.id; }
-        } catch { signOut(); return; }
-      } else if (authToken.startsWith('ul_')) {
-        try {
-          const res = await fetch('/api/user', {
-            headers: { 'Authorization': 'Bearer ' + authToken },
-          });
-          if (!res.ok) { signOut(); return; }
-          userProfile = await res.json();
-          currentUser = { id: userProfile.id, email: userProfile.email };
-          if (userProfile.id) { window._currentUserId = userProfile.id; currentUserId = userProfile.id; }
-        } catch { signOut(); return; }
-      } else {
-        // Decode JWT
-        const payload = decodeJWT(authToken);
-        if (!payload) {
-          signOut();
-          return;
-        }
+      if (authToken !== COOKIE_AUTH_SENTINEL) {
+        signOut();
+        return;
+      }
 
-        // Check expiration
-        if (payload.exp && payload.exp * 1000 < Date.now()) {
-          // Try refresh
-          const refreshToken = localStorage.getItem('ultralight_refresh_token');
-          if (refreshToken) {
-            try {
-              const res = await fetch('/auth/refresh', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ refresh_token: refreshToken }),
-              });
-              if (res.ok) {
-                const data = await res.json();
-                authToken = data.access_token;
-                localStorage.setItem('ultralight_token', data.access_token);
-                if (data.refresh_token) localStorage.setItem('ultralight_refresh_token', data.refresh_token);
-              } else {
-                signOut();
-                return;
-              }
-            } catch {
-              signOut();
-              return;
-            }
-          } else {
-            signOut();
-            return;
-          }
-        }
-
-        currentUser = payload;
+      try {
+        const authRes = await fetch('/auth/user');
+        const authData = await authRes.json();
+        if (!authRes.ok || !authData?.id) { signOut(); return; }
+        currentUser = authData;
+        if (authData.id) { window._currentUserId = authData.id; currentUserId = authData.id; }
+      } catch {
+        signOut();
+        return;
       }
 
       // Fetch full profile (skip if already loaded via ul_ token path)
@@ -3553,7 +3681,7 @@ export function getLayoutHTML(options: {
       } catch {}
 
       // Update nav
-      console.log('[updateAuthUI] switching to post-auth nav');
+      debugLog('auth-ui', 'Switching to post-auth nav');
       document.getElementById('navPreAuth').classList.add('hidden');
       var navPost = document.getElementById('navPostAuth');
       navPost.classList.remove('hidden');
@@ -3639,18 +3767,23 @@ export function getLayoutHTML(options: {
       }
     }
 
-    function signOut() {
+    async function signOut() {
+      try {
+        var signOutResponse = await nativeFetch('/auth/signout', {
+          method: 'POST',
+          credentials: 'same-origin',
+        });
+        if (!signOutResponse.ok) {
+          warnLog('auth', 'Sign-out did not fully revoke the upstream session');
+        }
+      } catch (e) {
+        warnLog('auth', 'Sign-out request failed', e);
+      }
       authToken = null;
       currentUser = null;
       userProfile = null;
       apps = [];
-      localStorage.removeItem('ultralight_token');
-      localStorage.removeItem('ultralight_refresh_token');
       localStorage.removeItem('ultralight_setup_v4');
-      nativeFetch('/auth/signout', {
-        method: 'POST',
-        credentials: 'same-origin',
-      }).catch(function() {});
       if (connectionPollInterval) clearInterval(connectionPollInterval);
       if (_isEmbed) return; // Don't redirect in embed mode
       window.location.href = '/';
@@ -4032,13 +4165,13 @@ export function getLayoutHTML(options: {
           }
           if (!resultsList) return;
           if (results.length === 0) {
-            resultsList.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">No results found.</div>';
+            resultsList.innerHTML = renderShellState('empty', 'No matching results', 'Try a different search term or clear a filter.', { compact: true });
             return;
           }
           resultsList.innerHTML = results.map(renderMarketplaceCard).join('');
         })
         .catch(function() {
-          if (resultsList) resultsList.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Search failed.</div>';
+          if (resultsList) resultsList.innerHTML = renderShellState('error', 'Search unavailable', 'We could not load those search results right now.', { compact: true });
         });
     }
 
@@ -4069,10 +4202,12 @@ export function getLayoutHTML(options: {
 
     // Load platform ticker stats
     function loadPlatformStats() {
+      var tickerEl = document.getElementById('marketTicker');
+      if (tickerEl) tickerEl.innerHTML = '<span>Loading market activity...</span>';
       fetch('/api/discover/stats')
         .then(function(r) { return r.json(); })
         .then(function(data) {
-          var tickerEl = document.getElementById('marketTicker');
+          tickerEl = document.getElementById('marketTicker');
           if (!tickerEl) return;
           var gmv = formatLight(data.gmv_30d_light || 0);
           var changePct = (data.gmv_change_pct || 0).toFixed(1);
@@ -4086,18 +4221,24 @@ export function getLayoutHTML(options: {
           var doubled = items.concat(items);
           tickerEl.innerHTML = doubled.map(function(t) { return '<span>' + escapeHtml(t) + '</span>'; }).join('');
         })
-        .catch(function() {});
+        .catch(function() {
+          if (tickerEl) tickerEl.innerHTML = '<span>Market activity is unavailable right now.</span>';
+        });
     }
 
     // Load newly published apps
     function loadNewlyPublished() {
+      var el = document.getElementById('newlyPublishedList');
+      if (el) {
+        el.innerHTML = renderShellState('loading', 'Loading new publications', 'Checking the latest apps that just shipped.', { compact: true });
+      }
       fetch('/api/discover/newly-published?limit=5')
         .then(function(r) { return r.json(); })
         .then(function(apps) {
-          var el = document.getElementById('newlyPublishedList');
+          el = document.getElementById('newlyPublishedList');
           if (!el) return;
           if (!apps || apps.length === 0) {
-            el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);">No recent publications.</div>';
+            el.innerHTML = renderShellState('empty', 'Nothing new has shipped yet', 'Freshly published apps will appear here.', { compact: true });
             return;
           }
           el.innerHTML = '<div style="border:1px solid var(--border);background:var(--bg-base);">' + apps.map(function(app, i) {
@@ -4114,18 +4255,26 @@ export function getLayoutHTML(options: {
               + '</div>';
           }).join('') + '</div>';
         })
-        .catch(function() {});
+        .catch(function() {
+          if (el) {
+            el.innerHTML = renderShellState('error', 'Could not load new publications', 'Try again in a moment.', { compact: true });
+          }
+        });
     }
 
     // Load newly acquired apps
     function loadNewlyAcquired() {
+      var el = document.getElementById('newlyAcquiredList');
+      if (el) {
+        el.innerHTML = renderShellState('loading', 'Loading acquisitions', 'Checking the latest app sales and transfers.', { compact: true });
+      }
       fetch('/api/discover/newly-acquired?limit=5')
         .then(function(r) { return r.json(); })
         .then(function(sales) {
-          var el = document.getElementById('newlyAcquiredList');
+          el = document.getElementById('newlyAcquiredList');
           if (!el) return;
           if (!sales || sales.length === 0) {
-            el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);">No recent acquisitions.</div>';
+            el.innerHTML = renderShellState('empty', 'No acquisitions yet', 'Completed app transfers will appear here once they happen.', { compact: true });
             return;
           }
           el.innerHTML = '<div style="border:1px solid var(--border);background:var(--bg-base);">' + sales.map(function(sale, i) {
@@ -4143,7 +4292,11 @@ export function getLayoutHTML(options: {
               + '</div>';
           }).join('') + '</div>';
         })
-        .catch(function() {});
+        .catch(function() {
+          if (el) {
+            el.innerHTML = renderShellState('error', 'Could not load acquisitions', 'Try again in a moment.', { compact: true });
+          }
+        });
     }
 
     // Load leaderboard
@@ -4155,14 +4308,14 @@ export function getLayoutHTML(options: {
 
       var tbody = document.getElementById('leaderboardBody');
       if (!tbody) return;
-      tbody.innerHTML = '<tr><td colspan="5" style="padding:var(--space-4);color:var(--text-muted);font-size:13px;">Loading...</td></tr>';
+      tbody.innerHTML = renderTableState(5, 'loading', 'Loading leaderboard', 'Checking the latest top-earning profiles.');
 
       fetch('/api/discover/leaderboard?period=' + leaderboardPeriod + '&limit=20')
         .then(function(r) { return r.json(); })
         .then(function(entries) {
           if (!tbody) return;
           if (!entries || entries.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" style="padding:var(--space-4);color:var(--text-muted);font-size:13px;">No data for this period.</td></tr>';
+            tbody.innerHTML = renderTableState(5, 'empty', 'No leaderboard data yet', 'Try a different time window or check back after more activity.');
             return;
           }
           tbody.innerHTML = entries.map(function(e, i) {
@@ -4180,7 +4333,7 @@ export function getLayoutHTML(options: {
           }).join('');
         })
         .catch(function() {
-          if (tbody) tbody.innerHTML = '<tr><td colspan="5" style="padding:var(--space-4);color:var(--text-muted);font-size:13px;">Failed to load.</td></tr>';
+          if (tbody) tbody.innerHTML = renderTableState(5, 'error', 'Could not load the leaderboard', 'Try again in a moment.');
         });
     }
 
@@ -4213,14 +4366,14 @@ export function getLayoutHTML(options: {
     function loadSharedApps() {
       var el = document.getElementById('sharedAppList');
       if (!el || !authToken) return;
-      el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Loading...</div>';
+      el.innerHTML = renderShellState('loading', 'Loading shared apps', 'Checking what other people have shared with you.', { compact: true });
       fetch('/api/apps/me/library?tab=shared', {
         headers: { 'Authorization': 'Bearer ' + authToken },
       })
         .then(function(r) { return r.json(); })
         .then(function(items) {
           if (!items || items.length === 0) {
-            el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">No apps shared with you yet.</div>';
+            el.innerHTML = renderShellState('empty', 'Nothing shared with you yet', 'Shared apps and pages will appear here when someone grants you access.', { compact: true });
             return;
           }
           el.innerHTML = items.map(function(item) {
@@ -4237,7 +4390,7 @@ export function getLayoutHTML(options: {
           }).join('');
         })
         .catch(function() {
-          el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Failed to load.</div>';
+          el.innerHTML = renderShellState('error', 'Could not load shared apps', 'Try again in a moment.', { compact: true });
         });
     }
 
@@ -4548,7 +4701,7 @@ export function getLayoutHTML(options: {
     function loadMarketplace(query, type) {
       var resultsEl = document.getElementById('marketplaceResults');
       if (!resultsEl) return;
-      resultsEl.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Loading...</div>';
+      resultsEl.innerHTML = renderShellState('loading', query ? 'Searching marketplace' : 'Loading marketplace', query ? 'Looking for matching apps and capabilities.' : 'Pulling the latest marketplace listings.', { compact: true });
 
       var params = new URLSearchParams();
       if (query) params.set('q', query);
@@ -4563,7 +4716,7 @@ export function getLayoutHTML(options: {
           // Sectioned browse mode
           if (data.sections && Array.isArray(data.sections)) {
             if (data.sections.length === 0) {
-              resultsEl.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">No apps yet.</div>';
+              resultsEl.innerHTML = renderShellState('empty', 'No marketplace listings yet', 'Published apps will appear here once they are available.', { compact: true });
               return;
             }
             resultsEl.innerHTML = data.sections.map(function(section) {
@@ -4580,14 +4733,14 @@ export function getLayoutHTML(options: {
 
           // Flat search results
           if (!data.results || data.results.length === 0) {
-            resultsEl.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">No results found.</div>';
+            resultsEl.innerHTML = renderShellState('empty', 'No matching apps', 'Try a different search term or browse all listings.', { compact: true });
             return;
           }
           resultsEl.innerHTML = data.results.map(renderMarketplaceCard).join('');
           marketplaceLoaded = true;
         })
         .catch(function() {
-          resultsEl.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Failed to load marketplace.</div>';
+          resultsEl.innerHTML = renderShellState('error', 'Marketplace unavailable', 'We could not load marketplace listings right now.', { compact: true });
         });
     }
 
@@ -4614,7 +4767,7 @@ export function getLayoutHTML(options: {
     }
     window.navigateToAppStore = navigateToAppStore;
 
-    // Fetch the user's API key from the server (stored as plaintext in DB)
+    // Fetch the user's API key from the canonical token schema.
     async function ensureApiKey() {
       if (!authToken) return '';
       var authHeaders = { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' };
@@ -4626,7 +4779,7 @@ export function getLayoutHTML(options: {
         var defaultToken = tokens.find(function(t) { return t.name === 'default'; }) || tokens[0];
         if (defaultToken && defaultToken.plaintext_token) return defaultToken.plaintext_token;
 
-        // Legacy token without stored plaintext — regenerate once to backfill
+        // Token row without stored plaintext — regenerate against the canonical schema
         if (defaultToken && !defaultToken.plaintext_token) {
           await fetch('/api/user/tokens/' + defaultToken.id, { method: 'DELETE', headers: authHeaders });
           var createRes = await fetch('/api/user/tokens', {
@@ -5085,6 +5238,10 @@ export function getLayoutHTML(options: {
 
     async function loadApps() {
       if (!authToken) return;
+      const list = document.getElementById('appList');
+      if (list) {
+        list.innerHTML = renderShellState('loading', 'Loading your apps', 'Checking the apps you own and manage.', { compact: true });
+      }
       try {
         const res = await fetch('/api/apps/me', {
           headers: { 'Authorization': 'Bearer ' + authToken },
@@ -5092,8 +5249,14 @@ export function getLayoutHTML(options: {
         if (res.ok) {
           apps = await res.json();
           renderAppList();
+        } else if (list) {
+          list.innerHTML = renderShellState('error', 'Could not load your apps', 'Try again in a moment.', { compact: true });
         }
-      } catch {}
+      } catch {
+        if (list) {
+          list.innerHTML = renderShellState('error', 'Could not load your apps', 'Try again in a moment.', { compact: true });
+        }
+      }
     }
 
     function renderAppList(filterText) {
@@ -5182,7 +5345,7 @@ export function getLayoutHTML(options: {
       var list = document.getElementById('appList');
       if (!list) return;
       if (!authToken) {
-        list.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Sign in to view your ' + tab + ' items.</div>';
+        list.innerHTML = renderShellState('empty', 'Sign in to continue', 'Sign in to view your ' + escapeHtml(tab) + ' items.', { compact: true });
         return;
       }
 
@@ -5193,7 +5356,7 @@ export function getLayoutHTML(options: {
         return;
       }
 
-      list.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Loading...</div>';
+      list.innerHTML = renderShellState('loading', 'Loading library items', 'Checking your ' + escapeHtml(tab) + ' items.', { compact: true });
 
       try {
         var res = await fetch('/api/apps/me/library?tab=' + tab, {
@@ -5207,7 +5370,7 @@ export function getLayoutHTML(options: {
 
         renderLibraryItems(items, tab);
       } catch (err) {
-        list.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:var(--space-4) 0;">Failed to load.</div>';
+        list.innerHTML = renderShellState('error', 'Could not load library items', 'Try again in a moment.', { compact: true });
       }
     }
 
@@ -5303,13 +5466,13 @@ export function getLayoutHTML(options: {
         });
 
         // Load all sections (each in its own try/catch so one failure doesn't block the rest)
-        try { loadAppOverview(app); } catch (e) { console.error('loadAppOverview:', e); }
-        try { loadAppPermissions(app); } catch (e) { console.error('loadAppPermissions:', e); }
-        try { loadAppEnvironment(app); } catch (e) { console.error('loadAppEnvironment:', e); }
-        try { loadAppPayments(appId, app); } catch (e) { console.error('loadAppPayments:', e); }
-        try { loadAppLogsSection(appId); } catch (e) { console.error('loadAppLogsSection:', e); }
-        try { loadAppOffers(appId, app); } catch (e) { console.error('loadAppOffers:', e); }
-        try { loadAppStoreListing(appId, app); } catch (e) { console.error('loadAppStoreListing:', e); }
+        try { loadAppOverview(app); } catch (e) { errorLog('app', 'loadAppOverview failed', e); }
+        try { loadAppPermissions(app); } catch (e) { errorLog('app', 'loadAppPermissions failed', e); }
+        try { loadAppEnvironment(app); } catch (e) { errorLog('app', 'loadAppEnvironment failed', e); }
+        try { loadAppPayments(appId, app); } catch (e) { errorLog('app', 'loadAppPayments failed', e); }
+        try { loadAppLogsSection(appId); } catch (e) { errorLog('app', 'loadAppLogsSection failed', e); }
+        try { loadAppOffers(appId, app); } catch (e) { errorLog('app', 'loadAppOffers failed', e); }
+        try { loadAppStoreListing(appId, app); } catch (e) { errorLog('app', 'loadAppStoreListing failed', e); }
 
       } catch (err) {
         showToast('Error loading app: ' + (err.message || ''), 'error');
@@ -5321,9 +5484,7 @@ export function getLayoutHTML(options: {
       // -- App header (meta only — app name is set by loadAppPage) --
       const headerEl = document.getElementById('appOverviewHeader');
       if (headerEl) {
-        const endpointBase = window.location.origin + '/mcp/' + app.id;
-        const tokenSuffix = currentApiKey && currentApiKey.plaintext_token ? '?token=' + currentApiKey.plaintext_token : '';
-        const endpointUrl = endpointBase + tokenSuffix;
+        const endpointUrl = window.location.origin + '/mcp/' + app.id;
         headerEl.innerHTML =
           '<div class="app-panel-name">' + escapeHtml(app.name || app.slug || 'Untitled') + '</div>' +
           '<div class="app-overview-meta" style="margin-bottom:var(--space-4);">' +
@@ -5332,7 +5493,7 @@ export function getLayoutHTML(options: {
               '<span style="font-size:12px;padding:2px 8px;background:rgba(52,211,153,0.1);color:var(--success);font-weight:500;">Active</span>' +
             '</div>' +
             '<div class="meta-row">' +
-              '<span style="font-size:12px;color:var(--text-muted);">MCP Endpoint:</span>' +
+              '<span style="font-size:12px;color:var(--text-muted);">MCP Endpoint (Authorization header required):</span>' +
               '<code style="font-size:12px;font-family:var(--font-mono);color:var(--text-secondary);background:var(--bg-active);padding:2px 8px;">' + escapeHtml(endpointUrl) + '</code>' +
               '<button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:11px;" onclick="copyAppEndpoint()">Copy</button>' +
             '</div>' +
@@ -5368,7 +5529,6 @@ export function getLayoutHTML(options: {
       if (fnsEl) {
         const fnResult = getAppFunctions(app);
         const fns = fnResult.functions;
-        const fnSource = fnResult.source;
         const functionsHtml = fns.length > 0
           ? '<div class="function-list">' + fns.map(function(fn) {
               // Handle object-keyed params {name: {type, required}} or legacy array [{name, type}]
@@ -5392,7 +5552,7 @@ export function getLayoutHTML(options: {
                 (fn.description ? '<div class="function-desc">' + escapeHtml(fn.description) + '</div>' : '') +
               '</div>';
             }).join('') + '</div>' +
-            (fnSource !== 'manifest' ? '<div style="font-size:11px;color:var(--text-muted);margin-top:8px;">Functions detected from ' + (fnSource === 'skills_parsed' ? 'code analysis' : 'exports') + '. Add a manifest.json for richer parameter schemas.</div>' : '')
+            (fnResult.migrationRequired ? '<div style="font-size:11px;color:#fbbf24;margin-top:8px;">' + escapeHtml(fnResult.message || 'Manifest migration required.') + '</div>' : '')
           : '<div style="font-size:13px;color:var(--text-muted);">No functions found. Deploy your app to see functions here.</div>';
 
         fnsEl.innerHTML =
@@ -5405,7 +5565,7 @@ export function getLayoutHTML(options: {
       // -- Skills --
       const skillsEl = document.getElementById('skillsContent');
       if (skillsEl) {
-        skillsEl.innerHTML = '<div class="section-card"><h3 class="section-title">Skills / Documentation</h3><div class="loading-text">Loading...</div></div>';
+        skillsEl.innerHTML = renderSectionState('Skills / Documentation', 'loading', 'Loading documentation', 'Pulling the latest generated docs and setup guidance.');
         loadSkills(app.id);
       }
     }
@@ -5418,7 +5578,7 @@ export function getLayoutHTML(options: {
           headers: { 'Authorization': 'Bearer ' + authToken },
         });
         if (!res.ok) {
-          container.querySelector('.loading-text').textContent = 'Could not load health data.';
+          container.innerHTML = renderSectionState('Health', 'error', 'Health data unavailable', 'We could not load the latest health summary.');
           return;
         }
         const data = await res.json();
@@ -5450,7 +5610,7 @@ export function getLayoutHTML(options: {
 
         container.innerHTML = '<h3 class="section-title">Health</h3>' + html;
       } catch {
-        container.querySelector('.loading-text').textContent = 'Could not load health data.';
+        container.innerHTML = renderSectionState('Health', 'error', 'Health data unavailable', 'We could not load the latest health summary.');
       }
     }
 
@@ -5471,43 +5631,6 @@ export function getLayoutHTML(options: {
         document.getElementById('autoHealToggle').checked = !enabled;
       }
     };
-
-    async function loadAppRecentCalls(appId) {
-      const container = document.getElementById('appRecentCalls');
-      if (!container) return;
-      try {
-        const res = await fetch('/api/user/call-log?limit=10&app_id=' + appId, {
-          headers: { 'Authorization': 'Bearer ' + authToken },
-        });
-        if (!res.ok) {
-          container.innerHTML = '<h3 class="section-title">Recent Calls</h3><div class="empty-state"><div class="empty-state-desc">No calls recorded yet.</div></div>';
-          return;
-        }
-        const data = await res.json();
-        const logs = Array.isArray(data) ? data : (data.logs || []);
-
-        if (logs.length === 0) {
-          container.innerHTML = '<h3 class="section-title">Recent Calls</h3><div class="empty-state"><div class="empty-state-desc">No calls recorded yet.</div></div>';
-          return;
-        }
-
-        container.innerHTML = '<h3 class="section-title">Recent Calls</h3><div class="activity-list">' +
-          logs.map(function(log) {
-            const success = log.success !== false;
-            const fn = escapeHtml(log.function_name || '');
-            const time = relTime(log.created_at);
-            const dur = log.duration_ms ? log.duration_ms + 'ms' : '';
-            return '<div class="activity-item">' +
-              '<div class="activity-dot' + (success ? '' : ' activity-dot-error') + '"></div>' +
-              '<span class="activity-fn">' + fn + '()</span>' +
-              (dur ? '<span class="activity-sep">·</span><span style="color:var(--text-muted);font-size:12px">' + dur + '</span>' : '') +
-              '<span class="activity-time">' + time + '</span>' +
-            '</div>';
-          }).join('') + '</div>';
-      } catch {
-        container.innerHTML = '<h3 class="section-title">Recent Calls</h3><div class="empty-state"><div class="empty-state-desc">Could not load calls.</div></div>';
-      }
-    }
 
     // ===== App Section Loaders =====
     function loadAppPermissions(app) {
@@ -5573,7 +5696,7 @@ export function getLayoutHTML(options: {
       // Load granted users
       const permsEl = document.getElementById('permissionsContent');
       if (permsEl) {
-        permsEl.innerHTML = '<div class="loading-text">Loading...</div>';
+        permsEl.innerHTML = renderShellState('loading', 'Loading permissions', 'Checking granted users and per-function access.', { compact: true });
         loadPermissions(app.id);
       }
     }
@@ -5581,12 +5704,12 @@ export function getLayoutHTML(options: {
     function loadAppEnvironment(app) {
       const dbEl = document.getElementById('databaseContent');
       if (dbEl) {
-        dbEl.innerHTML = '<div class="section-card"><h3 class="section-title">Database</h3><div class="loading-text">Loading...</div></div>';
+        dbEl.innerHTML = renderSectionState('Database', 'loading', 'Loading database connection', 'Checking the app\\'s current data binding.');
         loadDatabase(app.id);
       }
       const envEl = document.getElementById('envVarsContent');
       if (envEl) {
-        envEl.innerHTML = '<div class="section-card"><h3 class="section-title">Environment Variables</h3><div class="loading-text">Loading...</div></div>';
+        envEl.innerHTML = renderSectionState('Environment Variables', 'loading', 'Loading environment variables', 'Fetching saved keys for this app.');
         loadEnvVars(app.id);
       }
     }
@@ -5601,14 +5724,13 @@ export function getLayoutHTML(options: {
         const fnOverrides = pricingConfig.functions || {};
         const fnResult = getAppFunctions(app);
         const fns = fnResult.functions;
-        const fnSource = fnResult.source;
 
         // Build per-function rows
         var fnRowsHtml = '';
         if (fns.length > 0) {
           fnRowsHtml = '<div style="margin-top:var(--space-4)">' +
             '<h4 style="font-size:13px;font-weight:600;margin-bottom:var(--space-3)">Per-Function Pricing</h4>' +
-            (fnSource !== 'manifest' ? '<div style="font-size:11px;color:var(--text-muted);margin-bottom:var(--space-2);">Functions detected from ' + (fnSource === 'skills_parsed' ? 'code analysis' : 'exports') + '. Add a manifest.json for richer schemas.</div>' : '') +
+            (fnResult.migrationRequired ? '<div style="font-size:11px;color:#fbbf24;margin-bottom:var(--space-2);">' + escapeHtml(fnResult.message || 'Manifest migration required.') + '</div>' : '') +
             '<div style="display:grid;grid-template-columns:1fr 90px 90px 60px;gap:8px 12px;align-items:center;font-size:12px;">' +
               '<div style="color:var(--text-muted);font-weight:500;">Function</div>' +
               '<div style="color:var(--text-muted);font-weight:500;">Price (\u00a2)</div>' +
@@ -5669,7 +5791,7 @@ export function getLayoutHTML(options: {
 
       const revEl = document.getElementById('revenueSection');
       if (revEl) {
-        revEl.innerHTML = '<div class="section-card"><h3 class="section-title">Revenue</h3><div class="loading-text">Loading...</div></div>';
+        revEl.innerHTML = renderSectionState('Revenue', 'loading', 'Loading revenue data', 'Pulling earnings and per-function revenue for this app.');
         loadAppRevenue(appId);
       }
     }
@@ -5677,21 +5799,19 @@ export function getLayoutHTML(options: {
     function loadAppLogsSection(appId) {
       var logsEl = document.getElementById('appLogsContent');
       if (!logsEl) return;
-      logsEl.innerHTML = '<div class="loading-text">Loading data...</div>';
+      logsEl.innerHTML = renderShellState('loading', 'Loading usage data', 'Pulling metrics and recent call activity.', { compact: true });
 
-      // Parallel fetch: metrics + call logs
       Promise.all([
         fetch('/api/marketplace/metrics/' + appId, {
           headers: { 'Authorization': 'Bearer ' + authToken }
         }).then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; }),
-        fetch('/api/user/call-log?limit=50&app_id=' + appId, {
+        fetch('/api/apps/' + appId + '/call-log?limit=50', {
           headers: { 'Authorization': 'Bearer ' + authToken }
         }).then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; })
       ]).then(function(results) {
         var metrics = results[0];
-        var data = results[1];
-        var logs = data ? (Array.isArray(data) ? data : (data.logs || [])) : [];
-
+        var callData = results[1];
+        var logs = callData ? (Array.isArray(callData) ? callData : (callData.logs || [])) : [];
         var html = '';
 
         // ── METRICS CARDS ──
@@ -5747,8 +5867,10 @@ export function getLayoutHTML(options: {
         // ── RECENT CALLS TABLE ──
         html += '<h3 style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:var(--space-2);text-transform:uppercase;letter-spacing:0.5px">Recent Calls</h3>';
 
-        if (logs.length === 0) {
-          html += '<div style="color:var(--text-muted);font-size:13px;padding:var(--space-4) 0;">No calls recorded yet.</div>';
+        if (!callData) {
+          html += renderShellState('error', 'Recent calls unavailable', 'We could not load the owner activity feed for this app.', { compact: true });
+        } else if (logs.length === 0) {
+          html += renderShellState('empty', 'No calls recorded yet', 'Calls will appear here after agents use this app.', { compact: true });
         } else {
           html += '<table style="width:100%;font-size:13px;border-collapse:collapse">' +
             '<thead><tr style="border-bottom:1px solid var(--border);text-align:left">' +
@@ -5773,13 +5895,15 @@ export function getLayoutHTML(options: {
 
         logsEl.innerHTML = html;
       }).catch(function() {
-        logsEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px">Could not load data.</div>';
+        logsEl.innerHTML = renderShellState('error', 'Usage data unavailable', 'We could not load app metrics right now.', { compact: true });
       });
 
       // Health section
       var healthEl = document.getElementById('appHealthSection');
       if (healthEl) {
-        healthEl.innerHTML = '<div class="section-card" id="appHealthSummary"><h3 class="section-title">Health</h3><div class="loading-text">Loading...</div></div>';
+        healthEl.innerHTML = renderSectionState('Health', 'loading', 'Loading health data', 'Checking live status, auto-heal, and function error rates.', { cardClass: 'app-health-loading' });
+        var loadingSummaryEl = healthEl.querySelector('.section-card');
+        if (loadingSummaryEl) loadingSummaryEl.id = 'appHealthSummary';
         loadAppHealth(appId);
       }
     }
@@ -6054,7 +6178,7 @@ export function getLayoutHTML(options: {
 
       const isOwner = app && app.owner_id === window._currentUserId;
 
-      contentEl.innerHTML = '<div class="loading-text">Loading marketplace data...</div>';
+      contentEl.innerHTML = renderShellState('loading', 'Loading marketplace data', 'Checking listing status, bids, and acquisition history.', { compact: true });
       if (bidsEl) bidsEl.innerHTML = '';
       if (historyEl) historyEl.innerHTML = '';
 
@@ -6265,7 +6389,7 @@ export function getLayoutHTML(options: {
           }
         }
       }).catch(function(err) {
-        contentEl.innerHTML = '<div class="section-card"><p style="font-size:13px;color:var(--text-muted)">Marketplace data unavailable.</p></div>';
+        contentEl.innerHTML = renderSectionState('', 'error', 'Marketplace data unavailable', 'We could not load listing and bid data for this app.');
       });
     }
 
@@ -6665,8 +6789,9 @@ export function getLayoutHTML(options: {
     // ===== Copy Functions =====
     window.copyAppEndpoint = function() {
       const base = window.location.origin + '/mcp/' + currentAppId;
-      const token = currentApiKey && currentApiKey.plaintext_token ? '?token=' + currentApiKey.plaintext_token : '';
-      navigator.clipboard.writeText(base + token).then(function() { showToast('MCP endpoint copied!'); });
+      navigator.clipboard.writeText(base).then(function() {
+        showToast('MCP endpoint copied. Send your API key in the Authorization header.');
+      });
     };
 
     window.copyPlatformMcpUrl = function() {
@@ -6771,7 +6896,10 @@ export function getLayoutHTML(options: {
         const res = await fetch('/api/user/permissions/' + appId, {
           headers: { 'Authorization': 'Bearer ' + authToken },
         });
-        if (!res.ok) { container.innerHTML = '<div class="empty-state"><div class="empty-state-desc">Could not load permissions.</div></div>'; return; }
+        if (!res.ok) {
+          container.innerHTML = renderShellState('error', 'Permissions unavailable', 'We could not load the access list right now.', { compact: true });
+          return;
+        }
         const data = await res.json();
         permsGrantedUsers = data.users || data || [];
 
@@ -6792,10 +6920,12 @@ export function getLayoutHTML(options: {
             '</div>';
           }).join('');
         } else {
-          html += '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">No users have access to this app.</div>';
+          html += renderShellState('empty', 'No one else has access yet', 'Grant access to share this app with another user.', { compact: true });
         }
         container.innerHTML = html;
-      } catch { container.innerHTML = '<div class="empty-state"><div class="empty-state-desc">Could not load permissions.</div></div>'; }
+      } catch {
+        container.innerHTML = renderShellState('error', 'Permissions unavailable', 'We could not load the access list right now.', { compact: true });
+      }
     }
 
     window.addPermissionUser = async function() {
@@ -6843,7 +6973,7 @@ export function getLayoutHTML(options: {
       modal.classList.remove('hidden');
       const detail = document.getElementById('permsDetail');
       if (detail) {
-        detail.innerHTML = '<div class="loading-text">Loading permissions for ' + escapeHtml(email) + '...</div>';
+        detail.innerHTML = renderShellState('loading', 'Loading access for ' + email, 'Checking per-function access and constraints.', { compact: true });
         loadPermissionDetail(currentAppId, userId, email);
       }
     };
@@ -6854,7 +6984,10 @@ export function getLayoutHTML(options: {
         const res = await fetch('/api/user/permissions/' + appId + '?user_id=' + userId, {
           headers: { 'Authorization': 'Bearer ' + authToken },
         });
-        if (!res.ok) { detail.innerHTML = 'Failed to load.'; return; }
+        if (!res.ok) {
+          detail.innerHTML = renderShellState('error', 'Permission details unavailable', 'We could not load this user\\'s access settings.', { compact: true });
+          return;
+        }
         const data = await res.json();
         const perms = data.permissions || data || [];
         const fns = getAppFunctions(window._currentApp || {}).functions;
@@ -6879,7 +7012,9 @@ export function getLayoutHTML(options: {
         '</div>';
 
         detail.innerHTML = html;
-      } catch { detail.innerHTML = 'Failed to load.'; }
+      } catch {
+        detail.innerHTML = renderShellState('error', 'Permission details unavailable', 'We could not load this user\\'s access settings.', { compact: true });
+      }
     }
 
     window.savePermissionDetail = async function(userId) {
@@ -7005,7 +7140,7 @@ export function getLayoutHTML(options: {
           loadOAuthProjects(currentConfig);
         }
       } catch {
-        container.innerHTML = '<div class="empty-state"><div class="empty-state-desc">Could not load database config.</div></div>';
+        container.innerHTML = renderSectionState('Database', 'error', 'Database settings unavailable', 'We could not load the current database configuration.');
       }
     }
 
@@ -7310,11 +7445,14 @@ export function getLayoutHTML(options: {
               '<button class="btn btn-ghost btn-sm" onclick="generateDocs()">Generate Docs</button>' +
             '</div></div>';
         } else {
-          container.innerHTML = '<div class="section-card"><h3 class="section-title">Skills / Documentation</h3>' +
-            '<div style="font-size:13px;color:var(--text-muted)">No Skills.md found.</div>' +
-            '<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="generateDocs()">Generate Documentation</button></div>';
+          container.innerHTML = renderSectionState('Skills / Documentation', 'empty', 'No documentation published yet', 'Generate docs after you ship your manifest and function descriptions.', {
+            actionLabel: 'Generate Documentation',
+            actionOnclick: 'generateDocs()',
+          });
         }
-      } catch { container.innerHTML = '<div class="section-card"><h3 class="section-title">Skills / Documentation</h3><div class="empty-state"><div class="empty-state-desc">Could not load skills.</div></div></div>'; }
+      } catch {
+        container.innerHTML = renderSectionState('Skills / Documentation', 'error', 'Documentation unavailable', 'We could not load the latest docs for this app.');
+      }
     }
 
     window.openSkillsEditor = async function() {
@@ -7444,7 +7582,10 @@ export function getLayoutHTML(options: {
         const res = await fetch('/api/apps/' + appId + '/earnings?period=30d', {
           headers: { 'Authorization': 'Bearer ' + authToken },
         });
-        if (!res.ok) { container.querySelector('.loading-text').textContent = 'No revenue data.'; return; }
+        if (!res.ok) {
+          container.innerHTML = renderSectionState('Revenue', 'empty', 'No revenue data yet', 'Revenue appears here after paid usage starts flowing through this app.');
+          return;
+        }
         const data = await res.json();
 
         let html = '<h3 class="section-title">Revenue</h3>';
@@ -7465,7 +7606,9 @@ export function getLayoutHTML(options: {
         }
 
         container.innerHTML = html;
-      } catch { container.querySelector('.loading-text').textContent = 'Could not load revenue.'; }
+      } catch {
+        container.innerHTML = renderSectionState('Revenue', 'error', 'Revenue unavailable', 'We could not load the latest revenue summary.');
+      }
     }
 
     // ===== Account Settings =====
@@ -7500,7 +7643,7 @@ export function getLayoutHTML(options: {
     async function loadApiKey() {
       var valEl = document.getElementById('apiKeyValue');
       if (!valEl) return;
-      valEl.textContent = 'Loading...';
+      valEl.textContent = 'Loading API key...';
       var authHeaders = { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' };
 
       try {
@@ -7512,7 +7655,7 @@ export function getLayoutHTML(options: {
         if (tokens.length > 0) {
           currentApiKey = tokens.find(function(t) { return t.name === 'default'; }) || tokens[0];
 
-          // Legacy token without stored plaintext — regenerate to backfill
+          // Token row without stored plaintext — regenerate against the canonical schema
           if (currentApiKey && !currentApiKey.plaintext_token) {
             await fetch('/api/user/tokens/' + currentApiKey.id, { method: 'DELETE', headers: authHeaders });
             var regenRes = await fetch('/api/user/tokens', {
@@ -7713,13 +7856,18 @@ export function getLayoutHTML(options: {
       var listEl = document.getElementById('transactionsList');
       var summaryEl = document.getElementById('storageChargesSummary');
       if (!listEl) return;
-      if (txOffset === 0) listEl.innerHTML = '<span class="btn-spinner" style="width:12px;height:12px;border-width:1.5px;"></span>';
+      if (txOffset === 0) {
+        listEl.innerHTML = renderShellState('loading', 'Loading transactions', 'Pulling deposits, credits, and storage charges.', { compact: true });
+      }
 
       try {
         var res = await fetch('/api/user/transactions?limit=50&offset=' + txOffset, {
           headers: { 'Authorization': 'Bearer ' + authToken },
         });
-        if (!res.ok) { listEl.innerHTML = 'Failed to load transactions'; return; }
+        if (!res.ok) {
+          listEl.innerHTML = renderShellState('error', 'Transactions unavailable', 'We could not load your transaction history right now.', { compact: true });
+          return;
+        }
         var data = await res.json();
         var txs = data.transactions || [];
         var rate = data.current_rate || {};
@@ -7781,7 +7929,7 @@ export function getLayoutHTML(options: {
         if (txOffset === 0) listEl.innerHTML = '';
 
         if (generalTxs.length === 0 && txOffset === 0) {
-          listEl.innerHTML = '<div style="color:var(--text-muted);padding:var(--space-4) 0;">No transactions yet. Deposits and credits will appear here.</div>';
+          listEl.innerHTML = renderShellState('empty', 'No transactions yet', 'Deposits, credits, and storage charges will appear here.', { compact: true });
           return;
         }
 
@@ -7816,7 +7964,11 @@ export function getLayoutHTML(options: {
             + '<button class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);" onclick="loadTransactions()">Load more</button>'
             + '</div>';
         }
-      } catch { if (listEl) listEl.innerHTML = 'Failed to load transactions'; }
+      } catch {
+        if (listEl) {
+          listEl.innerHTML = renderShellState('error', 'Transactions unavailable', 'We could not load your transaction history right now.', { compact: true });
+        }
+      }
     }
     window.loadTransactions = loadTransactions;
 
@@ -7900,7 +8052,10 @@ export function getLayoutHTML(options: {
         var res = await fetch('/api/user/earnings?period=30d', {
           headers: { 'Authorization': 'Bearer ' + authToken },
         });
-        if (!res.ok) { el.textContent = 'Failed to load earnings'; return; }
+        if (!res.ok) {
+          el.innerHTML = renderShellState('error', 'Earnings unavailable', 'We could not load your earnings summary right now.', { compact: true });
+          return;
+        }
         var data = await res.json();
         var total = formatLight(data.total_earned_light || 0);
         var period = formatLight(data.period_earned_light || 0);
@@ -7914,7 +8069,9 @@ export function getLayoutHTML(options: {
             '<div><div style="font-size:11px;color:var(--success);">Withdrawable</div><div style="font-size:18px;font-weight:600;color:var(--success);">' + withdrawable + '</div></div>' +
           '</div>' +
           '<div style="font-size:11px;color:var(--text-muted);margin-top:var(--space-2);">Only earned funds can be withdrawn. Deposits are for hosting costs only.</div>';
-      } catch { el.textContent = 'Failed to load earnings'; }
+      } catch {
+        el.innerHTML = renderShellState('error', 'Earnings unavailable', 'We could not load your earnings summary right now.', { compact: true });
+      }
     }
 
     // --- Connect Status ---
@@ -8044,10 +8201,13 @@ export function getLayoutHTML(options: {
         var res = await fetch('/api/user/connect/payouts', {
           headers: { 'Authorization': 'Bearer ' + authToken },
         });
-        if (!res.ok) return;
+        if (!res.ok) {
+          el.innerHTML = renderShellState('error', 'Payout history unavailable', 'We could not load your latest payout history right now.', { compact: true });
+          return;
+        }
         var data = await res.json();
         if (!data.payouts || data.payouts.length === 0) {
-          el.textContent = 'No withdrawal history.';
+          el.innerHTML = renderShellState('empty', 'No payouts yet', 'Completed withdrawals will appear here after you cash out earnings.', { compact: true });
           return;
         }
         el.innerHTML = data.payouts.map(function(p) {
@@ -8065,7 +8225,9 @@ export function getLayoutHTML(options: {
             '<span style="color:var(--text-muted);">' + new Date(p.created_at).toLocaleDateString() + '</span>' +
           '</div>';
         }).join('');
-      } catch {}
+      } catch {
+        el.innerHTML = renderShellState('error', 'Payout history unavailable', 'We could not load your latest payout history right now.', { compact: true });
+      }
     }
 
     // --- Supabase Servers ---
@@ -8131,13 +8293,14 @@ export function getLayoutHTML(options: {
 
     // ===== Error Handling =====
     window.onerror = function(msg, src, line) {
-      console.error('Runtime Error:', msg, 'at line', line);
+      errorLog('runtime', 'Runtime error', { message: msg, source: src, line: line });
     };
     window.onunhandledrejection = function(e) {
-      console.error('Unhandled rejection:', e.reason);
+      errorLog('runtime', 'Unhandled rejection', e.reason);
     };
 
     // ===== Initialization =====
+    await bootstrapEmbedBridgeSession();
     await updateAuthUI();
 
     // Handle initial view
