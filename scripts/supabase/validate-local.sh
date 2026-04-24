@@ -10,11 +10,29 @@ ROOT="$(repo_root)"
 
 require_docker_daemon
 
-echo "[supabase] Starting local services"
-supabase_cli start --workdir "${ROOT}"
+retry_command() {
+  local label="$1"
+  shift
+
+  local attempt=1
+  local max_attempts=3
+  until "$@"; do
+    if (( attempt >= max_attempts )); then
+      echo "[supabase] ${label} failed after ${attempt} attempt(s)." >&2
+      return 1
+    fi
+
+    echo "[supabase] ${label} failed; retrying in $((attempt * 5))s..."
+    sleep $((attempt * 5))
+    attempt=$((attempt + 1))
+  done
+}
+
+echo "[supabase] Starting local database"
+retry_command "local database start" supabase_cli db start --workdir "${ROOT}"
 
 echo "[supabase] Resetting local database from checked-in migrations"
-supabase_cli db reset --workdir "${ROOT}" --yes
+retry_command "local database reset" supabase_cli db reset --workdir "${ROOT}" --yes
 
 echo "[supabase] Linting local schema"
 supabase_cli db lint --local --fail-on error --workdir "${ROOT}"
