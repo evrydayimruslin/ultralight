@@ -1,0 +1,9 @@
+{
+  "cycles": [
+    [
+      "hooks/useAgentFleet.ts",
+      "lib/agentRunner.ts",
+      "lib/agentStateSummary.ts"
+    ]
+  ]
+}

@@ -26,9 +26,16 @@ coverage/
 dist/
 build/
 
+# Shared contract compiler artifacts
+shared/contracts/*.js
+shared/contracts/*.js.map
+shared/contracts/*.d.ts
+shared/contracts/*.d.ts.map
+
 # Node
 node_modules/
 package-lock.json
+!api/package-lock.json
 *.tgz
 
 # wrangler files
@@ -37,8 +44,16 @@ package-lock.json
 !.dev.vars.example
 !.env.example
 
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/
+
 # Claude Code
 .claude/
 
 # Local SQLite database
 desktop/ultralight.db
+
+# Generated Tauri release configs
+desktop/src-tauri/tauri.release.conf.json
+desktop/src-tauri/tauri.windows.release.conf.json

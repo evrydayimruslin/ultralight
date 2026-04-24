@@ -1,0 +1,28 @@
+{
+  "checks": {
+    "backup-source-files": {
+      "description": "Protects live trees from shipping .bak copies and preview-only HTML artifacts by accident.",
+      "matches": []
+    },
+    "guarded-direct-console": {
+      "description": "Protects the Wave 5 logging-conversion surfaces from regressing back to raw console.* calls in product code.",
+      "matches": []
+    },
+    "placeholder-runtime-strings": {
+      "description": "Protects product paths from shipping new runtime strings that advertise unfinished implementation.",
+      "matches": []
+    },
+    "query-token-auth": {
+      "description": "Protects against introducing new tokenized URL transport or bootstrap flows while Wave 1 removes the remaining debt.",
+      "matches": []
+    },
+    "root-migration-files": {
+      "description": "Protects the canonical Supabase migration flow by rejecting new root-level migration-*.sql files.",
+      "matches": []
+    },
+    "wildcard-cors": {
+      "description": "Protects against adding new wildcard or reflective Access-Control-Allow-Origin behavior in production code.",
+      "matches": []
+    }
+  }
+}

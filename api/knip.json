@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/knip/schema.json",
+  "entry": [
+    "src/worker-entry.ts",
+    "services/*.test.ts",
+    "runtime/*.test.ts"
+  ],
+  "project": [
+    "src/**/*.ts",
+    "lib/**/*.ts",
+    "handlers/**/*.ts",
+    "services/**/*.ts",
+    "runtime/**/*.ts"
+  ],
+  "ignore": [
+    "services/gpu/test-template/**"
+  ],
+  "ignoreDependencies": [
+    "cloudflare",
+    "madge"
+  ]
+}
