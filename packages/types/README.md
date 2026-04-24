@@ -2,6 +2,10 @@
 
 TypeScript type definitions for [Ultralight](https://ultralight.dev) apps.
 
+`index.d.ts` and the `generated/` declarations are generated artifacts. Update
+the shared contract sources under `/shared/contracts` and then run
+`npm run generate` in `/packages/types`.
+
 Provides autocomplete and type checking for `ultralight.ai()`, `ultralight.store()`, and all SDK methods.
 
 ## Installation
@@ -98,4 +102,4 @@ export default App;
 ## Links
 
 - [Ultralight Documentation](https://ultralight.dev/docs)
-- [GitHub](https://github.com/anthropics/ultralight)
+- [GitHub](https://github.com/evrydayimruslin/ultralight)

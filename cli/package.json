@@ -25,13 +25,19 @@
   ],
   "author": "Ultralight",
   "license": "MIT",
-  "homepage": "https://ultralight-api-iikqz.ondigitalocean.app",
+  "homepage": "https://ultralight.dev",
   "engines": {
     "node": ">=18.0.0"
   },
   "files": [
     "bin/",
     "scripts/",
+    "mod.ts",
+    "api.ts",
+    "colors.ts",
+    "config.ts",
+    "logging.ts",
+    "deno.lock",
     "skills.md"
   ]
 }

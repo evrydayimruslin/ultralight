@@ -17,7 +17,9 @@ import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const API_URL = process.env.ULTRALIGHT_API_URL || 'https://ultralight-api.rgn4jz429m.workers.dev';
+const API_URL = process.env.ULTRALIGHT_API_URL || 'https://api.ultralight.dev';
+const DENO_INSTALL_URL = 'https://raw.githubusercontent.com/evrydayimruslin/ultralight/main/cli/mod.ts';
+const DENO_BIN_NAME = platform() === 'win32' ? 'deno.exe' : 'deno';
 
 // ─── Color helpers (no dependencies) ─────────────────────────────────
 const isTTY = process.stdout.isTTY;
@@ -29,6 +31,7 @@ const c = {
   bold:   (s) => isTTY ? `\x1b[1m${s}\x1b[0m`  : s,
   yellow: (s) => isTTY ? `\x1b[33m${s}\x1b[0m` : s,
 };
+const stderr = (line) => console.error(line);
 
 // ─── Config helpers ──────────────────────────────────────────────────
 function getConfigDir() {
@@ -49,14 +52,34 @@ function writeJSON(filePath, data) {
   writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n');
 }
 
+async function findDeno() {
+  const candidates = [
+    process.env.DENO_BIN,
+    process.env.DENO,
+    'deno',
+    join(homedir(), '.deno', 'bin', DENO_BIN_NAME),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const ok = await new Promise((resolve) => {
+      const proc = spawn(candidate, ['--version'], { stdio: 'pipe' });
+      proc.on('close', (code) => resolve(code === 0));
+      proc.on('error', () => resolve(false));
+    });
+    if (ok) return candidate;
+  }
+
+  return null;
+}
+
 // ─── Plugin content ──────────────────────────────────────────────────
 
 const PLUGIN_JSON = {
   name: 'ultralight',
   description: 'Ultralight — serverless MCP platform. Discover, build, test, and deploy AI agent tools.',
   version: '1.0.0',
-  author: { name: 'Ultralight', url: 'https://ultralight-api.rgn4jz429m.workers.dev' },
-  homepage: 'https://ultralight-api.rgn4jz429m.workers.dev',
+  author: { name: 'Ultralight', url: 'https://ultralight.dev' },
+  homepage: 'https://ultralight.dev',
   license: 'MIT',
   keywords: ['ultralight', 'mcp', 'serverless', 'ai', 'tools', 'agent'],
 };
@@ -369,7 +392,7 @@ function registerPlugin(token, apiUrl) {
               description: 'Ultralight — serverless MCP platform. Discover, build, test, and deploy AI agent tools instantly.',
               category: 'development',
               source: './external_plugins/ultralight',
-              homepage: 'https://ultralight-api.rgn4jz429m.workers.dev',
+              homepage: 'https://ultralight.dev',
             });
             writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
           }
@@ -583,7 +606,7 @@ async function main() {
   }
 
   // Version / help
-  if (command === '--version' || command === '-v') {
+  if (command === '--version' || command === '-v' || command === 'version') {
     console.log('1.3.0');
     return;
   }
@@ -610,14 +633,10 @@ ${c.dim('FULL CLI')}
   }
 
   // All other commands delegate to Deno CLI
-  const hasDeno = await new Promise((resolve) => {
-    const proc = spawn('deno', ['--version'], { stdio: 'pipe' });
-    proc.on('close', (code) => resolve(code === 0));
-    proc.on('error', () => resolve(false));
-  });
+  const denoBin = await findDeno();
 
-  if (!hasDeno) {
-    console.error(`
+  if (!denoBin) {
+    stderr(`
 ${c.red('Deno is required for this command.')}
 
 The ${c.cyan('setup')} command works without Deno, but ${c.cyan(command)} needs the full CLI.
@@ -633,18 +652,18 @@ Or visit: ${c.cyan('https://deno.land/#installation')}
   // Find CLI source — local dev or error (no remote fetch)
   const localPath = join(__dirname, '..', 'mod.ts');
   if (!existsSync(localPath)) {
-    console.error(`
+    stderr(`
 ${c.red('Full CLI not found.')}
 
 The ${c.cyan('setup')} command works standalone, but ${c.cyan(command)} needs the full Deno CLI.
 
 To use the full CLI, clone the repo or install globally:
-  ${c.cyan('deno install --allow-all -n ultralight https://ultralight-api.rgn4jz429m.workers.dev/cli/mod.ts')}
+  ${c.cyan(`deno install --allow-all -n ultralight ${DENO_INSTALL_URL}`)}
 `);
     process.exit(1);
   }
 
-  const proc = spawn('deno', [
+  const proc = spawn(denoBin, [
     'run',
     '--allow-net',
     '--allow-read',
@@ -660,7 +679,7 @@ To use the full CLI, clone the repo or install globally:
 
   proc.on('close', (code) => process.exit(code || 0));
   proc.on('error', (err) => {
-    console.error('Failed to start CLI:', err.message);
+    stderr(`Failed to start CLI: ${err.message}`);
     process.exit(1);
   });
 }

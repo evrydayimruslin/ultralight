@@ -60,6 +60,14 @@ export interface VersionMetadata {
   created_at: string;
 }
 
+export type AppGpuStatus =
+  | 'building'
+  | 'benchmarking'
+  | 'live'
+  | 'build_failed'
+  | 'benchmark_failed'
+  | 'build_config_invalid';
+
 export interface App {
   id: string;
   owner_id: string;
@@ -119,7 +127,7 @@ export interface App {
   // GPU compute runtime
   runtime: 'deno' | 'gpu' | null;           // null = legacy deno
   gpu_type: string | null;                   // GpuType identifier (e.g. 'A100-80GB-SXM')
-  gpu_status: string | null;                 // 'building' | 'benchmarking' | 'live' | 'build_failed' | 'benchmark_failed'
+  gpu_status: AppGpuStatus | null;
   gpu_endpoint_id: string | null;            // RunPod (or other provider) endpoint ID
   gpu_config: Record<string, unknown> | null;           // Parsed ultralight.gpu.yaml
   gpu_benchmark: Record<string, unknown> | null;        // BenchmarkStats from benchmark runs
@@ -342,7 +350,7 @@ export interface AIRequest {
 export interface WidgetDeclaration {
   id: string;
   label: string;
-  data_tool: string;
+  data_tool?: string;
   poll_interval_s?: number;
 }
 
@@ -394,6 +402,7 @@ export interface AIResponse {
     output_tokens: number;
     cost_light: number;
   };
+  error?: string;
 }
 
 // ============================================
@@ -445,6 +454,7 @@ export interface RunResponse {
     type: string;
     message: string;
     stack?: string;
+    details?: unknown;
   };
 }
 

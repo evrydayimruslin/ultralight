@@ -20,13 +20,36 @@ export interface Config {
   };
 }
 
+const DEFAULT_API_URL = 'https://api.ultralight.dev';
+const LEGACY_API_URLS = new Set([
+  'https://ultralight-api.rgn4jz429m.workers.dev',
+  'https://ultralight-api-iikqz.ondigitalocean.app',
+]);
+
 const DEFAULT_CONFIG: Config = {
-  api_url: 'https://ultralight-api.rgn4jz429m.workers.dev',
+  api_url: DEFAULT_API_URL,
   defaults: {
     visibility: 'private',
     auto_docs: true,
   },
 };
+
+function normalizeConfig(config: Config): Config {
+  const normalized: Config = {
+    ...DEFAULT_CONFIG,
+    ...config,
+    defaults: {
+      ...DEFAULT_CONFIG.defaults,
+      ...config.defaults,
+    },
+  };
+
+  if (LEGACY_API_URLS.has(normalized.api_url)) {
+    normalized.api_url = DEFAULT_API_URL;
+  }
+
+  return normalized;
+}
 
 function getConfigDir(): string {
   const home = Deno.env.get('HOME') || Deno.env.get('USERPROFILE') || '.';
@@ -42,7 +65,7 @@ export async function getConfig(): Promise<Config> {
     const configPath = getConfigPath();
     const content = await Deno.readTextFile(configPath);
     const config = JSON.parse(content) as Config;
-    return { ...DEFAULT_CONFIG, ...config };
+    return normalizeConfig(config);
   } catch {
     return DEFAULT_CONFIG;
   }

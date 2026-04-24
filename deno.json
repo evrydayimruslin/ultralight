@@ -1,7 +1,11 @@
 {
   "name": "ultralight",
   "version": "0.2.0",
-  "exports": "./api/main.ts",
+  "exports": {
+    ".": "./sdk/mod.ts",
+    "./sdk": "./sdk/mod.ts",
+    "./cli": "./cli/mod.ts"
+  },
   "tasks": {
     "dev": "cd api && npx wrangler dev",
     "deploy": "cd api && npx wrangler deploy",
@@ -16,6 +20,7 @@
   "imports": {
     "@std/": "https://deno.land/std@0.210.0/",
     "esbuild-wasm": "npm:esbuild-wasm",
+    "typescript": "npm:typescript",
     "yaml": "npm:yaml",
     "@supabase/supabase-js": "npm:@supabase/supabase-js"
   },

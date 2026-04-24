@@ -19,7 +19,8 @@
  * Environment:
  *   UL_TOKEN       — API token for authenticated tests (optional, tests skip if not set)
  *   UL_TEST_APP    — A known public app ID for per-app tests (optional)
- *   UL_API_URL     — Override API URL (default: https://ultralight-api-iikqz.ondigitalocean.app)
+ *   UL_API_URL     — Override API URL (default: https://api.ultralight.dev)
+ *   UL_LIVE_API_TESTS=1 — Run live API specs against UL_API_URL
  */
 
 import {
@@ -29,9 +30,10 @@ import {
   assertStringIncludes,
 } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 
-const API = Deno.env.get('UL_API_URL') || 'https://ultralight-api-iikqz.ondigitalocean.app';
+const API = Deno.env.get('UL_API_URL') || 'https://api.ultralight.dev';
 const TOKEN = Deno.env.get('UL_TOKEN');
 const TEST_APP = Deno.env.get('UL_TEST_APP') || 'cd118f84-fbca-4cb3-a680-3974585bc319';
+const LIVE_API_TESTS = Deno.env.get('UL_LIVE_API_TESTS') === '1';
 
 // ============================================
 // 1. CLI SOURCE VERIFICATION (No network needed)
@@ -119,12 +121,12 @@ Deno.test('CLI: whoami uses REST GET /api/user, not MCP tool', async () => {
   assertStringIncludes(cliSource, "restGet('/api/user')", 'Missing restGet /api/user call in whoami');
 });
 
-Deno.test('CLI: version is 1.2.0', async () => {
+Deno.test('CLI: version is 1.3.0', async () => {
   const cliSource = await Deno.readTextFile('./cli/mod.ts');
-  assertStringIncludes(cliSource, "const VERSION = '1.2.0'", 'CLI version should be 1.2.0');
+  assertStringIncludes(cliSource, "const VERSION = '1.3.0'", 'CLI version should be 1.3.0');
 
   const pkgJson = JSON.parse(await Deno.readTextFile('./cli/package.json'));
-  assertEquals(pkgJson.version, '1.2.0', 'package.json version should be 1.2.0');
+  assertEquals(pkgJson.version, '1.3.0', 'package.json version should be 1.3.0');
 });
 
 Deno.test('CLI: all expected commands are registered', async () => {
@@ -196,6 +198,7 @@ Deno.test('CLI: no remaining platform.* tool references anywhere', async () => {
 
 Deno.test({
   name: 'SPEC: discovery search returns correct response shape',
+  ignore: !LIVE_API_TESTS,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -216,6 +219,7 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: each discovery result includes mcp_endpoint AND http_endpoint',
+  ignore: !LIVE_API_TESTS,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -249,6 +253,7 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: discovery _links includes auth endpoint for agent onboarding',
+  ignore: !LIVE_API_TESTS,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -271,7 +276,7 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: authenticated discovery results include is_owner flag',
-  ignore: !TOKEN,
+  ignore: !LIVE_API_TESTS || !TOKEN,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -301,6 +306,7 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: featured endpoint returns ranked results',
+  ignore: !LIVE_API_TESTS,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -316,6 +322,7 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: status endpoint returns operational metrics',
+  ignore: !LIVE_API_TESTS,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -346,6 +353,7 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: OpenAPI spec is valid 3.1.0 with documented paths',
+  ignore: !LIVE_API_TESTS,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -367,6 +375,7 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: missing query returns structured error with code and docs_url',
+  ignore: !LIVE_API_TESTS,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -391,6 +400,7 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: short query returns structured error with code',
+  ignore: !LIVE_API_TESTS,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -416,7 +426,7 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: GET /api/mcp-config/{appId} returns Claude Desktop config',
-  ignore: !TOKEN,
+  ignore: !LIVE_API_TESTS || !TOKEN,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -442,7 +452,7 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: GET /api/mcp-config/{appId}?client=cursor returns Cursor config',
-  ignore: !TOKEN,
+  ignore: !LIVE_API_TESTS || !TOKEN,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -473,6 +483,7 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: OAuth authorization server metadata has required fields',
+  ignore: !LIVE_API_TESTS,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -493,6 +504,7 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: OAuth protected resource metadata exists',
+  ignore: !LIVE_API_TESTS,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -507,6 +519,7 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: dynamic client registration returns client_id',
+  ignore: !LIVE_API_TESTS,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -532,7 +545,7 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: platform MCP initialize returns protocol version',
-  ignore: !TOKEN,
+  ignore: !LIVE_API_TESTS || !TOKEN,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -555,7 +568,7 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: platform MCP tools/list returns 20+ ul.* tools',
-  ignore: !TOKEN,
+  ignore: !LIVE_API_TESTS || !TOKEN,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -581,6 +594,7 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: invalid token returns 401',
+  ignore: !LIVE_API_TESTS,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -604,7 +618,7 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: per-app MCP initialize works',
-  ignore: !TOKEN || !TEST_APP,
+  ignore: !LIVE_API_TESTS || !TOKEN || !TEST_APP,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -625,7 +639,7 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: per-app MCP tools/list returns app functions',
-  ignore: !TOKEN || !TEST_APP,
+  ignore: !LIVE_API_TESTS || !TOKEN || !TEST_APP,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
@@ -647,7 +661,7 @@ Deno.test({
 
 Deno.test({
   name: 'SPEC: per-app .well-known/mcp.json has transport config',
-  ignore: !TOKEN,
+  ignore: !LIVE_API_TESTS || !TOKEN,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
