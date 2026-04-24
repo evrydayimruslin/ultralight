@@ -1,13 +1,8 @@
-// Document Generation Service
-// Generates Skills.md from ParsedSkills and validates markdown edits
+// Skills.md generation and validation helpers.
 
 import type { ParsedSkills, SkillFunction, PermissionDeclaration } from '../../shared/types/index.ts';
 import { formatLight } from '../../shared/types/index.ts';
 import type { ParseResult, ParsedFunction, ParsedParameter, JsonSchema } from './parser.ts';
-
-// ============================================
-// TYPES
-// ============================================
 
 export interface GenerationResult {
   success: boolean;
@@ -39,10 +34,6 @@ export interface ValidationError {
   suggestion?: string;
 }
 
-// ============================================
-// SKILLS.MD GENERATION
-// ============================================
-
 /**
  * Generate Skills.md markdown from ParseResult
  */
@@ -54,21 +45,17 @@ export function generateSkillsMd(
   const { includeExamples = true, includePermissions = true } = options;
   const lines: string[] = [];
 
-  // Header
   lines.push(`# ${appName} Skills`);
   lines.push('');
 
-  // File description if available
   if (parseResult.description) {
     lines.push(`> ${parseResult.description}`);
     lines.push('');
   }
 
-  // Auto-generated notice
-  lines.push('<!-- Auto-generated documentation. Edit with caution. -->');
+  lines.push('<!-- Generated from the current app source. Keep manual edits aligned with code changes. -->');
   lines.push('');
 
-  // Permissions summary if any
   if (includePermissions && parseResult.permissions.length > 0) {
     lines.push('## Required Permissions');
     lines.push('');
@@ -78,7 +65,6 @@ export function generateSkillsMd(
     lines.push('');
   }
 
-  // Functions section
   if (parseResult.functions.length > 0) {
     lines.push('## Functions');
     lines.push('');
@@ -90,11 +76,10 @@ export function generateSkillsMd(
   } else {
     lines.push('## Functions');
     lines.push('');
-    lines.push('*No exported functions found.*');
+    lines.push('No exported functions were detected in the entry file. Add at least one exported function to publish app capabilities.');
     lines.push('');
   }
 
-  // Type definitions section (if any complex types)
   if (Object.keys(parseResult.types).length > 0) {
     lines.push('## Type Definitions');
     lines.push('');
@@ -109,7 +94,6 @@ export function generateSkillsMd(
     }
   }
 
-  // Pricing section — generated from pricing_config if present
   const pc = options.pricingConfig;
   if (pc && (pc.default_price_light || pc.functions || (pc.products && pc.products.length > 0))) {
     lines.push('## Pricing');
@@ -144,7 +128,6 @@ export function generateSkillsMd(
     lines.push('');
   }
 
-  // Web Dashboard section — always present so agents know about the UI endpoint
   lines.push('## Web Dashboard');
   lines.push('');
   lines.push('This app has a browser-accessible dashboard at:');
@@ -153,26 +136,21 @@ export function generateSkillsMd(
   lines.push('GET /http/{appId}/ui');
   lines.push('```');
   lines.push('');
-  lines.push('Direct users to this URL when they want to view or manage their data visually. Supports `#token=ul_...` (fragment hash) for authentication.');
+  lines.push('Direct users to this URL when they want to view or manage their data visually. Browser access should use an Ultralight session, while agent/API access should use the MCP endpoint with an `Authorization` header.');
   lines.push('');
 
   return lines.join('\n');
 }
 
 /**
- * Collapse multi-line type annotations to a single line.
- * Inline object types like `{ tier_map?: Record<string, string>;\n  price_map?: number; }`
- * become `object` in the signature line. Detailed types go in the parameters table.
+ * Collapse multi-line or large inline type annotations to a single line.
  */
 function collapseType(typeStr: string): string {
-  // If the type contains newlines, it's a multi-line inline type — simplify it
   if (typeStr.includes('\n')) {
-    // Wrap type: Promise<{ ... }> → Promise<object>
     const promiseMatch = typeStr.match(/^Promise<[\s\S]+>$/);
     if (promiseMatch) return 'Promise<object>';
     return 'object';
   }
-  // Very long single-line object types: collapse to `object` if over 60 chars
   if (typeStr.length > 60 && typeStr.includes('{')) {
     const promiseMatch = typeStr.match(/^Promise<\{[\s\S]+\}>$/);
     if (promiseMatch) return 'Promise<object>';
@@ -190,10 +168,8 @@ function generateFunctionDoc(
 ): string {
   const lines: string[] = [];
 
-  // Function signature — collapse types to single line for parser round-trip
   const params = fn.parameters.map(p => {
     const optional = !p.required ? '?' : '';
-    // Collapse multi-line types (inline objects, unions) to single line
     const compactType = collapseType(p.type);
     return `${p.name}${optional}: ${compactType}`;
   }).join(', ');
@@ -203,13 +179,11 @@ function generateFunctionDoc(
   lines.push(`### \`${asyncPrefix}${fn.name}(${params}): ${compactReturn}\``);
   lines.push('');
 
-  // Description
   if (fn.description) {
     lines.push(fn.description);
     lines.push('');
   }
 
-  // Parameters table
   if (fn.parameters.length > 0) {
     lines.push('**Parameters:**');
     lines.push('');
@@ -225,18 +199,15 @@ function generateFunctionDoc(
     lines.push('');
   }
 
-  // Returns
   if (fn.returns.type !== 'void' && fn.returns.type !== 'Promise<void>') {
     lines.push(`**Returns:** \`${fn.returns.type}\`${fn.returns.description ? ` - ${fn.returns.description}` : ''}`);
     lines.push('');
   }
 
-  // Examples
   if (options.includeExamples && fn.examples.length > 0) {
     lines.push('**Example:**');
     lines.push('');
     for (const example of fn.examples) {
-      // Check if example is already wrapped in code fence
       if (example.includes('```')) {
         lines.push(example);
       } else {
@@ -248,7 +219,6 @@ function generateFunctionDoc(
     }
   }
 
-  // Permissions
   if (options.includePermissions && fn.permissions.length > 0) {
     lines.push('**Permissions Required:**');
     lines.push('');
@@ -261,16 +231,10 @@ function generateFunctionDoc(
   return lines.join('\n');
 }
 
-/**
- * Escape special characters for markdown table cells
- */
 function escapeTableCell(text: string): string {
   return text.replace(/\|/g, '\\|').replace(/\n/g, ' ');
 }
 
-/**
- * Convert JSON Schema to TypeScript type definition string
- */
 function schemaToTypeDefinition(name: string, schema: JsonSchema): string {
   if (schema.type === 'object' && schema.properties) {
     const props = Object.entries(schema.properties).map(([propName, propSchema]) => {
@@ -286,9 +250,6 @@ function schemaToTypeDefinition(name: string, schema: JsonSchema): string {
   return `type ${name} = ${schemaToTypeString(schema)};`;
 }
 
-/**
- * Convert JSON Schema to TypeScript type string
- */
 function schemaToTypeString(schema: JsonSchema): string {
   if (!schema) return 'unknown';
 
@@ -342,10 +303,6 @@ function schemaToTypeString(schema: JsonSchema): string {
   return 'unknown';
 }
 
-// ============================================
-// SKILLS.MD VALIDATION & PARSING
-// ============================================
-
 /**
  * Validate and parse Skills.md markdown back to ParsedSkills
  * Used when user manually edits the markdown
@@ -361,7 +318,6 @@ export function validateAndParseSkillsMd(markdown: string): ValidationResult {
     const lines = markdown.split('\n');
     let lineNum = 0;
 
-    // Extract description from blockquote near top
     for (let i = 0; i < Math.min(10, lines.length); i++) {
       const line = lines[i];
       if (line.startsWith('> ')) {
@@ -370,7 +326,6 @@ export function validateAndParseSkillsMd(markdown: string): ValidationResult {
       }
     }
 
-    // Extract permissions from "Required Permissions" section
     let inPermissionsSection = false;
     for (const line of lines) {
       lineNum++;
@@ -390,8 +345,6 @@ export function validateAndParseSkillsMd(markdown: string): ValidationResult {
       }
     }
 
-    // Parse function definitions
-    // Match: ### `functionName(params): ReturnType` or ### `async functionName(...)`
     const functionRegex = /^###\s+`(async\s+)?(\w+)\(([^)]*)\)(?::\s*(.+?))?`\s*$/;
 
     lineNum = 0;
@@ -404,7 +357,6 @@ export function validateAndParseSkillsMd(markdown: string): ValidationResult {
     for (const line of lines) {
       lineNum++;
 
-      // Track code blocks
       if (line.startsWith('```')) {
         inCodeBlock = !inCodeBlock;
         if (currentSection === 'example') {
@@ -420,15 +372,12 @@ export function validateAndParseSkillsMd(markdown: string): ValidationResult {
         continue;
       }
 
-      // Check for function header
       const fnMatch = line.match(functionRegex);
       if (fnMatch) {
-        // Save previous function
         if (currentFunction && currentFunction.name) {
           functions.push(finalizeParsedFunction(currentFunction, parameterLines, exampleLines, warnings));
         }
 
-        // Start new function
         const [, asyncPrefix, name, paramsStr, returnType] = fnMatch;
         currentFunction = {
           name,
@@ -443,14 +392,12 @@ export function validateAndParseSkillsMd(markdown: string): ValidationResult {
         continue;
       }
 
-      // Section headers within a function
       if (line.startsWith('**Parameters:**')) {
         currentSection = 'parameters';
         continue;
       }
       if (line.startsWith('**Returns:**')) {
         currentSection = 'returns';
-        // Parse inline return description
         if (currentFunction) {
           const returnMatch = line.match(/\*\*Returns:\*\*\s*`([^`]+)`(?:\s*-\s*(.+))?/);
           if (returnMatch) {
@@ -468,14 +415,12 @@ export function validateAndParseSkillsMd(markdown: string): ValidationResult {
         continue;
       }
 
-      // Skip other section headers
       if (line.startsWith('## ')) {
         currentFunction = null;
         currentSection = null;
         continue;
       }
 
-      // Collect content based on current section
       if (currentFunction && currentSection) {
         switch (currentSection) {
           case 'description':
@@ -495,12 +440,10 @@ export function validateAndParseSkillsMd(markdown: string): ValidationResult {
       }
     }
 
-    // Save last function
     if (currentFunction && currentFunction.name) {
       functions.push(finalizeParsedFunction(currentFunction, parameterLines, exampleLines, warnings));
     }
 
-    // Validation checks
     if (functions.length === 0) {
       warnings.push('No functions found in Skills.md. Make sure function headers use the format: ### `functionName(params): ReturnType`');
     }
@@ -536,17 +479,12 @@ export function validateAndParseSkillsMd(markdown: string): ValidationResult {
   }
 }
 
-/**
- * Parse parameter table lines into parameters object
- */
 function parseParameterTable(lines: string[]): Record<string, unknown> {
   const params: Record<string, unknown> = {};
 
   for (const line of lines) {
-    // Skip header row
     if (line.includes('Name') && line.includes('Type')) continue;
 
-    // Parse: | `name` | `type` | Yes/No | description |
     const match = line.match(/\|\s*`(\w+)`\s*\|\s*`([^`]+)`\s*\|\s*(Yes|No)\s*\|\s*([^|]*)\|?/);
     if (match) {
       const [, name, type, required, desc] = match;
@@ -580,30 +518,21 @@ function typeStringToSchema(typeStr: string): JsonSchema {
     return typeStringToSchema(type.slice(8, -1));
   }
 
-  // Complex type reference
   return { $ref: `#/definitions/${type}` };
 }
 
-/**
- * Parse return type string to schema
- */
 function parseReturnType(typeStr: string): unknown {
   return typeStringToSchema(typeStr);
 }
 
-/**
- * Finalize a parsed function with parameter and example data
- */
 function finalizeParsedFunction(
   fn: Partial<SkillFunction>,
   parameterLines: string[],
   exampleLines: string[],
   warnings: string[]
 ): SkillFunction {
-  // Parse parameters
   const params = parseParameterTable(parameterLines);
 
-  // Parse examples - join non-empty lines
   const exampleText = exampleLines
     .filter(l => l.trim())
     .join('\n')
@@ -618,10 +547,6 @@ function finalizeParsedFunction(
   };
 }
 
-// ============================================
-// EMBEDDING TEXT GENERATION
-// ============================================
-
 /**
  * Generate text optimized for embedding/semantic search
  */
@@ -633,13 +558,11 @@ export function generateEmbeddingText(
 ): string {
   const parts: string[] = [];
 
-  // Search hints first — high weight for matching domain-specific queries
   if (searchHints && searchHints.length > 0) {
     parts.push('Keywords: ' + searchHints.join(', '));
     parts.push('');
   }
 
-  // App identity
   parts.push(appName);
   if (appDescription) {
     parts.push(appDescription);
@@ -651,7 +574,6 @@ export function generateEmbeddingText(
   parts.push('');
   parts.push('Functions:');
 
-  // Function summaries — enriched with param types and descriptions
   for (const fn of skills.functions) {
     const params = fn.parameters as Record<string, Record<string, unknown>>;
     const paramParts = Object.entries(params).map(([name, schema]) => {
@@ -663,12 +585,10 @@ export function generateEmbeddingText(
     parts.push(`- ${fn.name}${paramStr}: ${fn.description}`);
   }
 
-  // Permissions as capabilities
   if (skills.permissions.length > 0) {
     parts.push('');
     parts.push('Capabilities:');
     for (const perm of skills.permissions) {
-      // Convert permission to readable capability
       const capability = permissionToCapability(perm.permission);
       if (capability) {
         parts.push(`- ${capability}`);
@@ -679,9 +599,6 @@ export function generateEmbeddingText(
   return parts.join('\n');
 }
 
-/**
- * Convert permission string to human-readable capability
- */
 function permissionToCapability(permission: string): string | null {
   const map: Record<string, string> = {
     'storage:read': 'can read stored data',
@@ -695,30 +612,22 @@ function permissionToCapability(permission: string): string | null {
   return map[permission] || null;
 }
 
-// ============================================
-// AI ENHANCEMENT (placeholder)
-// ============================================
-
 /**
- * Enhance parsed skills with AI-generated descriptions
- * This is a placeholder - actual implementation will use the AI service
+ * Enhance parsed skills with AI-generated descriptions using the provided text-generation function.
  */
 export async function enhanceWithAI(
   skills: ParsedSkills,
   code: string,
   aiService: (prompt: string) => Promise<string>
 ): Promise<ParsedSkills> {
-  // Clone skills to avoid mutation
   const enhanced: ParsedSkills = JSON.parse(JSON.stringify(skills));
 
-  // Find functions missing descriptions
   const needsDescription = enhanced.functions.filter(fn => !fn.description || fn.description.length < 10);
 
   if (needsDescription.length === 0) {
     return enhanced;
   }
 
-  // Build prompt for AI
   const prompt = `Given this TypeScript code, provide brief descriptions for these functions:
 
 ${needsDescription.map(fn => `- ${fn.name}`).join('\n')}
@@ -733,7 +642,6 @@ Respond with JSON array of {name, description} objects. Keep descriptions under 
   try {
     const response = await aiService(prompt);
 
-    // Parse AI response
     const match = response.match(/\[[\s\S]*\]/);
     if (match) {
       const descriptions = JSON.parse(match[0]) as Array<{ name: string; description: string }>;
@@ -747,7 +655,6 @@ Respond with JSON array of {name, description} objects. Keep descriptions under 
     }
   } catch (err) {
     console.error('AI enhancement failed:', err);
-    // Continue with un-enhanced skills
   }
 
   return enhanced;

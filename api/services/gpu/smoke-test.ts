@@ -21,25 +21,35 @@
 //   6. Cleans up by deleting the endpoint
 //   7. Reports results and timing
 
-import { getEnv } from '../../lib/env.ts';
-import { RunPodProvider } from './runpod.ts';
+import { getEnv } from "../../lib/env.ts";
+import { RunPodProvider } from "./runpod.ts";
 import {
-  isValidGpuType,
+  computeGpuCostLight,
   getGpuRate,
   getGpuVram,
-  computeGpuCostLight,
-  GPU_TYPES,
   GPU_RATE_TABLE,
-} from './types.ts';
-import type { GpuType, GpuConfig } from './types.ts';
+  GPU_TYPES,
+  isValidGpuType,
+} from "./types.ts";
+import type { GpuConfig, GpuType } from "./types.ts";
+
+function exitProcess(code: number): never {
+  const deno = (globalThis as typeof globalThis & {
+    Deno?: { exit(exitCode: number): never };
+  }).Deno;
+  if (deno) {
+    return deno.exit(code);
+  }
+  throw new Error(`Process exit requested with code ${code}`);
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const PASS = '✅';
-const FAIL = '❌';
-const INFO = 'ℹ️';
+const PASS = "✅";
+const FAIL = "❌";
+const INFO = "ℹ️";
 let passed = 0;
 let failed = 0;
 
@@ -54,9 +64,9 @@ function assert(condition: boolean, label: string): void {
 }
 
 function section(name: string): void {
-  console.log(`\n${'='.repeat(60)}`);
+  console.log(`\n${"=".repeat(60)}`);
   console.log(`  ${name}`);
-  console.log('='.repeat(60));
+  console.log("=".repeat(60));
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -68,30 +78,48 @@ async function sleep(ms: number): Promise<void> {
 // ---------------------------------------------------------------------------
 
 function testTypeSystem(): void {
-  section('Test 1: Type System Validation');
+  section("Test 1: Type System Validation");
 
   // GPU_TYPES should have 10 entries
-  assert(GPU_TYPES.length === 10, `GPU_TYPES has ${GPU_TYPES.length} entries (expected 10)`);
+  assert(
+    GPU_TYPES.length === 10,
+    `GPU_TYPES has ${GPU_TYPES.length} entries (expected 10)`,
+  );
 
   // isValidGpuType
-  assert(isValidGpuType('A100-80GB-SXM') === true, 'isValidGpuType("A100-80GB-SXM") → true');
-  assert(isValidGpuType('H100-SXM') === true, 'isValidGpuType("H100-SXM") → true');
-  assert(isValidGpuType('fake-gpu') === false, 'isValidGpuType("fake-gpu") → false');
-  assert(isValidGpuType('') === false, 'isValidGpuType("") → false');
+  assert(
+    isValidGpuType("A100-80GB-SXM") === true,
+    'isValidGpuType("A100-80GB-SXM") → true',
+  );
+  assert(
+    isValidGpuType("H100-SXM") === true,
+    'isValidGpuType("H100-SXM") → true',
+  );
+  assert(
+    isValidGpuType("fake-gpu") === false,
+    'isValidGpuType("fake-gpu") → false',
+  );
+  assert(isValidGpuType("") === false, 'isValidGpuType("") → false');
 
-  // getGpuRate (Light per ms — rates are 800× the old cent rates)
-  assert(getGpuRate('H100-SXM') === 0.00720000, 'getGpuRate("H100-SXM") → 0.00720000');
-  assert(getGpuRate('A40') === 0.00080000, 'getGpuRate("A40") → 0.00080000');
-  assert(getGpuRate('B200') === 0.01600000, 'getGpuRate("B200") → 0.01600000');
+  // getGpuRate (Light per ms)
+  assert(
+    getGpuRate("H100-SXM") === 0.00090000,
+    'getGpuRate("H100-SXM") → 0.00090000',
+  );
+  assert(getGpuRate("A40") === 0.00010000, 'getGpuRate("A40") → 0.00010000');
+  assert(getGpuRate("B200") === 0.00200000, 'getGpuRate("B200") → 0.00200000');
 
   // getGpuVram
-  assert(getGpuVram('A100-80GB-SXM') === 80, 'getGpuVram("A100-80GB-SXM") → 80');
-  assert(getGpuVram('H200') === 141, 'getGpuVram("H200") → 141');
-  assert(getGpuVram('B200') === 180, 'getGpuVram("B200") → 180');
+  assert(
+    getGpuVram("A100-80GB-SXM") === 80,
+    'getGpuVram("A100-80GB-SXM") → 80',
+  );
+  assert(getGpuVram("H200") === 141, 'getGpuVram("H200") → 141');
+  assert(getGpuVram("B200") === 180, 'getGpuVram("B200") → 180');
 
   // computeGpuCostLight
   // 1000ms on A100-80GB-SXM: 0.00050000 Light/ms * 1000ms = 0.5 Light
-  const cost = computeGpuCostLight('A100-80GB-SXM', 1000);
+  const cost = computeGpuCostLight("A100-80GB-SXM", 1000);
   assert(
     Math.abs(cost - 0.5) < 0.001,
     `computeGpuCostLight("A100-80GB-SXM", 1000) → ${cost} (expected ~0.5)`,
@@ -100,7 +128,10 @@ function testTypeSystem(): void {
   // Rate table completeness
   for (const gpuType of GPU_TYPES) {
     const entry = GPU_RATE_TABLE[gpuType];
-    assert(entry.rate_per_ms > 0, `${gpuType}: rate_per_ms = ${entry.rate_per_ms} (> 0)`);
+    assert(
+      entry.rate_per_ms > 0,
+      `${gpuType}: rate_per_ms = ${entry.rate_per_ms} (> 0)`,
+    );
     assert(entry.vram_gb > 0, `${gpuType}: vram_gb = ${entry.vram_gb} (> 0)`);
   }
 }
@@ -110,9 +141,9 @@ function testTypeSystem(): void {
 // ---------------------------------------------------------------------------
 
 function testProviderInstantiation(): RunPodProvider | null {
-  section('Test 2: Provider Instantiation');
+  section("Test 2: Provider Instantiation");
 
-  const apiKey = getEnv('RUNPOD_API_KEY');
+  const apiKey = getEnv("RUNPOD_API_KEY");
 
   if (!apiKey) {
     console.log(`  ${INFO} RUNPOD_API_KEY not set — skipping API tests`);
@@ -124,23 +155,29 @@ function testProviderInstantiation(): RunPodProvider | null {
   let provider: RunPodProvider | null = null;
   try {
     provider = new RunPodProvider(apiKey);
-    assert(true, 'RunPodProvider constructed successfully');
+    assert(true, "RunPodProvider constructed successfully");
   } catch (err) {
     assert(false, `RunPodProvider construction failed: ${err}`);
     return null;
   }
 
   // Name should be 'runpod'
-  assert(provider.name === 'runpod', `Provider name: "${provider.name}" (expected "runpod")`);
+  assert(
+    provider.name === "runpod",
+    `Provider name: "${provider.name}" (expected "runpod")`,
+  );
 
   // Should support all GPU types
   const supported = provider.getSupportedGpuTypes();
-  assert(supported.length === 10, `Supports ${supported.length} GPU types (expected 10)`);
+  assert(
+    supported.length === 10,
+    `Supports ${supported.length} GPU types (expected 10)`,
+  );
 
   // Empty key should throw
   let threwOnEmpty = false;
   try {
-    new RunPodProvider('');
+    new RunPodProvider("");
   } catch {
     threwOnEmpty = true;
   }
@@ -154,12 +191,16 @@ function testProviderInstantiation(): RunPodProvider | null {
 // ---------------------------------------------------------------------------
 
 async function testEndpointLifecycle(provider: RunPodProvider): Promise<void> {
-  section('Test 3: Endpoint Lifecycle (live API)');
+  section("Test 3: Endpoint Lifecycle (live API)");
 
-  const templateId = getEnv('RUNPOD_TEMPLATE_ID');
+  const templateId = getEnv("RUNPOD_TEMPLATE_ID");
   if (!templateId) {
-    console.log(`  ${INFO} RUNPOD_TEMPLATE_ID not set — skipping endpoint tests`);
-    console.log(`  ${INFO} Create a template in RunPod console first, then set RUNPOD_TEMPLATE_ID`);
+    console.log(
+      `  ${INFO} RUNPOD_TEMPLATE_ID not set — skipping endpoint tests`,
+    );
+    console.log(
+      `  ${INFO} Create a template in RunPod console first, then set RUNPOD_TEMPLATE_ID`,
+    );
     return;
   }
 
@@ -169,24 +210,30 @@ async function testEndpointLifecycle(provider: RunPodProvider): Promise<void> {
     // Step 1: Build container (creates endpoint)
     console.log(`\n  ${INFO} Creating endpoint...`);
     const config: GpuConfig = {
-      runtime: 'gpu',
-      gpu_type: 'A40' as GpuType, // Cheapest option for testing
-      python: '3.11',
+      runtime: "gpu",
+      gpu_type: "A40" as GpuType, // Cheapest option for testing
+      python: "3.11",
       max_duration_ms: 30_000,
     };
 
     const buildResult = await provider.buildContainer({
-      appId: 'smoke-test-' + Date.now(),
-      version: '1.0.0',
+      appId: "smoke-test-" + Date.now(),
+      version: "1.0.0",
       codeFiles: [
-        { name: 'main.py', content: 'def hello(name): return f"Hello {name} from GPU"' },
+        {
+          name: "main.py",
+          content: 'def hello(name): return f"Hello {name} from GPU"',
+        },
       ],
       config,
     });
 
     endpointId = buildResult.endpointId;
     assert(!!endpointId, `Endpoint created: ${endpointId}`);
-    assert(buildResult.buildLogs.length > 0, `Build logs: ${buildResult.buildLogs.length} lines`);
+    assert(
+      buildResult.buildLogs.length > 0,
+      `Build logs: ${buildResult.buildLogs.length} lines`,
+    );
 
     for (const log of buildResult.buildLogs) {
       console.log(`    ${log}`);
@@ -196,7 +243,7 @@ async function testEndpointLifecycle(provider: RunPodProvider): Promise<void> {
     console.log(`\n  ${INFO} Checking endpoint status...`);
     const status = await provider.getEndpointStatus(endpointId);
     assert(
-      ['active', 'building'].includes(status.status),
+      ["active", "building"].includes(status.status),
       `Endpoint status: ${status.status} (expected active or building)`,
     );
     console.log(`    Workers: ${status.workers}, Queue: ${status.queueDepth}`);
@@ -210,33 +257,49 @@ async function testEndpointLifecycle(provider: RunPodProvider): Promise<void> {
 
     while (Date.now() - start < maxWait) {
       const s = await provider.getEndpointStatus(endpointId);
-      if (s.status === 'active') {
+      if (s.status === "active") {
         ready = true;
         break;
       }
-      console.log(`    Status: ${s.status} (${Math.round((Date.now() - start) / 1000)}s elapsed)`);
+      console.log(
+        `    Status: ${s.status} (${
+          Math.round((Date.now() - start) / 1000)
+        }s elapsed)`,
+      );
       await sleep(pollInterval);
     }
 
     if (!ready) {
-      console.log(`  ${INFO} Endpoint not ready within ${maxWait / 1000}s — skipping execution test`);
-      console.log(`  ${INFO} This is normal for new endpoints. Try again after the endpoint initializes.`);
+      console.log(
+        `  ${INFO} Endpoint not ready within ${
+          maxWait / 1000
+        }s — skipping execution test`,
+      );
+      console.log(
+        `  ${INFO} This is normal for new endpoints. Try again after the endpoint initializes.`,
+      );
     } else {
       // Step 4: Execute a test job
       console.log(`\n  ${INFO} Executing test job...`);
       try {
         const execResult = await provider.execute({
           endpointId,
-          functionName: 'hello',
-          args: { name: 'Ultralight' },
+          functionName: "hello",
+          args: { name: "Ultralight" },
           maxDurationMs: 30_000,
-          gpuType: 'A40',
+          gpuType: "A40",
         });
 
-        assert(execResult.success === true, `Execution success: ${execResult.success}`);
-        assert(execResult.duration_ms > 0, `Duration: ${execResult.duration_ms}ms`);
         assert(
-          typeof execResult.exit_code === 'string',
+          execResult.success === true,
+          `Execution success: ${execResult.success}`,
+        );
+        assert(
+          execResult.duration_ms > 0,
+          `Duration: ${execResult.duration_ms}ms`,
+        );
+        assert(
+          typeof execResult.exit_code === "string",
           `Exit code: ${execResult.exit_code}`,
         );
         console.log(`    Result: ${JSON.stringify(execResult.result)}`);
@@ -244,7 +307,9 @@ async function testEndpointLifecycle(provider: RunPodProvider): Promise<void> {
         console.log(`    Peak VRAM: ${execResult.peak_vram_gb}GB`);
         console.log(`    Logs: ${execResult.logs.length} lines`);
       } catch (err) {
-        console.log(`  ${INFO} Execution failed (expected if template doesn't have our harness): ${err}`);
+        console.log(
+          `  ${INFO} Execution failed (expected if template doesn't have our harness): ${err}`,
+        );
       }
     }
   } catch (err) {
@@ -255,12 +320,13 @@ async function testEndpointLifecycle(provider: RunPodProvider): Promise<void> {
       console.log(`\n  ${INFO} Cleaning up endpoint ${endpointId}...`);
       try {
         await provider.deleteEndpoint(endpointId);
-        assert(true, 'Endpoint deleted successfully');
+        assert(true, "Endpoint deleted successfully");
 
         // Verify deletion
         const deletedStatus = await provider.getEndpointStatus(endpointId);
         assert(
-          deletedStatus.status === 'not_found' || deletedStatus.status === 'error',
+          deletedStatus.status === "not_found" ||
+            deletedStatus.status === "error",
           `Post-delete status: ${deletedStatus.status}`,
         );
       } catch (err) {
@@ -275,8 +341,8 @@ async function testEndpointLifecycle(provider: RunPodProvider): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  console.log('\n🔥 GPU Compute Runtime — Phase 1 Smoke Test');
-  console.log('─'.repeat(60));
+  console.log("\n🔥 GPU Compute Runtime — Phase 1 Smoke Test");
+  console.log("─".repeat(60));
 
   // Test 1: Offline type system validation
   testTypeSystem();
@@ -290,14 +356,14 @@ async function main(): Promise<void> {
   }
 
   // Summary
-  section('Summary');
+  section("Summary");
   console.log(`  ${PASS} Passed: ${passed}`);
   console.log(`  ${FAIL} Failed: ${failed}`);
   console.log(`  Total:  ${passed + failed}`);
 
   if (failed > 0) {
     console.log(`\n${FAIL} Some tests failed. Review output above.`);
-    Deno.exit(1);
+    exitProcess(1);
   } else {
     console.log(`\n${PASS} All tests passed!`);
   }

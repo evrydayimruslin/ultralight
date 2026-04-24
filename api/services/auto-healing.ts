@@ -1,6 +1,7 @@
 // Auto-Healing Service — Detection Only
 // Detects failing MCP functions and records health events.
-// Does NOT patch or deploy — agents read events via ul.health and fix issues themselves.
+// Does NOT patch or deploy — agents read events via ul.logs({ health: true })
+// and fix issues themselves.
 // Runs periodically alongside the billing loop.
 
 import { getEnv } from '../lib/env.ts';
@@ -63,7 +64,7 @@ export interface AutoHealingReport {
  * Run the failure detection cycle.
  * Called periodically (every 30 min) by the job scheduler.
  * Detects failing functions and records health events.
- * Agents fix issues themselves via ul.health + ul.upload.
+ * Agents fix issues themselves via ul.logs({ health: true }) + ul.upload.
  */
 export async function runAutoHealing(): Promise<AutoHealingReport> {
   const report: AutoHealingReport = {
@@ -339,7 +340,7 @@ async function filterCandidates(
 /**
  * Start the health monitoring job.
  * Runs after a startup delay, then every 30 minutes.
- * Detection only — agents handle fixes via ul.health + ul.upload.
+ * Detection only — agents handle fixes via ul.logs({ health: true }) + ul.upload.
  */
 export function startAutoHealingJob(): void {
   const INTERVAL_MS = 30 * 60 * 1000; // 30 minutes

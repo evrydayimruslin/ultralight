@@ -13,9 +13,14 @@
 // All upload handlers (form upload, programmatic upload, MCP version update,
 // draft upload) call this pipeline instead of duplicating logic.
 
-import type { AppManifest, BuildLogEntry } from '../../shared/types/index.ts';
-import { validateManifest } from '../../shared/types/index.ts';
+import type { BuildLogEntry } from '../../shared/types/index.ts';
+import type { AppManifest } from '../../shared/contracts/manifest.ts';
+import { validateManifest } from '../../shared/contracts/manifest.ts';
 import { bundleCode } from './bundler.ts';
+import {
+  hydrateManifestForSource,
+  upsertManifestUploadFile,
+} from './app-manifest-generation.ts';
 import {
   parseMigrationFiles,
   validateMigrationSchema,
@@ -46,6 +51,8 @@ export interface PipelineOptions {
   name?: string;
   /** Override description from caller */
   description?: string;
+  /** Override version for generated manifests */
+  version?: string;
 }
 
 export interface D1Status {
@@ -178,23 +185,27 @@ function parseManifest(files: PipelineFile[], options: PipelineOptions): AppMani
     try {
       const manifestJson = JSON.parse(manifestFile.content);
       const validation = validateManifest(manifestJson);
-      if (validation.valid) {
-        manifest = validation.manifest!;
+      if (!validation.valid) {
+        throw new Error(
+          `Invalid manifest.json: ${validation.errors.map((entry) => `${entry.path}: ${entry.message}`).join(', ')}`,
+        );
       }
-    } catch {
-      // Fall through to options/auto-detect
+      manifest = validation.manifest!;
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : 'Failed to parse manifest.json');
     }
   }
 
   // Apply option overrides
   if (options.appType || options.functionsEntry) {
+    const appType = options.appType === 'mcp' ? 'mcp' : 'mcp';
     const base: AppManifest = manifest ? { ...manifest } : {
       name: options.name || 'Untitled App',
       version: '1.0.0',
-      type: options.appType || 'mcp',
+      type: appType,
       entry: {},
     };
-    if (options.appType) base.type = options.appType;
+    if (options.appType === 'mcp') base.type = 'mcp';
     if (options.functionsEntry) base.entry.functions = options.functionsEntry;
     if (options.description) base.description = options.description;
     manifest = base;
@@ -366,9 +377,11 @@ function prepareFilesForUpload(
   esmBundledCode: string | undefined,
   bundleUsed: boolean,
   normalizedEntryName: string,
+  manifest: AppManifest | null,
 ): Array<{ name: string; content: Uint8Array; contentType: string }> {
   if (bundleUsed) {
-    return [
+    return upsertManifestUploadFile(
+      [
       // Bundled entry (IIFE)
       { name: normalizedEntryName, content: new TextEncoder().encode(bundledCode), contentType: getContentType(normalizedEntryName) },
       // ESM bundle for browser rendering
@@ -387,14 +400,29 @@ function prepareFilesForUpload(
           content: new TextEncoder().encode(f.content),
           contentType: getContentType(f.name),
         })),
-    ];
+      ],
+      manifest,
+      (manifestJson) => ({
+        name: 'manifest.json',
+        content: new TextEncoder().encode(manifestJson),
+        contentType: 'application/json',
+      }),
+    );
   }
 
-  return files.map(f => ({
-    name: normalizeFileName(files, f.name),
-    content: new TextEncoder().encode(f.content),
-    contentType: getContentType(f.name),
-  }));
+  return upsertManifestUploadFile(
+    files.map(f => ({
+      name: normalizeFileName(files, f.name),
+      content: new TextEncoder().encode(f.content),
+      contentType: getContentType(f.name),
+    })),
+    manifest,
+    (manifestJson) => ({
+      name: 'manifest.json',
+      content: new TextEncoder().encode(manifestJson),
+      contentType: 'application/json',
+    }),
+  );
 }
 
 // ============================================
@@ -543,13 +571,38 @@ export async function processUploadPipeline(
   }
 
   // Stage 2: Manifest parsing
-  const manifest = parseManifest(files, options);
+  let manifest = parseManifest(files, options);
   if (manifest) log('info', `Manifest: ${manifest.name} (type: ${manifest.type})`);
 
   // Stage 3: Entry file detection
   const { entryFile } = detectEntryFile(files, manifest);
   const normalizedEntryName = normalizeFileName(files, entryFile.name);
   log('info', `Entry: ${entryFile.name} → ${normalizedEntryName}`);
+
+  const hydratedManifest = await hydrateManifestForSource({
+    app: {
+      name: manifest?.name || options.name || 'Untitled App',
+      slug: options.name || 'uploaded-app',
+      description: options.description || manifest?.description || null,
+    },
+    existingManifest: manifest,
+    sourceCode: entryFile.content,
+    filename: normalizedEntryName,
+    version: manifest?.version || options.version || '1.0.0',
+  });
+  manifest = hydratedManifest.manifest;
+  if (hydratedManifest.source !== 'uploaded') {
+    const manifestMessage = hydratedManifest.source === 'merged'
+      ? 'Normalized manifest-backed contracts from uploaded manifest and source code'
+      : 'Generated manifest-backed contracts from source code';
+    log('info', manifestMessage);
+  }
+  for (const parseError of hydratedManifest.parseResult.parseErrors) {
+    log('warn', `[Manifest] ${parseError}`);
+  }
+  for (const parseWarning of hydratedManifest.parseResult.parseWarnings) {
+    log('warn', `[Manifest] ${parseWarning}`);
+  }
 
   // Stage 4: Export extraction
   const exports = extractExportsFromManifestOrCode(manifest, entryFile.content);
@@ -568,7 +621,7 @@ export async function processUploadPipeline(
 
   // Stage 8: File preparation
   const filesToUpload = prepareFilesForUpload(
-    files, entryFile, bundledCode, esmBundledCode, bundleUsed, normalizedEntryName,
+    files, entryFile, bundledCode, esmBundledCode, bundleUsed, normalizedEntryName, manifest,
   );
 
   log('success', 'Pipeline complete');

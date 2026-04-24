@@ -244,6 +244,18 @@ Deno.test('PermissionCache: incrementBudget targets correct function only', () =
   assertEquals(cached!.rows.find(r => r.function_name === 'fn_b')!.budget_used, 10); // unchanged
 });
 
+Deno.test('PermissionCache: incrementBudget matches prefixed legacy names when appSlug provided', () => {
+  const cache = new PermissionCache(100, 60_000);
+  const rows = [makeRow({ function_name: 'demo-app_fn_a', budget_limit: 10, budget_used: 2 })];
+  cache.set('user-1', 'app-1', new Set(['fn_a']), rows);
+
+  const updated = cache.incrementBudget('user-1', 'app-1', 'fn_a', 'demo-app');
+  assertEquals(updated, true);
+
+  const cached = cache.get('user-1', 'app-1');
+  assertEquals(cached!.rows.find(r => r.function_name === 'demo-app_fn_a')!.budget_used, 3);
+});
+
 Deno.test('PermissionCache: multiple increments accumulate correctly', () => {
   const cache = new PermissionCache(100, 60_000);
   const rows = [makeRow({ function_name: 'fn_a', budget_limit: 10, budget_used: 0 })];

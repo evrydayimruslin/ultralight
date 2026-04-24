@@ -80,6 +80,7 @@ export type GpuStatus =
   | 'building'          // Container image being built
   | 'benchmarking'      // Benchmark runs in progress
   | 'live'              // Ready to accept calls
+  | 'build_config_invalid' // Platform/provider build configuration is invalid
   | 'build_failed'      // Container build failed
   | 'benchmark_failed'; // Benchmark failed (or regression not acknowledged)
 

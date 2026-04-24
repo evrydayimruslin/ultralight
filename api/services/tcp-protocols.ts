@@ -238,7 +238,7 @@ export async function imapFetchUnseen(
 ): Promise<{ emails: ParsedEmail[]; maxUid: number; hasMore: boolean }> {
   validateTarget(host, port);
 
-  const socket = connect({ hostname: host, port }, { secureTransport: 'on' });
+  const socket = connect({ hostname: host, port }, { secureTransport: 'on', allowHalfOpen: false });
   const lr = new LineReader(socket.readable);
   const writer = socket.writable.getWriter();
   let tagNum = 0;
@@ -331,7 +331,7 @@ export async function smtpSend(
 ): Promise<{ success: boolean; error?: string }> {
   validateTarget(host, port);
 
-  const socket = connect({ hostname: host, port }, { secureTransport: 'on' });
+  const socket = connect({ hostname: host, port }, { secureTransport: 'on', allowHalfOpen: false });
   const lr = new LineReader(socket.readable);
   const writer = socket.writable.getWriter();
 

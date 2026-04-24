@@ -1,85 +1,48 @@
 // WidgetAppView — full-screen container for an MCP's HTML widget app.
-// Loads the app_html in an iframe with a direct-call bridge SDK injected.
-// The bridge makes HTTP calls directly to the MCP endpoint (no postMessage needed).
+// Loads the app_html in an iframe with the shared widget bridge injected.
+// The bridge makes MCP calls directly and uses postMessage for widget-to-widget navigation.
 
-import { useRef, useEffect } from 'react';
-import type { WidgetAppSource } from '../hooks/useWidgetInbox';
+import { useRef, useEffect, useState } from 'react';
 import { getApiBase, getToken } from '../lib/storage';
 import { openWidgetWindow } from '../lib/multiWindow';
+import {
+  buildWidgetNavigationTarget,
+  buildWidgetSrcDoc,
+  type WidgetAppSource,
+} from '../lib/widgetRuntime';
+import { createDesktopLogger } from '../lib/logging';
+import DesktopAsyncState from './DesktopAsyncState';
 
 interface WidgetAppViewProps {
   source: WidgetAppSource;
   appHtml: string;
   onBack: () => void;
-  onBridgeCall: (appUuid: string, slug: string, fn: string, args: Record<string, unknown>) => Promise<unknown>;
 }
+
+const widgetAppLogger = createDesktopLogger('WidgetAppView');
 
 export default function WidgetAppView({ source, appHtml, onBack }: WidgetAppViewProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [iframeError, setIframeError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
-  // Build bridge SDK that calls the MCP endpoint directly via fetch
   const apiBase = getApiBase();
   const token = getToken();
 
-  const bridgeSdk = `<script>
-(function() {
-  var _apiBase = ${JSON.stringify(apiBase)};
-  var _token = ${JSON.stringify(token)};
-  var _appUuid = ${JSON.stringify(source.appUuid)};
-  var _appSlug = ${JSON.stringify(source.appSlug)};
-
-  window.ulAction = function(functionName, args) {
-    // Platform tools (ultralight.* / ul.*) — route to platform endpoint, no slug prefix
-    var isPlatform = functionName.indexOf('ultralight.') === 0 || functionName.indexOf('ul.') === 0;
-    var toolName = isPlatform ? functionName : (_appSlug + '_' + functionName);
-    var endpoint = isPlatform ? (_apiBase + '/mcp/platform') : (_apiBase + '/mcp/' + _appUuid);
-    return fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + _token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: crypto.randomUUID(),
-        method: 'tools/call',
-        params: { name: toolName, arguments: args || {} }
-      })
-    })
-    .then(function(res) { return res.json(); })
-    .then(function(data) {
-      if (data.error) throw new Error(data.error.message || 'MCP error');
-      var text = data.result && data.result.content && data.result.content[0] && data.result.content[0].text;
-      if (!text) return null;
-      try { return JSON.parse(text); } catch(e) { return text; }
-    });
-  };
-
-  // Open another widget in a new window
-  window.ulOpenWidget = function(widgetName, context) {
-    parent.postMessage({ type: 'ul-open-widget', widgetName: widgetName, context: context || {} }, '*');
-  };
-})();
-</script>`;
-
-  // Inject bridge SDK into the HTML
-  const preparedHtml = (() => {
-    if (appHtml.includes('<head>')) {
-      return appHtml.replace('<head>', '<head>' + bridgeSdk);
-    }
-    if (appHtml.includes('<html>')) {
-      return appHtml.replace('<html>', '<html><head>' + bridgeSdk + '</head>');
-    }
-    return `<!DOCTYPE html><html><head><meta charset="utf-8">${bridgeSdk}</head><body>${appHtml}</body></html>`;
-  })();
+  const preparedHtml = buildWidgetSrcDoc({
+    appHtml,
+    appUuid: source.appUuid,
+    appSlug: source.appSlug,
+    widgetName: source.widgetName,
+    apiBase,
+    token,
+  });
 
   // Listen for widget-to-widget navigation requests
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       if (e.data?.type === 'ul-open-widget' && e.data.widgetName) {
-        const target = {
-          appUuid: source.appUuid, appSlug: source.appSlug, appName: source.appName,
-          widgetName: e.data.widgetName,
-          uiFunction: `widget_${e.data.widgetName}_ui`,
-          dataFunction: `widget_${e.data.widgetName}_data`,
-        };
+        const target = buildWidgetNavigationTarget(source, e.data.widgetName);
         openWidgetWindow(target, e.data.context);
       }
     };
@@ -116,14 +79,40 @@ export default function WidgetAppView({ source, appHtml, onBack }: WidgetAppView
 
       {/* Widget App iframe */}
       <div className="flex-1 min-h-0">
-        <iframe
-          ref={iframeRef}
-          srcDoc={preparedHtml}
-          sandbox="allow-scripts allow-same-origin"
-          className="w-full h-full border-0"
-          title={`Widget: ${source.widgetName}`}
-          onError={() => console.error(`[WidgetAppView] iframe error: ${source.widgetName}`)}
-        />
+        {!appHtml.trim() ? (
+          <DesktopAsyncState
+            kind="empty"
+            title="No widget UI returned"
+            message="This widget is connected, but it has not published a visual surface yet."
+          />
+        ) : iframeError ? (
+          <DesktopAsyncState
+            kind="error"
+            title="Widget view unavailable"
+            message="The widget shell could not finish loading."
+            actionLabel="Retry"
+            onAction={() => {
+              setIframeError(false);
+              setReloadKey((value) => value + 1);
+            }}
+          />
+        ) : (
+          <iframe
+            key={reloadKey}
+            ref={iframeRef}
+            srcDoc={preparedHtml}
+            sandbox="allow-scripts allow-same-origin"
+            className="w-full h-full border-0"
+            title={`Widget: ${source.widgetName}`}
+            onError={() => {
+              setIframeError(true);
+              widgetAppLogger.error('Widget iframe error', {
+                widgetName: source.widgetName,
+                appUuid: source.appUuid,
+              });
+            }}
+          />
+        )}
       </div>
     </div>
   );

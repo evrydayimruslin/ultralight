@@ -1,69 +1,59 @@
-// WidgetInbox — renders all MCP widget items grouped by source.
-// Sits at the top of the Activity tab, above the existing event log.
+// WidgetInbox — compact widget surface for any view that wants the
+// widget inbox model without the full HomeView inline-widget experience.
 
 import { useWidgetInbox } from '../hooks/useWidgetInbox';
-import WidgetCard from './WidgetCard';
+import WidgetHomescreen from './WidgetHomescreen';
+import { openWidgetWindow } from '../lib/multiWindow';
+import DesktopAsyncState from './DesktopAsyncState';
 
 export default function WidgetInbox() {
-  const { sources, data, loading, executeAction, refresh } = useWidgetInbox();
+  const { sources, metas, loading, refresh } = useWidgetInbox();
 
-  // Group widget data by source
-  const groups = sources
-    .map(source => {
-      const key = source.appUuid + ':' + source.widgetFunction;
-      const widgetData = data[key];
-      return { source, data: widgetData };
-    })
-    .filter(g => g.data && g.data.items.length > 0);
-
-  if (loading && groups.length === 0) {
+  if (loading && sources.length === 0) {
     return (
-      <div className="text-center py-8">
-        <div className="inline-block w-5 h-5 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
-        <p className="text-caption text-ul-text-muted mt-2">Checking for pending items…</p>
-      </div>
+      <DesktopAsyncState
+        kind="loading"
+        title="Loading widgets"
+        message="Checking your connected widget apps and live badge counts."
+        compact
+      />
     );
   }
 
-  if (groups.length === 0) {
-    return null;
+  const hasVisibleWidgets = sources.some((source) => metas[`${source.appUuid}:${source.widgetName}`]);
+  if (!hasVisibleWidgets) {
+    return (
+      <DesktopAsyncState
+        kind="empty"
+        title="No widgets yet"
+        message={sources.length > 0
+          ? 'Your widget apps are connected, but none are showing live activity right now.'
+          : 'Connect or open an app with widget surfaces to see live inbox tiles here.'}
+        actionLabel="Refresh"
+        onAction={() => {
+          void refresh();
+        }}
+        compact
+      />
+    );
   }
 
   return (
     <div className="space-y-4">
-      {groups.map(({ source, data: widgetData }) => (
-        <div key={source.appUuid + ':' + source.widgetFunction}>
-          {/* Source header */}
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <span className="text-small font-medium text-ul-text">Email Approvals</span>
-              <span className="text-caption text-ul-text-muted">via {source.appName}</span>
-            </div>
-            {widgetData!.badge_count > 0 && (
-              <span className="text-[11px] font-medium bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
-                {widgetData!.badge_count} pending
-              </span>
-            )}
-          </div>
+      <WidgetHomescreen
+        sources={sources}
+        metas={metas}
+        loading={loading}
+        onOpenWidget={(source) => {
+          void openWidgetWindow(source);
+        }}
+      />
 
-          {/* Widget items */}
-          <div className="space-y-2">
-            {widgetData!.items.map(item => (
-              <WidgetCard
-                key={item.id}
-                item={item}
-                appId={source.appUuid}
-                onAction={executeAction}
-              />
-            ))}
-          </div>
-        </div>
-      ))}
-
-      {/* Refresh button */}
       <div className="flex justify-center pt-1">
         <button
-          onClick={refresh}
+          onClick={() => {
+            void refresh();
+          }}
           disabled={loading}
           className="text-caption text-ul-text-muted hover:text-ul-text transition-colors disabled:opacity-50"
         >

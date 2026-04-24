@@ -2,13 +2,31 @@
 // Parses TypeScript/JavaScript code to extract exported functions with full type information
 // Uses the TypeScript compiler API for accurate AST parsing
 
+import type * as tsTypes from 'typescript';
+import type { ParsedSkills } from '../../shared/types/index.ts';
+
 // TypeScript compiler — dynamically imported to avoid __filename crash at module init.
 // The TS compiler uses Node.js APIs (fs, path, __filename) not available in Workers global scope.
 // We lazy-load it only when parseTypeScript() is actually called.
-type TS = typeof import('typescript');
-let _ts: TS | null = null;
+type TSModule = typeof import('typescript');
+type TSLazyModule = TSModule & { default?: TSModule };
 
-import type { ParsedSkills, SkillFunction, PermissionDeclaration } from '../../shared/types/index.ts';
+let _ts: TSModule | null = null;
+
+async function loadTs(): Promise<TSModule> {
+  if (_ts) return _ts;
+  const module = await import('typescript') as TSLazyModule;
+  _ts = module.default ?? module;
+  return _ts;
+}
+
+function getLoadedTs(): TSModule {
+  if (!_ts) {
+    throw new Error('TypeScript compiler has not been loaded');
+  }
+
+  return _ts;
+}
 
 // ============================================
 // TYPES
@@ -42,7 +60,7 @@ export interface ParsedFunction {
 export interface JsonSchema {
   type?: string;
   properties?: Record<string, JsonSchema>;
-  items?: JsonSchema;
+  items?: JsonSchema | JsonSchema[];
   required?: string[];
   description?: string;
   enum?: unknown[];
@@ -78,8 +96,7 @@ export interface JSDocInfo {
  */
 export async function parseTypeScript(code: string, filename = 'index.ts'): Promise<ParseResult> {
   // Lazy-load TypeScript compiler (can't load at module init in CF Workers)
-  if (!_ts) _ts = await import('typescript');
-  const ts = _ts.default || _ts;
+  const ts = await loadTs();
 
   const functions: ParsedFunction[] = [];
   const types: Record<string, JsonSchema> = {};
@@ -107,7 +124,7 @@ export async function parseTypeScript(code: string, filename = 'index.ts'): Prom
     }
 
     // Walk the AST to find exports
-    ts.forEachChild(sourceFile, node => {
+    ts.forEachChild(sourceFile, (node: tsTypes.Node) => {
       try {
         // Export function declarations: export function foo() {}
         if (ts.isFunctionDeclaration(node) && isExported(node) && node.name) {
@@ -148,7 +165,7 @@ export async function parseTypeScript(code: string, filename = 'index.ts'): Prom
     });
 
     // Also check for named exports: export { foo, bar }
-    ts.forEachChild(sourceFile, node => {
+    ts.forEachChild(sourceFile, (node: tsTypes.Node) => {
       if (ts.isExportDeclaration(node) && node.exportClause && ts.isNamedExports(node.exportClause)) {
         for (const element of node.exportClause.elements) {
           const localName = element.propertyName?.text || element.name.text;
@@ -191,19 +208,21 @@ export async function parseTypeScript(code: string, filename = 'index.ts'): Prom
 /**
  * Check if a node has export modifier
  */
-function isExported(node: ts.Node): boolean {
+function isExported(node: tsTypes.Node): boolean {
+  const ts = getLoadedTs();
   if (!ts.canHaveModifiers(node)) return false;
   const modifiers = ts.getModifiers(node);
-  return modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+  return modifiers?.some((m: tsTypes.ModifierLike) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
 }
 
 /**
  * Find a declaration by name in the source file
  */
-function findDeclaration(sourceFile: ts.SourceFile, name: string): ts.Declaration | undefined {
-  let found: ts.Declaration | undefined;
+function findDeclaration(sourceFile: tsTypes.SourceFile, name: string): tsTypes.Declaration | undefined {
+  const ts = getLoadedTs();
+  let found: tsTypes.Declaration | undefined;
 
-  ts.forEachChild(sourceFile, node => {
+  ts.forEachChild(sourceFile, (node: tsTypes.Node) => {
     if (ts.isFunctionDeclaration(node) && node.name?.text === name) {
       found = node;
     }
@@ -222,12 +241,13 @@ function findDeclaration(sourceFile: ts.SourceFile, name: string): ts.Declaratio
 /**
  * Parse a function declaration into ParsedFunction
  */
-function parseFunctionDeclaration(node: ts.FunctionDeclaration, sourceFile: ts.SourceFile): ParsedFunction | null {
+function parseFunctionDeclaration(node: tsTypes.FunctionDeclaration, sourceFile: tsTypes.SourceFile): ParsedFunction | null {
+  const ts = getLoadedTs();
   if (!node.name) return null;
 
   const name = node.name.text;
   const jsDoc = getJSDocComment(node, sourceFile);
-  const isAsync = node.modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+  const isAsync = node.modifiers?.some((m: tsTypes.ModifierLike) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
 
   // Parse parameters
   const parameters = node.parameters.map(param => parseParameter(param, jsDoc, sourceFile));
@@ -255,10 +275,11 @@ function parseFunctionDeclaration(node: ts.FunctionDeclaration, sourceFile: ts.S
  * Parse a variable declaration with function initializer
  */
 function parseVariableFunction(
-  decl: ts.VariableDeclaration,
-  statement: ts.VariableStatement,
-  sourceFile: ts.SourceFile
+  decl: tsTypes.VariableDeclaration,
+  statement: tsTypes.VariableStatement,
+  sourceFile: tsTypes.SourceFile
 ): ParsedFunction | null {
+  const ts = getLoadedTs();
   if (!ts.isIdentifier(decl.name)) return null;
   if (!decl.initializer) return null;
   if (!ts.isArrowFunction(decl.initializer) && !ts.isFunctionExpression(decl.initializer)) return null;
@@ -266,14 +287,14 @@ function parseVariableFunction(
   const fn = decl.initializer;
   const name = decl.name.text;
   const jsDoc = getJSDocComment(statement, sourceFile);
-  const isAsync = fn.modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+  const isAsync = fn.modifiers?.some((m: tsTypes.ModifierLike) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
 
   // Parse parameters
   const parameters = fn.parameters.map(param => parseParameter(param, jsDoc, sourceFile));
 
   // Parse return type - check variable type annotation first, then function return type
   let returnType = 'void';
-  let returnTypeNode: ts.TypeNode | undefined;
+  let returnTypeNode: tsTypes.TypeNode | undefined;
 
   if (decl.type && ts.isFunctionTypeNode(decl.type)) {
     returnTypeNode = decl.type.type;
@@ -305,7 +326,7 @@ function parseVariableFunction(
 /**
  * Parse a parameter node
  */
-function parseParameter(param: ts.ParameterDeclaration, jsDoc: JSDocInfo | null, sourceFile: ts.SourceFile): ParsedParameter {
+function parseParameter(param: tsTypes.ParameterDeclaration, jsDoc: JSDocInfo | null, sourceFile: tsTypes.SourceFile): ParsedParameter {
   const name = param.name.getText(sourceFile);
   const type = param.type ? param.type.getText(sourceFile) : 'unknown';
   const required = !param.questionToken && !param.initializer;
@@ -343,7 +364,8 @@ function parseParameter(param: ts.ParameterDeclaration, jsDoc: JSDocInfo | null,
 /**
  * Parse an interface declaration to JSON Schema
  */
-function parseInterfaceDeclaration(node: ts.InterfaceDeclaration, sourceFile: ts.SourceFile): JsonSchema {
+function parseInterfaceDeclaration(node: tsTypes.InterfaceDeclaration, sourceFile: tsTypes.SourceFile): JsonSchema {
+  const ts = getLoadedTs();
   const properties: Record<string, JsonSchema> = {};
   const required: string[] = [];
 
@@ -374,7 +396,7 @@ function parseInterfaceDeclaration(node: ts.InterfaceDeclaration, sourceFile: ts
 /**
  * Parse a type alias to JSON Schema
  */
-function parseTypeAlias(node: ts.TypeAliasDeclaration, sourceFile: ts.SourceFile): JsonSchema {
+function parseTypeAlias(node: tsTypes.TypeAliasDeclaration, sourceFile: tsTypes.SourceFile): JsonSchema {
   return typeNodeToJsonSchema(node.type, sourceFile);
 }
 
@@ -385,7 +407,8 @@ function parseTypeAlias(node: ts.TypeAliasDeclaration, sourceFile: ts.SourceFile
 /**
  * Convert a TypeScript type node to JSON Schema
  */
-function typeNodeToJsonSchema(typeNode: ts.TypeNode | undefined, sourceFile: ts.SourceFile): JsonSchema {
+function typeNodeToJsonSchema(typeNode: tsTypes.TypeNode | undefined, sourceFile: tsTypes.SourceFile): JsonSchema {
+  const ts = getLoadedTs();
   if (!typeNode) {
     return { type: 'any' };
   }
@@ -500,7 +523,7 @@ function typeNodeToJsonSchema(typeNode: ts.TypeNode | undefined, sourceFile: ts.
   if (ts.isTupleTypeNode(typeNode)) {
     return {
       type: 'array',
-      items: typeNode.elements.map(el => typeNodeToJsonSchema(el, sourceFile)),
+      items: typeNode.elements.map((el: tsTypes.TypeNode) => typeNodeToJsonSchema(el, sourceFile)),
     };
   }
 
@@ -567,7 +590,8 @@ function typeNodeToJsonSchema(typeNode: ts.TypeNode | undefined, sourceFile: ts.
 /**
  * Extract JSDoc comment from a node
  */
-function getJSDocComment(node: ts.Node, sourceFile: ts.SourceFile): JSDocInfo | null {
+function getJSDocComment(node: tsTypes.Node, sourceFile: tsTypes.SourceFile): JSDocInfo | null {
+  const ts = getLoadedTs();
   // Get leading comment ranges
   const text = sourceFile.getFullText();
   const commentRanges = ts.getLeadingCommentRanges(text, node.getFullStart());

@@ -457,7 +457,7 @@ WAVE 3: Multi-Instance + Optimization ✅ COMPLETE
 
 FUTURE: Workers for Platforms ($25/month upgrade)
 ├── Full V8 isolate sandbox execution on CF edge
-├── Files preserved in worker/src/_future-wfp/
+├── Files preserved in archive/experimental/future-wfp/
 └── Removes the last single-server bottleneck (code execution)
 ```
 
@@ -501,4 +501,5 @@ The CF Worker provides a fast R2 data layer with native bindings (~5-15ms vs ~50
 Feature-flagged via `WORKER_DATA_URL` + `WORKER_SECRET` env vars — remove to fall back.
 
 **Future**: Workers for Platforms ($25/month) enables moving code execution to CF edge
-with true V8 isolate sandboxing. Files preserved in `worker/src/_future-wfp/`.
+with true V8 isolate sandboxing. Historical prototype files are preserved in
+`archive/experimental/future-wfp/`.

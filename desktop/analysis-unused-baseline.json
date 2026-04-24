@@ -1,0 +1,253 @@
+{
+  "issues": [
+    {
+      "file": "src/components/AgentConfigPanel.tsx",
+      "types": [
+        "AgentConfigPanelProps"
+      ]
+    },
+    {
+      "file": "src/components/AgentSidebar.tsx",
+      "files": [
+        "src/components/AgentSidebar.tsx"
+      ]
+    },
+    {
+      "file": "src/components/ConversationSidebar.tsx",
+      "files": [
+        "src/components/ConversationSidebar.tsx"
+      ]
+    },
+    {
+      "file": "src/components/DiscoverWidget.tsx",
+      "types": [
+        "DiscoverWidgetMode"
+      ]
+    },
+    {
+      "file": "src/components/ModelSelector.tsx",
+      "files": [
+        "src/components/ModelSelector.tsx"
+      ]
+    },
+    {
+      "file": "src/components/PermissionLevelSelector.tsx",
+      "files": [
+        "src/components/PermissionLevelSelector.tsx"
+      ]
+    },
+    {
+      "file": "src/components/ProjectDirIndicator.tsx",
+      "files": [
+        "src/components/ProjectDirIndicator.tsx"
+      ]
+    },
+    {
+      "file": "src/components/WidgetCard.tsx",
+      "files": [
+        "src/components/WidgetCard.tsx"
+      ]
+    },
+    {
+      "file": "src/components/WidgetInbox.tsx",
+      "files": [
+        "src/components/WidgetInbox.tsx"
+      ]
+    },
+    {
+      "file": "src/hooks/useAgentFleet.ts",
+      "types": [
+        "UseAgentFleetReturn"
+      ]
+    },
+    {
+      "file": "src/hooks/useAppState.ts",
+      "types": [
+        "UseAppStateReturn"
+      ]
+    },
+    {
+      "file": "src/hooks/useChat.ts",
+      "types": [
+        "UseChatOptions",
+        "UseChatReturn"
+      ]
+    },
+    {
+      "file": "src/hooks/useConversations.ts",
+      "types": [
+        "Conversation",
+        "UseConversationsReturn"
+      ]
+    },
+    {
+      "exports": [
+        "parseDeepLink"
+      ],
+      "file": "src/hooks/useDeepLink.ts",
+      "types": [
+        "DeepLinkNavigator"
+      ]
+    },
+    {
+      "file": "src/hooks/useInChatWidgets.ts",
+      "files": [
+        "src/hooks/useInChatWidgets.ts"
+      ]
+    },
+    {
+      "file": "src/hooks/useKanban.ts",
+      "types": [
+        "KanbanBoard",
+        "UseKanbanReturn"
+      ]
+    },
+    {
+      "exports": [
+        "LOCAL_TOOL_NAMES"
+      ],
+      "file": "src/hooks/useLocalTools.ts",
+      "types": [
+        "UseLocalToolsReturn"
+      ]
+    },
+    {
+      "file": "src/hooks/useMcp.ts",
+      "types": [
+        "UseMcpReturn"
+      ]
+    },
+    {
+      "file": "src/hooks/usePermissions.ts",
+      "types": [
+        "UsePermissionsReturn"
+      ]
+    },
+    {
+      "file": "src/hooks/useProjectDir.ts",
+      "types": [
+        "UseProjectDirReturn"
+      ]
+    },
+    {
+      "file": "src/hooks/useWidgetInbox.ts",
+      "types": [
+        "WidgetInboxState"
+      ]
+    },
+    {
+      "file": "src/lib/agentLoop.ts",
+      "types": [
+        "AgentLoopOptions",
+        "AgentLoopResult"
+      ]
+    },
+    {
+      "exports": [
+        "generateStateSummary",
+        "syncAllSystemAgentStates"
+      ],
+      "file": "src/lib/agentStateSummary.ts"
+    },
+    {
+      "file": "src/lib/api.ts",
+      "types": [
+        "ApiError",
+        "FunctionIndex",
+        "McpToolResult",
+        "OrchestrateEvent",
+        "TaskContext"
+      ]
+    },
+    {
+      "file": "src/lib/auth.ts",
+      "types": [
+        "DesktopEmbedBridgeSession"
+      ]
+    },
+    {
+      "file": "src/lib/environment.ts",
+      "types": [
+        "DesktopEnvironment",
+        "DesktopEnvSource"
+      ]
+    },
+    {
+      "file": "src/lib/parseFileOps.ts",
+      "types": [
+        "FileOperation"
+      ]
+    },
+    {
+      "exports": [
+        "PERMISSION_LEVELS"
+      ],
+      "file": "src/lib/permissions.ts"
+    },
+    {
+      "file": "src/lib/sse.ts",
+      "types": [
+        "ChatDelta"
+      ]
+    },
+    {
+      "exports": [
+        "setModel"
+      ],
+      "file": "src/lib/storage.ts"
+    },
+    {
+      "exports": [
+        "findSplitPoint"
+      ],
+      "file": "src/lib/summarizer.ts"
+    },
+    {
+      "file": "src/lib/systemAgents.ts",
+      "types": [
+        "SystemAgentState"
+      ]
+    },
+    {
+      "exports": [
+        "generateCodeModeTypes",
+        "generateFleetContext",
+        "isCodeModeCapable"
+      ],
+      "file": "src/lib/systemPrompt.ts",
+      "types": [
+        "FleetMember"
+      ]
+    },
+    {
+      "exports": [
+        "getHomeDir"
+      ],
+      "file": "src/lib/templates.ts"
+    },
+    {
+      "exports": [
+        "ULTRALIGHT_RELEASES_REPO",
+        "ULTRALIGHT_UPDATER_ENDPOINT"
+      ],
+      "file": "src/lib/updater.ts"
+    },
+    {
+      "file": "src/lib/widgetContracts.ts",
+      "types": [
+        "DiscoveredWidgetSource",
+        "LegacyWidgetContractInventoryEntry",
+        "LegacyWidgetContractObservation",
+        "WidgetDiscoveryResult"
+      ]
+    },
+    {
+      "file": "src/lib/widgetRuntime.ts",
+      "types": [
+        "WidgetHtmlCacheEntry",
+        "WidgetHtmlLoadResult",
+        "WidgetUiPayload"
+      ]
+    }
+  ]
+}

@@ -16,12 +16,30 @@ import { getEnv } from '../lib/env.ts';
 import { runFlashBroker, type FlashBrokerResult, type FlashEvent, type SystemAgentState, type SystemAgentContext } from './flash-broker.ts';
 import { executeDynamicCodeMode } from '../runtime/dynamic-executor.ts';
 import { getD1DatabaseId } from './d1-provisioning.ts';
+import { createAppsService } from './apps.ts';
+import { registerExecutionPlanGate } from './plan-gate.ts';
+import { getCallPriceLight, type AppPricingConfig } from '../../shared/types/index.ts';
 
 // ── Types ──
 
 export type OrchestrateEvent =
   // Flash phase events (visible to user as "Flash thinking")
   | { type: 'flash_status'; text: string }
+  | {
+    type: 'ambient_suggestions';
+    suggestions: Array<{
+      id: string;
+      slug: string;
+      name: string;
+      description: string;
+      icon_url: string | null;
+      similarity: number;
+      source: 'marketplace';
+      type: 'app';
+      connected: false;
+      runtime?: string;
+    }>;
+  }
   | { type: 'flash_search'; query: string; apps: string[] }
   | { type: 'flash_found'; entity: string; detail: string }
   | { type: 'flash_context'; functions: string[]; conventions: number }
@@ -32,6 +50,25 @@ export type OrchestrateEvent =
   | { type: 'heavy_text'; content: string }
   | { type: 'heavy_recipe'; code: string }
   // Execution phase events
+  | {
+    type: 'plan_ready';
+    plan: {
+      id: string;
+      recipe: string;
+      tools_used: Array<{
+        appId: string;
+        appName: string;
+        appSlug: string;
+        origin: 'library' | 'marketplace';
+        fnName: string;
+        args: Record<string, unknown>;
+        cost_light: number;
+      }>;
+      total_cost_light: number;
+      created_at: number;
+    };
+  }
+  | { type: 'plan_cancelled'; planId: string; reason?: string }
   | { type: 'exec_start' }
   | { type: 'exec_result'; data: unknown }
   // System agent delegation
@@ -105,6 +142,9 @@ export async function* orchestrate(
       switch (event.type) {
         case 'analyzing':
           yield { type: 'flash_status', text: event.text || 'Analyzing your request...' };
+          break;
+        case 'ambient_suggestions':
+          yield { type: 'ambient_suggestions', suggestions: event.suggestions || [] };
           break;
         case 'searching':
           yield { type: 'flash_search', query: event.query || '', apps: event.apps || [] };
@@ -281,7 +321,23 @@ export async function* orchestrate(
     // ── Phase 4: Execute recipe + synthesis ──
     if (call1Result.toolCall) {
       const recipeCode = call1Result.toolCall.code;
-      const toolCallId = call1Result.toolCall.id || 'call_1';
+      const planId = crypto.randomUUID();
+      const createdAt = Date.now();
+      const plan = await buildExecutionPlan(planId, recipeCode, brokerResult, userId, createdAt);
+      const decisionPromise = registerExecutionPlanGate(planId, userId);
+
+      yield { type: 'plan_ready', plan };
+
+      const decision = await decisionPromise;
+      if (decision.status !== 'confirmed') {
+        yield {
+          type: 'plan_cancelled',
+          planId,
+          reason: decision.status === 'timeout' ? 'timed_out' : 'cancelled',
+        };
+        yield { type: 'done' };
+        return;
+      }
 
       yield { type: 'exec_start' };
 
@@ -344,6 +400,16 @@ interface StreamResult {
   fullText: string;
   toolCall: { name: string; code: string; id: string } | null;
   usage: object | null;
+}
+
+interface PlannedToolUse {
+  appId: string;
+  appName: string;
+  appSlug: string;
+  origin: 'library' | 'marketplace';
+  fnName: string;
+  args: Record<string, unknown>;
+  cost_light: number;
 }
 
 /**
@@ -498,6 +564,215 @@ async function streamHeavyModel(
   return { textDeltas, fullText, toolCall, usage };
 }
 
+async function buildExecutionPlan(
+  planId: string,
+  recipeCode: string,
+  brokerResult: FlashBrokerResult,
+  userId: string,
+  createdAt: number,
+): Promise<{
+  id: string;
+  recipe: string;
+  tools_used: PlannedToolUse[];
+  total_cost_light: number;
+  created_at: number;
+}> {
+  const calls = extractCodemodeCalls(recipeCode);
+  const uniqueAppIds = [...new Set(
+    calls
+      .map(call => brokerResult.toolMap[call.toolName]?.appId)
+      .filter((appId): appId is string => !!appId)
+  )];
+
+  const appMap = await loadExecutionPlanApps(uniqueAppIds);
+  const toolsUsed: PlannedToolUse[] = [];
+  for (const call of calls) {
+    const mapping = brokerResult.toolMap[call.toolName];
+    if (!mapping) continue;
+
+    const app = appMap.get(mapping.appId);
+    const appName = app?.name || mapping.appName || titleizeSlug(mapping.appSlug);
+    const appSlug = app?.slug || mapping.appSlug;
+    const costLight = app && app.owner_id !== userId
+      ? getCallPriceLight(app.pricing_config as AppPricingConfig | null | undefined, mapping.fnName)
+      : 0;
+
+    toolsUsed.push({
+      appId: mapping.appId,
+      appName,
+      appSlug,
+      origin: mapping.origin,
+      fnName: mapping.fnName,
+      args: parseToolArgsSource(call.argsSource),
+      cost_light: costLight,
+    });
+  }
+
+  return {
+    id: planId,
+    recipe: recipeCode,
+    tools_used: toolsUsed,
+    total_cost_light: toolsUsed.reduce((sum, tool) => sum + tool.cost_light, 0),
+    created_at: createdAt,
+  };
+}
+
+async function loadExecutionPlanApps(appIds: string[]): Promise<Map<string, {
+  id: string;
+  name: string;
+  slug: string;
+  owner_id: string;
+  pricing_config: unknown;
+}>> {
+  if (appIds.length === 0) {
+    return new Map();
+  }
+
+  let appsService: ReturnType<typeof createAppsService>;
+  try {
+    appsService = createAppsService();
+  } catch {
+    return new Map();
+  }
+  const entries = await Promise.all(
+    appIds.map(async (appId) => [appId, await appsService.findById(appId)] as const)
+  );
+
+  const appMap = new Map<string, {
+    id: string;
+    name: string;
+    slug: string;
+    owner_id: string;
+    pricing_config: unknown;
+  }>();
+
+  for (const [appId, app] of entries) {
+    if (!app) continue;
+    appMap.set(appId, {
+      id: app.id,
+      name: app.name,
+      slug: app.slug,
+      owner_id: app.owner_id,
+      pricing_config: app.pricing_config,
+    });
+  }
+
+  return appMap;
+}
+
+function extractCodemodeCalls(code: string): Array<{ toolName: string; argsSource: string }> {
+  const calls: Array<{ toolName: string; argsSource: string }> = [];
+  let searchFrom = 0;
+
+  while (searchFrom < code.length) {
+    const marker = code.indexOf('codemode.', searchFrom);
+    if (marker === -1) break;
+
+    const nameStart = marker + 'codemode.'.length;
+    let nameEnd = nameStart;
+    while (/[A-Za-z0-9_]/.test(code[nameEnd] || '')) {
+      nameEnd += 1;
+    }
+
+    const toolName = code.slice(nameStart, nameEnd);
+    let cursor = nameEnd;
+    while (/\s/.test(code[cursor] || '')) cursor += 1;
+
+    if (!toolName || code[cursor] !== '(') {
+      searchFrom = nameEnd;
+      continue;
+    }
+
+    const callBounds = sliceBalancedParens(code, cursor);
+    if (!callBounds) {
+      searchFrom = cursor + 1;
+      continue;
+    }
+
+    calls.push({ toolName, argsSource: callBounds.inner.trim() });
+    searchFrom = callBounds.endIndex;
+  }
+
+  return calls;
+}
+
+function sliceBalancedParens(
+  source: string,
+  openParenIndex: number,
+): { inner: string; endIndex: number } | null {
+  let depth = 0;
+  let quote: '"' | '\'' | '`' | null = null;
+  let escaped = false;
+
+  for (let i = openParenIndex; i < source.length; i += 1) {
+    const char = source[i];
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === '\'' || char === '`') {
+      quote = char;
+      continue;
+    }
+
+    if (char === '(') {
+      depth += 1;
+      continue;
+    }
+
+    if (char === ')') {
+      depth -= 1;
+      if (depth === 0) {
+        return {
+          inner: source.slice(openParenIndex + 1, i),
+          endIndex: i + 1,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function parseToolArgsSource(argsSource: string): Record<string, unknown> {
+  if (!argsSource.trim()) return {};
+
+  try {
+    return JSON.parse(argsSource) as Record<string, unknown>;
+  } catch {
+    // Fall through to loose object-literal normalization.
+  }
+
+  const normalized = argsSource
+    .trim()
+    .replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:/g, '$1"$2":')
+    .replace(/'/g, '"');
+
+  try {
+    return JSON.parse(normalized) as Record<string, unknown>;
+  } catch {
+    return { _source: argsSource.trim() };
+  }
+}
+
+function titleizeSlug(slug: string): string {
+  return slug
+    .replace(/[-_]/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 // ── Recipe Execution ──
 
 async function executeRecipe(
@@ -623,6 +898,7 @@ async function retrieveConversationHistory(searchQuery: string, userId: string):
   try {
     const { createEmbeddingService, searchConversationEmbeddings } = await import('./embedding.ts');
     const svc = createEmbeddingService();
+    if (!svc) return '';
     const { embedding } = await svc.embed(searchQuery);
     const matches = await searchConversationEmbeddings(embedding, userId, { limit: 3, threshold: 0.55 });
     if (matches.length === 0) return '';

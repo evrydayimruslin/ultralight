@@ -3,13 +3,14 @@
 // Background job that drives GPU functions through the lifecycle:
 //   building → benchmarking → live
 //
-// Registered in main.ts via startGpuBuildProcessorJob().
+// Registered from the Worker scheduled/runtime path in api/src/worker-entry.ts.
 // Follows the setTimeout + setInterval pattern from embedding-processor.ts.
 
 import type { GpuType, GpuConfig, BenchmarkStats } from './types.ts';
 import { getGpuVram, GPU_RATE_TABLE } from './types.ts';
-import { getGPUProvider, isGpuAvailable } from './index.ts';
+import { getGPUProvider, isGpuAvailable } from './provider-singleton.ts';
 import { createR2Service } from '../storage.ts';
+import { getEnv } from '../../lib/env.ts';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -37,7 +38,7 @@ const BATCH_LIMIT = 5;
 /**
  * Start the GPU build processor background job.
  *
- * Called once from main.ts on server startup. Polls every 15s for
+ * Called from the Worker runtime startup path. Polls every 15s for
  * apps in 'building' or 'benchmarking' status and drives them forward.
  */
 export function startGpuBuildProcessorJob(): void {
@@ -350,6 +351,17 @@ interface GpuAppRow {
   storage_key: string;
 }
 
+function getSupabaseConfig(): { supabaseUrl: string; supabaseKey: string } | null {
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+
+  if (!supabaseUrl || !supabaseKey) {
+    return null;
+  }
+
+  return { supabaseUrl, supabaseKey };
+}
+
 /**
  * Query apps by gpu_status from Supabase.
  * If requireEndpoint is true, also filters for non-null gpu_endpoint_id.
@@ -359,10 +371,9 @@ async function queryAppsByGpuStatus(
   limit: number,
   requireEndpoint = false,
 ): Promise<GpuAppRow[]> {
-  const supabaseUrl = globalThis.Deno?.env?.get('SUPABASE_URL') || '';
-  const supabaseKey = globalThis.Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-
-  if (!supabaseUrl || !supabaseKey) return [];
+  const supabaseConfig = getSupabaseConfig();
+  if (!supabaseConfig) return [];
+  const { supabaseUrl, supabaseKey } = supabaseConfig;
 
   const url = new URL(`${supabaseUrl}/rest/v1/apps`);
   url.searchParams.set('gpu_status', `eq.${status}`);
@@ -389,10 +400,9 @@ async function queryAppsByGpuStatus(
 
 /** Update an app's gpu_status field. */
 async function updateAppGpuStatus(appId: string, status: string): Promise<void> {
-  const supabaseUrl = globalThis.Deno?.env?.get('SUPABASE_URL') || '';
-  const supabaseKey = globalThis.Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-
-  if (!supabaseUrl || !supabaseKey) return;
+  const supabaseConfig = getSupabaseConfig();
+  if (!supabaseConfig) return;
+  const { supabaseUrl, supabaseKey } = supabaseConfig;
 
   const url = new URL(`${supabaseUrl}/rest/v1/apps`);
   url.searchParams.set('id', `eq.${appId}`);
@@ -416,10 +426,9 @@ async function updateAppWithBenchmark(
   appId: string,
   stats: BenchmarkStats,
 ): Promise<void> {
-  const supabaseUrl = globalThis.Deno?.env?.get('SUPABASE_URL') || '';
-  const supabaseKey = globalThis.Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-
-  if (!supabaseUrl || !supabaseKey) return;
+  const supabaseConfig = getSupabaseConfig();
+  if (!supabaseConfig) return;
+  const { supabaseUrl, supabaseKey } = supabaseConfig;
 
   const url = new URL(`${supabaseUrl}/rest/v1/apps`);
   url.searchParams.set('id', `eq.${appId}`);
@@ -445,10 +454,9 @@ async function updateGpuEndpointStatus(
   endpointId: string,
   status: string,
 ): Promise<void> {
-  const supabaseUrl = globalThis.Deno?.env?.get('SUPABASE_URL') || '';
-  const supabaseKey = globalThis.Deno?.env?.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-
-  if (!supabaseUrl || !supabaseKey) return;
+  const supabaseConfig = getSupabaseConfig();
+  if (!supabaseConfig) return;
+  const { supabaseUrl, supabaseKey } = supabaseConfig;
 
   const url = new URL(`${supabaseUrl}/rest/v1/gpu_endpoints`);
   url.searchParams.set('endpoint_id', `eq.${endpointId}`);

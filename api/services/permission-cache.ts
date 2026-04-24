@@ -4,9 +4,10 @@
 // Pattern matches CodeCache in api/services/codecache.ts.
 
 import type { PermissionRow } from '../../shared/types/index.ts';
+import { toRawMcpFunctionName } from './mcp-function-names.ts';
 
 export interface CachedPermissions {
-  /** Set of allowed function names (built from rows where allowed === true) */
+  /** Set of canonical raw function names (for example "search") */
   allowed: Set<string>;
   /** Raw permission rows with constraint data (for IP/time/budget/expiry checks) */
   rows: PermissionRow[];
@@ -112,13 +113,18 @@ export class PermissionCache {
    * Without this, a user could blow through their budget within the TTL window.
    * Returns true if the entry was found and updated, false otherwise.
    */
-  incrementBudget(userId: string, appId: string, functionName: string): boolean {
+  incrementBudget(userId: string, appId: string, functionName: string, appSlug?: string): boolean {
     const key = `${userId}:${appId}`;
     const entry = this.cache.get(key);
     if (!entry) return false;
 
+    const targetName = appSlug ? toRawMcpFunctionName(appSlug, functionName) : functionName;
     const row = entry.rows.find(
-      r => r.function_name === functionName && r.allowed
+      (r) =>
+        r.allowed &&
+        (appSlug
+          ? toRawMcpFunctionName(appSlug, r.function_name) === targetName
+          : r.function_name === functionName)
     );
     if (row && row.budget_limit !== null && row.budget_limit > 0) {
       row.budget_used = (row.budget_used || 0) + 1;

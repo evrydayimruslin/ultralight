@@ -3,7 +3,104 @@
 // 10 tools: search, query, browse, ingest, sync, lint, update_page, create_wiki, widget_wiki_browser_ui, widget_wiki_browser_data
 // Storage: Ultralight D1 | Permissions: ai:call
 
-const ultralight = (globalThis as any).ultralight;
+const ultralight = globalThis.ultralight;
+
+type SqlValue = string | number | null;
+type LintSeverity = 'info' | 'warning' | 'error';
+
+interface WikiIdRow {
+  id: string;
+}
+
+interface CountRow {
+  count: number;
+}
+
+interface WikiPageRow {
+  id: string;
+  wiki_id: string;
+  title: string;
+  slug: string;
+  content: string;
+  page_type: string;
+  due_date?: string | null;
+}
+
+interface WikiPageListRow {
+  id: string;
+  title: string;
+  slug: string;
+  page_type: string;
+}
+
+interface WikiPageSearchRow extends WikiPageListRow {
+  snippet: string;
+}
+
+interface LinkedWikiPageRow extends WikiPageListRow {
+  link_type: string;
+}
+
+interface WikiSourceRow {
+  id: string;
+  title: string;
+  content: string;
+  source_type: string;
+  classification: string;
+  created_at?: string;
+}
+
+interface WikiSourceSearchRow {
+  id: string;
+  title: string;
+  classification: string;
+  snippet: string;
+}
+
+interface WikiTypeCountRow {
+  page_type: string;
+  count: number;
+}
+
+interface CompiledCreateRow {
+  title: string;
+  slug: string;
+  content: string;
+  page_type?: string;
+  due_date?: string | null;
+}
+
+interface CompiledUpdateRow {
+  slug: string;
+  append_content: string;
+}
+
+interface CompiledWikiPayload {
+  creates?: CompiledCreateRow[];
+  updates?: CompiledUpdateRow[];
+}
+
+interface LintIssue {
+  severity: LintSeverity;
+  type: string;
+  message: string;
+  page_slug?: string;
+}
+
+interface ContradictionCandidate {
+  pages?: string[];
+  description: string;
+}
+
+interface GapCandidate {
+  topic: string;
+  reason: string;
+}
+
+function extractJsonBlock(raw: string): string {
+  const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  return jsonMatch?.[1] || raw;
+}
 
 function uuid() { return crypto.randomUUID(); }
 function now() { return new Date().toISOString(); }
@@ -14,7 +111,7 @@ function slugify(title: string): string {
 }
 
 async function ensureDefaultWiki(): Promise<string> {
-  const existing = await ultralight.db.first(
+  const existing: WikiIdRow | null = await ultralight.db.first(
     'SELECT id FROM wikis WHERE user_id = ? AND name = ?', [uid(), 'Personal']
   );
   if (existing) return existing.id;
@@ -29,7 +126,7 @@ async function ensureDefaultWiki(): Promise<string> {
 
 async function resolveWiki(wiki_id?: string): Promise<string> {
   if (wiki_id) {
-    const w = await ultralight.db.first(
+    const w: WikiIdRow | null = await ultralight.db.first(
       'SELECT id FROM wikis WHERE (id = ? OR name = ?) AND user_id = ?', [wiki_id, wiki_id, uid()]
     );
     if (w) return w.id;
@@ -42,7 +139,7 @@ async function syncLinks(pageId: string, wikiId: string, content: string): Promi
   const linkMatches = [...content.matchAll(/\[\[([^\]]+)\]\]/g)];
   for (const match of linkMatches) {
     const targetSlug = slugify(match[1]);
-    const targetPage = await ultralight.db.first(
+    const targetPage: WikiIdRow | null = await ultralight.db.first(
       'SELECT id FROM pages WHERE slug = ? AND wiki_id = ? AND user_id = ?', [targetSlug, wikiId, uid()]
     );
     if (targetPage) {
@@ -74,12 +171,12 @@ export async function search(args: { query: string; wiki_id?: string }): Promise
   const wikiId = await resolveWiki(args.wiki_id);
   const q = `%${args.query}%`;
 
-  const pages = await ultralight.db.all(
+  const pages: WikiPageSearchRow[] = await ultralight.db.all(
     'SELECT id, title, slug, page_type, substr(content, 1, 200) as snippet FROM pages WHERE wiki_id = ? AND user_id = ? AND (title LIKE ? OR content LIKE ?) ORDER BY updated_at DESC LIMIT 20',
     [wikiId, uid(), q, q]
   );
 
-  const sources = await ultralight.db.all(
+  const sources: WikiSourceSearchRow[] = await ultralight.db.all(
     'SELECT id, title, classification, substr(content, 1, 200) as snippet FROM sources WHERE wiki_id = ? AND user_id = ? AND synced_at IS NULL AND (title LIKE ? OR content LIKE ?) ORDER BY created_at DESC LIMIT 10',
     [wikiId, uid(), q, q]
   );
@@ -93,12 +190,12 @@ export async function browse(args: {
   const wikiId = await resolveWiki(args.wiki_id);
 
   if (args.page_id) {
-    const page = await ultralight.db.first(
+    const page: WikiPageRow | null = await ultralight.db.first(
       'SELECT * FROM pages WHERE id = ? AND user_id = ?', [args.page_id, uid()]
     );
     if (!page) return { error: 'Page not found' };
 
-    const linkedPages = await ultralight.db.all(
+    const linkedPages: LinkedWikiPageRow[] = await ultralight.db.all(
       `SELECT p.id, p.title, p.slug, p.page_type, l.link_type FROM pages p
        JOIN links l ON (l.to_page_id = p.id AND l.from_page_id = ?) OR (l.from_page_id = p.id AND l.to_page_id = ?)
        WHERE p.user_id = ?
@@ -110,7 +207,7 @@ export async function browse(args: {
 
   if (args.search) {
     const q = `%${args.search}%`;
-    const pages = await ultralight.db.all(
+    const pages: WikiPageListRow[] = await ultralight.db.all(
       'SELECT id, title, slug, page_type FROM pages WHERE wiki_id = ? AND user_id = ? AND title LIKE ? ORDER BY updated_at DESC LIMIT 20',
       [wikiId, uid(), q]
     );
@@ -118,7 +215,7 @@ export async function browse(args: {
   }
 
   if (args.page_type) {
-    const pages = await ultralight.db.all(
+    const pages: WikiPageListRow[] = await ultralight.db.all(
       'SELECT id, title, slug, page_type FROM pages WHERE wiki_id = ? AND user_id = ? AND page_type = ? ORDER BY updated_at DESC LIMIT 30',
       [wikiId, uid(), args.page_type]
     );
@@ -126,15 +223,15 @@ export async function browse(args: {
   }
 
   // Default: overview
-  const typeCounts = await ultralight.db.all(
+  const typeCounts: WikiTypeCountRow[] = await ultralight.db.all(
     'SELECT page_type, COUNT(*) as count FROM pages WHERE wiki_id = ? AND user_id = ? GROUP BY page_type',
     [wikiId, uid()]
   );
-  const recentPages = await ultralight.db.all(
+  const recentPages: WikiPageListRow[] = await ultralight.db.all(
     'SELECT id, title, slug, page_type FROM pages WHERE wiki_id = ? AND user_id = ? ORDER BY updated_at DESC LIMIT 5',
     [wikiId, uid()]
   );
-  const unsyncedResult = await ultralight.db.first(
+  const unsyncedResult: CountRow | null = await ultralight.db.first(
     'SELECT COUNT(*) as count FROM sources WHERE wiki_id = ? AND user_id = ? AND synced_at IS NULL',
     [wikiId, uid()]
   );
@@ -148,13 +245,13 @@ export async function browse(args: {
 export async function update_page(args: {
   page_id: string; content?: string; title?: string; page_type?: string;
 }): Promise<unknown> {
-  const page = await ultralight.db.first(
+  const page: Pick<WikiPageRow, 'id' | 'wiki_id' | 'slug'> | null = await ultralight.db.first(
     'SELECT id, wiki_id, slug FROM pages WHERE id = ? AND user_id = ?', [args.page_id, uid()]
   );
   if (!page) return { success: false, error: 'Page not found' };
 
   const fields: string[] = [];
-  const values: any[] = [];
+  const values: SqlValue[] = [];
   if (args.content !== undefined) { fields.push('content = ?'); values.push(args.content); }
   if (args.title !== undefined) {
     fields.push('title = ?'); values.push(args.title);
@@ -198,7 +295,7 @@ export async function query(args: {
   const conditions = words.map(() => '(title LIKE ? OR content LIKE ?)').join(' OR ');
   const params = words.flatMap(w => [`%${w}%`, `%${w}%`]);
 
-  let relevantPages: any[] = [];
+  let relevantPages: WikiPageRow[] = [];
   if (conditions) {
     relevantPages = await ultralight.db.all(
       `SELECT id, title, slug, content, page_type FROM pages WHERE wiki_id = ? AND user_id = ? AND (${conditions}) ORDER BY updated_at DESC LIMIT 10`,
@@ -215,9 +312,9 @@ export async function query(args: {
 
   // Follow one level of links
   if (relevantPages.length > 0) {
-    const pageIds = relevantPages.map((p: any) => p.id);
+    const pageIds = relevantPages.map((page) => page.id);
     const placeholders = pageIds.map(() => '?').join(',');
-    const linkedPages = await ultralight.db.all(
+    const linkedPages: WikiPageRow[] = await ultralight.db.all(
       `SELECT DISTINCT p.id, p.title, p.slug, p.content, p.page_type FROM pages p
        JOIN links l ON l.to_page_id = p.id
        WHERE l.from_page_id IN (${placeholders}) AND p.user_id = ? AND p.id NOT IN (${placeholders})
@@ -228,7 +325,7 @@ export async function query(args: {
   }
 
   // Also check unsynced sources
-  const unsyncedSources = await ultralight.db.all(
+  const unsyncedSources: Pick<WikiSourceRow, 'title' | 'content'>[] = await ultralight.db.all(
     'SELECT title, content FROM sources WHERE wiki_id = ? AND user_id = ? AND synced_at IS NULL ORDER BY created_at DESC LIMIT 5',
     [wikiId, uid()]
   );
@@ -261,7 +358,7 @@ export async function query(args: {
   });
 
   const answer = response.content || '';
-  const citedSlugs = [...answer.matchAll(/\[\[([^\]]+)\]\]/g)].map((m: any) => m[1]);
+  const citedSlugs = [...answer.matchAll(/\[\[([^\]]+)\]\]/g)].map((match) => match[1]);
 
   let savedPageId: string | undefined;
   if (args.save) {
@@ -289,7 +386,7 @@ export async function sync(args: { wiki_id?: string }): Promise<unknown> {
   const wikiId = await resolveWiki(args.wiki_id);
 
   // 1. Read unsynced sources
-  const unsynced = await ultralight.db.all(
+  const unsynced: WikiSourceRow[] = await ultralight.db.all(
     'SELECT id, title, content, source_type, classification FROM sources WHERE wiki_id = ? AND user_id = ? AND synced_at IS NULL ORDER BY created_at ASC LIMIT 20',
     [wikiId, uid()]
   );
@@ -299,11 +396,11 @@ export async function sync(args: { wiki_id?: string }): Promise<unknown> {
   }
 
   // 2. Read existing page titles for merge context
-  const existingPages = await ultralight.db.all(
+  const existingPages: Pick<WikiPageRow, 'slug' | 'title' | 'page_type'>[] = await ultralight.db.all(
     'SELECT slug, title, page_type FROM pages WHERE wiki_id = ? AND user_id = ?',
     [wikiId, uid()]
   );
-  const existingList = existingPages.map((p: any) => `- [[${p.slug}]] (${p.page_type}): ${p.title}`).join('\n');
+  const existingList = existingPages.map((page) => `- [[${page.slug}]] (${page.page_type}): ${page.title}`).join('\n');
 
   // 3. Build source content for AI
   let sourcesText = '';
@@ -348,11 +445,10 @@ Output ONLY valid JSON:
   });
 
   // 5. Parse AI response
-  let compiled: { creates?: any[]; updates?: any[] };
+  let compiled: CompiledWikiPayload;
   try {
     const raw = response.content || '';
-    const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, raw];
-    compiled = JSON.parse(jsonMatch[1] || raw);
+    compiled = JSON.parse(extractJsonBlock(raw)) as CompiledWikiPayload;
   } catch {
     compiled = { creates: [], updates: [] };
   }
@@ -376,7 +472,7 @@ Output ONLY valid JSON:
   // 7. Execute updates
   for (const update of compiled.updates || []) {
     if (!update.slug || !update.append_content) continue;
-    const existing = await ultralight.db.first(
+    const existing: Pick<WikiPageRow, 'id' | 'content'> | null = await ultralight.db.first(
       'SELECT id, content FROM pages WHERE slug = ? AND wiki_id = ? AND user_id = ?',
       [update.slug, wikiId, uid()]
     );
@@ -391,7 +487,7 @@ Output ONLY valid JSON:
   }
 
   // 8. Mark sources synced
-  const sourceIds = unsynced.map((s: any) => s.id);
+  const sourceIds = unsynced.map((source) => source.id);
   for (const sid of sourceIds) {
     await ultralight.db.run(
       'UPDATE sources SET synced_at = ? WHERE id = ? AND user_id = ?', [ts, sid, uid()]
@@ -399,14 +495,14 @@ Output ONLY valid JSON:
   }
 
   // 9. Quick structural lint
-  const orphans = await ultralight.db.all(
+  const orphans: Pick<WikiPageRow, 'id' | 'title' | 'slug'>[] = await ultralight.db.all(
     `SELECT p.id, p.title, p.slug FROM pages p
      LEFT JOIN links l ON l.to_page_id = p.id
      WHERE p.wiki_id = ? AND p.user_id = ? AND l.id IS NULL AND p.page_type != 'index'`,
     [wikiId, uid()]
   );
-  const lintIssues = orphans.map((o: any) => ({
-    severity: 'info', type: 'orphan', message: `No inbound links to "${o.title}"`, page_slug: o.slug,
+  const lintIssues: LintIssue[] = orphans.map((orphan) => ({
+    severity: 'info', type: 'orphan', message: `No inbound links to "${orphan.title}"`, page_slug: orphan.slug,
   }));
 
   // 10. Log activity
@@ -426,16 +522,16 @@ Output ONLY valid JSON:
 export async function lint(args: { wiki_id?: string; depth?: string }): Promise<unknown> {
   const wikiId = await resolveWiki(args.wiki_id);
   const depth = args.depth || 'quick';
-  const issues: Array<{ severity: string; type: string; message: string; page_slug?: string }> = [];
+  const issues: LintIssue[] = [];
 
   // Stats
-  const pageCountResult = await ultralight.db.first(
+  const pageCountResult: CountRow | null = await ultralight.db.first(
     'SELECT COUNT(*) as count FROM pages WHERE wiki_id = ? AND user_id = ?', [wikiId, uid()]
   );
-  const linkCountResult = await ultralight.db.first(
+  const linkCountResult: CountRow | null = await ultralight.db.first(
     'SELECT COUNT(*) as count FROM links WHERE wiki_id = ? AND user_id = ?', [wikiId, uid()]
   );
-  const unsyncedResult = await ultralight.db.first(
+  const unsyncedResult: CountRow | null = await ultralight.db.first(
     'SELECT COUNT(*) as count FROM sources WHERE wiki_id = ? AND user_id = ? AND synced_at IS NULL', [wikiId, uid()]
   );
 
@@ -448,7 +544,7 @@ export async function lint(args: { wiki_id?: string; depth?: string }): Promise<
   // ── Quick: structural checks (SQL only) ──
 
   // Orphan pages
-  const orphans = await ultralight.db.all(
+  const orphans: Pick<WikiPageRow, 'title' | 'slug'>[] = await ultralight.db.all(
     `SELECT p.title, p.slug FROM pages p
      LEFT JOIN links l ON l.to_page_id = p.id
      WHERE p.wiki_id = ? AND p.user_id = ? AND l.id IS NULL AND p.page_type != 'index'`,
@@ -459,7 +555,7 @@ export async function lint(args: { wiki_id?: string; depth?: string }): Promise<
   }
 
   // Stale pages (>90 days)
-  const stale = await ultralight.db.all(
+  const stale: Pick<WikiPageRow, 'title' | 'slug'>[] = await ultralight.db.all(
     "SELECT title, slug FROM pages WHERE wiki_id = ? AND user_id = ? AND updated_at < datetime('now', '-90 days')",
     [wikiId, uid()]
   );
@@ -468,7 +564,7 @@ export async function lint(args: { wiki_id?: string; depth?: string }): Promise<
   }
 
   // Overdue commitments/deadlines
-  const overdue = await ultralight.db.all(
+  const overdue: Array<Pick<WikiPageRow, 'title' | 'slug'> & { due_date: string }> = await ultralight.db.all(
     "SELECT title, slug, due_date FROM pages WHERE wiki_id = ? AND user_id = ? AND due_date IS NOT NULL AND due_date < date('now') AND page_type IN ('commitment', 'deadline')",
     [wikiId, uid()]
   );
@@ -477,10 +573,10 @@ export async function lint(args: { wiki_id?: string; depth?: string }): Promise<
   }
 
   // Broken wikilinks
-  const allPages = await ultralight.db.all(
-    'SELECT id, title, slug, content FROM pages WHERE wiki_id = ? AND user_id = ?', [wikiId, uid()]
+  const allPages: Pick<WikiPageRow, 'id' | 'title' | 'slug' | 'content' | 'page_type'>[] = await ultralight.db.all(
+    'SELECT id, title, slug, content, page_type FROM pages WHERE wiki_id = ? AND user_id = ?', [wikiId, uid()]
   );
-  const slugSet = new Set(allPages.map((p: any) => p.slug));
+  const slugSet = new Set(allPages.map((page) => page.slug));
   for (const page of allPages) {
     const wikilinks = [...page.content.matchAll(/\[\[([^\]]+)\]\]/g)];
     for (const match of wikilinks) {
@@ -497,16 +593,16 @@ export async function lint(args: { wiki_id?: string; depth?: string }): Promise<
 
   // ── Standard: AI contradiction check on recent pages + neighbors ──
   if (depth === 'standard' || depth === 'deep') {
-    const recentPages = await ultralight.db.all(
+    const recentPages: Pick<WikiPageRow, 'id' | 'title' | 'slug' | 'content' | 'page_type'>[] = await ultralight.db.all(
       "SELECT id, title, slug, content, page_type FROM pages WHERE wiki_id = ? AND user_id = ? AND updated_at > datetime('now', '-30 days') LIMIT 15",
       [wikiId, uid()]
     );
 
     if (recentPages.length > 1) {
       // Get linked neighbors
-      const recentIds = recentPages.map((p: any) => p.id);
+      const recentIds = recentPages.map((page) => page.id);
       const placeholders = recentIds.map(() => '?').join(',');
-      const neighbors = await ultralight.db.all(
+      const neighbors: Pick<WikiPageRow, 'id' | 'title' | 'slug' | 'content' | 'page_type'>[] = await ultralight.db.all(
         `SELECT DISTINCT p.id, p.title, p.slug, p.content, p.page_type FROM pages p
          JOIN links l ON l.to_page_id = p.id OR l.from_page_id = p.id
          WHERE (l.from_page_id IN (${placeholders}) OR l.to_page_id IN (${placeholders}))
@@ -532,12 +628,12 @@ export async function lint(args: { wiki_id?: string; depth?: string }): Promise<
             { role: 'user', content: summaries },
           ],
         });
-        const parsed = JSON.parse(contradictionCheck.content || '{"contradictions":[]}');
-        for (const c of parsed.contradictions || []) {
+        const parsed = JSON.parse(extractJsonBlock(contradictionCheck.content || '{"contradictions":[]}')) as { contradictions?: ContradictionCandidate[] };
+        for (const contradiction of parsed.contradictions || []) {
           issues.push({
             severity: 'warning', type: 'contradiction',
-            message: `Contradiction between ${(c.pages || []).join(' and ')}: ${c.description}`,
-            page_slug: c.pages?.[0],
+            message: `Contradiction between ${(contradiction.pages || []).join(' and ')}: ${contradiction.description}`,
+            page_slug: contradiction.pages?.[0],
           });
         }
       } catch { /* skip AI failures */ }
@@ -546,7 +642,7 @@ export async function lint(args: { wiki_id?: string; depth?: string }): Promise<
 
   // ── Deep: AI gap analysis ──
   if (depth === 'deep') {
-    const allTitles = allPages.map((p: any) => `- [[${p.slug}]] (${p.page_type}): ${p.title}`).join('\n');
+    const allTitles = allPages.map((page) => `- [[${page.slug}]] (${page.page_type}): ${page.title}`).join('\n');
     try {
       const gapCheck = await ultralight.ai({
         model: 'openai/gpt-4o-mini',
@@ -558,9 +654,9 @@ export async function lint(args: { wiki_id?: string; depth?: string }): Promise<
           { role: 'user', content: `Wiki pages:\n${allTitles}` },
         ],
       });
-      const parsed = JSON.parse(gapCheck.content || '{"gaps":[]}');
-      for (const g of parsed.gaps || []) {
-        issues.push({ severity: 'info', type: 'gap', message: `Missing topic: ${g.topic} — ${g.reason}` });
+      const parsed = JSON.parse(extractJsonBlock(gapCheck.content || '{"gaps":[]}')) as { gaps?: GapCandidate[] };
+      for (const gap of parsed.gaps || []) {
+        issues.push({ severity: 'info', type: 'gap', message: `Missing topic: ${gap.topic} — ${gap.reason}` });
       }
     } catch { /* skip AI failures */ }
   }
@@ -749,7 +845,7 @@ loadIndex();
 
 export async function widget_wiki_browser_ui(args: {}): Promise<unknown> {
   const wikiId = await ensureDefaultWiki();
-  const unsyncedResult = await ultralight.db.first(
+  const unsyncedResult: CountRow | null = await ultralight.db.first(
     'SELECT COUNT(*) as count FROM sources WHERE wiki_id = ? AND user_id = ? AND synced_at IS NULL',
     [wikiId, uid()]
   );
@@ -766,7 +862,7 @@ export async function widget_wiki_browser_data(args: {
   const wikiId = await ensureDefaultWiki();
 
   if (args.view === 'raw') {
-    const sources = await ultralight.db.all(
+    const sources: Pick<WikiSourceRow, 'id' | 'title' | 'source_type' | 'classification' | 'created_at'>[] = await ultralight.db.all(
       'SELECT id, title, source_type, classification, created_at FROM sources WHERE wiki_id = ? AND user_id = ? AND synced_at IS NULL ORDER BY created_at DESC LIMIT 30',
       [wikiId, uid()]
     );

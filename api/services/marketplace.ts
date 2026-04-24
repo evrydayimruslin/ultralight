@@ -111,6 +111,83 @@ export interface SaleHistory {
   created_at: string;
 }
 
+interface AppEligibilityRow {
+  owner_id?: string;
+  had_external_db: boolean | null;
+}
+
+interface ListingRow {
+  id: string;
+  owner_id: string;
+  ask_price_light: number | null;
+  floor_price_light: number | null;
+  instant_buy: boolean;
+  status?: string;
+  listing_note?: string | null;
+  provenance?: ListingDetails['listing'] extends { provenance: infer P } ? P : never;
+  created_at?: string;
+}
+
+interface SaleRpcResult {
+  sale_id: string;
+  app_id: string;
+  seller_id: string;
+  buyer_id: string;
+  sale_price_light: number;
+  platform_fee_light: number;
+  seller_payout_light: number;
+}
+
+interface JoinedBidRow {
+  id: string;
+  app_id: string;
+  bidder_id: string;
+  amount_light: number;
+  message: string | null;
+  status?: string;
+  escrow_status?: string;
+  created_at: string;
+  expires_at?: string | null;
+  apps?: unknown;
+}
+
+interface OwnedAppRow {
+  id: string;
+  name: string;
+}
+
+interface EmailRow {
+  id: string;
+  email: string;
+}
+
+interface ListingAppRow {
+  id: string;
+  name: string;
+  slug: string;
+  owner_id: string;
+  total_runs: number;
+  runs_30d: number;
+  description: string | null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function extractJoinedName(value: unknown): string | undefined {
+  if (isRecord(value) && typeof value.name === 'string') {
+    return value.name;
+  }
+  if (Array.isArray(value)) {
+    const first = value[0];
+    if (isRecord(first) && typeof first.name === 'string') {
+      return first.name;
+    }
+  }
+  return undefined;
+}
+
 // ============================================
 // HELPERS
 // ============================================
@@ -158,7 +235,7 @@ export async function placeBid(
     `${getEnv('SUPABASE_URL')}/rest/v1/apps?id=eq.${appId}&select=had_external_db`,
     { headers: dbHeaders() }
   );
-  const appRows = appCheck.ok ? await appCheck.json() : [];
+  const appRows = appCheck.ok ? await appCheck.json() as AppEligibilityRow[] : [];
   if (appRows[0]?.had_external_db) {
     throw createError('This app is permanently ineligible for trading because it has used an external database.', 400);
   }
@@ -193,7 +270,7 @@ export async function placeBid(
     throw createError('Failed to place bid', 500);
   }
 
-  const bidId = await res.json();
+  const bidId = await res.json() as string;
 
   console.log(`[MARKETPLACE] Bid placed: ${bidId} by ${bidderId} on ${appId} for ${formatLight(amountLight)}`);
 
@@ -222,7 +299,7 @@ export async function setAskPrice(
     `${getEnv('SUPABASE_URL')}/rest/v1/apps?id=eq.${appId}&select=owner_id,had_external_db`,
     { headers: dbHeaders() }
   );
-  const apps = appRes.ok ? await appRes.json() : [];
+  const apps = appRes.ok ? await appRes.json() as AppEligibilityRow[] : [];
   if (!apps[0] || apps[0].owner_id !== ownerId) {
     throw createError('Only the app owner can set ask price', 403);
   }
@@ -259,7 +336,7 @@ export async function setAskPrice(
     throw createError('Failed to update listing', 500);
   }
 
-  const rows = await upsertRes.json();
+  const rows = await upsertRes.json() as ListingRow[] | ListingRow;
   const listing = Array.isArray(rows) ? rows[0] : rows;
 
   console.log(`[MARKETPLACE] Ask price set: ${appId} = ${priceLight !== null ? formatLight(priceLight) : 'open'} (instant_buy: ${instantBuy})`);
@@ -294,7 +371,7 @@ export async function acceptBid(ownerId: string, bidId: string): Promise<SaleRes
     throw createError('Failed to accept bid', 500);
   }
 
-  const result = await res.json();
+  const result = await res.json() as SaleRpcResult;
 
   console.log(`[MARKETPLACE] Sale completed: ${result.sale_id} — ${result.seller_id} → ${result.buyer_id} for ${formatLight(result.sale_price_light)}`);
 
@@ -373,7 +450,7 @@ export async function buyNow(buyerId: string, appId: string): Promise<SaleResult
     `${getEnv('SUPABASE_URL')}/rest/v1/app_listings?app_id=eq.${appId}&select=*`,
     { headers: dbHeaders() }
   );
-  const listings = listingRes.ok ? await listingRes.json() : [];
+  const listings = listingRes.ok ? await listingRes.json() as ListingRow[] : [];
   const listing = listings[0];
 
   if (!listing) throw createError('No listing found for this app', 404);
@@ -417,15 +494,15 @@ export async function getOffers(userId: string, appId?: string): Promise<OffersS
   // Parse incoming — may fail if join syntax not supported, fall back to separate queries
   let incoming: OffersSummary['incoming'] = [];
   if (incomingRes.ok) {
-    const inData = await incomingRes.json();
-    incoming = (inData || []).map((b: Record<string, unknown>) => ({
-      bid_id: b.id as string,
-      app_id: b.app_id as string,
-      app_name: (b.apps as Record<string, unknown>)?.name as string || 'Unknown',
+    const inData = await incomingRes.json() as JoinedBidRow[];
+    incoming = inData.map((b) => ({
+      bid_id: b.id,
+      app_id: b.app_id,
+      app_name: extractJoinedName(b.apps) || 'Unknown',
       bidder_email: '',
-      amount_light: b.amount_light as number,
-      message: b.message as string | null,
-      created_at: b.created_at as string,
+      amount_light: b.amount_light,
+      message: b.message,
+      created_at: b.created_at,
     }));
   } else {
     // Fallback: get user's apps, then get bids on those apps
@@ -433,38 +510,38 @@ export async function getOffers(userId: string, appId?: string): Promise<OffersS
       `${getEnv('SUPABASE_URL')}/rest/v1/apps?owner_id=eq.${userId}&select=id,name`,
       { headers: dbHeaders() }
     );
-    const myApps = myAppsRes.ok ? await myAppsRes.json() : [];
+    const myApps = myAppsRes.ok ? await myAppsRes.json() as OwnedAppRow[] : [];
     if (myApps.length > 0) {
-      const appIds = myApps.map((a: { id: string }) => a.id);
+      const appIds = myApps.map((a) => a.id);
       const appNameMap: Record<string, string> = {};
-      myApps.forEach((a: { id: string; name: string }) => { appNameMap[a.id] = a.name; });
+      myApps.forEach((a) => { appNameMap[a.id] = a.name; });
 
       const bidsRes = await fetch(
         `${getEnv('SUPABASE_URL')}/rest/v1/app_bids?status=eq.active&app_id=in.(${appIds.join(',')})&select=id,app_id,bidder_id,amount_light,message,created_at&order=amount_light.desc`,
         { headers: dbHeaders() }
       );
-      const bidsData = bidsRes.ok ? await bidsRes.json() : [];
+      const bidsData = bidsRes.ok ? await bidsRes.json() as JoinedBidRow[] : [];
 
       // Get bidder emails
-      const bidderIds = [...new Set(bidsData.map((b: { bidder_id: string }) => b.bidder_id))];
+      const bidderIds = [...new Set(bidsData.map((b) => b.bidder_id))];
       let emailMap: Record<string, string> = {};
       if (bidderIds.length > 0) {
         const emailRes = await fetch(
           `${getEnv('SUPABASE_URL')}/rest/v1/users?id=in.(${bidderIds.join(',')})&select=id,email`,
           { headers: dbHeaders() }
         );
-        const emails = emailRes.ok ? await emailRes.json() : [];
-        emails.forEach((u: { id: string; email: string }) => { emailMap[u.id] = u.email; });
+        const emails = emailRes.ok ? await emailRes.json() as EmailRow[] : [];
+        emails.forEach((u) => { emailMap[u.id] = u.email; });
       }
 
-      incoming = bidsData.map((b: Record<string, unknown>) => ({
-        bid_id: b.id as string,
-        app_id: b.app_id as string,
-        app_name: appNameMap[b.app_id as string] || 'Unknown',
-        bidder_email: emailMap[b.bidder_id as string] || 'Unknown',
-        amount_light: b.amount_light as number,
-        message: b.message as string | null,
-        created_at: b.created_at as string,
+      incoming = bidsData.map((b) => ({
+        bid_id: b.id,
+        app_id: b.app_id,
+        app_name: appNameMap[b.app_id] || 'Unknown',
+        bidder_email: emailMap[b.bidder_id] || 'Unknown',
+        amount_light: b.amount_light,
+        message: b.message,
+        created_at: b.created_at,
       }));
     }
   }
@@ -472,15 +549,15 @@ export async function getOffers(userId: string, appId?: string): Promise<OffersS
   // Parse outgoing
   let outgoing: OffersSummary['outgoing'] = [];
   if (outgoingRes.ok) {
-    const outData = await outgoingRes.json();
-    outgoing = (outData || []).map((b: Record<string, unknown>) => ({
-      bid_id: b.id as string,
-      app_id: b.app_id as string,
-      app_name: (b.apps as Record<string, unknown>)?.name as string || 'Unknown',
-      amount_light: b.amount_light as number,
-      status: b.status as string,
-      escrow_status: b.escrow_status as string,
-      created_at: b.created_at as string,
+    const outData = await outgoingRes.json() as JoinedBidRow[];
+    outgoing = outData.map((b) => ({
+      bid_id: b.id,
+      app_id: b.app_id,
+      app_name: extractJoinedName(b.apps) || 'Unknown',
+      amount_light: b.amount_light,
+      status: b.status || 'unknown',
+      escrow_status: b.escrow_status || 'unknown',
+      created_at: b.created_at,
     }));
   }
 
@@ -498,7 +575,7 @@ export async function getHistory(appId?: string, userId?: string): Promise<SaleH
   const res = await fetch(url, { headers: dbHeaders() });
   if (!res.ok) return [];
 
-  return res.json();
+  return await res.json() as SaleHistory[];
 }
 
 /**
@@ -520,25 +597,31 @@ export async function getListing(appId: string): Promise<ListingDetails> {
     ),
   ]);
 
-  const listings = listingRes.ok ? await listingRes.json() : [];
-  const bids = bidsRes.ok ? await bidsRes.json() : [];
-  const apps = appRes.ok ? await appRes.json() : [];
+  const listings = listingRes.ok ? await listingRes.json() as ListingDetails['listing'][] : [];
+  const bids = bidsRes.ok ? await bidsRes.json() as JoinedBidRow[] : [];
+  const apps = appRes.ok ? await appRes.json() as ListingAppRow[] : [];
 
   // Get bidder emails for bid display
-  const bidderIds = [...new Set(bids.map((b: { bidder_id: string }) => b.bidder_id))];
+  const bidderIds = [...new Set(bids.map((b) => b.bidder_id))];
   let emailMap: Record<string, string> = {};
   if (bidderIds.length > 0) {
     const emailRes = await fetch(
       `${getEnv('SUPABASE_URL')}/rest/v1/users?id=in.(${(bidderIds as string[]).join(',')})&select=id,email`,
       { headers: dbHeaders() }
     );
-    const emails = emailRes.ok ? await emailRes.json() : [];
-    emails.forEach((u: { id: string; email: string }) => { emailMap[u.id] = u.email; });
+    const emails = emailRes.ok ? await emailRes.json() as EmailRow[] : [];
+    emails.forEach((u) => { emailMap[u.id] = u.email; });
   }
 
-  const enrichedBids = bids.map((b: Record<string, unknown>) => ({
-    ...b,
-    bidder_email: emailMap[b.bidder_id as string] || undefined,
+  const enrichedBids: ListingDetails['bids'] = bids.map((b) => ({
+    id: b.id,
+    bidder_id: b.bidder_id,
+    bidder_email: emailMap[b.bidder_id] || undefined,
+    amount_light: b.amount_light,
+    message: b.message,
+    status: b.status || 'unknown',
+    created_at: b.created_at,
+    expires_at: b.expires_at || null,
   }));
 
   return {

@@ -10,7 +10,174 @@
 // AI: ultralight.ai() for LLM synthesis + embeddings
 // Permissions: ai:call (synthesis + embeddings), net:fetch (external APIs)
 
-const ultralight = (globalThis as any).ultralight;
+const ultralight = globalThis.ultralight;
+
+type JsonObject = Record<string, unknown>;
+
+interface CountRow {
+  cnt: number;
+}
+
+interface EmbedContentRow {
+  id: string;
+  source_type: string | null;
+  title: string | null;
+  body: string | null;
+  author: string | null;
+  theme_id: string | null;
+}
+
+interface InsightRow {
+  id: string;
+  digest_run_id: string | null;
+  source_content_ids: string | null;
+  title: string;
+  body: string;
+  themes: string | null;
+  tags: string | null;
+  theme_id: string | null;
+  newsletter_section: string | null;
+  newsletter_id: string | null;
+  approved: number;
+  approved_at: string | null;
+  rejected: number;
+  revision_notes: string | null;
+  codebase_relevance: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ParsedInsight extends Omit<InsightRow, 'source_content_ids' | 'themes' | 'tags' | 'approved' | 'rejected' | 'codebase_relevance'> {
+  source_content_ids: string[];
+  themes: string[];
+  tags: string[];
+  approved: boolean;
+  rejected: boolean;
+  codebase_relevance: JsonObject | null;
+}
+
+interface SynthesizedInsight {
+  title: string;
+  body: string;
+  themes: string[];
+  source_indices: number[];
+  newsletter_section: string | null;
+}
+
+interface SynthesizeAiResponse {
+  insights: SynthesizedInsight[];
+}
+
+interface NewsletterSection {
+  section: string;
+  insight_id: string;
+  content: string;
+  order: number;
+}
+
+interface NewsletterRow {
+  id: string;
+  title: string;
+  slug: string | null;
+  sections: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ParsedNewsletter extends Omit<NewsletterRow, 'sections'> {
+  sections: NewsletterSection[];
+}
+
+interface RenderedNewsletter extends ParsedNewsletter {
+  rendered_markdown: string;
+}
+
+interface DigestRunRow {
+  id: string;
+  user_id: string;
+  step: string;
+  status: string;
+  items_processed: number;
+  items_created: number;
+  error_message: string | null;
+  duration_ms: number | null;
+  ai_input_tokens: number | null;
+  ai_output_tokens: number | null;
+  ai_cost_light: number | string | null;
+  started_at: string;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface DashboardInsightRow {
+  id: string;
+  title: string;
+  themes: string | null;
+  approved: number;
+  rejected: number;
+  created_at: string;
+}
+
+interface DashboardInsight extends Omit<DashboardInsightRow, 'themes' | 'approved' | 'rejected'> {
+  themes: string[];
+  approved: boolean;
+  rejected: boolean;
+}
+
+interface DashboardPipelineData {
+  undigested: number;
+  pending: number;
+  approved: number;
+  drafts: number;
+  sent: number;
+  recentInsights: DashboardInsight[];
+}
+
+function parseStringArray(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseJsonObject(value: string | null | undefined): JsonObject | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as JsonObject : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseNewsletterSections(value: string | null | undefined): NewsletterSection[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item): item is NewsletterSection =>
+        !!item
+        && typeof item === 'object'
+        && typeof item.section === 'string'
+        && typeof item.insight_id === 'string'
+        && typeof item.content === 'string'
+        && typeof item.order === 'number')
+      .map((item) => ({
+        section: item.section,
+        insight_id: item.insight_id,
+        content: item.content,
+        order: item.order,
+      }));
+  } catch {
+    return [];
+  }
+}
 
 // ============================================
 // INTERNAL HELPERS
@@ -48,15 +215,22 @@ async function logDigestRun(step: string, status: string, metrics: {
   return runId;
 }
 
-function parseInsightRow(row: any): any {
+function parseInsightRow(row: InsightRow): ParsedInsight {
   return {
     ...row,
-    source_content_ids: JSON.parse(row.source_content_ids || '[]'),
-    themes: JSON.parse(row.themes || '[]'),
-    tags: JSON.parse(row.tags || '[]'),
-    codebase_relevance: row.codebase_relevance ? JSON.parse(row.codebase_relevance) : null,
+    source_content_ids: parseStringArray(row.source_content_ids),
+    themes: parseStringArray(row.themes),
+    tags: parseStringArray(row.tags),
+    codebase_relevance: parseJsonObject(row.codebase_relevance),
     approved: !!row.approved,
     rejected: !!row.rejected,
+  };
+}
+
+function parseNewsletterRow(row: NewsletterRow): ParsedNewsletter {
+  return {
+    ...row,
+    sections: parseNewsletterSections(row.sections),
   };
 }
 
@@ -87,7 +261,7 @@ export async function synthesize(args: {
   // Note: This assumes the embeds MCP is also using D1 and the table is accessible
   // In practice, this would query the embeds table or a local content mirror
   let undigestedQuery = 'SELECT id, source_type, title, body, author, theme_id FROM embeds WHERE digested_at IS NULL AND embedded_at IS NOT NULL AND user_id = ?';
-  const params: any[] = [ultralight.user.id];
+  const params: Array<string | number | null> = [ultralight.user.id];
 
   if (sourceFilter) {
     undigestedQuery += ' AND source_type = ?';
@@ -97,7 +271,7 @@ export async function synthesize(args: {
   undigestedQuery += ' ORDER BY created_at DESC LIMIT ?';
   params.push(batchSize);
 
-  let undigested: any[];
+  let undigested: EmbedContentRow[];
   try {
     undigested = await ultralight.db.all(undigestedQuery, params);
   } catch (e) {
@@ -120,7 +294,7 @@ export async function synthesize(args: {
   }
 
   // Prepare content summaries for AI
-  const contentSummaries = undigested.map((item: any, idx: number) => {
+  const contentSummaries = undigested.map((item: EmbedContentRow, idx: number) => {
     const source = item.source_type || 'unknown';
     const author = item.author ? ' by @' + item.author : '';
     const title = item.title ? ' — ' + item.title : '';
@@ -167,7 +341,7 @@ export async function synthesize(args: {
   }
 
   // Parse AI response
-  let parsed: { insights: Array<{ title: string; body: string; themes: string[]; source_indices: number[]; newsletter_section: string | null }> };
+  let parsed: SynthesizeAiResponse;
   try {
     const content = aiResponse.content || aiResponse.text || '';
     const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, content];
@@ -224,7 +398,7 @@ export async function synthesize(args: {
   }
 
   // Mark content as digested in the embeds table
-  const contentIds = undigested.map((item: any) => item.id);
+  const contentIds = undigested.map((item: EmbedContentRow) => item.id);
   const now = new Date().toISOString();
   const placeholders = contentIds.map(() => '?').join(', ');
   try {
@@ -265,7 +439,7 @@ export async function review(args: {
   revision_notes?: string;
   newsletter_section?: string;
   limit?: number;
-}): Promise<{ insights: any[]; total: number; action: string }> {
+}): Promise<{ insights: ParsedInsight[]; total: number; action: string }> {
   const { action, insight_id, revision_notes, newsletter_section, limit } = args;
 
   if (!action) {
@@ -275,7 +449,7 @@ export async function review(args: {
   // LIST PENDING
   if (action === 'pending') {
     const pageSize = limit || 20;
-    const rows = await ultralight.db.all(
+    const rows: InsightRow[] = await ultralight.db.all(
       'SELECT ' + INSIGHT_SELECT + ' FROM insights WHERE approved = 0 AND rejected = 0 AND user_id = ? ORDER BY created_at DESC LIMIT ?',
       [ultralight.user.id, pageSize]
     );
@@ -286,7 +460,7 @@ export async function review(args: {
   // LIST APPROVED
   if (action === 'approved') {
     const pageSize = limit || 20;
-    const rows = await ultralight.db.all(
+    const rows: InsightRow[] = await ultralight.db.all(
       'SELECT ' + INSIGHT_SELECT + ' FROM insights WHERE approved = 1 AND user_id = ? ORDER BY approved_at DESC LIMIT ?',
       [ultralight.user.id, pageSize]
     );
@@ -297,7 +471,7 @@ export async function review(args: {
   // LIST REJECTED
   if (action === 'rejected') {
     const pageSize = limit || 20;
-    const rows = await ultralight.db.all(
+    const rows: InsightRow[] = await ultralight.db.all(
       'SELECT ' + INSIGHT_SELECT + ' FROM insights WHERE rejected = 1 AND user_id = ? ORDER BY updated_at DESC LIMIT ?',
       [ultralight.user.id, pageSize]
     );
@@ -313,7 +487,7 @@ export async function review(args: {
 
     const now = new Date().toISOString();
     let sql = 'UPDATE insights SET approved = 1, approved_at = ?, rejected = 0, updated_at = ?';
-    const params: any[] = [now, now];
+    const params: Array<string | number | null> = [now, now];
 
     if (newsletter_section) {
       sql += ', newsletter_section = ?';
@@ -325,7 +499,7 @@ export async function review(args: {
 
     await ultralight.db.run(sql, params);
 
-    const updated = await ultralight.db.first(
+    const updated: InsightRow | null = await ultralight.db.first(
       'SELECT ' + INSIGHT_SELECT + ' FROM insights WHERE id = ? AND user_id = ?',
       [insight_id, ultralight.user.id]
     );
@@ -345,7 +519,7 @@ export async function review(args: {
       [revision_notes || null, now, insight_id, ultralight.user.id]
     );
 
-    const updated = await ultralight.db.first(
+    const updated: InsightRow | null = await ultralight.db.first(
       'SELECT ' + INSIGHT_SELECT + ' FROM insights WHERE id = ? AND user_id = ?',
       [insight_id, ultralight.user.id]
     );
@@ -365,7 +539,7 @@ export async function review(args: {
       [revision_notes, now, insight_id, ultralight.user.id]
     );
 
-    const updated = await ultralight.db.first(
+    const updated: InsightRow | null = await ultralight.db.first(
       'SELECT ' + INSIGHT_SELECT + ' FROM insights WHERE id = ? AND user_id = ?',
       [insight_id, ultralight.user.id]
     );
@@ -399,17 +573,17 @@ export async function compose(args: {
   }
 
   const maxSections = max_sections || 8;
-  let selectedInsights: any[];
+  let selectedInsights: ParsedInsight[];
 
   if (insight_ids && insight_ids.length > 0) {
     const placeholders = insight_ids.map(() => '?').join(', ');
-    const rows = await ultralight.db.all(
+    const rows: InsightRow[] = await ultralight.db.all(
       'SELECT ' + INSIGHT_SELECT + ' FROM insights WHERE id IN (' + placeholders + ') AND approved = 1 AND user_id = ?',
       [...insight_ids, ultralight.user.id]
     );
     selectedInsights = rows.map(parseInsightRow);
   } else if (auto_select !== false) {
-    const rows = await ultralight.db.all(
+    const rows: InsightRow[] = await ultralight.db.all(
       'SELECT ' + INSIGHT_SELECT + ' FROM insights WHERE approved = 1 AND newsletter_id IS NULL AND user_id = ? ORDER BY created_at DESC LIMIT ?',
       [ultralight.user.id, maxSections]
     );
@@ -429,12 +603,12 @@ export async function compose(args: {
   // Build sections
   const sectionOrder: Record<string, number> = { lead: 1, analysis: 2, links: 3, coda: 4 };
   const sections = selectedInsights
-    .sort((a: any, b: any) => {
+    .sort((a, b) => {
       const orderA = sectionOrder[a.newsletter_section || ''] || 3;
       const orderB = sectionOrder[b.newsletter_section || ''] || 3;
       return orderA - orderB;
     })
-    .map((insight: any, idx: number) => ({
+    .map((insight, idx: number) => ({
       section: insight.newsletter_section || 'analysis',
       insight_id: insight.id,
       content: '## ' + insight.title + '\n\n' + insight.body,
@@ -447,7 +621,7 @@ export async function compose(args: {
   );
 
   // Link insights to this newsletter
-  const insightIdsToLink = selectedInsights.map((i: any) => i.id);
+  const insightIdsToLink = selectedInsights.map((insight) => insight.id);
   const placeholders = insightIdsToLink.map(() => '?').join(', ');
   await ultralight.db.run(
     'UPDATE insights SET newsletter_id = ?, updated_at = ? WHERE id IN (' + placeholders + ') AND user_id = ?',
@@ -474,7 +648,7 @@ export async function newsletter(args: {
   title?: string;
   sections?: Array<{ section: string; insight_id: string; content: string; order: number }>;
   limit?: number;
-}): Promise<{ newsletters: any[]; total: number; action: string }> {
+}): Promise<{ newsletters: Array<ParsedNewsletter | RenderedNewsletter>; total: number; action: string }> {
   const { action, newsletter_id, status_filter, title, sections, limit } = args;
 
   if (!action) {
@@ -485,7 +659,7 @@ export async function newsletter(args: {
   if (action === 'list') {
     const pageSize = limit || 20;
     let sql = 'SELECT * FROM newsletters WHERE user_id = ?';
-    const params: any[] = [ultralight.user.id];
+    const params: Array<string | number | null> = [ultralight.user.id];
 
     if (status_filter) {
       sql += ' AND status = ?';
@@ -495,8 +669,8 @@ export async function newsletter(args: {
     sql += ' ORDER BY created_at DESC LIMIT ?';
     params.push(pageSize);
 
-    const rows = await ultralight.db.all(sql, params);
-    const parsed = rows.map((r: any) => ({ ...r, sections: JSON.parse(r.sections || '[]') }));
+    const rows: NewsletterRow[] = await ultralight.db.all(sql, params);
+    const parsed = rows.map(parseNewsletterRow);
     return { newsletters: parsed, total: parsed.length, action: 'list' };
   }
 
@@ -506,7 +680,7 @@ export async function newsletter(args: {
       throw new Error('newsletter_id is required for action "get"');
     }
 
-    const row = await ultralight.db.first(
+    const row: NewsletterRow | null = await ultralight.db.first(
       'SELECT * FROM newsletters WHERE id = ? AND user_id = ?',
       [newsletter_id, ultralight.user.id]
     );
@@ -515,7 +689,7 @@ export async function newsletter(args: {
       throw new Error('Newsletter not found: ' + newsletter_id);
     }
 
-    const parsed = { ...row, sections: JSON.parse(row.sections || '[]') };
+    const parsed = parseNewsletterRow(row);
     return { newsletters: [parsed], total: 1, action: 'get' };
   }
 
@@ -527,7 +701,7 @@ export async function newsletter(args: {
 
     const now = new Date().toISOString();
     const setClauses: string[] = ['updated_at = ?'];
-    const params: any[] = [now];
+    const params: Array<string | number | null> = [now];
 
     if (title) {
       setClauses.push('title = ?');
@@ -544,11 +718,11 @@ export async function newsletter(args: {
       params
     );
 
-    const updated = await ultralight.db.first(
+    const updated: NewsletterRow | null = await ultralight.db.first(
       'SELECT * FROM newsletters WHERE id = ? AND user_id = ?',
       [newsletter_id, ultralight.user.id]
     );
-    const parsed = updated ? { ...updated, sections: JSON.parse(updated.sections || '[]') } : null;
+    const parsed = updated ? parseNewsletterRow(updated) : null;
     return { newsletters: parsed ? [parsed] : [], total: 1, action: 'update' };
   }
 
@@ -564,11 +738,11 @@ export async function newsletter(args: {
       ['approved', now, newsletter_id, 'draft', ultralight.user.id]
     );
 
-    const updated = await ultralight.db.first(
+    const updated: NewsletterRow | null = await ultralight.db.first(
       'SELECT * FROM newsletters WHERE id = ? AND user_id = ?',
       [newsletter_id, ultralight.user.id]
     );
-    const parsed = updated ? { ...updated, sections: JSON.parse(updated.sections || '[]') } : null;
+    const parsed = updated ? parseNewsletterRow(updated) : null;
     return { newsletters: parsed ? [parsed] : [], total: 1, action: 'approve' };
   }
 
@@ -578,7 +752,7 @@ export async function newsletter(args: {
       throw new Error('newsletter_id is required for action "render"');
     }
 
-    const row = await ultralight.db.first(
+    const row: NewsletterRow | null = await ultralight.db.first(
       'SELECT * FROM newsletters WHERE id = ? AND user_id = ?',
       [newsletter_id, ultralight.user.id]
     );
@@ -587,9 +761,9 @@ export async function newsletter(args: {
       throw new Error('Newsletter not found: ' + newsletter_id);
     }
 
-    const nl = { ...row, sections: JSON.parse(row.sections || '[]') };
+    const nl = parseNewsletterRow(row);
     const nlSections = nl.sections || [];
-    const sortedSections = [...nlSections].sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
+    const sortedSections = [...nlSections].sort((a, b) => (a.order || 0) - (b.order || 0));
 
     let markdown = '# ' + nl.title + '\n\n';
     for (const section of sortedSections) {
@@ -618,7 +792,7 @@ export async function status(args?: Record<string, never>): Promise<{
     approved_newsletters: number;
     sent_newsletters: number;
   };
-  recent_runs: any[];
+  recent_runs: DigestRunRow[];
   ai_usage: {
     total_input_tokens: number;
     total_output_tokens: number;
@@ -628,7 +802,7 @@ export async function status(args?: Record<string, never>): Promise<{
   // Pipeline stats
   let undigestedCount = 0;
   try {
-    const row = await ultralight.db.first(
+    const row: CountRow | null = await ultralight.db.first(
       'SELECT COUNT(*) as cnt FROM embeds WHERE digested_at IS NULL AND embedded_at IS NOT NULL AND user_id = ?',
       [ultralight.user.id]
     );
@@ -637,39 +811,39 @@ export async function status(args?: Record<string, never>): Promise<{
     // embeds table may not exist in this DB
   }
 
-  const pendingRow = await ultralight.db.first(
+  const pendingRow: CountRow | null = await ultralight.db.first(
     'SELECT COUNT(*) as cnt FROM insights WHERE approved = 0 AND rejected = 0 AND user_id = ?',
     [ultralight.user.id]
   );
-  const approvedRow = await ultralight.db.first(
+  const approvedRow: CountRow | null = await ultralight.db.first(
     'SELECT COUNT(*) as cnt FROM insights WHERE approved = 1 AND user_id = ?',
     [ultralight.user.id]
   );
-  const rejectedRow = await ultralight.db.first(
+  const rejectedRow: CountRow | null = await ultralight.db.first(
     'SELECT COUNT(*) as cnt FROM insights WHERE rejected = 1 AND user_id = ?',
     [ultralight.user.id]
   );
-  const draftRow = await ultralight.db.first(
+  const draftRow: CountRow | null = await ultralight.db.first(
     'SELECT COUNT(*) as cnt FROM newsletters WHERE status = ? AND user_id = ?',
     ['draft', ultralight.user.id]
   );
-  const approvedNlRow = await ultralight.db.first(
+  const approvedNlRow: CountRow | null = await ultralight.db.first(
     'SELECT COUNT(*) as cnt FROM newsletters WHERE status = ? AND user_id = ?',
     ['approved', ultralight.user.id]
   );
-  const sentRow = await ultralight.db.first(
+  const sentRow: CountRow | null = await ultralight.db.first(
     'SELECT COUNT(*) as cnt FROM newsletters WHERE status = ? AND user_id = ?',
     ['sent', ultralight.user.id]
   );
 
   // Recent digest runs
-  const recentRuns = await ultralight.db.all(
+  const recentRuns: DigestRunRow[] = await ultralight.db.all(
     'SELECT * FROM digest_runs WHERE user_id = ? ORDER BY started_at DESC LIMIT 10',
     [ultralight.user.id]
   );
 
   // AI usage totals
-  const aiUsageRows = await ultralight.db.all(
+  const aiUsageRows: Pick<DigestRunRow, 'ai_input_tokens' | 'ai_output_tokens' | 'ai_cost_light'>[] = await ultralight.db.all(
     'SELECT ai_input_tokens, ai_output_tokens, ai_cost_light FROM digest_runs WHERE user_id = ?',
     [ultralight.user.id]
   );
@@ -713,37 +887,37 @@ export async function ui(args: {
   path?: string;
   query?: Record<string, string>;
   headers?: Record<string, string>;
-}): Promise<any> {
-  let pipelineData: any = null;
+}): Promise<unknown> {
+  let pipelineData: DashboardPipelineData | null = null;
   try {
     let undigestedCount = 0;
     try {
-      const row = await ultralight.db.first(
+      const row: CountRow | null = await ultralight.db.first(
         'SELECT COUNT(*) as cnt FROM embeds WHERE digested_at IS NULL AND embedded_at IS NOT NULL AND user_id = ?',
         [ultralight.user.id]
       );
       undigestedCount = row ? row.cnt : 0;
     } catch (e) { /* embeds table may not exist */ }
 
-    const pendingRow = await ultralight.db.first(
+    const pendingRow: CountRow | null = await ultralight.db.first(
       'SELECT COUNT(*) as cnt FROM insights WHERE approved = 0 AND rejected = 0 AND user_id = ?',
       [ultralight.user.id]
     );
-    const approvedRow = await ultralight.db.first(
+    const approvedRow: CountRow | null = await ultralight.db.first(
       'SELECT COUNT(*) as cnt FROM insights WHERE approved = 1 AND user_id = ?',
       [ultralight.user.id]
     );
-    const draftRow = await ultralight.db.first(
+    const draftRow: CountRow | null = await ultralight.db.first(
       'SELECT COUNT(*) as cnt FROM newsletters WHERE status = ? AND user_id = ?',
       ['draft', ultralight.user.id]
     );
-    const sentRow = await ultralight.db.first(
+    const sentRow: CountRow | null = await ultralight.db.first(
       'SELECT COUNT(*) as cnt FROM newsletters WHERE status = ? AND user_id = ?',
       ['sent', ultralight.user.id]
     );
 
     // Recent insights
-    const recentInsights = await ultralight.db.all(
+    const recentInsights: DashboardInsightRow[] = await ultralight.db.all(
       'SELECT id, title, themes, approved, rejected, created_at FROM insights WHERE user_id = ? ORDER BY created_at DESC LIMIT 10',
       [ultralight.user.id]
     );
@@ -754,21 +928,23 @@ export async function ui(args: {
       approved: approvedRow ? approvedRow.cnt : 0,
       drafts: draftRow ? draftRow.cnt : 0,
       sent: sentRow ? sentRow.cnt : 0,
-      recentInsights: recentInsights.map((r: any) => ({
-        ...r,
-        themes: JSON.parse(r.themes || '[]'),
-        approved: !!r.approved,
-        rejected: !!r.rejected,
+      recentInsights: recentInsights.map((row) => ({
+        id: row.id,
+        title: row.title,
+        created_at: row.created_at,
+        themes: parseStringArray(row.themes),
+        approved: !!row.approved,
+        rejected: !!row.rejected,
       })),
     };
   } catch (e) {
     console.error('Dashboard data fetch failed:', e);
   }
 
-  const p = pipelineData || { undigested: 0, pending: 0, approved: 0, drafts: 0, sent: 0, recentInsights: [] };
+  const p: DashboardPipelineData = pipelineData || { undigested: 0, pending: 0, approved: 0, drafts: 0, sent: 0, recentInsights: [] };
 
   const insightRows = p.recentInsights
-    .map((item: any) => {
+    .map((item) => {
       const statusBadge = item.approved ? '<span class="badge green">Approved</span>'
         : item.rejected ? '<span class="badge red">Rejected</span>'
         : '<span class="badge yellow">Pending</span>';

@@ -7,9 +7,9 @@
   "permissions": ["ai:call", "net:fetch"],
   "storage": "d1",
   "env_vars": {
-    "RESEND_API_KEY": { "type": "universal", "required": false, "description": "Resend API key for sending emails" },
-    "RESORT_EMAIL_ADDRESS": { "type": "universal", "required": false, "description": "From address for outbound emails" },
-    "RESORT_NAME": { "type": "universal", "required": false, "description": "Resort display name for email templates" }
+    "RESEND_API_KEY": { "scope": "universal", "input": "password", "required": false, "description": "Resend API key for sending emails" },
+    "RESORT_EMAIL_ADDRESS": { "scope": "universal", "input": "email", "required": false, "description": "From address for outbound emails" },
+    "RESORT_NAME": { "scope": "universal", "input": "text", "required": false, "description": "Resort display name for email templates" }
   },
   "functions": {
     "rooms_initialize": {

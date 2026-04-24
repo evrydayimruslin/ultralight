@@ -5,6 +5,7 @@
 
 import { getEnv } from '../lib/env.ts';
 import { COMBINED_FREE_TIER_BYTES } from '../../shared/types/index.ts';
+import { resolveEnforcementOptions, type EnforcementOptions } from './enforcement.ts';
 
 /** Combined storage limit: source code + user data = 100MB. */
 const STORAGE_LIMIT_BYTES = COMBINED_FREE_TIER_BYTES; // 100 MB
@@ -14,24 +15,48 @@ export interface StorageQuotaResult {
   used_bytes: number;
   limit_bytes: number;
   remaining_bytes: number;
+  reason?: 'quota_exceeded' | 'service_unavailable';
+}
+
+function unavailableStorageQuotaResult(
+  uploadSizeBytes: number,
+  options?: EnforcementOptions,
+  detail?: unknown,
+): StorageQuotaResult {
+  const enforcement = resolveEnforcementOptions(options, 'storage quota check');
+  const suffix = enforcement.mode === 'fail_closed'
+    ? 'blocking upload (fail-closed)'
+    : 'allowing upload (fail-open)';
+
+  console.error(
+    `[STORAGE] Quota backend unavailable for ${enforcement.resource}, ${suffix}. Upload bytes=${uploadSizeBytes}:`,
+    detail,
+  );
+
+  return {
+    allowed: enforcement.mode !== 'fail_closed',
+    used_bytes: 0,
+    limit_bytes: STORAGE_LIMIT_BYTES,
+    remaining_bytes: enforcement.mode === 'fail_closed' ? 0 : STORAGE_LIMIT_BYTES,
+    reason: 'service_unavailable',
+  };
 }
 
 /**
  * Check whether a user has enough storage quota for a source code upload.
  * Queries users.storage_used_bytes + data_storage_used_bytes (combined budget)
  * and compares against the 100MB combined limit.
- * Falls back to allowing the upload if the DB query fails (fail-open).
  */
 export async function checkStorageQuota(
   userId: string,
-  uploadSizeBytes: number
+  uploadSizeBytes: number,
+  options?: EnforcementOptions,
 ): Promise<StorageQuotaResult> {
   const SUPABASE_URL = getEnv('SUPABASE_URL');
   const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    // Can't check — fail open
-    return { allowed: true, used_bytes: 0, limit_bytes: 0, remaining_bytes: 0 };
+    return unavailableStorageQuotaResult(uploadSizeBytes, options, 'Supabase credentials not configured');
   }
 
   try {
@@ -47,25 +72,28 @@ export async function checkStorageQuota(
     );
 
     if (!res.ok) {
-      console.warn('[STORAGE] Failed to query storage bytes, allowing upload:', await res.text());
-      return { allowed: true, used_bytes: 0, limit_bytes: STORAGE_LIMIT_BYTES, remaining_bytes: STORAGE_LIMIT_BYTES };
+      return unavailableStorageQuotaResult(uploadSizeBytes, options, await res.text());
     }
 
     const rows = await res.json() as Array<{ storage_used_bytes: number | null; data_storage_used_bytes: number | null }>;
+    if (!rows || rows.length === 0) {
+      return unavailableStorageQuotaResult(uploadSizeBytes, options, 'User row missing during quota check');
+    }
     const sourceBytes = rows[0]?.storage_used_bytes ?? 0;
     const dataBytes = rows[0]?.data_storage_used_bytes ?? 0;
     const combinedUsed = sourceBytes + dataBytes;
     const remaining = Math.max(0, STORAGE_LIMIT_BYTES - combinedUsed);
+    const allowed = (combinedUsed + uploadSizeBytes) <= STORAGE_LIMIT_BYTES;
 
     return {
-      allowed: (combinedUsed + uploadSizeBytes) <= STORAGE_LIMIT_BYTES,
+      allowed,
       used_bytes: combinedUsed,
       limit_bytes: STORAGE_LIMIT_BYTES,
       remaining_bytes: remaining,
+      reason: allowed ? undefined : 'quota_exceeded',
     };
   } catch (err) {
-    console.error('[STORAGE] Error checking storage quota, allowing upload:', err);
-    return { allowed: true, used_bytes: 0, limit_bytes: STORAGE_LIMIT_BYTES, remaining_bytes: STORAGE_LIMIT_BYTES };
+    return unavailableStorageQuotaResult(uploadSizeBytes, options, err);
   }
 }
 

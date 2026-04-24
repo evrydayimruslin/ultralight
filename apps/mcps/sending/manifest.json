@@ -2,7 +2,7 @@
   "name": "Sending",
   "version": "1.0.0",
   "type": "mcp",
-  "description": "Distribution layer for the Research Intelligence Hub. Sends newsletters via email (Resend), web (ul.markdown.publish), and Discord (per-room routing via theme webhooks). Broadcasts individual insights to themed rooms. Manages the subscriber list.",
+  "description": "Distribution layer for the Research Intelligence Hub. Sends newsletters via email (Resend), web (ul.upload type=page), and Discord (per-room routing via theme webhooks). Broadcasts individual insights to themed rooms. Manages the subscriber list.",
   "author": "russell",
   "entry": {
     "functions": "index.ts"
@@ -16,13 +16,13 @@
       "required": true
     },
     "SUPABASE_SERVICE_KEY": {
-      "description": "Supabase service role key (encrypted via ul.set.supabase)",
+      "description": "Supabase service role key (configure through the app's canonical Supabase settings flow)",
       "required": true
     }
   },
   "functions": {
     "send": {
-      "description": "Distribute a newsletter across one or more channels. The newsletter must be in 'approved' status. Channels: 'email' (via Resend API), 'web' (renders markdown for ul.markdown.publish), 'discord' (webhook post). Email sends to all active subscribers (optionally filtered by tags).",
+      "description": "Distribute a newsletter across one or more channels. The newsletter must be in 'approved' status. Channels: 'email' (via Resend API), 'web' (renders markdown for ul.upload with type=page), 'discord' (webhook post). Email sends to all active subscribers (optionally filtered by tags).",
       "parameters": {
         "newsletter_id": {
           "type": "string",

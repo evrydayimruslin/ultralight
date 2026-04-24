@@ -3,7 +3,7 @@
 // - Sets tier to 'free'
 // - Sets public apps to 'unlisted' (soft degradation — shared links still work)
 // - Clears tier_expires_at
-// - Runs hourly via setInterval in main.ts
+// - Runs hourly via the scheduled runtime in api/src/worker-entry.ts
 
 import { getEnv } from '../lib/env.ts';
 
@@ -86,7 +86,7 @@ export async function processExpiredSubscriptions(): Promise<ExpiryResult> {
         let appsChanged = 0;
 
         if (appsResponse.ok) {
-          const publicApps = await appsResponse.json();
+          const publicApps = await appsResponse.json() as Array<{ name: string }>;
 
           if (publicApps.length > 0) {
             const updateResponse = await fetch(

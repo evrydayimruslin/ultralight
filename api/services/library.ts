@@ -11,12 +11,19 @@ import { createR2Service } from './storage.ts';
 import { createAppsService } from './apps.ts';
 import { parseTypeScript, toSkillsParsed } from './parser.ts';
 import {
+  generateManifestFromParseResult,
+  mergeManifestWithParseResult,
+} from './app-manifest-generation.ts';
+import {
   generateSkillsMd,
   generateEmbeddingText,
 } from './docgen.ts';
 import { createEmbeddingService } from './embedding.ts';
-import type { App, AppWithDraft, AppManifest, ManifestFunction, ManifestParameter, ManifestReturn, ParsedSkills } from '../../shared/types/index.ts';
+import type { App, AppWithDraft, ParsedSkills } from '../../shared/types/index.ts';
+import { resolveManifestEnvSchema } from '../../shared/types/index.ts';
 import type { ParseResult } from './parser.ts';
+
+export { generateManifestFromParseResult } from './app-manifest-generation.ts';
 
 // ============================================
 // USER MEMORY.MD: Read / Write / Append
@@ -376,62 +383,6 @@ export interface VersionArtifacts {
 }
 
 /**
- * Convert a JSON Schema type to a ManifestParameter type string.
- */
-function jsonSchemaToManifestType(schema: Record<string, unknown>): ManifestParameter['type'] {
-  const t = schema.type as string;
-  if (t === 'string' || t === 'number' || t === 'boolean' || t === 'object' || t === 'array') return t;
-  return 'object'; // fallback for complex/union types
-}
-
-/**
- * Auto-generate an AppManifest from a ParseResult.
- * This is the canonical source of truth — all other representations derive from it.
- */
-export function generateManifestFromParseResult(
-  app: { name: string; slug: string; description?: string | null },
-  parseResult: ParseResult,
-  version: string
-): AppManifest {
-  const functions: Record<string, ManifestFunction> = {};
-
-  for (const fn of parseResult.functions) {
-    const parameters: Record<string, ManifestParameter> = {};
-    for (const p of fn.parameters) {
-      parameters[p.name] = {
-        type: jsonSchemaToManifestType(p.schema as Record<string, unknown>),
-        description: p.description || undefined,
-        required: p.required !== false,
-        ...(p.default !== undefined ? { default: p.default } : {}),
-        // Preserve nested object properties if present
-        ...(p.schema && (p.schema as Record<string, unknown>).properties
-          ? { properties: (p.schema as Record<string, unknown>).properties as Record<string, ManifestParameter> }
-          : {}),
-      };
-    }
-
-    functions[fn.name] = {
-      description: fn.description || `Function ${fn.name}`,
-      parameters: Object.keys(parameters).length > 0 ? parameters : undefined,
-      returns: fn.returns?.type
-        ? { type: jsonSchemaToManifestType({ type: fn.returns.type.replace(/^Promise<(.+)>$/, '$1') } as Record<string, unknown>), description: fn.returns.description || undefined } as ManifestReturn
-        : undefined,
-      examples: fn.examples.length > 0 ? fn.examples : undefined,
-    };
-  }
-
-  return {
-    name: app.name || app.slug,
-    version,
-    description: app.description || undefined,
-    type: 'mcp',
-    entry: { functions: 'index.ts' },
-    functions: Object.keys(functions).length > 0 ? functions : undefined,
-    permissions: parseResult.permissions.length > 0 ? parseResult.permissions : undefined,
-  };
-}
-
-/**
  * Auto-generate Skills.md, library.txt, manifest.json, and embedding.json for a specific
  * version of an app. Stores artifacts in R2 at the version's storage key
  * and also updates the app DB record with the latest skills/embedding/manifest.
@@ -465,39 +416,24 @@ export async function generateSkillsForVersion(
   // Parse code → all artifacts derive from ParseResult
   const parseResult = await parseTypeScript(code);
 
-  // Generate manifest: prefer uploaded manifest.json (has rich descriptions + schemas),
-  // fall back to auto-generated from code parsing
-  let manifest: AppManifest;
-  const existingManifest = app.manifest ? (() => { try { return JSON.parse(app.manifest!) as AppManifest; } catch { return null; } })() : null;
-
-  if (existingManifest?.functions && existingManifest.type === 'mcp') {
-    // Uploaded manifest exists with function definitions — use it as base,
-    // but merge in any code-detected functions not declared in the manifest
-    const autoManifest = generateManifestFromParseResult(app, parseResult, _version);
-    manifest = { ...existingManifest, version: _version };
-
-    // Check if manifest descriptions are auto-generated (generic "Function X" pattern)
-    // If so, the manifest was previously auto-generated and should be replaced
-    const hasRichDescriptions = Object.values(existingManifest.functions).some(
-      (fn) => fn.description && !fn.description.startsWith('Function ')
-    );
-
-    if (hasRichDescriptions) {
-      // Merge: keep uploaded manifest functions, add any new exports not in manifest
-      if (autoManifest.functions) {
-        for (const [fnName, fnDef] of Object.entries(autoManifest.functions)) {
-          if (!manifest.functions![fnName]) {
-            manifest.functions![fnName] = fnDef;
-          }
+  // Generate manifest: keep rich uploaded manifests when possible, but converge
+  // back onto source-derived contracts when the stored manifest is thin or stale.
+  const existingManifest = app.manifest
+    ? (() => {
+        try {
+          return JSON.parse(app.manifest!);
+        } catch {
+          return null;
         }
-      }
-    } else {
-      // All descriptions are generic — auto-generated manifest is equally good, use it
-      manifest = autoManifest;
-    }
-  } else {
-    manifest = generateManifestFromParseResult(app, parseResult, _version);
-  }
+      })()
+    : null;
+  const { manifest } = mergeManifestWithParseResult(
+    app,
+    existingManifest,
+    parseResult,
+    _version,
+    { entryFileName: 'index.ts' },
+  );
 
   const manifestJson = JSON.stringify(manifest, null, 2);
 
@@ -564,6 +500,7 @@ export async function generateSkillsForVersion(
       skills_md: skillsMd,
       skills_parsed: skillsParsed,
       manifest: manifestJson,
+      env_schema: resolveManifestEnvSchema(manifest),
       docs_generated_at: new Date().toISOString(),
     } as Partial<AppWithDraft>);
 

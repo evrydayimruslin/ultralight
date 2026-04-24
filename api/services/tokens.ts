@@ -12,11 +12,98 @@
 import { createClient } from '@supabase/supabase-js';
 import { getEnv } from '../lib/env.ts';
 
+interface UserApiTokenRow {
+  id: string;
+  user_id: string;
+  name: string;
+  token_prefix: string;
+  token_hash: string;
+  token_salt: string | null;
+  plaintext_token: string | null;
+  scopes: string[] | null;
+  app_ids: string[] | null;
+  function_names: string[] | null;
+  last_used_at: string | null;
+  last_used_ip: string | null;
+  expires_at: string | null;
+  created_at: string;
+}
+
+interface UserApiTokenInsert {
+  id?: string;
+  user_id: string;
+  name: string;
+  token_prefix: string;
+  token_hash: string;
+  token_salt?: string | null;
+  plaintext_token?: string | null;
+  scopes?: string[] | null;
+  app_ids?: string[] | null;
+  function_names?: string[] | null;
+  last_used_at?: string | null;
+  last_used_ip?: string | null;
+  expires_at?: string | null;
+  created_at?: string;
+}
+
+interface UserRow {
+  id: string;
+  email: string;
+  tier: string | null;
+  provisional: boolean | null;
+  last_active_at: string | null;
+}
+
+interface Database {
+  public: {
+    Tables: {
+      user_api_tokens: {
+        Row: UserApiTokenRow;
+        Insert: UserApiTokenInsert;
+        Update: Partial<UserApiTokenInsert>;
+        Relationships: [];
+      };
+      users: {
+        Row: UserRow;
+        Insert: Partial<UserRow> & { id: string };
+        Update: Partial<UserRow>;
+        Relationships: [];
+      };
+    };
+    Views: Record<string, never>;
+    Functions: Record<string, never>;
+    Enums: Record<string, never>;
+    CompositeTypes: Record<string, never>;
+  };
+}
+
+type UserApiTokenInsertPayload = Database['public']['Tables']['user_api_tokens']['Insert'];
+type TokensSupabaseClient = ReturnType<typeof createTokensSupabaseClient>;
+
 // Lazy Supabase client — CF Workers env not available at module init
-let _supabase: ReturnType<typeof createClient>;
-function getSupabase() {
-  if (!_supabase) _supabase = createClient(getEnv('SUPABASE_URL'), getEnv('SUPABASE_SERVICE_ROLE_KEY'));
+let _supabase: TokensSupabaseClient | undefined;
+
+function createTokensSupabaseClient() {
+  return createClient<Database, 'public'>(getEnv('SUPABASE_URL'), getEnv('SUPABASE_SERVICE_ROLE_KEY'));
+}
+
+function getSupabase(): TokensSupabaseClient {
+  if (!_supabase) {
+    _supabase = createTokensSupabaseClient();
+  }
+
   return _supabase;
+}
+
+// The repo does not yet have a shared generated Supabase schema, so `from(...)`
+// can collapse to `never` in isolated files. Bridge the two tables we use here
+// through local wrappers until the broader schema story is cleaned up.
+function tokensTable() {
+  return getSupabase().from('user_api_tokens' as never) as any;
+}
+
+function usersTable() {
+  return getSupabase().from('users' as never) as any;
 }
 
 // Token prefix for easy identification
@@ -54,6 +141,22 @@ export interface ValidatedToken {
   function_names: string[] | null;
 }
 
+export type ApiTokenCompatibilityState =
+  | 'canonical'
+  | 'canonical_missing_plaintext'
+  | 'legacy_backfillable_from_plaintext'
+  | 'legacy_unrecoverable';
+
+export interface ApiTokenVerificationOutcome {
+  valid: boolean;
+  state: ApiTokenCompatibilityState;
+  reason?: 'hash_mismatch' | 'plaintext_mismatch' | 'missing_token_material';
+  canonical_update?: {
+    token_hash: string;
+    token_salt: string;
+  };
+}
+
 /**
  * Generate a cryptographically secure random token
  */
@@ -77,17 +180,6 @@ function constantTimeEqual(a: string, b: string): boolean {
     result |= a.charCodeAt(i) ^ b.charCodeAt(i);
   }
   return result === 0;
-}
-
-/**
- * Hash a token using SHA-256 (legacy, unsalted — used for backward compat with old tokens)
- */
-async function hashToken(token: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(token);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 /**
@@ -116,6 +208,84 @@ function generateTokenSalt(): string {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+export function classifyApiTokenCompatibility(row: {
+  token_salt: string | null;
+  plaintext_token: string | null;
+}): ApiTokenCompatibilityState {
+  if (row.token_salt) {
+    return row.plaintext_token ? 'canonical' : 'canonical_missing_plaintext';
+  }
+
+  if (row.plaintext_token) {
+    return 'legacy_backfillable_from_plaintext';
+  }
+
+  return 'legacy_unrecoverable';
+}
+
+export async function verifyApiTokenRecord(
+  token: string,
+  row: {
+    token_hash: string;
+    token_salt: string | null;
+    plaintext_token: string | null;
+  },
+): Promise<ApiTokenVerificationOutcome> {
+  const state = classifyApiTokenCompatibility(row);
+
+  if (row.token_salt) {
+    const tokenHash = await hashTokenWithSalt(token, row.token_salt);
+    const valid = constantTimeEqual(row.token_hash, tokenHash);
+    return {
+      valid,
+      state,
+      reason: valid ? undefined : 'hash_mismatch',
+    };
+  }
+
+  if (!row.plaintext_token) {
+    return {
+      valid: false,
+      state,
+      reason: 'missing_token_material',
+    };
+  }
+
+  if (!constantTimeEqual(row.plaintext_token, token)) {
+    return {
+      valid: false,
+      state,
+      reason: 'plaintext_mismatch',
+    };
+  }
+
+  const tokenSalt = generateTokenSalt();
+  return {
+    valid: true,
+    state,
+    canonical_update: {
+      token_salt: tokenSalt,
+      token_hash: await hashTokenWithSalt(token, tokenSalt),
+    },
+  };
+}
+
+async function backfillCanonicalTokenHash(
+  tokenId: string,
+  update: {
+    token_hash: string;
+    token_salt: string;
+  },
+): Promise<void> {
+  const { error } = await tokensTable()
+    .update(update)
+    .eq('id', tokenId);
+
+  if (error) {
+    throw new Error(`Failed to backfill canonical token hash: ${error.message}`);
+  }
+}
+
 /**
  * Create a new API token for a user.
  * All tiers have unlimited API tokens.
@@ -131,8 +301,7 @@ export async function createToken(
   }
 ): Promise<CreateTokenResult> {
   // Check if token with this name already exists
-  const { data: existing } = await getSupabase()
-    .from('user_api_tokens')
+  const { data: existing } = await tokensTable()
     .select('id')
     .eq('user_id', userId)
     .eq('name', name)
@@ -156,8 +325,8 @@ export async function createToken(
     expiresAt = expiry.toISOString();
   }
 
-  // Insert token (token_salt column enables per-token salted hashing)
-  const insertPayload: Record<string, unknown> = {
+  // Insert token into the canonical schema.
+  const insertPayload: UserApiTokenInsertPayload = {
     user_id: userId,
     name,
     token_prefix: tokenPrefix,
@@ -170,24 +339,16 @@ export async function createToken(
     expires_at: expiresAt,
   };
 
-  let { data, error } = await getSupabase()
-    .from('user_api_tokens')
+  let { data, error } = await tokensTable()
     .insert(insertPayload)
     .select()
     .single();
 
-  // Fallback: if plaintext_token column doesn't exist yet, retry without it
-  if (error && error.message?.includes('plaintext_token')) {
-    delete insertPayload.plaintext_token;
-    ({ data, error } = await getSupabase()
-      .from('user_api_tokens')
-      .insert(insertPayload)
-      .select()
-      .single());
-  }
-
   if (error) {
     throw new Error(`Failed to create token: ${error.message}`);
+  }
+  if (!data) {
+    throw new Error('Failed to create token: insert returned no row');
   }
 
   return {
@@ -200,20 +361,10 @@ export async function createToken(
  * List all tokens for a user (without exposing hashes)
  */
 export async function listTokens(userId: string): Promise<ApiToken[]> {
-  let { data, error } = await getSupabase()
-    .from('user_api_tokens')
+  let { data, error } = await tokensTable()
     .select('id, user_id, name, token_prefix, plaintext_token, scopes, app_ids, function_names, last_used_at, last_used_ip, expires_at, created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
-
-  // Fallback: if plaintext_token column doesn't exist yet, query without it
-  if (error && error.message?.includes('plaintext_token')) {
-    ({ data, error } = await getSupabase()
-      .from('user_api_tokens')
-      .select('id, user_id, name, token_prefix, scopes, app_ids, function_names, last_used_at, last_used_ip, expires_at, created_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false }));
-  }
 
   if (error) {
     throw new Error(`Failed to list tokens: ${error.message}`);
@@ -226,8 +377,7 @@ export async function listTokens(userId: string): Promise<ApiToken[]> {
  * Revoke (delete) a token
  */
 export async function revokeToken(userId: string, tokenId: string): Promise<void> {
-  const { error } = await getSupabase()
-    .from('user_api_tokens')
+  const { error } = await tokensTable()
     .delete()
     .eq('id', tokenId)
     .eq('user_id', userId); // Ensure user owns the token
@@ -241,8 +391,7 @@ export async function revokeToken(userId: string, tokenId: string): Promise<void
  * Revoke all tokens for a user
  */
 export async function revokeAllTokens(userId: string): Promise<number> {
-  const { data, error } = await getSupabase()
-    .from('user_api_tokens')
+  const { data, error } = await tokensTable()
     .delete()
     .eq('user_id', userId)
     .select('id');
@@ -268,10 +417,9 @@ export async function revokeByToken(token: string): Promise<boolean> {
 
   const tokenPrefix = token.substring(0, 8);
 
-  // Look up by prefix (indexed), then verify hash with appropriate method
-  const { data, error: lookupErr } = await getSupabase()
-    .from('user_api_tokens')
-    .select('id, token_hash, token_salt')
+  // Look up by prefix (indexed), then verify canonical token material.
+  const { data, error: lookupErr } = await tokensTable()
+    .select('id, token_hash, token_salt, plaintext_token')
     .eq('token_prefix', tokenPrefix)
     .single();
 
@@ -279,18 +427,13 @@ export async function revokeByToken(token: string): Promise<boolean> {
     return false;
   }
 
-  // Use salted hash if token has a salt, otherwise fall back to legacy unsalted SHA-256
-  const tokenHash = data.token_salt
-    ? await hashTokenWithSalt(token, data.token_salt)
-    : await hashToken(token);
-
-  if (!constantTimeEqual(data.token_hash, tokenHash)) {
+  const verification = await verifyApiTokenRecord(token, data);
+  if (!verification.valid) {
     return false;
   }
 
   // Delete the token
-  const { error: deleteErr } = await getSupabase()
-    .from('user_api_tokens')
+  const { error: deleteErr } = await tokensTable()
     .delete()
     .eq('id', data.id);
 
@@ -312,8 +455,7 @@ export async function revokeExcessTokens(
   maxTokens: number
 ): Promise<{ revoked_count: number; kept_count: number; revoked_names: string[] }> {
   // Get all tokens ordered by created_at descending (newest first)
-  const { data: tokens, error: listErr } = await getSupabase()
-    .from('user_api_tokens')
+  const { data: tokens, error: listErr } = await tokensTable()
     .select('id, name, created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
@@ -332,8 +474,7 @@ export async function revokeExcessTokens(
   const revokedNames: string[] = [];
 
   for (const token of tokensToRevoke) {
-    const { error: revokeErr } = await getSupabase()
-      .from('user_api_tokens')
+    const { error: revokeErr } = await tokensTable()
       .delete()
       .eq('id', token.id)
       .eq('user_id', userId);
@@ -374,9 +515,8 @@ export async function validateToken(
   console.log(`[TOKEN] Validating token with prefix: ${tokenPrefix}`);
 
   // Look up token by prefix first (indexed), then verify hash
-  const { data, error } = await getSupabase()
-    .from('user_api_tokens')
-    .select('id, user_id, token_hash, token_salt, scopes, app_ids, function_names, expires_at')
+  const { data, error } = await tokensTable()
+    .select('id, user_id, token_hash, token_salt, plaintext_token, scopes, app_ids, function_names, expires_at')
     .eq('token_prefix', tokenPrefix)
     .single();
 
@@ -384,17 +524,20 @@ export async function validateToken(
     console.log(`[TOKEN] Prefix lookup FAILED for "${tokenPrefix}" — error: ${error?.message || 'no rows'}, code: ${error?.code || 'n/a'}`);
     return null;
   }
-  console.log(`[TOKEN] Prefix lookup OK — token_id: ${data.id}, user_id: ${data.user_id}, has_salt: ${!!data.token_salt}`);
+  console.log(`[TOKEN] Prefix lookup OK — token_id: ${data.id}, user_id: ${data.user_id}, state: ${classifyApiTokenCompatibility(data)}`);
 
-  // Use salted hash if token has a salt, otherwise fall back to legacy unsalted SHA-256
-  const tokenHash = data.token_salt
-    ? await hashTokenWithSalt(token, data.token_salt)
-    : await hashToken(token);
-
-  // Verify hash matches (constant-time comparison)
-  if (!constantTimeEqual(data.token_hash, tokenHash)) {
-    console.log(`[TOKEN] Hash MISMATCH for token_id: ${data.id} (method: ${data.token_salt ? 'HMAC-SHA256' : 'SHA-256'})`);
+  const verification = await verifyApiTokenRecord(token, data);
+  if (!verification.valid) {
+    console.log(`[TOKEN] Validation failed for token_id: ${data.id} (reason: ${verification.reason || 'unknown'})`);
     return null;
+  }
+  if (verification.canonical_update) {
+    try {
+      await backfillCanonicalTokenHash(data.id, verification.canonical_update);
+      console.log(`[TOKEN] Canonical token hash backfilled for token_id: ${data.id}`);
+    } catch (err) {
+      console.warn('[TOKEN] Failed to backfill canonical token hash', err);
+    }
   }
   console.log(`[TOKEN] Hash verified OK for token_id: ${data.id}`);
 
@@ -405,8 +548,7 @@ export async function validateToken(
   }
 
   // Update last used (fire and forget - don't wait)
-  getSupabase()
-    .from('user_api_tokens')
+  tokensTable()
     .update({
       last_used_at: new Date().toISOString(),
       last_used_ip: clientIp || null,
@@ -447,8 +589,7 @@ export async function getUserFromToken(token: string, clientIp?: string): Promis
   }
 
   // Get user from database (include provisional + last_active_at for expiry check)
-  const { data: user, error } = await getSupabase()
-    .from('users')
+  const { data: user, error } = await usersTable()
     .select('id, email, tier, provisional, last_active_at')
     .eq('id', validated.user_id)
     .single();

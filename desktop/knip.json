@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/knip/schema.json",
+  "entry": [
+    "index.html",
+    "src/main.tsx",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "tailwind.config.ts",
+    "vite.config.ts"
+  ],
+  "project": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "tailwind.config.ts",
+    "vite.config.ts"
+  ],
+  "ignore": [
+    "src/vite-env.d.ts"
+  ],
+  "ignoreDependencies": [
+    "madge"
+  ]
+}

@@ -144,7 +144,7 @@ export async function getUserTier(userId: string): Promise<Tier> {
       return 'free';
     }
 
-    const users = await response.json();
+    const users = await response.json() as Array<{ tier?: Tier | null }>;
     return (users[0]?.tier || 'free') as Tier;
   } catch (err) {
     console.error('getUserTier: error:', err);

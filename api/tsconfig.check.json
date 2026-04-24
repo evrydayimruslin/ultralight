@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "pretty": false
+  },
+  "exclude": [
+    "**/*.test.ts",
+    "**/*.bak"
+  ]
+}

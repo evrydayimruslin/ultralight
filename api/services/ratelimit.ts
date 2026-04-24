@@ -2,6 +2,7 @@
 // Uses Supabase table + RPC function for persistent, distributed rate limiting
 
 import { getEnv } from '../lib/env.ts';
+import { resolveEnforcementOptions, type EnforcementOptions } from './enforcement.ts';
 
 // ============================================
 // TYPES
@@ -17,6 +18,7 @@ export interface RateLimitResult {
   allowed: boolean;
   remaining: number;
   resetAt: Date;
+  reason?: 'limit_exceeded' | 'service_unavailable';
 }
 
 // Default rate limits by endpoint
@@ -29,6 +31,30 @@ export const RATE_LIMITS: Record<string, RateLimitConfig> = {
   'chat:stream': { endpoint: 'chat:stream', limit: 30, windowMinutes: 1 },
   'chat:models': { endpoint: 'chat:models', limit: 30, windowMinutes: 1 },
 };
+
+function fallbackRateLimitResult(
+  endpoint: string,
+  limit: number,
+  windowMinutes: number,
+  options?: EnforcementOptions,
+  detail?: unknown,
+): RateLimitResult {
+  const enforcement = resolveEnforcementOptions(options, endpoint);
+  const resetAt = new Date(Date.now() + windowMinutes * 60 * 1000);
+  const prefix = '[RATE-LIMIT] Backend unavailable';
+  const suffix = enforcement.mode === 'fail_closed'
+    ? 'blocking request (fail-closed)'
+    : 'allowing request (fail-open)';
+
+  console.error(`${prefix} for ${enforcement.resource}, ${suffix}:`, detail);
+
+  return {
+    allowed: enforcement.mode !== 'fail_closed',
+    remaining: enforcement.mode === 'fail_closed' ? 0 : limit,
+    resetAt,
+    reason: 'service_unavailable',
+  };
+}
 
 // ============================================
 // RATE LIMIT SERVICE
@@ -58,7 +84,8 @@ export class RateLimitService {
     userId: string,
     endpoint: string,
     limit?: number,
-    windowMinutes?: number
+    windowMinutes?: number,
+    options?: EnforcementOptions,
   ): Promise<RateLimitResult> {
     // Get config for this endpoint, or use defaults
     const config = RATE_LIMITS[endpoint] || { endpoint, limit: 100, windowMinutes: 1 };
@@ -83,14 +110,13 @@ export class RateLimitService {
       });
 
       if (!response.ok) {
-        // Fail-open: allow the request when rate limit service is unavailable
-        // (prevents blocking all requests when Supabase RPC has issues)
-        console.warn('Rate limit check failed, allowing request (fail-open):', await response.text());
-        return {
-          allowed: true,
-          remaining: effectiveLimit,
-          resetAt: new Date(Date.now() + effectiveWindow * 60 * 1000),
-        };
+        return fallbackRateLimitResult(
+          endpoint,
+          effectiveLimit,
+          effectiveWindow,
+          options,
+          await response.text(),
+        );
       }
 
       const allowed = await response.json();
@@ -104,16 +130,17 @@ export class RateLimitService {
         allowed: allowed === true,
         remaining: allowed ? effectiveLimit - 1 : 0, // Approximate
         resetAt,
+        reason: allowed ? undefined : 'limit_exceeded',
       };
 
     } catch (err) {
-      // Fail-open: allow the request when rate limit service errors
-      console.error('Rate limit error, allowing request (fail-open):', err);
-      return {
-        allowed: true,
-        remaining: effectiveLimit,
-        resetAt: new Date(Date.now() + effectiveWindow * 60 * 1000),
-      };
+      return fallbackRateLimitResult(
+        endpoint,
+        effectiveLimit,
+        effectiveWindow,
+        options,
+        err,
+      );
     }
   }
 
@@ -166,6 +193,7 @@ export function checkInMemoryLimit(
     allowed,
     remaining: Math.max(0, limit - entry.count),
     resetAt: new Date(entry.resetAt),
+    reason: allowed ? undefined : 'limit_exceeded',
   };
 }
 
@@ -205,7 +233,8 @@ export async function checkRateLimit(
   userId: string,
   endpoint: string,
   limit?: number,
-  windowMinutes?: number
+  windowMinutes?: number,
+  options?: EnforcementOptions,
 ): Promise<RateLimitResult> {
   const config = RATE_LIMITS[endpoint] || { limit: 100, windowMinutes: 1 };
   const effectiveLimit = limit ?? config.limit;
@@ -219,9 +248,14 @@ export async function checkRateLimit(
 
   try {
     const service = createRateLimitService();
-    return await service.checkLimit(userId, endpoint, limit, windowMinutes);
-  } catch {
-    // Fallback to in-memory
-    return checkInMemoryLimit(userId, endpoint, effectiveLimit, effectiveWindow * 60 * 1000);
+    return await service.checkLimit(userId, endpoint, limit, windowMinutes, options);
+  } catch (err) {
+    return fallbackRateLimitResult(
+      endpoint,
+      effectiveLimit,
+      effectiveWindow,
+      options,
+      err,
+    );
   }
 }

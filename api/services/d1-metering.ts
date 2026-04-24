@@ -5,6 +5,7 @@
 
 import { getEnv } from '../lib/env.ts';
 import { D1_FREE_TIER, D1_RATE_LIMITS } from '../../shared/types/index.ts';
+import { resolveEnforcementOptions, type EnforcementOptions } from './enforcement.ts';
 
 // ============================================
 // TYPES
@@ -112,12 +113,27 @@ export function releaseD1ConcurrencySlot(userId: string, appId: string): void {
  * Called before executing D1 queries to determine if billing applies.
  */
 export async function checkD1FreeTier(userId: string): Promise<D1UsageCheck> {
+  return await checkD1FreeTierWithOptions(userId);
+}
+
+export async function checkD1FreeTierWithOptions(
+  userId: string,
+  options?: EnforcementOptions,
+): Promise<D1UsageCheck> {
   const supabaseUrl = getEnv('SUPABASE_URL');
   const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+  const enforcement = resolveEnforcementOptions(options, 'D1 free tier check');
+  const unavailableResult = (): D1UsageCheck => ({
+    allowed: enforcement.mode !== 'fail_closed',
+    reason: 'service_unavailable',
+    withinFreeTier: enforcement.mode !== 'fail_closed',
+    rowsReadTotal: 0,
+    rowsWrittenTotal: 0,
+    storageBytes: 0,
+  });
 
   if (!supabaseUrl || !supabaseKey) {
-    // Can't check — allow (fail open)
-    return { allowed: true, withinFreeTier: true, rowsReadTotal: 0, rowsWrittenTotal: 0, storageBytes: 0 };
+    return unavailableResult();
   }
 
   try {
@@ -131,9 +147,7 @@ export async function checkD1FreeTier(userId: string): Promise<D1UsageCheck> {
       body: JSON.stringify({ p_user_id: userId }),
     });
 
-    if (!res.ok) {
-      return { allowed: true, withinFreeTier: true, rowsReadTotal: 0, rowsWrittenTotal: 0, storageBytes: 0 };
-    }
+    if (!res.ok) return unavailableResult();
 
     const rows = await res.json() as Array<{
       within_free_tier: boolean;
@@ -143,9 +157,7 @@ export async function checkD1FreeTier(userId: string): Promise<D1UsageCheck> {
     }>;
 
     const row = rows?.[0];
-    if (!row) {
-      return { allowed: true, withinFreeTier: true, rowsReadTotal: 0, rowsWrittenTotal: 0, storageBytes: 0 };
-    }
+    if (!row) return unavailableResult();
 
     return {
       allowed: true, // Always allowed, but billing may apply
@@ -156,7 +168,7 @@ export async function checkD1FreeTier(userId: string): Promise<D1UsageCheck> {
     };
   } catch (err) {
     console.error('[D1-METERING] Error checking free tier:', err);
-    return { allowed: true, withinFreeTier: true, rowsReadTotal: 0, rowsWrittenTotal: 0, storageBytes: 0 };
+    return unavailableResult();
   }
 }
 
@@ -165,10 +177,22 @@ export async function checkD1FreeTier(userId: string): Promise<D1UsageCheck> {
  * Returns false (with 402-style reason) if user has exhausted free tier and has zero balance.
  */
 export async function checkD1Balance(userId: string): Promise<{ allowed: boolean; reason?: string }> {
+  return await checkD1BalanceWithOptions(userId);
+}
+
+export async function checkD1BalanceWithOptions(
+  userId: string,
+  options?: EnforcementOptions,
+): Promise<{ allowed: boolean; reason?: string }> {
   const supabaseUrl = getEnv('SUPABASE_URL');
   const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+  const enforcement = resolveEnforcementOptions(options, 'D1 balance check');
+  const unavailableResult = () => ({
+    allowed: enforcement.mode !== 'fail_closed',
+    reason: 'service_unavailable',
+  });
 
-  if (!supabaseUrl || !supabaseKey) return { allowed: true };
+  if (!supabaseUrl || !supabaseKey) return unavailableResult();
 
   try {
     const res = await fetch(
@@ -181,7 +205,7 @@ export async function checkD1Balance(userId: string): Promise<{ allowed: boolean
       }
     );
 
-    if (!res.ok) return { allowed: true };
+    if (!res.ok) return unavailableResult();
 
     const rows = await res.json() as Array<{
       balance_light: number;
@@ -190,7 +214,7 @@ export async function checkD1Balance(userId: string): Promise<{ allowed: boolean
     }>;
 
     const user = rows?.[0];
-    if (!user) return { allowed: true };
+    if (!user) return unavailableResult();
 
     // Within free tier — always allowed
     if (user.d1_rows_read_total < D1_FREE_TIER.ROWS_READ &&
@@ -208,7 +232,7 @@ export async function checkD1Balance(userId: string): Promise<{ allowed: boolean
 
     return { allowed: true };
   } catch {
-    return { allowed: true };
+    return unavailableResult();
   }
 }
 

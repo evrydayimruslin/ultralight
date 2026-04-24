@@ -3,32 +3,29 @@
 // Uses RunPod REST API (rest.runpod.io) for endpoint management
 // and RunPod Serverless API (api.runpod.ai) for job execution.
 
+import type { GpuExecutionResult, GpuExitCode, GpuType } from "./types.ts";
+import { GPU_TYPES } from "./types.ts";
 import type {
-  GpuType,
-  GpuExecutionResult,
-  GpuExitCode,
-} from './types.ts';
-import { GPU_TYPES } from './types.ts';
-import type {
-  GPUProvider,
   BuildContainerParams,
   BuildContainerResult,
-  ExecuteParams,
   EndpointStatus,
-} from './provider.ts';
+  ExecuteParams,
+  GPUProvider,
+} from "./provider.ts";
+import { getEnv } from "../../lib/env.ts";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 /** RunPod REST API for endpoint management (CRUD). */
-const RUNPOD_REST_BASE = 'https://rest.runpod.io/v1';
+const RUNPOD_REST_BASE = "https://rest.runpod.io/v1";
 
 /** RunPod GraphQL API for template management. */
-const RUNPOD_GRAPHQL_BASE = 'https://api.runpod.io/graphql';
+const RUNPOD_GRAPHQL_BASE = "https://api.runpod.io/graphql";
 
 /** RunPod Serverless API for job execution. */
-const RUNPOD_API_BASE = 'https://api.runpod.ai/v2';
+const RUNPOD_API_BASE = "https://api.runpod.ai/v2";
 
 /** Buffer added to maxDurationMs for cold start + network overhead. */
 const COLD_START_BUFFER_MS = 30_000;
@@ -44,17 +41,95 @@ const RETRY_DELAY_MS = 2_000;
  * RunPod uses full NVIDIA display names in their API.
  */
 const GPU_TYPE_TO_RUNPOD: Record<GpuType, string> = {
-  'A40':            'NVIDIA A40',
-  'L40':            'NVIDIA L40',
-  'L40S':           'NVIDIA L40S',
-  'A100-80GB-PCIe': 'NVIDIA A100 80GB PCIe',
-  'A100-80GB-SXM':  'NVIDIA A100-SXM4-80GB',
-  'H100-PCIe':      'NVIDIA H100 80GB HBM3',
-  'H100-SXM':       'NVIDIA H100 80GB HBM3',
-  'H100-NVL':       'NVIDIA H100 NVL',
-  'H200':           'NVIDIA H200',
-  'B200':           'NVIDIA B200',
+  "A40": "NVIDIA A40",
+  "L40": "NVIDIA L40",
+  "L40S": "NVIDIA L40S",
+  "A100-80GB-PCIe": "NVIDIA A100 80GB PCIe",
+  "A100-80GB-SXM": "NVIDIA A100-SXM4-80GB",
+  "H100-PCIe": "NVIDIA H100 80GB HBM3",
+  "H100-SXM": "NVIDIA H100 80GB HBM3",
+  "H100-NVL": "NVIDIA H100 NVL",
+  "H200": "NVIDIA H200",
+  "B200": "NVIDIA B200",
 };
+
+export interface RunPodTemplateResolutionInput {
+  appId: string;
+  version: string;
+  baseImage?: string;
+  platformUrl?: string;
+  gpuSecret?: string;
+  sharedTemplateId?: string;
+  allowSharedTemplateFallback?: boolean;
+}
+
+export type RunPodTemplateResolution =
+  | {
+    mode: "per_app";
+    imageName: string;
+    codeUrl: string;
+    env: Record<string, string>;
+  }
+  | {
+    mode: "shared";
+    templateId: string;
+    warning: string;
+  };
+
+export function resolveRunPodTemplateResolution(
+  input: RunPodTemplateResolutionInput,
+): RunPodTemplateResolution {
+  const baseImage = input.baseImage || "";
+  const platformUrl = (input.platformUrl || "").replace(/\/+$/, "");
+  const gpuSecret = input.gpuSecret || "";
+  const sharedTemplateId = input.sharedTemplateId || "";
+  const allowSharedTemplateFallback =
+    input.allowSharedTemplateFallback === true;
+
+  if (baseImage && platformUrl && gpuSecret) {
+    const codeUrl =
+      `${platformUrl}/internal/gpu/code/${input.appId}/${input.version}`;
+    return {
+      mode: "per_app",
+      imageName: baseImage,
+      codeUrl,
+      env: {
+        ULTRALIGHT_CODE_URL: codeUrl,
+        ULTRALIGHT_PLATFORM_SECRET: gpuSecret,
+        ULTRALIGHT_APP_ID: input.appId,
+        ULTRALIGHT_VERSION: input.version,
+      },
+    };
+  }
+
+  const missing = [
+    !baseImage ? "RUNPOD_BASE_IMAGE" : null,
+    !platformUrl ? "PLATFORM_URL or APP_URL" : null,
+    !gpuSecret ? "GPU_INTERNAL_SECRET" : null,
+  ].filter((value): value is string => !!value);
+
+  if (!allowSharedTemplateFallback) {
+    throw new Error(
+      "GPU build requires per-app template injection. Missing: " +
+        `${missing.join(", ")}. Configure those env vars or explicitly set ` +
+        "RUNPOD_ALLOW_SHARED_TEMPLATE_FALLBACK=true to use the legacy shared template path.",
+    );
+  }
+
+  if (!sharedTemplateId) {
+    throw new Error(
+      "RUNPOD_ALLOW_SHARED_TEMPLATE_FALLBACK=true requires RUNPOD_TEMPLATE_ID to be configured.",
+    );
+  }
+
+  return {
+    mode: "shared",
+    templateId: sharedTemplateId,
+    warning:
+      `Using legacy shared template fallback because per-app template injection is unavailable. ` +
+      `Missing: ${missing.join(", ")}.`,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // RunPod API Types (response shapes from RunPod)
@@ -63,7 +138,13 @@ const GPU_TYPE_TO_RUNPOD: Record<GpuType, string> = {
 /** RunPod /runsync response. */
 interface RunPodSyncResponse {
   id: string;
-  status: 'COMPLETED' | 'FAILED' | 'TIMED_OUT' | 'CANCELLED' | 'IN_QUEUE' | 'IN_PROGRESS';
+  status:
+    | "COMPLETED"
+    | "FAILED"
+    | "TIMED_OUT"
+    | "CANCELLED"
+    | "IN_QUEUE"
+    | "IN_PROGRESS";
   /** Cold start / queue delay in milliseconds. */
   delayTime?: number;
   /** Actual execution time in milliseconds. */
@@ -121,17 +202,26 @@ interface RunPodHealthResponse {
   };
 }
 
+interface RunPodGraphQLError {
+  message: string;
+}
+
+interface RunPodGraphQLResponse<T> {
+  data?: T;
+  errors?: RunPodGraphQLError[];
+}
+
 // ---------------------------------------------------------------------------
 // RunPod Provider Implementation
 // ---------------------------------------------------------------------------
 
 export class RunPodProvider implements GPUProvider {
-  readonly name = 'runpod';
+  readonly name = "runpod";
   private apiKey: string;
 
   constructor(apiKey: string) {
     if (!apiKey) {
-      throw new Error('RunPod API key is required');
+      throw new Error("RunPod API key is required");
     }
     this.apiKey = apiKey;
   }
@@ -140,7 +230,9 @@ export class RunPodProvider implements GPUProvider {
   // buildContainer
   // -----------------------------------------------------------------------
 
-  async buildContainer(params: BuildContainerParams): Promise<BuildContainerResult> {
+  async buildContainer(
+    params: BuildContainerParams,
+  ): Promise<BuildContainerResult> {
     const { appId, version, config } = params;
     const buildLogs: string[] = [];
 
@@ -150,8 +242,10 @@ export class RunPodProvider implements GPUProvider {
     }
 
     buildLogs.push(`[build] Starting container build for ${appId}@${version}`);
-    buildLogs.push(`[build] GPU type: ${config.gpu_type} → RunPod: ${runpodGpuType}`);
-    buildLogs.push(`[build] Python: ${config.python || '3.11'}`);
+    buildLogs.push(
+      `[build] GPU type: ${config.gpu_type} → RunPod: ${runpodGpuType}`,
+    );
+    buildLogs.push(`[build] Python: ${config.python || "3.11"}`);
 
     // Phase 2 will handle actual Docker image building and template creation.
     // For Phase 1, we create the endpoint with a placeholder template.
@@ -170,12 +264,13 @@ export class RunPodProvider implements GPUProvider {
       name: `ul-${appId.slice(0, 8)}-${version}`,
       templateId,
       gpuTypeIds: [runpodGpuType],
-      scalerType: 'QUEUE_DELAY',
+      scalerType: "QUEUE_DELAY",
       scalerValue: 4,
       workersMin: 0,
       workersMax: 5, // Default concurrency, configurable later
       idleTimeout: 5,
-      executionTimeoutMs: (config.max_duration_ms || 60_000) + COLD_START_BUFFER_MS,
+      executionTimeoutMs: (config.max_duration_ms || 60_000) +
+        COLD_START_BUFFER_MS,
     });
 
     buildLogs.push(`[build] RunPod endpoint created: ${endpoint.id}`);
@@ -209,7 +304,7 @@ export class RunPodProvider implements GPUProvider {
     };
 
     const response = await this.fetchWithRetry<RunPodSyncResponse>(url, {
-      method: 'POST',
+      method: "POST",
       body: JSON.stringify(body),
       timeoutMs,
     });
@@ -226,18 +321,17 @@ export class RunPodProvider implements GPUProvider {
     try {
       const health = await this.fetchRunPod<RunPodHealthResponse>(
         `${RUNPOD_API_BASE}/${endpointId}/health`,
-        { method: 'GET' },
+        { method: "GET" },
       );
 
-      const totalWorkers =
-        (health.workers?.ready || 0) +
+      const totalWorkers = (health.workers?.ready || 0) +
         (health.workers?.running || 0) +
         (health.workers?.idle || 0);
 
       const queueDepth = health.jobs?.inQueue || 0;
 
       return {
-        status: 'active',
+        status: "active",
         workers: totalWorkers,
         queueDepth,
       };
@@ -246,25 +340,27 @@ export class RunPodProvider implements GPUProvider {
       try {
         const endpoint = await this.fetchRunPod<RunPodEndpoint>(
           `${RUNPOD_REST_BASE}/endpoints/${endpointId}`,
-          { method: 'GET' },
+          { method: "GET" },
         );
 
         if (!endpoint || !endpoint.id) {
-          return { status: 'not_found', workers: 0, queueDepth: 0 };
+          return { status: "not_found", workers: 0, queueDepth: 0 };
         }
 
         return {
-          status: 'active',
+          status: "active",
           workers: endpoint.workers?.length || 0,
           queueDepth: 0,
         };
       } catch (innerErr) {
         // Both failed — endpoint probably doesn't exist
-        const errMsg = innerErr instanceof Error ? innerErr.message : String(innerErr);
-        if (errMsg.includes('404') || errMsg.includes('Not Found')) {
-          return { status: 'not_found', workers: 0, queueDepth: 0 };
+        const errMsg = innerErr instanceof Error
+          ? innerErr.message
+          : String(innerErr);
+        if (errMsg.includes("404") || errMsg.includes("Not Found")) {
+          return { status: "not_found", workers: 0, queueDepth: 0 };
         }
-        return { status: 'error', workers: 0, queueDepth: 0 };
+        return { status: "error", workers: 0, queueDepth: 0 };
       }
     }
   }
@@ -276,7 +372,7 @@ export class RunPodProvider implements GPUProvider {
   async deleteEndpoint(endpointId: string): Promise<void> {
     await this.fetchRunPod<void>(
       `${RUNPOD_REST_BASE}/endpoints/${endpointId}`,
-      { method: 'DELETE' },
+      { method: "DELETE" },
     );
   }
 
@@ -299,35 +395,40 @@ export class RunPodProvider implements GPUProvider {
    * template per app+version with environment variables that tell the harness
    * where to download the developer's code from R2.
    *
-   * Falls back to RUNPOD_TEMPLATE_ID (shared template) if per-app creation fails.
+   * Shared-template fallback is disabled by default because the harness must be
+   * given an app-specific code URL to avoid running baked-in placeholder code.
    */
   private async getOrCreateTemplate(
     params: BuildContainerParams,
     buildLogs: string[],
   ): Promise<string> {
-    const baseImage = globalThis.Deno?.env?.get('RUNPOD_BASE_IMAGE') || '';
-    const platformUrl = globalThis.Deno?.env?.get('PLATFORM_URL') || globalThis.Deno?.env?.get('APP_URL') || '';
-    const gpuSecret = globalThis.Deno?.env?.get('GPU_INTERNAL_SECRET') || '';
+    const allowSharedTemplateFallback =
+      getEnv("RUNPOD_ALLOW_SHARED_TEMPLATE_FALLBACK") === "true";
+    const templateResolution = resolveRunPodTemplateResolution({
+      appId: params.appId,
+      version: params.version,
+      baseImage: getEnv("RUNPOD_BASE_IMAGE"),
+      platformUrl: getEnv("PLATFORM_URL") || getEnv("APP_URL"),
+      gpuSecret: getEnv("GPU_INTERNAL_SECRET"),
+      sharedTemplateId: getEnv("RUNPOD_TEMPLATE_ID"),
+      allowSharedTemplateFallback,
+    });
 
-    // If we have the base image configured, create a per-app template
-    if (baseImage && platformUrl) {
+    if (templateResolution.mode === "per_app") {
       try {
-        const codeUrl = `${platformUrl}/internal/gpu/code/${params.appId}/${params.version}`;
-        buildLogs.push(`[build] Creating per-app template for ${params.appId}@${params.version}`);
-        buildLogs.push(`[build] Base image: ${baseImage}`);
-        buildLogs.push(`[build] Code URL: ${codeUrl}`);
+        buildLogs.push(
+          `[build] Creating per-app template for ${params.appId}@${params.version}`,
+        );
+        buildLogs.push(`[build] Base image: ${templateResolution.imageName}`);
+        buildLogs.push(`[build] Code URL: ${templateResolution.codeUrl}`);
 
-        const templateName = `ul-${params.appId.slice(0, 8)}-${params.version}`.slice(0, 191);
+        const templateName = `ul-${params.appId.slice(0, 8)}-${params.version}`
+          .slice(0, 191);
         const template = await this.createTemplate({
           name: templateName,
-          imageName: baseImage,
+          imageName: templateResolution.imageName,
           isServerless: true,
-          env: {
-            ULTRALIGHT_CODE_URL: codeUrl,
-            ULTRALIGHT_PLATFORM_SECRET: gpuSecret,
-            ULTRALIGHT_APP_ID: params.appId,
-            ULTRALIGHT_VERSION: params.version,
-          },
+          env: templateResolution.env,
           containerDiskInGb: 20,
         });
 
@@ -335,23 +436,39 @@ export class RunPodProvider implements GPUProvider {
         return template.id;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        buildLogs.push(`[build] WARNING: Per-app template creation failed: ${msg}`);
-        buildLogs.push('[build] Falling back to shared template...');
-        // Fall through to shared template
+        if (!allowSharedTemplateFallback) {
+          buildLogs.push(
+            `[build] ERROR: Per-app template creation failed: ${msg}`,
+          );
+          throw new Error(
+            "Per-app GPU template creation failed and shared fallback is disabled. " +
+              `Original error: ${msg}`,
+          );
+        }
+        buildLogs.push(
+          `[build] WARNING: Per-app template creation failed: ${msg}`,
+        );
+        buildLogs.push(
+          "[build] Falling back to legacy shared template because RUNPOD_ALLOW_SHARED_TEMPLATE_FALLBACK=true",
+        );
+        const sharedTemplateId = getEnv("RUNPOD_TEMPLATE_ID");
+        if (!sharedTemplateId) {
+          throw new Error(
+            "RUNPOD_ALLOW_SHARED_TEMPLATE_FALLBACK=true requires RUNPOD_TEMPLATE_ID to be configured.",
+          );
+        }
+        buildLogs.push(
+          `[build] Using shared template (fallback): ${sharedTemplateId}`,
+        );
+        return sharedTemplateId;
       }
     }
 
-    // Fallback: use shared RUNPOD_TEMPLATE_ID (Phase 1 behavior)
-    const templateId = globalThis.Deno?.env?.get('RUNPOD_TEMPLATE_ID') || '';
-    if (!templateId) {
-      buildLogs.push('[build] ERROR: No RUNPOD_BASE_IMAGE or RUNPOD_TEMPLATE_ID configured.');
-      throw new Error(
-        'GPU build requires either RUNPOD_BASE_IMAGE (for per-app templates) ' +
-        'or RUNPOD_TEMPLATE_ID (shared template fallback). Neither is set.',
-      );
-    }
-    buildLogs.push(`[build] Using shared template (fallback): ${templateId}`);
-    return templateId;
+    buildLogs.push(`[build] WARNING: ${templateResolution.warning}`);
+    buildLogs.push(
+      `[build] Using shared template (fallback): ${templateResolution.templateId}`,
+    );
+    return templateResolution.templateId;
   }
 
   /**
@@ -370,7 +487,7 @@ export class RunPodProvider implements GPUProvider {
   }): Promise<{ id: string; name: string }> {
     const envArray = Object.entries(config.env).map(([key, value]) =>
       `{key: "${key}", value: "${value.replace(/"/g, '\\"')}"}`
-    ).join(', ');
+    ).join(", ");
 
     const mutation = `mutation {
       saveTemplate(input: {
@@ -390,7 +507,12 @@ export class RunPodProvider implements GPUProvider {
     }`;
 
     const response = await this.fetchGraphQL<{
-      saveTemplate: { id: string; name: string; imageName: string; isServerless: boolean };
+      saveTemplate: {
+        id: string;
+        name: string;
+        imageName: string;
+        isServerless: boolean;
+      };
     }>(mutation);
 
     return response.saveTemplate;
@@ -425,7 +547,7 @@ export class RunPodProvider implements GPUProvider {
     return this.fetchRunPod<RunPodEndpoint>(
       `${RUNPOD_REST_BASE}/endpoints`,
       {
-        method: 'POST',
+        method: "POST",
         body: JSON.stringify(config),
       },
     );
@@ -444,7 +566,10 @@ export class RunPodProvider implements GPUProvider {
    */
   private mapRunPodResponse(response: RunPodSyncResponse): GpuExecutionResult {
     // If harness output is present and structured, use it directly
-    if (response.output && typeof response.output === 'object' && 'exit_code' in response.output) {
+    if (
+      response.output && typeof response.output === "object" &&
+      "exit_code" in response.output
+    ) {
       const harness = response.output as RunPodHarnessOutput;
       return {
         success: harness.success,
@@ -461,31 +586,33 @@ export class RunPodProvider implements GPUProvider {
 
     // No harness output — map RunPod status to our exit codes
     switch (response.status) {
-      case 'COMPLETED':
+      case "COMPLETED":
         return {
           success: true,
-          exit_code: 'success',
+          exit_code: "success",
           result: response.output,
           duration_ms: response.executionTime || 0,
           peak_vram_gb: 0,
           logs: [],
         };
 
-      case 'TIMED_OUT':
+      case "TIMED_OUT":
         return {
           success: false,
-          exit_code: 'timeout',
+          exit_code: "timeout",
           result: null,
           duration_ms: response.executionTime || 0,
           peak_vram_gb: 0,
           logs: [],
           error: {
-            type: 'TimeoutError',
-            message: `Execution timed out after ${response.executionTime || 0}ms`,
+            type: "TimeoutError",
+            message: `Execution timed out after ${
+              response.executionTime || 0
+            }ms`,
           },
         };
 
-      case 'FAILED':
+      case "FAILED":
         return {
           success: false,
           exit_code: this.classifyRunPodError(response.error),
@@ -494,22 +621,22 @@ export class RunPodProvider implements GPUProvider {
           peak_vram_gb: 0,
           logs: [],
           error: {
-            type: 'RunPodError',
-            message: response.error || 'Unknown RunPod execution error',
+            type: "RunPodError",
+            message: response.error || "Unknown RunPod execution error",
           },
         };
 
-      case 'CANCELLED':
+      case "CANCELLED":
         return {
           success: false,
-          exit_code: 'infra_error',
+          exit_code: "infra_error",
           result: null,
           duration_ms: 0,
           peak_vram_gb: 0,
           logs: [],
           error: {
-            type: 'CancelledError',
-            message: 'Job was cancelled',
+            type: "CancelledError",
+            message: "Job was cancelled",
           },
         };
 
@@ -518,13 +645,13 @@ export class RunPodProvider implements GPUProvider {
         // but handle defensively
         return {
           success: false,
-          exit_code: 'infra_error',
+          exit_code: "infra_error",
           result: null,
           duration_ms: 0,
           peak_vram_gb: 0,
           logs: [],
           error: {
-            type: 'UnexpectedStatus',
+            type: "UnexpectedStatus",
             message: `Unexpected RunPod status: ${response.status}`,
           },
         };
@@ -536,33 +663,34 @@ export class RunPodProvider implements GPUProvider {
    * OOM errors from RunPod/CUDA are distinguishable by error message patterns.
    */
   private classifyRunPodError(error?: string): GpuExitCode {
-    if (!error) return 'exception';
+    if (!error) return "exception";
 
     const lower = error.toLowerCase();
     // OOM: match CUDA memory errors specifically, not all CUDA errors
     if (
-      lower.includes('out of memory') ||
-      lower.includes('oom') ||
-      (lower.includes('cuda') && (lower.includes('memory') || lower.includes('alloc')))
+      lower.includes("out of memory") ||
+      lower.includes("oom") ||
+      (lower.includes("cuda") &&
+        (lower.includes("memory") || lower.includes("alloc")))
     ) {
-      return 'oom';
+      return "oom";
     }
-    if (lower.includes('timeout') || lower.includes('timed out')) {
-      return 'timeout';
+    if (lower.includes("timeout") || lower.includes("timed out")) {
+      return "timeout";
     }
     // CUDA non-memory errors are infrastructure issues (driver, init, etc.)
     if (
-      lower.includes('cuda error') ||
-      lower.includes('cuda driver') ||
-      lower.includes('cuda init') ||
-      lower.includes('container') ||
-      lower.includes('worker') ||
-      lower.includes('network') ||
-      lower.includes('failed to start')
+      lower.includes("cuda error") ||
+      lower.includes("cuda driver") ||
+      lower.includes("cuda init") ||
+      lower.includes("container") ||
+      lower.includes("worker") ||
+      lower.includes("network") ||
+      lower.includes("failed to start")
     ) {
-      return 'infra_error';
+      return "infra_error";
     }
-    return 'exception';
+    return "exception";
   }
 
   // -----------------------------------------------------------------------
@@ -580,20 +708,25 @@ export class RunPodProvider implements GPUProvider {
 
     try {
       const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query }),
         signal: controller.signal,
       });
 
-      const json = await response.json();
+      const json = await response.json() as RunPodGraphQLResponse<T>;
 
       if (json.errors && json.errors.length > 0) {
-        const messages = json.errors.map((e: { message: string }) => e.message).join('; ');
+        const messages = json.errors.map((e: { message: string }) => e.message)
+          .join("; ");
         throw new Error(`RunPod GraphQL error: ${messages}`);
       }
 
-      return json.data as T;
+      if (json.data === undefined) {
+        throw new Error("RunPod GraphQL response missing data");
+      }
+
+      return json.data;
     } finally {
       clearTimeout(timer);
     }
@@ -619,8 +752,8 @@ export class RunPodProvider implements GPUProvider {
       const response = await fetch(url, {
         method: options.method,
         headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
+          "Authorization": `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json",
         },
         body: options.body,
         signal: controller.signal,
@@ -632,16 +765,19 @@ export class RunPodProvider implements GPUProvider {
 
         try {
           const errorJson = JSON.parse(errorText);
-          errorMessage = errorJson.error?.message || errorJson.message || errorText;
+          errorMessage = errorJson.error?.message || errorJson.message ||
+            errorText;
         } catch {
           errorMessage = errorText;
         }
 
-        throw new Error(`RunPod API error (${response.status}): ${errorMessage}`);
+        throw new Error(
+          `RunPod API error (${response.status}): ${errorMessage}`,
+        );
       }
 
       // DELETE returns no body
-      if (options.method === 'DELETE') {
+      if (options.method === "DELETE") {
         return undefined as unknown as T;
       }
 
@@ -681,6 +817,6 @@ export class RunPodProvider implements GPUProvider {
       }
     }
 
-    throw lastError || new Error('RunPod request failed after retries');
+    throw lastError || new Error("RunPod request failed after retries");
   }
 }

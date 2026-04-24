@@ -11,6 +11,10 @@ export const SYSTEM_AGENT_TYPES = [
 
 export type SystemAgentType = typeof SYSTEM_AGENT_TYPES[number];
 
+export function isSystemAgentType(value: string | null | undefined): value is SystemAgentType {
+  return SYSTEM_AGENT_TYPES.includes(value as SystemAgentType);
+}
+
 export interface StarterPrompt {
   label: string;          // short display text for the chip
   prompt: string;         // full message sent on click
@@ -70,7 +74,7 @@ export const SYSTEM_AGENTS: SystemAgentConfig[] = [
     name: 'Tool Dealer',
     role: 'marketer',
     icon: 'Store',
-    persona: 'Tool Dealer, a marketplace specialist who discovers, evaluates, publishes, and monetizes tools. IMPORTANT: When marketplace search returns zero results or only weak matches (nothing that clearly fits the user need), you MUST report a capability gap via ul.shortcomings with type "capability_gap", including the user\'s original request in the context. This feeds the platform\'s demand detection pipeline. Always try to help the user regardless — suggest alternatives, partial matches, or offer to escalate to Tool Maker if the gap is significant.',
+    persona: 'Tool Dealer, a marketplace specialist who discovers, evaluates, publishes, and monetizes tools. IMPORTANT: When marketplace search returns zero results or only weak matches (nothing that clearly fits the user need), you MUST report a capability gap via ul.rate({ shortcoming: { type: "capability_gap", summary, context } }) and include the user\'s original request in that context. This feeds the platform\'s demand detection pipeline. Always try to help the user regardless — suggest alternatives, partial matches, or offer to escalate to Tool Maker if the gap is significant.',
     skillsPath: 'system-agents/tool_marketer/skills.md',
     description: 'Discover, publish, price, and manage marketplace tools',
     welcome: {

@@ -1,89 +1,54 @@
 // WidgetWindow — standalone window for a widget app, opened via multiWindow.
-// Reads WidgetAppSource from query params, token/apiBase from shared localStorage.
+// Reads WidgetAppSource from query params, shared auth state from secure storage,
+// and the API base from the build-pinned desktop environment.
 // Includes a refresh button to re-fetch the widget HTML from the MCP.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { getApiBase, getToken } from '../lib/storage';
-import { executeAppMcpTool } from '../lib/api';
 import { openWidgetWindow } from '../lib/multiWindow';
-import type { WidgetAppSource } from '../hooks/useWidgetInbox';
+import {
+  buildWidgetNavigationTarget,
+  buildWidgetSrcDoc,
+  loadWidgetHtml,
+  parseWidgetContextFromSearch,
+  parseWidgetSourceFromSearch,
+} from '../lib/widgetRuntime';
+import { createDesktopLogger } from '../lib/logging';
+import DesktopAsyncState from './DesktopAsyncState';
 
-/** Parse WidgetAppSource from current URL query params */
-function parseSourceFromParams(): WidgetAppSource {
-  const p = new URLSearchParams(window.location.search);
-  return {
-    appUuid: p.get('appUuid') || '',
-    appSlug: p.get('appSlug') || '',
-    appName: p.get('appName') || '',
-    widgetName: p.get('widgetName') || '',
-    uiFunction: p.get('uiFunction') || '',
-    dataFunction: p.get('dataFunction') || '',
-  };
-}
-
-/** Parse context from ctx_* query params */
-function parseContextFromParams(): Record<string, string> {
-  const p = new URLSearchParams(window.location.search);
-  const ctx: Record<string, string> = {};
-  p.forEach((v, k) => { if (k.startsWith('ctx_')) ctx[k.slice(4)] = v; });
-  return ctx;
-}
+const widgetWindowLogger = createDesktopLogger('WidgetWindow');
 
 export default function WidgetWindow() {
-  const source = useRef(parseSourceFromParams()).current;
+  const source = useRef(parseWidgetSourceFromSearch(window.location.search)).current;
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [html, setHtml] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [iframeError, setIframeError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const widgetContext = useRef(parseWidgetContextFromSearch(window.location.search)).current;
 
   const fetchHtml = useCallback(async (bustCache = false) => {
     setLoading(true);
     setError(null);
+    setIframeError(false);
 
-    const cacheKey = `widget_app:${source.appUuid}:${source.widgetName}`;
-
-    // Try localStorage cache first (unless busting)
-    if (!bustCache) {
-      try {
-        const cached = localStorage.getItem(cacheKey);
-        if (cached) {
-          const { html: cachedHtml } = JSON.parse(cached);
-          if (cachedHtml) {
-            setHtml(cachedHtml);
-            setLoading(false);
-            return;
-          }
-        }
-      } catch { /* ignore corrupt cache */ }
-    }
-
-    // Fetch fresh from MCP
     try {
-      const prefixed = `${source.appSlug}_${source.uiFunction}`;
-      const result = await executeAppMcpTool(source.appUuid, prefixed, {});
-      if (result.isError) {
+      const result = await loadWidgetHtml(source, { bustCache });
+      if (!result) {
         setError('Failed to load widget');
-        setLoading(false);
-        return;
-      }
-
-      const text = result.content?.[0]?.text || '';
-      const parsed = JSON.parse(text);
-      const appHtml = parsed.app_html || null;
-
-      if (appHtml) {
-        localStorage.setItem(cacheKey, JSON.stringify({
-          html: appHtml,
-          version: parsed.version || '1',
-          cachedAt: Date.now(),
-        }));
-        setHtml(appHtml);
+      } else if (result.html) {
+        setHtml(result.html);
       } else {
         setError('Widget returned no HTML');
       }
     } catch (e) {
       setError('Failed to fetch widget');
-      console.error('[WidgetWindow] fetch error:', e);
+      widgetWindowLogger.error('Failed to fetch widget HTML', {
+        error: e,
+        widgetName: source.widgetName,
+        appUuid: source.appUuid,
+      });
     }
     setLoading(false);
   }, [source]);
@@ -97,61 +62,22 @@ export default function WidgetWindow() {
     const apiBase = getApiBase();
     const token = getToken();
 
-    const bridgeSdk = `<script>
-(function() {
-  var _apiBase = ${JSON.stringify(apiBase)};
-  var _token = ${JSON.stringify(token)};
-  var _appUuid = ${JSON.stringify(source.appUuid)};
-  var _appSlug = ${JSON.stringify(source.appSlug)};
-
-  window.ulAction = function(functionName, args) {
-    var isPlatform = functionName.indexOf('ultralight.') === 0 || functionName.indexOf('ul.') === 0;
-    var toolName = isPlatform ? functionName : (_appSlug + '_' + functionName);
-    var endpoint = isPlatform ? (_apiBase + '/mcp/platform') : (_apiBase + '/mcp/' + _appUuid);
-    return fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + _token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: crypto.randomUUID(),
-        method: 'tools/call',
-        params: { name: toolName, arguments: args || {} }
-      })
-    })
-    .then(function(res) { return res.json(); })
-    .then(function(data) {
-      if (data.error) throw new Error(data.error.message || 'MCP error');
-      var text = data.result && data.result.content && data.result.content[0] && data.result.content[0].text;
-      if (!text) return null;
-      try { return JSON.parse(text); } catch(e) { return text; }
+    return buildWidgetSrcDoc({
+      appHtml: html,
+      appUuid: source.appUuid,
+      appSlug: source.appSlug,
+      widgetName: source.widgetName,
+      apiBase,
+      token,
+      context: widgetContext,
     });
-  };
-
-  // Open another widget in a new window
-  window.ulOpenWidget = function(widgetName, context) {
-    parent.postMessage({ type: 'ul-open-widget', widgetName: widgetName, context: context || {} }, '*');
-  };
-
-  // Inject context from parent (for widget-to-widget navigation)
-  window.ulWidgetContext = ${JSON.stringify(parseContextFromParams())};
-})();
-</script>`;
-
-    if (html.includes('<head>')) return html.replace('<head>', '<head>' + bridgeSdk);
-    if (html.includes('<html>')) return html.replace('<html>', '<html><head>' + bridgeSdk + '</head>');
-    return `<!DOCTYPE html><html><head><meta charset="utf-8">${bridgeSdk}</head><body>${html}</body></html>`;
   })();
 
   // Listen for widget-to-widget navigation requests from iframe
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       if (e.data?.type === 'ul-open-widget' && e.data.widgetName) {
-        const target = {
-          appUuid: source.appUuid, appSlug: source.appSlug, appName: source.appName,
-          widgetName: e.data.widgetName,
-          uiFunction: `widget_${e.data.widgetName}_ui`,
-          dataFunction: `widget_${e.data.widgetName}_data`,
-        };
+        const target = buildWidgetNavigationTarget(source, e.data.widgetName);
         openWidgetWindow(target, e.data.context);
       }
     };
@@ -182,24 +108,62 @@ export default function WidgetWindow() {
 
       {/* Content */}
       <div className="flex-1 min-h-0">
-        {error && (
-          <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-500">
-            <span className="text-sm">{error}</span>
-            <button
-              onClick={() => fetchHtml(true)}
-              className="text-sm text-blue-600 hover:text-blue-800 underline"
-            >
-              Try again
-            </button>
-          </div>
+        {loading && !error && !preparedHtml && (
+          <DesktopAsyncState
+            kind="loading"
+            title={`Loading ${source.appName || 'widget'}`}
+            message="Opening the latest widget view from your connected app."
+          />
         )}
-        {preparedHtml && (
+        {!loading && error && (
+          <DesktopAsyncState
+            kind="error"
+            title="Widget unavailable"
+            message={error}
+            actionLabel="Retry"
+            onAction={() => {
+              void fetchHtml(true);
+            }}
+          />
+        )}
+        {!loading && !error && !preparedHtml && (
+          <DesktopAsyncState
+            kind="empty"
+            title="No widget UI returned"
+            message="This widget is reachable, but it did not return a visual surface yet."
+            actionLabel="Refresh"
+            onAction={() => {
+              void fetchHtml(true);
+            }}
+          />
+        )}
+        {!loading && !error && iframeError && (
+          <DesktopAsyncState
+            kind="error"
+            title="Widget view unavailable"
+            message="The widget shell could not finish loading."
+            actionLabel="Retry"
+            onAction={() => {
+              setIframeError(false);
+              setReloadKey((value) => value + 1);
+            }}
+          />
+        )}
+        {preparedHtml && !iframeError && (
           <iframe
+            key={reloadKey}
             ref={iframeRef}
             srcDoc={preparedHtml}
             sandbox="allow-scripts allow-same-origin"
             className="w-full h-full border-0"
             title={`Widget: ${source.widgetName}`}
+            onError={() => {
+              setIframeError(true);
+              widgetWindowLogger.error('Widget iframe error', {
+                widgetName: source.widgetName,
+                appUuid: source.appUuid,
+              });
+            }}
           />
         )}
       </div>

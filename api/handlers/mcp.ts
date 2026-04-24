@@ -2,48 +2,97 @@
 // Implements JSON-RPC 2.0 protocol for tool discovery and execution
 // Spec: https://modelcontextprotocol.io/specification/draft/server/tools
 
-import { json, error } from './app.ts';
-import { authenticate } from './auth.ts';
-import { isApiToken } from '../services/tokens.ts';
-import { createAppsService } from '../services/apps.ts';
-import { createAppDataService, createWorkerAppDataService } from '../services/appdata.ts';
-import { createMeteredAppDataService } from '../services/appdata-metered.ts';
-import { checkRateLimit } from '../services/ratelimit.ts';
-import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
-import { checkProvisionalDailyLimit, updateLastActive } from '../services/provisional.ts';
-import { getPermissionsForUser } from './user.ts';
-import { type Tier, type AppPricingConfig, getCallPriceLight, getFreeCalls, getFreeCallsScope, formatLight, LIGHT_PER_DOLLAR_DESKTOP } from '../../shared/types/index.ts';
-import { executeInSandbox, type UserContext } from '../runtime/sandbox.ts';
-import { createR2Service } from '../services/storage.ts';
-import { createUserService } from '../services/user.ts';
-import { createAIService } from '../services/ai.ts';
-import { decryptEnvVars, decryptEnvVar } from '../services/envvars.ts';
-import { getCodeCache } from '../services/codecache.ts';
-import { getPermissionCache } from '../services/permission-cache.ts';
-import { createMemoryService, type MemoryService as MemoryServiceImpl } from '../services/memory.ts';
-import { executeGpuFunction, type GpuExecuteResult } from '../services/gpu/executor.ts';
-import { acquireGpuSlot } from '../services/gpu/concurrency.ts';
-import { settleGpuExecution } from '../services/gpu/billing.ts';
-import { createD1DataService } from '../services/d1-data.ts';
-import { getD1DatabaseId } from '../services/d1-provisioning.ts';
+import { error, json } from "./response.ts";
+import { createAppsService } from "../services/apps.ts";
+import {
+  createAppDataService,
+  createWorkerAppDataService,
+} from "../services/appdata.ts";
+import { createMeteredAppDataService } from "../services/appdata-metered.ts";
+import { checkRateLimit } from "../services/ratelimit.ts";
+import { checkAndIncrementWeeklyCalls } from "../services/weekly-calls.ts";
+import {
+  checkProvisionalDailyLimit,
+  updateLastActive,
+} from "../services/provisional.ts";
+import { getPermissionsForUser } from "./user.ts";
+import type { Tier } from "../../shared/contracts/runtime.ts";
+import { type UserContext } from "../runtime/sandbox.ts";
+import { createR2Service } from "../services/storage.ts";
+import { createAIService } from "../services/ai.ts";
+import { getCodeCache } from "../services/codecache.ts";
+import { getPermissionCache } from "../services/permission-cache.ts";
+import {
+  createMemoryService,
+  type MemoryService as MemoryServiceImpl,
+} from "../services/memory.ts";
+import {
+  findPermissionRowForFunction,
+  getMcpFunctionNameAliases,
+  permissionSetAllowsFunction,
+  toRawMcpFunctionName,
+} from "../services/mcp-function-names.ts";
+import { executeGpuFunction } from "../services/gpu/executor.ts";
+import { acquireGpuSlot } from "../services/gpu/concurrency.ts";
+import {
+  buildGpuNotReadyMessage,
+  buildGpuStatusDiagnostics,
+} from "../services/gpu/status.ts";
+import {
+  logExecutionResult,
+  settleAndLogGpuExecution,
+  settleCallerAppCharge,
+} from "../services/execution-settlement.ts";
+import {
+  AppContractMigrationRequiredError,
+  logAppContractResolution,
+  requireManifestFunctionContracts,
+  resolveAppFunctionContracts,
+} from "../services/app-contracts.ts";
+import {
+  buildMissingAppSecretsErrorDetails,
+  buildMissingAppSecretsMessage,
+  createAppD1Resources,
+  fetchAppEntryCode,
+  resolveAppRuntimeEnvVars,
+  resolveAppSupabaseConfig,
+  resolveManifestPermissions,
+  SupabaseConfigMigrationRequiredError,
+} from "../services/app-runtime-resources.ts";
+import {
+  callerHasAppAccess,
+  callerHasFunctionAccess,
+  callerHasRequiredScope,
+  type RequestCallerContext,
+  resolveRequestCallerContext,
+} from "../services/request-caller-context.ts";
 import type {
-  MCPTool,
+  MCPContent,
   MCPJsonSchema,
-  MCPToolsListResponse,
+  MCPResourceContent,
+  MCPResourceDescriptor,
+  MCPServerInfo,
+  MCPTool,
   MCPToolCallRequest,
   MCPToolCallResponse,
-  MCPContent,
-  MCPServerInfo,
-  MCPResourceDescriptor,
-  MCPResourceContent,
-  ParsedSkills,
-  SkillFunction,
-  BYOKProvider,
-  AppManifest,
-  App,
-} from '../../shared/types/index.ts';
-import { manifestToMCPTools, normalizeManifestParameters } from '../../shared/types/index.ts';
-import { getEnv } from '../lib/env.ts';
+  MCPToolsListResponse,
+} from "../../shared/contracts/mcp.ts";
+import type { AppManifest } from "../../shared/contracts/manifest.ts";
+import { manifestToMCPTools } from "../../shared/contracts/manifest.ts";
+import type {
+  AIContentPart,
+  AIRequest,
+  AIResponse,
+} from "../../shared/contracts/ai.ts";
+import type { WidgetAppResponse } from "../../shared/contracts/widget.ts";
+import type {
+  JsonRpcId,
+  JsonRpcRequest,
+  JsonRpcResponse,
+} from "../../shared/contracts/jsonrpc.ts";
+import { normalizeJsonRpcResponseId } from "../../shared/contracts/jsonrpc.ts";
+import type { App, BYOKProvider } from "../../shared/types/index.ts";
+import { getEnv } from "../lib/env.ts";
 
 // ============================================
 // MEMORY SERVICE (lazy singleton)
@@ -55,7 +104,7 @@ function getMemoryService(): MemoryServiceImpl | null {
     try {
       _memoryService = createMemoryService();
     } catch (err) {
-      console.error('Failed to create MemoryService:', err);
+      console.error("Failed to create MemoryService:", err);
     }
   }
   return _memoryService;
@@ -73,26 +122,28 @@ async function indexAppKV(
   appId: string,
   appOwnerId: string,
   key: string,
-  value: unknown
+  value: unknown,
 ): Promise<void> {
-  const SUPABASE_URL = getEnv('SUPABASE_URL');
-  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+  const SUPABASE_URL = getEnv("SUPABASE_URL");
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv("SUPABASE_SERVICE_ROLE_KEY");
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
 
-  const embeddingText = typeof value === 'string' ? value : JSON.stringify(value);
+  const embeddingText = typeof value === "string"
+    ? value
+    : JSON.stringify(value);
   // Skip very large values to prevent content table bloat
   if (embeddingText.length > 50_000) return;
 
   const slug = `${appId}/${key}`;
   const row = {
     owner_id: appOwnerId,
-    type: 'app_kv',
+    type: "app_kv",
     slug: slug,
     title: key,
     description: `App data: ${key}`,
-    visibility: 'private',
+    visibility: "private",
     size: new TextEncoder().encode(embeddingText).length,
-    embedding_text: embeddingText.split(/\s+/).slice(0, 6000).join(' '),
+    embedding_text: embeddingText.split(/\s+/).slice(0, 6000).join(" "),
     embedding: null,
     updated_at: new Date().toISOString(),
   };
@@ -100,18 +151,18 @@ async function indexAppKV(
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/content?on_conflict=owner_id,type,slug`,
     {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates',
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates",
       },
       body: JSON.stringify(row),
-    }
+    },
   );
   if (!res.ok) {
-    console.error('[KV-INDEX] Content upsert failed:', await res.text());
+    console.error("[KV-INDEX] Content upsert failed:", await res.text());
   }
 }
 
@@ -122,25 +173,27 @@ async function indexUserKV(
   userId: string,
   scope: string,
   key: string,
-  value: unknown
+  value: unknown,
 ): Promise<void> {
-  const SUPABASE_URL = getEnv('SUPABASE_URL');
-  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+  const SUPABASE_URL = getEnv("SUPABASE_URL");
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv("SUPABASE_SERVICE_ROLE_KEY");
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
 
-  const embeddingText = typeof value === 'string' ? value : JSON.stringify(value);
+  const embeddingText = typeof value === "string"
+    ? value
+    : JSON.stringify(value);
   if (embeddingText.length > 50_000) return;
 
   const slug = `${scope}/${key}`;
   const row = {
     owner_id: userId,
-    type: 'user_kv',
+    type: "user_kv",
     slug: slug,
     title: key,
     description: `User data: ${scope}/${key}`,
-    visibility: 'private',
+    visibility: "private",
     size: new TextEncoder().encode(embeddingText).length,
-    embedding_text: embeddingText.split(/\s+/).slice(0, 6000).join(' '),
+    embedding_text: embeddingText.split(/\s+/).slice(0, 6000).join(" "),
     embedding: null,
     updated_at: new Date().toISOString(),
   };
@@ -148,18 +201,21 @@ async function indexUserKV(
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/content?on_conflict=owner_id,type,slug`,
     {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates',
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates",
       },
       body: JSON.stringify(row),
-    }
+    },
   );
   if (!res.ok) {
-    console.error('[KV-INDEX] User KV content upsert failed:', await res.text());
+    console.error(
+      "[KV-INDEX] User KV content upsert failed:",
+      await res.text(),
+    );
   }
 }
 
@@ -169,51 +225,101 @@ async function indexUserKV(
 async function removeKVIndex(
   ownerId: string,
   type: string,
-  slug: string
+  slug: string,
 ): Promise<void> {
-  const SUPABASE_URL = getEnv('SUPABASE_URL');
-  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+  const SUPABASE_URL = getEnv("SUPABASE_URL");
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv("SUPABASE_SERVICE_ROLE_KEY");
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
 
   await fetch(
-    `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${ownerId}&type=eq.${type}&slug=eq.${encodeURIComponent(slug)}`,
+    `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${ownerId}&type=eq.${type}&slug=eq.${
+      encodeURIComponent(slug)
+    }`,
     {
-      method: 'DELETE',
+      method: "DELETE",
       headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        'Prefer': 'return=minimal',
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        "Prefer": "return=minimal",
       },
-    }
+    },
   );
 }
 
-// ============================================
-// TYPES
-// ============================================
-
-interface JsonRpcRequest {
-  jsonrpc: '2.0';
-  id?: string | number;  // Optional for JSON-RPC notifications (e.g. notifications/initialized)
-  method: string;
-  params?: Record<string, unknown>;
+function toTier(value: string): Tier {
+  return value === "free" ||
+      value === "fun" ||
+      value === "pro" ||
+      value === "scale" ||
+      value === "enterprise"
+    ? value
+    : "free";
 }
 
-interface JsonRpcResponse {
-  jsonrpc: '2.0';
-  id: string | number | null;
-  result?: unknown;
-  error?: {
-    code: number;
-    message: string;
-    data?: unknown;
-  };
+async function readJsonResponse<T>(response: Response): Promise<T> {
+  return await response.json() as T;
 }
 
-interface JsonRpcError {
-  code: number;
-  message: string;
-  data?: unknown;
+function isAiContentPartArray(value: unknown): value is AIContentPart[] {
+  return Array.isArray(value) && value.every((part) => {
+    if (!part || typeof part !== "object") {
+      return false;
+    }
+    const candidate = part as Record<string, unknown>;
+    if (candidate.type === "text") {
+      return typeof candidate.text === "string";
+    }
+    if (candidate.type === "file") {
+      return typeof candidate.data === "string";
+    }
+    return false;
+  });
+}
+
+function isWidgetAppResponse(value: unknown): value is WidgetAppResponse {
+  return typeof value === "object" &&
+    value !== null &&
+    "app_html" in value &&
+    typeof (value as { app_html?: unknown }).app_html === "string";
+}
+
+function toAiMessages(value: unknown): AIRequest["messages"] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const messages: AIRequest["messages"] = [];
+  for (const message of value) {
+    if (!message || typeof message !== "object") {
+      return null;
+    }
+
+    const candidate = message as Record<string, unknown>;
+    if (
+      candidate.role !== "system" && candidate.role !== "user" &&
+      candidate.role !== "assistant"
+    ) {
+      return null;
+    }
+
+    const content = candidate.content;
+    if (typeof content !== "string" && !isAiContentPartArray(content)) {
+      return null;
+    }
+
+    messages.push({
+      role: candidate.role,
+      content,
+      ...(candidate.cache_control &&
+          typeof candidate.cache_control === "object" &&
+          (candidate.cache_control as Record<string, unknown>).type ===
+            "ephemeral"
+        ? { cache_control: { type: "ephemeral" as const } }
+        : {}),
+    });
+  }
+
+  return messages;
 }
 
 // JSON-RPC error codes
@@ -254,226 +360,237 @@ function nextSequenceNumber(sessionId: string | undefined): number | undefined {
 const SDK_TOOLS: MCPTool[] = [
   // ---- Skills (Documentation) ----
   {
-    name: 'ultralight.getSkills',
-    title: 'Get Skills',
+    name: "ultralight.getSkills",
+    title: "Get Skills",
     description:
-      'Get the Skills.md documentation for this app. Call this FIRST before using other tools — ' +
-      'it explains every function, its parameters, return types, and usage patterns.',
+      "Get the Skills.md documentation for this app. Call this FIRST before using other tools — " +
+      "it explains every function, its parameters, return types, and usage patterns.",
     inputSchema: {
-      type: 'object',
+      type: "object",
       properties: {},
     },
     outputSchema: {
-      type: 'object',
+      type: "object",
       properties: {
-        skills_md: { type: 'string', description: 'The full Skills.md markdown content.' },
-        app_name: { type: 'string' },
-        app_id: { type: 'string' },
+        skills_md: {
+          type: "string",
+          description: "The full Skills.md markdown content.",
+        },
+        app_name: { type: "string" },
+        app_id: { type: "string" },
       },
     },
   },
 
   // ---- Data Storage ----
   {
-    name: 'ultralight.store',
-    title: 'Store Data',
-    description: 'Store a value in app-scoped persistent storage. Data is partitioned per user.',
+    name: "ultralight.store",
+    title: "Store Data",
+    description:
+      "Store a value in app-scoped persistent storage. Data is partitioned per user.",
     inputSchema: {
-      type: 'object',
+      type: "object",
       properties: {
         key: {
-          type: 'string',
-          description: 'Storage key. Supports "/" for hierarchy (e.g., "users/123/profile").',
+          type: "string",
+          description:
+            'Storage key. Supports "/" for hierarchy (e.g., "users/123/profile").',
         },
         value: {
-          description: 'JSON-serializable value to store.',
+          description: "JSON-serializable value to store.",
         },
       },
-      required: ['key', 'value'],
+      required: ["key", "value"],
     },
   },
   {
-    name: 'ultralight.load',
-    title: 'Load Data',
-    description: 'Load a value from app-scoped storage by key.',
+    name: "ultralight.load",
+    title: "Load Data",
+    description: "Load a value from app-scoped storage by key.",
     inputSchema: {
-      type: 'object',
+      type: "object",
       properties: {
         key: {
-          type: 'string',
-          description: 'Storage key to retrieve.',
+          type: "string",
+          description: "Storage key to retrieve.",
         },
       },
-      required: ['key'],
+      required: ["key"],
     },
     outputSchema: {
-      description: 'The stored value, or null if not found.',
+      description: "The stored value, or null if not found.",
     },
   },
   {
-    name: 'ultralight.list',
-    title: 'List Keys',
-    description: 'List all keys in storage, optionally filtered by prefix.',
+    name: "ultralight.list",
+    title: "List Keys",
+    description: "List all keys in storage, optionally filtered by prefix.",
     inputSchema: {
-      type: 'object',
+      type: "object",
       properties: {
         prefix: {
-          type: 'string',
-          description: 'Optional prefix filter (e.g., "users/" to list all user keys).',
+          type: "string",
+          description:
+            'Optional prefix filter (e.g., "users/" to list all user keys).',
         },
       },
     },
     outputSchema: {
-      type: 'array',
-      items: { type: 'string' },
-      description: 'Array of matching keys.',
+      type: "array",
+      items: { type: "string" },
+      description: "Array of matching keys.",
     },
   },
   {
-    name: 'ultralight.query',
-    title: 'Query Data',
-    description: 'Query storage with filtering, sorting, and pagination.',
+    name: "ultralight.query",
+    title: "Query Data",
+    description: "Query storage with filtering, sorting, and pagination.",
     inputSchema: {
-      type: 'object',
+      type: "object",
       properties: {
         prefix: {
-          type: 'string',
-          description: 'Key prefix to query.',
+          type: "string",
+          description: "Key prefix to query.",
         },
         limit: {
-          type: 'number',
-          description: 'Maximum number of results to return.',
+          type: "number",
+          description: "Maximum number of results to return.",
         },
         offset: {
-          type: 'number',
-          description: 'Number of results to skip.',
+          type: "number",
+          description: "Number of results to skip.",
         },
       },
-      required: ['prefix'],
+      required: ["prefix"],
     },
     outputSchema: {
-      type: 'array',
+      type: "array",
       items: {
-        type: 'object',
+        type: "object",
         properties: {
-          key: { type: 'string' },
+          key: { type: "string" },
           value: {},
-          updatedAt: { type: 'string' },
+          updatedAt: { type: "string" },
         },
       },
     },
   },
   {
-    name: 'ultralight.remove',
-    title: 'Remove Data',
-    description: 'Remove a key from storage.',
+    name: "ultralight.remove",
+    title: "Remove Data",
+    description: "Remove a key from storage.",
     inputSchema: {
-      type: 'object',
+      type: "object",
       properties: {
         key: {
-          type: 'string',
-          description: 'Storage key to remove.',
+          type: "string",
+          description: "Storage key to remove.",
         },
       },
-      required: ['key'],
+      required: ["key"],
     },
   },
 
   // ---- User Memory (Cross-App) ----
   {
-    name: 'ultralight.remember',
-    title: 'Remember (Cross-App)',
-    description: "Store a value in user's cross-app memory. Defaults to app-scoped (app:{appId}). Use scope='user' for memory shared across all apps.",
+    name: "ultralight.remember",
+    title: "Remember (Cross-App)",
+    description:
+      "Store a value in user's cross-app memory. Defaults to app-scoped (app:{appId}). Use scope='user' for memory shared across all apps.",
     inputSchema: {
-      type: 'object',
+      type: "object",
       properties: {
         key: {
-          type: 'string',
-          description: 'Memory key.',
+          type: "string",
+          description: "Memory key.",
         },
         value: {
-          description: 'JSON-serializable value to remember.',
+          description: "JSON-serializable value to remember.",
         },
         scope: {
-          type: 'string',
-          description: "Memory scope. Defaults to 'app:{appId}'. Use 'user' for cross-app memory.",
+          type: "string",
+          description:
+            "Memory scope. Defaults to 'app:{appId}'. Use 'user' for cross-app memory.",
         },
       },
-      required: ['key', 'value'],
+      required: ["key", "value"],
     },
   },
   {
-    name: 'ultralight.recall',
-    title: 'Recall (Cross-App)',
-    description: "Retrieve a value from user's cross-app memory. Defaults to app-scoped. Use scope='user' for cross-app memory.",
+    name: "ultralight.recall",
+    title: "Recall (Cross-App)",
+    description:
+      "Retrieve a value from user's cross-app memory. Defaults to app-scoped. Use scope='user' for cross-app memory.",
     inputSchema: {
-      type: 'object',
+      type: "object",
       properties: {
         key: {
-          type: 'string',
-          description: 'Memory key to recall.',
+          type: "string",
+          description: "Memory key to recall.",
         },
         scope: {
-          type: 'string',
-          description: "Memory scope. Defaults to 'app:{appId}'. Use 'user' for cross-app memory.",
+          type: "string",
+          description:
+            "Memory scope. Defaults to 'app:{appId}'. Use 'user' for cross-app memory.",
         },
       },
-      required: ['key'],
+      required: ["key"],
     },
     outputSchema: {
-      description: 'The remembered value, or null if not found.',
+      description: "The remembered value, or null if not found.",
     },
   },
 
   // ---- AI ----
   {
-    name: 'ultralight.ai',
-    title: 'Call AI Model',
-    description: 'Call an AI model. Requires BYOK (Bring Your Own Key) to be enabled.',
+    name: "ultralight.ai",
+    title: "Call AI Model",
+    description:
+      "Call an AI model. Requires BYOK (Bring Your Own Key) to be enabled.",
     inputSchema: {
-      type: 'object',
+      type: "object",
       properties: {
         messages: {
-          type: 'array',
+          type: "array",
           items: {
-            type: 'object',
+            type: "object",
             properties: {
               role: {
-                type: 'string',
-                enum: ['system', 'user', 'assistant'],
+                type: "string",
+                enum: ["system", "user", "assistant"],
               },
-              content: { type: 'string' },
+              content: { type: "string" },
             },
-            required: ['role', 'content'],
+            required: ["role", "content"],
           },
-          description: 'Conversation messages.',
+          description: "Conversation messages.",
         },
         model: {
-          type: 'string',
-          description: 'Model ID (default: gpt-4).',
+          type: "string",
+          description: "Model ID (default: gpt-4).",
         },
         temperature: {
-          type: 'number',
-          description: 'Sampling temperature (0-2).',
+          type: "number",
+          description: "Sampling temperature (0-2).",
         },
         max_tokens: {
-          type: 'number',
-          description: 'Maximum tokens to generate.',
+          type: "number",
+          description: "Maximum tokens to generate.",
         },
       },
-      required: ['messages'],
+      required: ["messages"],
     },
     outputSchema: {
-      type: 'object',
+      type: "object",
       properties: {
-        content: { type: 'string' },
-        model: { type: 'string' },
+        content: { type: "string" },
+        model: { type: "string" },
         usage: {
-          type: 'object',
+          type: "object",
           properties: {
-            input_tokens: { type: 'number' },
-            output_tokens: { type: 'number' },
-            cost_light: { type: 'number' },
+            input_tokens: { type: "number" },
+            output_tokens: { type: "number" },
+            cost_light: { type: "number" },
           },
         },
       },
@@ -482,35 +599,35 @@ const SDK_TOOLS: MCPTool[] = [
 
   // ---- Inter-App Calls ----
   {
-    name: 'ultralight.call',
-    title: 'Call Another App',
+    name: "ultralight.call",
+    title: "Call Another App",
     description:
-      'Call a function on another Ultralight app. Uses the current user\'s auth context — ' +
-      'the called app sees the same user. Accepts app ID or slug as the target.',
+      "Call a function on another Ultralight app. Uses the current user's auth context — " +
+      "the called app sees the same user. Accepts app ID or slug as the target.",
     inputSchema: {
-      type: 'object',
+      type: "object",
       properties: {
         app_id: {
-          type: 'string',
-          description: 'App ID or slug of the target app.',
+          type: "string",
+          description: "App ID or slug of the target app.",
         },
         function_name: {
-          type: 'string',
-          description: 'Function name to call on the target app (unprefixed, e.g. "doThing" not "app-slug_doThing").',
+          type: "string",
+          description:
+            'Function name to call on the target app (unprefixed, e.g. "doThing" not "app-slug_doThing").',
         },
         args: {
-          type: 'object',
-          description: 'Arguments to pass to the function.',
+          type: "object",
+          description: "Arguments to pass to the function.",
           additionalProperties: true,
         },
       },
-      required: ['app_id', 'function_name'],
+      required: ["app_id", "function_name"],
     },
     outputSchema: {
-      description: 'The return value from the called function.',
+      description: "The return value from the called function.",
     },
   },
-
 ];
 
 // ============================================
@@ -521,47 +638,61 @@ const SDK_TOOLS: MCPTool[] = [
  * Handle MCP JSON-RPC requests
  * POST /mcp/:appId
  */
-export async function handleMcp(request: Request, appId: string): Promise<Response> {
+export async function handleMcp(
+  request: Request,
+  appId: string,
+): Promise<Response> {
   const method = request.method;
 
   // Streamable HTTP transport: GET opens SSE stream (not supported yet), DELETE terminates session
-  if (method === 'DELETE') {
+  if (method === "DELETE") {
     // Session termination — we're stateless, so just acknowledge
     return new Response(null, { status: 200 });
   }
 
-  if (method === 'GET') {
+  if (method === "GET") {
     // SSE stream for server-initiated notifications — not supported yet
-    return new Response(JSON.stringify({ error: 'SSE stream not supported. Use POST for MCP requests.' }), {
-      status: 405,
-      headers: { 'Allow': 'POST, DELETE', 'Content-Type': 'application/json' },
-    });
+    return new Response(
+      JSON.stringify({
+        error: "SSE stream not supported. Use POST for MCP requests.",
+      }),
+      {
+        status: 405,
+        headers: {
+          "Allow": "POST, DELETE",
+          "Content-Type": "application/json",
+        },
+      },
+    );
   }
 
-  if (method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed.' }), {
+  if (method !== "POST") {
+    return new Response(JSON.stringify({ error: "Method not allowed." }), {
       status: 405,
-      headers: { 'Allow': 'POST, GET, DELETE', 'Content-Type': 'application/json' },
+      headers: {
+        "Allow": "POST, GET, DELETE",
+        "Content-Type": "application/json",
+      },
     });
   }
 
   // Streamable HTTP: read client protocol version (don't enforce — backward compatible)
-  const _clientProtocolVersion = request.headers.get('MCP-Protocol-Version');
+  const _clientProtocolVersion = request.headers.get("MCP-Protocol-Version");
 
   // Parse JSON-RPC request
   let rpcRequest: JsonRpcRequest;
   try {
     rpcRequest = await request.json();
   } catch {
-    return jsonRpcErrorResponse(null, PARSE_ERROR, 'Parse error: Invalid JSON');
+    return jsonRpcErrorResponse(null, PARSE_ERROR, "Parse error: Invalid JSON");
   }
 
   // Validate JSON-RPC format
-  if (rpcRequest.jsonrpc !== '2.0' || !rpcRequest.method) {
+  if (rpcRequest.jsonrpc !== "2.0" || !rpcRequest.method) {
     return jsonRpcErrorResponse(
       rpcRequest.id ?? null,
       INVALID_REQUEST,
-      'Invalid Request: Missing jsonrpc version or method'
+      "Invalid Request: Missing jsonrpc version or method",
     );
   }
 
@@ -569,67 +700,66 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
   const appsService = createAppsService();
   let userId: string;
   let user: UserContext | null = null;
-  let tokenAppIds: string[] | null = null;
-  let tokenFunctionNames: string[] | null = null;
-
-  // Support token-in-URL: if no Authorization header, check ?token= query param
-  // This lets users share a single MCP endpoint URL that works without separate auth config
-  let authRequest = request;
-  if (!request.headers.get('Authorization')) {
-    const url = new URL(request.url);
-    const urlToken = url.searchParams.get('token');
-    if (urlToken) {
-      const headers = new Headers(request.headers);
-      headers.set('Authorization', `Bearer ${urlToken}`);
-      authRequest = new Request(request.url, { method: request.method, headers, body: request.body });
-    }
-  }
+  const requestUrl = new URL(request.url);
+  const rejectedQueryToken = !request.headers.get("Authorization") &&
+    requestUrl.searchParams.has("token");
 
   // Run auth and app lookup concurrently — they have no dependency on each other
-  type AuthResult = { id: string; email: string; tier: string; tokenId?: string; tokenAppIds?: string[] | null; tokenFunctionNames?: string[] | null; scopes?: string[] };
-  let authUser: AuthResult;
-  let app: Awaited<ReturnType<typeof appsService.findById>>;
+  let callerContext: RequestCallerContext;
+  let app: App | null;
 
   try {
-    [authUser, app] = await Promise.all([
-      authenticate(authRequest),
+    [callerContext, app] = await Promise.all([
+      resolveRequestCallerContext(request, { authSourcePolicy: "bearer_only" }),
       appsService.findById(appId),
     ]);
   } catch (authErr) {
     // If findById fails it throws, but authenticate errors are the common case
-    const message = authErr instanceof Error ? authErr.message : 'Authentication required';
+    let message = authErr instanceof Error
+      ? authErr.message
+      : "Authentication required";
 
     // Classify the auth error for client-side handling
-    let errorType = 'AUTH_REQUIRED';
-    if (message.includes('expired')) {
-      errorType = 'AUTH_TOKEN_EXPIRED';
-    } else if (message.includes('Missing') || message.includes('invalid authorization')) {
-      errorType = 'AUTH_MISSING_TOKEN';
-    } else if (message.includes('Invalid JWT') || message.includes('decode')) {
-      errorType = 'AUTH_INVALID_TOKEN';
-    } else if (message.includes('Invalid or expired API token')) {
-      errorType = 'AUTH_API_TOKEN_INVALID';
+    let errorType = "AUTH_REQUIRED";
+    if (rejectedQueryToken) {
+      errorType = "AUTH_QUERY_TOKEN_UNSUPPORTED";
+      message =
+        "Query-string token auth is no longer supported. Use Authorization: Bearer <token>.";
+    } else if (message.includes("expired")) {
+      errorType = "AUTH_TOKEN_EXPIRED";
+    } else if (
+      message.includes("Missing") || message.includes("invalid authorization")
+    ) {
+      errorType = "AUTH_MISSING_TOKEN";
+    } else if (message.includes("Invalid JWT") || message.includes("decode")) {
+      errorType = "AUTH_INVALID_TOKEN";
+    } else if (message.includes("Invalid or expired API token")) {
+      errorType = "AUTH_API_TOKEN_INVALID";
     }
 
     console.error(`MCP auth failed [${errorType}]:`, message, {
       appId,
       method: rpcRequest.method,
-      hasAuthHeader: !!request.headers.get('Authorization'),
+      hasAuthHeader: !!request.headers.get("Authorization"),
     });
 
     const reqUrl = new URL(request.url);
-    const host = request.headers.get('host') || reqUrl.host;
-    const proto = request.headers.get('x-forwarded-proto') || (host.includes('localhost') ? 'http' : 'https');
+    const host = request.headers.get("host") || reqUrl.host;
+    const proto = request.headers.get("x-forwarded-proto") ||
+      (host.includes("localhost") ? "http" : "https");
     const baseUrl = `${proto}://${host}`;
     const authErrorResponse = jsonRpcErrorResponse(
       rpcRequest.id,
       -32001,
       message,
-      { type: errorType }
+      { type: errorType },
     );
     // MCP spec: 401 must include WWW-Authenticate pointing to resource metadata
     const authHeaders = new Headers(authErrorResponse.headers);
-    authHeaders.set('WWW-Authenticate', `Bearer resource_metadata="${baseUrl}/.well-known/oauth-protected-resource"`);
+    authHeaders.set(
+      "WWW-Authenticate",
+      `Bearer resource_metadata="${baseUrl}/.well-known/oauth-protected-resource"`,
+    );
     return new Response(authErrorResponse.body, {
       status: 401,
       headers: authHeaders,
@@ -637,71 +767,36 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
   }
 
   // Process auth result
-  userId = authUser.id;
-  tokenAppIds = authUser.tokenAppIds || null;
-  tokenFunctionNames = authUser.tokenFunctionNames || null;
-
-  // Extract display name and avatar from JWT user_metadata (not available on authenticate() return type)
-  let displayName: string | null = authUser.email.split('@')[0];
-  let avatarUrl: string | null = null;
-  const token = request.headers.get('Authorization')?.slice(7) || '';
-  if (token && !isApiToken(token)) {
-    try {
-      const parts = token.split('.');
-      if (parts.length === 3) {
-        const base64Payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-        const padded = base64Payload + '='.repeat((4 - base64Payload.length % 4) % 4);
-        const payload = JSON.parse(atob(padded));
-        const meta = payload.user_metadata || {};
-        displayName = meta.full_name || meta.name || displayName;
-        avatarUrl = meta.avatar_url || meta.picture || null;
-      }
-    } catch { /* JWT metadata extraction is best-effort */ }
-  }
-
-  user = {
-    id: authUser.id,
-    email: authUser.email,
-    displayName,
-    avatarUrl,
-    tier: authUser.tier as Tier,
-    provisional: authUser.provisional || false,
-  };
+  userId = callerContext.userId;
+  user = callerContext.user;
 
   // Update last_active_at for provisional users (fire-and-forget)
-  if (authUser.provisional) {
+  if (callerContext.authUser?.provisional) {
     updateLastActive(userId);
   }
 
   // Validate app result
   if (!app) {
-    return jsonRpcErrorResponse(rpcRequest.id, -32002, 'App not found');
+    return jsonRpcErrorResponse(rpcRequest.id, -32002, "App not found");
   }
 
-  // Hosting suspension flag: suspended apps still serve calls, but revenue
-  // goes to the owner's (negative) balance to recover hosting debt.
-  // When enough per-call revenue pushes balance positive, auto-unsuspend.
-  const isSuspended = (app as Record<string, unknown>).hosting_suspended === true;
-
   // Token scoping: if the API token is scoped to specific apps, enforce it
-  if (tokenAppIds && tokenAppIds.length > 0 && !tokenAppIds.includes('*')) {
-    if (!tokenAppIds.includes(appId) && !tokenAppIds.includes(app.slug)) {
-      return jsonRpcErrorResponse(
-        rpcRequest.id,
-        -32003,
-        `Token not authorized for this app. Scoped to: ${tokenAppIds.join(', ')}`
-      );
-    }
+  if (!callerHasAppAccess(callerContext, [appId, app.slug, app.id])) {
+    const scopedApps = callerContext.tokenAppIds?.join(", ") || "none";
+    return jsonRpcErrorResponse(
+      rpcRequest.id,
+      -32003,
+      `Token not authorized for this app. Scoped to: ${scopedApps}`,
+    );
   }
 
   // Scope enforcement: require apps:call scope for tools/call
-  if (rpcRequest.method === 'tools/call') {
-    const scopes = authUser.scopes || ['*'];
-    if (!scopes.includes('*') && !scopes.includes('apps:call')) {
+  if (rpcRequest.method === "tools/call") {
+    if (!callerHasRequiredScope(callerContext, "apps:call")) {
       return jsonRpcErrorResponse(
         rpcRequest.id,
         -32003,
-        'Token missing required scope: apps:call'
+        "Token missing required scope: apps:call",
       );
     }
   }
@@ -709,64 +804,158 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
   // Phase 2B: Run gate checks in parallel — rate limit, weekly calls, per-app RL, permissions
   // All depend on userId (from auth) and app (from findById), both now resolved
   {
-    const isToolsCall = rpcRequest.method === 'tools/call';
+    const isToolsCall = rpcRequest.method === "tools/call";
     const isNonOwner = app.owner_id !== userId;
-    const rlConfig = app.rate_limit_config as { calls_per_minute?: number; calls_per_day?: number } | null;
+    const rlConfig = app.rate_limit_config as {
+      calls_per_minute?: number;
+      calls_per_day?: number;
+    } | null;
+    const endpointRateLimitOptions = isToolsCall
+      ? { mode: "fail_closed" as const, resource: "MCP tools/call rate limit" }
+      : undefined;
 
     // Build array of gate checks to run in parallel
     const gateChecks = await Promise.all([
       // [0] Per-endpoint rate limit (always)
-      checkRateLimit(userId, `mcp:${rpcRequest.method}`),
+      checkRateLimit(
+        userId,
+        `mcp:${rpcRequest.method}`,
+        undefined,
+        undefined,
+        endpointRateLimitOptions,
+      ),
       // [1] Weekly call limit (tools/call only)
-      isToolsCall ? checkAndIncrementWeeklyCalls(userId, user.tier) : null,
+      isToolsCall
+        ? checkAndIncrementWeeklyCalls(
+          userId,
+          toTier(user?.tier || callerContext.authUser?.tier || "free"),
+          {
+            mode: "fail_closed",
+            resource: "MCP weekly call limit",
+          },
+        )
+        : null,
       // [2] Per-app minute rate limit (tools/call, non-owner, if configured)
       isToolsCall && isNonOwner && rlConfig?.calls_per_minute
-        ? checkRateLimit(userId, `app:${appId}:minute`, rlConfig.calls_per_minute, 1) : null,
+        ? checkRateLimit(
+          userId,
+          `app:${appId}:minute`,
+          rlConfig.calls_per_minute,
+          1,
+          {
+            mode: "fail_closed",
+            resource: "MCP app minute rate limit",
+          },
+        )
+        : null,
       // [3] Per-app daily rate limit (tools/call, non-owner, if configured)
       isToolsCall && isNonOwner && rlConfig?.calls_per_day
-        ? checkRateLimit(userId, `app:${appId}:day`, rlConfig.calls_per_day, 1440) : null,
+        ? checkRateLimit(
+          userId,
+          `app:${appId}:day`,
+          rlConfig.calls_per_day,
+          1440,
+          {
+            mode: "fail_closed",
+            resource: "MCP app daily rate limit",
+          },
+        )
+        : null,
       // [4] Visibility/permissions (private apps, non-owner)
-      app.visibility === 'private' && isNonOwner
-        ? getPermissionsForUser(userId, app.id, app.owner_id, app.visibility) : undefined,
+      app.visibility === "private" && isNonOwner
+        ? getPermissionsForUser(
+          userId,
+          app.id,
+          app.owner_id,
+          app.visibility,
+          app.slug,
+        )
+        : undefined,
       // [5] Provisional daily call limit (tools/call, provisional users only)
       isToolsCall && user?.provisional
-        ? checkProvisionalDailyLimit(userId) : null,
+        ? checkProvisionalDailyLimit(userId)
+        : null,
     ]);
 
     // Check results — return first error found
-    const [endpointRL, weeklyRL, appMinuteRL, appDayRL, perms, provisionalRL] = gateChecks;
+    const [endpointRL, weeklyRL, appMinuteRL, appDayRL, perms, provisionalRL] =
+      gateChecks;
 
     if (!endpointRL.allowed) {
+      if (endpointRL.reason === "service_unavailable") {
+        return jsonRpcErrorResponse(
+          rpcRequest.id,
+          INTERNAL_ERROR,
+          "Usage controls are temporarily unavailable. Please try again shortly.",
+        );
+      }
       return jsonRpcErrorResponse(
-        rpcRequest.id, RATE_LIMITED,
-        `Rate limit exceeded. Try again after ${endpointRL.resetAt.toISOString()}`
+        rpcRequest.id,
+        RATE_LIMITED,
+        `Rate limit exceeded. Try again after ${endpointRL.resetAt.toISOString()}`,
       );
     }
     if (weeklyRL && !weeklyRL.allowed) {
+      if (weeklyRL.reason === "service_unavailable") {
+        return jsonRpcErrorResponse(
+          rpcRequest.id,
+          INTERNAL_ERROR,
+          "Usage controls are temporarily unavailable. Please try again shortly.",
+        );
+      }
       return jsonRpcErrorResponse(
-        rpcRequest.id, RATE_LIMITED,
-        `Too many requests. Please try again later or upgrade to Pro.`
+        rpcRequest.id,
+        RATE_LIMITED,
+        `Too many requests. Please try again later or upgrade to Pro.`,
       );
     }
     if (appMinuteRL && !appMinuteRL.allowed) {
+      if (appMinuteRL.reason === "service_unavailable") {
+        return jsonRpcErrorResponse(
+          rpcRequest.id,
+          INTERNAL_ERROR,
+          "App usage controls are temporarily unavailable. Please try again shortly.",
+        );
+      }
       return jsonRpcErrorResponse(
-        rpcRequest.id, RATE_LIMITED,
-        `App rate limit exceeded (${rlConfig!.calls_per_minute}/min). Try again after ${appMinuteRL.resetAt.toISOString()}`
+        rpcRequest.id,
+        RATE_LIMITED,
+        `App rate limit exceeded (${
+          rlConfig!.calls_per_minute
+        }/min). Try again after ${appMinuteRL.resetAt.toISOString()}`,
       );
     }
     if (appDayRL && !appDayRL.allowed) {
+      if (appDayRL.reason === "service_unavailable") {
+        return jsonRpcErrorResponse(
+          rpcRequest.id,
+          INTERNAL_ERROR,
+          "App usage controls are temporarily unavailable. Please try again shortly.",
+        );
+      }
       return jsonRpcErrorResponse(
-        rpcRequest.id, RATE_LIMITED,
-        `App daily limit exceeded (${rlConfig!.calls_per_day}/day). Try again tomorrow.`
+        rpcRequest.id,
+        RATE_LIMITED,
+        `App daily limit exceeded (${
+          rlConfig!.calls_per_day
+        }/day). Try again tomorrow.`,
       );
     }
     if (perms !== undefined && perms !== null && perms.allowed.size === 0) {
-      return jsonRpcErrorResponse(rpcRequest.id, -32002, 'App not found');
+      return jsonRpcErrorResponse(rpcRequest.id, -32002, "App not found");
     }
     if (provisionalRL && !provisionalRL.allowed) {
+      if (provisionalRL.reason === "service_unavailable") {
+        return jsonRpcErrorResponse(
+          rpcRequest.id,
+          INTERNAL_ERROR,
+          "Provisional usage controls are temporarily unavailable. Please try again shortly.",
+        );
+      }
       return jsonRpcErrorResponse(
-        rpcRequest.id, RATE_LIMITED,
-        `Provisional account daily limit reached (50 calls/day). Sign in at ultralight-api.rgn4jz429m.workers.dev to unlock full access.`
+        rpcRequest.id,
+        RATE_LIMITED,
+        `Provisional account daily limit reached (50 calls/day). Sign in at ultralight-api.rgn4jz429m.workers.dev to unlock full access.`,
       );
     }
   }
@@ -776,40 +965,55 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
 
   try {
     switch (rpcMethod) {
-      case 'initialize': {
+      case "initialize": {
         const response = handleInitialize(id, appId, app);
         // Streamable HTTP: assign a session ID on initialize
         const sessionId = crypto.randomUUID();
         const headers = new Headers(response.headers);
-        headers.set('Mcp-Session-Id', sessionId);
-        return new Response(response.body, { status: response.status, headers });
+        headers.set("Mcp-Session-Id", sessionId);
+        return new Response(response.body, {
+          status: response.status,
+          headers,
+        });
       }
 
-      case 'notifications/initialized':
+      case "notifications/initialized":
         // Client acknowledgment after initialize — no response body needed
         return new Response(null, { status: 202 });
 
-      case 'tools/list':
+      case "tools/list":
         return await handleToolsList(id, app, params, userId);
 
-      case 'tools/call':
-        return await handleToolsCall(id, app, params, userId, user, request, tokenFunctionNames);
+      case "tools/call":
+        return await handleToolsCall(
+          id,
+          app,
+          params,
+          userId,
+          user,
+          request,
+          callerContext,
+        );
 
-      case 'resources/list':
+      case "resources/list":
         return handleResourcesList(id, appId, app);
 
-      case 'resources/read':
+      case "resources/read":
         return await handleResourcesRead(id, appId, app, params, userId);
 
       default:
-        return jsonRpcErrorResponse(id, METHOD_NOT_FOUND, `Method not found: ${rpcMethod}`);
+        return jsonRpcErrorResponse(
+          id,
+          METHOD_NOT_FOUND,
+          `Method not found: ${rpcMethod}`,
+        );
     }
   } catch (err) {
     console.error(`MCP ${rpcMethod} error:`, err);
     return jsonRpcErrorResponse(
       id,
       INTERNAL_ERROR,
-      `Internal error: ${err instanceof Error ? err.message : 'Unknown error'}`
+      `Internal error: ${err instanceof Error ? err.message : "Unknown error"}`,
     );
   }
 }
@@ -822,9 +1026,9 @@ export async function handleMcp(request: Request, appId: string): Promise<Respon
  * Handle initialize request - return server capabilities
  */
 function handleInitialize(
-  id: string | number,
+  id: JsonRpcId,
   appId: string,
-  app: { name: string; slug: string; description: string | null; skills_md?: string | null }
+  app: App,
 ): Response {
   // Level 2: Inline the app's Skills.md directly into the instructions field.
   // This guarantees agents receive function signatures, parameter types, and usage
@@ -840,20 +1044,21 @@ function handleInitialize(
     instructions = app.skills_md;
   } else {
     // Skills.md not yet generated — use description + resource directive
-    instructions = (app.description || `${app.name || app.slug} — an Ultralight MCP server.`) +
+    instructions = (app.description ||
+      `${app.name || app.slug} — an Ultralight MCP server.`) +
       `\n\nCall resources/read with uri "ultralight://app/${appId}/skills.md" ` +
-      'to load full documentation once available.';
+      "to load full documentation once available.";
   }
 
   const result: MCPServerInfo = {
-    protocolVersion: '2025-03-26',
+    protocolVersion: "2025-03-26",
     capabilities: {
       tools: { listChanged: false },
       resources: { subscribe: false, listChanged: false },
     },
     serverInfo: {
       name: app.name || app.slug,
-      version: '1.0.0',
+      version: "1.0.0",
     },
     instructions: instructions,
   };
@@ -865,9 +1070,9 @@ function handleInitialize(
  * Handle resources/list request - return available resources for this app
  */
 function handleResourcesList(
-  id: string | number,
+  id: JsonRpcId,
   appId: string,
-  app: { name: string; slug: string; skills_md?: string | null; manifest?: string | null }
+  app: App,
 ): Response {
   const resources: MCPResourceDescriptor[] = [];
 
@@ -876,8 +1081,9 @@ function handleResourcesList(
     resources.push({
       uri: `ultralight://app/${appId}/skills.md`,
       name: `${app.name || app.slug} — Skills & Usage Guide`,
-      description: 'Auto-generated documentation: function signatures, parameters, return types, and usage examples. Read this before calling tools.',
-      mimeType: 'text/markdown',
+      description:
+        "Auto-generated documentation: function signatures, parameters, return types, and usage examples. Read this before calling tools.",
+      mimeType: "text/markdown",
     });
   }
 
@@ -885,16 +1091,18 @@ function handleResourcesList(
   resources.push({
     uri: `ultralight://app/${appId}/manifest.json`,
     name: `${app.name || app.slug} — App Manifest`,
-    description: 'Function definitions, parameter schemas, and app configuration. Machine-readable complement to skills.md.',
-    mimeType: 'application/json',
+    description:
+      "Function definitions, parameter schemas, and app configuration. Machine-readable complement to skills.md.",
+    mimeType: "application/json",
   });
 
   // Phase 2A: Storage — browsable app data
   resources.push({
     uri: `ultralight://app/${appId}/data`,
     name: `${app.name || app.slug} — Stored Data`,
-    description: 'List of all storage keys for this app. Read individual keys at ultralight://app/{appId}/data/{key}.',
-    mimeType: 'application/json',
+    description:
+      "List of all storage keys for this app. Read individual keys at ultralight://app/{appId}/data/{key}.",
+    mimeType: "application/json",
   });
 
   return jsonRpcResponse(id, { resources });
@@ -904,29 +1112,37 @@ function handleResourcesList(
  * Handle resources/read request - return resource content
  */
 async function handleResourcesRead(
-  id: string | number,
+  id: JsonRpcId,
   appId: string,
-  app: { name: string; slug: string; skills_md?: string | null; manifest?: string | null; current_version?: string; visibility?: string; exports?: string[]; total_runs?: number },
+  app: App,
   params: unknown,
-  userId?: string
+  userId?: string,
 ): Promise<Response> {
   const readParams = params as { uri?: string } | undefined;
   const uri = readParams?.uri;
 
   if (!uri) {
-    return jsonRpcErrorResponse(id, INVALID_PARAMS, 'Missing required parameter: uri');
+    return jsonRpcErrorResponse(
+      id,
+      INVALID_PARAMS,
+      "Missing required parameter: uri",
+    );
   }
 
   // Skills.md — auto-generated function documentation
   const expectedSkillsUri = `ultralight://app/${appId}/skills.md`;
   if (uri === expectedSkillsUri) {
     if (!app.skills_md) {
-      return jsonRpcErrorResponse(id, -32002, 'Skills.md not yet generated for this app');
+      return jsonRpcErrorResponse(
+        id,
+        -32002,
+        "Skills.md not yet generated for this app",
+      );
     }
 
     const contents: MCPResourceContent[] = [{
       uri: uri,
-      mimeType: 'text/markdown',
+      mimeType: "text/markdown",
       text: app.skills_md,
     }];
 
@@ -954,7 +1170,7 @@ async function handleResourcesRead(
 
     const contents: MCPResourceContent[] = [{
       uri: uri,
-      mimeType: 'application/json',
+      mimeType: "application/json",
       text: JSON.stringify(manifest, null, 2),
     }];
     return jsonRpcResponse(id, { contents });
@@ -963,19 +1179,29 @@ async function handleResourcesRead(
   // Phase 2A: Storage key listing
   if (uri === `ultralight://app/${appId}/data`) {
     if (!userId) {
-      return jsonRpcErrorResponse(id, AUTH_REQUIRED, 'Authentication required to access app storage');
+      return jsonRpcErrorResponse(
+        id,
+        AUTH_REQUIRED,
+        "Authentication required to access app storage",
+      );
     }
     try {
       const appData = createAppDataService(appId, userId);
       const keys = await appData.list();
       const contents: MCPResourceContent[] = [{
         uri: uri,
-        mimeType: 'application/json',
+        mimeType: "application/json",
         text: JSON.stringify({ keys, count: keys.length }),
       }];
       return jsonRpcResponse(id, { contents });
     } catch (err) {
-      return jsonRpcErrorResponse(id, INTERNAL_ERROR, `Failed to list storage keys: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      return jsonRpcErrorResponse(
+        id,
+        INTERNAL_ERROR,
+        `Failed to list storage keys: ${
+          err instanceof Error ? err.message : "Unknown error"
+        }`,
+      );
     }
   }
 
@@ -983,26 +1209,40 @@ async function handleResourcesRead(
   const dataPrefix = `ultralight://app/${appId}/data/`;
   if (uri.startsWith(dataPrefix)) {
     if (!userId) {
-      return jsonRpcErrorResponse(id, AUTH_REQUIRED, 'Authentication required to access app storage');
+      return jsonRpcErrorResponse(
+        id,
+        AUTH_REQUIRED,
+        "Authentication required to access app storage",
+      );
     }
     const key = decodeURIComponent(uri.slice(dataPrefix.length));
     if (!key) {
-      return jsonRpcErrorResponse(id, INVALID_PARAMS, 'Missing key in URI');
+      return jsonRpcErrorResponse(id, INVALID_PARAMS, "Missing key in URI");
     }
     try {
       const appData = createAppDataService(appId, userId);
       const value = await appData.load(key);
       if (value === null || value === undefined) {
-        return jsonRpcErrorResponse(id, NOT_FOUND, `Storage key not found: ${key}`);
+        return jsonRpcErrorResponse(
+          id,
+          NOT_FOUND,
+          `Storage key not found: ${key}`,
+        );
       }
       const contents: MCPResourceContent[] = [{
         uri: uri,
-        mimeType: 'application/json',
+        mimeType: "application/json",
         text: JSON.stringify(value),
       }];
       return jsonRpcResponse(id, { contents });
     } catch (err) {
-      return jsonRpcErrorResponse(id, INTERNAL_ERROR, `Failed to read storage key: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      return jsonRpcErrorResponse(
+        id,
+        INTERNAL_ERROR,
+        `Failed to read storage key: ${
+          err instanceof Error ? err.message : "Unknown error"
+        }`,
+      );
     }
   }
 
@@ -1013,57 +1253,72 @@ async function handleResourcesRead(
  * Handle tools/list request - return available tools
  */
 async function handleToolsList(
-  id: string | number,
-  app: { id: string; slug: string; owner_id: string; visibility: string; skills_parsed: ParsedSkills | null; manifest?: string | null; runtime?: string; exports?: string[] },
+  id: JsonRpcId,
+  app: App,
   params?: { cursor?: string },
-  callerUserId?: string
+  callerUserId?: string,
 ): Promise<Response> {
   const tools: MCPTool[] = [];
+  let manifestTools: MCPTool[] = [];
 
-  // First, try to get tools from manifest (v2 architecture)
-  if (app.manifest) {
-    try {
-      const manifest = JSON.parse(app.manifest) as AppManifest;
-      if (manifest.functions && manifest.type === 'mcp') {
-        const manifestTools = manifestToMCPTools(manifest, app.id, app.slug);
-        tools.push(...manifestTools);
-      }
-    } catch (err) {
-      console.error('Failed to parse manifest for tools list:', err);
-    }
-  }
+  try {
+    const contractResolution = requireManifestFunctionContracts(app);
+    logAppContractResolution({
+      appId: app.id,
+      ownerId: app.owner_id,
+      appSlug: app.slug,
+      runtime: app.runtime,
+      surface: "mcp_tools_list",
+      source: contractResolution.source,
+      legacySourceDetected: contractResolution.legacySourceDetected,
+      functionCount: contractResolution.functions.length,
+      manifestBacked: contractResolution.manifestBacked,
+      migrationRequired: contractResolution.migrationRequired,
+    });
 
-  // Fall back to skills_parsed if no manifest tools found (legacy behavior)
-  if (tools.length === 0 && app.skills_parsed?.functions) {
-    for (const fn of app.skills_parsed.functions) {
-      tools.push(skillFunctionToMCPTool(fn));
-    }
-  }
-
-  // GPU apps: generate tools from exports (Python function names)
-  const appAny = app as Record<string, unknown>;
-  if (tools.length === 0 && appAny.runtime === 'gpu' && Array.isArray(appAny.exports) && (appAny.exports as string[]).length > 0) {
-    for (const exportName of appAny.exports as string[]) {
-      tools.push({
-        name: exportName,
-        description: `GPU function: ${exportName}`,
-        inputSchema: {
-          type: 'object' as const,
-          properties: {},
-          additionalProperties: true,
-        },
+    const manifest = contractResolution.manifest as AppManifest;
+    manifestTools = manifestToMCPTools(manifest, app.id, app.slug);
+    tools.push(...manifestTools);
+  } catch (err) {
+    if (err instanceof AppContractMigrationRequiredError) {
+      const legacyResolution = resolveAppFunctionContracts(app, {
+        allowLegacySkills: true,
+        allowLegacyExports: true,
+        allowGpuExports: true,
       });
+      logAppContractResolution({
+        appId: app.id,
+        ownerId: app.owner_id,
+        appSlug: app.slug,
+        runtime: app.runtime,
+        surface: "mcp_tools_list",
+        source: "none",
+        legacySourceDetected: legacyResolution.legacySourceDetected,
+        functionCount: 0,
+        manifestBacked: false,
+        migrationRequired: true,
+        note: "manifest_required",
+      });
+      return jsonRpcErrorResponse(id, INVALID_REQUEST, err.message);
     }
+    throw err;
   }
 
   // Permission filtering for private apps: only show allowed functions to non-owners
-  if (callerUserId && app.visibility === 'private') {
-    const permsResult = await getPermissionsForUser(callerUserId, app.id, app.owner_id, app.visibility);
+  if (callerUserId && app.visibility === "private") {
+    const permsResult = await getPermissionsForUser(
+      callerUserId,
+      app.id,
+      app.owner_id,
+      app.visibility,
+      app.slug,
+    );
     if (permsResult !== null) {
       // Filter tools to only include allowed functions
       // SDK tools (ultralight.*) are always shown
-      const filteredTools = tools.filter(tool =>
-        tool.name.startsWith('ultralight.') || permsResult.allowed.has(tool.name)
+      const filteredTools = tools.filter((tool) =>
+        tool.name.startsWith("ultralight.") ||
+        permissionSetAllowsFunction(app.slug, permsResult.allowed, tool.name)
       );
       tools.length = 0;
       tools.push(...filteredTools);
@@ -1075,19 +1330,19 @@ async function handleToolsList(
 
   // ── GPU tool enrichment ──
   // If this is a GPU app, annotate tools with cost + latency hints
-  if ((app as Record<string, unknown>).runtime === 'gpu') {
-    const gpuType = (app as Record<string, unknown>).gpu_type as string || 'GPU';
-    const benchmark = (app as Record<string, unknown>).gpu_benchmark as Record<string, unknown> | null;
+  if (app.runtime === "gpu") {
+    const gpuType = app.gpu_type || "GPU";
+    const benchmark = app.gpu_benchmark as Record<string, unknown> | null;
 
     for (const tool of tools) {
       // Skip SDK tools
-      if (tool.name.startsWith('ultralight.')) continue;
+      if (tool.name.startsWith("ultralight.")) continue;
 
       // Add GPU context to description
       const avgMs = benchmark?.mean_ms as number | undefined;
-      const avgDisplay = avgMs ? `~${(avgMs / 1000).toFixed(1)}s` : 'variable';
+      const avgDisplay = avgMs ? `~${(avgMs / 1000).toFixed(1)}s` : "variable";
       const gpuSuffix = `\n\n⚡ GPU function (${gpuType}, ${avgDisplay})`;
-      tool.description = (tool.description || '') + gpuSuffix;
+      tool.description = (tool.description || "") + gpuSuffix;
 
       // Set annotations: GPU tools are never read-only, not idempotent, open-world
       tool.annotations = {
@@ -1111,166 +1366,231 @@ async function handleToolsList(
  * Handle tools/call request - execute a tool
  */
 async function handleToolsCall(
-  id: string | number,
-  app: { id: string; slug: string; owner_id: string; visibility: string; storage_key: string; skills_parsed: ParsedSkills | null; manifest?: string | null },
+  id: JsonRpcId,
+  app: App,
   params: unknown,
   userId: string,
   user: UserContext | null,
   request: Request,
-  tokenFunctionNames?: string[] | null
+  callerContext: RequestCallerContext,
 ): Promise<Response> {
   // Validate params
   const callParams = params as MCPToolCallRequest | undefined;
   if (!callParams?.name) {
-    return jsonRpcErrorResponse(id, INVALID_PARAMS, 'Missing tool name');
+    return jsonRpcErrorResponse(id, INVALID_PARAMS, "Missing tool name");
   }
 
   const { name, arguments: args } = callParams;
 
   // Check if it's an SDK tool (always allowed) — supports both ultralight.* and ul.* prefixes
-  if (name.startsWith('ultralight.') || name.startsWith('ul.')) {
-    return await executeSDKTool(id, name, args || {}, app.id, app.owner_id, userId, user, request);
+  if (name.startsWith("ultralight.") || name.startsWith("ul.")) {
+    return await executeSDKTool(
+      id,
+      name,
+      args || {},
+      app.id,
+      app.owner_id,
+      userId,
+      user,
+      request,
+      callerContext,
+    );
   }
 
   // Token function scoping: if the API token restricts callable functions, enforce it
-  if (tokenFunctionNames && tokenFunctionNames.length > 0 && !tokenFunctionNames.includes('*')) {
-    // Extract the raw function name from prefixed tool name (slug_functionName)
-    const prefix = `${app.slug}_`;
-    const rawName = name.startsWith(prefix) ? name.slice(prefix.length) : name;
-    if (!tokenFunctionNames.includes(name) && !tokenFunctionNames.includes(rawName)) {
-      return jsonRpcErrorResponse(
-        id,
-        -32003,
-        `Token not authorized for function '${rawName}'. Scoped to: ${tokenFunctionNames.join(', ')}`
-      );
-    }
+  const rawName = toRawMcpFunctionName(app.slug, name);
+  if (
+    !callerHasFunctionAccess(
+      callerContext,
+      getMcpFunctionNameAliases(app.slug, name),
+    )
+  ) {
+    const scopedFunctions = callerContext.tokenFunctionNames?.join(", ") ||
+      "none";
+    return jsonRpcErrorResponse(
+      id,
+      -32003,
+      `Token not authorized for function '${rawName}'. Scoped to: ${scopedFunctions}`,
+    );
   }
 
   // Permission check: for private apps, verify non-owner has access to this function
   // Also enforce granular constraints (IP, time window, budget, expiry, arg whitelist) — Pro feature
-  if (app.visibility === 'private') {
-    const permsResult = await getPermissionsForUser(userId, app.id, app.owner_id, app.visibility);
+  if (app.visibility === "private") {
+    const permsResult = await getPermissionsForUser(
+      userId,
+      app.id,
+      app.owner_id,
+      app.visibility,
+      app.slug,
+    );
     if (permsResult !== null) {
-      if (!permsResult.allowed.has(name)) {
+      if (!permissionSetAllowsFunction(app.slug, permsResult.allowed, name)) {
         return jsonRpcErrorResponse(
           id,
           -32003,
-          `Permission denied: you do not have access to '${name}'. Ask the app owner to grant you access.`
+          `Permission denied: you do not have access to '${rawName}'. Ask the app owner to grant you access.`,
         );
       }
 
       // Enforce granular constraints on the matching permission row
-      const { checkConstraints } = await import('../services/constraints.ts');
-      const matchingRow = permsResult.rows.find(r => r.function_name === name && r.allowed);
+      const { checkConstraints } = await import("../services/constraints.ts");
+      const matchingRow = findPermissionRowForFunction(
+        app.slug,
+        permsResult.rows,
+        name,
+      );
       if (matchingRow) {
-        const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-          || request.headers.get('x-real-ip')
-          || null;
+        const clientIp =
+          request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+          request.headers.get("x-real-ip") ||
+          null;
         // Pass call arguments for argument-value whitelist enforcement
-        const callArgs = (args && typeof args === 'object') ? args as Record<string, unknown> : undefined;
-        const constraintResult = checkConstraints(matchingRow, clientIp, undefined, callArgs);
+        const callArgs = (args && typeof args === "object")
+          ? args as Record<string, unknown>
+          : undefined;
+        const constraintResult = checkConstraints(
+          matchingRow,
+          clientIp,
+          undefined,
+          callArgs,
+        );
         if (!constraintResult.allowed) {
           return jsonRpcErrorResponse(
             id,
             -32003,
-            `Permission denied: ${constraintResult.reason}`
+            `Permission denied: ${constraintResult.reason}`,
           );
         }
 
         // Increment budget_used atomically if budget_limit is set
         if (matchingRow.budget_limit !== null && matchingRow.budget_limit > 0) {
-          const sbUrl = getEnv('SUPABASE_URL');
-          const sbKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+          const sbUrl = getEnv("SUPABASE_URL");
+          const sbKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
           try {
             // Use Supabase RPC for atomic increment to avoid race conditions
-            const rpcRes = await fetch(`${sbUrl}/rest/v1/rpc/increment_budget_used`, {
-              method: 'POST',
-              headers: {
-                'apikey': sbKey,
-                'Authorization': `Bearer ${sbKey}`,
-                'Content-Type': 'application/json',
+            const rpcRes = await fetch(
+              `${sbUrl}/rest/v1/rpc/increment_budget_used`,
+              {
+                method: "POST",
+                headers: {
+                  "apikey": sbKey,
+                  "Authorization": `Bearer ${sbKey}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  p_user_id: userId,
+                  p_app_id: app.id,
+                  p_function_name: matchingRow.function_name,
+                }),
               },
-              body: JSON.stringify({
-                p_user_id: userId,
-                p_app_id: app.id,
-                p_function_name: name,
-              }),
-            });
+            );
             if (!rpcRes.ok) {
               // Fallback: use PostgREST PATCH with atomic SQL expression
               // PostgREST doesn't support SET col = col + 1 directly,
               // so we await the non-atomic version but log a warning
-              console.warn('Budget RPC not available, falling back to non-atomic increment');
-              await fetch(`${sbUrl}/rest/v1/user_app_permissions?granted_to_user_id=eq.${userId}&app_id=eq.${app.id}&function_name=eq.${encodeURIComponent(name)}`, {
-                method: 'PATCH',
-                headers: {
-                  'apikey': sbKey,
-                  'Authorization': `Bearer ${sbKey}`,
-                  'Content-Type': 'application/json',
+              console.warn(
+                "Budget RPC not available, falling back to non-atomic increment",
+              );
+              await fetch(
+                `${sbUrl}/rest/v1/user_app_permissions?granted_to_user_id=eq.${userId}&app_id=eq.${app.id}&function_name=eq.${
+                  encodeURIComponent(matchingRow.function_name)
+                }`,
+                {
+                  method: "PATCH",
+                  headers: {
+                    "apikey": sbKey,
+                    "Authorization": `Bearer ${sbKey}`,
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    budget_used: (matchingRow.budget_used || 0) + 1,
+                    updated_at: new Date().toISOString(),
+                  }),
                 },
-                body: JSON.stringify({
-                  budget_used: (matchingRow.budget_used || 0) + 1,
-                  updated_at: new Date().toISOString(),
-                }),
-              });
+              );
             }
           } catch (err) {
-            console.error('Budget increment failed:', err);
+            console.error("Budget increment failed:", err);
           }
 
           // Keep permission cache in sync with local budget increment
-          getPermissionCache().incrementBudget(userId, app.id, name);
+          getPermissionCache().incrementBudget(
+            userId,
+            app.id,
+            matchingRow.function_name,
+            app.slug,
+          );
         }
       }
     }
   }
 
-  // Determine the actual function name to execute
-  let functionName = name;
-  let isManifestFunction = false;
-
-  // Check if it's a manifest-based tool (format: appSlug_functionName or just functionName)
-  if (app.manifest) {
-    try {
-      const manifest = JSON.parse(app.manifest) as AppManifest;
-      const prefix = `${app.slug}_`;
-      if (name.startsWith(prefix) && manifest.functions) {
-        // Prefixed name: strip slug prefix
-        const fnName = name.slice(prefix.length);
-        if (fnName in manifest.functions) {
-          functionName = fnName;
-          isManifestFunction = true;
-        }
-      } else if (manifest.functions && name in manifest.functions) {
-        // Unprefixed name: use directly (supports in-chat widget bridge calls)
-        functionName = name;
-        isManifestFunction = true;
-      }
-    } catch (err) {
-      console.error('Failed to parse manifest for tool call:', err);
+  // Determine the actual function name to execute from canonical manifest contracts only.
+  let functionName = rawName;
+  let manifest: AppManifest;
+  try {
+    const contractResolution = requireManifestFunctionContracts(app);
+    logAppContractResolution({
+      appId: app.id,
+      ownerId: app.owner_id,
+      appSlug: app.slug,
+      runtime: app.runtime,
+      surface: "mcp_tools_call",
+      source: contractResolution.source,
+      legacySourceDetected: contractResolution.legacySourceDetected,
+      functionCount: contractResolution.functions.length,
+      manifestBacked: contractResolution.manifestBacked,
+      migrationRequired: contractResolution.migrationRequired,
+    });
+    manifest = contractResolution.manifest as AppManifest;
+  } catch (err) {
+    if (err instanceof AppContractMigrationRequiredError) {
+      const legacyResolution = resolveAppFunctionContracts(app, {
+        allowLegacySkills: true,
+        allowLegacyExports: true,
+        allowGpuExports: true,
+      });
+      logAppContractResolution({
+        appId: app.id,
+        ownerId: app.owner_id,
+        appSlug: app.slug,
+        runtime: app.runtime,
+        surface: "mcp_tools_call",
+        source: "none",
+        legacySourceDetected: legacyResolution.legacySourceDetected,
+        functionCount: 0,
+        manifestBacked: false,
+        migrationRequired: true,
+        note: "manifest_required",
+      });
+      return jsonRpcErrorResponse(id, INVALID_REQUEST, err.message);
     }
+    throw err;
   }
 
-  // Fall back to skills_parsed check (legacy behavior)
-  if (!isManifestFunction) {
-    const appFunction = app.skills_parsed?.functions.find(f => f.name === name);
-    // GPU apps: allow any exported function name
-    const appR = app as Record<string, unknown>;
-    const isGpuExport = appR.runtime === 'gpu' && Array.isArray(appR.exports) && (appR.exports as string[]).includes(name);
-    if (!appFunction && !isGpuExport) {
-      return jsonRpcErrorResponse(id, INVALID_PARAMS, `Unknown tool: ${name}`);
-    }
+  if (!manifest.functions || !(functionName in manifest.functions)) {
+    return jsonRpcErrorResponse(id, INVALID_PARAMS, `Unknown tool: ${name}`);
   }
 
   // Extract agent meta (e.g. _user_query, _session_id) before passing to sandbox
-  const { extractCallMeta } = await import('../services/call-logger.ts');
+  const { extractCallMeta } = await import("../services/call-logger.ts");
   const { cleanArgs, userQuery, sessionId } = extractCallMeta(args || {});
 
   // Extract auth token from request for inter-app calls (ultralight.call)
-  const authToken = request.headers.get('Authorization')?.slice(7) || undefined;
+  const authToken = request.headers.get("Authorization")?.slice(7) || undefined;
 
   // Execute app function via sandbox
-  return await executeAppFunction(id, functionName, cleanArgs, app, userId, user, { userQuery, sessionId, authToken });
+  return await executeAppFunction(
+    id,
+    functionName,
+    cleanArgs,
+    app,
+    userId,
+    user,
+    callerContext,
+    { userQuery, sessionId, authToken },
+  );
 }
 
 // ============================================
@@ -1281,20 +1601,21 @@ async function handleToolsCall(
  * Execute an SDK tool (ultralight.*)
  */
 async function executeSDKTool(
-  id: string | number,
+  id: JsonRpcId,
   toolName: string,
   args: Record<string, unknown>,
   appId: string,
   appOwnerId: string,
   userId: string,
   user: UserContext | null,
-  request?: Request
+  request: Request | undefined,
+  callerContext: RequestCallerContext,
 ): Promise<Response> {
   try {
     // Create app data service — use Worker-backed service if configured (native R2, ~10x faster)
     // Wrap with metered service when userId is present to track user data storage.
-    const _workerUrl = getEnv('WORKER_DATA_URL');
-    const _workerSecret = getEnv('WORKER_SECRET');
+    const _workerUrl = getEnv("WORKER_DATA_URL");
+    const _workerSecret = getEnv("WORKER_SECRET");
     const _rawAppDataService = (_workerUrl && _workerSecret)
       ? createWorkerAppDataService(appId, userId, _workerUrl, _workerSecret)
       : createAppDataService(appId, userId);
@@ -1306,11 +1627,12 @@ async function executeSDKTool(
 
     switch (toolName) {
       // Skills (documentation)
-      case 'ultralight.getSkills': {
+      case "ultralight.getSkills": {
         const appsService = createAppsService();
         const app = await appsService.findById(appId);
         result = {
-          skills_md: app?.skills_md || 'Skills.md not yet generated for this app.',
+          skills_md: app?.skills_md ||
+            "Skills.md not yet generated for this app.",
           app_name: app?.name || app?.slug || appId,
           app_id: appId,
         };
@@ -1318,62 +1640,62 @@ async function executeSDKTool(
       }
 
       // Storage
-      case 'ultralight.store': {
+      case "ultralight.store": {
         const storeKey = args.key as string;
         await appDataService.store(storeKey, args.value);
         // Index KV data for semantic search (fire-and-forget)
-        indexAppKV(appId, appOwnerId, storeKey, args.value).catch(err =>
-          console.error('[KV-INDEX] App KV index failed:', err)
+        indexAppKV(appId, appOwnerId, storeKey, args.value).catch((err) =>
+          console.error("[KV-INDEX] App KV index failed:", err)
         );
         result = { success: true };
         break;
       }
 
-      case 'ultralight.load':
+      case "ultralight.load":
         result = await appDataService.load(args.key as string);
         break;
 
-      case 'ultralight.list':
+      case "ultralight.list":
         result = await appDataService.list(args.prefix as string | undefined);
         break;
 
-      case 'ultralight.query':
+      case "ultralight.query":
         result = await appDataService.query(args.prefix as string, {
           limit: args.limit as number | undefined,
           offset: args.offset as number | undefined,
         });
         break;
 
-      case 'ultralight.remove': {
+      case "ultralight.remove": {
         const removeKey = args.key as string;
         await appDataService.remove(removeKey);
         // Clean up content index (fire-and-forget)
-        removeKVIndex(appOwnerId, 'app_kv', `${appId}/${removeKey}`).catch(err =>
-          console.error('[KV-INDEX] App KV remove failed:', err)
+        removeKVIndex(appOwnerId, "app_kv", `${appId}/${removeKey}`).catch(
+          (err) => console.error("[KV-INDEX] App KV remove failed:", err),
         );
         result = { success: true };
         break;
       }
 
       // Memory (cross-app)
-      case 'ultralight.remember': {
+      case "ultralight.remember": {
         const memService = getMemoryService();
         if (!memService) {
-          result = { success: false, error: 'Memory service not available' };
+          result = { success: false, error: "Memory service not available" };
           break;
         }
         const scope = args.scope as string || `app:${appId}`;
         const rememberKey = args.key as string;
         await memService.remember(userId, scope, rememberKey, args.value);
         // Index user KV data for semantic search (fire-and-forget)
-        indexUserKV(userId, scope, rememberKey, args.value).catch(err =>
-          console.error('[KV-INDEX] User KV index failed:', err)
+        indexUserKV(userId, scope, rememberKey, args.value).catch((err) =>
+          console.error("[KV-INDEX] User KV index failed:", err)
         );
         result = { success: true, key: rememberKey, scope };
         break;
       }
 
-      case 'ultralight.recall': {
+      case "ultralight.recall": {
         const memService = getMemoryService();
         if (!memService) {
           result = null;
@@ -1385,80 +1707,101 @@ async function executeSDKTool(
       }
 
       // AI
-      case 'ultralight.ai': {
-        // Get user's BYOK configuration
-        const userService = createUserService();
-        const userProfile = await userService.getUser(userId);
+      case "ultralight.ai": {
+        const userProfile = callerContext.userProfile;
+        const apiKey = callerContext.userApiKey;
 
         if (!userProfile?.byok_enabled || !userProfile.byok_provider) {
           result = {
-            content: '',
-            model: 'none',
+            content: "",
+            model: "none",
             usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
-            error: 'BYOK not configured. Please add your API key in Settings.',
+            error: "BYOK not configured. Please add your API key in Settings.",
           };
           break;
         }
 
-        // Get the decrypted API key for the user's primary provider
-        const apiKey = await userService.getDecryptedApiKey(userId, userProfile.byok_provider);
         if (!apiKey) {
           result = {
-            content: '',
-            model: 'none',
+            content: "",
+            model: "none",
             usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
-            error: 'API key not found. Please re-add your API key in Settings.',
+            error: "API key not found. Please re-add your API key in Settings.",
           };
           break;
         }
 
         // Create AI service with user's provider and key
         const aiService = createAIService(userProfile.byok_provider, apiKey);
+        const aiMessages = toAiMessages(args.messages);
+        if (!aiMessages) {
+          result = {
+            content: "",
+            model: "none",
+            usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
+            error:
+              "Invalid messages payload. Expected an array of AI messages.",
+          };
+          break;
+        }
 
         // Make the AI call
         try {
           result = await aiService.call({
-            messages: args.messages as Array<{ role: 'system' | 'user' | 'assistant'; content: string | unknown[] }>,
+            messages: aiMessages,
             model: args.model as string | undefined,
             temperature: args.temperature as number | undefined,
             max_tokens: args.max_tokens as number | undefined,
-            tools: args.tools as Array<{ name: string; description: string; parameters: Record<string, unknown> }> | undefined,
+            tools: args.tools as
+              | Array<
+                {
+                  name: string;
+                  description: string;
+                  parameters: Record<string, unknown>;
+                }
+              >
+              | undefined,
           });
         } catch (aiError) {
           result = {
-            content: '',
-            model: args.model || 'unknown',
+            content: "",
+            model: args.model || "unknown",
             usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
-            error: aiError instanceof Error ? aiError.message : 'AI call failed',
+            error: aiError instanceof Error
+              ? aiError.message
+              : "AI call failed",
           };
         }
         break;
       }
 
       // Inter-app calls
-      case 'ultralight.call': {
+      case "ultralight.call": {
         const targetAppId = args.app_id as string;
         const targetFn = args.function_name as string;
         const callArgs = (args.args as Record<string, unknown>) || {};
 
         if (!targetAppId || !targetFn) {
-          result = { error: 'app_id and function_name are required' };
+          result = { error: "app_id and function_name are required" };
           break;
         }
 
-        const baseUrl = getEnv('BASE_URL');
-        const authToken = request?.headers.get('Authorization')?.slice(7);
+        const baseUrl = getEnv("BASE_URL");
+        const authToken = request?.headers.get("Authorization")?.slice(7);
 
         if (!baseUrl || !authToken) {
-          result = { error: 'Inter-app calls not available (missing baseUrl or authToken)' };
+          result = {
+            error:
+              "Inter-app calls not available (missing baseUrl or authToken)",
+          };
           break;
         }
 
         // Make JSON-RPC call to target app's MCP endpoint
         const rpcRequest = {
-          jsonrpc: '2.0',
+          jsonrpc: "2.0",
           id: crypto.randomUUID(),
-          method: 'tools/call',
+          method: "tools/call",
           params: {
             name: targetFn,
             arguments: callArgs,
@@ -1466,30 +1809,42 @@ async function executeSDKTool(
         };
 
         const callResponse = await fetch(`${baseUrl}/mcp/${targetAppId}`, {
-          method: 'POST',
+          method: "POST",
           headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${authToken}`,
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${authToken}`,
           },
           body: JSON.stringify(rpcRequest),
         });
 
         if (!callResponse.ok) {
-          const errText = await callResponse.text().catch(() => callResponse.statusText);
-          result = { error: `Call failed (${callResponse.status}): ${errText}` };
+          const errText = await callResponse.text().catch(() =>
+            callResponse.statusText
+          );
+          result = {
+            error: `Call failed (${callResponse.status}): ${errText}`,
+          };
           break;
         }
 
-        const rpcResponse = await callResponse.json();
+        const rpcResponse = await readJsonResponse<JsonRpcResponse>(
+          callResponse,
+        );
         if (rpcResponse.error) {
-          result = { error: `RPC error: ${rpcResponse.error.message || JSON.stringify(rpcResponse.error)}` };
+          result = {
+            error: `RPC error: ${
+              rpcResponse.error.message || JSON.stringify(rpcResponse.error)
+            }`,
+          };
           break;
         }
 
         // Unwrap MCP tool result
-        const callResult = rpcResponse.result;
+        const callResult = rpcResponse.result as
+          | MCPToolCallResponse
+          | undefined;
         if (callResult?.content && Array.isArray(callResult.content)) {
-          const textBlock = callResult.content.find((c: { type: string }) => c.type === 'text');
+          const textBlock = callResult.content.find((c) => c.type === "text");
           if (textBlock?.text) {
             try {
               result = JSON.parse(textBlock.text);
@@ -1506,36 +1861,56 @@ async function executeSDKTool(
       }
 
       // Async job polling — mirrors ul.job from platform-mcp
-      case 'ultralight.job':
-      case 'ul.job': {
+      case "ultralight.job":
+      case "ul.job": {
         const jobId = args.job_id as string;
         if (!jobId) {
-          result = { error: 'Missing required: job_id' };
+          result = { error: "Missing required: job_id" };
           break;
         }
-        const { getJob } = await import('../services/async-jobs.ts');
+        const { getJob } = await import("../services/async-jobs.ts");
         const job = await getJob(jobId, userId);
         if (!job) {
           result = { error: `Job ${jobId} not found` };
           break;
         }
-        if (job.status === 'running') {
+        if (job.status === "running") {
           const elapsed = Date.now() - new Date(job.created_at).getTime();
-          result = { job_id: jobId, status: 'running', elapsed_seconds: Math.round(elapsed / 1000), message: 'Still running. Poll again in a few seconds.' };
-        } else if (job.status === 'completed') {
-          result = { job_id: jobId, status: 'completed', duration_ms: job.duration_ms, result: job.result, logs: job.logs, ai_cost_light: job.ai_cost_light };
+          result = {
+            job_id: jobId,
+            status: "running",
+            elapsed_seconds: Math.round(elapsed / 1000),
+            message: "Still running. Poll again in a few seconds.",
+          };
+        } else if (job.status === "completed") {
+          result = {
+            job_id: jobId,
+            status: "completed",
+            duration_ms: job.duration_ms,
+            result: job.result,
+            logs: job.logs,
+            ai_cost_light: job.ai_cost_light,
+          };
         } else {
-          result = { job_id: jobId, status: 'failed', duration_ms: job.duration_ms, error: job.error };
+          result = {
+            job_id: jobId,
+            status: "failed",
+            duration_ms: job.duration_ms,
+            error: job.error,
+          };
         }
         break;
       }
 
       default:
-        return jsonRpcErrorResponse(id, INVALID_PARAMS, `Unknown SDK tool: ${toolName}`);
+        return jsonRpcErrorResponse(
+          id,
+          INVALID_PARAMS,
+          `Unknown SDK tool: ${toolName}`,
+        );
     }
 
     return jsonRpcResponse(id, formatToolResult(result));
-
   } catch (err) {
     console.error(`SDK tool ${toolName} error:`, err);
     return jsonRpcResponse(id, formatToolError(err));
@@ -1550,19 +1925,20 @@ async function executeSDKTool(
  * Called early in executeAppFunction before code fetching (GPU apps have no JS code).
  */
 async function handleGpuExecution(
-  id: string | number,
-  app: Record<string, unknown>,
+  id: JsonRpcId,
+  app: App,
   functionName: string,
   args: Record<string, unknown>,
   userId: string,
   user: UserContext | null,
   meta?: { userQuery?: string; sessionId?: string; authToken?: string },
 ): Promise<Response> {
-  if (app.gpu_status !== 'live') {
+  if (app.gpu_status !== "live") {
     return jsonRpcErrorResponse(
       id,
       -32603,
-      `GPU function is not ready (status: ${app.gpu_status ?? 'null'}). Try again later.`,
+      buildGpuNotReadyMessage(app.gpu_status),
+      buildGpuStatusDiagnostics(app.gpu_status, { appId: app.id }),
     );
   }
 
@@ -1577,8 +1953,8 @@ async function handleGpuExecution(
     return jsonRpcErrorResponse(
       id,
       -32000,
-      'GPU function is at capacity. Please try again in a few seconds.',
-      { type: 'GPU_CONCURRENCY_LIMIT' },
+      "GPU function is at capacity. Please try again in a few seconds.",
+      { type: "GPU_CONCURRENCY_LIMIT" },
     );
   }
 
@@ -1586,77 +1962,45 @@ async function handleGpuExecution(
     // Execute on GPU
     const gpuExecStart = Date.now();
     const gpuResult = await executeGpuFunction({
-      app: app as unknown as Parameters<typeof executeGpuFunction>[0]['app'],
+      app,
       functionName,
       args,
       executionId: crypto.randomUUID(),
     });
     const gpuExecDuration = Date.now() - gpuExecStart;
 
-    // Settle billing (if caller !== owner and result is chargeable)
-    let gpuCallChargeLight = 0;
-    let gpuSettlement;
-    if (userId !== app.owner_id) {
-      gpuSettlement = await settleGpuExecution(
-        userId,
-        app as unknown as Parameters<typeof settleGpuExecution>[1],
-        functionName,
-        args,
-        gpuResult,
-      );
-
-      if (gpuSettlement.insufficientBalance) {
-        return jsonRpcResponse(id, {
-          isError: true,
-          content: [{
-            type: 'text',
-            text: gpuSettlement.insufficientBalanceMessage!,
-          }],
-        });
-      }
-      gpuCallChargeLight = gpuSettlement.chargedLight;
-    }
-
-    // Log the call (fire-and-forget, with GPU telemetry)
-    const gpuResultJson = JSON.stringify(
-      gpuResult.success ? gpuResult.result : gpuResult.error,
-    );
-    const gpuResponseSizeBytes = new TextEncoder().encode(gpuResultJson).byteLength;
-    const gpuCallSource = user?.provisional ? 'onboarding_template' : undefined;
-
-    const { logMcpCall: logGpuMcpCall } = await import('../services/call-logger.ts');
-    logGpuMcpCall({
+    const gpuCallSource = user?.provisional ? "onboarding_template" : undefined;
+    const { settlement: gpuSettlement } = await settleAndLogGpuExecution({
       userId,
-      appId: app.id as string,
-      appName: (app.name || app.slug) as string,
+      user,
+      app,
       functionName,
-      method: 'tools/call',
-      success: gpuResult.success,
-      durationMs: gpuExecDuration,
-      errorMessage: gpuResult.success ? undefined : gpuResult.error?.message,
-      source: gpuCallSource,
       inputArgs: args,
-      outputResult: gpuResult.success ? gpuResult.result : gpuResult.error,
-      userTier: user?.tier,
-      appVersion: (app.current_version as string) || undefined,
-      responseSizeBytes: gpuResponseSizeBytes,
-      callChargeLight: gpuCallChargeLight,
+      method: "tools/call",
+      gpuResult,
+      durationMs: gpuExecDuration,
       sessionId: meta?.sessionId,
       sequenceNumber: nextSequenceNumber(meta?.sessionId),
       userQuery: meta?.userQuery,
-      // GPU-specific telemetry
-      gpuType: gpuResult.gpuType,
-      gpuExitCode: gpuResult.exitCode,
-      gpuDurationMs: gpuResult.durationMs,
-      gpuCostLight: gpuResult.gpuCostLight,
-      gpuPeakVramGb: gpuResult.peakVramGb,
-      gpuDeveloperFeeLight: gpuSettlement?.breakdown.developerFeeLight || 0,
-      gpuFailurePolicy: gpuSettlement?.failurePolicy,
+      source: gpuCallSource,
     });
+
+    if (gpuSettlement?.insufficientBalance) {
+      return jsonRpcResponse(id, {
+        isError: true,
+        content: [{
+          type: "text",
+          text: gpuSettlement.insufficientBalanceMessage!,
+        }],
+      });
+    }
 
     // Return result (same format as Deno sandbox)
     if (gpuResult.success) {
-      return jsonRpcResponse(id, formatToolResult(gpuResult.result, gpuResult.logs));
+      return jsonRpcResponse(
+        id,
+        formatToolResult(gpuResult.result, gpuResult.logs),
+      );
     } else {
       return jsonRpcResponse(id, formatToolError(gpuResult.error));
     }
@@ -1666,34 +2010,41 @@ async function handleGpuExecution(
 }
 
 async function executeAppFunction(
-  id: string | number,
+  id: JsonRpcId,
   functionName: string,
   args: Record<string, unknown>,
-  app: { id: string; storage_key: string },
+  app: App,
   userId: string,
   user: UserContext | null,
-  meta?: { userQuery?: string; sessionId?: string; authToken?: string }
+  callerContext: RequestCallerContext,
+  meta?: { userQuery?: string; sessionId?: string; authToken?: string },
 ): Promise<Response> {
   try {
     // ── GPU Runtime Branch (early return) ──
     // Must check BEFORE code fetching since GPU apps don't have JS code in R2.
-    const appFull = app as Record<string, unknown>;
-    if (appFull.runtime === 'gpu') {
-      return await handleGpuExecution(id, appFull, functionName, args, userId, user, meta);
+    if (app.runtime === "gpu") {
+      return await handleGpuExecution(
+        id,
+        app,
+        functionName,
+        args,
+        userId,
+        user,
+        meta,
+      );
     }
 
     const r2Service = createR2Service();
     // Use Worker-backed data service if configured (native R2 bindings, ~10x faster)
     // Wrap with metered service when userId is present to track user data storage.
-    const _wUrl = getEnv('WORKER_DATA_URL');
-    const _wSecret = getEnv('WORKER_SECRET');
+    const _wUrl = getEnv("WORKER_DATA_URL");
+    const _wSecret = getEnv("WORKER_SECRET");
     const _rawAppDataService2 = (_wUrl && _wSecret)
       ? createWorkerAppDataService(app.id, userId, _wUrl, _wSecret)
       : createAppDataService(app.id, userId);
     const appDataService = userId
       ? createMeteredAppDataService(_rawAppDataService2, userId)
       : _rawAppDataService2;
-    const userService = createUserService();
 
     // Phase 2C: Run independent setup tasks in parallel
     // - Code fetch (R2, ~50-200ms on cache miss — the bottleneck)
@@ -1706,137 +2057,99 @@ async function executeAppFunction(
     const codeCache = getCodeCache();
     const cachedCode = codeCache.get(app.id, app.storage_key);
 
-    const codeFetchPromise = cachedCode
-      ? Promise.resolve(cachedCode)
-      : (async () => {
-          console.log(`[MCP] Code cache MISS for app ${app.id}, fetching from R2 (storage_key=${app.storage_key})...`);
-          const entryFiles = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
-          for (const entryFile of entryFiles) {
-            try {
-              const path = `${app.storage_key}${entryFile}`;
-              const fetched = await r2Service.fetchTextFile(path);
-              if (fetched) {
-                // Log code fingerprint for debugging
-                const hasGemma = fetched.includes('gemma');
-                const hasSub = fetched.includes('FROM subjects sub WHERE');
-                const hasOldS = fetched.includes('FROM subjects WHERE');
-                console.log(`[MCP] Fetched ${path} (${fetched.length} bytes) gemma=${hasGemma} subAlias=${hasSub} oldSQL=${hasOldS}`);
-                codeCache.set(app.id, app.storage_key, fetched);
-                return fetched;
-              }
-            } catch { /* Try next */ }
-          }
-          return null;
-        })();
+    const codeFetchPromise = fetchAppEntryCode(
+      app,
+      {
+        r2Service,
+        codeCache,
+        onCacheMiss: () => {
+          console.log(
+            `[MCP] Code cache MISS for app ${app.id}, fetching from R2 (storage_key=${app.storage_key})...`,
+          );
+        },
+        onFileLoaded: (entryFile: string, fetched: string) => {
+          const hasGemma = fetched.includes("gemma");
+          const hasSub = fetched.includes("FROM subjects sub WHERE");
+          const hasOldS = fetched.includes("FROM subjects WHERE");
+          console.log(
+            `[MCP] Fetched ${app.storage_key}${entryFile} (${fetched.length} bytes) ` +
+              `gemma=${hasGemma} subAlias=${hasSub} oldSQL=${hasOldS}`,
+          );
+        },
+      },
+    );
 
     if (cachedCode) {
-      console.log(`[MCP] Code cache HIT for app ${app.id} (${codeCache.stats.hitRate} hit rate)`);
+      console.log(
+        `[MCP] Code cache HIT for app ${app.id} (${codeCache.stats.hitRate} hit rate)`,
+      );
     }
 
-    // --- Env var decryption (CPU-only) ---
-    const encryptedEnvVars = (app as Record<string, unknown>).env_vars as Record<string, string> || {};
-    const envVarsPromise = decryptEnvVars(encryptedEnvVars).catch(err => {
-      console.error('Failed to decrypt env vars:', err);
-      return {} as Record<string, string>;
-    });
-
-    // --- Per-user secrets fetch (conditional) ---
-    const envSchema = (app.env_schema || {}) as Record<string, { scope: string; required?: boolean; description?: string }>;
-    const perUserKeys = Object.entries(envSchema)
-      .filter(([, v]) => v.scope === 'per_user')
-      .map(([k]) => k);
-    const _SUPABASE_URL = getEnv('SUPABASE_URL');
-    const _SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
-
-    const secretsPromise = perUserKeys.length > 0
-      ? fetch(
-          `${_SUPABASE_URL}/rest/v1/user_app_secrets?user_id=eq.${userId}&app_id=eq.${app.id}&select=key,value_encrypted`,
-          { headers: { 'apikey': _SUPABASE_SERVICE_ROLE_KEY, 'Authorization': `Bearer ${_SUPABASE_SERVICE_ROLE_KEY}` } }
-        ).then(res => res.ok ? res.json() as Promise<Array<{ key: string; value_encrypted: string }>> : [])
-         .catch(() => [] as Array<{ key: string; value_encrypted: string }>)
-      : Promise.resolve([] as Array<{ key: string; value_encrypted: string }>);
+    const runtimeEnvPromise = resolveAppRuntimeEnvVars(app, userId);
 
     // --- Supabase config fetch (conditional) ---
-    const supabaseConfigPromise = (async (): Promise<{ url: string; anonKey: string; serviceKey?: string } | undefined> => {
-      // Prefer config_id (new model)
-      if (app.supabase_config_id) {
-        try {
-          const { getDecryptedSupabaseConfig } = await import('./user.ts');
-          const config = await getDecryptedSupabaseConfig(app.supabase_config_id as string);
-          if (config) return config;
-        } catch (err) {
-          console.error('Failed to get Supabase config by ID:', err);
-        }
-      }
-      // Legacy fallback: app-level creds
-      if (app.supabase_enabled && app.supabase_url && app.supabase_anon_key_encrypted) {
-        try {
-          const anonKey = await decryptEnvVar(app.supabase_anon_key_encrypted as string);
-          const config: { url: string; anonKey: string; serviceKey?: string } = { url: app.supabase_url as string, anonKey };
-          if (app.supabase_service_key_encrypted) {
-            config.serviceKey = await decryptEnvVar(app.supabase_service_key_encrypted as string);
-          }
-          return config;
-        } catch (err) {
-          console.error('Failed to decrypt legacy Supabase config:', err);
-        }
-      }
-      // Legacy fallback: user platform-level config
-      if (app.supabase_enabled) {
-        try {
-          const { getDecryptedPlatformSupabase } = await import('./user.ts');
-          const platformConfig = await getDecryptedPlatformSupabase(app.owner_id);
-          if (platformConfig) return platformConfig;
-        } catch (err) {
-          console.error('Failed to get platform Supabase config:', err);
-        }
-      }
-      return undefined;
-    })();
+    const supabaseConfigPromise = resolveAppSupabaseConfig(app);
 
     // Await all parallel tasks
-    const [code, envVars, userSecrets, userProfile, supabaseConfig] = await Promise.all([
-      codeFetchPromise,
-      envVarsPromise,
-      secretsPromise,
-      userService.getUser(userId),   // Phase 2D: fetch user profile here (BYOK keys included)
-      supabaseConfigPromise,
-    ]);
-
-    if (!code) {
-      return jsonRpcErrorResponse(id, INTERNAL_ERROR, 'App code not found');
+    let code;
+    let envResolution;
+    let supabaseConfig;
+    let d1DataService;
+    try {
+      [code, envResolution, supabaseConfig, { d1DataService }] = await Promise
+        .all([
+          codeFetchPromise,
+          runtimeEnvPromise,
+          supabaseConfigPromise,
+          createAppD1Resources(app),
+        ]);
+    } catch (err) {
+      if (err instanceof SupabaseConfigMigrationRequiredError) {
+        return jsonRpcErrorResponse(id, INVALID_REQUEST, err.message);
+      }
+      throw err;
     }
 
-    // Phase 2D: Build AI service from user profile — no redundant re-fetch
-    // getUser() already fetched byok_keys; use getDecryptedApiKey() which will cache-hit
-    // or, even better, we have the profile so we avoid the re-query on the hot path
-    let userApiKey: string | null = null;
+    if (!code) {
+      return jsonRpcErrorResponse(id, INTERNAL_ERROR, "App code not found");
+    }
+
+    const { envVars, missingRequiredSecrets } = envResolution;
+
     let aiServiceInstance: { call: (request: unknown) => Promise<unknown> };
 
-    if (userProfile?.byok_enabled && userProfile.byok_provider) {
-      userApiKey = await userService.getDecryptedApiKey(userId, userProfile.byok_provider);
-      if (userApiKey) {
-        const actualAiService = createAIService(userProfile.byok_provider, userApiKey);
+    if (
+      callerContext.userProfile?.byok_enabled &&
+      callerContext.userProfile.byok_provider
+    ) {
+      if (callerContext.userApiKey) {
+        const actualAiService = createAIService(
+          callerContext.userProfile.byok_provider,
+          callerContext.userApiKey,
+        );
         aiServiceInstance = {
-          call: async (request: unknown) => actualAiService.call(request as Parameters<typeof actualAiService.call>[0]),
+          call: async (request: unknown) =>
+            actualAiService.call(
+              request as Parameters<typeof actualAiService.call>[0],
+            ),
         };
       } else {
         aiServiceInstance = {
           call: async () => ({
-            content: '',
-            model: 'none',
+            content: "",
+            model: "none",
             usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
-            error: 'API key not found. Please re-add your API key in Settings.',
+            error: "API key not found. Please re-add your API key in Settings.",
           }),
         };
       }
     } else {
       aiServiceInstance = {
         call: async () => ({
-          content: '',
-          model: 'none',
+          content: "",
+          model: "none",
           usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
-          error: 'BYOK not configured. Please add your API key in Settings.',
+          error: "BYOK not configured. Please add your API key in Settings.",
         }),
       };
     }
@@ -1846,78 +2159,47 @@ async function executeAppFunction(
     // Always pass args object so functions can destructure (even if empty)
     const argsArray = [args];
 
-    // Merge per-user secrets into envVars (per-user overrides universal)
-    if (userSecrets.length > 0) {
-      for (const secret of userSecrets) {
-        try {
-          envVars[secret.key] = await decryptEnvVar(secret.value_encrypted);
-        } catch (err) {
-          console.error(`Failed to decrypt per-user secret ${secret.key}:`, err);
-        }
-      }
-
-      // Check for missing required per-user secrets
-      const requiredPerUser = Object.entries(envSchema)
-        .filter(([, v]) => v.scope === 'per_user' && v.required)
-        .map(([k]) => k);
-      const missingSecrets = requiredPerUser.filter(k => !envVars[k]);
-
-      if (missingSecrets.length > 0) {
-        return jsonRpcErrorResponse(
-          id,
-          -32006,
-          `Missing required secrets: ${missingSecrets.join(', ')}. Use ul.connect to provide them.`,
-          {
-            type: 'MISSING_SECRETS',
-            missing_secrets: missingSecrets,
-            app_id: app.id,
-            hint: `Call ul.connect with app_id="${app.id}" and provide: ${missingSecrets.join(', ')}`,
-          }
-        );
-      }
+    if (missingRequiredSecrets.length > 0) {
+      return jsonRpcErrorResponse(
+        id,
+        -32006,
+        buildMissingAppSecretsMessage(missingRequiredSecrets),
+        buildMissingAppSecretsErrorDetails(app.id, missingRequiredSecrets),
+      );
     }
 
     // ── Deno Sandbox Path (existing, unchanged) ──
     // Execute in sandbox (local — Worker handles data layer only)
-    const baseUrl = getEnv('BASE_URL') || undefined;
+    const baseUrl = getEnv("BASE_URL") || undefined;
     // workerBaseUrl not needed — SELF service binding handles internal routing
 
     const memService = getMemoryService();
-    const memoryAdapter = memService ? {
-      remember: async (key: string, value: unknown) => {
-        await memService.remember(userId, `app:${app.id}`, key, value);
-      },
-      recall: async (key: string) => {
-        return await memService.recall(userId, `app:${app.id}`, key);
-      },
-    } : null;
-
-    // ── D1 Data Service (lazy-provisioned) ──
-    const d1DatabaseId = app.d1_database_id ? app.d1_database_id : await getD1DatabaseId(app.id);
-    const d1DataService = createD1DataService(app.id, d1DatabaseId);
+    const memoryAdapter = memService
+      ? {
+        remember: async (key: string, value: unknown) => {
+          await memService.remember(userId, `app:${app.id}`, key, value);
+        },
+        recall: async (key: string) => {
+          return await memService.recall(userId, `app:${app.id}`, key);
+        },
+      }
+      : null;
 
     // AI-capable apps get a longer timeout (120s) since AI calls are inherently slow
-    const permissions = ['memory:read', 'memory:write', 'ai:call', 'net:fetch', 'app:call'];
-    // Include manifest-declared permissions (e.g., net:connect for IMAP/SMTP)
-    let manifestPerms: string[] = [];
-    try {
-      const rawManifest = (app as any).manifest;
-      const parsed = typeof rawManifest === 'string' ? JSON.parse(rawManifest) : rawManifest;
-      manifestPerms = parsed?.permissions || [];
-    } catch {}
-    if (!Array.isArray(manifestPerms)) manifestPerms = [];
-    for (const p of manifestPerms) {
-      if (p === 'net:connect' && !permissions.includes(p)) {
-        permissions.push(p);
-      }
-    }
-    const timeoutMs = permissions.includes('ai:call') ? 120_000 : 30_000;
+    const permissions = resolveManifestPermissions(app, [
+      "memory:read",
+      "memory:write",
+      "ai:call",
+      "net:fetch",
+      "app:call",
+    ]);
+    const timeoutMs = permissions.includes("ai:call") ? 120_000 : 30_000;
 
     // ── Async promotion threshold: if execution exceeds this, return a job envelope ──
     // Set high to avoid promotion — CF Workers Dynamic Worker sub-isolates don't survive
     // after the parent response is sent, even with ctx.waitUntil(). Keep sync for reliability.
     const ASYNC_PROMOTION_MS = 120_000;
-    const isAiCapable = permissions.includes('ai:call');
+    const isAiCapable = permissions.includes("ai:call");
     const executionId = crypto.randomUUID();
 
     const execStart = Date.now();
@@ -1928,154 +2210,49 @@ async function executeAppFunction(
       executionId,
       code,
       permissions,
-      userApiKey,
+      userApiKey: callerContext.userApiKey,
       user,
       appDataService,
       d1DataService,
       memoryService: memoryAdapter,
-      aiService: aiServiceInstance as { call: (request: import('../../shared/types/index.ts').AIRequest, apiKey: string) => Promise<import('../../shared/types/index.ts').AIResponse> },
+      aiService: aiServiceInstance as {
+        call: (request: AIRequest, apiKey: string) => Promise<AIResponse>;
+      },
       envVars,
       supabase: supabaseConfig,
       baseUrl,
       authToken: meta?.authToken,
-      workerSecret: getEnv('WORKER_SECRET') || undefined,
+      workerSecret: getEnv("WORKER_SECRET") || undefined,
       timeoutMs,
     };
 
     // Helper: run billing + logging after execution completes (used by both sync and async paths)
-    const runPostExecution = async (result: { success: boolean; result: unknown; error?: unknown; logs: Array<{ time: string; level: string; message: string }>; durationMs: number; aiCostLight: number }) => {
-      const execDuration = result.durationMs;
-
-      // ── Per-call pricing: charge caller → app owner ──
-      let callChargeLight = 0;
-      if (result.success && userId !== app.owner_id) {
-        const pricingConfig = (app as Record<string, unknown>).pricing_config as AppPricingConfig | null;
-        callChargeLight = getCallPriceLight(pricingConfig, functionName);
-
-        if (callChargeLight > 0) {
-          const freeCalls = getFreeCalls(pricingConfig, functionName);
-          if (freeCalls > 0) {
-            const scope = getFreeCallsScope(pricingConfig);
-            const counterKey = scope === 'app' ? '__app__' : functionName;
-            try {
-              const _SB_URL = getEnv('SUPABASE_URL');
-              const _SB_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
-              const usageRes = await fetch(
-                `${_SB_URL}/rest/v1/rpc/increment_caller_usage`,
-                {
-                  method: 'POST',
-                  headers: {
-                    'apikey': _SB_KEY,
-                    'Authorization': `Bearer ${_SB_KEY}`,
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify({
-                    p_app_id: app.id,
-                    p_user_id: userId,
-                    p_counter_key: counterKey,
-                  }),
-                }
-              );
-              if (usageRes.ok) {
-                const callCount = await usageRes.json();
-                if (callCount <= freeCalls) {
-                  callChargeLight = 0;
-                }
-              }
-            } catch (usageErr) {
-              console.error('[PRICING] Free calls usage check error:', usageErr);
-            }
-          }
-        }
-
-        if (callChargeLight > 0) {
-          try {
-            const SUPABASE_URL = getEnv('SUPABASE_URL');
-            const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
-
-            const transferRes = await fetch(
-              `${SUPABASE_URL}/rest/v1/rpc/transfer_balance`,
-              {
-                method: 'POST',
-                headers: {
-                  'apikey': SUPABASE_SERVICE_ROLE_KEY,
-                  'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  p_from_user: userId,
-                  p_to_user: app.owner_id,
-                  p_amount_light: callChargeLight,
-                }),
-              }
-            );
-
-            if (transferRes.ok) {
-              const rows = await transferRes.json() as Array<{ from_new_balance: number; to_new_balance: number }>;
-              if (!rows || rows.length === 0) {
-                callChargeLight = 0; // Insufficient balance — async can't return error to caller, skip
-              } else {
-                const transferReason = isSuspended ? 'tool_call_suspended' : 'tool_call';
-                fetch(`${SUPABASE_URL}/rest/v1/transfers`, {
-                  method: 'POST',
-                  headers: {
-                    'apikey': SUPABASE_SERVICE_ROLE_KEY,
-                    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-                    'Content-Type': 'application/json',
-                    'Prefer': 'return=minimal',
-                  },
-                  body: JSON.stringify({
-                    from_user_id: userId,
-                    to_user_id: app.owner_id,
-                    amount_light: callChargeLight,
-                    reason: transferReason,
-                    app_id: app.id,
-                    function_name: functionName,
-                  }),
-                }).catch(() => {});
-
-                if (isSuspended && rows[0] && rows[0].to_new_balance > 0) {
-                  fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${app.owner_id}`, {
-                    method: 'PATCH',
-                    headers: {
-                      'apikey': SUPABASE_SERVICE_ROLE_KEY,
-                      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-                      'Content-Type': 'application/json',
-                      'Prefer': 'return=minimal',
-                    },
-                    body: JSON.stringify({ hosting_suspended: false }),
-                  }).catch(() => {});
-                  console.log(`[SUSPEND] Auto-unsuspended app ${app.id} — owner balance recovered to ${rows[0].to_new_balance}¢`);
-                }
-              }
-            } else {
-              console.error(`[PRICING] Transfer failed for ${userId} → ${app.owner_id}:`, await transferRes.text());
-              callChargeLight = 0;
-            }
-          } catch (chargeErr) {
-            console.error(`[PRICING] Charge error:`, chargeErr);
-            callChargeLight = 0;
-          }
-        }
-      }
-
-      // Measure response size for cost telemetry
-      const resultJson = JSON.stringify(result.success ? result.result : result.error);
-      const responseSizeBytes = new TextEncoder().encode(resultJson || '').byteLength;
-      const requestCost = 0.0000003;
-      const cpuCost = execDuration * 0.00000002;
-      const executionCostEstimateLight = (requestCost + cpuCost) * LIGHT_PER_DOLLAR_DESKTOP;
-
-      const callSource = user?.provisional ? 'onboarding_template' : undefined;
-      const { logMcpCall } = await import('../services/call-logger.ts');
-      logMcpCall({
+    const runPostExecution = async (
+      result: {
+        success: boolean;
+        result: unknown;
+        error?: unknown;
+        logs: Array<{ time: string; level: string; message: string }>;
+        durationMs: number;
+        aiCostLight: number;
+      },
+    ) => {
+      const chargeResult = await settleCallerAppCharge({
+        app,
+        userId,
+        functionName,
+        inputArgs: args,
+        successful: result.success,
+      });
+      const callSource = user?.provisional ? "onboarding_template" : undefined;
+      logExecutionResult({
         userId,
         appId: app.id,
         appName: app.name || app.slug,
         functionName,
-        method: 'tools/call',
+        method: "tools/call",
         success: result.success,
-        durationMs: execDuration,
+        durationMs: result.durationMs,
         errorMessage: result.success ? undefined : String(result.error),
         source: callSource,
         inputArgs: args,
@@ -2086,51 +2263,72 @@ async function executeAppFunction(
         sessionId: meta?.sessionId,
         sequenceNumber: nextSequenceNumber(meta?.sessionId),
         userQuery: meta?.userQuery,
-        responseSizeBytes,
-        executionCostEstimateLight,
-        callChargeLight,
+        callChargeLight: chargeResult.chargedLight,
       });
 
-      return callChargeLight;
+      return chargeResult.chargedLight;
     };
 
     // Start execution (Dynamic Worker sandbox — avoids `new Function()` restriction on CF Workers)
-    const { executeInDynamicSandbox } = await import('../runtime/dynamic-sandbox.ts');
-    const executionPromise = executeInDynamicSandbox(sandboxConfig, functionName, argsArray);
+    const { executeInDynamicSandbox } = await import(
+      "../runtime/dynamic-sandbox.ts"
+    );
+    const executionPromise = executeInDynamicSandbox(
+      sandboxConfig,
+      functionName,
+      argsArray,
+    );
 
     // ── Async promotion: race execution against timer ──
     // Only promote AI-capable apps (others complete fast enough)
-    const { canAcceptAsyncJob, createJob, completeJob, failJob } = await import('../services/async-jobs.ts');
+    const { canAcceptAsyncJob, createJob, completeJob, failJob } = await import(
+      "../services/async-jobs.ts"
+    );
 
     if (isAiCapable && canAcceptAsyncJob()) {
-      const promotionTimer = new Promise<'promote'>((resolve) => {
-        setTimeout(() => resolve('promote'), ASYNC_PROMOTION_MS);
+      const promotionTimer = new Promise<"promote">((resolve) => {
+        setTimeout(() => resolve("promote"), ASYNC_PROMOTION_MS);
       });
 
       const raceResult = await Promise.race([
-        executionPromise.then(r => ({ type: 'sync' as const, result: r })),
-        promotionTimer.then(() => ({ type: 'promote' as const, result: undefined as unknown })),
+        executionPromise.then((r) => ({ type: "sync" as const, result: r })),
+        promotionTimer.then(() => ({
+          type: "promote" as const,
+          result: undefined as unknown,
+        })),
       ]);
 
-      if (raceResult.type === 'sync') {
+      if (raceResult.type === "sync") {
         // Fast path: completed within threshold — business as usual
-        const result = raceResult.result as { success: boolean; result: unknown; error?: unknown; logs: Array<{ time: string; level: string; message: string }>; durationMs: number; aiCostLight: number };
+        const result = raceResult.result as {
+          success: boolean;
+          result: unknown;
+          error?: unknown;
+          logs: Array<{ time: string; level: string; message: string }>;
+          durationMs: number;
+          aiCostLight: number;
+        };
         const callChargeLight = await runPostExecution(result);
 
         // Fire-and-forget: rebuild entity index after successful execution
         if (result.success) {
-          import('../services/entity-index.ts')
+          import("../services/entity-index.ts")
             .then(({ rebuildEntityIndex }) => rebuildEntityIndex(userId))
-            .catch(err => console.error('[MCP] Entity index rebuild failed:', err));
+            .catch((err) =>
+              console.error("[MCP] Entity index rebuild failed:", err)
+            );
         }
 
         // Handle insufficient balance for sync path (callChargeLight would be 0 if failed)
         if (result.success) {
           // Auto-stamp widget responses with app version for client cache busting
-          if (result.result && typeof result.result === 'object' && (result.result as any).app_html) {
-            (result.result as any).version = app.current_version || '1';
+          if (isWidgetAppResponse(result.result)) {
+            result.result.version = app.current_version || "1";
           }
-          return jsonRpcResponse(id, formatToolResult(result.result, result.logs));
+          return jsonRpcResponse(
+            id,
+            formatToolResult(result.result, result.logs),
+          );
         } else {
           return jsonRpcResponse(id, formatToolError(result.error));
         }
@@ -2158,30 +2356,31 @@ async function executeAppFunction(
           });
         }).catch(async (err) => {
           await failJob(jobId, {
-            type: 'ExecutionError',
+            type: "ExecutionError",
             message: err instanceof Error ? err.message : String(err),
           }, Date.now() - execStart);
         });
 
         // Keep CF Worker alive until async execution completes
-        const ctx = (globalThis as any).__ctx as { waitUntil?: (p: Promise<unknown>) => void } | undefined;
+        const ctx = globalThis.__ctx;
         if (ctx?.waitUntil) ctx.waitUntil(completionPromise);
 
         // Return job envelope immediately
         return jsonRpcResponse(id, {
           content: [{
-            type: 'text',
+            type: "text",
             text: JSON.stringify({
               _async: true,
               job_id: jobId,
-              status: 'running',
-              message: `Execution promoted to async job. Poll with ul.job({ job_id: "${jobId}" }) to get the result.`,
+              status: "running",
+              message:
+                `Execution promoted to async job. Poll with ul.job({ job_id: "${jobId}" }) to get the result.`,
             }),
           }],
           structuredContent: {
             _async: true,
             job_id: jobId,
-            status: 'running',
+            status: "running",
           },
           isError: false,
         });
@@ -2193,22 +2392,26 @@ async function executeAppFunction(
 
       // Fire-and-forget: rebuild entity index after successful execution
       if (result.success) {
-        import('../services/entity-index.ts')
+        import("../services/entity-index.ts")
           .then(({ rebuildEntityIndex }) => rebuildEntityIndex(userId))
-          .catch(err => console.error('[MCP] Entity index rebuild failed:', err));
+          .catch((err) =>
+            console.error("[MCP] Entity index rebuild failed:", err)
+          );
       }
 
       if (result.success) {
         // Auto-stamp widget responses with app version for client cache busting
-        if (result.result && typeof result.result === 'object' && (result.result as any).app_html) {
-          (result.result as any).version = app.current_version || '1';
+        if (isWidgetAppResponse(result.result)) {
+          result.result.version = app.current_version || "1";
         }
-        return jsonRpcResponse(id, formatToolResult(result.result, result.logs));
+        return jsonRpcResponse(
+          id,
+          formatToolResult(result.result, result.logs),
+        );
       } else {
         return jsonRpcResponse(id, formatToolError(result.error));
       }
     }
-
   } catch (err) {
     console.error(`App function ${functionName} error:`, err);
     return jsonRpcResponse(id, formatToolError(err));
@@ -2222,53 +2425,32 @@ async function executeAppFunction(
 /**
  * Convert SkillFunction to MCPTool format
  */
-function skillFunctionToMCPTool(fn: SkillFunction): MCPTool {
-  // Convert parameters object to JSON Schema
-  const inputSchema: MCPJsonSchema = {
-    type: 'object',
-    properties: {},
-    required: [],
-  };
-
-  if (fn.parameters && typeof fn.parameters === 'object') {
-    // Normalize array→object for legacy skills_parsed records
-    const params = normalizeManifestParameters(fn.parameters) || fn.parameters;
-    for (const [name, schema] of Object.entries(params)) {
-      inputSchema.properties![name] = schema as MCPJsonSchema;
-      // Assume all parameters are required unless marked optional
-      if (!(schema as MCPJsonSchema).nullable) {
-        inputSchema.required!.push(name);
-      }
-    }
-  }
-
-  return {
-    name: fn.name,
-    description: fn.description,
-    inputSchema,
-    outputSchema: fn.returns as MCPJsonSchema | undefined,
-  };
-}
-
 /**
  * Format successful tool result for MCP response
  */
-function formatToolResult(result: unknown, logs?: Array<{ message: string }>): MCPToolCallResponse {
+function formatToolResult(
+  result: unknown,
+  logs?: Array<{ message: string }> | string[],
+): MCPToolCallResponse {
   const content: MCPContent[] = [];
 
   // Add result as text
   if (result !== undefined && result !== null) {
     content.push({
-      type: 'text',
-      text: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
+      type: "text",
+      text: typeof result === "string"
+        ? result
+        : JSON.stringify(result, null, 2),
     });
   }
 
   // Add logs if present
-  if (logs && logs.length > 0) {
+  const logMessages =
+    logs?.map((log) => typeof log === "string" ? log : log.message) || [];
+  if (logMessages.length > 0) {
     content.push({
-      type: 'text',
-      text: `\n--- Logs ---\n${logs.map(l => l.message).join('\n')}`,
+      type: "text",
+      text: `\n--- Logs ---\n${logMessages.join("\n")}`,
     });
   }
 
@@ -2289,7 +2471,7 @@ function formatToolError(err: unknown): MCPToolCallResponse {
 
   return {
     content: [{
-      type: 'text',
+      type: "text",
       text: `Error: ${message}`,
     }],
     isError: true,
@@ -2299,15 +2481,15 @@ function formatToolError(err: unknown): MCPToolCallResponse {
 /**
  * Create JSON-RPC success response
  */
-function jsonRpcResponse(id: string | number | null, result: unknown): Response {
+function jsonRpcResponse(id: JsonRpcId, result: unknown): Response {
   const response: JsonRpcResponse = {
-    jsonrpc: '2.0',
-    id,
+    jsonrpc: "2.0",
+    id: normalizeJsonRpcResponseId(id),
     result,
   };
 
   return new Response(JSON.stringify(response), {
-    headers: { 'Content-Type': 'application/json' },
+    headers: { "Content-Type": "application/json" },
   });
 }
 
@@ -2315,20 +2497,20 @@ function jsonRpcResponse(id: string | number | null, result: unknown): Response 
  * Create JSON-RPC error response
  */
 function jsonRpcErrorResponse(
-  id: string | number | null,
+  id: JsonRpcId,
   code: number,
   message: string,
-  data?: unknown
+  data?: unknown,
 ): Response {
   const response: JsonRpcResponse = {
-    jsonrpc: '2.0',
-    id,
+    jsonrpc: "2.0",
+    id: normalizeJsonRpcResponseId(id),
     error: { code, message, data },
   };
 
   return new Response(JSON.stringify(response), {
     status: code === RATE_LIMITED ? 429 : code < 0 ? 400 : 500,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { "Content-Type": "application/json" },
   });
 }
 
@@ -2340,36 +2522,57 @@ function jsonRpcErrorResponse(
  * Handle MCP discovery endpoint
  * GET /a/:appId/.well-known/mcp.json
  */
-export async function handleMcpDiscovery(request: Request, appId: string): Promise<Response> {
+export async function handleMcpDiscovery(
+  request: Request,
+  appId: string,
+): Promise<Response> {
   try {
     const appsService = createAppsService();
     const app = await appsService.findById(appId);
 
     if (!app) {
-      return error('App not found', 404);
+      return error("App not found", 404);
     }
 
     // Check visibility for private apps
-    if (app.visibility === 'private') {
+    if (app.visibility === "private") {
       try {
-        const user = await authenticate(request);
-        if (user.id !== app.owner_id) {
-          return error('App not found', 404);
+        const caller = await resolveRequestCallerContext(request, {
+          authSourcePolicy: "bearer_or_cookie",
+        });
+        if (caller.userId !== app.owner_id) {
+          return error("App not found", 404);
         }
       } catch {
-        return error('App not found', 404);
+        return error("App not found", 404);
       }
     }
 
-    // Count tools
-    const appToolsCount = app.skills_parsed?.functions?.length || 0;
+    const contractResolution = resolveAppFunctionContracts(app);
+    logAppContractResolution({
+      appId: app.id,
+      ownerId: app.owner_id,
+      appSlug: app.slug,
+      runtime: app.runtime,
+      surface: "mcp_discovery",
+      source: contractResolution.source,
+      legacySourceDetected: contractResolution.legacySourceDetected,
+      functionCount: contractResolution.functions.length,
+      manifestBacked: contractResolution.manifestBacked,
+      migrationRequired: contractResolution.migrationRequired,
+    });
+
+    // Count tools using canonical manifest-backed contracts only.
+    const appToolsCount = contractResolution.manifestBacked
+      ? contractResolution.functions.length
+      : 0;
     const totalTools = appToolsCount + SDK_TOOLS.length;
 
     const response = {
       name: app.name || app.slug,
       description: app.description || undefined,
       transport: {
-        type: 'http-post',
+        type: "http-post",
         url: `/mcp/${appId}`,
       },
       capabilities: {
@@ -2380,12 +2583,17 @@ export async function handleMcpDiscovery(request: Request, appId: string): Promi
       app_tools: appToolsCount,
       sdk_tools: SDK_TOOLS.length,
       resources_count: app.skills_md ? 1 : 0,
+      contract_source: contractResolution.manifestBacked
+        ? "manifest"
+        : (contractResolution.legacySourceDetected || "none"),
+      manifest_backed: contractResolution.manifestBacked,
+      migration_required: contractResolution.migrationRequired,
+      contract_message: contractResolution.message || undefined,
     };
 
     return json(response);
-
   } catch (err) {
-    console.error('MCP discovery error:', err);
-    return error('Failed to get MCP info', 500);
+    console.error("MCP discovery error:", err);
+    return error("Failed to get MCP info", 500);
   }
 }

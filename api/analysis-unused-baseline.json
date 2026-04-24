@@ -1,0 +1,815 @@
+{
+  "issues": [
+    {
+      "exports": [
+        "getUserId"
+      ],
+      "file": "handlers/auth.ts"
+    },
+    {
+      "file": "handlers/cron.ts",
+      "files": [
+        "handlers/cron.ts"
+      ]
+    },
+    {
+      "exports": [
+        "handleDraftUploadFiles"
+      ],
+      "file": "handlers/upload.ts"
+    },
+    {
+      "exports": [
+        "getDecryptedPlatformSupabase",
+        "getDecryptedSupabaseConfig",
+        "getUserPlatformSupabase"
+      ],
+      "file": "handlers/user.ts",
+      "types": [
+        "PermissionsResult"
+      ]
+    },
+    {
+      "file": "handlers/wave3-e2e.test.ts",
+      "files": [
+        "handlers/wave3-e2e.test.ts"
+      ]
+    },
+    {
+      "exports": [
+        "CANONICAL_BASE"
+      ],
+      "file": "lib/urls.ts"
+    },
+    {
+      "file": "runtime/dynamic-executor.ts",
+      "types": [
+        "DynamicExecuteOptions"
+      ]
+    },
+    {
+      "file": "services/admin-request-validation.ts",
+      "types": [
+        "ApproveAssessmentPayload",
+        "CreateGapPayload",
+        "RecordAssessmentPayload",
+        "SetAppCategoryPayload",
+        "SetAppFeaturedPayload",
+        "TopUpBalancePayload",
+        "UpdateGapPayload"
+      ]
+    },
+    {
+      "exports": [
+        "AIService",
+        "getDefaultModel",
+        "getSupportedProviders"
+      ],
+      "file": "services/ai.ts",
+      "types": [
+        "AIServiceConfig"
+      ]
+    },
+    {
+      "file": "services/app-diagnostics.ts",
+      "types": [
+        "AppAccessRequiredDiagnostics",
+        "AppSecretDiagnostics",
+        "AppSecretDiagnosticsState",
+        "AppSharingDiagnostics",
+        "AppSharingDiagnosticsState",
+        "BuildAppSecretDiagnosticsInput",
+        "BuildAppSharingDiagnosticsInput",
+        "SharingPermissionDiagnosticRow"
+      ]
+    },
+    {
+      "exports": [
+        "APP_ENTRY_FILES",
+        "resolveAppEnvVars"
+      ],
+      "file": "services/app-runtime-resources.ts",
+      "types": [
+        "AppSupabaseConfigState",
+        "MissingAppSecretsErrorDetails",
+        "ResolvedAppRuntimeEnv"
+      ]
+    },
+    {
+      "exports": [
+        "buildAppSupabaseResolutionLogEntry"
+      ],
+      "file": "services/app-runtime-telemetry.ts"
+    },
+    {
+      "exports": [
+        "AppsService"
+      ],
+      "file": "services/apps.ts",
+      "types": [
+        "SupabaseConfig"
+      ]
+    },
+    {
+      "exports": [
+        "getServerInstance",
+        "startAsyncJobCleanupJob"
+      ],
+      "file": "services/async-jobs.ts",
+      "types": [
+        "AsyncJob"
+      ]
+    },
+    {
+      "file": "services/auth-cookies.ts",
+      "types": [
+        "CookieOptions"
+      ]
+    },
+    {
+      "exports": [
+        "AUTH_ROUTE_RATE_LIMITS",
+        "buildAuthRateLimitHeaders",
+        "getAuthRateLimitClientIp"
+      ],
+      "file": "services/auth-rate-limit.ts",
+      "types": [
+        "AuthRateLimitRoute"
+      ]
+    },
+    {
+      "file": "services/auth-request-validation.ts",
+      "types": [
+        "DynamicClientRegistrationPayload",
+        "EmbedBridgeExchangePayload",
+        "OAuthAuthorizeQuery",
+        "OAuthRevocationPayload",
+        "OAuthTokenExchangePayload",
+        "PageShareExchangePayload",
+        "RefreshPayload",
+        "SessionBootstrapPayload"
+      ]
+    },
+    {
+      "file": "services/auth-transport.ts",
+      "types": [
+        "LegacyAuthTokenShape",
+        "LegacyAuthTransportKind",
+        "LegacyAuthTransportLogInput"
+      ]
+    },
+    {
+      "exports": [
+        "startAutoHealingJob"
+      ],
+      "file": "services/auto-healing.ts",
+      "types": [
+        "AutoHealingReport"
+      ]
+    },
+    {
+      "file": "services/bundler.ts",
+      "types": [
+        "BundleResult",
+        "FileInput"
+      ]
+    },
+    {
+      "exports": [
+        "calculateCostLight",
+        "CHAT_MIN_BALANCE_LIGHT"
+      ],
+      "file": "services/chat-billing.ts"
+    },
+    {
+      "exports": [
+        "CodeCache"
+      ],
+      "file": "services/codecache.ts"
+    },
+    {
+      "file": "services/codemode-tools.ts",
+      "types": [
+        "JsonSchemaToolDescriptor"
+      ]
+    },
+    {
+      "file": "services/constraints.ts",
+      "types": [
+        "ConstraintCheckResult"
+      ]
+    },
+    {
+      "file": "services/context-resolver.ts",
+      "types": [
+        "TaskContext"
+      ]
+    },
+    {
+      "exports": [
+        "isCorsOriginAllowed"
+      ],
+      "file": "services/cors.ts",
+      "types": [
+        "CorsConfigInput"
+      ]
+    },
+    {
+      "exports": [
+        "createCronJob",
+        "createCronService",
+        "CRON_PRESETS",
+        "deleteAppCronJobs",
+        "deleteCronJob",
+        "describeCronExpression",
+        "executeCronJob",
+        "getAppCronJobs",
+        "getCronJob",
+        "getJobRunLogs",
+        "isValidCronExpression",
+        "loadCronJobs",
+        "saveCronJobs",
+        "shouldRunAt",
+        "startCronScheduler",
+        "stopCronScheduler",
+        "triggerCronJob",
+        "updateCronJob"
+      ],
+      "file": "services/cron.ts",
+      "types": [
+        "CronJob",
+        "CronJobCreateInput",
+        "CronRunLog",
+        "CronService"
+      ]
+    },
+    {
+      "exports": [
+        "startD1BillingJob"
+      ],
+      "file": "services/d1-billing.ts"
+    },
+    {
+      "exports": [
+        "acquireD1ConcurrencySlot",
+        "checkD1Balance",
+        "checkD1FreeTier",
+        "checkD1RateLimit",
+        "releaseD1ConcurrencySlot"
+      ],
+      "file": "services/d1-metering.ts",
+      "types": [
+        "D1UsageCheck"
+      ]
+    },
+    {
+      "file": "services/d1-migrations.ts",
+      "types": [
+        "SchemaValidationResult"
+      ]
+    },
+    {
+      "exports": [
+        "deleteD1ForApp"
+      ],
+      "file": "services/d1-provisioning.ts"
+    },
+    {
+      "file": "services/d1-test-fixtures.ts",
+      "types": [
+        "D1FixtureMethod",
+        "D1FixtureRequest"
+      ]
+    },
+    {
+      "file": "services/data-quota.ts",
+      "types": [
+        "DataQuotaResult",
+        "DataStorageAdjustResult"
+      ]
+    },
+    {
+      "exports": [
+        "enhanceWithAI"
+      ],
+      "file": "services/docgen.ts",
+      "types": [
+        "GenerationError",
+        "GenerationResult",
+        "ValidationError",
+        "ValidationResult"
+      ]
+    },
+    {
+      "file": "services/embed-bridge.ts",
+      "types": [
+        "EmbedBridgeTokenPayload"
+      ]
+    },
+    {
+      "exports": [
+        "startEmbeddingProcessorJob"
+      ],
+      "file": "services/embedding-processor.ts"
+    },
+    {
+      "exports": [
+        "EmbeddingService"
+      ],
+      "file": "services/embedding.ts",
+      "types": [
+        "EmbeddingConfig",
+        "EmbeddingResult"
+      ]
+    },
+    {
+      "exports": [
+        "encryptEnvVars",
+        "maskEnvVarValue"
+      ],
+      "file": "services/envvars.ts"
+    },
+    {
+      "file": "services/execution-settlement.ts",
+      "types": [
+        "ExecutionTelemetry",
+        "LogExecutionResultParams",
+        "SettleAndLogGpuExecutionParams",
+        "SettleCallerAppChargeParams",
+        "SettleCallerAppChargeResult"
+      ]
+    },
+    {
+      "file": "services/flash-broker.ts",
+      "types": [
+        "ScopeConfig"
+      ]
+    },
+    {
+      "exports": [
+        "computeBenchmarkStats",
+        "startGpuBuildProcessorJob"
+      ],
+      "file": "services/gpu/benchmark.ts"
+    },
+    {
+      "exports": [
+        "computeGpuCallCost",
+        "estimateMaxGpuCost",
+        "extractUnitCount"
+      ],
+      "file": "services/gpu/billing.ts",
+      "types": [
+        "GpuCostBreakdown",
+        "GpuSettlementResult"
+      ]
+    },
+    {
+      "file": "services/gpu/builder.test.ts",
+      "files": [
+        "services/gpu/builder.test.ts"
+      ]
+    },
+    {
+      "exports": [
+        "getGpuConcurrency",
+        "GpuConcurrencyError",
+        "releaseGpuSlot"
+      ],
+      "file": "services/gpu/concurrency.ts",
+      "types": [
+        "GpuSlot"
+      ]
+    },
+    {
+      "file": "services/gpu/config.ts",
+      "types": [
+        "GpuConfigValidation"
+      ]
+    },
+    {
+      "file": "services/gpu/executor.ts",
+      "types": [
+        "GpuExecuteParams"
+      ]
+    },
+    {
+      "file": "services/gpu/index.ts",
+      "files": [
+        "services/gpu/index.ts"
+      ]
+    },
+    {
+      "exports": [
+        "formatGpuCostEstimate"
+      ],
+      "file": "services/gpu/pricing-display.ts"
+    },
+    {
+      "file": "services/gpu/runpod.test.ts",
+      "files": [
+        "services/gpu/runpod.test.ts"
+      ]
+    },
+    {
+      "file": "services/gpu/runpod.ts",
+      "types": [
+        "RunPodTemplateResolution",
+        "RunPodTemplateResolutionInput"
+      ]
+    },
+    {
+      "file": "services/gpu/smoke-test.ts",
+      "files": [
+        "services/gpu/smoke-test.ts"
+      ]
+    },
+    {
+      "file": "services/gpu/status.test.ts",
+      "files": [
+        "services/gpu/status.test.ts"
+      ]
+    },
+    {
+      "exports": [
+        "resolveGpuStatusDetails"
+      ],
+      "file": "services/gpu/status.ts",
+      "types": [
+        "GpuStatusDetails",
+        "GpuStatusDiagnostics",
+        "GpuStatusPhase"
+      ]
+    },
+    {
+      "file": "services/gpu/test-endpoint.ts",
+      "files": [
+        "services/gpu/test-endpoint.ts"
+      ]
+    },
+    {
+      "file": "services/gpu/test-pipeline.ts",
+      "files": [
+        "services/gpu/test-pipeline.ts"
+      ]
+    },
+    {
+      "exports": [
+        "getGpuRate"
+      ],
+      "file": "services/gpu/types.ts",
+      "types": [
+        "FailureChargeability",
+        "GpuDispatchStrategy",
+        "GpuEndpoint",
+        "GpuRateEntry",
+        "GpuStatus"
+      ]
+    },
+    {
+      "exports": [
+        "startHostingBillingJob"
+      ],
+      "file": "services/hosting-billing.ts",
+      "types": [
+        "BillingResult"
+      ]
+    },
+    {
+      "file": "services/integrity.ts",
+      "types": [
+        "IntegrityIssue",
+        "SafetyScanResult"
+      ]
+    },
+    {
+      "exports": [
+        "generateLibraryEntry"
+      ],
+      "file": "services/library.ts",
+      "types": [
+        "VersionArtifacts"
+      ]
+    },
+    {
+      "file": "services/logging.ts",
+      "types": [
+        "LogLevel"
+      ]
+    },
+    {
+      "file": "services/marketplace-request-validation.ts",
+      "types": [
+        "MarketplaceAskPayload",
+        "MarketplaceBidActionPayload",
+        "MarketplaceBidPayload",
+        "MarketplaceBuyPayload",
+        "MarketplaceMetricsVisibilityPayload"
+      ]
+    },
+    {
+      "file": "services/marketplace.ts",
+      "types": [
+        "AppMetrics",
+        "BidResult",
+        "ListingDetails",
+        "ListingResult",
+        "OffersSummary",
+        "SaleHistory",
+        "SaleResult"
+      ]
+    },
+    {
+      "exports": [
+        "getMcpToolPrefix"
+      ],
+      "file": "services/mcp-function-names.ts",
+      "types": [
+        "LegacyFunctionNameAlias",
+        "PermissionNamedRow"
+      ]
+    },
+    {
+      "file": "services/memory.ts",
+      "types": [
+        "SupabaseConfig"
+      ]
+    },
+    {
+      "exports": [
+        "createOpenRouterKey"
+      ],
+      "file": "services/openrouter-keys.ts"
+    },
+    {
+      "file": "services/orchestrator.ts",
+      "types": [
+        "ChatFileAttachment",
+        "OrchestrateEvent",
+        "OrchestrateRequest"
+      ]
+    },
+    {
+      "exports": [
+        "clearPageShareSessionCookie",
+        "getPageShareCookiePath",
+        "issuePageShareSession"
+      ],
+      "file": "services/page-share-session.ts",
+      "types": [
+        "PageShareSessionPayload"
+      ]
+    },
+    {
+      "exports": [
+        "fromSkillsParsed"
+      ],
+      "file": "services/parser.ts",
+      "types": [
+        "JSDocInfo"
+      ]
+    },
+    {
+      "exports": [
+        "startPayoutProcessorJob"
+      ],
+      "file": "services/payout-processor.ts",
+      "types": [
+        "PayoutProcessorResult"
+      ]
+    },
+    {
+      "exports": [
+        "_setPermissionCacheForTest"
+      ],
+      "file": "services/permission-cache.ts",
+      "types": [
+        "CachedPermissions"
+      ]
+    },
+    {
+      "file": "services/permission-name-telemetry.ts",
+      "types": [
+        "LegacyPermissionNameTelemetryInput",
+        "PermissionNameCompatibilitySurface"
+      ]
+    },
+    {
+      "file": "services/plan-gate.ts",
+      "types": [
+        "PlanGateDecision"
+      ]
+    },
+    {
+      "file": "services/platform-alias-telemetry.ts",
+      "types": [
+        "PlatformMcpAliasInfo",
+        "PlatformMcpAliasLogInput"
+      ]
+    },
+    {
+      "exports": [
+        "getSupabaseAdminHeaders"
+      ],
+      "file": "services/platform-clients/supabase-rest.ts"
+    },
+    {
+      "exports": [
+        "createIntegrityBlockedFailure",
+        "PlatformFailure"
+      ],
+      "file": "services/platform-failures.ts",
+      "types": [
+        "PlatformFailureCode"
+      ]
+    },
+    {
+      "file": "services/platform-request-validation.ts",
+      "types": [
+        "UploadOptionInput",
+        "ValidatedAppSupabaseConfigPayload",
+        "ValidatedConnectOnboardPayload",
+        "ValidatedHostingCheckoutPayload",
+        "ValidatedSupabaseOauthConnectPayload",
+        "ValidatedUploadFormMetadata",
+        "ValidatedUploadOptions",
+        "ValidatedWithdrawalPayload"
+      ]
+    },
+    {
+      "exports": [
+        "getProvisionalDailyCallLimit",
+        "getProvisionalStorageLimit",
+        "isProvisionalExpired"
+      ],
+      "file": "services/provisional.ts",
+      "types": [
+        "ConversionEventData",
+        "MergeResult",
+        "ProvisionalCreateResult"
+      ]
+    },
+    {
+      "exports": [
+        "createRateLimitService",
+        "RATE_LIMITS",
+        "RateLimitService"
+      ],
+      "file": "services/ratelimit.ts",
+      "types": [
+        "RateLimitConfig"
+      ]
+    },
+    {
+      "file": "services/request-auth.ts",
+      "types": [
+        "ResolvedPendingPermissionRow",
+        "VerifiedSupabaseUser"
+      ]
+    },
+    {
+      "exports": [
+        "ANONYMOUS_USER_ID",
+        "callerUsesApiToken"
+      ],
+      "file": "services/request-caller-context.ts"
+    },
+    {
+      "exports": [
+        "ensurePlainObject",
+        "rejectUnknownKeys"
+      ],
+      "file": "services/request-validation.ts"
+    },
+    {
+      "exports": [
+        "buildSensitiveRouteRateLimitHeaders",
+        "SENSITIVE_ROUTE_RATE_LIMITS"
+      ],
+      "file": "services/sensitive-route-rate-limit.ts",
+      "types": [
+        "SensitiveRoute"
+      ]
+    },
+    {
+      "file": "services/session-revocation.ts",
+      "types": [
+        "SupabaseSignOutScope"
+      ]
+    },
+    {
+      "exports": [
+        "reclaimAppStorage",
+        "reclaimVersionStorage"
+      ],
+      "file": "services/storage-quota.ts",
+      "types": [
+        "StorageQuotaResult"
+      ]
+    },
+    {
+      "exports": [
+        "R2Service"
+      ],
+      "file": "services/storage.ts"
+    },
+    {
+      "exports": [
+        "CROSS_BORDER_FX_PERCENT",
+        "getConnectedBalance",
+        "PAYOUT_FEE_FIXED_CENTS",
+        "PAYOUT_FEE_PERCENT"
+      ],
+      "file": "services/stripe-connect.ts",
+      "types": [
+        "ConnectAccountStatus",
+        "PayoutEstimate",
+        "PayoutResult",
+        "TransferResult"
+      ]
+    },
+    {
+      "file": "services/subscription-expiry.ts",
+      "files": [
+        "services/subscription-expiry.ts"
+      ]
+    },
+    {
+      "file": "services/tcp-protocols.ts",
+      "types": [
+        "ParsedEmail"
+      ]
+    },
+    {
+      "exports": [
+        "revokeExcessTokens"
+      ],
+      "file": "services/tokens.ts",
+      "types": [
+        "ApiToken",
+        "ApiTokenCompatibilityState",
+        "ApiTokenVerificationOutcome",
+        "CreateTokenResult",
+        "ValidatedToken"
+      ]
+    },
+    {
+      "file": "services/tool-maker-telemetry.ts",
+      "types": [
+        "ToolMakerStageStatus",
+        "ToolMakerTelemetryInput"
+      ]
+    },
+    {
+      "exports": [
+        "findUlTestEntryFile"
+      ],
+      "file": "services/ul-test-inputs.ts",
+      "types": [
+        "UlTestFile",
+        "UlTestInvocationResolution"
+      ]
+    },
+    {
+      "exports": [
+        "extractExports"
+      ],
+      "file": "services/upload-pipeline.ts",
+      "types": [
+        "D1Status",
+        "PipelineFile",
+        "PipelineOptions",
+        "PipelineResult"
+      ]
+    },
+    {
+      "file": "services/user-app-settings.ts",
+      "types": [
+        "PerUserSettingsStatusSummary",
+        "PerUserSettingStatus",
+        "PerUserSettingsValidationResult"
+      ]
+    },
+    {
+      "file": "services/user-supabase-configs.ts",
+      "types": [
+        "UserSupabaseConfigSummary"
+      ]
+    },
+    {
+      "file": "services/user.ts",
+      "types": [
+        "UserService"
+      ]
+    },
+    {
+      "exports": [
+        "getWeekStart"
+      ],
+      "file": "services/weekly-calls.ts",
+      "types": [
+        "WeeklyCallResult"
+      ]
+    }
+  ]
+}

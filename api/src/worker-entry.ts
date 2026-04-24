@@ -1,11 +1,8 @@
-// Cloudflare Workers Entry Point
-// Replaces api/main.ts (Deno.serve) as the production entry point.
-// Handles both HTTP requests (fetch) and background jobs (scheduled).
+// Cloudflare Workers entrypoint for HTTP requests and scheduled jobs.
 
 import type { Env } from '../lib/env.ts';
 import { createApp } from '../handlers/app.ts';
 
-// Import core job functions (extracted from setInterval wrappers)
 import { processHostingBilling } from '../services/hosting-billing.ts';
 import { runAutoHealing } from '../services/auto-healing.ts';
 import { processHeldPayouts } from '../services/payout-processor.ts';
@@ -15,10 +12,12 @@ import { runD1BillingCycle } from '../services/d1-billing.ts';
 import { cleanupStaleJobs } from '../services/async-jobs.ts';
 import { checkAndRunJobs as checkUserCronJobs } from '../services/cron.ts';
 import { getEnv } from '../lib/env.ts';
+import { applyCorsHeaders, buildCorsPreflightResponse } from '../services/cors.ts';
+import { createServerLogger } from '../services/logging.ts';
 
-// Export RPC entrypoints for Dynamic Worker bindings
-// These are available via ctx.exports in the fetch handler
+// RPC entrypoints exposed through ctx.exports for dynamic worker bindings.
 export { DatabaseBinding } from './bindings/database-binding.ts';
+export { FixtureDatabaseBinding } from './bindings/fixture-database-binding.ts';
 export { AppDataBinding } from './bindings/appdata-binding.ts';
 export { AIBinding } from './bindings/ai-binding.ts';
 export { MemoryBinding } from './bindings/memory-binding.ts';
@@ -37,13 +36,8 @@ const securityHeaders: Record<string, string> = {
   'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
 };
 
-const corsHeaders: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
-
-const standardHeaders = { ...securityHeaders, ...corsHeaders };
+const requestLogger = createServerLogger('REQ');
+const cronLogger = createServerLogger('CRON');
 
 // ============================================
 // WORKER EXPORT
@@ -59,7 +53,12 @@ export default {
     globalThis.__ctx = ctx;
 
     const url = new URL(request.url);
-    console.log(`[REQ] ${request.method} ${url.pathname}`);
+    const standardHeaders = securityHeaders;
+    requestLogger.info('Incoming request', {
+      method: request.method,
+      path: url.pathname,
+      embed: url.searchParams.get('embed') === '1',
+    });
 
     // Reject oversized request bodies early (50 MB limit)
     const contentLength = request.headers.get('content-length');
@@ -68,14 +67,25 @@ export default {
         JSON.stringify({ error: 'Request body too large' }),
         {
           status: 413,
-          headers: { 'Content-Type': 'application/json', ...standardHeaders },
+          headers: (() => {
+            const headers = new Headers({
+              'Content-Type': 'application/json',
+              ...standardHeaders,
+            });
+            applyCorsHeaders(headers, request);
+            return headers;
+          })(),
         },
       );
     }
 
     // Handle CORS preflight
     if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: standardHeaders });
+      const response = buildCorsPreflightResponse(request);
+      for (const [key, value] of Object.entries(standardHeaders)) {
+        response.headers.set(key, value);
+      }
+      return response;
     }
 
     try {
@@ -88,20 +98,29 @@ export default {
         if (key === 'X-Frame-Options' && url.searchParams.get('embed') === '1') continue;
         response.headers.set(key, value);
       }
+      applyCorsHeaders(response.headers, request);
 
       return response;
     } catch (err) {
-      console.error('Unhandled error:', err);
+      requestLogger.error('Unhandled request error', {
+        method: request.method,
+        path: url.pathname,
+        error: err,
+      });
 
       // Never leak internal error messages to clients
       return new Response(
         JSON.stringify({ error: 'Internal server error' }),
         {
           status: 500,
-          headers: {
-            'Content-Type': 'application/json',
-            ...standardHeaders,
-          },
+          headers: (() => {
+            const headers = new Headers({
+              'Content-Type': 'application/json',
+              ...standardHeaders,
+            });
+            applyCorsHeaders(headers, request);
+            return headers;
+          })(),
         },
       );
     }
@@ -116,7 +135,10 @@ export default {
     globalThis.__env = env;
     globalThis.__ctx = ctx;
 
-    console.log(`[CRON] Triggered: ${event.cron} at ${new Date(event.scheduledTime).toISOString()}`);
+    cronLogger.info('Cron trigger received', {
+      schedule: event.cron,
+      scheduled_at: new Date(event.scheduledTime).toISOString(),
+    });
 
     switch (event.cron) {
       // Every minute: high-frequency jobs
@@ -127,7 +149,12 @@ export default {
       // Every 5 minutes: D1 billing cycle
       case '*/5 * * * *':
         ctx.waitUntil(
-          runD1BillingCycle().catch(err => console.error('[CRON] D1 billing error:', err))
+          runD1BillingCycle().catch(err =>
+            cronLogger.error('D1 billing cron failed', {
+              schedule: event.cron,
+              error: err,
+            })
+          )
         );
         break;
 
@@ -139,12 +166,17 @@ export default {
       // Every 30 minutes: auto-healing
       case '*/30 * * * *':
         ctx.waitUntil(
-          runAutoHealing().catch(err => console.error('[CRON] Auto-healing error:', err))
+          runAutoHealing().catch(err =>
+            cronLogger.error('Auto-healing cron failed', {
+              schedule: event.cron,
+              error: err,
+            })
+          )
         );
         break;
 
       default:
-        console.warn(`[CRON] Unknown cron trigger: ${event.cron}`);
+        cronLogger.warn('Unknown cron trigger', { schedule: event.cron });
     }
   },
 };
@@ -160,11 +192,6 @@ export default {
 async function runMinuteJobs(): Promise<void> {
   const baseUrl = getEnv('BASE_URL');
 
-  // TODO: Entity index rebuilds — run on the 5th minute for active users.
-  // Requires a way to enumerate active user IDs (e.g., from recent chat sessions).
-  // Once available, add: rebuildEntityIndex(userId) for each active user.
-  // import { rebuildEntityIndex } from '../services/entity-index.ts';
-
   const results = await Promise.allSettled([
     cleanupStaleJobs(),
     processNullEmbeddings(),
@@ -172,11 +199,13 @@ async function runMinuteJobs(): Promise<void> {
     checkUserCronJobs(baseUrl),  // user-facing cron scheduler
   ]);
 
-  // Log any failures
   for (const [i, result] of results.entries()) {
     if (result.status === 'rejected') {
       const names = ['asyncJobCleanup', 'embeddingProcessor', 'gpuBuildProcessor', 'userCronScheduler'];
-      console.error(`[CRON] ${names[i]} failed:`, result.reason);
+      cronLogger.error('Minute cron job failed', {
+        job: names[i],
+        error: result.reason,
+      });
     }
   }
 }
@@ -193,7 +222,15 @@ async function runHourlyJobs(): Promise<void> {
   for (const [i, result] of results.entries()) {
     if (result.status === 'rejected') {
       const names = ['hostingBilling', 'payoutProcessor'];
-      console.error(`[CRON] ${names[i]} failed:`, result.reason);
+      cronLogger.error('Hourly cron job failed', {
+        job: names[i],
+        error: result.reason,
+      });
+    } else if (i === 0 && 'degraded' in result.value && (result.value.degraded || result.value.errors.length > 0)) {
+      cronLogger.warn('Hosting billing completed in degraded mode', {
+        job: 'hostingBilling',
+        errors: result.value.errors,
+      });
     }
   }
 }

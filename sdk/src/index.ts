@@ -5,7 +5,7 @@
  *
  * @example
  * ```typescript
- * import { Ultralight } from '@ultralight/sdk';
+ * import { Ultralight } from 'ultralightpro-sdk';
  *
  * const ul = new Ultralight({ token: 'your-token' });
  *
@@ -24,7 +24,7 @@
  */
 
 export interface UltralightConfig {
-  /** API base URL (default: https://ultralight-api-iikqz.ondigitalocean.app) */
+  /** API base URL (default: https://api.ultralight.dev) */
   apiUrl?: string;
   /** Authentication token (JWT or API key) */
   token: string;
@@ -121,6 +121,16 @@ export interface McpTool {
   inputSchema: unknown;
 }
 
+const DEFAULT_API_URL = 'https://api.ultralight.dev';
+
+function normalizeToolArgs(args: unknown): Record<string, unknown> {
+  if (!args) return {};
+  if (typeof args === 'object' && !Array.isArray(args)) {
+    return args as Record<string, unknown>;
+  }
+  return { value: args };
+}
+
 /**
  * Main Ultralight SDK client
  */
@@ -137,7 +147,7 @@ export class Ultralight {
   readonly docs: DocsClient;
 
   constructor(config: UltralightConfig) {
-    this.apiUrl = config.apiUrl || 'https://ultralight-api-iikqz.ondigitalocean.app';
+    this.apiUrl = config.apiUrl || DEFAULT_API_URL;
     this.token = config.token;
 
     this.apps = new AppsClient(this);
@@ -149,22 +159,27 @@ export class Ultralight {
    * Execute a function in an app
    */
   async run(appId: string, functionName: string, args?: unknown, options?: RunOptions): Promise<RunResult> {
-    return this.callTool('platform.run', {
+    const response = await this.callTool('ul.call', {
       app_id: appId,
-      function: functionName,
-      args,
+      function_name: functionName,
+      args: normalizeToolArgs(args),
       use_draft: options?.useDraft,
-    }) as Promise<RunResult>;
+    });
+    return {
+      success: true,
+      result: (response as { result?: unknown }).result ?? response,
+      duration_ms: 0,
+    };
   }
 
   /**
    * Discover apps by capability
    */
   async discover(query: string, options?: DiscoverOptions): Promise<DiscoverResult[]> {
-    const result = await this.callTool('platform.discover', {
+    const result = await this.callTool('ul.discover', {
+      scope: 'appstore',
       query,
       limit: options?.limit,
-      include_private: options?.includePrivate,
       min_similarity: options?.minSimilarity,
     });
     return (result as { results: DiscoverResult[] }).results;
@@ -179,7 +194,7 @@ export class Ultralight {
     display_name: string | null;
     tier: string;
   }> {
-    return this.callTool('platform.user.profile', {}) as Promise<{
+    return this.restGet('/api/user') as Promise<{
       id: string;
       email: string;
       display_name: string | null;
@@ -229,6 +244,56 @@ export class Ultralight {
 
     return rpc.result?.structuredContent ?? {};
   }
+
+  /** @internal */
+  async restGet(path: string): Promise<unknown> {
+    return this.restRequest('GET', path);
+  }
+
+  /** @internal */
+  async restPost(path: string, body?: unknown): Promise<unknown> {
+    return this.restRequest('POST', path, body);
+  }
+
+  /** @internal */
+  async restPatch(path: string, body?: unknown): Promise<unknown> {
+    return this.restRequest('PATCH', path, body);
+  }
+
+  /** @internal */
+  async restDelete(path: string): Promise<unknown> {
+    return this.restRequest('DELETE', path);
+  }
+
+  /** @internal */
+  async restText(path: string): Promise<string> {
+    const response = await fetch(`${this.apiUrl}${path}`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${this.token}` },
+    });
+    if (!response.ok) {
+      throw new UltralightError(`API error: ${response.status}`, response.status);
+    }
+    return response.text();
+  }
+
+  private async restRequest(method: string, path: string, body?: unknown): Promise<unknown> {
+    const response = await fetch(`${this.apiUrl}${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.token}`,
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      throw new UltralightError(`API error: ${response.status}`, response.status);
+    }
+
+    const text = await response.text();
+    return text ? JSON.parse(text) : {};
+  }
 }
 
 interface JsonRpcResponse {
@@ -255,23 +320,29 @@ class AppsClient {
    * List apps owned by the authenticated user
    */
   async list(options?: ListAppsOptions): Promise<{ apps: App[]; total: number }> {
-    return this.client.callTool('platform.apps.list', {
-      visibility: options?.visibility,
-      limit: options?.limit,
-      offset: options?.offset,
-      include_drafts: options?.includeDrafts,
-    }) as Promise<{ apps: App[]; total: number }>;
+    const payload = await this.client.restGet('/api/apps/me');
+    const apps = Array.isArray(payload) ? payload as App[] : (payload as { apps?: App[] }).apps ?? [];
+    const visible = options?.visibility && options.visibility !== 'all'
+      ? apps.filter((app) => app.visibility === options.visibility)
+      : apps;
+    const offset = options?.offset ?? 0;
+    const limit = options?.limit ?? visible.length;
+    return { apps: visible.slice(offset, offset + limit), total: visible.length };
   }
 
   /**
    * Get details for a specific app
    */
   async get(appId: string, options?: { includeCode?: boolean; includeSkills?: boolean }): Promise<App & { code?: string; skills_md?: string }> {
-    return this.client.callTool('platform.apps.get', {
-      app_id: appId,
-      include_code: options?.includeCode,
-      include_skills: options?.includeSkills,
-    }) as Promise<App & { code?: string; skills_md?: string }>;
+    const app = await this.client.restGet(`/api/apps/${encodeURIComponent(appId)}`) as App & { code?: string; skills_md?: string };
+    if (options?.includeCode) {
+      const code = await this.client.restGet(`/api/apps/${encodeURIComponent(appId)}/code`) as { code?: string };
+      app.code = code.code;
+    }
+    if (options?.includeSkills) {
+      app.skills_md = await this.client.restText(`/api/apps/${encodeURIComponent(appId)}/skills.md`);
+    }
+    return app;
   }
 
   /**
@@ -285,7 +356,8 @@ class AppsClient {
     exports: string[];
     docs_generated?: boolean;
   }> {
-    return this.client.callTool('platform.apps.create', {
+    return this.client.callTool('ul.upload', {
+      type: 'app',
       name: options.name,
       slug: options.slug,
       description: options.description,
@@ -306,31 +378,28 @@ class AppsClient {
    * Update app metadata
    */
   async update(appId: string, updates: UpdateAppOptions): Promise<{ success: boolean }> {
-    return this.client.callTool('platform.apps.update', {
-      app_id: appId,
-      ...updates,
-    }) as Promise<{ success: boolean }>;
+    return this.client.restPatch(`/api/apps/${encodeURIComponent(appId)}`, updates) as Promise<{ success: boolean }>;
   }
 
   /**
    * Delete an app (soft delete)
    */
   async delete(appId: string): Promise<{ success: boolean }> {
-    return this.client.callTool('platform.apps.delete', {
-      app_id: appId,
-      confirm: true,
-    }) as Promise<{ success: boolean }>;
+    return this.client.restDelete(`/api/apps/${encodeURIComponent(appId)}`) as Promise<{ success: boolean }>;
   }
 
   /**
    * Search apps by text
    */
   async search(query: string, options?: { limit?: number; offset?: number }): Promise<{ results: App[]; total: number }> {
-    return this.client.callTool('platform.apps.search', {
+    const result = await this.client.callTool('ul.discover', {
+      scope: 'appstore',
       query,
       limit: options?.limit,
-      offset: options?.offset,
-    }) as Promise<{ results: App[]; total: number }>;
+    }) as { results?: App[] };
+    const results = result.results ?? [];
+    const offset = options?.offset ?? 0;
+    return { results: results.slice(offset), total: results.length };
   }
 }
 
@@ -348,8 +417,7 @@ class DraftsClient {
     draft_version: string;
     exports: string[];
   }> {
-    return this.client.callTool('platform.draft.upload', {
-      app_id: appId,
+    return this.client.restPost(`/api/apps/${encodeURIComponent(appId)}/draft`, {
       files: options.files,
     }) as Promise<{
       app_id: string;
@@ -370,10 +438,9 @@ class DraftsClient {
       removed: string[];
     };
   }> {
-    return this.client.callTool('platform.draft.get', {
-      app_id: appId,
-      include_diff: options?.includeDiff,
-    }) as Promise<{
+    return this.client.restGet(
+      `/api/apps/${encodeURIComponent(appId)}/draft${options?.includeDiff ? '?include_diff=1' : ''}`,
+    ) as Promise<{
       has_draft: boolean;
       draft_version?: string;
       draft_uploaded_at?: string;
@@ -390,8 +457,7 @@ class DraftsClient {
     new_version: string;
     docs_regenerated: boolean;
   }> {
-    return this.client.callTool('platform.draft.publish', {
-      app_id: appId,
+    return this.client.restPost(`/api/apps/${encodeURIComponent(appId)}/publish`, {
       regenerate_docs: options?.regenerateDocs,
       version_bump: options?.versionBump,
     }) as Promise<{
@@ -406,9 +472,7 @@ class DraftsClient {
    * Discard a draft
    */
   async discard(appId: string): Promise<{ success: boolean }> {
-    return this.client.callTool('platform.draft.discard', {
-      app_id: appId,
-    }) as Promise<{ success: boolean }>;
+    return this.client.restDelete(`/api/apps/${encodeURIComponent(appId)}/draft`) as Promise<{ success: boolean }>;
   }
 }
 
@@ -426,8 +490,7 @@ class DocsClient {
     functions_found: number;
     embedding_generated: boolean;
   }> {
-    return this.client.callTool('platform.docs.generate', {
-      app_id: appId,
+    return this.client.restPost(`/api/apps/${encodeURIComponent(appId)}/generate-docs`, {
       ai_enhance: options?.aiEnhance,
     }) as Promise<{
       success: boolean;
@@ -445,15 +508,13 @@ class DocsClient {
     skills_parsed?: unknown;
     tools?: unknown[];
   }> {
-    return this.client.callTool('platform.docs.get', {
-      app_id: appId,
-      format,
-    }) as Promise<{
-      exists: boolean;
-      skills_md?: string;
-      skills_parsed?: unknown;
-      tools?: unknown[];
-    }>;
+    if (format === 'mcp') {
+      const instructions = await this.client.restText(`/api/apps/${encodeURIComponent(appId)}/instructions`);
+      return { exists: true, skills_md: instructions };
+    }
+
+    const skillsMd = await this.client.restText(`/api/apps/${encodeURIComponent(appId)}/skills.md`);
+    return { exists: true, skills_md: skillsMd };
   }
 
   /**
@@ -464,8 +525,7 @@ class DocsClient {
     functions_found: number;
     warnings: string[];
   }> {
-    return this.client.callTool('platform.docs.update', {
-      app_id: appId,
+    return this.client.restPatch(`/api/apps/${encodeURIComponent(appId)}/skills`, {
       skills_md: skillsMd,
     }) as Promise<{
       success: boolean;

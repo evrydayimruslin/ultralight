@@ -6,7 +6,7 @@
 // (customer.subscription.updated / customer.subscription.deleted).
 // For now, accepts manual tier changes with a service-role secret.
 
-import { json, error } from './app.ts';
+import { json, error } from './response.ts';
 import { TIER_LIMITS, type Tier } from '../../shared/types/index.ts';
 import { getEnv } from '../lib/env.ts';
 
@@ -19,6 +19,10 @@ const TIER_ALIASES: Record<string, Tier> = {
   scale: 'pro',
   enterprise: 'pro',
 };
+
+function readJsonArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? value as T[] : [];
+}
 
 /**
  * Handle tier change requests.
@@ -74,7 +78,7 @@ export async function handleTierChange(request: Request): Promise<Response> {
     return error('Failed to fetch user', 500);
   }
 
-  const users = await userResponse.json();
+  const users = readJsonArray<{ id: string; tier: Tier | null; email: string | null }>(await userResponse.json());
   if (!users || users.length === 0) {
     return error('User not found', 404);
   }
@@ -112,7 +116,7 @@ export async function handleTierChange(request: Request): Promise<Response> {
     );
 
     if (appsResponse.ok) {
-      const publicApps = await appsResponse.json();
+      const publicApps = readJsonArray<{ id: string; name: string; visibility: string }>(await appsResponse.json());
 
       if (publicApps.length > 0) {
         // Soft degradation: public → unlisted (NOT private)

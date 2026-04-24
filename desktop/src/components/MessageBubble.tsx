@@ -9,7 +9,9 @@ import type { Message } from '../hooks/useChat';
 import ToolCallCard from './ToolCallCard';
 import InChatWidget from './InChatWidget';
 import DiscoverWidget from './DiscoverWidget';
-import { executeAppMcpTool } from '../lib/api';
+import ExecutionWidget from './ExecutionWidget';
+import { createDesktopLogger } from '../lib/logging';
+import { loadWidgetHtml } from '../lib/widgetRuntime';
 
 interface MessageBubbleProps {
   message: Message;
@@ -19,20 +21,25 @@ interface MessageBubbleProps {
   toolsExecuting?: boolean;
 }
 
+const inlineWidgetLogger = createDesktopLogger('InlineWidget');
+
 // ── Widget Token Parsing ──
 
 interface ContentSegment {
-  type: 'text' | 'widget' | 'discover';
+  type: 'text' | 'widget' | 'discover' | 'exec';
   content: string;       // markdown text for 'text' segments
   widgetName?: string;    // e.g. "email_inbox"
   appId?: string;         // e.g. "d90a446c-..."
   discoverQuery?: string; // search query for discover widget
+  planId?: string;        // execution plan id
 }
 
 /** Regex to match {{widget:widget_name:app_uuid}} tokens */
 const WIDGET_TOKEN_RE = /\{\{widget:([a-z0-9_]+):([a-f0-9-]{36})\}\}/g;
 /** Regex to match {{discover:search query}} tokens */
 const DISCOVER_TOKEN_RE = /\{\{discover:([^}]+)\}\}/g;
+/** Regex to match {{exec:plan_uuid}} tokens */
+const EXEC_TOKEN_RE = /\{\{exec:([a-f0-9-]{36})\}\}/g;
 
 /** Split message content into text, widget, and discover segments */
 function parseWidgetTokens(content: string): ContentSegment[] {
@@ -52,6 +59,14 @@ function parseWidgetTokens(content: string): ContentSegment[] {
       index: match.index!,
       length: match[0].length,
       segment: { type: 'discover', content: match[0], discoverQuery: match[1] },
+    });
+  }
+
+  for (const match of content.matchAll(EXEC_TOKEN_RE)) {
+    allMatches.push({
+      index: match.index!,
+      length: match[0].length,
+      segment: { type: 'exec', content: match[0], planId: match[1] },
     });
   }
 
@@ -91,48 +106,31 @@ function InlineWidget({ widgetName, appId }: InlineWidgetProps) {
   const [error, setError] = useState<string | null>(null);
 
   const loadWidget = useCallback(async () => {
-    // 1. Check localStorage cache (shared with dashboard widgets)
-    const cacheKey = `widget_app:${appId}:${widgetName}`;
-    const cached = localStorage.getItem(cacheKey);
-    if (cached) {
-      try {
-        const { html: cachedHtml } = JSON.parse(cached);
-        if (cachedHtml) {
-          setHtml(cachedHtml);
-          setLoading(false);
-          return;
-        }
-      } catch { /* cache corrupt, fetch fresh */ }
-    }
-
-    // 2. Fetch fresh by calling the widget_ui function
     try {
-      // We need to find the app slug to call the right function.
-      // Try calling the widget function with unprefixed name (server accepts it).
-      const uiFn = `widget_${widgetName}_ui`;
-      const result = await executeAppMcpTool(appId, uiFn, {});
-      if (result.isError) {
+      const result = await loadWidgetHtml({
+        appUuid: appId,
+        appSlug: '',
+        widgetName,
+        uiFunction: `widget_${widgetName}_ui`,
+      });
+
+      if (!result) {
         setError('Failed to load widget');
         setLoading(false);
         return;
       }
 
-      const text = result.content?.[0]?.text || '';
-      const parsed = JSON.parse(text);
-
-      if (parsed.app_html) {
-        // Cache it
-        localStorage.setItem(cacheKey, JSON.stringify({
-          html: parsed.app_html,
-          version: parsed.version || '1',
-          cachedAt: Date.now(),
-        }));
-        setHtml(parsed.app_html);
+      if (result.html) {
+        setHtml(result.html);
       } else {
         setError('Widget returned no HTML');
       }
     } catch (e) {
-      console.error('[InlineWidget] Failed to load:', e);
+      inlineWidgetLogger.error('Failed to load inline widget', {
+        error: e,
+        appId,
+        widgetName,
+      });
       setError('Failed to load widget');
     } finally {
       setLoading(false);
@@ -186,7 +184,7 @@ export default function MessageBubble({ message, toolResults, toolsExecuting }: 
   const segments = isAssistant && message.content
     ? parseWidgetTokens(message.content)
     : [];
-  const hasWidgets = segments.some(s => s.type === 'widget' || s.type === 'discover');
+  const hasWidgets = segments.some(s => s.type === 'widget' || s.type === 'discover' || s.type === 'exec');
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
@@ -232,13 +230,21 @@ export default function MessageBubble({ message, toolResults, toolsExecuting }: 
                     return (
                       <div key={`discover-${i}`} className="my-3">
                         <DiscoverWidget
-                          query={seg.discoverQuery}
+                          mode={{ kind: 'inline', query: seg.discoverQuery }}
                           onInjectScope={(apps) => {
                             // Dispatch custom event — ChatView listens and updates agent scope
                             window.dispatchEvent(new CustomEvent('ul-inject-scope', { detail: { apps } }));
                           }}
                         />
                       </div>
+                    );
+                  }
+                  if (seg.type === 'exec' && seg.planId) {
+                    return (
+                      <ExecutionWidget
+                        key={`exec-${i}-${seg.planId}`}
+                        planId={seg.planId}
+                      />
                     );
                   }
                   return (

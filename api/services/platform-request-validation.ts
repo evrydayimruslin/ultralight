@@ -1,0 +1,335 @@
+import { MIN_WITHDRAWAL_LIGHT, formatLight } from "../../shared/types/index.ts";
+import { getEnv } from "../lib/env.ts";
+import {
+  normalizeOptionalString,
+  readJsonObject,
+  RequestValidationError,
+} from "./request-validation.ts";
+
+const ALLOWED_CHECKOUT_SOURCES = new Set(["web", "desktop"]);
+const ALLOWED_UPLOAD_VISIBILITIES = new Set(["private", "unlisted", "public"]);
+const ALLOWED_UPLOAD_APP_TYPES = new Set(["mcp", "skill"]);
+const ALLOWED_PROGRAMMATIC_APP_TYPES = new Set(["mcp"]);
+const MAX_HOSTING_CHECKOUT_CENTS = 500_000;
+const MAX_UPLOAD_NAME_LENGTH = 120;
+const MAX_UPLOAD_DESCRIPTION_LENGTH = 5_000;
+const MAX_UPLOAD_SLUG_LENGTH = 80;
+const MAX_FUNCTIONS_ENTRY_LENGTH = 120;
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SUPABASE_PROJECT_REF_REGEX = /^[a-z0-9-]{6,64}$/;
+const COUNTRY_CODE_REGEX = /^[A-Z]{2}$/;
+const APP_SLUG_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$/;
+const FUNCTIONS_ENTRY_REGEX = /^[A-Za-z0-9._-]+\.(ts|tsx|js|jsx)$/;
+
+export interface ValidatedSupabaseOauthConnectPayload {
+  projectRef: string;
+  appId?: string;
+}
+
+export interface ValidatedAppSupabaseConfigPayload {
+  configId: string | null;
+}
+
+export interface ValidatedHostingCheckoutPayload {
+  amountCents: number;
+  source: "web" | "desktop";
+}
+
+export interface ValidatedConnectOnboardPayload {
+  country: string;
+}
+
+export interface ValidatedWithdrawalPayload {
+  amountLight: number;
+}
+
+export interface ValidatedUploadFormMetadata {
+  name: string | null;
+  description: string | null;
+  appType: "mcp" | "skill" | null;
+  functionsEntry: string | null;
+}
+
+export interface UploadOptionInput {
+  name?: unknown;
+  slug?: unknown;
+  description?: unknown;
+  visibility?: unknown;
+  app_type?: unknown;
+  functions_entry?: unknown;
+  gap_id?: unknown;
+}
+
+export interface ValidatedUploadOptions {
+  name?: string;
+  slug?: string;
+  description?: string;
+  visibility?: "private" | "unlisted" | "public";
+  app_type?: "mcp";
+  functions_entry?: string;
+  gap_id?: string;
+}
+
+function normalizeRequiredUuid(value: unknown, field: string): string {
+  const normalized = normalizeOptionalString(value, field, { maxLength: 128 });
+  if (!normalized) {
+    throw new RequestValidationError(`Missing ${field}`);
+  }
+  if (!UUID_REGEX.test(normalized)) {
+    throw new RequestValidationError(`${field} must be a valid UUID`);
+  }
+  return normalized;
+}
+
+function normalizeOptionalUuid(value: unknown, field: string): string | undefined {
+  const normalized = normalizeOptionalString(value, field, { maxLength: 128 });
+  if (!normalized) {
+    return undefined;
+  }
+  if (!UUID_REGEX.test(normalized)) {
+    throw new RequestValidationError(`${field} must be a valid UUID`);
+  }
+  return normalized;
+}
+
+function normalizeRequiredInteger(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) {
+    throw new RequestValidationError(`${field} must be an integer`);
+  }
+  return value;
+}
+
+function normalizeOptionalUploadText(value: unknown, field: string, maxLength: number): string | undefined {
+  return normalizeOptionalString(value, field, { maxLength });
+}
+
+function normalizeFunctionsEntry(value: unknown): string | undefined {
+  const normalized = normalizeOptionalString(value, "functions_entry", {
+    maxLength: MAX_FUNCTIONS_ENTRY_LENGTH,
+  });
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized.includes("/") || normalized.includes("\\")) {
+    throw new RequestValidationError("functions_entry must be a filename, not a path");
+  }
+  if (!FUNCTIONS_ENTRY_REGEX.test(normalized)) {
+    throw new RequestValidationError(
+      'functions_entry must be a .ts, .tsx, .js, or .jsx filename',
+    );
+  }
+  return normalized;
+}
+
+function normalizeUploadVisibility(value: unknown): "private" | "unlisted" | "public" | undefined {
+  const normalized = normalizeOptionalString(value, "visibility");
+  if (!normalized) {
+    return undefined;
+  }
+  if (!ALLOWED_UPLOAD_VISIBILITIES.has(normalized)) {
+    throw new RequestValidationError('visibility must be "private", "unlisted", or "public"');
+  }
+  return normalized as "private" | "unlisted" | "public";
+}
+
+function normalizeUploadSlug(value: unknown): string | undefined {
+  const normalized = normalizeOptionalString(value, "slug", {
+    maxLength: MAX_UPLOAD_SLUG_LENGTH,
+  });
+  if (!normalized) {
+    return undefined;
+  }
+  if (!APP_SLUG_REGEX.test(normalized)) {
+    throw new RequestValidationError(
+      'slug must be lowercase alphanumeric with hyphens (for example "email-ops")',
+    );
+  }
+  return normalized;
+}
+
+function normalizeSupabaseProjectRef(value: unknown): string {
+  const normalized = normalizeOptionalString(value, "project_ref", {
+    maxLength: 64,
+  });
+  if (!normalized) {
+    throw new RequestValidationError("project_ref is required");
+  }
+  if (!SUPABASE_PROJECT_REF_REGEX.test(normalized)) {
+    throw new RequestValidationError("project_ref must be a lowercase project reference");
+  }
+  return normalized;
+}
+
+export async function validateSupabaseOauthConnectRequest(
+  request: Request,
+): Promise<ValidatedSupabaseOauthConnectPayload> {
+  const body = await readJsonObject(request, {
+    allowedKeys: ["project_ref", "app_id"],
+  });
+
+  return {
+    projectRef: normalizeSupabaseProjectRef(body.project_ref),
+    appId: normalizeOptionalUuid(body.app_id, "app_id"),
+  };
+}
+
+export async function validateAppSupabaseConfigRequest(
+  request: Request,
+): Promise<ValidatedAppSupabaseConfigPayload> {
+  const body = await readJsonObject(request, {
+    allowedKeys: ["config_id"],
+  });
+
+  if (body.config_id === null || body.config_id === undefined) {
+    return { configId: null };
+  }
+
+  return {
+    configId: normalizeOptionalUuid(body.config_id, "config_id") ?? null,
+  };
+}
+
+export async function assertOwnedSupabaseConfig(userId: string, configId: string): Promise<void> {
+  const supabaseUrl = getEnv("SUPABASE_URL");
+  const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
+
+  const response = await fetch(
+    `${supabaseUrl}/rest/v1/user_supabase_configs?id=eq.${configId}&user_id=eq.${userId}&select=id&limit=1`,
+    {
+      headers: {
+        apikey: serviceRoleKey,
+        Authorization: `Bearer ${serviceRoleKey}`,
+      },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Failed to verify Supabase configuration ownership: ${await response.text()}`);
+  }
+
+  const rows = await response.json() as Array<{ id: string }>;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new RequestValidationError("Supabase configuration not found", 404);
+  }
+}
+
+export async function validateHostingCheckoutRequest(
+  request: Request,
+): Promise<ValidatedHostingCheckoutPayload> {
+  const body = await readJsonObject(request, {
+    allowedKeys: ["amount_cents", "source"],
+  });
+
+  const amountCents = normalizeRequiredInteger(body.amount_cents, "amount_cents");
+  if (amountCents < 500) {
+    throw new RequestValidationError("amount_cents must be at least 500 ($5.00 minimum deposit)");
+  }
+  if (amountCents > MAX_HOSTING_CHECKOUT_CENTS) {
+    throw new RequestValidationError(
+      `amount_cents must be ${MAX_HOSTING_CHECKOUT_CENTS} or less ($${(MAX_HOSTING_CHECKOUT_CENTS / 100).toFixed(2)} max deposit)`,
+    );
+  }
+
+  const source = normalizeOptionalString(body.source, "source") || "web";
+  if (!ALLOWED_CHECKOUT_SOURCES.has(source)) {
+    throw new RequestValidationError('source must be "web" or "desktop"');
+  }
+
+  return {
+    amountCents,
+    source: source as "web" | "desktop",
+  };
+}
+
+export async function validateConnectOnboardRequest(
+  request: Request,
+): Promise<ValidatedConnectOnboardPayload> {
+  const body = await readJsonObject(request, {
+    allowEmptyBody: true,
+    allowedKeys: ["country"],
+  });
+
+  const country = normalizeOptionalString(body.country, "country", {
+    maxLength: 8,
+  });
+  if (!country) {
+    return { country: "US" };
+  }
+
+  const normalizedCountry = country.toUpperCase();
+  if (!COUNTRY_CODE_REGEX.test(normalizedCountry)) {
+    throw new RequestValidationError("country must be a two-letter ISO country code");
+  }
+
+  return { country: normalizedCountry };
+}
+
+export async function validateWithdrawalRequest(
+  request: Request,
+): Promise<ValidatedWithdrawalPayload> {
+  const body = await readJsonObject(request, {
+    allowedKeys: ["amount_light"],
+  });
+
+  const amountLight = normalizeRequiredInteger(body.amount_light, "amount_light");
+  if (amountLight < MIN_WITHDRAWAL_LIGHT) {
+    throw new RequestValidationError(
+      `amount_light must be at least ${MIN_WITHDRAWAL_LIGHT} (${formatLight(MIN_WITHDRAWAL_LIGHT)} minimum withdrawal)`,
+    );
+  }
+
+  return { amountLight };
+}
+
+export function validateUploadFormMetadata(input: {
+  name?: unknown;
+  description?: unknown;
+  app_type?: unknown;
+  functions_entry?: unknown;
+}): ValidatedUploadFormMetadata {
+  const name = normalizeOptionalUploadText(input.name, "name", MAX_UPLOAD_NAME_LENGTH) ?? null;
+  const description =
+    normalizeOptionalUploadText(input.description, "description", MAX_UPLOAD_DESCRIPTION_LENGTH) ?? null;
+
+  const appTypeValue = normalizeOptionalString(input.app_type, "app_type");
+  if (appTypeValue && !ALLOWED_UPLOAD_APP_TYPES.has(appTypeValue)) {
+    throw new RequestValidationError('app_type must be "mcp" or "skill"');
+  }
+
+  return {
+    name,
+    description,
+    appType: (appTypeValue as "mcp" | "skill" | undefined) ?? null,
+    functionsEntry: normalizeFunctionsEntry(input.functions_entry) ?? null,
+  };
+}
+
+export function validateProgrammaticUploadOptions(options: UploadOptionInput): ValidatedUploadOptions {
+  const name = normalizeOptionalUploadText(options.name, "name", MAX_UPLOAD_NAME_LENGTH);
+  const description = normalizeOptionalUploadText(
+    options.description,
+    "description",
+    MAX_UPLOAD_DESCRIPTION_LENGTH,
+  );
+  const visibility = normalizeUploadVisibility(options.visibility);
+  const slug = normalizeUploadSlug(options.slug);
+  const functionsEntry = normalizeFunctionsEntry(options.functions_entry);
+  const appTypeValue = normalizeOptionalString(options.app_type, "app_type");
+
+  if (appTypeValue && !ALLOWED_PROGRAMMATIC_APP_TYPES.has(appTypeValue)) {
+    throw new RequestValidationError('app_type must be "mcp" for programmatic uploads');
+  }
+
+  return {
+    ...(name ? { name } : {}),
+    ...(slug ? { slug } : {}),
+    ...(description ? { description } : {}),
+    ...(visibility ? { visibility } : {}),
+    ...(appTypeValue ? { app_type: appTypeValue as "mcp" } : {}),
+    ...(functionsEntry ? { functions_entry: functionsEntry } : {}),
+    ...(options.gap_id !== undefined && options.gap_id !== null
+      ? { gap_id: normalizeRequiredUuid(options.gap_id, "gap_id") }
+      : {}),
+  };
+}

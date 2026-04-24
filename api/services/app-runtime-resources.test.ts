@@ -1,0 +1,412 @@
+import { assertEquals } from "https://deno.land/std@0.210.0/assert/assert_equals.ts";
+import { assertRejects } from "https://deno.land/std@0.210.0/assert/assert_rejects.ts";
+
+import {
+  buildMissingAppSecretsErrorDetails,
+  buildMissingAppSecretsMessage,
+  classifyAppSupabaseConfigState,
+  createAppD1Resources,
+  fetchAppEntryCode,
+  resolveAppRuntimeEnvVars,
+  resolveAppSupabaseConfig,
+  resolveManifestPermissions,
+  SupabaseConfigMigrationRequiredError,
+} from "./app-runtime-resources.ts";
+
+Deno.test("app runtime resources: entry code fetch checks cache before probing R2", async () => {
+  const calls: string[] = [];
+  const cache = {
+    get: () => "cached-code",
+    set: () => {
+      throw new Error("cache set should not run on cache hit");
+    },
+  };
+
+  const code = await fetchAppEntryCode(
+    { id: "app-123", storage_key: "apps/app-123/current/" } as {
+      id: string;
+      storage_key: string;
+    },
+    {
+      codeCache: cache,
+      r2Service: {
+        fetchTextFile: async (path: string) => {
+          calls.push(path);
+          return "from-r2";
+        },
+      } as unknown as ReturnType<typeof import("./storage.ts").createR2Service>,
+    },
+  );
+
+  assertEquals(code, "cached-code");
+  assertEquals(calls.length, 0);
+});
+
+Deno.test("app runtime resources: entry code fetch probes supported files and caches the first hit", async () => {
+  const visited: string[] = [];
+  let cached: string | null = null;
+
+  const code = await fetchAppEntryCode(
+    { id: "app-123", storage_key: "apps/app-123/current/" } as {
+      id: string;
+      storage_key: string;
+    },
+    {
+      codeCache: {
+        get: () => null,
+        set: (_appId, _storageKey, value) => {
+          cached = value;
+        },
+      },
+      r2Service: {
+        fetchTextFile: async (path: string) => {
+          visited.push(path);
+          if (path.endsWith("index.ts")) {
+            return "export const ok = true;";
+          }
+          throw new Error("missing");
+        },
+      } as unknown as ReturnType<typeof import("./storage.ts").createR2Service>,
+    },
+  );
+
+  assertEquals(visited, [
+    "apps/app-123/current/index.tsx",
+    "apps/app-123/current/index.ts",
+  ]);
+  assertEquals(code, "export const ok = true;");
+  assertEquals(cached, "export const ok = true;");
+});
+
+Deno.test("app runtime resources: runtime env merges per-user secrets over universal env vars", async () => {
+  const fetchCalls: string[] = [];
+
+  const result = await resolveAppRuntimeEnvVars(
+    {
+      id: "app-123",
+      env_vars: {
+        APP_ONLY: "enc-app-only",
+        SHARED_TOKEN: "enc-app-shared",
+      },
+      env_schema: {
+        USER_TOKEN: { scope: "per_user", required: true },
+        SHARED_TOKEN: { scope: "per_user", required: false },
+        APP_ONLY: { scope: "universal", required: false },
+      },
+      manifest: null,
+    },
+    "user-123",
+    {
+      decryptEnvVarsFn: async (envVars) =>
+        Object.fromEntries(
+          Object.entries(envVars).map(([key, value]) => [key, `app:${value}`]),
+        ),
+      decryptEnvVarFn: async (value: string) => `user:${value}`,
+      fetchFn: async (input) => {
+        fetchCalls.push(String(input));
+        return new Response(
+          JSON.stringify([
+            { key: "USER_TOKEN", value_encrypted: "enc-user-token" },
+            { key: "SHARED_TOKEN", value_encrypted: "enc-user-override" },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      },
+      supabaseUrl: "https://supabase.example",
+      supabaseServiceRoleKey: "service-role",
+    },
+  );
+
+  assertEquals(fetchCalls, [
+    "https://supabase.example/rest/v1/user_app_secrets?user_id=eq.user-123&app_id=eq.app-123&select=key,value_encrypted",
+  ]);
+  assertEquals(result.envVars, {
+    APP_ONLY: "app:enc-app-only",
+    SHARED_TOKEN: "user:enc-user-override",
+    USER_TOKEN: "user:enc-user-token",
+  });
+  assertEquals(result.missingRequiredSecrets, []);
+});
+
+Deno.test("app runtime resources: runtime env reports missing required per-user secrets", async () => {
+  const result = await resolveAppRuntimeEnvVars(
+    {
+      id: "app-123",
+      env_vars: {},
+      env_schema: {
+        USER_TOKEN: { scope: "per_user", required: true },
+        OPTIONAL_TOKEN: { scope: "per_user", required: false },
+      },
+      manifest: null,
+    },
+    "user-123",
+    {
+      decryptEnvVarsFn: async () => ({}),
+      fetchFn: async () => new Response(JSON.stringify([]), { status: 200 }),
+      supabaseUrl: "https://supabase.example",
+      supabaseServiceRoleKey: "service-role",
+    },
+  );
+
+  assertEquals(result.envVars, {});
+  assertEquals(result.missingRequiredSecrets, ["USER_TOKEN"]);
+  assertEquals(
+    buildMissingAppSecretsMessage(result.missingRequiredSecrets),
+    "Missing required secrets: USER_TOKEN. Use ul.connect to provide them.",
+  );
+  assertEquals(
+    buildMissingAppSecretsErrorDetails(
+      "app-123",
+      result.missingRequiredSecrets,
+    ),
+    {
+      type: "MISSING_SECRETS",
+      state: "action_required",
+      missing_secrets: ["USER_TOKEN"],
+      app_id: "app-123",
+      message:
+        "Per-user settings are incomplete. Missing required keys: USER_TOKEN.",
+      remediation:
+        "Provide the missing secrets with ul.connect before running the app.",
+      hint: 'Call ul.connect with app_id="app-123" and provide: USER_TOKEN',
+      connect_command:
+        'ul.connect({ app_id: "app-123", secrets: {"USER_TOKEN":"<USER_TOKEN>"} })',
+    },
+  );
+});
+
+Deno.test("app runtime resources: Supabase config prefers config_id before legacy fallbacks", async () => {
+  const calls: string[] = [];
+  const telemetry: Array<Record<string, unknown>> = [];
+  const config = await resolveAppSupabaseConfig(
+    {
+      id: "app-123",
+      owner_id: "owner-123",
+      supabase_config_id: "cfg-123",
+      supabase_enabled: true,
+      supabase_url: "https://legacy.example",
+      supabase_anon_key_encrypted: "legacy-anon",
+      supabase_service_key_encrypted: "legacy-service",
+    },
+    {
+      getDecryptedSupabaseConfigFn: async (configId: string) => {
+        calls.push(`config:${configId}`);
+        return { url: "https://managed.example", anonKey: "managed-anon" };
+      },
+      getDecryptedPlatformSupabaseFn: async () => {
+        calls.push("platform");
+        return { url: "https://platform.example", anonKey: "platform-anon" };
+      },
+      decryptEnvVarFn: async (value: string) => `dec:${value}`,
+      logAppSupabaseResolutionFn: (entry) => {
+        telemetry.push({
+          app_id: entry.appId,
+          owner_id: entry.ownerId,
+          source: entry.source,
+          note: entry.note ?? null,
+        });
+      },
+    },
+  );
+
+  assertEquals(calls, ["config:cfg-123"]);
+  assertEquals(config, {
+    url: "https://managed.example",
+    anonKey: "managed-anon",
+  });
+  assertEquals(telemetry, [
+    {
+      app_id: "app-123",
+      owner_id: "owner-123",
+      source: "saved_config",
+      note: null,
+    },
+  ]);
+});
+
+Deno.test("app runtime resources: Supabase config telemetry records legacy app config fallback", async () => {
+  const telemetry: Array<Record<string, unknown>> = [];
+
+  const config = await resolveAppSupabaseConfig(
+    {
+      id: "app-legacy",
+      owner_id: "owner-123",
+      supabase_config_id: "cfg-missing",
+      supabase_enabled: true,
+      supabase_url: "https://legacy.example",
+      supabase_anon_key_encrypted: "legacy-anon",
+      supabase_service_key_encrypted: null,
+    },
+    {
+      allowLegacyAppConfig: true,
+      getDecryptedSupabaseConfigFn: async () => null,
+      getDecryptedPlatformSupabaseFn: async () => {
+        throw new Error(
+          "platform fallback should not run once legacy config resolves",
+        );
+      },
+      decryptEnvVarFn: async (value: string) => `dec:${value}`,
+      logAppSupabaseResolutionFn: (entry) => {
+        telemetry.push({
+          app_id: entry.appId,
+          source: entry.source,
+          note: entry.note ?? null,
+        });
+      },
+    },
+  );
+
+  assertEquals(config, {
+    url: "https://legacy.example",
+    anonKey: "dec:legacy-anon",
+  });
+  assertEquals(telemetry, [
+    {
+      app_id: "app-legacy",
+      source: "legacy_app_config",
+      note: "saved_config_missing",
+    },
+  ]);
+});
+
+Deno.test("app runtime resources: canonical runtime rejects legacy app config fallback", async () => {
+  const telemetry: Array<Record<string, unknown>> = [];
+
+  await assertRejects(
+    () =>
+      resolveAppSupabaseConfig(
+        {
+          id: "app-legacy",
+          owner_id: "owner-123",
+          supabase_config_id: null,
+          supabase_enabled: true,
+          supabase_url: "https://legacy.example",
+          supabase_anon_key_encrypted: "legacy-anon",
+          supabase_service_key_encrypted: null,
+        },
+        {
+          logAppSupabaseResolutionFn: (entry) => {
+            telemetry.push({
+              app_id: entry.appId,
+              source: entry.source,
+              note: entry.note ?? null,
+            });
+          },
+        },
+      ),
+    SupabaseConfigMigrationRequiredError,
+    "legacy app-level Supabase credentials",
+  );
+
+  assertEquals(telemetry, [
+    {
+      app_id: "app-legacy",
+      source: "none",
+      note: "legacy_app_config_disabled,platform_default_disabled",
+    },
+  ]);
+});
+
+Deno.test("app runtime resources: canonical runtime rejects platform-default fallback", async () => {
+  const telemetry: Array<Record<string, unknown>> = [];
+
+  await assertRejects(
+    () =>
+      resolveAppSupabaseConfig(
+        {
+          id: "app-platform",
+          owner_id: "owner-123",
+          supabase_config_id: null,
+          supabase_enabled: true,
+          supabase_url: null,
+          supabase_anon_key_encrypted: null,
+          supabase_service_key_encrypted: null,
+        },
+        {
+          logAppSupabaseResolutionFn: (entry) => {
+            telemetry.push({
+              app_id: entry.appId,
+              source: entry.source,
+              note: entry.note ?? null,
+            });
+          },
+        },
+      ),
+    SupabaseConfigMigrationRequiredError,
+    "deprecated default Supabase server",
+  );
+
+  assertEquals(telemetry, [
+    {
+      app_id: "app-platform",
+      source: "none",
+      note: "legacy_app_config_unavailable,platform_default_disabled",
+    },
+  ]);
+});
+
+Deno.test("app runtime resources: classify Supabase config state matches migration surfaces", () => {
+  assertEquals(
+    classifyAppSupabaseConfigState({
+      supabase_config_id: "cfg-123",
+      supabase_enabled: true,
+      supabase_url: null,
+      supabase_anon_key_encrypted: null,
+    }),
+    "saved_config",
+  );
+  assertEquals(
+    classifyAppSupabaseConfigState({
+      supabase_config_id: null,
+      supabase_enabled: false,
+      supabase_url: null,
+      supabase_anon_key_encrypted: null,
+    }),
+    "disabled",
+  );
+  assertEquals(
+    classifyAppSupabaseConfigState({
+      supabase_config_id: null,
+      supabase_enabled: true,
+      supabase_url: "https://legacy.example",
+      supabase_anon_key_encrypted: "enc",
+    }),
+    "legacy_app_config",
+  );
+  assertEquals(
+    classifyAppSupabaseConfigState({
+      supabase_config_id: null,
+      supabase_enabled: true,
+      supabase_url: null,
+      supabase_anon_key_encrypted: null,
+    }),
+    "platform_default",
+  );
+});
+
+Deno.test("app runtime resources: manifest permissions only admit allowlisted runtime expansions", () => {
+  const permissions = resolveManifestPermissions(
+    {
+      manifest: JSON.stringify({
+        permissions: ["net:connect", "ai:call", "fs:write"],
+      }),
+    },
+    ["memory:read", "net:fetch"],
+  );
+
+  assertEquals(permissions, ["memory:read", "net:fetch", "net:connect"]);
+});
+
+Deno.test("app runtime resources: D1 setup stays disabled when provisioning cannot resolve a database id", async () => {
+  const resources = await createAppD1Resources(
+    { id: "app-123", d1_database_id: null },
+    {
+      getD1DatabaseIdFn: async () => null,
+    },
+  );
+
+  assertEquals(resources, {
+    d1DatabaseId: null,
+    d1DataService: null,
+  });
+});

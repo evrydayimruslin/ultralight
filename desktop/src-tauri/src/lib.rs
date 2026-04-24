@@ -1,4 +1,6 @@
 mod db;
+mod secure_storage;
+mod system;
 mod tools;
 
 use std::sync::Mutex;
@@ -18,7 +20,15 @@ fn extract_deep_link_from_args(args: &[String]) -> Option<String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  tauri::Builder::default()
+  // The production release pipeline ships a universal macOS binary, so the
+  // updater must advertise the same custom target to match GitHub latest.json.
+  let mut updater = tauri_plugin_updater::Builder::new();
+  #[cfg(target_os = "macos")]
+  {
+    updater = updater.target("darwin-universal");
+  }
+
+  let builder = tauri::Builder::default()
     // single-instance MUST be registered first so it can intercept
     // second-launch attempts before any other plugin sets up state.
     // On second launch: extract the deep link URL from argv, emit the
@@ -37,6 +47,17 @@ pub fn run() {
     }))
     .plugin(tauri_plugin_deep_link::init())
     .plugin(tauri_plugin_dialog::init())
+    .plugin(tauri_plugin_process::init());
+
+  // Updater checks are production-only. Dev builds should boot without
+  // requiring the signed updater config generated in the release workflow.
+  let builder = if cfg!(debug_assertions) {
+    builder
+  } else {
+    builder.plugin(updater.build())
+  };
+
+  builder
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -132,6 +153,17 @@ pub fn run() {
       db::db_create_card_report,
       db::db_list_card_reports,
       db::db_delete_card_report,
+      // Execution plan commands
+      db::db_create_execution_plan,
+      db::db_update_execution_plan_status,
+      db::db_get_execution_plan,
+      db::db_get_execution_plans_by_message,
+      // Secure storage commands
+      secure_storage::secure_get_auth_token,
+      secure_storage::secure_set_auth_token,
+      secure_storage::secure_clear_auth_token,
+      // System commands
+      system::open_auth_url,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

@@ -68,7 +68,7 @@ export class MemoryService {
       throw new Error(`Memory read failed: ${error}`);
     }
 
-    const results = await response.json();
+    const results = await response.json() as Array<{ value?: unknown }>;
     return results[0]?.value ?? null;
   }
 

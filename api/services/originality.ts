@@ -8,6 +8,11 @@ import {
   createEmbeddingService,
   searchAppsByEmbedding,
 } from './embedding.ts';
+import { createSupabaseRestClient } from './platform-clients/supabase-rest.ts';
+import {
+  createServiceUnavailableFailure,
+  isPlatformFailure,
+} from './platform-failures.ts';
 
 // ============================================
 // TYPES
@@ -27,6 +32,11 @@ export interface OriginalityResult {
   reason?: string;            // Human-readable reason for blocking
   matches: OriginalityMatch[];
   seller_relist: boolean;
+  status?: 'passed' | 'blocked' | 'service_unavailable';
+}
+
+export interface OriginalityCheckOptions {
+  mode?: 'best_effort' | 'fail_closed';
 }
 
 // ============================================
@@ -43,24 +53,6 @@ function getThresholds() {
     EMBEDDING_SIMILARITY_ALERT: parseFloat(getEnv('ORIGINALITY_SIMILARITY_ALERT') || '0.92'),
     // Embedding similarity above this + matching fingerprint = block
     EXACT_CLONE_THRESHOLD: parseFloat(getEnv('ORIGINALITY_EXACT_CLONE') || '0.97'),
-  };
-}
-
-// ============================================
-// SUPABASE HELPERS
-// ============================================
-
-function dbHeaders() {
-  return {
-    'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
-    'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
-  };
-}
-
-function rpcHeaders() {
-  return {
-    ...dbHeaders(),
-    'Content-Type': 'application/json',
   };
 }
 
@@ -136,38 +128,34 @@ async function checkExactFingerprint(
   uploaderId: string,
   appId: string
 ): Promise<OriginalityMatch[]> {
-  if (!getEnv('SUPABASE_URL') || !getEnv('SUPABASE_SERVICE_ROLE_KEY')) return [];
-
-  try {
-    const url = `${getEnv('SUPABASE_URL')}/rest/v1/apps?` + new URLSearchParams({
-      'source_fingerprint': `eq.${fingerprint}`,
-      'id': `neq.${appId}`,
-      'owner_id': `neq.${uploaderId}`,
-      'visibility': 'in.(public,unlisted)',
-      'select': 'id,name',
-    }).toString();
-
-    // Also exclude deleted apps
-    const res = await fetch(url + '&deleted_at=is.null', {
-      headers: dbHeaders(),
-    });
-
-    if (!res.ok) {
-      console.error('[ORIGINALITY] Fingerprint check failed:', await res.text());
-      return [];
-    }
-
-    const matches = await res.json();
-    return matches.map((m: { id: string; name: string }) => ({
-      app_id: m.id,
-      name: m.name || 'Unknown',
-      similarity: 1.0,
-      is_exact_fingerprint: true,
-    }));
-  } catch (err) {
-    console.error('[ORIGINALITY] Fingerprint check error:', err);
-    return [];
+  if (!getEnv('SUPABASE_URL') || !getEnv('SUPABASE_SERVICE_ROLE_KEY')) {
+    throw createServiceUnavailableFailure('Supabase is not configured for fingerprint checks');
   }
+  const supabase = createSupabaseRestClient();
+
+  const url = `${getEnv('SUPABASE_URL')}/rest/v1/apps?` + new URLSearchParams({
+    'source_fingerprint': `eq.${fingerprint}`,
+    'id': `neq.${appId}`,
+    'owner_id': `neq.${uploaderId}`,
+    'visibility': 'in.(public,unlisted)',
+    'select': 'id,name',
+  }).toString();
+
+  const res = await supabase.request(url.replace(getEnv('SUPABASE_URL'), '') + '&deleted_at=is.null');
+
+  if (!res.ok) {
+    throw createServiceUnavailableFailure(
+      `Fingerprint check failed: ${await res.text()}`,
+    );
+  }
+
+  const matches = await res.json() as Array<{ id: string; name: string }>;
+  return matches.map((m: { id: string; name: string }) => ({
+    app_id: m.id,
+    name: m.name || 'Unknown',
+    similarity: 1.0,
+    is_exact_fingerprint: true,
+  }));
 }
 
 /**
@@ -179,28 +167,23 @@ async function checkSellerRelist(
   uploaderId: string,
   fingerprint: string
 ): Promise<boolean> {
-  if (!getEnv('SUPABASE_URL') || !getEnv('SUPABASE_SERVICE_ROLE_KEY')) return false;
-
-  try {
-    const res = await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/rpc/check_seller_relist`, {
-      method: 'POST',
-      headers: rpcHeaders(),
-      body: JSON.stringify({
-        p_uploader_id: uploaderId,
-        p_fingerprint: fingerprint,
-      }),
-    });
-
-    if (!res.ok) {
-      console.error('[ORIGINALITY] Seller-relist check failed:', await res.text());
-      return false;
-    }
-
-    return await res.json();
-  } catch (err) {
-    console.error('[ORIGINALITY] Seller-relist check error:', err);
-    return false;
+  if (!getEnv('SUPABASE_URL') || !getEnv('SUPABASE_SERVICE_ROLE_KEY')) {
+    throw createServiceUnavailableFailure('Supabase is not configured for seller relist checks');
   }
+  const supabase = createSupabaseRestClient();
+
+  const res = await supabase.rpc('check_seller_relist', {
+    p_uploader_id: uploaderId,
+    p_fingerprint: fingerprint,
+  });
+
+  if (!res.ok) {
+    throw createServiceUnavailableFailure(
+      `Seller relist check failed: ${await res.text()}`,
+    );
+  }
+
+  return await res.json();
 }
 
 /**
@@ -215,29 +198,53 @@ async function checkEmbeddingSimilarity(
 ): Promise<OriginalityMatch[]> {
   const thresholds = getThresholds();
 
-  try {
-    const results = await searchAppsByEmbedding(
-      embedding,
-      uploaderId, // The RPC uses this for access control, we filter further below
-      {
-        limit: 10,
-        threshold: thresholds.EMBEDDING_SIMILARITY_ALERT,
-      }
-    );
+  const results = await searchAppsByEmbedding(
+    embedding,
+    uploaderId, // The RPC uses this for access control, we filter further below
+    {
+      limit: 10,
+      threshold: thresholds.EMBEDDING_SIMILARITY_ALERT,
+    }
+  );
 
-    // Filter out the uploader's own apps and the current app
-    return results
-      .filter(r => r.owner_id !== uploaderId && r.id !== appId)
-      .map(r => ({
-        app_id: r.id,
-        name: r.name || 'Unknown',
-        similarity: r.similarity,
-        is_exact_fingerprint: false,
-      }));
-  } catch (err) {
-    console.error('[ORIGINALITY] Embedding similarity check error:', err);
-    return [];
+  // Filter out the uploader's own apps and the current app
+  return results
+    .filter(r => r.owner_id !== uploaderId && r.id !== appId)
+    .map(r => ({
+      app_id: r.id,
+      name: r.name || 'Unknown',
+      similarity: r.similarity,
+      is_exact_fingerprint: false,
+    }));
+}
+
+function unavailableOriginalityResult(
+  fingerprint: string,
+  reason: string,
+): OriginalityResult {
+  return {
+    passed: false,
+    score: 0,
+    fingerprint,
+    reason: `Originality check unavailable: ${reason}`,
+    matches: [],
+    seller_relist: false,
+    status: 'service_unavailable',
+  };
+}
+
+function handleOriginalityServiceFailure(
+  err: unknown,
+  fingerprint: string,
+  mode: 'best_effort' | 'fail_closed',
+): OriginalityResult | null {
+  const reason = err instanceof Error ? err.message : String(err);
+  if (mode === 'fail_closed') {
+    return unavailableOriginalityResult(fingerprint, reason);
   }
+
+  console.warn('[ORIGINALITY] Best-effort originality step unavailable:', reason);
+  return null;
 }
 
 // ============================================
@@ -263,10 +270,12 @@ export async function runOriginalityCheck(
   uploaderId: string,
   appId: string,
   files: Array<{ name: string; content: string }>,
-  existingEmbedding?: number[]
+  existingEmbedding?: number[],
+  options?: OriginalityCheckOptions,
 ): Promise<OriginalityResult> {
   const thresholds = getThresholds();
   const allMatches: OriginalityMatch[] = [];
+  const mode = options?.mode ?? 'best_effort';
 
   // Find entry file and optional .md content
   const entryFile = files.find(f =>
@@ -282,6 +291,7 @@ export async function runOriginalityCheck(
       fingerprint: '',
       matches: [],
       seller_relist: false,
+      status: 'passed',
     };
   }
 
@@ -293,7 +303,20 @@ export async function runOriginalityCheck(
   const fingerprint = await computeFingerprint(entryFile.content, mdContent);
 
   // Step 2: Exact fingerprint check (fast SQL query)
-  const exactMatches = await checkExactFingerprint(fingerprint, uploaderId, appId);
+  let exactMatches: OriginalityMatch[];
+  try {
+    exactMatches = await checkExactFingerprint(fingerprint, uploaderId, appId);
+  } catch (err) {
+    return handleOriginalityServiceFailure(err, fingerprint, mode)
+      ?? {
+        passed: true,
+        score: 1.0,
+        fingerprint,
+        matches: [],
+        seller_relist: false,
+        status: 'passed',
+      };
+  }
   allMatches.push(...exactMatches);
 
   if (exactMatches.length > 0) {
@@ -304,11 +327,25 @@ export async function runOriginalityCheck(
       reason: `Exact code clone detected. Matches existing app: "${exactMatches[0].name}" (${exactMatches[0].app_id})`,
       matches: allMatches,
       seller_relist: false,
+      status: 'blocked',
     };
   }
 
   // Step 3: Seller-relist check (fast SQL query)
-  const isSellerRelist = await checkSellerRelist(uploaderId, fingerprint);
+  let isSellerRelist: boolean;
+  try {
+    isSellerRelist = await checkSellerRelist(uploaderId, fingerprint);
+  } catch (err) {
+    return handleOriginalityServiceFailure(err, fingerprint, mode)
+      ?? {
+        passed: true,
+        score: 1.0,
+        fingerprint,
+        matches: allMatches,
+        seller_relist: false,
+        status: 'passed',
+      };
+  }
 
   if (isSellerRelist) {
     return {
@@ -318,6 +355,7 @@ export async function runOriginalityCheck(
       reason: 'Seller-relist detected: this code matches an app you previously sold. Original buyers have exclusive rights to relist.',
       matches: allMatches,
       seller_relist: true,
+      status: 'blocked',
     };
   }
 
@@ -327,7 +365,19 @@ export async function runOriginalityCheck(
 
   if (existingEmbedding && existingEmbedding.length > 0) {
     // Reuse embedding from Skills generation (zero additional cost)
-    embeddingMatches = await checkEmbeddingSimilarity(existingEmbedding, uploaderId, appId);
+    try {
+      embeddingMatches = await checkEmbeddingSimilarity(existingEmbedding, uploaderId, appId);
+    } catch (err) {
+      return handleOriginalityServiceFailure(err, fingerprint, mode)
+        ?? {
+          passed: true,
+          score: 1.0,
+          fingerprint,
+          matches: allMatches,
+          seller_relist: false,
+          status: 'passed',
+        };
+    }
   } else {
     // Try to generate embedding on-the-fly
     const embeddingService = createEmbeddingService();
@@ -338,10 +388,25 @@ export async function runOriginalityCheck(
         const result = await embeddingService.embed(embeddingText);
         embeddingMatches = await checkEmbeddingSimilarity(result.embedding, uploaderId, appId);
       } catch (err) {
-        console.warn('[ORIGINALITY] Embedding generation failed, skipping similarity check:', err);
+        return handleOriginalityServiceFailure(err, fingerprint, mode)
+          ?? {
+            passed: true,
+            score: 1.0,
+            fingerprint,
+            matches: allMatches,
+            seller_relist: false,
+            status: 'passed',
+          };
       }
     } else {
-      console.warn('[ORIGINALITY] No embedding service available, skipping similarity check');
+      const unavailable = handleOriginalityServiceFailure(
+        createServiceUnavailableFailure('Embedding service is not available'),
+        fingerprint,
+        mode,
+      );
+      if (unavailable) {
+        return unavailable;
+      }
     }
   }
 
@@ -363,6 +428,7 @@ export async function runOriginalityCheck(
       reason: `Near-identical app detected (${(bestEmbeddingSimilarity * 100).toFixed(1)}% similarity). Matches: "${embeddingMatches[0].name}" (${embeddingMatches[0].app_id})`,
       matches: allMatches,
       seller_relist: false,
+      status: 'blocked',
     };
   }
 
@@ -375,6 +441,7 @@ export async function runOriginalityCheck(
       reason: `Originality score too low (${(score * 100).toFixed(1)}%). Code is too similar to existing apps.`,
       matches: allMatches,
       seller_relist: false,
+      status: 'blocked',
     };
   }
 
@@ -387,6 +454,7 @@ export async function runOriginalityCheck(
       reason: `Low originality warning (${(score * 100).toFixed(1)}%) — similar apps exist but publish is allowed.`,
       matches: allMatches,
       seller_relist: false,
+      status: 'passed',
     };
   }
 
@@ -396,6 +464,7 @@ export async function runOriginalityCheck(
     fingerprint,
     matches: allMatches,
     seller_relist: false,
+    status: 'passed',
   };
 }
 
@@ -418,16 +487,13 @@ export async function recordSaleFingerprint(
     console.warn('[ORIGINALITY] Supabase not configured, skipping fingerprint recording');
     return;
   }
+  const supabase = createSupabaseRestClient();
 
-  const res = await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/rpc/record_sale_fingerprint`, {
-    method: 'POST',
-    headers: rpcHeaders(),
-    body: JSON.stringify({
-      p_sale_id: saleId,
-      p_app_id: appId,
-      p_seller_id: sellerId,
-      p_buyer_id: buyerId,
-    }),
+  const res = await supabase.rpc('record_sale_fingerprint', {
+    p_sale_id: saleId,
+    p_app_id: appId,
+    p_seller_id: sellerId,
+    p_buyer_id: buyerId,
   });
 
   if (!res.ok) {
@@ -457,17 +523,10 @@ export async function storeIntegrityResults(
   }
 ): Promise<void> {
   if (!getEnv('SUPABASE_URL') || !getEnv('SUPABASE_SERVICE_ROLE_KEY')) return;
+  const supabase = createSupabaseRestClient();
 
   try {
-    const res = await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/apps?id=eq.${appId}`, {
-      method: 'PATCH',
-      headers: {
-        ...dbHeaders(),
-        'Content-Type': 'application/json',
-        'Prefer': 'return=minimal',
-      },
-      body: JSON.stringify(results),
-    });
+    const res = await supabase.patch(`/rest/v1/apps?id=eq.${appId}`, results);
 
     if (!res.ok) {
       console.error('[ORIGINALITY] Failed to store integrity results:', await res.text());

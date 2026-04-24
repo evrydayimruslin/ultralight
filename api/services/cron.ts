@@ -401,7 +401,11 @@ export async function executeCronJob(job: CronJob, baseUrl: string): Promise<Cro
       }),
     });
 
-    const data = await response.json();
+    const data = await response.json() as {
+      success?: boolean;
+      result?: unknown;
+      error?: { message?: string };
+    };
 
     if (data.success) {
       success = true;

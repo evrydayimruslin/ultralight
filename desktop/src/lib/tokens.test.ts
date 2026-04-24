@@ -131,25 +131,25 @@ describe('countAllTokens', () => {
 
 describe('shouldSummarize', () => {
   it('returns false when under threshold', () => {
-    // 200k context, 70% threshold = 140k
+    // 200k context, 40% threshold = 80k
     expect(shouldSummarize(10_000, 'anthropic/claude-sonnet-4-20250514')).toBe(false);
-    expect(shouldSummarize(100_000, 'anthropic/claude-sonnet-4-20250514')).toBe(false);
+    expect(shouldSummarize(70_000, 'anthropic/claude-sonnet-4-20250514')).toBe(false);
   });
 
   it('returns true when over threshold', () => {
-    // 200k * 0.7 = 140k
-    expect(shouldSummarize(150_000, 'anthropic/claude-sonnet-4-20250514')).toBe(true);
+    // 200k * 0.4 = 80k
+    expect(shouldSummarize(90_000, 'anthropic/claude-sonnet-4-20250514')).toBe(true);
     expect(shouldSummarize(200_000, 'anthropic/claude-sonnet-4-20250514')).toBe(true);
   });
 
   it('uses model-specific context window', () => {
-    // DeepSeek = 64k, threshold = 44.8k
+    // DeepSeek = 64k, threshold = 25.6k
     expect(shouldSummarize(50_000, 'deepseek/deepseek-chat')).toBe(true);
     // Same token count OK for Claude (200k context)
     expect(shouldSummarize(50_000, 'anthropic/claude-sonnet-4-20250514')).toBe(false);
   });
 
-  it('has threshold at 70%', () => {
-    expect(SUMMARIZE_THRESHOLD).toBe(0.7);
+  it('has threshold at 40%', () => {
+    expect(SUMMARIZE_THRESHOLD).toBe(0.4);
   });
 });

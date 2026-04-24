@@ -2,20 +2,37 @@
   "name": "ultralight-api-worker",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "deploy:staging": "wrangler deploy --env staging",
-    "tail": "wrangler tail"
+    "dev": "wrangler dev --config wrangler.toml",
+    "analyze": "npm run analyze:unused && npm run analyze:deps",
+    "analyze:deps": "node ../scripts/analysis/run-madge.mjs --package api",
+    "analyze:deps:update-baseline": "node ../scripts/analysis/run-madge.mjs --package api --write-baseline",
+    "analyze:unused": "node ../scripts/analysis/run-knip.mjs --package api",
+    "analyze:unused:update-baseline": "node ../scripts/analysis/run-knip.mjs --package api --write-baseline",
+    "typecheck": "node scripts/typecheck.mjs",
+    "typecheck:full": "tsc -p tsconfig.check.json --pretty false",
+    "typecheck:update-baseline": "node scripts/typecheck.mjs --write-baseline",
+    "test": "DENO_BIN=${DENO_BIN:-$(command -v deno 2>/dev/null || printf '%s' \"$HOME/.deno/bin/deno\")}; if ! command -v \"$DENO_BIN\" >/dev/null 2>&1; then echo \"Deno not found: $DENO_BIN\" >&2; exit 127; fi; \"$DENO_BIN\" test --allow-env --allow-run --no-check --no-lock handlers/wave3-e2e.test.ts services/admin-request-validation.test.ts services/api-key-crypto.test.ts services/app-contracts.test.ts services/app-manifest-generation.test.ts services/app-runtime-resources.test.ts services/auth-cookies.test.ts services/auth-rate-limit.test.ts services/auth-request-validation.test.ts services/auth-transport.test.ts services/constraints.test.ts services/cors.test.ts services/d1-metering.test.ts services/d1-test-fixtures.test.ts services/desktop-oauth-sessions.test.ts services/docgen.test.ts services/embed-bridge.test.ts services/enforcement-policies.test.ts services/envvars.test.ts services/execution-settlement.test.ts services/gpu/builder.test.ts services/gpu/runpod.test.ts services/gpu/status.test.ts services/logging.test.ts services/marketplace-request-validation.test.ts services/mcp-function-names.test.ts services/oauth-login.test.ts services/openrouter-keys.test.ts services/originality.test.ts services/page-share-session.test.ts services/parser.test.ts services/permission-name-telemetry.test.ts services/plan-gate.test.ts services/platform-alias-telemetry.test.ts services/platform-request-validation.test.ts services/public-apps.test.ts services/permission-cache.test.ts services/request-auth.test.ts services/sensitive-route-rate-limit.test.ts services/session-revocation.test.ts services/tokens.test.ts services/ul-test-inputs.test.ts services/user-app-settings.test.ts services/user-supabase-configs.test.ts runtime/sandbox.test.ts",
+    "test:full": "DENO_BIN=${DENO_BIN:-$(command -v deno 2>/dev/null || printf '%s' \"$HOME/.deno/bin/deno\")}; if ! command -v \"$DENO_BIN\" >/dev/null 2>&1; then echo \"Deno not found: $DENO_BIN\" >&2; exit 127; fi; \"$DENO_BIN\" test --allow-env --allow-run --no-check --no-lock handlers/*.test.ts services/*.test.ts runtime/*.test.ts",
+    "test:gpu-live": "DENO_BIN=${DENO_BIN:-$(command -v deno 2>/dev/null || printf '%s' \"$HOME/.deno/bin/deno\")}; if ! command -v \"$DENO_BIN\" >/dev/null 2>&1; then echo \"Deno not found: $DENO_BIN\" >&2; exit 127; fi; \"$DENO_BIN\" run --allow-net --allow-env services/gpu/smoke-test.ts",
+    "deploy": "wrangler deploy --config wrangler.toml --env=\"\"",
+    "deploy:dry-run": "wrangler deploy --config wrangler.toml --env=\"\" --dry-run",
+    "deploy:staging": "wrangler deploy --config wrangler.toml --env staging",
+    "tail": "wrangler tail --config wrangler.toml"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2",
-    "typescript": "^5.3.3",
     "esbuild-wasm": "^0.24.0",
+    "typescript": "^5.3.3",
     "yaml": "^2.4.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241205.0",
+    "knip": "^6.5.0",
+    "madge": "^8.0.0",
     "wrangler": "^4.67.0"
   }
 }

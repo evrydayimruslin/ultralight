@@ -1,0 +1,490 @@
+import type { App } from "../../shared/types/index.ts";
+import type { EnvSchemaEntry } from "../../shared/contracts/env.ts";
+import { getEnv } from "../lib/env.ts";
+import { buildAppSecretDiagnostics } from "./app-diagnostics.ts";
+import {
+  getScopedEnvSchemaEntries,
+  resolveAppEnvSchema,
+} from "./app-settings.ts";
+import { createD1DataService } from "./d1-data.ts";
+import { getD1DatabaseId } from "./d1-provisioning.ts";
+import { decryptEnvVar, decryptEnvVars } from "./envvars.ts";
+import { createR2Service } from "./storage.ts";
+import {
+  type DecryptedSupabaseConfig,
+  getDecryptedPlatformSupabase,
+  getDecryptedSupabaseConfig,
+} from "./user-supabase-configs.ts";
+import {
+  type AppSupabaseResolutionLogInput,
+  type AppSupabaseResolutionSource,
+  logAppSupabaseResolution,
+} from "./app-runtime-telemetry.ts";
+import { createServerLogger, type LoggerLike } from "./logging.ts";
+
+export const APP_ENTRY_FILES = [
+  "index.tsx",
+  "index.ts",
+  "index.jsx",
+  "index.js",
+] as const;
+
+type RuntimeApp = Pick<
+  App,
+  | "id"
+  | "owner_id"
+  | "storage_key"
+  | "env_vars"
+  | "env_schema"
+  | "manifest"
+  | "d1_database_id"
+  | "supabase_config_id"
+  | "supabase_enabled"
+  | "supabase_url"
+  | "supabase_anon_key_encrypted"
+  | "supabase_service_key_encrypted"
+>;
+
+type AppCodeCache = {
+  get: (appId: string, storageKey: string) => string | null | undefined;
+  set: (appId: string, storageKey: string, code: string) => void;
+};
+
+interface FetchAppEntryCodeOptions {
+  r2Service?: ReturnType<typeof createR2Service>;
+  codeCache?: AppCodeCache;
+  entryFiles?: readonly string[];
+  onCacheHit?: (code: string) => void;
+  onCacheMiss?: () => void;
+  onFileLoaded?: (entryFile: string, code: string) => void;
+}
+
+interface RuntimeResourceDeps {
+  decryptEnvVarsFn?: typeof decryptEnvVars;
+  decryptEnvVarFn?: typeof decryptEnvVar;
+  getDecryptedSupabaseConfigFn?: typeof getDecryptedSupabaseConfig;
+  getDecryptedPlatformSupabaseFn?: typeof getDecryptedPlatformSupabase;
+  createD1DataServiceFn?: typeof createD1DataService;
+  getD1DatabaseIdFn?: typeof getD1DatabaseId;
+  logAppSupabaseResolutionFn?: (input: AppSupabaseResolutionLogInput) => void;
+  logger?: LoggerLike;
+  allowLegacyAppConfig?: boolean;
+  allowPlatformDefault?: boolean;
+  requireCanonicalWhenEnabled?: boolean;
+}
+
+interface ResolveAppRuntimeEnvVarsDeps extends RuntimeResourceDeps {
+  fetchFn?: typeof fetch;
+  supabaseUrl?: string;
+  supabaseServiceRoleKey?: string;
+}
+
+interface UserAppSecretRow {
+  key: string;
+  value_encrypted: string;
+}
+
+export interface ResolvedAppRuntimeEnv {
+  envVars: Record<string, string>;
+  envSchema: Record<string, EnvSchemaEntry>;
+  missingRequiredSecrets: string[];
+}
+
+export interface MissingAppSecretsErrorDetails {
+  type: "MISSING_SECRETS";
+  state: "not_required" | "ready" | "action_required";
+  missing_secrets: string[];
+  app_id: string;
+  message: string;
+  remediation: string;
+  hint: string;
+  connect_command: string | null;
+}
+
+export type AppSupabaseConfigState =
+  | "disabled"
+  | "saved_config"
+  | "missing_saved_config"
+  | "legacy_app_config"
+  | "platform_default";
+
+export function classifyAppSupabaseConfigState(
+  app: Pick<
+    RuntimeApp,
+    | "supabase_config_id"
+    | "supabase_enabled"
+    | "supabase_url"
+    | "supabase_anon_key_encrypted"
+  >,
+): AppSupabaseConfigState {
+  if (app.supabase_config_id) {
+    return "saved_config";
+  }
+
+  if (!app.supabase_enabled) {
+    return "disabled";
+  }
+
+  if (app.supabase_url && app.supabase_anon_key_encrypted) {
+    return "legacy_app_config";
+  }
+
+  return "platform_default";
+}
+
+function getSupabaseMigrationMessage(
+  reason: Exclude<AppSupabaseConfigState, "disabled" | "saved_config">,
+): string {
+  switch (reason) {
+    case "missing_saved_config":
+      return "This app references a saved Supabase server that is missing or invalid. Reassign a saved server in App Settings > Supabase before running it.";
+    case "legacy_app_config":
+      return "This app still uses legacy app-level Supabase credentials. Reconnect or assign a saved server in App Settings > Supabase before running it.";
+    case "platform_default":
+      return "This app still depends on the deprecated default Supabase server. Assign a saved server in App Settings > Supabase before running it.";
+  }
+}
+
+export class SupabaseConfigMigrationRequiredError extends Error {
+  readonly appId: string;
+  readonly reason: Exclude<AppSupabaseConfigState, "disabled" | "saved_config">;
+
+  constructor(
+    appId: string,
+    reason: Exclude<AppSupabaseConfigState, "disabled" | "saved_config">,
+  ) {
+    super(getSupabaseMigrationMessage(reason));
+    this.name = "SupabaseConfigMigrationRequiredError";
+    this.appId = appId;
+    this.reason = reason;
+  }
+}
+
+export async function fetchAppEntryCode(
+  app: Pick<RuntimeApp, "id" | "storage_key">,
+  options?: FetchAppEntryCodeOptions,
+): Promise<string | null> {
+  const codeCache = options?.codeCache;
+  const cachedCode = codeCache?.get(app.id, app.storage_key);
+  if (cachedCode) {
+    options?.onCacheHit?.(cachedCode);
+    return cachedCode;
+  }
+
+  options?.onCacheMiss?.();
+
+  const r2Service = options?.r2Service ?? createR2Service();
+  const entryFiles = options?.entryFiles ?? APP_ENTRY_FILES;
+
+  for (const entryFile of entryFiles) {
+    try {
+      const code = await r2Service.fetchTextFile(
+        `${app.storage_key}${entryFile}`,
+      );
+      if (!code) {
+        continue;
+      }
+      codeCache?.set(app.id, app.storage_key, code);
+      options?.onFileLoaded?.(entryFile, code);
+      return code;
+    } catch {
+      // Try the next supported entry file.
+    }
+  }
+
+  return null;
+}
+
+export async function resolveAppEnvVars(
+  app: Pick<RuntimeApp, "env_vars">,
+  deps?: RuntimeResourceDeps,
+): Promise<Record<string, string>> {
+  const decryptEnvVarsFn = deps?.decryptEnvVarsFn ?? decryptEnvVars;
+  const logger = deps?.logger ?? createServerLogger("APP-RUNTIME");
+
+  try {
+    return await decryptEnvVarsFn(app.env_vars || {});
+  } catch (err) {
+    logger.error("Failed to decrypt env vars", {
+      app_env_present: !!app.env_vars,
+      error: err,
+    });
+    return {};
+  }
+}
+
+export function buildMissingAppSecretsMessage(
+  missingSecrets: string[],
+): string {
+  return `Missing required secrets: ${
+    missingSecrets.join(", ")
+  }. Use ul.connect to provide them.`;
+}
+
+export function buildMissingAppSecretsErrorDetails(
+  appId: string,
+  missingSecrets: string[],
+): MissingAppSecretsErrorDetails {
+  const diagnostics = buildAppSecretDiagnostics({
+    appId,
+    declaredKeys: missingSecrets,
+    requiredKeys: missingSecrets,
+    connectedKeys: [],
+    missingRequired: missingSecrets,
+  });
+
+  return {
+    type: "MISSING_SECRETS",
+    state: diagnostics.state,
+    missing_secrets: missingSecrets,
+    app_id: appId,
+    message: diagnostics.message,
+    remediation: diagnostics.remediation,
+    hint: `Call ul.connect with app_id="${appId}" and provide: ${
+      missingSecrets.join(", ")
+    }`,
+    connect_command: diagnostics.connect_command,
+  };
+}
+
+export async function resolveAppRuntimeEnvVars(
+  app: Pick<RuntimeApp, "id" | "env_vars" | "env_schema" | "manifest">,
+  userId: string | null | undefined,
+  deps?: ResolveAppRuntimeEnvVarsDeps,
+): Promise<ResolvedAppRuntimeEnv> {
+  const decryptEnvVarFn = deps?.decryptEnvVarFn ?? decryptEnvVar;
+  const fetchFn = deps?.fetchFn ?? fetch;
+  const logger = deps?.logger ?? createServerLogger("APP-RUNTIME");
+  const envVars = await resolveAppEnvVars(app, deps);
+  const envSchema = resolveAppEnvSchema(app);
+  const perUserEntries = getScopedEnvSchemaEntries(envSchema, "per_user");
+
+  if (perUserEntries.length > 0 && userId) {
+    const supabaseUrl = deps?.supabaseUrl ?? getEnv("SUPABASE_URL");
+    const supabaseServiceRoleKey = deps?.supabaseServiceRoleKey ??
+      getEnv("SUPABASE_SERVICE_ROLE_KEY");
+
+    try {
+      const secretsRes = await fetchFn(
+        `${supabaseUrl}/rest/v1/user_app_secrets?user_id=eq.${userId}&app_id=eq.${app.id}&select=key,value_encrypted`,
+        {
+          headers: {
+            "apikey": supabaseServiceRoleKey,
+            "Authorization": `Bearer ${supabaseServiceRoleKey}`,
+          },
+        },
+      );
+
+      const userSecrets = secretsRes.ok
+        ? await secretsRes.json() as UserAppSecretRow[]
+        : [];
+
+      for (const secret of userSecrets) {
+        try {
+          envVars[secret.key] = await decryptEnvVarFn(secret.value_encrypted);
+        } catch (err) {
+          logger.error("Failed to decrypt per-user secret", {
+            app_id: app.id,
+            user_id: userId,
+            secret_key: secret.key,
+            error: err,
+          });
+        }
+      }
+    } catch (err) {
+      logger.error("Failed to load per-user secrets", {
+        app_id: app.id,
+        user_id: userId,
+        error: err,
+      });
+    }
+  }
+
+  const missingRequiredSecrets = perUserEntries
+    .filter(({ entry }) => entry.required)
+    .map(({ key }) => key)
+    .filter((key) => !envVars[key]);
+
+  return { envVars, envSchema, missingRequiredSecrets };
+}
+
+export async function resolveAppSupabaseConfig(
+  app: Pick<
+    RuntimeApp,
+    | "id"
+    | "owner_id"
+    | "supabase_config_id"
+    | "supabase_enabled"
+    | "supabase_url"
+    | "supabase_anon_key_encrypted"
+    | "supabase_service_key_encrypted"
+  >,
+  deps?: RuntimeResourceDeps,
+): Promise<DecryptedSupabaseConfig | undefined> {
+  const decryptEnvVarFn = deps?.decryptEnvVarFn ?? decryptEnvVar;
+  const getDecryptedSupabaseConfigFn = deps?.getDecryptedSupabaseConfigFn ??
+    getDecryptedSupabaseConfig;
+  const getDecryptedPlatformSupabaseFn = deps?.getDecryptedPlatformSupabaseFn ??
+    getDecryptedPlatformSupabase;
+  const logAppSupabaseResolutionFn = deps?.logAppSupabaseResolutionFn ??
+    logAppSupabaseResolution;
+  const logger = deps?.logger ?? createServerLogger("APP-RUNTIME");
+  const allowLegacyAppConfig = deps?.allowLegacyAppConfig ?? false;
+  const allowPlatformDefault = deps?.allowPlatformDefault ?? false;
+  const requireCanonicalWhenEnabled = deps?.requireCanonicalWhenEnabled ?? true;
+  const resolutionNotes: string[] = [];
+  const appState = classifyAppSupabaseConfigState(app);
+  const logResolution = (source: AppSupabaseResolutionSource): void => {
+    logAppSupabaseResolutionFn({
+      appId: app.id,
+      ownerId: app.owner_id,
+      source,
+      supabaseEnabled: !!app.supabase_enabled,
+      hasConfigId: !!app.supabase_config_id,
+      hasLegacyAppConfig:
+        !!(app.supabase_url && app.supabase_anon_key_encrypted),
+      note: resolutionNotes.length > 0 ? resolutionNotes.join(",") : undefined,
+    });
+  };
+
+  if (app.supabase_config_id) {
+    try {
+      const config = await getDecryptedSupabaseConfigFn(app.supabase_config_id);
+      if (config) {
+        logResolution("saved_config");
+        return config;
+      }
+      resolutionNotes.push("saved_config_missing");
+    } catch (err) {
+      logger.error("Failed to get saved Supabase config by ID", {
+        app_id: app.id,
+        supabase_config_id: app.supabase_config_id,
+        error: err,
+      });
+      resolutionNotes.push("saved_config_error");
+    }
+  }
+
+  if (
+    app.supabase_enabled && app.supabase_url && app.supabase_anon_key_encrypted
+  ) {
+    if (allowLegacyAppConfig) {
+      try {
+        const anonKey = await decryptEnvVarFn(app.supabase_anon_key_encrypted);
+        const config: DecryptedSupabaseConfig = {
+          url: app.supabase_url,
+          anonKey,
+        };
+        if (app.supabase_service_key_encrypted) {
+          config.serviceKey = await decryptEnvVarFn(
+            app.supabase_service_key_encrypted,
+          );
+        }
+        logResolution("legacy_app_config");
+        return config;
+      } catch (err) {
+        logger.error("Failed to decrypt legacy app-level Supabase config", {
+          app_id: app.id,
+          error: err,
+        });
+        resolutionNotes.push("legacy_app_config_error");
+      }
+    } else {
+      resolutionNotes.push("legacy_app_config_disabled");
+    }
+  } else if (app.supabase_enabled) {
+    resolutionNotes.push("legacy_app_config_unavailable");
+  }
+
+  if (app.supabase_enabled) {
+    if (allowPlatformDefault) {
+      try {
+        const platformConfig = await getDecryptedPlatformSupabaseFn(
+          app.owner_id,
+        );
+        if (platformConfig) {
+          logResolution("platform_default");
+          return platformConfig;
+        }
+        resolutionNotes.push("platform_default_missing");
+      } catch (err) {
+        logger.error("Failed to get platform default Supabase config", {
+          app_id: app.id,
+          owner_id: app.owner_id,
+          error: err,
+        });
+        resolutionNotes.push("platform_default_error");
+      }
+    } else {
+      resolutionNotes.push("platform_default_disabled");
+    }
+  }
+
+  logResolution("none");
+
+  if (app.supabase_enabled && requireCanonicalWhenEnabled) {
+    const reason = appState === "saved_config"
+      ? "missing_saved_config"
+      : appState === "disabled"
+      ? "platform_default"
+      : appState;
+    throw new SupabaseConfigMigrationRequiredError(app.id, reason);
+  }
+
+  return undefined;
+}
+
+export async function createAppD1Resources(
+  app: Pick<RuntimeApp, "id" | "d1_database_id">,
+  deps?: RuntimeResourceDeps,
+): Promise<{
+  d1DatabaseId: string | null;
+  d1DataService: ReturnType<typeof createD1DataService> | null;
+}> {
+  const getD1DatabaseIdFn = deps?.getD1DatabaseIdFn ?? getD1DatabaseId;
+  const createD1DataServiceFn = deps?.createD1DataServiceFn ??
+    createD1DataService;
+  const d1DatabaseId = app.d1_database_id || await getD1DatabaseIdFn(app.id);
+  if (!d1DatabaseId) {
+    return {
+      d1DatabaseId: null,
+      d1DataService: null,
+    };
+  }
+  return {
+    d1DatabaseId,
+    d1DataService: createD1DataServiceFn(app.id, d1DatabaseId),
+  };
+}
+
+export function resolveManifestPermissions(
+  app: Pick<RuntimeApp, "manifest">,
+  basePermissions: string[],
+  allowedManifestPermissions = ["net:connect"],
+): string[] {
+  const permissions = [...basePermissions];
+
+  try {
+    const rawManifest = app.manifest;
+    const parsed = typeof rawManifest === "string"
+      ? JSON.parse(rawManifest)
+      : rawManifest;
+    const manifestPermissions = Array.isArray(parsed?.permissions)
+      ? parsed.permissions
+      : [];
+
+    for (const permission of manifestPermissions) {
+      if (
+        typeof permission === "string" &&
+        allowedManifestPermissions.includes(permission) &&
+        !permissions.includes(permission)
+      ) {
+        permissions.push(permission);
+      }
+    }
+  } catch {
+    // Invalid manifest payloads should not crash execution setup.
+  }
+
+  return permissions;
+}

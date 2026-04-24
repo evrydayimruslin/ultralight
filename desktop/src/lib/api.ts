@@ -1,8 +1,11 @@
 // API client for Ultralight chat endpoints
 // All requests route through the Ultralight server proxy (auth + billing).
 
-import { getToken, getApiBase } from './storage';
+import { fetchFromApi, getToken } from './storage';
 import { parseSSEStream, type ChatStreamEvent } from './sse';
+import type { ToolUsed } from '../types/executionPlan';
+import type { AmbientSuggestion } from '../types/ambientSuggestion';
+import { createDesktopLogger } from './logging';
 
 // ── Types ──
 
@@ -53,6 +56,8 @@ const FALLBACK_MODELS: ModelInfo[] = [
   { id: 'deepseek/deepseek-chat', name: 'deepseek-chat', provider: 'deepseek' },
 ];
 
+const apiLogger = createDesktopLogger('api');
+
 // ── Headers ──
 
 function authHeaders(): Record<string, string> {
@@ -77,11 +82,9 @@ export async function* streamChat(opts: {
   temperature?: number;
   max_tokens?: number;
 }): AsyncGenerator<ChatStreamEvent> {
-  const base = getApiBase();
-
   let res: Response;
   try {
-    res = await fetch(`${base}/chat/stream`, {
+    res = await fetchFromApi('/chat/stream', {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({
@@ -131,7 +134,6 @@ export async function* streamChat(opts: {
  * Fetch available models from the server.
  */
 export async function fetchModels(): Promise<ModelInfo[]> {
-  const base = getApiBase();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 
   const token = getToken();
@@ -140,7 +142,7 @@ export async function fetchModels(): Promise<ModelInfo[]> {
   }
 
   try {
-    const res = await fetch(`${base}/chat/models`, { headers });
+    const res = await fetchFromApi('/chat/models', { headers });
     if (!res.ok) {
       throw new Error(`Failed to fetch models: ${res.status}`);
     }
@@ -189,12 +191,11 @@ export async function fetchFunctionIndex(forceRefresh = false): Promise<Function
   }
 
   // Fetch from server
-  const base = getApiBase();
   const token = getToken();
   if (!token) return null;
 
   try {
-    const res = await fetch(`${base}/chat/function-index`, {
+    const res = await fetchFromApi('/chat/function-index', {
       headers: { 'Authorization': `Bearer ${token}` },
     });
     if (!res.ok) return null;
@@ -242,12 +243,11 @@ export interface TaskContext {
  * functions, conventions, and a formatted promptBlock for system prompt injection.
  */
 export async function fetchTaskContext(prompt: string): Promise<TaskContext | null> {
-  const base = getApiBase();
   const token = getToken();
   if (!token) return null;
 
   try {
-    const res = await fetch(`${base}/chat/context`, {
+    const res = await fetchFromApi('/chat/context', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`,
@@ -269,6 +269,38 @@ export interface McpToolResult {
   isError?: boolean;
 }
 
+export class ExecutionPlanRequestError extends Error {
+  status: number;
+  detail?: string;
+
+  constructor(message: string, status: number, detail?: string) {
+    super(message);
+    this.name = 'ExecutionPlanRequestError';
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+async function buildExecutionPlanRequestError(res: Response): Promise<ExecutionPlanRequestError> {
+  const fallback = `Execution plan request failed (${res.status})`;
+  const text = await res.text().catch(() => '');
+
+  if (!text) {
+    return new ExecutionPlanRequestError(fallback, res.status);
+  }
+
+  try {
+    const parsed = JSON.parse(text) as { error?: string; detail?: string };
+    return new ExecutionPlanRequestError(
+      parsed.error || fallback,
+      res.status,
+      parsed.detail || text,
+    );
+  } catch {
+    return new ExecutionPlanRequestError(text, res.status, text);
+  }
+}
+
 /**
  * Execute an MCP tool call via the platform endpoint.
  */
@@ -276,9 +308,7 @@ export async function executeMcpTool(
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<McpToolResult> {
-  const base = getApiBase();
-
-  const res = await fetch(`${base}/mcp/platform`, {
+  const res = await fetchFromApi('/mcp/platform', {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify({
@@ -317,16 +347,14 @@ export async function executeMcpTool(
 
 /**
  * Call a specific app's MCP endpoint directly (bypasses ul.call prefix issues).
- * toolName must be the slug-prefixed name (e.g., "app-7vftmp_widget_approval_queue").
+ * toolName must be the slug-prefixed name (e.g., "app-7vftmp_widget_email_inbox_ui").
  */
 export async function executeAppMcpTool(
   appUuid: string,
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<McpToolResult> {
-  const base = getApiBase();
-
-  const res = await fetch(`${base}/mcp/${appUuid}`, {
+  const res = await fetchFromApi(`/mcp/${appUuid}`, {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify({
@@ -387,11 +415,11 @@ export async function fetchBalance(): Promise<number | null> {
 export interface OrchestrateEvent {
   type:
     // Flash phase
-    | 'flash_status' | 'flash_search' | 'flash_found' | 'flash_context' | 'flash_prompt' | 'flash_direct'
+    | 'flash_status' | 'ambient_suggestions' | 'flash_search' | 'flash_found' | 'flash_context' | 'flash_prompt' | 'flash_direct'
     // Heavy phase
     | 'heavy_status' | 'heavy_text' | 'heavy_recipe'
     // Execution phase
-    | 'exec_start' | 'exec_result'
+    | 'plan_ready' | 'plan_cancelled' | 'exec_start' | 'exec_result'
     // System agent delegation
     | 'system_agent_spawn'
     // Meta
@@ -408,6 +436,7 @@ export interface OrchestrateEvent {
   message?: string;
   query?: string;
   apps?: string[];
+  suggestions?: AmbientSuggestion[];
   entity?: string;
   detail?: string;
   functions?: string[];
@@ -418,6 +447,15 @@ export interface OrchestrateEvent {
   agentType?: string;
   task?: string;
   originalPrompt?: string;
+  plan?: {
+    id: string;
+    recipe: string;
+    tools_used: ToolUsed[];
+    total_cost_light: number;
+    created_at: number;
+  };
+  planId?: string;
+  reason?: string;
 }
 
 /**
@@ -442,11 +480,9 @@ export async function* streamOrchestrate(opts: {
   /** Attached files (base64 data URLs) */
   files?: Array<{ name: string; size: number; mimeType: string; content: string }>;
 }): AsyncGenerator<OrchestrateEvent> {
-  const base = getApiBase();
-
   let res: Response;
   try {
-    res = await fetch(`${base}/chat/orchestrate`, {
+    res = await fetchFromApi('/chat/orchestrate', {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify(opts),
@@ -497,6 +533,28 @@ export async function* streamOrchestrate(opts: {
   }
 }
 
+export async function confirmExecutionPlan(planId: string): Promise<void> {
+  const res = await fetchFromApi(`/chat/plan/${planId}/confirm`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+
+  if (!res.ok) {
+    throw await buildExecutionPlanRequestError(res);
+  }
+}
+
+export async function cancelExecutionPlan(planId: string): Promise<void> {
+  const res = await fetchFromApi(`/chat/plan/${planId}/cancel`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+
+  if (!res.ok) {
+    throw await buildExecutionPlanRequestError(res);
+  }
+}
+
 // ── Conversation Embedding ──
 
 /** Embed a conversation summary for cross-session semantic search */
@@ -506,15 +564,14 @@ export async function embedConversation(opts: {
   summary: string;
   metadata?: Record<string, unknown>;
 }): Promise<void> {
-  const base = getApiBase();
   try {
-    await fetch(`${base}/api/user/conversation-embedding`, {
+    await fetchFromApi('/api/user/conversation-embedding', {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify(opts),
     });
   } catch (err) {
-    console.warn('[api] Failed to embed conversation:', err);
+    apiLogger.warn('Failed to embed conversation', { error: err });
   }
 }
 
@@ -524,15 +581,14 @@ export async function embedConversation(opts: {
 export async function syncSystemAgentStates(
   states: Array<{ type: string; name: string; tools: string[]; stateSummary: string | null; status: string }>,
 ): Promise<void> {
-  const base = getApiBase();
   try {
-    await fetch(`${base}/api/user/system-agent-states`, {
+    await fetchFromApi('/api/user/system-agent-states', {
       method: 'PUT',
       headers: authHeaders(),
       body: JSON.stringify({ states }),
     });
   } catch (err) {
-    console.warn('[api] Failed to sync system agent states:', err);
+    apiLogger.warn('Failed to sync system agent states', { error: err });
   }
 }
 
