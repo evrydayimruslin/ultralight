@@ -1012,7 +1012,7 @@ BEGIN
 
   -- Calculate change percentage
   IF v_gmv_prev > 0 THEN
-    v_gmv_change_pct := ROUND(((v_gmv_30d - v_gmv_prev)::FLOAT / v_gmv_prev) * 100, 1);
+    v_gmv_change_pct := ROUND((((v_gmv_30d - v_gmv_prev)::NUMERIC / v_gmv_prev::NUMERIC) * 100), 1)::FLOAT;
   ELSE
     v_gmv_change_pct := 0;
   END IF;
@@ -1141,7 +1141,7 @@ $$;
 ALTER FUNCTION "public"."increment_app_runs"("app_id" "uuid") OWNER TO "postgres";
 
 
-CREATE OR REPLACE FUNCTION "public"."increment_budget_used"("p_user_id" "uuid", "p_app_id" "text", "p_function_name" "text") RETURNS "void"
+CREATE OR REPLACE FUNCTION "public"."increment_budget_used"("p_user_id" "uuid", "p_app_id" "uuid", "p_function_name" "text") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO 'public, extensions'
     AS $$
@@ -1156,7 +1156,7 @@ END;
 $$;
 
 
-ALTER FUNCTION "public"."increment_budget_used"("p_user_id" "uuid", "p_app_id" "text", "p_function_name" "text") OWNER TO "postgres";
+ALTER FUNCTION "public"."increment_budget_used"("p_user_id" "uuid", "p_app_id" "uuid", "p_function_name" "text") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."increment_caller_usage"("p_app_id" "uuid", "p_user_id" "uuid", "p_counter_key" "text") RETURNS integer
@@ -1473,7 +1473,7 @@ BEGIN
   RETURN QUERY
   SELECT
     a.id, a.name, a.slug, a.description, a.owner_id, a.visibility,
-    1 - (a.skills_embedding <=> p_query_embedding) as similarity,
+    1 - (a.skills_embedding OPERATOR(public.<=>) p_query_embedding) as similarity,
     a.skills_parsed,
     COALESCE(a.likes, 0),
     COALESCE(a.dislikes, 0),
@@ -1508,7 +1508,7 @@ BEGIN
     c.description,
     c.owner_id,
     c.visibility,
-    1 - (c.embedding <=> p_query_embedding) as similarity,
+    1 - (c.embedding OPERATOR(public.<=>) p_query_embedding) as similarity,
     c.tags,
     c.published,
     c.updated_at,
@@ -1520,7 +1520,7 @@ BEGIN
   LEFT JOIN public.content_shares cs
     ON cs.content_id = c.id
     AND (cs.shared_with_user_id = p_user_id OR cs.shared_with_email = (
-      SELECT email FROM public.users WHERE id = p_user_id LIMIT 1
+      SELECT u.email FROM public.users u WHERE u.id = p_user_id LIMIT 1
     ))
     AND (cs.expires_at IS NULL OR cs.expires_at > NOW())
   WHERE
@@ -1570,7 +1570,7 @@ BEGIN
     LEFT JOIN public.content_shares cs
       ON cs.content_id = c.id
       AND (cs.shared_with_user_id = p_user_id OR cs.shared_with_email = (
-        SELECT email FROM public.users WHERE public.users.id = p_user_id LIMIT 1
+      SELECT u.email FROM public.users u WHERE u.id = p_user_id LIMIT 1
       ))
       AND (cs.expires_at IS NULL OR cs.expires_at > NOW())
     WHERE
@@ -1586,10 +1586,10 @@ BEGIN
     -- Vector similarity search (only rows with embeddings)
     SELECT
       a.id,
-      1 - (a.embedding <=> p_query_embedding) AS v_similarity
+      1 - (a.embedding OPERATOR(public.<=>) p_query_embedding) AS v_similarity
     FROM accessible a
     WHERE a.embedding IS NOT NULL
-    ORDER BY a.embedding <=> p_query_embedding
+    ORDER BY a.embedding OPERATOR(public.<=>) p_query_embedding
     LIMIT p_limit * 3
   ),
   keyword_results AS (
@@ -1668,12 +1668,12 @@ BEGIN
     ce.conversation_name,
     ce.summary,
     ce.metadata,
-    1 - (ce.embedding <=> p_query_embedding) AS similarity,
+    1 - (ce.embedding OPERATOR(public.<=>) p_query_embedding) AS similarity,
     ce.created_at
   FROM public.conversation_embeddings ce
   WHERE ce.user_id = p_user_id
-    AND 1 - (ce.embedding <=> p_query_embedding) > p_match_threshold
-  ORDER BY ce.embedding <=> p_query_embedding
+    AND 1 - (ce.embedding OPERATOR(public.<=>) p_query_embedding) > p_match_threshold
+  ORDER BY ce.embedding OPERATOR(public.<=>) p_query_embedding
   LIMIT p_match_count;
 END;
 $$;
@@ -5299,9 +5299,9 @@ GRANT ALL ON FUNCTION "public"."increment_app_runs"("app_id" "uuid") TO "service
 
 
 
-GRANT ALL ON FUNCTION "public"."increment_budget_used"("p_user_id" "uuid", "p_app_id" "text", "p_function_name" "text") TO "anon";
-GRANT ALL ON FUNCTION "public"."increment_budget_used"("p_user_id" "uuid", "p_app_id" "text", "p_function_name" "text") TO "authenticated";
-GRANT ALL ON FUNCTION "public"."increment_budget_used"("p_user_id" "uuid", "p_app_id" "text", "p_function_name" "text") TO "service_role";
+GRANT ALL ON FUNCTION "public"."increment_budget_used"("p_user_id" "uuid", "p_app_id" "uuid", "p_function_name" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."increment_budget_used"("p_user_id" "uuid", "p_app_id" "uuid", "p_function_name" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."increment_budget_used"("p_user_id" "uuid", "p_app_id" "uuid", "p_function_name" "text") TO "service_role";
 
 
 
