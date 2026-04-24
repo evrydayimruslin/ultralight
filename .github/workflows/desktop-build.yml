@@ -1,13 +1,60 @@
 name: Desktop Build
 
 on:
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop-build.yml'
   push:
     branches: [main]
-    paths: ['desktop/**']
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop-build.yml'
   workflow_dispatch:
 
 jobs:
+  verify:
+    name: Verify desktop JS
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck desktop frontend
+        run: pnpm run typecheck
+
+      - name: Unused-code baseline
+        run: pnpm run analyze:unused
+
+      - name: Dependency-cycle baseline
+        run: pnpm run analyze:deps
+
+      - name: Run JS tests
+        run: pnpm test
+
+      - name: Build production desktop frontend
+        run: pnpm run build:production
+
   build:
+    name: Bundle desktop (${{ matrix.target }})
+    needs: verify
+    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -26,11 +73,11 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 10.28.2
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .nvmrc
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
 
@@ -44,12 +91,13 @@ jobs:
 
       - name: Install dependencies
         working-directory: desktop
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ULTRALIGHT_DESKTOP_BUILD_CHANNEL: staging
         with:
           projectPath: desktop
           args: ${{ matrix.args }}

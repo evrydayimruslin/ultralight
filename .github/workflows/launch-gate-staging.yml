@@ -1,0 +1,118 @@
+name: Staging Launch Gate
+run-name: Staging launch gate (${{ github.event.inputs.candidate_sha || github.sha }})
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'api/**'
+      - 'apps/**'
+      - 'shared/**'
+      - 'supabase/**'
+      - 'scripts/checks/**'
+      - 'scripts/supabase/**'
+      - 'scripts/release/check-staging-launch-gate.mjs'
+      - 'desktop/**'
+      - 'sdk/**'
+      - 'web/**'
+      - 'migration-*.sql'
+      - '.gitignore'
+      - '.nvmrc'
+      - '.github/workflows/api-ci.yml'
+      - '.github/workflows/api-deploy.yml'
+      - '.github/workflows/desktop-build.yml'
+      - '.github/workflows/launch-guardrails.yml'
+      - '.github/workflows/launch-gate-staging.yml'
+      - '.github/workflows/supabase-db.yml'
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: 'Candidate commit SHA on main to evaluate. Defaults to the current SHA when omitted.'
+        required: false
+        type: string
+      compare_base:
+        description: 'Optional base SHA for changed-file comparison. Defaults to the push before SHA or parent commit.'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  gate:
+    name: Evaluate staging candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.candidate_sha || github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Resolve candidate SHAs
+        id: shas
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CANDIDATE_SHA="${{ github.event.inputs.candidate_sha || github.sha }}"
+          BASE_SHA="${{ github.event.inputs.compare_base }}"
+
+          if [[ -z "$BASE_SHA" ]]; then
+            if [[ "${{ github.event_name }}" == "push" && "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
+              BASE_SHA="${{ github.event.before }}"
+            else
+              BASE_SHA="$(git rev-parse "${CANDIDATE_SHA}^")"
+            fi
+          fi
+
+          echo "candidate_sha=$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Collect changed files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --name-only "${{ steps.shas.outputs.base_sha }}" "${{ steps.shas.outputs.candidate_sha }}" | sort > /tmp/staging-launch-gate-files.txt
+          echo "Changed files for candidate ${{ steps.shas.outputs.candidate_sha }}:"
+          cat /tmp/staging-launch-gate-files.txt || true
+
+      - name: Evaluate required workflow runs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node scripts/release/check-staging-launch-gate.mjs \
+            --repository "${{ github.repository }}" \
+            --sha "${{ steps.shas.outputs.candidate_sha }}" \
+            --base "${{ steps.shas.outputs.base_sha }}" \
+            --changed-files-file /tmp/staging-launch-gate-files.txt \
+            --poll-until-complete \
+            --timeout-seconds 2100 \
+            --poll-interval-seconds 20 \
+            --write-json /tmp/staging-launch-gate-summary.json \
+            --write-md /tmp/staging-launch-gate-summary.md
+
+      - name: Publish job summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f /tmp/staging-launch-gate-summary.md ]]; then
+            cat /tmp/staging-launch-gate-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload staging launch gate summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-launch-gate-${{ steps.shas.outputs.candidate_sha }}
+          path: |
+            /tmp/staging-launch-gate-summary.json
+            /tmp/staging-launch-gate-summary.md
+            /tmp/staging-launch-gate-files.txt
+          if-no-files-found: error

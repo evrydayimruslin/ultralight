@@ -1,0 +1,67 @@
+name: Supabase DB
+
+on:
+  pull_request:
+    paths:
+      - 'supabase/**'
+      - 'scripts/supabase/**'
+      - '.github/workflows/supabase-db.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/**'
+      - 'scripts/supabase/**'
+      - '.github/workflows/supabase-db.yml'
+  workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: 'Run validation only, or validate and deploy staging.'
+        required: true
+        default: validate
+        type: choice
+        options:
+          - validate
+          - staging
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Supabase migrations
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Validate local migration set
+        run: bash ./scripts/supabase/validate-local.sh
+
+  deploy_staging:
+    name: Deploy staging schema
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.event_name == 'push' || github.event.inputs.deploy_target == 'staging'
+    environment: staging
+    concurrency:
+      group: supabase-staging-db
+      cancel-in-progress: false
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_STAGING_PROJECT_ID }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_STAGING_DB_PASSWORD }}
+      SUPABASE_ENV_NAME: staging
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Push staging migrations
+        run: bash ./scripts/supabase/deploy-linked.sh

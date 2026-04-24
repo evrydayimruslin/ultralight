@@ -4,14 +4,30 @@ on:
   pull_request:
     paths:
       - 'api/**'
+      - 'apps/**'
+      - 'cli/**'
+      - 'packages/types/**'
+      - 'scripts/contracts/**'
       - 'shared/**'
+      - 'sdk/**'
+      - 'scripts/checks/**'
+      - 'supabase/**'
+      - 'scripts/supabase/**'
       - 'migration-*.sql'
       - '.github/workflows/api-ci.yml'
   push:
     branches: [main]
     paths:
       - 'api/**'
+      - 'apps/**'
+      - 'cli/**'
+      - 'packages/types/**'
+      - 'scripts/contracts/**'
       - 'shared/**'
+      - 'sdk/**'
+      - 'scripts/checks/**'
+      - 'supabase/**'
+      - 'scripts/supabase/**'
       - 'migration-*.sql'
       - '.github/workflows/api-ci.yml'
   workflow_dispatch:
@@ -32,16 +48,38 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version-file: api/.nvmrc
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: api/package-lock.json
 
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: vx.x
+          deno-version: v2.x
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Generate published contract artifacts
+        working-directory: .
+        run: node scripts/contracts/generate-types-package.mjs
+
+      - name: Verify generated contract artifacts are committed
+        working-directory: .
+        run: git diff --exit-code -- packages/types/index.d.ts packages/types/generated
+
+      - name: Contract guardrails
+        working-directory: .
+        run: node scripts/checks/check-contract-guardrails.mjs
+
+      - name: Widget contract guardrails
+        working-directory: .
+        run: node scripts/checks/check-widget-contracts.mjs
+
+      - name: Unused-code baseline
+        run: npm run analyze:unused
+
+      - name: Dependency-cycle baseline
+        run: npm run analyze:deps
 
       - name: Typecheck
         run: npm run typecheck
@@ -51,3 +89,6 @@ jobs:
 
       - name: Wrangler Dry Run
         run: npm run deploy:dry-run
+
+      - name: Wrangler Dry Run (staging)
+        run: npx wrangler deploy --config wrangler.toml --env staging --dry-run
