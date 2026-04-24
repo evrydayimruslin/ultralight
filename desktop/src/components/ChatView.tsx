@@ -15,15 +15,19 @@ import ChatInput, { type ChatFile } from './ChatInput';
 import PermissionModal from './PermissionModal';
 import SpendingApprovalModal from './SpendingApprovalModal';
 import AgentHeader from './AgentHeader';
-import { clearToken, getToken, getApiBase, getModel, getInterpreterModel, getHeavyModel } from '../lib/storage';
+import DiscoverWidget from './DiscoverWidget';
+import { clearToken, fetchFromApi, getToken, getApiBase, getModel, getInterpreterModel, getHeavyModel } from '../lib/storage';
 import { getContextWindow } from '../lib/tokens';
 import { buildSystemPrompt, buildCodeModeAppsPrompt } from '../lib/systemPrompt';
 import { SYSTEM_AGENTS } from '../lib/systemAgents';
 import { gatherProjectContext } from '../lib/projectContext';
 import { parseFileOperations } from '../lib/parseFileOps';
 import { updateSystemAgentState, maybeEmbedConversation } from '../lib/agentStateSummary';
-import { fetchFunctionIndex, fetchTaskContext, streamOrchestrate, streamChat } from '../lib/api';
+import { confirmExecutionPlan, fetchFunctionIndex, fetchTaskContext, streamOrchestrate, streamChat } from '../lib/api';
+import type { ExecutionPlan } from '../types/executionPlan';
 import { agentRunner } from '../lib/agentRunner';
+import { dispatchAmbientSuggestions, useAmbientSuggestions } from '../hooks/useAmbientSuggestions';
+import { createDesktopLogger } from '../lib/logging';
 
 /** Map flash broker's model suggestion to a real OpenRouter model ID */
 function resolveModelFromBroker(suggestion?: string): string | undefined {
@@ -60,6 +64,8 @@ interface ChatViewProps {
   onNavigateToAgent?: (agentId: string) => void;
   onShowTutorial?: () => void;
 }
+
+const chatViewLogger = createDesktopLogger('ChatView');
 
 export default function ChatView({
   agentId,
@@ -109,6 +115,13 @@ export default function ChatView({
 
   const [diagnostics, setDiagnostics] = useState<string | null>(null);
   const [queuedMessages, setQueuedMessages] = useState<string[]>([]);
+  const [ambientOpen, setAmbientOpen] = useState(false);
+  const {
+    suggestions: ambientSuggestions,
+    hasNew: ambientHasNew,
+    isPulsing: ambientIsPulsing,
+    markViewed: markAmbientViewed,
+  } = useAmbientSuggestions();
 
   // Per-conversation project directory (persisted to agent DB record)
   const [conversationProjectDir, setConversationProjectDir] = useState<string | null>(null);
@@ -200,11 +213,11 @@ export default function ChatView({
         // Deduplicate by slug
         const seen = new Set<string>();
         apps = apps.filter(a => { if (seen.has(a.slug)) return false; seen.add(a.slug); return true; });
-        console.log('[SCOPE] Loaded', apps.length, 'apps for scope dropdown');
+        chatViewLogger.debug('Loaded scope apps for dropdown', { count: apps.length });
         setPreChatAllApps(apps);
       })
       .catch(err => {
-        console.error('[SCOPE] Failed to load apps:', err);
+        chatViewLogger.error('Failed to load scope apps', { error: err });
         setPreChatAllApps([]);
       })
       .finally(() => setPreChatAppsLoading(false));
@@ -346,6 +359,12 @@ export default function ChatView({
     prevMessageCountRef.current = messages.length;
   }, [activeId]);
 
+  useEffect(() => {
+    if (ambientOpen) {
+      markAmbientViewed();
+    }
+  }, [ambientOpen, markAmbientViewed]);
+
   // Load agent conversation when agentId prop changes
   useEffect(() => {
     if (!agentId) return;
@@ -451,6 +470,7 @@ export default function ChatView({
   const runOrchestrateStream = useCallback(async (
     content: string,
     history?: Array<{ role: string; content: string }>,
+    conversationIdOverride?: string,
   ) => {
     const userMsg: import('../hooks/useChat').Message = {
       id: crypto.randomUUID(),
@@ -463,6 +483,7 @@ export default function ChatView({
     const assistantId = crypto.randomUUID();
     let assistantContent = '';
     let statusHint = '';  // Subtle animated status during Flash phase
+    let currentPlanId: string | null = null;
 
     const updateUI = () => {
       if (assistantContent) {
@@ -508,7 +529,11 @@ export default function ChatView({
         };
       }
     }
-    if (scope) console.log('[SCOPE] Sending scope:', Object.keys(scope).join(', '));
+    if (scope) {
+      chatViewLogger.debug('Sending scope with orchestrate request', {
+        scopes: Object.keys(scope),
+      });
+    }
 
     // Gather system agent states for Flash's Context Index
     const systemAgentStates = agents
@@ -518,7 +543,8 @@ export default function ChatView({
         return {
           type: a.system_agent_type!,
           name: a.name,
-          tools: config?.toolScope || [],
+          // Flash resolves effective system-agent tools server-side now.
+          tools: [],
           stateSummary: a.state_summary,
           status: a.status,
         };
@@ -530,11 +556,13 @@ export default function ChatView({
       try {
         projectContext = await gatherProjectContext(conversationProjectDirRef.current, content);
       } catch (err) {
-        console.warn('[ChatView] Context gathering failed:', err);
+        chatViewLogger.warn('Context gathering failed', { error: err });
       }
     }
 
     const agentModels = parseAgentModels(currentAgent?.model || null);
+    const executeWindowSeconds = currentAgent?.execute_window_seconds ?? 8;
+    const resolvedConversationId = conversationIdOverride || activeId || currentAgent?.conversation_id || assistantId;
 
     // Attach pending files (from ChatInput)
     const chatFiles = pendingFilesRef.current || undefined;
@@ -550,10 +578,15 @@ export default function ChatView({
       systemAgentStates: systemAgentStates.length > 0 ? systemAgentStates : undefined,
       systemAgentContext: systemAgentContext || undefined,
       projectContext,
-      conversationId: activeId || undefined,
+      conversationId: conversationIdOverride || activeId || undefined,
       files: chatFiles,
     })) {
       switch (event.type) {
+        case 'ambient_suggestions':
+          if (event.suggestions?.length) {
+            dispatchAmbientSuggestions(event.suggestions);
+          }
+          break;
         // Flash phase — show subtle status hints
         case 'flash_status':
           statusHint = event.text || 'Thinking...';
@@ -599,7 +632,88 @@ export default function ChatView({
           break; // Don't show recipe code
 
         // Execution
+        case 'plan_ready': {
+          if (!event.plan) break;
+
+          currentPlanId = event.plan.id;
+          const fireAt = executeWindowSeconds >= 0
+            ? Date.now() + Math.max(executeWindowSeconds, 0) * 1000
+            : null;
+
+          const localPlan: ExecutionPlan = {
+            id: event.plan.id,
+            conversation_id: resolvedConversationId,
+            message_id: assistantId,
+            recipe: event.plan.recipe,
+            tools_used: event.plan.tools_used,
+            total_cost_light: event.plan.total_cost_light,
+            created_at: event.plan.created_at,
+            window_seconds: executeWindowSeconds,
+            fire_at: fireAt ?? undefined,
+            status: 'pending',
+            result: undefined,
+            fired_at: undefined,
+            completed_at: undefined,
+          };
+
+          try {
+            await invoke('db_create_execution_plan', { plan: localPlan });
+          } catch (err) {
+            chatViewLogger.error('Failed to persist execution plan', {
+              error: err,
+              planId: event.plan.id,
+            });
+          }
+
+          assistantContent += assistantContent
+            ? `\n\n{{exec:${event.plan.id}}}`
+            : `{{exec:${event.plan.id}}}`;
+          updateUI();
+
+          break;
+        }
+        case 'plan_cancelled':
+          statusHint = '';
+          if (currentPlanId || event.planId) {
+            const cancellationResult = event.reason === 'timed_out'
+              ? 'Execution window expired before approval.'
+              : 'Execution was cancelled before any tools ran.';
+            try {
+              await invoke('db_update_execution_plan_status', {
+                id: event.planId || currentPlanId,
+                status: 'cancelled',
+                result: cancellationResult,
+                fireAt: null,
+                firedAt: null,
+                completedAt: Date.now(),
+              });
+            } catch (err) {
+              chatViewLogger.warn('Failed to persist cancelled execution plan', {
+                error: err,
+                planId: event.planId || currentPlanId,
+              });
+            }
+          }
+          updateUI();
+          break;
         case 'exec_start':
+          if (currentPlanId) {
+            try {
+              await invoke('db_update_execution_plan_status', {
+                id: currentPlanId,
+                status: 'executing',
+                result: null,
+                fireAt: null,
+                firedAt: Date.now(),
+                completedAt: null,
+              });
+            } catch (err) {
+              chatViewLogger.warn('Failed to persist executing execution plan state', {
+                error: err,
+                planId: currentPlanId,
+              });
+            }
+          }
           if (assistantContent) {
             // Already have text from heavy model, just wait
           } else {
@@ -611,6 +725,32 @@ export default function ChatView({
           // Recipe result is internal — don't show raw JSON to the user.
           // The heavy model's text response is the user-facing output.
           statusHint = '';
+          if (currentPlanId) {
+            let serializedResult = '';
+            try {
+              serializedResult = typeof event.data === 'string'
+                ? event.data
+                : JSON.stringify(event.data, null, 2);
+            } catch {
+              serializedResult = String(event.data);
+            }
+
+            try {
+              await invoke('db_update_execution_plan_status', {
+                id: currentPlanId,
+                status: 'completed',
+                result: serializedResult || null,
+                fireAt: null,
+                firedAt: null,
+                completedAt: Date.now(),
+              });
+            } catch (err) {
+              chatViewLogger.warn('Failed to persist completed execution plan state', {
+                error: err,
+                planId: currentPlanId,
+              });
+            }
+          }
           updateUI();
           break;
         }
@@ -652,7 +792,10 @@ export default function ChatView({
         }
 
         case 'usage':
-          console.log('[orchestrate] usage:', event.flash, event.heavy);
+          chatViewLogger.debug('Received orchestrate usage event', {
+            flash: event.flash,
+            heavy: event.heavy,
+          });
           break;
         case 'error':
           statusHint = '';
@@ -695,9 +838,12 @@ export default function ChatView({
               path: op.path,
               content: op.content,
             });
-            console.log(`[ChatView] Wrote file: ${op.path}`);
+            chatViewLogger.debug('Wrote file from assistant operation', { path: op.path });
           } catch (err) {
-            console.warn(`[ChatView] Failed to write ${op.path}:`, err);
+            chatViewLogger.warn('Failed to write file from assistant operation', {
+              path: op.path,
+              error: err,
+            });
           }
         }
       }
@@ -727,7 +873,10 @@ export default function ChatView({
           connectedAppIds: null, connectedApps: null,
           initialTask: null, stateSummary: null, systemAgentType: null,
         });
-        console.log(`[ChatView] Inherited projectDir ${callingProjectDir} → ${agent.name}`);
+        chatViewLogger.debug('Inherited project directory for delegated agent', {
+          projectDir: callingProjectDir,
+          agentName: agent.name,
+        });
       }
 
       // Build the message for the system agent — includes both routing context and original prompt
@@ -757,7 +906,7 @@ export default function ChatView({
         try {
           delegatedProjectContext = await gatherProjectContext(callingProjectDir, delegationMessage);
         } catch (err) {
-          console.warn('[ChatView] Delegated context gathering failed:', err);
+          chatViewLogger.warn('Delegated context gathering failed', { error: err });
         }
       }
 
@@ -775,6 +924,15 @@ export default function ChatView({
       })) {
         if (ev.type === 'flash_direct' || ev.type === 'heavy_text') {
           resultContent += ev.content || '';
+        } else if (ev.type === 'plan_ready' && ev.plan?.id) {
+          try {
+            await confirmExecutionPlan(ev.plan.id);
+          } catch (err) {
+            chatViewLogger.warn('Failed to auto-confirm delegated execution plan', {
+              error: err,
+              planId: ev.plan.id,
+            });
+          }
         }
       }
 
@@ -802,7 +960,7 @@ export default function ChatView({
         { role: 'assistant', content: resultContent },
       ]);
     } catch (err) {
-      console.warn('[ChatView] Delegated orchestrate failed:', err);
+      chatViewLogger.warn('Delegated orchestrate failed', { error: err, agentId: agent.id });
     }
   }, [agents]);
 
@@ -816,7 +974,7 @@ export default function ChatView({
         .filter(m => m.role === 'user' || m.role === 'assistant')
         .slice(-10)
         .map(m => ({ role: m.role, content: m.content }));
-      await runOrchestrateStream(content, history);
+      await runOrchestrateStream(content, history, activeId || activeAgent.conversation_id);
       pendingFilesRef.current = null;
       return;
     }
@@ -838,7 +996,7 @@ export default function ChatView({
       const history = messages
         .filter(m => m.role === 'user' || m.role === 'assistant')
         .map(m => ({ role: m.role, content: m.content }));
-      await runOrchestrateStream(content, history);
+      await runOrchestrateStream(content, history, activeId || activeAgent.conversation_id);
       return;
     }
 
@@ -886,7 +1044,7 @@ export default function ChatView({
         setPreChatScope([]);
 
         // Stream FIRST, then navigate — keeps this ChatView mounted during streaming
-        await runOrchestrateStream(content);
+        await runOrchestrateStream(content, undefined, convId || undefined);
 
         // Generate a nice title asynchronously (don't block navigation)
         (async () => {
@@ -911,7 +1069,7 @@ export default function ChatView({
               refreshAgents();
             }
           } catch (err) {
-            console.warn('[ChatView] Title generation failed:', err);
+            chatViewLogger.warn('Title generation failed', { error: err, agentId: agent.id });
           }
         })();
 
@@ -936,6 +1094,7 @@ export default function ChatView({
     chatClearMessages();
     switchConversation(null);
     setActiveAgent(null);
+    setAmbientOpen(false);
     prevMessageCountRef.current = 0;
     isOrchestratedRef.current = false;
     setPreChatApps([]);
@@ -951,6 +1110,7 @@ export default function ChatView({
     if (agent.conversation_id === activeId) return;
 
     setActiveAgent(agent);
+    setAmbientOpen(false);
     const msgs = await loadConversation(agent.conversation_id);
     loadMessages(msgs);
     switchConversation(agent.conversation_id);
@@ -976,11 +1136,26 @@ export default function ChatView({
   }, [stopAgent]);
 
   const handleSignOut = useCallback(async () => {
+    const token = getToken();
+    try {
+      if (token) {
+        const response = await fetchFromApi('/auth/signout', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) {
+          chatViewLogger.warn('Desktop sign-out did not fully revoke the upstream session');
+        }
+      }
+    } catch (error) {
+      chatViewLogger.warn('Desktop sign-out request failed', { error });
+    }
+
     try {
       await clearToken();
       window.location.reload();
     } catch (error) {
-      console.error('[auth] Failed to clear secure desktop token', error);
+      chatViewLogger.error('Failed to clear secure desktop token', { error });
       setDiagnostics('Unable to clear your saved sign-in token securely. Please try again.');
     }
   }, []);
@@ -1004,6 +1179,7 @@ export default function ChatView({
       endGoal: updates.end_goal ?? null,
       context: updates.context ?? null,
       permissionLevel: updates.permission_level ?? null,
+      executeWindowSeconds: updates.execute_window_seconds ?? null,
       model: updates.model ?? null,
       projectDir: updates.project_dir ?? null,
       connectedAppIds: updates.connected_app_ids ?? null,
@@ -1032,7 +1208,7 @@ export default function ChatView({
         };
       }
       await handleUpdateAgent({ connected_apps: JSON.stringify(current) });
-      console.log(`[ChatView] Injected ${apps.length} app(s) into scope`);
+      chatViewLogger.debug('Injected apps into scope from discover widget', { count: apps.length });
     };
 
     window.addEventListener('ul-inject-scope', handler);
@@ -1057,7 +1233,7 @@ export default function ChatView({
         handleProjectDirChange(selected);
       }
     } catch (err) {
-      console.error('[ChatView] Folder picker error:', err);
+      chatViewLogger.error('Folder picker error', { error: err });
     }
   }, [handleProjectDirChange]);
 
@@ -1073,8 +1249,7 @@ export default function ChatView({
     setDiagnostics('Running preflight checks...');
     try {
       const token = getToken();
-      const base = getApiBase();
-      const res = await fetch(`${base}/debug/chat-preflight`, {
+      const res = await fetchFromApi('/debug/chat-preflight', {
         headers: { 'Authorization': `Bearer ${token}` },
       });
       const data = await res.json();
@@ -1118,7 +1293,7 @@ export default function ChatView({
                 Diagnose
               </button>
               <button onClick={handleSignOut} className="text-caption text-ul-error hover:underline">
-                Re-enter Token
+                Sign in again
               </button>
               <button onClick={() => { clearError(); setDiagnostics(null); }} className="text-caption text-ul-error hover:underline">
                 Dismiss
@@ -1191,6 +1366,21 @@ export default function ChatView({
         </div>
       )}
 
+      {ambientOpen && (
+        <div className="border-t border-ul-border bg-white/95 px-4 py-3">
+          <div className="max-w-narrow mx-auto">
+            <DiscoverWidget
+              mode={{ kind: 'ambient', suggestions: ambientSuggestions }}
+              onInjectScope={(apps) => {
+                window.dispatchEvent(new CustomEvent('ul-inject-scope', { detail: { apps } }));
+                setAmbientOpen(false);
+                markAmbientViewed();
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Input */}
       <ChatInput
         onSend={sendMessage}
@@ -1205,6 +1395,30 @@ export default function ChatView({
         queueMode={isRunnerManaged}
         projectDir={conversationProjectDir}
         onProjectDirChange={handleProjectDirChange}
+        extraAction={(
+          <button
+            onClick={() => {
+              setAmbientOpen((open) => {
+                const next = !open;
+                if (next) markAmbientViewed();
+                return next;
+              });
+            }}
+            className="relative flex h-8 w-8 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+            title="Suggested tools"
+          >
+            <svg className="h-4.5 w-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 3l1.8 4.7L18.5 9l-4.7 1.3L12 15l-1.8-4.7L5.5 9l4.7-1.3L12 3z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9L18 15z" />
+            </svg>
+            {ambientHasNew && (
+              <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-emerald-500" />
+            )}
+            {ambientHasNew && ambientIsPulsing && (
+              <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-emerald-500 animate-ping" />
+            )}
+          </button>
+        )}
       />
 
       {/* Permission modal overlay */}

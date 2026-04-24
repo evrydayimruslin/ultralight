@@ -8,7 +8,7 @@ import type { Agent } from '../hooks/useAgentFleet';
 import type { AppView } from '../hooks/useAppState';
 import type { PopoutView } from '../lib/multiWindow';
 import type { OnboardingHighlight } from './OnboardingWizard';
-import { getToken, getApiBase } from '../lib/storage';
+import { fetchFromApi, getToken } from '../lib/storage';
 import { SYSTEM_AGENTS, SYSTEM_AGENT_ORDER, type SystemAgentType } from '../lib/systemAgents';
 
 // ── Props ──
@@ -229,7 +229,7 @@ export default function NavSidebar({
   useEffect(() => {
     const token = getToken();
     if (!token) return;
-    fetch(`${getApiBase()}/api/user`, {
+    fetchFromApi('/api/user', {
       headers: { 'Authorization': `Bearer ${token}` },
     })
       .then(r => r.ok ? r.json() : null)

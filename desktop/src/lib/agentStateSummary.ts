@@ -6,9 +6,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { streamChat, embedConversation } from './api';
 import { syncSystemAgentStates } from './api';
 import { SYSTEM_AGENTS } from './systemAgents';
+import { createDesktopLogger } from './logging';
 import type { Agent } from '../hooks/useAgentFleet';
 
 const STATE_SUMMARY_SYSTEM = `Summarize this system agent's current state in 1-2 sentences. Focus on: what the user is working on with this agent, any pending actions, and key context. Be extremely concise — max 100 words.`;
+const agentStateLogger = createDesktopLogger('agentStateSummary');
 
 /**
  * Generate a state summary from the agent's recent messages.
@@ -41,7 +43,7 @@ export async function generateStateSummary(
       }
     }
   } catch (err) {
-    console.warn('[agentStateSummary] Generation failed:', err);
+    agentStateLogger.warn('Generation failed', { error: err });
     // Fallback: simple extraction from last message
     const last = recentMessages[recentMessages.length - 1];
     summary = last ? last.content.slice(0, 150) : '';
@@ -77,7 +79,7 @@ export async function updateSystemAgentState(
     // Sync all system agent states to server
     await syncAllSystemAgentStates();
   } catch (err) {
-    console.warn('[agentStateSummary] Update failed:', err);
+    agentStateLogger.warn('Update failed', { agent_id: agentId, error: err });
   }
 }
 
@@ -96,7 +98,7 @@ export async function syncAllSystemAgentStates(): Promise<void> {
     }));
     await syncSystemAgentStates(states);
   } catch (err) {
-    console.warn('[agentStateSummary] Sync failed:', err);
+    agentStateLogger.warn('Sync failed', { error: err });
   }
 }
 
@@ -132,6 +134,9 @@ export async function maybeEmbedConversation(
       metadata: { entities: [...new Set(entities)].slice(0, 10) },
     });
   } catch (err) {
-    console.warn('[agentStateSummary] Conversation embedding failed:', err);
+    agentStateLogger.warn('Conversation embedding failed', {
+      conversation_id: conversationId,
+      error: err,
+    });
   }
 }

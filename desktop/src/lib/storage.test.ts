@@ -36,6 +36,7 @@ describe('secure desktop storage', () => {
 
   it('hydrates from secure storage and clears any legacy token copy', async () => {
     localStorage.setItem('ul_token', 'legacy-token');
+    localStorage.setItem('ul_api_base', 'https://staging-api.ultralight.dev');
     invokeMock.mockResolvedValueOnce('secure-token');
 
     const storage = await import('./storage');
@@ -43,10 +44,12 @@ describe('secure desktop storage', () => {
 
     expect(storage.getToken()).toBe('secure-token');
     expect(localStorage.getItem('ul_token')).toBeNull();
+    expect(localStorage.getItem('ul_api_base')).toBeNull();
+    expect(localStorage.getItem('ul_auth_storage_migrated_v1')).toBe('1');
     expect(invokeMock).toHaveBeenCalledWith('secure_get_auth_token');
   });
 
-  it('migrates a legacy localStorage token into secure storage', async () => {
+  it('migrates a legacy localStorage token into secure storage once and records completion', async () => {
     localStorage.setItem('ul_token', 'legacy-token');
     invokeMock
       .mockResolvedValueOnce(null)
@@ -57,10 +60,25 @@ describe('secure desktop storage', () => {
 
     expect(storage.getToken()).toBe('legacy-token');
     expect(localStorage.getItem('ul_token')).toBeNull();
+    expect(localStorage.getItem('ul_auth_storage_migrated_v1')).toBe('1');
     expect(invokeMock).toHaveBeenNthCalledWith(1, 'secure_get_auth_token');
     expect(invokeMock).toHaveBeenNthCalledWith(2, 'secure_set_auth_token', {
       token: 'legacy-token',
     });
+  });
+
+  it('does not re-import a legacy localStorage token after the migration marker is set', async () => {
+    localStorage.setItem('ul_auth_storage_migrated_v1', '1');
+    localStorage.setItem('ul_token', 'stale-legacy-token');
+    invokeMock.mockResolvedValueOnce(null);
+
+    const storage = await import('./storage');
+    await storage.hydrateSecureStorage();
+
+    expect(storage.getToken()).toBeNull();
+    expect(localStorage.getItem('ul_token')).toBeNull();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledWith('secure_get_auth_token');
   });
 
   it('writes and clears tokens through secure storage after hydration', async () => {
@@ -75,6 +93,7 @@ describe('secure desktop storage', () => {
     await storage.clearToken();
 
     expect(storage.getToken()).toBeNull();
+    expect(localStorage.getItem('ul_auth_storage_migrated_v1')).toBe('1');
     expect(invokeMock).toHaveBeenNthCalledWith(1, 'secure_get_auth_token');
     expect(invokeMock).toHaveBeenNthCalledWith(2, 'secure_set_auth_token', {
       token: 'fresh-token',

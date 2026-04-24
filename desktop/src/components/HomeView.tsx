@@ -19,6 +19,7 @@ import AgentConfigPanel from './AgentConfigPanel';
 import WidgetHomescreen from './WidgetHomescreen';
 import WidgetAppView from './WidgetAppView';
 import { useWidgetInbox, type WidgetAppSource } from '../hooks/useWidgetInbox';
+import DesktopAsyncState from './DesktopAsyncState';
 
 // ── Types ──
 
@@ -109,21 +110,37 @@ export default function HomeView({
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
   const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
   const instructInputRef = useRef<HTMLInputElement>(null);
-  const { sources: widgetSources, metas: widgetMetas, totalBadge: widgetBadge, loading: widgetLoading, getAppHtml, executeBridgeCall, refresh: refreshWidgets } = useWidgetInbox();
+  const { sources: widgetSources, metas: widgetMetas, totalBadge: widgetBadge, loading: widgetLoading, getAppHtml, refresh: refreshWidgets } = useWidgetInbox();
   const [openWidget, setOpenWidget] = useState<WidgetAppSource | null>(null);
   const [widgetAppHtml, setWidgetAppHtml] = useState<string | null>(null);
+  const [widgetOpenLoading, setWidgetOpenLoading] = useState(false);
+  const [widgetOpenError, setWidgetOpenError] = useState<string | null>(null);
 
   const handleOpenWidget = useCallback(async (source: WidgetAppSource) => {
-    const html = await getAppHtml(source);
-    if (html) {
-      setWidgetAppHtml(html);
-      setOpenWidget(source);
+    setOpenWidget(source);
+    setWidgetAppHtml(null);
+    setWidgetOpenError(null);
+    setWidgetOpenLoading(true);
+
+    try {
+      const html = await getAppHtml(source);
+      if (html) {
+        setWidgetAppHtml(html);
+      } else {
+        setWidgetOpenError('This widget is connected, but it did not return a visual surface.');
+      }
+    } catch (err) {
+      setWidgetOpenError(err instanceof Error ? err.message : 'Could not open this widget.');
+    } finally {
+      setWidgetOpenLoading(false);
     }
   }, [getAppHtml]);
 
   const handleCloseWidget = useCallback(() => {
     setOpenWidget(null);
     setWidgetAppHtml(null);
+    setWidgetOpenError(null);
+    setWidgetOpenLoading(false);
     // Don't trigger full refresh — the 30s poll will update badges naturally
   }, []);
 
@@ -259,6 +276,7 @@ export default function HomeView({
         endGoal: updates.end_goal ?? null,
         context: updates.context ?? null,
         permissionLevel: updates.permission_level ?? null,
+        executeWindowSeconds: updates.execute_window_seconds ?? null,
         model: updates.model ?? null,
         projectDir: updates.project_dir ?? null,
         connectedAppIds: updates.connected_app_ids ?? null,
@@ -497,7 +515,7 @@ export default function HomeView({
 
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto relative">
-        {false && activeTab === 'project_disabled' && (
+        {false && (
           <div className="px-6 py-4 space-y-6">
             {selectedProjectDir ? (
               <section>
@@ -738,14 +756,37 @@ export default function HomeView({
         )}
 
         {/* Full-screen widget app overlay — positioned against the tab content container */}
-        {openWidget && widgetAppHtml && (
+        {openWidget && (
           <div className="absolute inset-0 z-10 bg-white">
-            <WidgetAppView
-              source={openWidget}
-              appHtml={widgetAppHtml}
-              onBack={handleCloseWidget}
-              onBridgeCall={executeBridgeCall}
-            />
+            {widgetOpenLoading && (
+              <DesktopAsyncState
+                kind="loading"
+                title={`Opening ${openWidget.appName}`}
+                message="Loading the latest widget view."
+                secondaryActionLabel="Close"
+                onSecondaryAction={handleCloseWidget}
+              />
+            )}
+            {!widgetOpenLoading && widgetOpenError && (
+              <DesktopAsyncState
+                kind="error"
+                title="Widget unavailable"
+                message={widgetOpenError}
+                actionLabel="Retry"
+                onAction={() => {
+                  void handleOpenWidget(openWidget);
+                }}
+                secondaryActionLabel="Close"
+                onSecondaryAction={handleCloseWidget}
+              />
+            )}
+            {!widgetOpenLoading && !widgetOpenError && widgetAppHtml && (
+              <WidgetAppView
+                source={openWidget}
+                appHtml={widgetAppHtml}
+                onBack={handleCloseWidget}
+              />
+            )}
           </div>
         )}
 

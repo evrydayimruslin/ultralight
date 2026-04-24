@@ -1,8 +1,11 @@
 // WebPanel — iframe wrapper for embedding web app pages (Library, Marketplace, Wallet, Settings).
-// Passes auth token via query param and shows loading/error states.
+// Uses a short-lived bridge token for desktop embed auth and shows loading/error states.
 
-import { useState, useMemo, useCallback, useRef } from 'react';
-import { getToken, getApiBase } from '../lib/storage';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { buildDesktopEmbedUrl, requestDesktopEmbedBridgeToken } from '../lib/auth';
+import { ensureApiBaseAvailable, getToken } from '../lib/storage';
+import DesktopAsyncState from './DesktopAsyncState';
+import { createDesktopLogger } from '../lib/logging';
 
 interface WebPanelProps {
   /** Path appended to API base, e.g. '/dash', '/marketplace' */
@@ -13,24 +16,51 @@ interface WebPanelProps {
   headerExtra?: React.ReactNode;
 }
 
+const webPanelLogger = createDesktopLogger('WebPanel');
+
 export default function WebPanel({ path, title, headerExtra }: WebPanelProps) {
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [src, setSrc] = useState('');
   const [retryKey, setRetryKey] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  const src = useMemo(() => {
-    const base = getApiBase();
-    const token = getToken();
-    const url = new URL(path, base);
-    if (token) url.searchParams.set('token', token);
-    url.searchParams.set('embed', '1');
-    url.searchParams.set('_v', Date.now().toString());
-    return url.toString();
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadEmbed() {
+      setLoading(true);
+      setError(null);
+      setSrc('');
+
+      try {
+        const base = await ensureApiBaseAvailable();
+        const token = getToken();
+        const cacheKey = Date.now();
+        const bridgeToken = token
+          ? (await requestDesktopEmbedBridgeToken(base, token)).bridgeToken
+          : null;
+        const nextSrc = buildDesktopEmbedUrl(base, path, bridgeToken, cacheKey);
+        if (!cancelled) {
+          setSrc(nextSrc);
+        }
+      } catch (err) {
+        webPanelLogger.error('Failed to establish secure embed session', { error: err, path });
+        if (!cancelled) {
+          setError('Could not establish a secure session for this panel.');
+          setLoading(false);
+        }
+      }
+    }
+
+    void loadEmbed();
+    return () => {
+      cancelled = true;
+    };
   }, [path, retryKey]);
 
   const handleRetry = useCallback(() => {
-    setError(false);
+    setError(null);
     setLoading(true);
     setRetryKey(k => k + 1);
   }, []);
@@ -48,24 +78,34 @@ export default function WebPanel({ path, title, headerExtra }: WebPanelProps) {
       {/* Content */}
       <div className="flex-1 relative min-h-0">
         {loading && !error && (
-          <div className="absolute inset-0 flex items-center justify-center bg-white z-10">
-            <p className="text-body text-ul-text-muted">Loading {title}...</p>
+          <div className="absolute inset-0 z-10 bg-white">
+            <DesktopAsyncState
+              kind="loading"
+              title={`Loading ${title}`}
+              message="Preparing a secure embedded session."
+            />
           </div>
         )}
         {error && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-white gap-3 z-10">
-            <p className="text-body text-ul-text-muted">Failed to load {title}.</p>
-            <button onClick={handleRetry} className="btn-secondary btn-sm">
-              Retry
-            </button>
+          <div className="absolute inset-0 z-10 bg-white">
+            <DesktopAsyncState
+              kind="error"
+              title={`${title} is unavailable`}
+              message={error}
+              actionLabel="Retry"
+              onAction={handleRetry}
+            />
           </div>
         )}
         <iframe
-          key={retryKey}
+          key={src || String(retryKey)}
           ref={iframeRef}
           src={src}
           onLoad={() => setLoading(false)}
-          onError={() => { setLoading(false); setError(true); }}
+          onError={() => {
+            setLoading(false);
+            setError(`Could not load ${title}.`);
+          }}
           className={`w-full h-full border-0 ${loading || error ? 'invisible' : ''}`}
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
           title={title}

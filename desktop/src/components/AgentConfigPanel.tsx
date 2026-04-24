@@ -110,6 +110,29 @@ function parsePersistedConfig(json: string): PersistedConfig {
   return { apps: raw as ConnectedAppsConfig, team: undefined };
 }
 
+const EXECUTE_WINDOW_PRESETS = new Set(['0', '8', '15', '30', '60', '-1']);
+
+function clampExecuteWindowSeconds(value: number): number {
+  return Math.min(600, Math.max(1, Math.round(value)));
+}
+
+function getExecuteWindowDropdownValue(seconds: number): string {
+  const value = String(seconds);
+  return EXECUTE_WINDOW_PRESETS.has(value) ? value : 'custom';
+}
+
+function formatExecuteWindowLabel(seconds: number): string {
+  if (seconds === 0) return 'Instant';
+  if (seconds === -1) return 'Manual';
+  return `${seconds}s countdown`;
+}
+
+function formatExecuteWindowDescription(seconds: number): string {
+  if (seconds === 0) return 'Fires immediately';
+  if (seconds === -1) return 'Waits for your click';
+  return `Waits ${seconds} seconds before firing`;
+}
+
 /** Inspect an app and build the function list */
 async function inspectApp(
   executeMcpTool: (name: string, args: Record<string, unknown>) => Promise<string>,
@@ -191,6 +214,12 @@ export default function AgentConfigPanel({
   const [editingDirective, setEditingDirective] = useState(false);
   const [flashModelValue, setFlashModelValue] = useState('');
   const [heavyModelValue, setHeavyModelValue] = useState('');
+  const [executeWindowSelection, setExecuteWindowSelection] = useState(getExecuteWindowDropdownValue(agent.execute_window_seconds));
+  const [customExecuteWindow, setCustomExecuteWindow] = useState(
+    getExecuteWindowDropdownValue(agent.execute_window_seconds) === 'custom'
+      ? String(agent.execute_window_seconds)
+      : '8',
+  );
   const [models, setModels] = useState<ModelInfo[]>(_cachedModels || []);
 
   // Scope state
@@ -315,6 +344,12 @@ export default function AgentConfigPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent.id]);
 
+  useEffect(() => {
+    const selection = getExecuteWindowDropdownValue(agent.execute_window_seconds);
+    setExecuteWindowSelection(selection);
+    setCustomExecuteWindow(selection === 'custom' ? String(agent.execute_window_seconds) : '8');
+  }, [agent.execute_window_seconds]);
+
   // ── Persist helpers ──
 
   const persistScopeConfig = useCallback(async (apps: ScopedApp[]) => {
@@ -377,6 +412,37 @@ export default function AgentConfigPanel({
   const handleToolApprovalChange = useCallback(async (value: string) => {
     await onUpdateAgent({ permission_level: value } as Partial<Agent>);
   }, [onUpdateAgent]);
+
+  const handleExecuteWindowChange = useCallback(async (value: string) => {
+    setExecuteWindowSelection(value);
+
+    if (value === 'custom') {
+      const fallback = getExecuteWindowDropdownValue(agent.execute_window_seconds) === 'custom'
+        ? agent.execute_window_seconds
+        : 8;
+      setCustomExecuteWindow(String(fallback));
+      return;
+    }
+
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return;
+    await onUpdateAgent({ execute_window_seconds: parsed } as Partial<Agent>);
+  }, [agent.execute_window_seconds, onUpdateAgent]);
+
+  const commitCustomExecuteWindow = useCallback(async () => {
+    const parsed = Number(customExecuteWindow.trim());
+    const currentCustom = getExecuteWindowDropdownValue(agent.execute_window_seconds) === 'custom';
+    const nextValue = Number.isFinite(parsed)
+      ? clampExecuteWindowSeconds(parsed)
+      : (currentCustom ? agent.execute_window_seconds : 8);
+
+    setCustomExecuteWindow(String(nextValue));
+    setExecuteWindowSelection('custom');
+
+    if (nextValue !== agent.execute_window_seconds || !currentCustom) {
+      await onUpdateAgent({ execute_window_seconds: nextValue } as Partial<Agent>);
+    }
+  }, [agent.execute_window_seconds, customExecuteWindow, onUpdateAgent]);
 
   // ── Function toggle / convention ──
 
@@ -584,6 +650,16 @@ export default function AgentConfigPanel({
     { value: 'auto_read', label: 'Read only', description: 'Block all write operations', icon: <span className="w-1.5 h-1.5 rounded-full bg-gray-300 shrink-0" /> },
   ];
 
+  const executeWindowOptions: DropdownOption[] = [
+    { value: '0', label: 'Instant', description: 'Fires immediately' },
+    { value: '8', label: '8s countdown', description: 'Default delay before firing' },
+    { value: '15', label: '15s countdown', description: 'A little more think time' },
+    { value: '30', label: '30s countdown', description: 'Good for higher-stakes actions' },
+    { value: '60', label: '60s countdown', description: 'Long review window before firing' },
+    { value: 'custom', label: 'Custom...', description: 'Set any delay from 1 to 600 seconds' },
+    { value: '-1', label: 'Manual', description: 'Waits for your click' },
+  ];
+
   // Scope dropdown options
   const availableApps = allUserApps.filter(a => !scopedApps.some(s => s.id === a.id));
   const scopeOptions: DropdownOption[] = availableApps.map(a => ({
@@ -661,6 +737,59 @@ export default function AgentConfigPanel({
             </div>
           }
         />
+      </div>
+
+      {/* ── Execution ── */}
+      <div className={cardClass}>
+        <span className={`${labelClass} block mb-1.5`}>Execution</span>
+        <ConfigDropdown
+          options={executeWindowOptions}
+          selected={executeWindowSelection}
+          onSelect={handleExecuteWindowChange}
+          width="w-64"
+          trigger={
+            <div className="flex items-center gap-2 w-[calc(100%+1.5rem)] -mx-3 px-3 py-0.5 hover:bg-white transition-colors">
+              <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-sky-400" />
+              <div className="min-w-0">
+                <span className={`${valueClass} block`}>
+                  {executeWindowSelection === 'custom' && customExecuteWindow.trim()
+                    ? `${clampExecuteWindowSeconds(Number(customExecuteWindow.trim()) || agent.execute_window_seconds || 8)}s countdown`
+                    : formatExecuteWindowLabel(agent.execute_window_seconds)}
+                </span>
+                <span className="text-[11px] text-gray-400 block">
+                  {executeWindowSelection === 'custom' && customExecuteWindow.trim()
+                    ? 'Custom delay'
+                    : formatExecuteWindowDescription(agent.execute_window_seconds)}
+                </span>
+              </div>
+            </div>
+          }
+        />
+        {executeWindowSelection === 'custom' && (
+          <div className="mt-2 px-3">
+            <label className="text-[11px] text-gray-400 block mb-1">
+              Countdown seconds
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={600}
+              step={1}
+              value={customExecuteWindow}
+              onChange={e => setCustomExecuteWindow(e.target.value)}
+              onBlur={() => { void commitCustomExecuteWindow(); }}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  e.currentTarget.blur();
+                }
+              }}
+              className="w-full px-2 py-1 text-[12px] font-mono rounded border border-gray-200 bg-white focus:outline-none focus:border-gray-300"
+            />
+            <p className="mt-1 text-[10px] text-gray-400">
+              Custom values are clamped between 1 and 600 seconds.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* ── Scope ── */}

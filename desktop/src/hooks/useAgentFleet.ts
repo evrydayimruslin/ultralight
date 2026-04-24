@@ -20,6 +20,7 @@ export interface Agent {
   project_dir: string | null;
   model: string | null;
   permission_level: string;
+  execute_window_seconds: number;
   admin_notes: string | null;
   end_goal: string | null;
   context: string | null;
@@ -50,6 +51,7 @@ export interface CreateAgentParams {
   model: string;
   parentAgentId: string | null;
   permissionLevel?: string;
+  executeWindowSeconds?: number;
   adminNotes?: string;
   endGoal?: string;
   context?: string;
@@ -76,7 +78,7 @@ export interface UseAgentFleetReturn {
   /** Stop a running agent */
   stopAgent: (agentId: string) => void;
   /** Update agent fields (status, name, notes, etc.) */
-  updateAgent: (id: string, updates: Partial<Pick<Agent, 'status' | 'name' | 'admin_notes' | 'end_goal' | 'context' | 'permission_level' | 'model' | 'project_dir' | 'connected_app_ids' | 'connected_apps' | 'initial_task' | 'state_summary' | 'system_agent_type'>>) => Promise<void>;
+  updateAgent: (id: string, updates: Partial<Pick<Agent, 'status' | 'name' | 'admin_notes' | 'end_goal' | 'context' | 'permission_level' | 'execute_window_seconds' | 'model' | 'project_dir' | 'connected_app_ids' | 'connected_apps' | 'initial_task' | 'state_summary' | 'system_agent_type'>>) => Promise<void>;
   /** Delete an agent and its conversation */
   deleteAgent: (id: string) => Promise<void>;
   /** Set which agent is currently being viewed */
@@ -153,6 +155,7 @@ export function useAgentFleet(): UseAgentFleetReturn {
       model: params.model,
       parentAgentId: params.parentAgentId,
       permissionLevel: params.permissionLevel ?? 'auto_edit',
+      executeWindowSeconds: params.executeWindowSeconds ?? null,
       adminNotes: params.adminNotes ?? null,
       endGoal: params.endGoal ?? null,
       context: params.context ?? null,
@@ -180,7 +183,7 @@ export function useAgentFleet(): UseAgentFleetReturn {
   // Update agent fields
   const updateAgent = useCallback(async (
     id: string,
-    updates: Partial<Pick<Agent, 'status' | 'name' | 'admin_notes' | 'end_goal' | 'context' | 'permission_level' | 'model' | 'project_dir' | 'connected_app_ids' | 'connected_apps' | 'initial_task' | 'state_summary' | 'system_agent_type'>>,
+    updates: Partial<Pick<Agent, 'status' | 'name' | 'admin_notes' | 'end_goal' | 'context' | 'permission_level' | 'execute_window_seconds' | 'model' | 'project_dir' | 'connected_app_ids' | 'connected_apps' | 'initial_task' | 'state_summary' | 'system_agent_type'>>,
   ) => {
     await invoke('db_update_agent', {
       id,
@@ -190,6 +193,7 @@ export function useAgentFleet(): UseAgentFleetReturn {
       endGoal: updates.end_goal ?? null,
       context: updates.context ?? null,
       permissionLevel: updates.permission_level ?? null,
+      executeWindowSeconds: updates.execute_window_seconds ?? null,
       model: updates.model ?? null,
       projectDir: updates.project_dir ?? null,
       connectedAppIds: updates.connected_app_ids ?? null,

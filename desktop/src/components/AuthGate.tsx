@@ -1,36 +1,24 @@
-// Auth gate — Google OAuth (primary) + manual API token entry (fallback).
+// Auth gate — Google OAuth via system browser.
 // OAuth flow: opens system browser → user signs in with Google → desktop polls for token.
 
-import { useState, useRef, useCallback } from 'react';
-import { setToken as storeToken, getApiBase } from '../lib/storage';
+import { useState, useRef, useCallback, useEffect } from 'react';
+import { setToken as storeToken, ensureApiBaseAvailable } from '../lib/storage';
+import {
+  buildDesktopLoginUrl,
+  generateSessionSecret,
+  openAuthUrl,
+  sha256Hex,
+  type DesktopOAuthOptions,
+} from '../lib/auth';
 
 interface AuthGateProps {
   onAuthenticated: () => void;
 }
 
-type AuthMode = 'choose' | 'oauth-polling' | 'token';
-
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    'SHA-256',
-    new TextEncoder().encode(value),
-  );
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-function generateSessionSecret(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes)
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
-}
+type AuthMode = 'choose' | 'oauth-polling';
 
 export default function AuthGate({ onAuthenticated }: AuthGateProps) {
   const [mode, setMode] = useState<AuthMode>('choose');
-  const [token, setTokenInput] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -45,20 +33,35 @@ export default function AuthGate({ onAuthenticated }: AuthGateProps) {
     }
   }, []);
 
+  function formatStartOAuthError(error: unknown): string {
+    const fallback = 'Unable to start Google sign-in. Please try again.';
+    if (!(error instanceof Error) || !error.message) return fallback;
+
+    if (import.meta.env.DEV) {
+      return `Unable to start Google sign-in. ${error.message}`;
+    }
+
+    return fallback;
+  }
+
   // ── Google OAuth flow ──
-  const startOAuth = useCallback(async () => {
+  const startOAuth = useCallback(async (options: DesktopOAuthOptions = {}) => {
     try {
+      stopPolling();
       const sessionId = crypto.randomUUID();
       const sessionSecret = generateSessionSecret();
       const sessionSecretHash = await sha256Hex(sessionSecret);
       sessionSecretRef.current = sessionSecret;
-      const base = getApiBase();
-      const loginUrl = new URL(`${base}/auth/login`);
-      loginUrl.searchParams.set('desktop_session', sessionId);
-      loginUrl.searchParams.set('desktop_poll_secret_hash', sessionSecretHash);
+      const base = await ensureApiBaseAvailable();
+      const loginUrl = buildDesktopLoginUrl(
+        base,
+        sessionId,
+        sessionSecretHash,
+        options,
+      );
 
       // Open system browser for Google OAuth
-      window.open(loginUrl.toString(), '_blank');
+      await openAuthUrl(loginUrl);
 
       setMode('oauth-polling');
       setError('');
@@ -100,13 +103,20 @@ export default function AuthGate({ onAuthenticated }: AuthGateProps) {
           // Network error — keep polling
         }
       }, 2000);
-    } catch {
+    } catch (error) {
+      console.error('[auth] Failed to start desktop OAuth', error);
       sessionSecretRef.current = '';
       setLoading(false);
       setMode('choose');
-      setError('Unable to start Google sign-in. Please try again.');
+      setError(formatStartOAuthError(error));
     }
   }, [onAuthenticated, stopPolling]);
+
+  useEffect(() => {
+    return () => {
+      stopPolling();
+    };
+  }, [stopPolling]);
 
   const cancelOAuth = useCallback(() => {
     stopPolling();
@@ -115,57 +125,6 @@ export default function AuthGate({ onAuthenticated }: AuthGateProps) {
     setError('');
     setMode('choose');
   }, [stopPolling]);
-
-  // ── Manual token flow ──
-  const handleTokenSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = token.trim();
-
-    if (!trimmed) {
-      setError('Token is required');
-      return;
-    }
-    if (!trimmed.startsWith('ul_')) {
-      setError('Token must start with ul_');
-      return;
-    }
-
-    setLoading(true);
-    setError('');
-
-    try {
-      const base = getApiBase();
-      const res = await fetch(`${base}/debug/auth-test`, {
-        headers: { 'Authorization': `Bearer ${trimmed}` },
-      });
-      const data = await res.json();
-
-      if (!data.ok) {
-        const failedStep = data.steps?.find((s: { ok: boolean }) => !s.ok);
-        const detail = failedStep ? ` (${failedStep.result})` : '';
-        setError(`Invalid token${detail}. Check your API key at ultralight.dev`);
-        setLoading(false);
-        return;
-      }
-
-      try {
-        await storeToken(trimmed);
-        onAuthenticated();
-      } catch {
-        setError(storageErrorMessage);
-        setLoading(false);
-      }
-    } catch {
-      // Network error — store anyway, they might be offline temporarily
-      try {
-        await storeToken(trimmed);
-        onAuthenticated();
-      } catch {
-        setError(storageErrorMessage);
-        setLoading(false);
-      }
-    }
-  };
 
   return (
     <div className="flex items-center justify-center h-full bg-white">
@@ -178,9 +137,7 @@ export default function AuthGate({ onAuthenticated }: AuthGateProps) {
           <p className="text-small text-ul-text-muted mt-2">
             {mode === 'oauth-polling'
               ? 'Complete sign-in in your browser'
-              : mode === 'token'
-                ? 'Enter your API token'
-                : 'Sign in to get started'}
+              : 'Sign in to get started'}
           </p>
         </div>
 
@@ -188,7 +145,7 @@ export default function AuthGate({ onAuthenticated }: AuthGateProps) {
         {mode === 'choose' && (
           <div className="space-y-3">
             <button
-              onClick={startOAuth}
+              onClick={() => void startOAuth()}
               className="btn-primary w-full flex items-center justify-center gap-2"
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24">
@@ -200,18 +157,14 @@ export default function AuthGate({ onAuthenticated }: AuthGateProps) {
               Sign in with Google
             </button>
 
-            <div className="relative flex items-center gap-3 my-4">
-              <div className="flex-1 h-px bg-ul-border" />
-              <span className="text-caption text-ul-text-muted">or</span>
-              <div className="flex-1 h-px bg-ul-border" />
-            </div>
-
             <button
-              onClick={() => setMode('token')}
+              onClick={() => void startOAuth({ forceAccountSelection: true })}
               className="btn-secondary w-full"
             >
-              Enter API token manually
+              Use another account
             </button>
+
+            {error && <p className="text-small text-ul-error text-center">{error}</p>}
           </div>
         )}
 
@@ -224,6 +177,12 @@ export default function AuthGate({ onAuthenticated }: AuthGateProps) {
             </p>
             {error && <p className="text-small text-ul-error">{error}</p>}
             <button
+              onClick={() => void startOAuth()}
+              className="btn-secondary w-full"
+            >
+              Open sign-in page again
+            </button>
+            <button
               onClick={cancelOAuth}
               className="text-small text-ul-text-muted underline cursor-pointer"
             >
@@ -232,61 +191,11 @@ export default function AuthGate({ onAuthenticated }: AuthGateProps) {
           </div>
         )}
 
-        {/* ── Manual token entry ── */}
-        {mode === 'token' && (
-          <>
-            <form onSubmit={handleTokenSubmit} className="space-y-4">
-              <div>
-                <label
-                  htmlFor="token"
-                  className="block text-caption text-ul-text-secondary mb-1.5"
-                >
-                  API Token
-                </label>
-                <input
-                  id="token"
-                  type="password"
-                  value={token}
-                  onChange={e => {
-                    setTokenInput(e.target.value);
-                    setError('');
-                  }}
-                  placeholder="ul_..."
-                  className="input"
-                  autoFocus
-                  disabled={loading}
-                />
-              </div>
-
-              {error && (
-                <p className="text-small text-ul-error">{error}</p>
-              )}
-
-              <button
-                type="submit"
-                disabled={loading || !token.trim()}
-                className="btn-primary w-full disabled:opacity-40"
-              >
-                {loading ? 'Connecting...' : 'Connect'}
-              </button>
-            </form>
-
-            <button
-              onClick={() => { setMode('choose'); setError(''); }}
-              className="text-small text-ul-text-muted underline cursor-pointer block mx-auto mt-4"
-            >
-              Back to sign-in options
-            </button>
-          </>
-        )}
-
         {/* Help text */}
         {mode === 'choose' && (
           <p className="text-caption text-ul-text-muted text-center mt-6">
-            Get your token at{' '}
-            <span className="text-ul-text underline cursor-pointer">
-              ultralight.dev/settings
-            </span>
+            We’ll open Google sign-in in your default browser and bring you back
+            here once authentication completes.
           </p>
         )}
       </div>

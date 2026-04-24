@@ -2,7 +2,7 @@
 // Uses @tauri-apps/api/webviewWindow to create new windows.
 
 import { WebviewWindow, getAllWebviewWindows } from '@tauri-apps/api/webviewWindow';
-import type { WidgetAppSource } from '../hooks/useWidgetInbox';
+import { buildWidgetWindowSearchParams, type WidgetAppSource } from './widgetRuntime';
 
 /** Any view that can be opened in its own window. */
 export type PopoutView =
@@ -47,7 +47,8 @@ export async function openSubagentWindow(agentId: string, agentName: string): Pr
 /**
  * Open a new window for a widget app.
  * Passes WidgetAppSource fields via query params; the window reads
- * token/apiBase from shared localStorage and fetches its own HTML.
+ * the token from shared secure storage-backed state and apiBase from the
+ * build-pinned desktop environment, then fetches its own HTML.
  */
 export async function openWidgetWindow(source: WidgetAppSource, context?: Record<string, string>): Promise<void> {
   // Include context in label so different contexts open different windows
@@ -61,22 +62,7 @@ export async function openWidgetWindow(source: WidgetAppSource, context?: Record
     return;
   }
 
-  const params = new URLSearchParams({
-    widget: '1',
-    appUuid: source.appUuid,
-    appSlug: source.appSlug,
-    appName: source.appName,
-    widgetName: source.widgetName,
-    uiFunction: source.uiFunction,
-    dataFunction: source.dataFunction,
-  });
-
-  // Encode context as ctx_* query params
-  if (context) {
-    for (const [k, v] of Object.entries(context)) {
-      params.set(`ctx_${k}`, v);
-    }
-  }
+  const params = buildWidgetWindowSearchParams(source, context);
 
   const _webview = new WebviewWindow(label, {
     url: `index.html?${params.toString()}`,

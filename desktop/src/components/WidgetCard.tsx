@@ -3,7 +3,7 @@
 // Supports inline editing, prompt-based regeneration, and standard actions.
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import type { WidgetItem, WidgetAction } from '../../../shared/types/index';
+import type { WidgetItem, WidgetAction } from '../../../shared/contracts/widget.ts';
 
 interface WidgetCardProps {
   item: WidgetItem;

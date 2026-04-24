@@ -24,6 +24,8 @@ log = "0.4"
 tauri = { version = "2.10.3", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-process = "2.3.1"
+tauri-plugin-updater = "2.10.1"
 # Deep linking: register `ultralight://` URL scheme and receive URL-open
 # events from the OS. Ships Phase 3 of the app store work — lets users
 # click `ultralight://app/{id}` links in the browser to open the desktop
@@ -39,6 +41,9 @@ regex = "1"
 walkdir = "2"
 rusqlite = { version = "0.31", features = ["bundled"] }
 keyring = "2.3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+url = "2"
+webbrowser = "1"
 
 [dev-dependencies]
 tempfile = "3"

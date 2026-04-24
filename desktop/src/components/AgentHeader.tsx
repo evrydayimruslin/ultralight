@@ -54,6 +54,21 @@ function formatElapsed(createdAt: number): string {
   return `${hours}h ${minutes % 60}m`;
 }
 
+function formatModelChip(model: string | null): string | null {
+  if (!model) return null;
+  const parts = model.split(' -> ');
+  const fallbackParts = model.split(' → ');
+  const modelId = (parts[1] || fallbackParts[1] || parts[0] || fallbackParts[0] || model).trim();
+  const name = modelId.split('/').pop() || modelId;
+  return name.replace(/:nitro$/, '');
+}
+
+function formatExecuteWindowChip(seconds: number): string {
+  if (seconds === 0) return 'auto';
+  if (seconds === -1) return 'manual';
+  return `${seconds}s`;
+}
+
 function buildNewChatAgent(): Agent {
   const flash = getInterpreterModel();
   const heavy = getHeavyModel();
@@ -69,6 +84,7 @@ function buildNewChatAgent(): Agent {
     project_dir: null,
     model: `${flash} → ${heavy}`,
     permission_level: 'auto_edit',
+    execute_window_seconds: 8,
     admin_notes: null,
     end_goal: null,
     context: null,
@@ -138,6 +154,18 @@ export default function AgentHeader({
               <path d="M3.5 5.5L7 9L10.5 5.5" />
             </svg>
           </button>
+          {displayAgent && (
+            <div className="hidden md:flex items-center gap-1.5">
+              {formatModelChip(displayAgent.model) && (
+                <span className="px-2 py-0.5 rounded-full border border-ul-border text-[11px] text-ul-text-muted font-mono">
+                  {formatModelChip(displayAgent.model)}
+                </span>
+              )}
+              <span className="px-2 py-0.5 rounded-full border border-ul-border text-[11px] text-ul-text-muted font-mono">
+                {formatExecuteWindowChip(displayAgent.execute_window_seconds)}
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-2">

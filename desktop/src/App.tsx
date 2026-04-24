@@ -2,13 +2,15 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { getToken, getApiBase, isOnboardingComplete, setOnboardingComplete, resetOnboarding } from './lib/storage';
+import { fetchFromApi, getToken, isOnboardingComplete, setOnboardingComplete, resetOnboarding } from './lib/storage';
 import { useAppState } from './hooks/useAppState';
 import { useDeepLink } from './hooks/useDeepLink';
+import { useDesktopUpdater } from './hooks/useDesktopUpdater';
 import { useAgentFleet, type Agent } from './hooks/useAgentFleet';
-import { SYSTEM_AGENTS, deriveSystemAgentId } from './lib/systemAgents';
+import { SYSTEM_AGENTS, deriveSystemAgentId, isSystemAgentType } from './lib/systemAgents';
 import { openViewWindow } from './lib/multiWindow';
 import AuthGate from './components/AuthGate';
+import DesktopUpdateToast from './components/DesktopUpdateToast';
 import OnboardingWizard, { type OnboardingHighlight } from './components/OnboardingWizard';
 import ChatView from './components/ChatView';
 import HomeView from './components/HomeView';
@@ -16,6 +18,9 @@ import NavSidebar from './components/NavSidebar';
 import TopToolbar from './components/TopToolbar';
 import WebPanel from './components/WebPanel';
 import SpendingSettings from './components/SpendingSettings';
+import { createDesktopLogger } from './lib/logging';
+
+const appLogger = createDesktopLogger('App');
 
 /**
  * Pre-provision the user's OpenRouter key in the background.
@@ -23,8 +28,7 @@ import SpendingSettings from './components/SpendingSettings';
  * OpenRouter Management API so the first chat doesn't timeout.
  */
 function provisionKeyInBackground(token: string) {
-  const base = getApiBase();
-  fetch(`${base}/chat/provision-key`, {
+  fetchFromApi('/chat/provision-key', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -34,12 +38,12 @@ function provisionKeyInBackground(token: string) {
     .then(res => res.json())
     .then(data => {
       if (data.ok) {
-        console.log('[App] OpenRouter key provisioned');
+        appLogger.debug('OpenRouter key provisioned');
       } else {
-        console.warn('[App] Key provisioning failed:', data.error);
+        appLogger.warn('OpenRouter key provisioning failed', { error: data.error });
       }
     })
-    .catch(err => console.warn('[App] Key provisioning error:', err));
+    .catch(err => appLogger.warn('OpenRouter key provisioning errored', { error: err }));
 }
 
 export default function App() {
@@ -48,6 +52,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [onboardingHighlight, setOnboardingHighlight] = useState<OnboardingHighlight>('none');
+  const desktopUpdater = useDesktopUpdater();
   const {
     view,
     navigateHome,
@@ -70,53 +75,18 @@ export default function App() {
   } = useAgentFleet();
   const systemAgentsProvisioned = useRef(false);
 
-  // Provision system agents (idempotent — skips existing ones)
+  // Provision canonical system agents if they are missing from the local DB.
   const provisionSystemAgents = useCallback(async () => {
     if (systemAgentsProvisioned.current) return;
     systemAgentsProvisioned.current = true;
     try {
       const existing = await invoke<Agent[]>('db_list_system_agents');
-      const existingTypes = new Set(existing.map(a => a.system_agent_type));
-      // Use token as seed for deterministic IDs — DB is per-user (Tauri local)
+      const existingTypes = new Set(
+        existing
+          .map((agent) => agent.system_agent_type)
+          .filter(isSystemAgentType),
+      );
       const userId = getToken() || 'default';
-
-      // ── Migration: v1 (4 agents) → v2 (3 agents) ──
-      // Convert tool_publisher → tool_marketer (preserves conversation history)
-      const publisherAgent = existing.find(a => a.system_agent_type === 'tool_publisher');
-      if (publisherAgent && !existingTypes.has('tool_marketer')) {
-        await invoke('db_update_agent', {
-          id: publisherAgent.id,
-          name: 'Tool Dealer',
-          systemAgentType: 'tool_marketer',
-          // pass null for all other optional fields
-          status: null, adminNotes: null, endGoal: null, context: null,
-          permissionLevel: null, model: null, projectDir: null,
-          connectedAppIds: null, connectedApps: null, initialTask: null,
-          stateSummary: null,
-        });
-        existingTypes.add('tool_marketer');
-        console.log('[App] Migrated tool_publisher → tool_marketer');
-      }
-      // Old tool_explorer agents are left orphaned — they won't match
-      // any SYSTEM_AGENTS config so NavSidebar won't display them.
-
-      // ── Sync display names for existing system agents ──
-      for (const config of SYSTEM_AGENTS) {
-        const match = existing.find(a => a.system_agent_type === config.type);
-        if (match && match.name !== config.name) {
-          await invoke('db_update_agent', {
-            id: match.id,
-            name: config.name,
-            systemAgentType: null, status: null, adminNotes: null,
-            endGoal: null, context: null, permissionLevel: null,
-            model: null, projectDir: null, connectedAppIds: null,
-            connectedApps: null, initialTask: null, stateSummary: null,
-          });
-          console.log(`[App] Renamed ${match.name} → ${config.name}`);
-        }
-      }
-
-      // ── Create any missing system agents ──
       let created = 0;
       for (const config of SYSTEM_AGENTS) {
         if (existingTypes.has(config.type)) continue;
@@ -148,11 +118,11 @@ export default function App() {
       }
 
       if (created > 0) {
-        console.log(`[App] Provisioned ${created} system agent(s)`);
+        appLogger.info('Provisioned missing system agents', { created });
       }
       await refreshAgents();
     } catch (err) {
-      console.warn('[App] System agent provisioning error:', err);
+      appLogger.warn('System agent provisioning failed', { error: err });
       systemAgentsProvisioned.current = false; // retry next time
     }
   }, [refreshAgents]);
@@ -307,7 +277,7 @@ export default function App() {
       await refreshAgents();
       openViewWindow({ kind: 'chat', agentId: id, agentName: instanceName });
     } catch (err) {
-      console.warn('[App] Failed to create system agent session:', err);
+      appLogger.warn('Failed to create system agent session', { error: err });
     }
   }, [agents, refreshAgents]);
 
@@ -349,15 +319,23 @@ export default function App() {
   // Loading state
   if (checking) {
     return (
-      <div className="flex items-center justify-center h-full bg-white">
-        <p className="text-body text-ul-text-muted">Loading...</p>
-      </div>
+      <>
+        <div className="flex items-center justify-center h-full bg-white">
+          <p className="text-body text-ul-text-muted">Loading...</p>
+        </div>
+        <DesktopUpdateToast updater={desktopUpdater} />
+      </>
     );
   }
 
   // Auth gate
   if (!authenticated) {
-    return <AuthGate onAuthenticated={handleAuthenticated} />;
+    return (
+      <>
+        <AuthGate onAuthenticated={handleAuthenticated} />
+        <DesktopUpdateToast updater={desktopUpdater} />
+      </>
+    );
   }
 
   // Helper: style to show/hide cached views
@@ -370,7 +348,8 @@ export default function App() {
   });
 
   return (
-    <div className="flex flex-col h-full">
+    <>
+      <div className="flex flex-col h-full">
       <TopToolbar />
       <div className="flex flex-1 min-h-0">
         <NavSidebar
@@ -479,6 +458,8 @@ export default function App() {
         )}
         </div>
       </div>
-    </div>
+      </div>
+      <DesktopUpdateToast updater={desktopUpdater} />
+    </>
   );
 }

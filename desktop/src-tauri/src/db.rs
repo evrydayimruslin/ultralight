@@ -83,6 +83,7 @@ pub struct Agent {
     pub project_dir: Option<String>,
     pub model: Option<String>,
     pub permission_level: String,
+    pub execute_window_seconds: i64,
     pub admin_notes: Option<String>,
     pub end_goal: Option<String>,
     pub context: Option<String>,
@@ -95,7 +96,7 @@ pub struct Agent {
     pub connected_apps: Option<String>,
     /// Whether this is a system agent (1) or a regular user agent (0).
     pub is_system: i64,
-    /// System agent type: tool_explorer, tool_builder, tool_publisher, platform_manager.
+    /// Canonical system agent type: tool_builder, tool_marketer, platform_manager.
     pub system_agent_type: Option<String>,
     /// Lightweight state summary for Flash context index.
     pub state_summary: Option<String>,
@@ -116,6 +117,36 @@ pub struct CardReport {
     pub report_type: String,
     pub content: String,
     pub created_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolUsed {
+    pub app_id: String,
+    pub app_name: String,
+    pub app_slug: String,
+    pub origin: String,
+    pub fn_name: String,
+    pub args: serde_json::Value,
+    pub cost_light: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ExecutionPlan {
+    pub id: String,
+    pub conversation_id: String,
+    pub message_id: String,
+    pub recipe: String,
+    pub tools_used: Vec<ToolUsed>,
+    pub total_cost_light: f64,
+    pub created_at: i64,
+    #[serde(default)]
+    pub window_seconds: i64,
+    pub fire_at: Option<i64>,
+    pub status: String,
+    pub result: Option<String>,
+    pub fired_at: Option<i64>,
+    pub completed_at: Option<i64>,
 }
 
 // ── Schema ──
@@ -161,6 +192,7 @@ CREATE TABLE IF NOT EXISTS agents (
     project_dir TEXT,
     model TEXT,
     permission_level TEXT NOT NULL DEFAULT 'auto_edit',
+    execute_window_seconds INTEGER NOT NULL DEFAULT 8,
     admin_notes TEXT,
     end_goal TEXT,
     context TEXT,
@@ -219,26 +251,33 @@ CREATE TABLE IF NOT EXISTS card_reports (
 );
 CREATE INDEX IF NOT EXISTS idx_card_reports_card
     ON card_reports(card_id, created_at ASC);
+
+CREATE TABLE IF NOT EXISTS execution_plans (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at INTEGER NOT NULL,
+    fired_at INTEGER,
+    completed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_execution_plans_message
+    ON execution_plans(message_id);
+CREATE INDEX IF NOT EXISTS idx_execution_plans_conv
+    ON execution_plans(conversation_id);
 ";
 
 // ── Init ──
 
-pub fn init_db(app_data_dir: &std::path::Path) -> Result<Connection, String> {
-    std::fs::create_dir_all(app_data_dir)
-        .map_err(|e| format!("Failed to create app data dir: {}", e))?;
+const DB_SCHEMA_VERSION: i64 = 1;
+const CANONICAL_SYSTEM_AGENT_ROLES: [(&str, &str); 3] = [
+    ("tool_builder", "builder"),
+    ("tool_marketer", "marketer"),
+    ("platform_manager", "manager"),
+];
 
-    let db_path = app_data_dir.join("conversations.db");
-    let conn = Connection::open(&db_path)
-        .map_err(|e| format!("Failed to open database: {}", e))?;
-
-    // Enable WAL mode for better concurrent performance
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
-        .map_err(|e| format!("Failed to set pragmas: {}", e))?;
-
-    conn.execute_batch(SCHEMA)
-        .map_err(|e| format!("Failed to create schema: {}", e))?;
-
-    // Migrations — idempotent column additions for existing databases
+fn apply_column_migrations(conn: &Connection) {
     let _ = conn.execute(
         "ALTER TABLE agents ADD COLUMN launch_mode TEXT NOT NULL DEFAULT 'build_now'",
         [],
@@ -263,6 +302,99 @@ pub fn init_db(app_data_dir: &std::path::Path) -> Result<Connection, String> {
         "ALTER TABLE agents ADD COLUMN state_summary TEXT",
         [],
     );
+    let _ = conn.execute(
+        "ALTER TABLE agents ADD COLUMN execute_window_seconds INTEGER NOT NULL DEFAULT 8",
+        [],
+    );
+}
+
+fn normalize_legacy_system_agent_rows(conn: &Connection) -> Result<(), String> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("Transaction error: {}", e))?;
+    let now = chrono_now();
+
+    tx.execute(
+        "UPDATE agents
+         SET system_agent_type = 'tool_marketer',
+             role = 'marketer',
+             updated_at = ?1
+         WHERE is_system = 1 AND system_agent_type = 'tool_publisher'",
+        params![now],
+    )
+    .map_err(|e| format!("Rename tool_publisher migration failed: {}", e))?;
+
+    tx.execute(
+        "UPDATE agents
+         SET name = REPLACE(name, 'Tool Publisher', 'Tool Dealer'),
+             updated_at = ?1
+         WHERE is_system = 1
+           AND system_agent_type = 'tool_marketer'
+           AND name LIKE 'Tool Publisher%'",
+        params![now],
+    )
+    .map_err(|e| format!("Rename tool_publisher display names failed: {}", e))?;
+
+    tx.execute(
+        "UPDATE agents
+         SET is_system = 0,
+             system_agent_type = NULL,
+             updated_at = ?1
+         WHERE is_system = 1 AND system_agent_type = 'tool_explorer'",
+        params![now],
+    )
+    .map_err(|e| format!("Demote tool_explorer migration failed: {}", e))?;
+
+    for (agent_type, canonical_role) in CANONICAL_SYSTEM_AGENT_ROLES {
+        tx.execute(
+            "UPDATE agents
+             SET role = ?1,
+                 updated_at = ?2
+             WHERE is_system = 1
+               AND system_agent_type = ?3
+               AND role != ?1",
+            params![canonical_role, now, agent_type],
+        )
+        .map_err(|e| format!("System agent role normalization failed: {}", e))?;
+    }
+
+    tx.commit()
+        .map_err(|e| format!("Commit system agent normalization failed: {}", e))?;
+
+    Ok(())
+}
+
+fn apply_versioned_migrations(conn: &Connection) -> Result<(), String> {
+    let current_version: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|e| format!("Failed to read database version: {}", e))?;
+
+    if current_version < 1 {
+        normalize_legacy_system_agent_rows(conn)?;
+        conn.execute_batch(&format!("PRAGMA user_version = {};", DB_SCHEMA_VERSION))
+            .map_err(|e| format!("Failed to bump database version: {}", e))?;
+    }
+
+    Ok(())
+}
+
+pub fn init_db(app_data_dir: &std::path::Path) -> Result<Connection, String> {
+    std::fs::create_dir_all(app_data_dir)
+        .map_err(|e| format!("Failed to create app data dir: {}", e))?;
+
+    let db_path = app_data_dir.join("conversations.db");
+    let conn = Connection::open(&db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    // Enable WAL mode for better concurrent performance
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
+        .map_err(|e| format!("Failed to set pragmas: {}", e))?;
+
+    conn.execute_batch(SCHEMA)
+        .map_err(|e| format!("Failed to create schema: {}", e))?;
+
+    apply_column_migrations(&conn);
+    apply_versioned_migrations(&conn)?;
 
     log::info!("Database initialized at {:?}", db_path);
     Ok(conn)
@@ -515,9 +647,9 @@ pub fn db_save_messages_batch(
 
 const AGENT_SELECT_COLS: &str =
     "id, conversation_id, parent_agent_id, name, role, status, system_prompt, \
-     initial_task, project_dir, model, permission_level, admin_notes, end_goal, \
-     context, launch_mode, connected_app_ids, connected_apps, is_system, \
-     system_agent_type, state_summary, created_at, updated_at";
+     initial_task, project_dir, model, permission_level, execute_window_seconds, \
+     admin_notes, end_goal, context, launch_mode, connected_app_ids, connected_apps, \
+     is_system, system_agent_type, state_summary, created_at, updated_at";
 
 #[tauri::command]
 pub fn db_create_agent(
@@ -532,6 +664,7 @@ pub fn db_create_agent(
     model: Option<String>,
     parent_agent_id: Option<String>,
     permission_level: Option<String>,
+    execute_window_seconds: Option<i64>,
     admin_notes: Option<String>,
     end_goal: Option<String>,
     context: Option<String>,
@@ -544,6 +677,7 @@ pub fn db_create_agent(
     let conn = db.0.lock().map_err(|e| format!("DB lock error: {}", e))?;
     let now = chrono_now();
     let perm = permission_level.unwrap_or_else(|| "auto_edit".to_string());
+    let execute_window = execute_window_seconds.unwrap_or(8);
     let lm = launch_mode.unwrap_or_else(|| "build_now".to_string());
     let is_sys = is_system.unwrap_or(0);
     let model_for_conv = model.clone().unwrap_or_else(|| "anthropic/claude-sonnet-4-20250514".to_string());
@@ -561,13 +695,13 @@ pub fn db_create_agent(
     // Create agent
     tx.execute(
         "INSERT INTO agents (id, conversation_id, parent_agent_id, name, role, status, \
-         system_prompt, initial_task, project_dir, model, permission_level, \
+         system_prompt, initial_task, project_dir, model, permission_level, execute_window_seconds, \
          admin_notes, end_goal, context, launch_mode, connected_app_ids, connected_apps, \
          is_system, system_agent_type, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
         params![
             id, conversation_id, parent_agent_id, name, role, "pending",
-            system_prompt, initial_task, project_dir, model, perm,
+            system_prompt, initial_task, project_dir, model, perm, execute_window,
             admin_notes, end_goal, context, lm, connected_app_ids, connected_apps,
             is_sys, system_agent_type, now, now,
         ],
@@ -587,6 +721,7 @@ pub fn db_create_agent(
         project_dir,
         model,
         permission_level: perm,
+        execute_window_seconds: execute_window,
         admin_notes,
         end_goal,
         context,
@@ -605,9 +740,9 @@ pub fn db_create_agent(
 
 const AGENT_ENRICHED_SELECT: &str =
     "a.id, a.conversation_id, a.parent_agent_id, a.name, a.role, a.status, a.system_prompt, \
-     a.initial_task, a.project_dir, a.model, a.permission_level, a.admin_notes, a.end_goal, \
-     a.context, a.launch_mode, a.connected_app_ids, a.connected_apps, a.is_system, \
-     a.system_agent_type, a.state_summary, a.created_at, a.updated_at, \
+     a.initial_task, a.project_dir, a.model, a.permission_level, a.execute_window_seconds, \
+     a.admin_notes, a.end_goal, a.context, a.launch_mode, a.connected_app_ids, a.connected_apps, \
+     a.is_system, a.system_agent_type, a.state_summary, a.created_at, a.updated_at, \
      COUNT(m.id) as message_count, \
      (SELECT content FROM messages WHERE conversation_id = a.conversation_id ORDER BY sort_order DESC LIMIT 1) as last_message_preview";
 
@@ -727,6 +862,7 @@ pub fn db_update_agent(
     end_goal: Option<String>,
     context: Option<String>,
     permission_level: Option<String>,
+    execute_window_seconds: Option<i64>,
     model: Option<String>,
     project_dir: Option<String>,
     connected_app_ids: Option<String>,
@@ -759,6 +895,11 @@ pub fn db_update_agent(
     maybe_set!(end_goal, "end_goal");
     maybe_set!(context, "context");
     maybe_set!(permission_level, "permission_level");
+    if let Some(v) = execute_window_seconds {
+        sets.push(format!("execute_window_seconds = ?{}", param_index));
+        values.push(Box::new(v));
+        param_index += 1;
+    }
     maybe_set!(model, "model");
     maybe_set!(project_dir, "project_dir");
     maybe_set!(connected_app_ids, "connected_app_ids");
@@ -1235,7 +1376,126 @@ pub fn db_delete_card_report(
     Ok(())
 }
 
+// ── Execution Plan Commands ──
+
+#[tauri::command]
+pub fn db_create_execution_plan(
+    db: State<'_, DbState>,
+    plan: ExecutionPlan,
+) -> Result<ExecutionPlan, String> {
+    let conn = db.0.lock().map_err(|e| format!("DB lock error: {}", e))?;
+    let payload_json = serde_json::to_string(&plan)
+        .map_err(|e| format!("Serialize execution plan error: {}", e))?;
+
+    conn.execute(
+        "INSERT OR REPLACE INTO execution_plans (id, conversation_id, message_id, payload_json, status, created_at, fired_at, completed_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            &plan.id,
+            &plan.conversation_id,
+            &plan.message_id,
+            &payload_json,
+            &plan.status,
+            plan.created_at,
+            plan.fired_at,
+            plan.completed_at,
+        ],
+    ).map_err(|e| format!("Create execution plan error: {}", e))?;
+
+    Ok(plan)
+}
+
+#[tauri::command]
+pub fn db_update_execution_plan_status(
+    db: State<'_, DbState>,
+    id: String,
+    status: String,
+    result: Option<String>,
+    fire_at: Option<i64>,
+    fired_at: Option<i64>,
+    completed_at: Option<i64>,
+) -> Result<ExecutionPlan, String> {
+    let conn = db.0.lock().map_err(|e| format!("DB lock error: {}", e))?;
+    let mut plan = load_execution_plan(&conn, &id)?
+        .ok_or_else(|| format!("Execution plan not found: {}", id))?;
+
+    plan.status = status;
+    if let Some(result_value) = result {
+        plan.result = Some(result_value);
+    }
+    if let Some(fire_at_value) = fire_at {
+        plan.fire_at = Some(fire_at_value);
+    }
+    if let Some(fired_at_value) = fired_at {
+        plan.fired_at = Some(fired_at_value);
+    }
+    if let Some(completed_at_value) = completed_at {
+        plan.completed_at = Some(completed_at_value);
+    }
+
+    let payload_json = serde_json::to_string(&plan)
+        .map_err(|e| format!("Serialize execution plan error: {}", e))?;
+
+    conn.execute(
+        "UPDATE execution_plans SET payload_json = ?1, status = ?2, fired_at = ?3, completed_at = ?4 WHERE id = ?5",
+        params![payload_json, &plan.status, plan.fired_at, plan.completed_at, id],
+    ).map_err(|e| format!("Update execution plan error: {}", e))?;
+
+    Ok(plan)
+}
+
+#[tauri::command]
+pub fn db_get_execution_plan(
+    db: State<'_, DbState>,
+    id: String,
+) -> Result<Option<ExecutionPlan>, String> {
+    let conn = db.0.lock().map_err(|e| format!("DB lock error: {}", e))?;
+    load_execution_plan(&conn, &id)
+}
+
+#[tauri::command]
+pub fn db_get_execution_plans_by_message(
+    db: State<'_, DbState>,
+    message_id: String,
+) -> Result<Vec<ExecutionPlan>, String> {
+    let conn = db.0.lock().map_err(|e| format!("DB lock error: {}", e))?;
+    let mut stmt = conn.prepare(
+        "SELECT payload_json FROM execution_plans WHERE message_id = ?1 ORDER BY created_at ASC"
+    ).map_err(|e| format!("Query error: {}", e))?;
+    let rows = stmt.query_map(params![message_id], |row| row.get::<_, String>(0))
+        .map_err(|e| format!("Query error: {}", e))?;
+
+    let mut plans = Vec::new();
+    for row in rows {
+        let payload_json = row.map_err(|e| format!("Row error: {}", e))?;
+        plans.push(parse_execution_plan(&payload_json)?);
+    }
+    Ok(plans)
+}
+
 // ── Helpers ──
+
+fn parse_execution_plan(payload_json: &str) -> Result<ExecutionPlan, String> {
+    serde_json::from_str(payload_json)
+        .map_err(|e| format!("Deserialize execution plan error: {}", e))
+}
+
+fn load_execution_plan(conn: &Connection, id: &str) -> Result<Option<ExecutionPlan>, String> {
+    let mut stmt = conn.prepare(
+        "SELECT payload_json FROM execution_plans WHERE id = ?1"
+    ).map_err(|e| format!("Query error: {}", e))?;
+
+    let mut rows = stmt.query_map(params![id], |row| row.get::<_, String>(0))
+        .map_err(|e| format!("Query error: {}", e))?;
+
+    match rows.next() {
+        Some(row) => {
+            let payload_json = row.map_err(|e| format!("Row error: {}", e))?;
+            Ok(Some(parse_execution_plan(&payload_json)?))
+        }
+        None => Ok(None),
+    }
+}
 
 fn row_to_board(row: &rusqlite::Row) -> rusqlite::Result<KanbanBoard> {
     Ok(KanbanBoard {
@@ -1298,17 +1558,18 @@ fn row_to_agent(row: &rusqlite::Row) -> rusqlite::Result<Agent> {
         project_dir: row.get(8)?,
         model: row.get(9)?,
         permission_level: row.get(10)?,
-        admin_notes: row.get(11)?,
-        end_goal: row.get(12)?,
-        context: row.get(13)?,
-        launch_mode: row.get(14)?,
-        connected_app_ids: row.get(15)?,
-        connected_apps: row.get(16)?,
-        is_system: row.get(17)?,
-        system_agent_type: row.get(18)?,
-        state_summary: row.get(19)?,
-        created_at: row.get(20)?,
-        updated_at: row.get(21)?,
+        execute_window_seconds: row.get(11)?,
+        admin_notes: row.get(12)?,
+        end_goal: row.get(13)?,
+        context: row.get(14)?,
+        launch_mode: row.get(15)?,
+        connected_app_ids: row.get(16)?,
+        connected_apps: row.get(17)?,
+        is_system: row.get(18)?,
+        system_agent_type: row.get(19)?,
+        state_summary: row.get(20)?,
+        created_at: row.get(21)?,
+        updated_at: row.get(22)?,
         last_message_preview: None,
         message_count: None,
     })
@@ -1327,19 +1588,20 @@ fn row_to_agent_enriched(row: &rusqlite::Row) -> rusqlite::Result<Agent> {
         project_dir: row.get(8)?,
         model: row.get(9)?,
         permission_level: row.get(10)?,
-        admin_notes: row.get(11)?,
-        end_goal: row.get(12)?,
-        context: row.get(13)?,
-        launch_mode: row.get(14)?,
-        connected_app_ids: row.get(15)?,
-        connected_apps: row.get(16)?,
-        is_system: row.get(17)?,
-        system_agent_type: row.get(18)?,
-        state_summary: row.get(19)?,
-        created_at: row.get(20)?,
-        updated_at: row.get(21)?,
-        message_count: row.get(22)?,
-        last_message_preview: row.get::<_, Option<String>>(23)?.map(|s| truncate(&s, 100)),
+        execute_window_seconds: row.get(11)?,
+        admin_notes: row.get(12)?,
+        end_goal: row.get(13)?,
+        context: row.get(14)?,
+        launch_mode: row.get(15)?,
+        connected_app_ids: row.get(16)?,
+        connected_apps: row.get(17)?,
+        is_system: row.get(18)?,
+        system_agent_type: row.get(19)?,
+        state_summary: row.get(20)?,
+        created_at: row.get(21)?,
+        updated_at: row.get(22)?,
+        message_count: row.get(23)?,
+        last_message_preview: row.get::<_, Option<String>>(24)?.map(|s| truncate(&s, 100)),
     })
 }
 
@@ -1383,11 +1645,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
         conn.execute_batch(SCHEMA).unwrap();
-        // Run migrations (same as init_db)
-        let _ = conn.execute(
-            "ALTER TABLE agents ADD COLUMN launch_mode TEXT NOT NULL DEFAULT 'build_now'",
-            [],
-        );
+        apply_column_migrations(&conn);
         conn
     }
 
@@ -1508,6 +1766,101 @@ mod tests {
         }).unwrap().map(|r| r.unwrap()).collect();
 
         assert_eq!(contents, vec!["First", "Second", "Response"]);
+    }
+
+    #[test]
+    fn test_versioned_migration_renames_tool_publisher_rows() {
+        let conn = setup_db();
+        let now = chrono_now();
+
+        conn.execute(
+            "INSERT INTO conversations (id, title, model, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params!["conv-publisher", "Tool Publisher", "model", now, now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO agents (
+                id, conversation_id, name, role, status, permission_level, execute_window_seconds,
+                launch_mode, is_system, system_agent_type, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                "agent-publisher",
+                "conv-publisher",
+                "Tool Publisher (1)",
+                "publisher",
+                "pending",
+                "auto_edit",
+                8i64,
+                "build_now",
+                1i64,
+                "tool_publisher",
+                now,
+                now,
+            ],
+        ).unwrap();
+
+        apply_versioned_migrations(&conn).unwrap();
+
+        let (name, role, is_system, system_agent_type): (String, String, i64, Option<String>) = conn.query_row(
+            "SELECT name, role, is_system, system_agent_type FROM agents WHERE id = ?1",
+            params!["agent-publisher"],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ).unwrap();
+
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+
+        assert_eq!(name, "Tool Dealer (1)");
+        assert_eq!(role, "marketer");
+        assert_eq!(is_system, 1);
+        assert_eq!(system_agent_type.as_deref(), Some("tool_marketer"));
+        assert_eq!(version, DB_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn test_versioned_migration_demotes_tool_explorer_rows() {
+        let conn = setup_db();
+        let now = chrono_now();
+
+        conn.execute(
+            "INSERT INTO conversations (id, title, model, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params!["conv-explorer", "Tool Explorer", "model", now, now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO messages (id, conversation_id, role, content, created_at, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params!["msg-explorer", "conv-explorer", "assistant", "Legacy session", now, 0i64],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO agents (
+                id, conversation_id, name, role, status, permission_level, execute_window_seconds,
+                launch_mode, is_system, system_agent_type, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                "agent-explorer",
+                "conv-explorer",
+                "Tool Explorer",
+                "explorer",
+                "pending",
+                "auto_edit",
+                8i64,
+                "build_now",
+                1i64,
+                "tool_explorer",
+                now,
+                now,
+            ],
+        ).unwrap();
+
+        apply_versioned_migrations(&conn).unwrap();
+
+        let (is_system, system_agent_type, message_count): (i64, Option<String>, i64) = conn.query_row(
+            "SELECT a.is_system, a.system_agent_type, (SELECT COUNT(*) FROM messages WHERE conversation_id = a.conversation_id)
+             FROM agents a WHERE id = ?1",
+            params!["agent-explorer"],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+
+        assert_eq!(is_system, 0);
+        assert_eq!(system_agent_type, None);
+        assert_eq!(message_count, 1);
     }
 
     // ── Agent Tests ──
@@ -2124,5 +2477,94 @@ mod tests {
             |row| row.get(0),
         ).unwrap();
         assert_eq!(launch_mode2, "build_now");
+    }
+
+    #[test]
+    fn test_agent_execute_window_defaults_and_persists() {
+        let conn = setup_db();
+        let now = chrono_now();
+
+        conn.execute(
+            "INSERT INTO conversations (id, title, model, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params!["conv-ew", "Agent", "model", now, now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO agents (id, conversation_id, name, role, status, permission_level, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params!["agent-ew", "conv-ew", "Runner", "general", "pending", "auto_edit", now, now],
+        ).unwrap();
+
+        let default_window: i64 = conn.query_row(
+            "SELECT execute_window_seconds FROM agents WHERE id = 'agent-ew'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(default_window, 8);
+
+        conn.execute(
+            "UPDATE agents SET execute_window_seconds = ?1 WHERE id = ?2",
+            params![30, "agent-ew"],
+        ).unwrap();
+
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {} FROM agents WHERE id = ?1",
+            AGENT_SELECT_COLS
+        )).unwrap();
+        let mut rows = stmt.query_map(params!["agent-ew"], row_to_agent).unwrap();
+        let agent = rows.next().unwrap().unwrap();
+
+        assert_eq!(agent.execute_window_seconds, 30);
+    }
+
+    #[test]
+    fn test_execution_plan_roundtrip() {
+        let conn = setup_db();
+        let now = chrono_now();
+
+        let plan = ExecutionPlan {
+            id: "plan-1".to_string(),
+            conversation_id: "conv-1".to_string(),
+            message_id: "msg-1".to_string(),
+            recipe: "return 42;".to_string(),
+            tools_used: vec![ToolUsed {
+                app_id: "app-1".to_string(),
+                app_name: "Calendar".to_string(),
+                app_slug: "calendar".to_string(),
+                origin: "library".to_string(),
+                fn_name: "calendar_lookup".to_string(),
+                args: serde_json::json!({ "query": "today" }),
+                cost_light: 0.05,
+            }],
+            total_cost_light: 0.05,
+            created_at: now,
+            window_seconds: 8,
+            fire_at: Some(now + 8_000),
+            status: "pending".to_string(),
+            result: None,
+            fired_at: None,
+            completed_at: None,
+        };
+
+        let payload_json = serde_json::to_string(&plan).unwrap();
+        conn.execute(
+            "INSERT INTO execution_plans (id, conversation_id, message_id, payload_json, status, created_at, fired_at, completed_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                plan.id,
+                plan.conversation_id,
+                plan.message_id,
+                payload_json,
+                plan.status,
+                plan.created_at,
+                plan.fired_at,
+                plan.completed_at,
+            ],
+        ).unwrap();
+
+        let loaded = load_execution_plan(&conn, "plan-1").unwrap().unwrap();
+        assert_eq!(loaded.recipe, "return 42;");
+        assert_eq!(loaded.tools_used.len(), 1);
+        assert_eq!(loaded.tools_used[0].origin, "library");
+        assert_eq!(loaded.fire_at, Some(now + 8_000));
     }
 }

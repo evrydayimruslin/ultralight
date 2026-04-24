@@ -2,7 +2,7 @@
 // Supports queue mode: input stays enabled while agent runs, shows "Queue" instead of "Send".
 // Supports file attachments via + icon.
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, type ReactNode } from 'react';
 import ProjectDropdown from './ProjectDropdown';
 
 /** File attachment ready to send — base64-encoded with metadata */
@@ -23,6 +23,8 @@ interface ChatInputProps {
   projectDir?: string | null;
   /** Called when user picks a new project directory */
   onProjectDirChange?: (dir: string) => void;
+  /** Optional extra action rendered beside the composer */
+  extraAction?: ReactNode;
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -34,7 +36,15 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
-export default function ChatInput({ onSend, isLoading, onStop, queueMode = false, projectDir, onProjectDirChange }: ChatInputProps) {
+export default function ChatInput({
+  onSend,
+  isLoading,
+  onStop,
+  queueMode = false,
+  projectDir,
+  onProjectDirChange,
+  extraAction,
+}: ChatInputProps) {
   const [value, setValue] = useState('');
   const [files, setFiles] = useState<ChatFile[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -162,6 +172,12 @@ export default function ChatInput({ onSend, isLoading, onStop, queueMode = false
             onChange={handleFileSelect}
             className="hidden"
           />
+
+          {extraAction ? (
+            <div className="mb-[3px] flex flex-shrink-0 items-center justify-center">
+              {extraAction}
+            </div>
+          ) : null}
 
           <textarea
             ref={textareaRef}

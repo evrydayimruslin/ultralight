@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { runAgentLoop, type LoopMessage, type AgentLoopCallbacks } from './agentLoop';
 import type { ChatTool } from './api';
 import { updateSystemAgentState, maybeEmbedConversation } from './agentStateSummary';
+import { createDesktopLogger } from './logging';
 
 // ── Types ──
 
@@ -46,6 +47,8 @@ interface ActiveRun {
 
 type EventListener = (event: AgentEvent) => void;
 
+const agentRunnerLogger = createDesktopLogger('AgentRunner');
+
 // ── AgentRunner Class ──
 
 class AgentRunner {
@@ -61,7 +64,7 @@ class AgentRunner {
 
     // Don't start if already running
     if (this.runs.has(agentId) && this.runs.get(agentId)!.status === 'running') {
-      console.warn(`[AgentRunner] Agent ${agentId} is already running`);
+      agentRunnerLogger.warn('Agent is already running', { agentId });
       return;
     }
 
@@ -104,7 +107,7 @@ class AgentRunner {
         this.emit({ type: 'message_added', agentId, message: msg });
         // Persist each message immediately
         this.persistMessage(conversationId, msg, run.messages.length - 1).catch(err => {
-          console.error(`[AgentRunner] Failed to persist message for agent ${agentId}:`, err);
+          agentRunnerLogger.error('Failed to persist agent message', { agentId, error: err });
         });
       },
       onStreamDelta: (assistantId: string, content: string) => {
@@ -112,7 +115,7 @@ class AgentRunner {
       },
       onToolCall,
       onWarning: (message: string) => {
-        console.warn(`[AgentRunner] Agent ${agentId}: ${message}`);
+        agentRunnerLogger.warn('Agent loop warning', { agentId, message });
         this.emit({ type: 'warning', agentId, message });
       },
     };
@@ -192,7 +195,7 @@ class AgentRunner {
   async resume(agentId: string, userMessage: string): Promise<void> {
     const run = this.runs.get(agentId);
     if (!run) {
-      console.warn(`[AgentRunner] Cannot resume agent ${agentId}: no run found`);
+      agentRunnerLogger.warn('Cannot resume agent without run', { agentId });
       return;
     }
     if (run.status === 'running') {
@@ -201,7 +204,7 @@ class AgentRunner {
       return;
     }
     if (!run.config) {
-      console.warn(`[AgentRunner] Cannot resume agent ${agentId}: no stashed config`);
+      agentRunnerLogger.warn('Cannot resume agent without stashed config', { agentId });
       return;
     }
 
@@ -262,7 +265,7 @@ class AgentRunner {
         run.messages.push(msg);
         this.emit({ type: 'message_added', agentId, message: msg });
         this.persistMessage(run.conversationId, msg, run.messages.length - 1).catch(err => {
-          console.error(`[AgentRunner] Failed to persist message for agent ${agentId}:`, err);
+          agentRunnerLogger.error('Failed to persist resumed agent message', { agentId, error: err });
         });
       },
       onStreamDelta: (assistantId: string, content: string) => {
@@ -270,7 +273,7 @@ class AgentRunner {
       },
       onToolCall: run.config.onToolCall,
       onWarning: (message: string) => {
-        console.warn(`[AgentRunner] Agent ${agentId}: ${message}`);
+        agentRunnerLogger.warn('Agent loop warning', { agentId, message });
         this.emit({ type: 'warning', agentId, message });
       },
     };
@@ -436,7 +439,7 @@ class AgentRunner {
       try {
         listener(event);
       } catch (err) {
-        console.error('[AgentRunner] Listener error:', err);
+        agentRunnerLogger.error('Agent listener error', { error: err });
       }
     }
   }
@@ -453,7 +456,7 @@ class AgentRunner {
     this.emit({ type: 'queue_changed', agentId, queueLength: run.pendingMessages.length });
     // Fire-and-forget — resume handles its own error states
     this.resume(agentId, nextMessage).catch(err => {
-      console.error(`[AgentRunner] Failed to drain queue for agent ${agentId}:`, err);
+      agentRunnerLogger.error('Failed to drain agent queue', { agentId, error: err });
     });
   }
 
@@ -461,7 +464,7 @@ class AgentRunner {
     try {
       await invoke('db_update_agent', { id: agentId, status });
     } catch (err) {
-      console.error(`[AgentRunner] Failed to update agent status in DB:`, err);
+      agentRunnerLogger.error('Failed to update agent status in DB', { agentId, status, error: err });
     }
   }
 
@@ -479,7 +482,7 @@ class AgentRunner {
             content: m.content,
           }));
           updateSystemAgentState(agentId, recentMsgs).catch(err =>
-            console.warn('[AgentRunner] State summary update failed:', err)
+            agentRunnerLogger.warn('State summary update failed', { agentId, error: err })
           );
         }
       })
@@ -507,7 +510,7 @@ class AgentRunner {
         },
       });
     } catch (err) {
-      console.error(`[AgentRunner] Failed to persist message:`, err);
+      agentRunnerLogger.error('Failed to persist message', { conversationId, messageId: msg.id, error: err });
     }
   }
 }

@@ -2,9 +2,9 @@
 // Each tile shows an icon, title, badge count, and MCP source.
 // Clicking a tile opens the widget's full-screen HTML app.
 
-import type { WidgetAppSource } from '../hooks/useWidgetInbox';
-import type { WidgetMeta } from '../../../shared/types/index';
+import type { WidgetMeta } from '../../../shared/contracts/widget.ts';
 import { openWidgetWindow } from '../lib/multiWindow';
+import type { WidgetAppSource } from '../lib/widgetRuntime';
 
 interface WidgetHomescreenProps {
   sources: WidgetAppSource[];
