@@ -141,6 +141,22 @@ export interface ValidatedToken {
   function_names: string[] | null;
 }
 
+export type ApiTokenCompatibilityState =
+  | 'canonical'
+  | 'canonical_missing_plaintext'
+  | 'legacy_backfillable_from_plaintext'
+  | 'legacy_unrecoverable';
+
+export interface ApiTokenVerificationOutcome {
+  valid: boolean;
+  state: ApiTokenCompatibilityState;
+  reason?: 'hash_mismatch' | 'plaintext_mismatch' | 'missing_token_material';
+  canonical_update?: {
+    token_hash: string;
+    token_salt: string;
+  };
+}
+
 /**
  * Generate a cryptographically secure random token
  */
@@ -167,17 +183,6 @@ function constantTimeEqual(a: string, b: string): boolean {
 }
 
 /**
- * Hash a token using SHA-256 (legacy, unsalted — used for backward compat with old tokens)
- */
-async function hashToken(token: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(token);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-/**
  * Hash a token with a per-token salt using HMAC-SHA256.
  * The salt acts as key material, making each token's hash unique even if tokens collide.
  */
@@ -201,6 +206,84 @@ function generateTokenSalt(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+export function classifyApiTokenCompatibility(row: {
+  token_salt: string | null;
+  plaintext_token: string | null;
+}): ApiTokenCompatibilityState {
+  if (row.token_salt) {
+    return row.plaintext_token ? 'canonical' : 'canonical_missing_plaintext';
+  }
+
+  if (row.plaintext_token) {
+    return 'legacy_backfillable_from_plaintext';
+  }
+
+  return 'legacy_unrecoverable';
+}
+
+export async function verifyApiTokenRecord(
+  token: string,
+  row: {
+    token_hash: string;
+    token_salt: string | null;
+    plaintext_token: string | null;
+  },
+): Promise<ApiTokenVerificationOutcome> {
+  const state = classifyApiTokenCompatibility(row);
+
+  if (row.token_salt) {
+    const tokenHash = await hashTokenWithSalt(token, row.token_salt);
+    const valid = constantTimeEqual(row.token_hash, tokenHash);
+    return {
+      valid,
+      state,
+      reason: valid ? undefined : 'hash_mismatch',
+    };
+  }
+
+  if (!row.plaintext_token) {
+    return {
+      valid: false,
+      state,
+      reason: 'missing_token_material',
+    };
+  }
+
+  if (!constantTimeEqual(row.plaintext_token, token)) {
+    return {
+      valid: false,
+      state,
+      reason: 'plaintext_mismatch',
+    };
+  }
+
+  const tokenSalt = generateTokenSalt();
+  return {
+    valid: true,
+    state,
+    canonical_update: {
+      token_salt: tokenSalt,
+      token_hash: await hashTokenWithSalt(token, tokenSalt),
+    },
+  };
+}
+
+async function backfillCanonicalTokenHash(
+  tokenId: string,
+  update: {
+    token_hash: string;
+    token_salt: string;
+  },
+): Promise<void> {
+  const { error } = await tokensTable()
+    .update(update)
+    .eq('id', tokenId);
+
+  if (error) {
+    throw new Error(`Failed to backfill canonical token hash: ${error.message}`);
+  }
 }
 
 /**
@@ -242,7 +325,7 @@ export async function createToken(
     expiresAt = expiry.toISOString();
   }
 
-  // Insert token (token_salt column enables per-token salted hashing)
+  // Insert token into the canonical schema.
   const insertPayload: UserApiTokenInsertPayload = {
     user_id: userId,
     name,
@@ -260,15 +343,6 @@ export async function createToken(
     .insert(insertPayload)
     .select()
     .single();
-
-  // Fallback: if plaintext_token column doesn't exist yet, retry without it
-  if (error && error.message?.includes('plaintext_token')) {
-    delete insertPayload.plaintext_token;
-    ({ data, error } = await tokensTable()
-      .insert(insertPayload)
-      .select()
-      .single());
-  }
 
   if (error) {
     throw new Error(`Failed to create token: ${error.message}`);
@@ -291,14 +365,6 @@ export async function listTokens(userId: string): Promise<ApiToken[]> {
     .select('id, user_id, name, token_prefix, plaintext_token, scopes, app_ids, function_names, last_used_at, last_used_ip, expires_at, created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
-
-  // Fallback: if plaintext_token column doesn't exist yet, query without it
-  if (error && error.message?.includes('plaintext_token')) {
-    ({ data, error } = await tokensTable()
-      .select('id, user_id, name, token_prefix, scopes, app_ids, function_names, last_used_at, last_used_ip, expires_at, created_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false }));
-  }
 
   if (error) {
     throw new Error(`Failed to list tokens: ${error.message}`);
@@ -351,9 +417,9 @@ export async function revokeByToken(token: string): Promise<boolean> {
 
   const tokenPrefix = token.substring(0, 8);
 
-  // Look up by prefix (indexed), then verify hash with appropriate method
+  // Look up by prefix (indexed), then verify canonical token material.
   const { data, error: lookupErr } = await tokensTable()
-    .select('id, token_hash, token_salt')
+    .select('id, token_hash, token_salt, plaintext_token')
     .eq('token_prefix', tokenPrefix)
     .single();
 
@@ -361,12 +427,8 @@ export async function revokeByToken(token: string): Promise<boolean> {
     return false;
   }
 
-  // Use salted hash if token has a salt, otherwise fall back to legacy unsalted SHA-256
-  const tokenHash = data.token_salt
-    ? await hashTokenWithSalt(token, data.token_salt)
-    : await hashToken(token);
-
-  if (!constantTimeEqual(data.token_hash, tokenHash)) {
+  const verification = await verifyApiTokenRecord(token, data);
+  if (!verification.valid) {
     return false;
   }
 
@@ -454,7 +516,7 @@ export async function validateToken(
 
   // Look up token by prefix first (indexed), then verify hash
   const { data, error } = await tokensTable()
-    .select('id, user_id, token_hash, token_salt, scopes, app_ids, function_names, expires_at')
+    .select('id, user_id, token_hash, token_salt, plaintext_token, scopes, app_ids, function_names, expires_at')
     .eq('token_prefix', tokenPrefix)
     .single();
 
@@ -462,17 +524,20 @@ export async function validateToken(
     console.log(`[TOKEN] Prefix lookup FAILED for "${tokenPrefix}" — error: ${error?.message || 'no rows'}, code: ${error?.code || 'n/a'}`);
     return null;
   }
-  console.log(`[TOKEN] Prefix lookup OK — token_id: ${data.id}, user_id: ${data.user_id}, has_salt: ${!!data.token_salt}`);
+  console.log(`[TOKEN] Prefix lookup OK — token_id: ${data.id}, user_id: ${data.user_id}, state: ${classifyApiTokenCompatibility(data)}`);
 
-  // Use salted hash if token has a salt, otherwise fall back to legacy unsalted SHA-256
-  const tokenHash = data.token_salt
-    ? await hashTokenWithSalt(token, data.token_salt)
-    : await hashToken(token);
-
-  // Verify hash matches (constant-time comparison)
-  if (!constantTimeEqual(data.token_hash, tokenHash)) {
-    console.log(`[TOKEN] Hash MISMATCH for token_id: ${data.id} (method: ${data.token_salt ? 'HMAC-SHA256' : 'SHA-256'})`);
+  const verification = await verifyApiTokenRecord(token, data);
+  if (!verification.valid) {
+    console.log(`[TOKEN] Validation failed for token_id: ${data.id} (reason: ${verification.reason || 'unknown'})`);
     return null;
+  }
+  if (verification.canonical_update) {
+    try {
+      await backfillCanonicalTokenHash(data.id, verification.canonical_update);
+      console.log(`[TOKEN] Canonical token hash backfilled for token_id: ${data.id}`);
+    } catch (err) {
+      console.warn('[TOKEN] Failed to backfill canonical token hash', err);
+    }
   }
   console.log(`[TOKEN] Hash verified OK for token_id: ${data.id}`);
 

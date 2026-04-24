@@ -4,7 +4,8 @@
 
 import type { GpuConfig } from './types.ts';
 import type { App } from '../../../shared/types/index.ts';
-import { getGPUProvider } from './index.ts';
+import { getGPUProvider } from './provider-singleton.ts';
+import { resolveRunPodTemplateResolution } from './runpod.ts';
 import { createAppsService } from '../apps.ts';
 import { createR2Service } from '../storage.ts';
 import { getEnv } from '../../lib/env.ts';
@@ -12,6 +13,76 @@ import { getEnv } from '../../lib/env.ts';
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+export interface GpuBuildPreflightResult {
+  ok: boolean;
+  status: 'ready' | 'build_config_invalid';
+  message: string;
+  template_mode?: 'per_app' | 'shared';
+}
+
+export class GpuBuildPreflightError extends Error {
+  readonly status = 503;
+  readonly gpuStatus = 'build_config_invalid';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'GpuBuildPreflightError';
+  }
+}
+
+export function resolveGpuBuildPreflight(
+  appId: string,
+  version: string,
+): GpuBuildPreflightResult {
+  if (!getEnv('RUNPOD_API_KEY')) {
+    return {
+      ok: false,
+      status: 'build_config_invalid',
+      message:
+        'GPU compute is not configured. RUNPOD_API_KEY environment variable is required.',
+    };
+  }
+
+  try {
+    const resolution = resolveRunPodTemplateResolution({
+      appId,
+      version,
+      baseImage: getEnv('RUNPOD_BASE_IMAGE') || undefined,
+      platformUrl: getEnv('PLATFORM_URL') || getEnv('APP_URL') || undefined,
+      gpuSecret: getEnv('GPU_INTERNAL_SECRET') || undefined,
+      sharedTemplateId: getEnv('RUNPOD_TEMPLATE_ID') || undefined,
+      allowSharedTemplateFallback:
+        getEnv('RUNPOD_ALLOW_SHARED_TEMPLATE_FALLBACK') === 'true',
+    });
+
+    return {
+      ok: true,
+      status: 'ready',
+      message: resolution.mode === 'shared'
+        ? resolution.warning
+        : 'GPU build configuration is ready.',
+      template_mode: resolution.mode,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 'build_config_invalid',
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export function assertGpuBuildPreflight(
+  appId: string,
+  version: string,
+): GpuBuildPreflightResult {
+  const preflight = resolveGpuBuildPreflight(appId, version);
+  if (!preflight.ok) {
+    throw new GpuBuildPreflightError(preflight.message);
+  }
+  return preflight;
+}
 
 /**
  * Trigger an async GPU container build.
@@ -34,6 +105,9 @@ export async function triggerGpuBuild(
     buildLogs.push(`[build] GPU type: ${config.gpu_type}`);
     buildLogs.push(`[build] Python: ${config.python || '3.11'}`);
     buildLogs.push(`[build] Files: ${files.length}`);
+
+    const preflight = assertGpuBuildPreflight(appId, version);
+    buildLogs.push(`[build] Preflight ready (${preflight.template_mode || 'unknown'})`);
 
     // Step 1: Create code bundle in R2 (downloaded by harness at container startup)
     const bundle = {
@@ -108,7 +182,9 @@ export async function triggerGpuBuild(
     // Transition to build_failed
     try {
       await appsService.update(appId, {
-        gpu_status: 'build_failed',
+        gpu_status: err instanceof GpuBuildPreflightError
+          ? 'build_config_invalid'
+          : 'build_failed',
       } as Partial<App>);
     } catch (updateErr) {
       console.error(`[GPU-BUILD] Failed to update status for ${appId}:`, updateErr);

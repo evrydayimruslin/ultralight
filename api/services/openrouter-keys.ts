@@ -49,12 +49,6 @@ interface EncryptedPlatformOpenRouterEntry {
   [key: string]: unknown;
 }
 
-interface LegacyPlatformOpenRouterEntry {
-  key: string;
-  provisioned_at?: string;
-  [key: string]: unknown;
-}
-
 // ── Create Key ──
 
 /**
@@ -100,10 +94,6 @@ export async function createOpenRouterKey(userId: string, userEmail: string): Pr
 
 function isEncryptedPlatformEntry(value: unknown): value is EncryptedPlatformOpenRouterEntry {
   return !!value && typeof value === 'object' && typeof (value as { encrypted_key?: unknown }).encrypted_key === 'string';
-}
-
-function isLegacyPlatformEntry(value: unknown): value is LegacyPlatformOpenRouterEntry {
-  return !!value && typeof value === 'object' && typeof (value as { key?: unknown }).key === 'string';
 }
 
 async function fetchUserByokKeys(userId: string): Promise<StoredByokKeys | null> {
@@ -178,16 +168,8 @@ export async function getStoredOpenRouterKey(userId: string): Promise<string | n
     }
   }
 
-  if (isLegacyPlatformEntry(entry)) {
-    const provisionedAt = entry.provisioned_at || new Date().toISOString();
-    try {
-      byokKeys[PLATFORM_OR_KEY] = await buildEncryptedPlatformEntry(entry.key, provisionedAt);
-      await patchUserByokKeys(userId, byokKeys);
-      console.log(`[OR-KEYS] Migrated legacy plaintext key for ${userId} to encrypted storage`);
-    } catch (err) {
-      console.error(`[OR-KEYS] Failed to backfill legacy plaintext key for ${userId}:`, err);
-    }
-    return entry.key;
+  if (entry && typeof entry === 'object' && typeof (entry as { key?: unknown }).key === 'string') {
+    throw new Error('Legacy plaintext OpenRouter key entry is unsupported at runtime; run the secret crypto audit/backfill.');
   }
 
   return null;

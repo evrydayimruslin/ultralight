@@ -5,7 +5,8 @@
 
 import type { GpuType, GpuExitCode, GpuExecutionResult } from './types.ts';
 import { computeGpuCostLight, isValidGpuType } from './types.ts';
-import { getGPUProvider } from './index.ts';
+import { getGPUProvider } from './provider-singleton.ts';
+import { buildGpuNotReadyMessage } from './status.ts';
 import type { App } from '../../../shared/types/index.ts';
 
 // ---------------------------------------------------------------------------
@@ -87,8 +88,7 @@ export async function executeGpuFunction(
     return makeError(
       'exception',
       'GpuStatusError',
-      `GPU function is not ready (status: ${app.gpu_status ?? 'null'}). ` +
-        'The function must complete building and benchmarking before it can be called.',
+      buildGpuNotReadyMessage(app.gpu_status),
       app,
     );
   }

@@ -1,7 +1,7 @@
 // Apps Handler
 // Handles app listing, discovery, and app-specific operations
 
-import { json, error, toResponseBody } from './app.ts';
+import { json, error, toResponseBody } from './response.ts';
 import { authenticate } from './auth.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
@@ -19,14 +19,16 @@ import {
   isEmbeddingAvailable,
   storeAppEmbedding
 } from '../services/embedding.ts';
-import type { App, GenerationResult, GenerationError, AppPricingConfig, EnvSchemaEntry } from '../../shared/types/index.ts';
+import type { App, GenerationResult, GenerationError, AppPricingConfig } from '../../shared/types/index.ts';
 import {
-  validateEnvVarKey,
-  validateEnvVarValue,
-  ENV_VAR_LIMITS,
   normalizeManifestParameters,
   resolveManifestEnvSchema,
-} from '../../shared/types/index.ts';
+} from '../../shared/contracts/manifest.ts';
+import {
+  ENV_VAR_LIMITS,
+  validateEnvVarKey,
+  validateEnvVarValue,
+} from '../../shared/contracts/env.ts';
 import {
   encryptEnvVar,
   decryptEnvVars,
@@ -45,15 +47,39 @@ import {
   getUserTier,
 } from '../services/tier-enforcement.ts';
 import { getEnv } from '../lib/env.ts';
+import { withSensitiveRouteRateLimit } from '../services/sensitive-route-rate-limit.ts';
+import { RequestValidationError } from '../services/request-validation.ts';
+import {
+  assertOwnedSupabaseConfig,
+  validateAppSupabaseConfigRequest,
+} from '../services/platform-request-validation.ts';
+import { classifyAppSupabaseConfigState } from '../services/app-runtime-resources.ts';
+import {
+  AppContractMigrationRequiredError,
+  logAppContractResolution,
+  requireManifestFunctionContracts,
+  resolveAppFunctionContracts,
+} from '../services/app-contracts.ts';
+import { resolveStoredManifestCoverage } from '../services/app-manifest-generation.ts';
+import { createServerLogger } from '../services/logging.ts';
+import {
+  buildPerUserSettingsStatus,
+  type UserAppSecretStatusRow as SharedUserAppSecretStatusRow,
+  validatePerUserSettingsValues,
+} from '../services/user-app-settings.ts';
+import { buildAppSecretDiagnostics } from '../services/app-diagnostics.ts';
+
+const appsLogger = createServerLogger('APPS');
+const docsLogger = createServerLogger('DOCS');
+const publishLogger = createServerLogger('PUBLISH');
+const rebuildLogger = createServerLogger('REBUILD');
+const callLogLogger = createServerLogger('CALL-LOG');
 
 type EmbeddingUser = Awaited<ReturnType<typeof authenticate>> & {
   openrouter_api_key?: string;
 };
 
-interface UserAppSecretRow {
-  key: string;
-  updated_at?: string | null;
-}
+type UserAppSecretRow = SharedUserAppSecretStatusRow;
 
 interface LibraryAppIdRow {
   app_id: string;
@@ -175,54 +201,6 @@ async function resolvePublicAppAccess(
   return { app: ownerApp, isOwner: true };
 }
 
-function buildPerUserSettingsStatus(
-  schema: Record<string, EnvSchemaEntry>,
-  secretRows: UserAppSecretRow[],
-): {
-  settings: Array<{
-    key: string;
-    label: string;
-    description: string | null;
-    help: string | null;
-    input: string;
-    placeholder: string | null;
-    required: boolean;
-    configured: boolean;
-    updated_at: string | null;
-  }>;
-  connectedKeys: string[];
-  missingRequired: string[];
-  fullyConnected: boolean;
-} {
-  const perUserEntries = getScopedEnvSchemaEntries(schema, 'per_user');
-  const connectedKeys = secretRows.map(row => row.key);
-  const connectedKeySet = new Set(connectedKeys);
-  const updatedAtByKey = new Map(secretRows.map(row => [row.key, row.updated_at || null]));
-
-  const settings = perUserEntries.map(({ key, entry }) => ({
-    key,
-    label: entry.label || key,
-    description: entry.description || null,
-    help: entry.help || null,
-    input: entry.input || 'text',
-    placeholder: entry.placeholder || null,
-    required: entry.required ?? false,
-    configured: connectedKeySet.has(key),
-    updated_at: updatedAtByKey.get(key) || null,
-  }));
-
-  const missingRequired = settings
-    .filter(setting => setting.required && !setting.configured)
-    .map(setting => setting.key);
-
-  return {
-    settings,
-    connectedKeys,
-    missingRequired,
-    fullyConnected: missingRequired.length === 0,
-  };
-}
-
 /**
  * Handle /api/apps routes
  */
@@ -231,23 +209,23 @@ export async function handleApps(request: Request): Promise<Response> {
   const path = url.pathname;
   const method = request.method;
 
-  console.log('[APPS] handleApps called:', method, path);
+  appsLogger.debug('Routing app handler request', { method, path });
 
   // GET /api/apps - List public apps
   if (path === '/api/apps' && method === 'GET') {
-    console.log('[APPS] Routing to handleListPublicApps');
+    appsLogger.debug('Routing to list public apps', { method, path });
     return handleListPublicApps(request);
   }
 
   // GET /api/apps/me - List user's own apps (authenticated)
   if (path === '/api/apps/me' && method === 'GET') {
-    console.log('[APPS] Routing to handleListMyApps');
+    appsLogger.debug('Routing to list owner apps', { method, path });
     return handleListMyApps(request);
   }
 
   // GET /api/apps/me/library?tab=saved|shared - Library tabs
   if (path === '/api/apps/me/library' && method === 'GET') {
-    console.log('[APPS] Routing to handleLibraryTab');
+    appsLogger.debug('Routing to library tab handler', { method, path });
     return handleLibraryTab(request);
   }
 
@@ -430,9 +408,7 @@ export async function handleApps(request: Request): Promise<Response> {
       return handleUpdateUserSettings(request, appId);
     }
 
-    // ============================================
-    // APP STORE LISTING — screenshots (Phase 2)
-    // ============================================
+    // App store listing screenshots
 
     // POST /api/apps/:appId/screenshots - Upload a new screenshot (owner)
     if (subPath === '/screenshots' && method === 'POST') {
@@ -469,8 +445,7 @@ async function handleListPublicApps(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const search = url.searchParams.get('q') || '';
 
-  // TODO: Query database for public apps with search
-  // For now, return empty array
+  // Legacy endpoint retained for compatibility. Public discovery is served by /api/discover.
   const apps: unknown[] = [];
 
   return json({ apps });
@@ -480,38 +455,34 @@ async function handleListPublicApps(request: Request): Promise<Response> {
  * List authenticated user's own apps
  */
 async function handleListMyApps(request: Request): Promise<Response> {
-  console.log('handleListMyApps: called');
+  appsLogger.debug('Listing owner apps');
 
   // Step 1: Authenticate
   let user;
   try {
-    console.log('handleListMyApps: starting auth check');
     user = await authenticate(request);
-    console.log('handleListMyApps: authenticated user:', user.id);
+    appsLogger.debug('Owner apps auth succeeded', { user_id: user.id });
   } catch (authErr) {
-    console.error('handleListMyApps: auth failed:', authErr);
+    appsLogger.warn('Owner apps auth failed', { error: authErr });
     return error('Authentication required', 401);
   }
 
   // Step 2: Create service
   let appsService;
   try {
-    console.log('handleListMyApps: creating apps service');
     appsService = createAppsService();
-    console.log('handleListMyApps: apps service created');
   } catch (serviceErr) {
-    console.error('handleListMyApps: failed to create service:', serviceErr);
+    appsLogger.error('Failed to initialize apps service', { error: serviceErr });
     return error('Service initialization failed', 500);
   }
 
   // Step 3: List apps
   try {
-    console.log('handleListMyApps: listing apps for user:', user.id);
     const apps = await appsService.listByOwner(user.id);
-    console.log('handleListMyApps: found', apps.length, 'apps');
+    appsLogger.info('Listed owner apps', { user_id: user.id, count: apps.length });
     return json(apps);
   } catch (listErr) {
-    console.error('handleListMyApps: failed to list apps:', listErr);
+    appsLogger.error('Failed to list owner apps', { user_id: user.id, error: listErr });
     return error('Failed to list apps', 500);
   }
 }
@@ -935,6 +906,16 @@ async function handleGetUserSettings(request: Request, appId: string): Promise<R
     );
     const secretRows = secretsRes.ok ? await secretsRes.json() as UserAppSecretRow[] : [];
     const perUserStatus = buildPerUserSettingsStatus(resolvedSchema, secretRows);
+    const requiredKeys = perUserStatus.settings
+      .filter((setting) => setting.required)
+      .map((setting) => setting.key);
+    const diagnostics = buildAppSecretDiagnostics({
+      appId: app.id,
+      declaredKeys: perUserStatus.settings.map((setting) => setting.key),
+      requiredKeys,
+      connectedKeys: perUserStatus.connectedKeys,
+      missingRequired: perUserStatus.missingRequired,
+    });
 
     return json({
       app_id: app.id,
@@ -947,6 +928,7 @@ async function handleGetUserSettings(request: Request, appId: string): Promise<R
       connected_keys: perUserStatus.connectedKeys,
       missing_required: perUserStatus.missingRequired,
       fully_connected: perUserStatus.fullyConnected,
+      diagnostics,
     });
   } catch (err) {
     console.error('[app-settings:get] failed:', err);
@@ -967,137 +949,139 @@ async function handleUpdateUserSettings(request: Request, appId: string): Promis
     return error('Authentication required', 401);
   }
 
-  const appsService = createAppsService();
-  const app = await appsService.findById(appId);
-  if (!app) {
-    return error('App not found', 404);
-  }
+  return withSensitiveRouteRateLimit(user.id, 'apps:user_settings_update', async () => {
+    const appsService = createAppsService();
+    const app = await appsService.findById(appId);
+    if (!app) {
+      return error('App not found', 404);
+    }
 
-  const supabaseUrl = getEnv('SUPABASE_URL');
-  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
-  const headers = {
-    'apikey': supabaseKey,
-    'Authorization': `Bearer ${supabaseKey}`,
-    'Content-Type': 'application/json',
-  };
+    const supabaseUrl = getEnv('SUPABASE_URL');
+    const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+    const headers = {
+      'apikey': supabaseKey,
+      'Authorization': `Bearer ${supabaseKey}`,
+      'Content-Type': 'application/json',
+    };
 
-  try {
-    const isOwner = app.owner_id === user.id;
-    if (!isOwner) {
-      const libRes = await fetch(
-        `${supabaseUrl}/rest/v1/user_app_library?user_id=eq.${user.id}&app_id=eq.${appId}&select=app_id&limit=1`,
+    try {
+      const isOwner = app.owner_id === user.id;
+      if (!isOwner) {
+        const libRes = await fetch(
+          `${supabaseUrl}/rest/v1/user_app_library?user_id=eq.${user.id}&app_id=eq.${appId}&select=app_id&limit=1`,
+          { headers }
+        );
+        const libRows = libRes.ok ? await libRes.json() as Array<{ app_id: string }> : [];
+        if (libRows.length === 0) {
+          return error('Install this app to configure your own settings', 403);
+        }
+      }
+
+      const resolvedSchema = resolveAppEnvSchema(app);
+      if (getScopedEnvSchemaEntries(resolvedSchema, 'per_user').length === 0) {
+        return error('This app has no per-user settings', 400);
+      }
+
+      const body = await request.json() as { values?: unknown };
+      const values = body.values;
+      if (!values || typeof values !== 'object' || Array.isArray(values)) {
+        return error('values object is required', 400);
+      }
+
+      const valuesRecord = values as Record<string, unknown>;
+      const entries = Object.entries(valuesRecord);
+      if (entries.length === 0) {
+        return error('Provide at least one setting to update', 400);
+      }
+
+      const validation = validatePerUserSettingsValues(
+        resolvedSchema,
+        valuesRecord,
+      );
+      const validationErrors = validation.errors;
+
+      if (validationErrors.length > 0) {
+        return json({ success: false, errors: validationErrors }, 400);
+      }
+
+      const updatedAt = new Date().toISOString();
+      const keysSaved: string[] = [];
+      const keysRemoved: string[] = [];
+
+      for (const [key, value] of validation.entries) {
+        if (value === null) {
+          const deleteRes = await fetch(
+            `${supabaseUrl}/rest/v1/user_app_secrets?user_id=eq.${user.id}&app_id=eq.${app.id}&key=eq.${encodeURIComponent(key)}`,
+            { method: 'DELETE', headers }
+          );
+          if (!deleteRes.ok) {
+            return error(`Failed to clear setting "${key}"`, 500);
+          }
+          keysRemoved.push(key);
+          continue;
+        }
+
+        const encryptedValue = await encryptEnvVar(value);
+        const upsertRes = await fetch(
+          `${supabaseUrl}/rest/v1/user_app_secrets`,
+          {
+            method: 'POST',
+            headers: {
+              ...headers,
+              'Prefer': 'resolution=merge-duplicates',
+            },
+            body: JSON.stringify({
+              user_id: user.id,
+              app_id: app.id,
+              key,
+              value_encrypted: encryptedValue,
+              updated_at: updatedAt,
+            }),
+          }
+        );
+
+        if (!upsertRes.ok) {
+          return error(`Failed to save setting "${key}"`, 500);
+        }
+
+        keysSaved.push(key);
+      }
+
+      const secretsRes = await fetch(
+        `${supabaseUrl}/rest/v1/user_app_secrets?user_id=eq.${user.id}&app_id=eq.${appId}&select=key,updated_at`,
         { headers }
       );
-      const libRows = libRes.ok ? await libRes.json() as Array<{ app_id: string }> : [];
-      if (libRows.length === 0) {
-        return error('Install this app to configure your own settings', 403);
-      }
+      const secretRows = secretsRes.ok ? await secretsRes.json() as UserAppSecretRow[] : [];
+      const perUserStatus = buildPerUserSettingsStatus(resolvedSchema, secretRows);
+      const requiredKeys = perUserStatus.settings
+        .filter((setting) => setting.required)
+        .map((setting) => setting.key);
+      const diagnostics = buildAppSecretDiagnostics({
+        appId: app.id,
+        declaredKeys: perUserStatus.settings.map((setting) => setting.key),
+        requiredKeys,
+        connectedKeys: perUserStatus.connectedKeys,
+        missingRequired: perUserStatus.missingRequired,
+      });
+
+      return json({
+        success: true,
+        keys_saved: keysSaved,
+        keys_removed: keysRemoved,
+        connected_keys: perUserStatus.connectedKeys,
+        missing_required: perUserStatus.missingRequired,
+        fully_connected: perUserStatus.fullyConnected,
+        diagnostics,
+      });
+    } catch (err) {
+      console.error('[app-settings:update] failed:', err);
+      return error('Failed to update app settings', 500);
     }
-
-    const resolvedSchema = resolveAppEnvSchema(app);
-    const perUserSettings = getScopedEnvSchemaEntries(resolvedSchema, 'per_user');
-    const allowedKeys = new Set(perUserSettings.map(({ key }) => key));
-
-    if (allowedKeys.size === 0) {
-      return error('This app has no per-user settings', 400);
-    }
-
-    const body = await request.json() as { values?: unknown };
-    const values = body.values;
-    if (!values || typeof values !== 'object' || Array.isArray(values)) {
-      return error('values object is required', 400);
-    }
-
-    const entries = Object.entries(values as Record<string, string | null>);
-    if (entries.length === 0) {
-      return error('Provide at least one setting to update', 400);
-    }
-
-    const validationErrors: string[] = [];
-    for (const [key, value] of entries) {
-      if (!allowedKeys.has(key)) {
-        validationErrors.push(`${key}: not a declared User Setting for this app`);
-        continue;
-      }
-
-      if (value !== null) {
-        const valueValidation = validateEnvVarValue(value);
-        if (!valueValidation.valid) {
-          validationErrors.push(`${key}: ${valueValidation.error}`);
-        }
-      }
-    }
-
-    if (validationErrors.length > 0) {
-      return json({ success: false, errors: validationErrors }, 400);
-    }
-
-    const updatedAt = new Date().toISOString();
-    const keysSaved: string[] = [];
-    const keysRemoved: string[] = [];
-
-    for (const [key, value] of entries) {
-      if (value === null) {
-        const deleteRes = await fetch(
-          `${supabaseUrl}/rest/v1/user_app_secrets?user_id=eq.${user.id}&app_id=eq.${app.id}&key=eq.${encodeURIComponent(key)}`,
-          { method: 'DELETE', headers }
-        );
-        if (!deleteRes.ok) {
-          return error(`Failed to clear setting "${key}"`, 500);
-        }
-        keysRemoved.push(key);
-        continue;
-      }
-
-      const encryptedValue = await encryptEnvVar(value);
-      const upsertRes = await fetch(
-        `${supabaseUrl}/rest/v1/user_app_secrets`,
-        {
-          method: 'POST',
-          headers: {
-            ...headers,
-            'Prefer': 'resolution=merge-duplicates',
-          },
-          body: JSON.stringify({
-            user_id: user.id,
-            app_id: app.id,
-            key,
-            value_encrypted: encryptedValue,
-            updated_at: updatedAt,
-          }),
-        }
-      );
-
-      if (!upsertRes.ok) {
-        return error(`Failed to save setting "${key}"`, 500);
-      }
-
-      keysSaved.push(key);
-    }
-
-    const secretsRes = await fetch(
-      `${supabaseUrl}/rest/v1/user_app_secrets?user_id=eq.${user.id}&app_id=eq.${appId}&select=key,updated_at`,
-      { headers }
-    );
-    const secretRows = secretsRes.ok ? await secretsRes.json() as UserAppSecretRow[] : [];
-    const perUserStatus = buildPerUserSettingsStatus(resolvedSchema, secretRows);
-
-    return json({
-      success: true,
-      keys_saved: keysSaved,
-      keys_removed: keysRemoved,
-      connected_keys: perUserStatus.connectedKeys,
-      missing_required: perUserStatus.missingRequired,
-      fully_connected: perUserStatus.fullyConnected,
-    });
-  } catch (err) {
-    console.error('[app-settings:update] failed:', err);
-    return error('Failed to update app settings', 500);
-  }
+  });
 }
 
 // ============================================
-// APP STORE LISTING — screenshot handlers (Phase 2)
+// App Store Listing Screenshot Handlers
 // ============================================
 
 /** Max screenshots per app. Client UI enforces this too. */
@@ -1319,19 +1303,16 @@ async function handleGetScreenshot(request: Request, appId: string, index: numbe
  * Extract function count from an app record.
  */
 function getFnCount(app: { manifest: unknown; skills_parsed: unknown; exports: string[] | null }): number {
-  const manifest = app.manifest as Record<string, unknown> | null;
-  if (manifest && typeof manifest === 'object') {
-    const fns = manifest.functions as Record<string, unknown> | undefined;
-    if (fns && typeof fns === 'object') return Object.keys(fns).length;
-  }
-  const parsed = app.skills_parsed as Record<string, unknown> | null;
-  if (parsed && typeof parsed === 'object') {
-    const fns = parsed.functions as unknown[];
-    if (Array.isArray(fns)) return fns.length;
-  }
-  const exports = app.exports as string[] | null;
-  if (Array.isArray(exports)) return exports.length;
-  return 0;
+  return resolveAppFunctionContracts({
+    slug: 'library-app',
+    manifest: app.manifest,
+    skills_parsed: app.skills_parsed,
+    exports: app.exports,
+  }, {
+    allowLegacySkills: true,
+    allowLegacyExports: true,
+    allowGpuExports: true,
+  }).functions.length;
 }
 
 /**
@@ -1348,59 +1329,40 @@ async function handleGetAppInstructions(request: Request, appId: string): Promis
     const name = app.name || app.slug || 'Untitled';
     const desc = app.description || '';
 
-    // Build function list from best source: manifest > skills_parsed (non-empty) > exports
+    // Build the function list from canonical manifest contracts.
     const fnLines: string[] = [];
-    let rawManifest = app.manifest;
-    // Handle manifest stored as JSON string
-    if (typeof rawManifest === 'string') {
-      try { rawManifest = JSON.parse(rawManifest); } catch { rawManifest = null; }
-    }
-    const manifest = rawManifest as Record<string, unknown> | null;
-    const skillsParsed = app.skills_parsed as Record<string, unknown> | null;
+    const contractResolution = resolveAppFunctionContracts({
+      slug: app.slug,
+      runtime: app.runtime,
+      manifest: app.manifest,
+      skills_parsed: app.skills_parsed,
+      exports: app.exports,
+    }, {
+      allowLegacySkills: true,
+      allowLegacyExports: true,
+      allowGpuExports: true,
+    });
 
-    if (manifest && typeof manifest === 'object' && manifest.functions) {
-      const fns = manifest.functions as Record<string, Record<string, unknown>>;
-      for (const [fnName, fnMeta] of Object.entries(fns)) {
-        try {
-          // Normalize parameters to object-keyed format (handles legacy array format)
-          let paramStr = '';
-          const normalizedParams = normalizeManifestParameters(fnMeta.parameters);
-          if (normalizedParams) {
-            paramStr = Object.entries(normalizedParams)
-              .map(([pName, pMeta]) =>
-                `${pName}${pMeta.required === false ? '?' : ''}: ${pMeta.type || 'any'}`
-              ).join(', ');
-          }
-          const fnDesc = fnMeta.description ? ` — ${fnMeta.description}` : '';
-          fnLines.push(`- ${fnName}({ ${paramStr} })${fnDesc}`);
-        } catch (fnErr) {
-          // Skip malformed function, log for debugging
-          console.warn(`[INSTRUCTIONS] Error parsing function ${fnName}:`, fnErr);
-          fnLines.push(`- ${fnName}()`);
+    for (const fn of contractResolution.functions) {
+      try {
+        let paramStr = '';
+        const normalizedParams = normalizeManifestParameters(fn.parameters);
+        if (normalizedParams) {
+          paramStr = Object.entries(normalizedParams)
+            .map(([pName, pMeta]) =>
+              `${pName}${pMeta.required === false ? '?' : ''}: ${pMeta.type || 'any'}`
+            ).join(', ');
         }
-      }
-    } else if (
-      skillsParsed && typeof skillsParsed === 'object' &&
-      Array.isArray(skillsParsed.functions) && (skillsParsed.functions as unknown[]).length > 0
-    ) {
-      for (const fn of skillsParsed.functions as Array<{ name: string; description?: string; parameters?: Array<{ name: string }> }>) {
-        const paramStr = fn.parameters ? fn.parameters.map(p => p.name).join(', ') : '';
         const fnDesc = fn.description ? ` — ${fn.description}` : '';
         fnLines.push(`- ${fn.name}(${paramStr ? `{ ${paramStr} }` : ''})${fnDesc}`);
-      }
-    }
-
-    // Always fall through to exports if no functions found yet
-    if (fnLines.length === 0 && Array.isArray(app.exports)) {
-      for (const exp of app.exports) {
-        fnLines.push(`- ${exp}()`);
+      } catch (fnErr) {
+        console.warn(`[INSTRUCTIONS] Error parsing function ${fn.name}:`, fnErr);
+        fnLines.push(`- ${fn.name}()`);
       }
     }
 
     const firstFn = fnLines.length > 0
-      ? (manifest && typeof manifest === 'object' && manifest.functions
-          ? Object.keys(manifest.functions as Record<string, unknown>)[0]
-          : Array.isArray(app.exports) && app.exports.length > 0 ? app.exports[0] : 'main')
+      ? contractResolution.functions[0]?.name || 'main'
       : 'main';
 
     // Derive base URL from request
@@ -1417,6 +1379,10 @@ async function handleGetAppInstructions(request: Request, appId: string): Promis
     // Functions
     if (fnLines.length > 0) {
       sections.push(`## Available Functions\n${fnLines.join('\n')}`);
+    }
+
+    if (!contractResolution.manifestBacked && contractResolution.message) {
+      sections.push(`## Contract Status\n${contractResolution.message}`);
     }
 
     // Connection: Platform gateway (for agents already connected to Ultralight)
@@ -1479,7 +1445,7 @@ async function handleGetApp(request: Request, appId: string): Promise<Response> 
 
     return json(ownerApp);
   } catch (err) {
-    console.error('Failed to get app:', err);
+    appsLogger.error('Failed to get app', { app_id: appId, error: err });
     return error('Failed to get app', 500);
   }
 }
@@ -1489,19 +1455,23 @@ async function handleGetApp(request: Request, appId: string): Promise<Response> 
  */
 async function handleGetAppCode(request: Request, appId: string): Promise<Response> {
   try {
-    console.log('handleGetAppCode: fetching app', appId);
+    appsLogger.debug('Fetching app code', { app_id: appId });
     const r2Service = createR2Service();
     const { app } = await resolvePublicAppAccess(request, appId, { allowPrivateOwner: true });
-    console.log('handleGetAppCode: app found:', !!app, app?.visibility);
+    appsLogger.debug('Resolved app access for code fetch', {
+      app_id: appId,
+      found: !!app,
+      visibility: app?.visibility,
+    });
 
     if (!app) {
-      console.log('handleGetAppCode: app not found in database');
+      appsLogger.debug('App code fetch found no app record', { app_id: appId });
       return error('App not found', 404);
     }
 
     // Fetch code from R2 - try different entry file extensions
     const storageKey = app.storage_key;
-    console.log('handleGetAppCode: fetching code from R2, storageKey:', storageKey);
+    appsLogger.debug('Fetching app code from storage', { app_id: appId, storage_key: storageKey });
     let code: string | null = null;
 
     // Try entry files in order of preference: tsx, ts, jsx, js
@@ -1509,15 +1479,22 @@ async function handleGetAppCode(request: Request, appId: string): Promise<Respon
     for (const entryFile of entryFiles) {
       try {
         code = await r2Service.fetchTextFile(`${storageKey}${entryFile}`);
-        console.log(`handleGetAppCode: loaded ${entryFile}, length:`, code?.length);
+        appsLogger.debug('Loaded app entry file from storage', {
+          app_id: appId,
+          entry_file: entryFile,
+          code_length: code?.length ?? 0,
+        });
         break;
       } catch {
-        console.log(`handleGetAppCode: ${entryFile} not found, trying next...`);
+        appsLogger.debug('App entry file missing; trying next candidate', {
+          app_id: appId,
+          entry_file: entryFile,
+        });
       }
     }
 
     if (!code) {
-      console.log('handleGetAppCode: no entry file found');
+      appsLogger.warn('No entry file found for app code fetch', { app_id: appId, storage_key: storageKey });
       return error('App code not found', 404);
     }
 
@@ -1569,125 +1546,127 @@ async function handleGetAppCode(request: Request, appId: string): Promise<Respon
 async function handleUpdateApp(request: Request, appId: string): Promise<Response> {
   try {
     const user: EmbeddingUser = await authenticate(request);
-    const appsService = createAppsService();
+    return withSensitiveRouteRateLimit(user.id, 'apps:update_app', async () => {
+      const appsService = createAppsService();
 
-    const app = await appsService.findById(appId);
+      const app = await appsService.findById(appId);
 
-    if (!app) {
-      return error('App not found', 404);
-    }
-
-    // Only owner can update
-    if (app.owner_id !== user.id) {
-      return error('Unauthorized', 403);
-    }
-
-    const updates = await readJsonObject(request);
-
-    // Whitelist allowed updates
-    const allowedFields = ['name', 'description', 'visibility', 'icon_url', 'tags', 'category', 'download_access', 'pricing_config', 'long_description'];
-    const filteredUpdates: Record<string, unknown> = {};
-
-    for (const field of allowedFields) {
-      if (field in updates) {
-        filteredUpdates[field] = updates[field];
+      if (!app) {
+        return error('App not found', 404);
       }
-    }
 
-    // Validate long_description (Phase 2): markdown, must be string or null, max 50KB
-    if ('long_description' in filteredUpdates) {
-      const ld = filteredUpdates.long_description;
-      if (ld !== null && typeof ld !== 'string') {
-        return error('long_description must be a string or null', 400);
+      // Only owner can update
+      if (app.owner_id !== user.id) {
+        return error('Unauthorized', 403);
       }
-      if (typeof ld === 'string' && ld.length > 50000) {
-        return error('long_description exceeds 50KB limit', 400);
-      }
-    }
 
-    if (Object.keys(filteredUpdates).length === 0) {
-      return error('No valid fields to update', 400);
-    }
+      const updates = await readJsonObject(request);
 
-    // Gate visibility changes by tier and deposit
-    if ('visibility' in filteredUpdates) {
-      const userTier = await getUserTier(user.id);
-      const visibilityErr = checkVisibilityAllowed(
-        userTier,
-        filteredUpdates.visibility as 'private' | 'unlisted' | 'public'
-      );
-      if (visibilityErr) {
-        return error(visibilityErr, 403);
-      }
-      // Require minimum deposit to publish
-      if (filteredUpdates.visibility !== 'private') {
-        const depositErr = await checkPublishDeposit(user.id);
-        if (depositErr) {
-          return error(depositErr, 402); // 402 Payment Required
+      // Whitelist allowed updates
+      const allowedFields = ['name', 'description', 'visibility', 'icon_url', 'tags', 'category', 'download_access', 'pricing_config', 'long_description'];
+      const filteredUpdates: Record<string, unknown> = {};
+
+      for (const field of allowedFields) {
+        if (field in updates) {
+          filteredUpdates[field] = updates[field];
         }
       }
 
-      // Set per-app billing clock when transitioning from private to published
-      if (filteredUpdates.visibility !== 'private' && app.visibility === 'private') {
-        filteredUpdates.hosting_last_billed_at = new Date().toISOString();
-      }
-    }
-
-    // Validate pricing_config structure if provided
-    if ('pricing_config' in filteredUpdates) {
-      const pc = filteredUpdates.pricing_config;
-      if (pc !== null) {
-        const cfg = pc as Record<string, unknown>;
-        if (typeof cfg !== 'object' || Array.isArray(cfg)) {
-          return error('pricing_config must be an object or null', 400);
+      // long_description is markdown, nullable, and capped at 50KB
+      if ('long_description' in filteredUpdates) {
+        const ld = filteredUpdates.long_description;
+        if (ld !== null && typeof ld !== 'string') {
+          return error('long_description must be a string or null', 400);
         }
-        if (cfg.default_price_light !== undefined) {
-          if (typeof cfg.default_price_light !== 'number' || cfg.default_price_light < 0 || cfg.default_price_light > 10000) {
-            return error('default_price_light must be 0-10000 (max ✦10000 per call)', 400);
+        if (typeof ld === 'string' && ld.length > 50000) {
+          return error('long_description exceeds 50KB limit', 400);
+        }
+      }
+
+      if (Object.keys(filteredUpdates).length === 0) {
+        return error('No valid fields to update', 400);
+      }
+
+      // Gate visibility changes by tier and deposit
+      if ('visibility' in filteredUpdates) {
+        const userTier = await getUserTier(user.id);
+        const visibilityErr = checkVisibilityAllowed(
+          userTier,
+          filteredUpdates.visibility as 'private' | 'unlisted' | 'public'
+        );
+        if (visibilityErr) {
+          return error(visibilityErr, 403);
+        }
+        // Require minimum deposit to publish
+        if (filteredUpdates.visibility !== 'private') {
+          const depositErr = await checkPublishDeposit(user.id);
+          if (depositErr) {
+            return error(depositErr, 402); // 402 Payment Required
           }
         }
-        if (cfg.default_free_calls !== undefined) {
-          if (typeof cfg.default_free_calls !== 'number' || cfg.default_free_calls < 0 || !Number.isInteger(cfg.default_free_calls) || cfg.default_free_calls > 1000000) {
-            return error('default_free_calls must be a non-negative integer up to 1,000,000', 400);
-          }
+
+        // Set per-app billing clock when transitioning from private to published
+        if (filteredUpdates.visibility !== 'private' && app.visibility === 'private') {
+          filteredUpdates.hosting_last_billed_at = new Date().toISOString();
         }
-        if (cfg.free_calls_scope !== undefined) {
-          if (cfg.free_calls_scope !== 'app' && cfg.free_calls_scope !== 'function') {
-            return error('free_calls_scope must be "app" or "function"', 400);
+      }
+
+      // Validate pricing_config structure if provided
+      if ('pricing_config' in filteredUpdates) {
+        const pc = filteredUpdates.pricing_config;
+        if (pc !== null) {
+          const cfg = pc as Record<string, unknown>;
+          if (typeof cfg !== 'object' || Array.isArray(cfg)) {
+            return error('pricing_config must be an object or null', 400);
           }
-        }
-        if (cfg.functions !== undefined) {
-          if (typeof cfg.functions !== 'object' || cfg.functions === null || Array.isArray(cfg.functions)) {
-            return error('pricing_config.functions must be an object mapping function names to prices', 400);
+          if (cfg.default_price_light !== undefined) {
+            if (typeof cfg.default_price_light !== 'number' || cfg.default_price_light < 0 || cfg.default_price_light > 10000) {
+              return error('default_price_light must be 0-10000 (max ✦10000 per call)', 400);
+            }
           }
-          for (const [fn, val] of Object.entries(cfg.functions as Record<string, unknown>)) {
-            if (typeof val === 'number') {
-              // Legacy format: plain number (Light)
-              if (val < 0 || val > 10000) {
-                return error(`Price for "${fn}" must be 0-10000 Light`, 400);
-              }
-            } else if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
-              // New format: FunctionPricing object
-              const fp = val as Record<string, unknown>;
-              if (typeof fp.price_light !== 'number' || fp.price_light < 0 || fp.price_light > 10000) {
-                return error(`price_light for "${fn}" must be 0-10000 Light`, 400);
-              }
-              if (fp.free_calls !== undefined) {
-                if (typeof fp.free_calls !== 'number' || fp.free_calls < 0 || !Number.isInteger(fp.free_calls) || fp.free_calls > 1000000) {
-                  return error(`free_calls for "${fn}" must be a non-negative integer up to 1,000,000`, 400);
+          if (cfg.default_free_calls !== undefined) {
+            if (typeof cfg.default_free_calls !== 'number' || cfg.default_free_calls < 0 || !Number.isInteger(cfg.default_free_calls) || cfg.default_free_calls > 1000000) {
+              return error('default_free_calls must be a non-negative integer up to 1,000,000', 400);
+            }
+          }
+          if (cfg.free_calls_scope !== undefined) {
+            if (cfg.free_calls_scope !== 'app' && cfg.free_calls_scope !== 'function') {
+              return error('free_calls_scope must be "app" or "function"', 400);
+            }
+          }
+          if (cfg.functions !== undefined) {
+            if (typeof cfg.functions !== 'object' || cfg.functions === null || Array.isArray(cfg.functions)) {
+              return error('pricing_config.functions must be an object mapping function names to prices', 400);
+            }
+            for (const [fn, val] of Object.entries(cfg.functions as Record<string, unknown>)) {
+              if (typeof val === 'number') {
+                // Legacy format: plain number (Light)
+                if (val < 0 || val > 10000) {
+                  return error(`Price for "${fn}" must be 0-10000 Light`, 400);
                 }
+              } else if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+                // New format: FunctionPricing object
+                const fp = val as Record<string, unknown>;
+                if (typeof fp.price_light !== 'number' || fp.price_light < 0 || fp.price_light > 10000) {
+                  return error(`price_light for "${fn}" must be 0-10000 Light`, 400);
+                }
+                if (fp.free_calls !== undefined) {
+                  if (typeof fp.free_calls !== 'number' || fp.free_calls < 0 || !Number.isInteger(fp.free_calls) || fp.free_calls > 1000000) {
+                    return error(`free_calls for "${fn}" must be a non-negative integer up to 1,000,000`, 400);
+                  }
+                }
+              } else {
+                return error(`Price for "${fn}" must be a number or { price_light, free_calls? }`, 400);
               }
-            } else {
-              return error(`Price for "${fn}" must be a number or { price_light, free_calls? }`, 400);
             }
           }
         }
       }
-    }
 
-    const updatedApp = await appsService.update(appId, filteredUpdates);
+      const updatedApp = await appsService.update(appId, filteredUpdates);
 
-    return json(updatedApp);
+      return json(updatedApp);
+    });
   } catch (err) {
     if (err instanceof Error && err.message.includes('Authentication')) {
       return error('Authentication required', 401);
@@ -1778,7 +1757,7 @@ async function handleDeleteVersion(request: Request, appId: string, version: str
       console.log(`[DELETE_VERSION] Cleaned up ${versionFiles.length} files for ${appId}/${version}`);
     } catch (cleanupErr) {
       console.error(`[DELETE_VERSION] R2 cleanup failed for ${appId}/${version}:`, cleanupErr);
-      // Non-fatal: quota already reclaimed, R2 files can be cleaned up later
+      // Non-fatal. Quota is already reclaimed even if R2 cleanup fails.
     }
 
     return json({
@@ -2153,7 +2132,10 @@ async function handleGenerateDocs(request: Request, appId: string): Promise<Resp
         try {
           code = await r2Service.fetchTextFile(`${storageKey}_source_${entryFile}`);
           filename = entryFile;
-          console.log('[GENERATE] Found original source file:', `_source_${entryFile}`);
+          docsLogger.debug('Found original source file for docs generation', {
+            app_id: appId,
+            filename: `_source_${entryFile}`,
+          });
           break;
         } catch {
           // Try next
@@ -2166,7 +2148,10 @@ async function handleGenerateDocs(request: Request, appId: string): Promise<Resp
           try {
             code = await r2Service.fetchTextFile(`${storageKey}${entryFile}`);
             filename = entryFile;
-            console.log('[GENERATE] Using bundled entry file:', entryFile);
+            docsLogger.debug('Using bundled entry file for docs generation', {
+              app_id: appId,
+              filename: entryFile,
+            });
             break;
           } catch {
             // Try next
@@ -2194,8 +2179,8 @@ async function handleGenerateDocs(request: Request, appId: string): Promise<Resp
         return json(result, 400);
       }
 
-      // Phase 1: Parse TypeScript code
-      console.log('[GENERATE] Parsing code...');
+      // Parse TypeScript source
+      docsLogger.debug('Parsing app source for documentation', { app_id: appId, filename });
       const parseResult = await parseTypeScript(code, filename);
 
       // Collect parse errors and warnings
@@ -2212,8 +2197,8 @@ async function handleGenerateDocs(request: Request, appId: string): Promise<Resp
         warnings.push('No exported functions found. Make sure to export your functions with `export` keyword.');
       }
 
-      // Phase 2: Generate Skills.md
-      console.log('[GENERATE] Generating Skills.md...');
+      // Generate Skills.md
+      docsLogger.debug('Generating Skills.md', { app_id: appId });
       let skills_md: string;
       try {
         skills_md = generateSkillsMd(app.name || app.slug, parseResult, {
@@ -2240,30 +2225,28 @@ async function handleGenerateDocs(request: Request, appId: string): Promise<Resp
         return json(result, 500);
       }
 
-      // Phase 3: Convert to ParsedSkills for storage
+      // Convert parser output into storage-ready shapes
       const skills_parsed = toSkillsParsed(parseResult);
 
-      // Phase 4: Generate embedding text
-      console.log('[GENERATE] Generating embedding text...');
+      // Build the embedding source text
+      docsLogger.debug('Generating embedding text', { app_id: appId });
       const embedding_text = generateEmbeddingText(
         app.name || app.slug,
         app.description,
         skills_parsed
       );
 
-      // Phase 5: AI Enhancement (if requested and user has BYOK)
+      // Record AI-enhancement requests without mutating the generated docs path
       if (options.ai_enhance) {
-        // Check if user has BYOK enabled
         if (!user.openrouter_api_key) {
           warnings.push('AI enhancement requested but BYOK not enabled. Enable BYOK for AI-enhanced descriptions.');
         } else {
-          // TODO: Implement AI enhancement using OpenRouter
-          warnings.push('AI enhancement is not yet implemented.');
+          warnings.push('AI enhancement was requested, but this run used the standard docs generator. Review the generated copy and refine it manually if you want a more polished description.');
         }
       }
 
-      // Phase 6: Generate and store embedding
-      console.log('[GENERATE] Generating embedding...');
+      // Generate and store the embedding
+      docsLogger.debug('Generating app embedding', { app_id: appId });
       let embeddingGenerated = false;
       const embeddingService = createEmbeddingService(user.openrouter_api_key);
 
@@ -2272,17 +2255,20 @@ async function handleGenerateDocs(request: Request, appId: string): Promise<Resp
           const embeddingResult = await embeddingService.embed(embedding_text);
           await storeAppEmbedding(appId, embeddingResult.embedding);
           embeddingGenerated = true;
-          console.log('[GENERATE] Embedding stored successfully');
+          docsLogger.info('Stored generated app embedding', { app_id: appId });
         } catch (embErr) {
-          console.error('[GENERATE] Failed to generate/store embedding:', embErr);
+          docsLogger.error('Failed to generate or store app embedding', {
+            app_id: appId,
+            error: embErr,
+          });
           warnings.push(`Failed to generate embedding: ${embErr instanceof Error ? embErr.message : String(embErr)}. App will not appear in semantic search.`);
         }
       } else if (!embeddingService) {
         warnings.push('Embedding service not available. Enable BYOK or contact admin to enable semantic search.');
       }
 
-      // Phase 7: Generate manifest and save to database
-      console.log('[GENERATE] Generating manifest and saving to database...');
+      // Generate the manifest and persist the generated docs
+      docsLogger.info('Saving generated docs and manifest', { app_id: appId });
       const manifest = generateManifestFromParseResult(app, parseResult, app.current_version || '1.0.0');
       await appsService.update(appId, {
         skills_md,
@@ -2309,14 +2295,16 @@ async function handleGenerateDocs(request: Request, appId: string): Promise<Resp
 
     } finally {
       // Always release the lock
-      await appsService.update(appId, { generation_in_progress: false }).catch(console.error);
+      await appsService.update(appId, { generation_in_progress: false }).catch((lockErr) => {
+        docsLogger.error('Failed to clear docs generation lock', { app_id: appId, error: lockErr });
+      });
     }
 
   } catch (err) {
     if (err instanceof Error && err.message.includes('Authentication')) {
       return error('Authentication required', 401);
     }
-    console.error('Failed to generate docs:', err);
+    docsLogger.error('Failed to generate docs', { app_id: appId, error: err });
     return error('Failed to generate documentation', 500);
   }
 }
@@ -2524,27 +2512,34 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
       for (const name of ['_source_index.ts', '_source_index.tsx', 'index.ts', 'index.tsx', 'index.js']) {
         try { draftSource = await r2Service.fetchTextFile(`${draftKey}${name}`); break; } catch {}
       }
-      if (draftSource) {
-        const { runOriginalityCheck, computeFingerprint, storeIntegrityResults } = await import('../services/originality.ts');
-        const mdContent = await r2Service.fetchTextFile(`${draftKey}README.md`).catch(() => '');
-        const originalityResult = await runOriginalityCheck(
-          user.id, appId,
-          [{ name: 'index.ts', content: draftSource }, ...(mdContent ? [{ name: 'README.md', content: mdContent }] : [])],
+      if (!draftSource) {
+        return error(
+          'Publish blocked: originality check requires the draft source entry file, but it could not be loaded.',
+          500,
         );
-        if (!originalityResult.passed) {
-          return error(
-            `Publish blocked: ${originalityResult.reason} ` +
-            `(originality score: ${(originalityResult.score * 100).toFixed(1)}%)`,
-            422
-          );
-        }
-        // Store fingerprint + originality score (fire-and-forget)
-        storeIntegrityResults(appId, {
-          source_fingerprint: originalityResult.fingerprint,
-          originality_score: originalityResult.score,
-          integrity_checked_at: new Date().toISOString(),
-        }).catch(err => console.error('[INTEGRITY] Publish gate storage failed:', err));
       }
+
+      const { runOriginalityCheck, computeFingerprint, storeIntegrityResults } = await import('../services/originality.ts');
+      const mdContent = await r2Service.fetchTextFile(`${draftKey}README.md`).catch(() => '');
+      const originalityResult = await runOriginalityCheck(
+        user.id, appId,
+        [{ name: 'index.ts', content: draftSource }, ...(mdContent ? [{ name: 'README.md', content: mdContent }] : [])],
+        undefined,
+        { mode: 'fail_closed' },
+      );
+      if (!originalityResult.passed) {
+        return error(
+          `Publish blocked: ${originalityResult.reason} ` +
+          `(originality score: ${(originalityResult.score * 100).toFixed(1)}%)`,
+          422
+        );
+      }
+      // Store fingerprint + originality score (fire-and-forget)
+      storeIntegrityResults(appId, {
+        source_fingerprint: originalityResult.fingerprint,
+        originality_score: originalityResult.score,
+        integrity_checked_at: new Date().toISOString(),
+      }).catch(err => console.error('[INTEGRITY] Publish gate storage failed:', err));
     }
 
     // Parse request options
@@ -2556,7 +2551,7 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
       // Use defaults
     }
 
-    console.log('[PUBLISH] Starting publish for app:', appId);
+    publishLogger.info('Starting draft publish', { app_id: appId });
 
     // Generate new version number
     const currentVersion = app.current_version || '1.0.0';
@@ -2564,7 +2559,11 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
     const newStorageKey = `apps/${appId}/${newVersion}/`;
 
     // Copy draft files to new version location, tracking total size
-    console.log('[PUBLISH] Copying draft files to new version...');
+    publishLogger.debug('Copying draft files to new version', {
+      app_id: appId,
+      draft_storage_key: app.draft_storage_key,
+      new_storage_key: newStorageKey,
+    });
     const draftStorageKey = app.draft_storage_key;
     const draftFiles = await r2Service.listFiles(draftStorageKey);
     let publishedSizeBytes = 0;
@@ -2582,19 +2581,74 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
       }
     }
 
-    // Read manifest.json from the published files (if exists) to update manifest field
-    let publishedManifest: string | null = null;
+    const manifestCoverage = await resolveStoredManifestCoverage({
+      app: {
+        name: app.name || app.slug,
+        slug: app.slug,
+        description: app.description,
+      },
+      fetchTextFile: (path) => r2Service.fetchTextFile(path),
+      storageKey: newStorageKey,
+      version: newVersion,
+      existingManifest: app.manifest,
+    });
+
+    let publishedManifest: string | null = manifestCoverage.manifestJson;
+    if (publishedManifest && manifestCoverage.source !== 'stored') {
+      await r2Service.uploadFile(`${newStorageKey}manifest.json`, {
+        name: 'manifest.json',
+        content: new TextEncoder().encode(publishedManifest),
+        contentType: 'application/json',
+      });
+      publishedSizeBytes += new TextEncoder().encode(publishedManifest).byteLength;
+      publishLogger.info('Wrote manifest.json for published draft', {
+        app_id: appId,
+        source: manifestCoverage.source,
+      });
+    } else if (publishedManifest) {
+      publishLogger.debug('Found existing manifest.json in published files', { app_id: appId });
+    }
+
+    const publishedContractResolution = resolveAppFunctionContracts({
+      slug: app.slug,
+      runtime: app.runtime,
+      manifest: publishedManifest,
+      skills_parsed: null,
+      exports: app.draft_exports,
+    });
+    logAppContractResolution({
+      appId,
+      ownerId: user.id,
+      appSlug: app.slug,
+      runtime: app.runtime,
+      surface: 'app_publish_draft',
+      source: publishedContractResolution.source,
+      legacySourceDetected: publishedContractResolution.legacySourceDetected,
+      functionCount: publishedContractResolution.functions.length,
+      manifestBacked: publishedContractResolution.manifestBacked,
+      migrationRequired: publishedContractResolution.migrationRequired,
+      note: manifestCoverage.source,
+    });
+
     try {
-      const manifestContent = await r2Service.fetchTextFile(`${newStorageKey}manifest.json`);
-      if (manifestContent) {
-        JSON.parse(manifestContent); // validate JSON
-        publishedManifest = manifestContent;
-        console.log('[PUBLISH] Found manifest.json in published files');
+      requireManifestFunctionContracts({
+        slug: app.slug,
+        runtime: app.runtime,
+        manifest: publishedManifest,
+        exports: app.draft_exports,
+      });
+    } catch (contractErr) {
+      if (contractErr instanceof AppContractMigrationRequiredError) {
+        return error(`Publish blocked: ${contractErr.message}`, 422);
       }
-    } catch { /* No manifest or invalid JSON */ }
+      throw contractErr;
+    }
 
     // Update app record with new version
-    console.log('[PUBLISH] Updating app record...');
+    publishLogger.debug('Updating app record for published draft', {
+      app_id: appId,
+      new_version: newVersion,
+    });
     const updateFields: Record<string, unknown> = {
       storage_key: newStorageKey,
       current_version: newVersion,
@@ -2645,21 +2699,30 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
             if (bundleResult.esmCode && globalThis.__env?.CODE_CACHE) {
               await globalThis.__env.CODE_CACHE.put(`esm:${appId}:latest`, bundleResult.esmCode);
             }
-            console.log(`[PUBLISH] ESM bundle rebuilt and cached (${bundleResult.esmCode?.length || 0} chars)`);
+            publishLogger.info('Rebuilt and cached ESM bundle during publish', {
+              app_id: appId,
+              esm_length: bundleResult.esmCode?.length || 0,
+            });
           }
         }
       } catch (rebuildErr) {
-        console.warn('[PUBLISH] ESM rebuild failed (non-fatal):', rebuildErr);
+        publishLogger.warn('ESM rebuild failed during publish (non-fatal)', {
+          app_id: appId,
+          error: rebuildErr,
+        });
       }
     }
 
-    // D1 provisioning — if app has no D1 but published files include migrations, provision now
+    // If the published bundle includes migrations, provision D1 on first publish.
     if (!app.d1_database_id && app.app_type !== 'skill') {
       try {
-        // List all files in the published storage and find migration SQL files
         const allFiles = await r2Service.listFiles(newStorageKey);
         const sqlFiles = allFiles.filter((f: string) => f.includes('migrations/') && f.endsWith('.sql')).sort();
-        console.log(`[PUBLISH] Found ${sqlFiles.length} migration file(s) in R2:`, sqlFiles);
+        publishLogger.debug('Found migration files in published storage', {
+          app_id: appId,
+          migration_count: sqlFiles.length,
+          files: sqlFiles,
+        });
 
         if (sqlFiles.length > 0) {
           const { parseMigrationFiles } = await import('../services/d1-migrations.ts');
@@ -2674,18 +2737,25 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
           if (parsed.length > 0) {
             const { provisionAndMigrate } = await import('../services/upload-pipeline.ts');
             const d1Result = await provisionAndMigrate(appId, parsed);
-            console.log(`[PUBLISH] D1 provisioned: ${d1Result.status}, ${d1Result.migrations_applied} migration(s) applied`);
+            publishLogger.info('Provisioned D1 during publish', {
+              app_id: appId,
+              status: d1Result.status,
+              migrations_applied: d1Result.migrations_applied,
+            });
           }
         }
       } catch (d1Err) {
-        console.warn('[PUBLISH] D1 provisioning failed (non-fatal):', d1Err);
+        publishLogger.warn('D1 provisioning failed during publish (non-fatal)', {
+          app_id: appId,
+          error: d1Err,
+        });
       }
     }
 
     // Optionally regenerate docs
     let docsResult = null;
     if (options.regenerate_docs && app.skills_md) {
-      console.log('[PUBLISH] Regenerating documentation...');
+      publishLogger.info('Regenerating docs during publish', { app_id: appId });
       try {
         // Fetch the new code
         let code: string | null = null;
@@ -2716,11 +2786,14 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
               await storeAppEmbedding(appId, embeddingResult.embedding);
               embeddingGenerated = true;
             } catch (embErr) {
-              console.error('[PUBLISH] Failed to generate embedding:', embErr);
+              publishLogger.error('Failed to generate embedding during publish', {
+                app_id: appId,
+                error: embErr,
+              });
             }
           }
 
-          const manifest = generateManifestFromParseResult(app, parseResult, app.current_version || '1.0.0');
+          const manifest = generateManifestFromParseResult(app, parseResult, newVersion);
           await appsService.update(appId, {
             skills_md,
             skills_parsed,
@@ -2735,7 +2808,10 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
           };
         }
       } catch (docsErr) {
-        console.error('[PUBLISH] Failed to regenerate docs:', docsErr);
+        publishLogger.error('Failed to regenerate docs during publish', {
+          app_id: appId,
+          error: docsErr,
+        });
         docsResult = {
           regenerated: false,
           error: docsErr instanceof Error ? docsErr.message : String(docsErr),
@@ -2743,29 +2819,48 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
       }
     }
 
-    // Clean up old draft files (optional, could be done async)
+    // Clean up draft files after publish.
     try {
-      console.log('[PUBLISH] Cleaning up draft files...');
+      publishLogger.debug('Cleaning up draft files after publish', { app_id: appId });
       for (const fileKey of draftFiles) {
         await r2Service.deleteFile(fileKey);
       }
-    } catch (cleanupErr) {
-      console.error('[PUBLISH] Failed to cleanup draft files:', cleanupErr);
-      // Non-fatal, continue
+      } catch (cleanupErr) {
+        publishLogger.error('Failed to clean up draft files after publish', {
+          app_id: appId,
+          error: cleanupErr,
+        });
+      // Non-fatal.
     }
 
-    console.log('[PUBLISH] Publish complete!');
+    publishLogger.info('Draft publish complete', {
+      app_id: appId,
+      new_version: newVersion,
+      published_size_bytes: publishedSizeBytes,
+    });
 
     // Rebuild library + function index synchronously so app appears immediately
     try {
       await rebuildUserLibrary(user.id);
-      console.log('[PUBLISH] Library rebuilt');
-    } catch (err) { console.error('Library rebuild after publish failed:', err); }
+      publishLogger.info('Rebuilt user library after publish', { app_id: appId, user_id: user.id });
+    } catch (err) {
+      publishLogger.error('Library rebuild failed after publish', {
+        app_id: appId,
+        user_id: user.id,
+        error: err,
+      });
+    }
     try {
       const { rebuildFunctionIndex } = await import('../services/function-index.ts');
       await rebuildFunctionIndex(user.id);
-      console.log('[PUBLISH] Function index rebuilt');
-    } catch (err) { console.error('Function index rebuild after publish failed:', err); }
+      publishLogger.info('Rebuilt function index after publish', { app_id: appId, user_id: user.id });
+    } catch (err) {
+      publishLogger.error('Function index rebuild failed after publish', {
+        app_id: appId,
+        user_id: user.id,
+        error: err,
+      });
+    }
 
     return json({
       success: true,
@@ -2781,7 +2876,7 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
     if (err instanceof Error && err.message.includes('Authentication')) {
       return error('Authentication required', 401);
     }
-    console.error('Failed to publish draft:', err);
+    publishLogger.error('Failed to publish draft', { app_id: appId, error: err });
     return error('Failed to publish draft', 500);
   }
 }
@@ -2808,7 +2903,10 @@ async function handleRebuild(request: Request, appId: string): Promise<Response>
     const storageKey = app.storage_key;
     if (!storageKey) return error('App has no stored code', 400);
 
-    console.log(`[REBUILD] Starting rebuild for app ${appId}, storage: ${storageKey}`);
+    rebuildLogger.info('Starting app rebuild', {
+      app_id: appId,
+      storage_key: storageKey,
+    });
 
     // Try standard source file names (avoids needing listFiles)
     const candidateEntries = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
@@ -2819,7 +2917,11 @@ async function handleRebuild(request: Request, appId: string): Promise<Response>
       try {
         sourceCode = await r2Service.fetchTextFile(`${storageKey}_source_${candidate}`);
         entryFileName = candidate;
-        console.log(`[REBUILD] Found source: _source_${candidate} (${sourceCode.length} chars)`);
+        rebuildLogger.debug('Found source file for rebuild', {
+          app_id: appId,
+          entry_file: `_source_${candidate}`,
+          code_length: sourceCode.length,
+        });
         break;
       } catch {
         // Try next candidate
@@ -2832,17 +2934,28 @@ async function handleRebuild(request: Request, appId: string): Promise<Response>
 
     const files = [{ name: entryFileName, content: sourceCode }];
 
-    console.log(`[REBUILD] Bundling ${files.length} files, entry: ${entryFileName}`);
+    rebuildLogger.debug('Bundling app rebuild source', {
+      app_id: appId,
+      file_count: files.length,
+      entry_file: entryFileName,
+    });
 
     // Re-bundle with esbuild
     const bundleResult = await bundleCode(files, entryFileName);
 
     if (!bundleResult.success) {
-      console.error(`[REBUILD] Bundle failed:`, bundleResult.errors);
+      rebuildLogger.error('App rebuild bundling failed', {
+        app_id: appId,
+        errors: bundleResult.errors,
+      });
       return error(`Rebuild failed: ${bundleResult.errors.join(', ')}`, 500);
     }
 
-    console.log(`[REBUILD] Bundle succeeded. IIFE: ${bundleResult.code.length} chars, ESM: ${bundleResult.esmCode?.length || 0} chars`);
+    rebuildLogger.info('App rebuild bundling succeeded', {
+      app_id: appId,
+      iife_length: bundleResult.code.length,
+      esm_length: bundleResult.esmCode?.length || 0,
+    });
 
     // Upload new bundles to R2 (overwrite existing)
     const filesToUpload = [
@@ -2862,15 +2975,25 @@ async function handleRebuild(request: Request, appId: string): Promise<Response>
     }
 
     await r2Service.uploadFiles(storageKey, filesToUpload);
-    console.log(`[REBUILD] Uploaded ${filesToUpload.length} rebuilt files to ${storageKey}`);
+    rebuildLogger.info('Uploaded rebuilt app files', {
+      app_id: appId,
+      file_count: filesToUpload.length,
+      storage_key: storageKey,
+    });
 
     // Store ESM bundle in KV for Dynamic Worker loading
     if (bundleResult.esmCode && globalThis.__env?.CODE_CACHE) {
       try {
         await globalThis.__env.CODE_CACHE.put(`esm:${appId}:latest`, bundleResult.esmCode);
-        console.log(`[REBUILD] ESM bundle cached in KV (${bundleResult.esmCode.length} chars)`);
+        rebuildLogger.info('Cached rebuilt ESM bundle in KV', {
+          app_id: appId,
+          esm_length: bundleResult.esmCode.length,
+        });
       } catch (kvErr) {
-        console.error(`[REBUILD] KV cache failed:`, kvErr);
+        rebuildLogger.error('KV cache write failed during rebuild', {
+          app_id: appId,
+          error: kvErr,
+        });
       }
     }
 
@@ -2888,7 +3011,7 @@ async function handleRebuild(request: Request, appId: string): Promise<Response>
       },
     });
   } catch (err) {
-    console.error('[REBUILD] Error:', err);
+    rebuildLogger.error('App rebuild failed', { app_id: appId, error: err });
     return error(err instanceof Error ? err.message : 'Rebuild failed', 500);
   }
 }
@@ -3043,64 +3166,66 @@ async function handleGetEnvVars(request: Request, appId: string): Promise<Respon
 async function handleSetEnvVars(request: Request, appId: string): Promise<Response> {
   try {
     const user = await authenticate(request);
-    const appsService = createAppsService();
+    return withSensitiveRouteRateLimit(user.id, 'apps:env_set', async () => {
+      const appsService = createAppsService();
 
-    const app = await appsService.findById(appId);
-    if (!app) {
-      return error('App not found', 404);
-    }
-
-    // Only owner can set env vars
-    if (app.owner_id !== user.id) {
-      return error('Unauthorized', 403);
-    }
-
-    const body = await readJsonObject(request);
-    const { env_vars } = body;
-
-    if (!env_vars || typeof env_vars !== 'object') {
-      return error('env_vars object is required', 400);
-    }
-
-    // Validate all keys and values
-    const errors: string[] = [];
-    const entries = Object.entries(env_vars as Record<string, string>);
-
-    // Check count limit
-    if (entries.length > ENV_VAR_LIMITS.max_vars_per_app) {
-      return error(`Maximum ${ENV_VAR_LIMITS.max_vars_per_app} environment variables allowed`, 400);
-    }
-
-    for (const [key, value] of entries) {
-      const keyValidation = validateEnvVarKey(key);
-      if (!keyValidation.valid) {
-        errors.push(`${key}: ${keyValidation.error}`);
-        continue;
+      const app = await appsService.findById(appId);
+      if (!app) {
+        return error('App not found', 404);
       }
 
-      const valueValidation = validateEnvVarValue(value);
-      if (!valueValidation.valid) {
-        errors.push(`${key}: ${valueValidation.error}`);
+      // Only owner can set env vars
+      if (app.owner_id !== user.id) {
+        return error('Unauthorized', 403);
       }
-    }
 
-    if (errors.length > 0) {
-      return json({ success: false, errors }, 400);
-    }
+      const body = await readJsonObject(request);
+      const { env_vars } = body;
 
-    // Encrypt all values
-    const encryptedEnvVars: Record<string, string> = {};
-    for (const [key, value] of entries) {
-      encryptedEnvVars[key] = await encryptEnvVar(value);
-    }
+      if (!env_vars || typeof env_vars !== 'object') {
+        return error('env_vars object is required', 400);
+      }
 
-    // Update app
-    await appsService.update(appId, { env_vars: encryptedEnvVars });
+      // Validate all keys and values
+      const errors: string[] = [];
+      const entries = Object.entries(env_vars as Record<string, string>);
 
-    return json({
-      success: true,
-      count: entries.length,
-      keys: entries.map(([key]) => key),
+      // Check count limit
+      if (entries.length > ENV_VAR_LIMITS.max_vars_per_app) {
+        return error(`Maximum ${ENV_VAR_LIMITS.max_vars_per_app} environment variables allowed`, 400);
+      }
+
+      for (const [key, value] of entries) {
+        const keyValidation = validateEnvVarKey(key);
+        if (!keyValidation.valid) {
+          errors.push(`${key}: ${keyValidation.error}`);
+          continue;
+        }
+
+        const valueValidation = validateEnvVarValue(value);
+        if (!valueValidation.valid) {
+          errors.push(`${key}: ${valueValidation.error}`);
+        }
+      }
+
+      if (errors.length > 0) {
+        return json({ success: false, errors }, 400);
+      }
+
+      // Encrypt all values
+      const encryptedEnvVars: Record<string, string> = {};
+      for (const [key, value] of entries) {
+        encryptedEnvVars[key] = await encryptEnvVar(value);
+      }
+
+      // Update app
+      await appsService.update(appId, { env_vars: encryptedEnvVars });
+
+      return json({
+        success: true,
+        count: entries.length,
+        keys: entries.map(([key]) => key),
+      });
     });
 
   } catch (err) {
@@ -3119,68 +3244,70 @@ async function handleSetEnvVars(request: Request, appId: string): Promise<Respon
 async function handleUpdateEnvVars(request: Request, appId: string): Promise<Response> {
   try {
     const user = await authenticate(request);
-    const appsService = createAppsService();
+    return withSensitiveRouteRateLimit(user.id, 'apps:env_update', async () => {
+      const appsService = createAppsService();
 
-    const app = await appsService.findById(appId);
-    if (!app) {
-      return error('App not found', 404);
-    }
-
-    // Only owner can update env vars
-    if (app.owner_id !== user.id) {
-      return error('Unauthorized', 403);
-    }
-
-    const body = await readJsonObject(request);
-    const { env_vars } = body;
-
-    if (!env_vars || typeof env_vars !== 'object') {
-      return error('env_vars object is required', 400);
-    }
-
-    // Get existing env vars
-    const existingEnvVars = app.env_vars || {};
-
-    // Validate new keys and values
-    const errors: string[] = [];
-    const newEntries = Object.entries(env_vars as Record<string, string>);
-
-    // Check total count after merge
-    const totalKeys = new Set([...Object.keys(existingEnvVars), ...newEntries.map(([k]) => k)]);
-    if (totalKeys.size > ENV_VAR_LIMITS.max_vars_per_app) {
-      return error(`Maximum ${ENV_VAR_LIMITS.max_vars_per_app} environment variables allowed`, 400);
-    }
-
-    for (const [key, value] of newEntries) {
-      const keyValidation = validateEnvVarKey(key);
-      if (!keyValidation.valid) {
-        errors.push(`${key}: ${keyValidation.error}`);
-        continue;
+      const app = await appsService.findById(appId);
+      if (!app) {
+        return error('App not found', 404);
       }
 
-      const valueValidation = validateEnvVarValue(value);
-      if (!valueValidation.valid) {
-        errors.push(`${key}: ${valueValidation.error}`);
+      // Only owner can update env vars
+      if (app.owner_id !== user.id) {
+        return error('Unauthorized', 403);
       }
-    }
 
-    if (errors.length > 0) {
-      return json({ success: false, errors }, 400);
-    }
+      const body = await readJsonObject(request);
+      const { env_vars } = body;
 
-    // Encrypt new values and merge with existing
-    const mergedEnvVars = { ...existingEnvVars };
-    for (const [key, value] of newEntries) {
-      mergedEnvVars[key] = await encryptEnvVar(value);
-    }
+      if (!env_vars || typeof env_vars !== 'object') {
+        return error('env_vars object is required', 400);
+      }
 
-    // Update app
-    await appsService.update(appId, { env_vars: mergedEnvVars });
+      // Get existing env vars
+      const existingEnvVars = app.env_vars || {};
 
-    return json({
-      success: true,
-      updated: newEntries.map(([key]) => key),
-      total_count: Object.keys(mergedEnvVars).length,
+      // Validate new keys and values
+      const errors: string[] = [];
+      const newEntries = Object.entries(env_vars as Record<string, string>);
+
+      // Check total count after merge
+      const totalKeys = new Set([...Object.keys(existingEnvVars), ...newEntries.map(([k]) => k)]);
+      if (totalKeys.size > ENV_VAR_LIMITS.max_vars_per_app) {
+        return error(`Maximum ${ENV_VAR_LIMITS.max_vars_per_app} environment variables allowed`, 400);
+      }
+
+      for (const [key, value] of newEntries) {
+        const keyValidation = validateEnvVarKey(key);
+        if (!keyValidation.valid) {
+          errors.push(`${key}: ${keyValidation.error}`);
+          continue;
+        }
+
+        const valueValidation = validateEnvVarValue(value);
+        if (!valueValidation.valid) {
+          errors.push(`${key}: ${valueValidation.error}`);
+        }
+      }
+
+      if (errors.length > 0) {
+        return json({ success: false, errors }, 400);
+      }
+
+      // Encrypt new values and merge with existing
+      const mergedEnvVars = { ...existingEnvVars };
+      for (const [key, value] of newEntries) {
+        mergedEnvVars[key] = await encryptEnvVar(value);
+      }
+
+      // Update app
+      await appsService.update(appId, { env_vars: mergedEnvVars });
+
+      return json({
+        success: true,
+        updated: newEntries.map(([key]) => key),
+        total_count: Object.keys(mergedEnvVars).length,
+      });
     });
 
   } catch (err) {
@@ -3199,37 +3326,39 @@ async function handleUpdateEnvVars(request: Request, appId: string): Promise<Res
 async function handleDeleteEnvVar(request: Request, appId: string, key: string): Promise<Response> {
   try {
     const user = await authenticate(request);
-    const appsService = createAppsService();
+    return withSensitiveRouteRateLimit(user.id, 'apps:env_delete', async () => {
+      const appsService = createAppsService();
 
-    const app = await appsService.findById(appId);
-    if (!app) {
-      return error('App not found', 404);
-    }
+      const app = await appsService.findById(appId);
+      if (!app) {
+        return error('App not found', 404);
+      }
 
-    // Only owner can delete env vars
-    if (app.owner_id !== user.id) {
-      return error('Unauthorized', 403);
-    }
+      // Only owner can delete env vars
+      if (app.owner_id !== user.id) {
+        return error('Unauthorized', 403);
+      }
 
-    // Get existing env vars
-    const existingEnvVars = app.env_vars || {};
+      // Get existing env vars
+      const existingEnvVars = app.env_vars || {};
 
-    // Check if key exists
-    if (!(key in existingEnvVars)) {
-      return error(`Environment variable "${key}" not found`, 404);
-    }
+      // Check if key exists
+      if (!(key in existingEnvVars)) {
+        return error(`Environment variable "${key}" not found`, 404);
+      }
 
-    // Remove the key
-    const updatedEnvVars = { ...existingEnvVars };
-    delete updatedEnvVars[key];
+      // Remove the key
+      const updatedEnvVars = { ...existingEnvVars };
+      delete updatedEnvVars[key];
 
-    // Update app
-    await appsService.update(appId, { env_vars: updatedEnvVars });
+      // Update app
+      await appsService.update(appId, { env_vars: updatedEnvVars });
 
-    return json({
-      success: true,
-      deleted: key,
-      remaining_count: Object.keys(updatedEnvVars).length,
+      return json({
+        success: true,
+        deleted: key,
+        remaining_count: Object.keys(updatedEnvVars).length,
+      });
     });
 
   } catch (err) {
@@ -3263,6 +3392,8 @@ async function handleGetSupabaseConfig(request: Request, appId: string): Promise
       return error('Unauthorized', 403);
     }
 
+    const resolutionSource = classifyAppSupabaseConfigState(app);
+
     return json({
       config_id: app.supabase_config_id || null,
       // Legacy fields for backward compatibility
@@ -3270,6 +3401,8 @@ async function handleGetSupabaseConfig(request: Request, appId: string): Promise
       url: app.supabase_url || null,
       has_anon_key: !!app.supabase_anon_key_encrypted,
       has_service_key: !!app.supabase_service_key_encrypted,
+      resolution_source: resolutionSource,
+      migration_required: resolutionSource !== 'disabled' && resolutionSource !== 'saved_config',
     });
 
   } catch (err) {
@@ -3288,42 +3421,53 @@ async function handleGetSupabaseConfig(request: Request, appId: string): Promise
 async function handleSetSupabaseConfig(request: Request, appId: string): Promise<Response> {
   try {
     const user = await authenticate(request);
-    const appsService = createAppsService();
+    return await withSensitiveRouteRateLimit(user.id, 'apps:supabase_set', async () => {
+      const appsService = createAppsService();
 
-    const app = await appsService.findById(appId);
-    if (!app) {
-      return error('App not found', 404);
-    }
-
-    if (app.owner_id !== user.id) {
-      return error('Unauthorized', 403);
-    }
-
-    const body = await readJsonObject(request);
-    const configId = typeof body.config_id === 'string' && body.config_id ? body.config_id : null;
-
-    // Update app to reference the saved server (or null to disable)
-    await appsService.update(appId, {
-      supabase_config_id: configId,
-      supabase_enabled: !!configId,
-    });
-
-    // If connecting Supabase, permanently flag app as ineligible for trading
-    if (configId) {
-      try {
-        const { flagExternalDb } = await import('../services/marketplace.ts');
-        await flagExternalDb(appId);
-      } catch (err) {
-        console.error('[APPS] Failed to flag external DB for marketplace:', err);
+      const app = await appsService.findById(appId);
+      if (!app) {
+        return error('App not found', 404);
       }
-    }
 
-    return json({
-      success: true,
-      message: configId ? 'Supabase server assigned' : 'Supabase disabled',
+      if (app.owner_id !== user.id) {
+        return error('Unauthorized', 403);
+      }
+
+      const { configId } = await validateAppSupabaseConfigRequest(request);
+
+      if (configId) {
+        await assertOwnedSupabaseConfig(user.id, configId);
+      }
+
+      // Update app to reference the saved server (or null to disable)
+      await appsService.update(appId, {
+        supabase_config_id: configId,
+        supabase_enabled: !!configId,
+        supabase_url: null,
+        supabase_anon_key_encrypted: null,
+        supabase_service_key_encrypted: null,
+      });
+
+      // If connecting Supabase, permanently flag app as ineligible for trading
+      if (configId) {
+        try {
+          const { flagExternalDb } = await import('../services/marketplace.ts');
+          await flagExternalDb(appId);
+        } catch (err) {
+          console.error('[APPS] Failed to flag external DB for marketplace:', err);
+        }
+      }
+
+      return json({
+        success: true,
+        message: configId ? 'Supabase server assigned' : 'Supabase disabled',
+      });
     });
 
   } catch (err) {
+    if (err instanceof RequestValidationError) {
+      return error(err.message, err.status);
+    }
     if (err instanceof Error && err.message.includes('Authentication')) {
       return error('Authentication required', 401);
     }
@@ -3339,25 +3483,30 @@ async function handleSetSupabaseConfig(request: Request, appId: string): Promise
 async function handleDeleteSupabaseConfig(request: Request, appId: string): Promise<Response> {
   try {
     const user = await authenticate(request);
-    const appsService = createAppsService();
+    return withSensitiveRouteRateLimit(user.id, 'apps:supabase_delete', async () => {
+      const appsService = createAppsService();
 
-    const app = await appsService.findById(appId);
-    if (!app) {
-      return error('App not found', 404);
-    }
+      const app = await appsService.findById(appId);
+      if (!app) {
+        return error('App not found', 404);
+      }
 
-    if (app.owner_id !== user.id) {
-      return error('Unauthorized', 403);
-    }
+      if (app.owner_id !== user.id) {
+        return error('Unauthorized', 403);
+      }
 
-    await appsService.update(appId, {
-      supabase_config_id: null,
-      supabase_enabled: false,
-    });
+      await appsService.update(appId, {
+        supabase_config_id: null,
+        supabase_enabled: false,
+        supabase_url: null,
+        supabase_anon_key_encrypted: null,
+        supabase_service_key_encrypted: null,
+      });
 
-    return json({
-      success: true,
-      message: 'Supabase configuration removed',
+      return json({
+        success: true,
+        message: 'Supabase configuration removed',
+      });
     });
 
   } catch (err) {
@@ -3529,7 +3678,7 @@ async function handleGetEarnings(request: Request, appId: string): Promise<Respo
 /**
  * Get health status and detected issues for an app (owner only).
  * Failures are detected automatically every 30 min.
- * Agents fix issues via ul.health + ul.upload.
+ * Agents fix issues via ul.logs({ health: true }) + ul.upload.
  * GET /api/apps/:appId/health
  */
 async function handleGetAppCallLog(request: Request, appId: string): Promise<Response> {
@@ -3543,13 +3692,13 @@ async function handleGetAppCallLog(request: Request, appId: string): Promise<Res
     const { getAppCallLog } = await import('../services/call-logger.ts');
     const url = new URL(request.url);
     const limit = parseInt(url.searchParams.get('limit') || '50', 10);
-    console.log(`[call-log] Fetching logs for app ${appId}, limit ${limit}`);
+    callLogLogger.debug('Fetching app call log', { app_id: appId, limit });
     const logs = await getAppCallLog(appId, { limit: Math.min(limit, 200) });
-    console.log(`[call-log] Got ${logs.length} logs`);
+    callLogLogger.info('Fetched app call log', { app_id: appId, count: logs.length });
     return json({ logs });
   } catch (err: any) {
     if (err.message === 'Not authenticated') return error('Unauthorized', 401);
-    console.error('Get app call log error:', err?.message, err?.stack);
+    callLogLogger.error('Failed to fetch app call log', { app_id: appId, error: err });
     return error(err?.message || 'Failed to get call logs', 500);
   }
 }

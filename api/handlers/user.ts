@@ -1,33 +1,71 @@
 // User Settings Handler
 // Handles user profile, BYOK configuration, and API token management
 
-import { json, error } from './app.ts';
-import { authenticate } from './auth.ts';
-import { createUserService, type UserProfile } from '../services/user.ts';
-import { validateAPIKey } from '../services/ai.ts';
+import { error, json } from "./response.ts";
+import { authenticate } from "./auth.ts";
+import { createUserService, type UserProfile } from "../services/user.ts";
+import { validateAPIKey } from "../services/ai.ts";
 import {
   BYOK_PROVIDERS,
   type BYOKProvider,
   type BYOKProviderInfo,
-  type Tier,
+  DATA_RATE_LIGHT_PER_MB_PER_HOUR,
   formatLight,
-  MIN_WITHDRAWAL_LIGHT,
-  LIGHT_PER_DOLLAR_WEB,
+  HOSTING_RATE_LIGHT_PER_MB_PER_HOUR,
   LIGHT_PER_DOLLAR_DESKTOP,
   LIGHT_PER_DOLLAR_PAYOUT,
-  HOSTING_RATE_LIGHT_PER_MB_PER_HOUR,
-  DATA_RATE_LIGHT_PER_MB_PER_HOUR,
-} from '../../shared/types/index.ts';
+  LIGHT_PER_DOLLAR_WEB,
+  type Tier,
+} from "../../shared/types/index.ts";
 import {
   createToken,
   listTokens,
-  revokeToken,
   revokeAllTokens,
-} from '../services/tokens.ts';
-import { createAppsService } from '../services/apps.ts';
-import { encryptEnvVar, decryptEnvVar } from '../services/envvars.ts';
-import { unsuspendContent } from '../services/hosting-billing.ts';
-import { getEnv } from '../lib/env.ts';
+  revokeToken,
+} from "../services/tokens.ts";
+import { createAppsService } from "../services/apps.ts";
+import { decryptEnvVar, encryptEnvVar } from "../services/envvars.ts";
+import { unsuspendContent } from "../services/hosting-billing.ts";
+import { getEnv } from "../lib/env.ts";
+import {
+  getSensitiveRouteClientKey,
+  withSensitiveRouteRateLimit,
+} from "../services/sensitive-route-rate-limit.ts";
+import {
+  buildAllowedPermissionSet,
+  normalizeFunctionNamedRows,
+  normalizePermissionNamedRows,
+} from "../services/mcp-function-names.ts";
+import { logLegacyPermissionNameCompatibility } from "../services/permission-name-telemetry.ts";
+import { RequestValidationError } from "../services/request-validation.ts";
+import {
+  getDecryptedPlatformSupabase,
+  getDecryptedSupabaseConfig,
+  getSupabaseEnv,
+  listSupabaseConfigs,
+} from "../services/user-supabase-configs.ts";
+export {
+  getDecryptedPlatformSupabase,
+  getDecryptedSupabaseConfig,
+  listSupabaseConfigs,
+} from "../services/user-supabase-configs.ts";
+import {
+  validateConnectOnboardRequest,
+  validateHostingCheckoutRequest,
+  validateSupabaseOauthConnectRequest,
+  validateWithdrawalRequest,
+} from "../services/platform-request-validation.ts";
+import {
+  validateMarketplaceAskRequest,
+  validateMarketplaceBidActionRequest,
+  validateMarketplaceBidRequest,
+  validateMarketplaceBuyRequest,
+  validateMarketplaceMetricsVisibilityRequest,
+} from "../services/marketplace-request-validation.ts";
+import { createServerLogger } from "../services/logging.ts";
+
+const stripeLogger = createServerLogger("STRIPE");
+const userLogger = createServerLogger("USER");
 
 // Stripe webhook idempotency: track processed event IDs in memory (1hr TTL).
 // Prevents double-crediting from Stripe's automatic webhook retries.
@@ -42,7 +80,12 @@ function cleanupProcessedEvents() {
 }
 
 type JsonRecord = Record<string, unknown>;
-type UserProfileUpdates = Partial<Pick<UserProfile, 'display_name' | 'country' | 'featured_app_id' | 'profile_slug'>>;
+type UserProfileUpdates = Partial<
+  Pick<
+    UserProfile,
+    "display_name" | "country" | "featured_app_id" | "profile_slug"
+  >
+>;
 
 interface PublicProfileRow {
   id: string;
@@ -117,11 +160,6 @@ interface SupabaseConfigCreateBody {
   service_key?: string;
 }
 
-interface SupabaseOauthConnectBody {
-  project_ref?: string;
-  app_id?: string;
-}
-
 interface PermissionGrant {
   function_name: string;
   allowed: boolean;
@@ -169,47 +207,6 @@ interface StripeConnectWithdrawRow extends StripeConnectStatusRow {
   escrow_light: number;
 }
 
-interface HostingCheckoutBody {
-  amount_cents?: number;
-  source?: 'web' | 'desktop';
-}
-
-interface ConnectOnboardBody {
-  country?: string;
-}
-
-interface WithdrawalBody {
-  amount_light?: number;
-}
-
-interface MarketplaceBidBody {
-  app_id?: string;
-  amount_light?: number;
-  message?: string;
-  expires_in_hours?: number;
-}
-
-interface MarketplaceAskBody {
-  app_id?: string;
-  price_light?: number | null;
-  floor_light?: number | null;
-  instant_buy?: boolean;
-  note?: string | null;
-}
-
-interface MarketplaceBidActionBody {
-  bid_id?: string;
-}
-
-interface MarketplaceBuyBody {
-  app_id?: string;
-}
-
-interface MarketplaceMetricsVisibilityBody {
-  app_id?: string;
-  show_metrics?: boolean;
-}
-
 async function readJsonBody<T>(request: Request): Promise<T> {
   return await request.json() as T;
 }
@@ -229,26 +226,28 @@ async function readFirstJsonRow<T>(response: Response): Promise<T | null> {
 }
 
 function isTier(value: unknown): value is Tier {
-  return value === 'free'
-    || value === 'fun'
-    || value === 'pro'
-    || value === 'scale'
-    || value === 'enterprise';
+  return value === "free" ||
+    value === "fun" ||
+    value === "pro" ||
+    value === "scale" ||
+    value === "enterprise";
 }
 
 function toTier(value: unknown): Tier {
-  return isTier(value) ? value : 'free';
+  return isTier(value) ? value : "free";
 }
 
 function isByokProvider(value: unknown): value is BYOKProvider {
-  return value === 'openrouter'
-    || value === 'openai'
-    || value === 'anthropic'
-    || value === 'deepseek'
-    || value === 'moonshot';
+  return value === "openrouter" ||
+    value === "openai" ||
+    value === "anthropic" ||
+    value === "deepseek" ||
+    value === "moonshot";
 }
 
-function getByokProviderEntry(value: unknown): { provider: BYOKProvider; info: BYOKProviderInfo } | null {
+function getByokProviderEntry(
+  value: unknown,
+): { provider: BYOKProvider; info: BYOKProviderInfo } | null {
   if (!isByokProvider(value)) {
     return null;
   }
@@ -273,21 +272,25 @@ export async function handleUser(request: Request): Promise<Response> {
   // POST /api/webhooks/stripe — handle Stripe webhook events
   // Verified by webhook signature, no auth token needed.
   // Idempotent: deduplicates by Stripe event ID (in-memory cache, 1hr TTL).
-  if (path === '/api/webhooks/stripe' && method === 'POST') {
+  if (path === "/api/webhooks/stripe" && method === "POST") {
     try {
-      const STRIPE_WEBHOOK_SECRET = getEnv('STRIPE_WEBHOOK_SECRET');
+      const STRIPE_WEBHOOK_SECRET = getEnv("STRIPE_WEBHOOK_SECRET");
 
       if (!STRIPE_WEBHOOK_SECRET) {
-        return error('Stripe webhooks not configured', 503);
+        return error("Stripe webhooks not configured", 503);
       }
 
       const rawBody = await request.text();
-      const signature = request.headers.get('stripe-signature') || '';
+      const signature = request.headers.get("stripe-signature") || "";
 
       // Verify webhook signature
-      const verified = await verifyStripeSignature(rawBody, signature, STRIPE_WEBHOOK_SECRET);
+      const verified = await verifyStripeSignature(
+        rawBody,
+        signature,
+        STRIPE_WEBHOOK_SECRET,
+      );
       if (!verified) {
-        return error('Invalid webhook signature', 400);
+        return error("Invalid webhook signature", 400);
       }
 
       const event = JSON.parse(rawBody) as {
@@ -295,7 +298,12 @@ export async function handleUser(request: Request): Promise<Response> {
         type: string;
         data: {
           object: {
-            metadata?: { user_id?: string; amount_cents?: string; light_amount?: string; type?: string };
+            metadata?: {
+              user_id?: string;
+              amount_cents?: string;
+              light_amount?: string;
+              type?: string;
+            };
             payment_status?: string;
           };
         };
@@ -303,31 +311,51 @@ export async function handleUser(request: Request): Promise<Response> {
 
       // Idempotency: skip if we've already processed this event
       if (processedStripeEvents.has(event.id)) {
-        console.log(`[STRIPE] Skipping duplicate event ${event.id}`);
+        stripeLogger.info("Skipping duplicate webhook event", {
+          event_id: event.id,
+          event_type: event.type,
+        });
         return json({ received: true, duplicate: true });
       }
       processedStripeEvents.set(event.id, Date.now());
 
       // Handle checkout.session.completed (manual deposits)
-      if (event.type === 'checkout.session.completed') {
+      if (event.type === "checkout.session.completed") {
         const session = event.data.object;
         const eventUserId = session.metadata?.user_id;
-        const lightAmount = parseInt(session.metadata?.light_amount || '0', 10);
+        const lightAmount = parseInt(session.metadata?.light_amount || "0", 10);
         const depositType = session.metadata?.type;
 
-        if (eventUserId && lightAmount > 0 && depositType === 'hosting_deposit' && session.payment_status === 'paid') {
-          console.log(`[STRIPE] Crediting ${formatLight(lightAmount)} to user ${eventUserId} (event: ${event.id})`);
+        if (
+          eventUserId && lightAmount > 0 && depositType === "hosting_deposit" &&
+          session.payment_status === "paid"
+        ) {
+          stripeLogger.info("Crediting manual hosting deposit", {
+            event_id: event.id,
+            event_type: event.type,
+            user_id: eventUserId,
+            amount_light: lightAmount,
+          });
           const creditResult = await creditBalance(eventUserId, lightAmount);
           // Log billing transaction
           try {
-            const { SUPABASE_URL: sUrl, SUPABASE_SERVICE_ROLE_KEY: sKey } = getSupabaseEnv();
+            const { SUPABASE_URL: sUrl, SUPABASE_SERVICE_ROLE_KEY: sKey } =
+              getSupabaseEnv();
             await fetch(`${sUrl}/rest/v1/billing_transactions`, {
-              method: 'POST',
-              headers: { 'apikey': sKey, 'Authorization': `Bearer ${sKey}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+              method: "POST",
+              headers: {
+                "apikey": sKey,
+                "Authorization": `Bearer ${sKey}`,
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal",
+              },
               body: JSON.stringify({
-                user_id: eventUserId, type: 'credit', category: 'deposit',
+                user_id: eventUserId,
+                type: "credit",
+                category: "deposit",
                 description: `Deposit: ${formatLight(lightAmount)}`,
-                amount_light: lightAmount, balance_after_light: creditResult.new_balance_light,
+                amount_light: lightAmount,
+                balance_after_light: creditResult.new_balance_light,
                 metadata: { stripe_event_id: event.id },
               }),
             });
@@ -336,25 +364,39 @@ export async function handleUser(request: Request): Promise<Response> {
       }
 
       // Handle payment_intent.succeeded (auto top-up charges)
-      if (event.type === 'payment_intent.succeeded') {
+      if (event.type === "payment_intent.succeeded") {
         const intent = event.data.object;
         const eventUserId = intent.metadata?.user_id;
-        const lightAmount = parseInt(intent.metadata?.light_amount || '0', 10);
+        const lightAmount = parseInt(intent.metadata?.light_amount || "0", 10);
         const intentType = intent.metadata?.type;
 
-        if (eventUserId && lightAmount > 0 && intentType === 'auto_topup') {
-          console.log(`[STRIPE] Auto top-up succeeded: crediting ${formatLight(lightAmount)} to user ${eventUserId} (event: ${event.id})`);
+        if (eventUserId && lightAmount > 0 && intentType === "auto_topup") {
+          stripeLogger.info("Crediting auto top-up charge", {
+            event_id: event.id,
+            event_type: event.type,
+            user_id: eventUserId,
+            amount_light: lightAmount,
+          });
           const topupResult = await creditBalance(eventUserId, lightAmount);
           // Log billing transaction
           try {
-            const { SUPABASE_URL: sUrl, SUPABASE_SERVICE_ROLE_KEY: sKey } = getSupabaseEnv();
+            const { SUPABASE_URL: sUrl, SUPABASE_SERVICE_ROLE_KEY: sKey } =
+              getSupabaseEnv();
             await fetch(`${sUrl}/rest/v1/billing_transactions`, {
-              method: 'POST',
-              headers: { 'apikey': sKey, 'Authorization': `Bearer ${sKey}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+              method: "POST",
+              headers: {
+                "apikey": sKey,
+                "Authorization": `Bearer ${sKey}`,
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal",
+              },
               body: JSON.stringify({
-                user_id: eventUserId, type: 'credit', category: 'auto_topup',
+                user_id: eventUserId,
+                type: "credit",
+                category: "auto_topup",
                 description: `Auto top-up: ${formatLight(lightAmount)}`,
-                amount_light: lightAmount, balance_after_light: topupResult.new_balance_light,
+                amount_light: lightAmount,
+                balance_after_light: topupResult.new_balance_light,
                 metadata: { stripe_event_id: event.id },
               }),
             });
@@ -363,7 +405,7 @@ export async function handleUser(request: Request): Promise<Response> {
       }
 
       // Handle account.updated (Connect onboarding status changes)
-      if (event.type === 'account.updated') {
+      if (event.type === "account.updated") {
         const account = event.data.object as {
           id: string;
           details_submitted?: boolean;
@@ -375,107 +417,129 @@ export async function handleUser(request: Request): Promise<Response> {
           await fetch(
             `${SUPABASE_URL}/rest/v1/users?stripe_connect_account_id=eq.${account.id}`,
             {
-              method: 'PATCH',
+              method: "PATCH",
               headers: {
-                'apikey': SUPABASE_SERVICE_ROLE_KEY,
-                'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=minimal',
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal",
               },
               body: JSON.stringify({
                 stripe_connect_onboarded: account.details_submitted || false,
-                stripe_connect_payouts_enabled: account.payouts_enabled || false,
+                stripe_connect_payouts_enabled: account.payouts_enabled ||
+                  false,
               }),
-            }
+            },
           );
-          console.log(`[STRIPE] Connect account updated: ${account.id} (payouts: ${account.payouts_enabled})`);
+          stripeLogger.info("Updated Stripe Connect account state", {
+            event_id: event.id,
+            account_id: account.id,
+            payouts_enabled: account.payouts_enabled || false,
+            details_submitted: account.details_submitted || false,
+          });
         }
       }
 
       // Handle payout.paid (money arrived in developer's bank)
-      if (event.type === 'payout.paid') {
+      if (event.type === "payout.paid") {
         const payout = event.data.object as { id: string };
         const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
         await fetch(
           `${SUPABASE_URL}/rest/v1/payouts?stripe_payout_id=eq.${payout.id}`,
           {
-            method: 'PATCH',
+            method: "PATCH",
             headers: {
-              'apikey': SUPABASE_SERVICE_ROLE_KEY,
-              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-              'Content-Type': 'application/json',
-              'Prefer': 'return=minimal',
+              "apikey": SUPABASE_SERVICE_ROLE_KEY,
+              "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+              "Content-Type": "application/json",
+              "Prefer": "return=minimal",
             },
-            body: JSON.stringify({ status: 'paid', completed_at: new Date().toISOString() }),
-          }
+            body: JSON.stringify({
+              status: "paid",
+              completed_at: new Date().toISOString(),
+            }),
+          },
         );
-        console.log(`[STRIPE] Payout paid: ${payout.id}`);
+        stripeLogger.info("Marked payout as paid", {
+          event_id: event.id,
+          payout_id: payout.id,
+        });
       }
 
       // Handle payout.failed (payout to bank failed — refund balance)
-      if (event.type === 'payout.failed') {
-        const payout = event.data.object as { id: string; failure_message?: string };
+      if (event.type === "payout.failed") {
+        const payout = event.data.object as {
+          id: string;
+          failure_message?: string;
+        };
         const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
         const sbHeaders = {
-          'apikey': SUPABASE_SERVICE_ROLE_KEY,
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          "apikey": SUPABASE_SERVICE_ROLE_KEY,
+          "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
         };
 
         // Find the payout record by stripe_payout_id
         const payoutRes = await fetch(
           `${SUPABASE_URL}/rest/v1/payouts?stripe_payout_id=eq.${payout.id}&status=eq.processing&select=id`,
-          { headers: sbHeaders }
+          { headers: sbHeaders },
         );
         if (payoutRes.ok) {
           const payoutRows = await payoutRes.json() as Array<{ id: string }>;
           for (const p of payoutRows) {
             await fetch(`${SUPABASE_URL}/rest/v1/rpc/fail_payout_refund`, {
-              method: 'POST',
-              headers: { ...sbHeaders, 'Content-Type': 'application/json' },
+              method: "POST",
+              headers: { ...sbHeaders, "Content-Type": "application/json" },
               body: JSON.stringify({
                 p_payout_id: p.id,
-                p_failure_reason: payout.failure_message || 'payout_failed',
+                p_failure_reason: payout.failure_message || "payout_failed",
               }),
             });
           }
         }
-        console.log(`[STRIPE] Payout failed: ${payout.id} — ${payout.failure_message || 'unknown reason'}`);
+        stripeLogger.warn("Processed failed payout refund path", {
+          event_id: event.id,
+          payout_id: payout.id,
+          failure_message: payout.failure_message || "unknown reason",
+        });
       }
 
       // Handle transfer.reversed (transfer from platform to connected account reversed)
-      if (event.type === 'transfer.reversed') {
+      if (event.type === "transfer.reversed") {
         const transfer = event.data.object as { id: string };
         const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
         const sbHeaders = {
-          'apikey': SUPABASE_SERVICE_ROLE_KEY,
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          "apikey": SUPABASE_SERVICE_ROLE_KEY,
+          "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
         };
 
         // Find payout record by transfer ID and refund
         const payoutRes = await fetch(
           `${SUPABASE_URL}/rest/v1/payouts?stripe_transfer_id=eq.${transfer.id}&status=in.(pending,processing)&select=id`,
-          { headers: sbHeaders }
+          { headers: sbHeaders },
         );
         if (payoutRes.ok) {
           const payoutRows = await payoutRes.json() as Array<{ id: string }>;
           for (const p of payoutRows) {
             await fetch(`${SUPABASE_URL}/rest/v1/rpc/fail_payout_refund`, {
-              method: 'POST',
-              headers: { ...sbHeaders, 'Content-Type': 'application/json' },
+              method: "POST",
+              headers: { ...sbHeaders, "Content-Type": "application/json" },
               body: JSON.stringify({
                 p_payout_id: p.id,
-                p_failure_reason: 'transfer_reversed',
+                p_failure_reason: "transfer_reversed",
               }),
             });
           }
         }
-        console.log(`[STRIPE] Transfer reversed: ${transfer.id}`);
+        stripeLogger.warn("Processed transfer reversal", {
+          event_id: event.id,
+          transfer_id: transfer.id,
+        });
       }
 
       return json({ received: true });
     } catch (err) {
-      console.error('[STRIPE] Webhook error:', err);
-      return error('Webhook processing failed', 500);
+      stripeLogger.error("Webhook processing failed", { error: err });
+      return error("Webhook processing failed", 500);
     }
   }
 
@@ -483,113 +547,146 @@ export async function handleUser(request: Request): Promise<Response> {
   // SUPABASE OAUTH CALLBACK (unauthenticated — redirect from Supabase)
   // Auth is validated via stored state → user_id mapping
   // ============================================
-  if (path === '/api/user/supabase/oauth/callback' && method === 'GET') {
-    try {
-      const code = url.searchParams.get('code');
-      const state = url.searchParams.get('state');
-      const errorParam = url.searchParams.get('error');
+  if (path === "/api/user/supabase/oauth/callback" && method === "GET") {
+    return withSensitiveRouteRateLimit(
+      getSensitiveRouteClientKey(request),
+      "user:supabase_oauth_callback",
+      async () => {
+        try {
+          const code = url.searchParams.get("code");
+          const state = url.searchParams.get("state");
+          const errorParam = url.searchParams.get("error");
 
-      if (errorParam) {
-        const desc = url.searchParams.get('error_description') || errorParam;
-        return new Response(getOAuthCallbackHtml(false, desc), {
-          headers: { 'Content-Type': 'text/html' },
-        });
-      }
+          if (errorParam) {
+            const desc = url.searchParams.get("error_description") ||
+              errorParam;
+            return new Response(getOAuthCallbackHtml(false, desc), {
+              headers: { "Content-Type": "text/html" },
+            });
+          }
 
-      if (!code || !state) {
-        return new Response(getOAuthCallbackHtml(false, 'Missing code or state'), {
-          headers: { 'Content-Type': 'text/html' },
-        });
-      }
+          if (!code || !state) {
+            return new Response(
+              getOAuthCallbackHtml(false, "Missing code or state"),
+              {
+                headers: { "Content-Type": "text/html" },
+              },
+            );
+          }
 
-      // Look up stored state
-      const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } = getSupabaseEnv();
-      const stateRes = await fetch(
-        `${SB_URL}/rest/v1/supabase_oauth_state?state=eq.${state}&select=user_id,code_verifier`,
-        { headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` } }
-      );
-      const stateRows = await stateRes.json();
-      if (!Array.isArray(stateRows) || stateRows.length === 0) {
-        return new Response(getOAuthCallbackHtml(false, 'Invalid or expired state'), {
-          headers: { 'Content-Type': 'text/html' },
-        });
-      }
+          // Look up stored state
+          const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } =
+            getSupabaseEnv();
+          const stateRes = await fetch(
+            `${SB_URL}/rest/v1/supabase_oauth_state?state=eq.${state}&select=user_id,code_verifier`,
+            {
+              headers: {
+                "apikey": SB_KEY,
+                "Authorization": `Bearer ${SB_KEY}`,
+              },
+            },
+          );
+          const stateRows = await stateRes.json();
+          if (!Array.isArray(stateRows) || stateRows.length === 0) {
+            return new Response(
+              getOAuthCallbackHtml(false, "Invalid or expired state"),
+              {
+                headers: { "Content-Type": "text/html" },
+              },
+            );
+          }
 
-      const { user_id: oauthUserId, code_verifier: codeVerifier } = stateRows[0];
+          const { user_id: oauthUserId, code_verifier: codeVerifier } =
+            stateRows[0];
 
-      // Clean up state row
-      await fetch(`${SB_URL}/rest/v1/supabase_oauth_state?state=eq.${state}`, {
-        method: 'DELETE',
-        headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` },
-      });
+          // Clean up state row
+          await fetch(
+            `${SB_URL}/rest/v1/supabase_oauth_state?state=eq.${state}`,
+            {
+              method: "DELETE",
+              headers: {
+                "apikey": SB_KEY,
+                "Authorization": `Bearer ${SB_KEY}`,
+              },
+            },
+          );
 
-      // Exchange code for tokens
-      const clientId = getEnv('SUPABASE_MGMT_OAUTH_CLIENT_ID');
-      const clientSecret = getEnv('SUPABASE_MGMT_OAUTH_CLIENT_SECRET');
-      const baseUrl = `${url.protocol}//${url.host}`;
-      const redirectUri = `${baseUrl}/api/user/supabase/oauth/callback`;
+          // Exchange code for tokens
+          const clientId = getEnv("SUPABASE_MGMT_OAUTH_CLIENT_ID");
+          const clientSecret = getEnv("SUPABASE_MGMT_OAUTH_CLIENT_SECRET");
+          const baseUrl = `${url.protocol}//${url.host}`;
+          const redirectUri = `${baseUrl}/api/user/supabase/oauth/callback`;
 
-      const tokenRes = await fetch('https://api.supabase.com/v1/oauth/token', {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Basic ' + btoa(`${clientId}:${clientSecret}`),
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: new URLSearchParams({
-          grant_type: 'authorization_code',
-          code: code,
-          redirect_uri: redirectUri,
-          code_verifier: codeVerifier,
-        }).toString(),
-      });
+          const tokenRes = await fetch(
+            "https://api.supabase.com/v1/oauth/token",
+            {
+              method: "POST",
+              headers: {
+                "Authorization": "Basic " + btoa(`${clientId}:${clientSecret}`),
+                "Content-Type": "application/x-www-form-urlencoded",
+              },
+              body: new URLSearchParams({
+                grant_type: "authorization_code",
+                code: code,
+                redirect_uri: redirectUri,
+                code_verifier: codeVerifier,
+              }).toString(),
+            },
+          );
 
-      if (!tokenRes.ok) {
-        const errText = await tokenRes.text();
-        console.error('Supabase token exchange failed:', errText);
-        return new Response(getOAuthCallbackHtml(false, 'Token exchange failed'), {
-          headers: { 'Content-Type': 'text/html' },
-        });
-      }
+          if (!tokenRes.ok) {
+            const errText = await tokenRes.text();
+            console.error("Supabase token exchange failed:", errText);
+            return new Response(
+              getOAuthCallbackHtml(false, "Token exchange failed"),
+              {
+                headers: { "Content-Type": "text/html" },
+              },
+            );
+          }
 
-      const tokens = await tokenRes.json() as {
-        access_token: string;
-        refresh_token: string;
-        expires_in: number;
-        token_type: string;
-      };
+          const tokens = await tokenRes.json() as {
+            access_token: string;
+            refresh_token: string;
+            expires_in: number;
+            token_type: string;
+          };
 
-      // Encrypt and store tokens
-      const encAccessToken = await encryptEnvVar(tokens.access_token);
-      const encRefreshToken = await encryptEnvVar(tokens.refresh_token);
-      const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
+          // Encrypt and store tokens
+          const encAccessToken = await encryptEnvVar(tokens.access_token);
+          const encRefreshToken = await encryptEnvVar(tokens.refresh_token);
+          const expiresAt = new Date(Date.now() + tokens.expires_in * 1000)
+            .toISOString();
 
-      // Upsert (unique on user_id)
-      await fetch(`${SB_URL}/rest/v1/user_supabase_oauth`, {
-        method: 'POST',
-        headers: {
-          'apikey': SB_KEY,
-          'Authorization': `Bearer ${SB_KEY}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'resolution=merge-duplicates',
-        },
-        body: JSON.stringify({
-          user_id: oauthUserId,
-          access_token_encrypted: encAccessToken,
-          refresh_token_encrypted: encRefreshToken,
-          token_expires_at: expiresAt,
-          updated_at: new Date().toISOString(),
-        }),
-      });
+          // Upsert (unique on user_id)
+          await fetch(`${SB_URL}/rest/v1/user_supabase_oauth`, {
+            method: "POST",
+            headers: {
+              "apikey": SB_KEY,
+              "Authorization": `Bearer ${SB_KEY}`,
+              "Content-Type": "application/json",
+              "Prefer": "resolution=merge-duplicates",
+            },
+            body: JSON.stringify({
+              user_id: oauthUserId,
+              access_token_encrypted: encAccessToken,
+              refresh_token_encrypted: encRefreshToken,
+              token_expires_at: expiresAt,
+              updated_at: new Date().toISOString(),
+            }),
+          });
 
-      return new Response(getOAuthCallbackHtml(true, ''), {
-        headers: { 'Content-Type': 'text/html' },
-      });
-    } catch (err) {
-      console.error('Supabase OAuth callback error:', err);
-      return new Response(getOAuthCallbackHtml(false, 'Internal error'), {
-        headers: { 'Content-Type': 'text/html' },
-      });
-    }
+          return new Response(getOAuthCallbackHtml(true, ""), {
+            headers: { "Content-Type": "text/html" },
+          });
+        } catch (err) {
+          console.error("Supabase OAuth callback error:", err);
+          return new Response(getOAuthCallbackHtml(false, "Internal error"), {
+            headers: { "Content-Type": "text/html" },
+          });
+        }
+      },
+    );
   }
 
   // ============================================
@@ -598,60 +695,74 @@ export async function handleUser(request: Request): Promise<Response> {
 
   // GET /api/user/profile/:slug — Public user profile data
   const profileMatch = path.match(/^\/api\/user\/profile\/([a-z0-9_-]+)$/);
-  if (profileMatch && method === 'GET') {
+  if (profileMatch && method === "GET") {
     const slug = profileMatch[1];
     try {
-      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
-      const headers = { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` };
+      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
+        getSupabaseEnv();
+      const headers = { "apikey": sbKey, "Authorization": `Bearer ${sbKey}` };
 
       // Look up user by profile_slug or by UUID
-      const isUuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(slug);
+      const isUuid =
+        /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(
+          slug,
+        );
       const userFilter = isUuid ? `id=eq.${slug}` : `profile_slug=eq.${slug}`;
       const userRes = await fetch(
         `${sbUrl}/rest/v1/users?${userFilter}&select=id,display_name,avatar_url,country,tier,featured_app_id,created_at`,
-        { headers }
+        { headers },
       );
-      if (!userRes.ok) return error('Failed to fetch profile', 500);
+      if (!userRes.ok) return error("Failed to fetch profile", 500);
       const users = await readJsonRows<PublicProfileRow>(userRes);
-      if (!users.length) return error('Profile not found', 404);
+      if (!users.length) return error("Profile not found", 404);
       const profile = users[0];
 
       // Fetch stats, published apps, and acquisitions in parallel
-      const [statsRes, publishedRes, acquisitionsRes, featuredRes] = await Promise.all([
-        fetch(`${sbUrl}/rest/v1/rpc/get_user_profile_stats`, {
-          method: 'POST',
-          headers: { ...headers, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ p_user_id: profile.id }),
-        }),
-        fetch(
-          `${sbUrl}/rest/v1/apps?owner_id=eq.${profile.id}&visibility=eq.public&deleted_at=is.null` +
-          `&select=id,name,slug,description,runs_30d,current_version,first_published_at` +
-          `&order=runs_30d.desc&limit=50`,
-          { headers }
-        ),
-        fetch(
-          `${sbUrl}/rest/v1/app_sales?buyer_id=eq.${profile.id}&select=id,sale_price_light,created_at,apps(name,slug)` +
-          `&order=created_at.desc&limit=50`,
-          { headers }
-        ),
-        profile.featured_app_id
-          ? fetch(`${sbUrl}/rest/v1/apps?id=eq.${profile.featured_app_id}&select=id,name,slug`, { headers })
-          : Promise.resolve(null),
-      ]);
+      const [statsRes, publishedRes, acquisitionsRes, featuredRes] =
+        await Promise.all([
+          fetch(`${sbUrl}/rest/v1/rpc/get_user_profile_stats`, {
+            method: "POST",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify({ p_user_id: profile.id }),
+          }),
+          fetch(
+            `${sbUrl}/rest/v1/apps?owner_id=eq.${profile.id}&visibility=eq.public&deleted_at=is.null` +
+              `&select=id,name,slug,description,runs_30d,current_version,first_published_at` +
+              `&order=runs_30d.desc&limit=50`,
+            { headers },
+          ),
+          fetch(
+            `${sbUrl}/rest/v1/app_sales?buyer_id=eq.${profile.id}&select=id,sale_price_light,created_at,apps(name,slug)` +
+              `&order=created_at.desc&limit=50`,
+            { headers },
+          ),
+          profile.featured_app_id
+            ? fetch(
+              `${sbUrl}/rest/v1/apps?id=eq.${profile.featured_app_id}&select=id,name,slug`,
+              { headers },
+            )
+            : Promise.resolve(null),
+        ]);
 
       const stats = statsRes.ok
-        ? await readJsonResponse<{ lifetime_gross_light: number; published_count: number; acquired_count: number }>(statsRes)
+        ? await readJsonResponse<
+          {
+            lifetime_gross_light: number;
+            published_count: number;
+            acquired_count: number;
+          }
+        >(statsRes)
         : { lifetime_gross_light: 0, published_count: 0, acquired_count: 0 };
       const published = publishedRes.ok
         ? await readJsonRows<{
-            id: string;
-            name: string;
-            slug: string;
-            description: string | null;
-            runs_30d: number;
-            current_version: string;
-            first_published_at: string | null;
-          }>(publishedRes)
+          id: string;
+          name: string;
+          slug: string;
+          description: string | null;
+          runs_30d: number;
+          current_version: string;
+          first_published_at: string | null;
+        }>(publishedRes)
         : [];
       const acquisitionsRaw = acquisitionsRes.ok
         ? await readJsonRows<PublicProfileAcquisitionRow>(acquisitionsRes)
@@ -659,14 +770,16 @@ export async function handleUser(request: Request): Promise<Response> {
       let featuredApp = null;
       if (featuredRes && featuredRes.ok) {
         const fa = await readJsonRows<PublicProfileFeaturedAppRow>(featuredRes);
-        if (fa.length) featuredApp = { id: fa[0].id, name: fa[0].name, slug: fa[0].slug };
+        if (fa.length) {
+          featuredApp = { id: fa[0].id, name: fa[0].name, slug: fa[0].slug };
+        }
       }
 
       const acquisitions = acquisitionsRaw.map((a) => {
         const app = a.apps;
         return {
-          app_name: app?.name || 'Unknown',
-          app_slug: app?.slug || '',
+          app_name: app?.name || "Unknown",
+          app_slug: app?.slug || "",
           price_light: a.sale_price_light,
           acquired_at: a.created_at,
         };
@@ -685,8 +798,8 @@ export async function handleUser(request: Request): Promise<Response> {
         acquisitions,
       });
     } catch (err) {
-      console.error('Profile fetch error:', err);
-      return error('Failed to fetch profile', 500);
+      console.error("Profile fetch error:", err);
+      return error("Failed to fetch profile", 500);
     }
   }
 
@@ -700,7 +813,7 @@ export async function handleUser(request: Request): Promise<Response> {
     const auth = await authenticate(request);
     userId = auth.id;
   } catch (err) {
-    return error('Authentication required', 401);
+    return error("Authentication required", 401);
   }
 
   const userService = createUserService();
@@ -708,69 +821,96 @@ export async function handleUser(request: Request): Promise<Response> {
   // ============================================
   // POST /api/user/conversation-embedding - Embed conversation for semantic search
   // ============================================
-  if (path === '/api/user/conversation-embedding' && method === 'POST') {
+  if (path === "/api/user/conversation-embedding" && method === "POST") {
     try {
       const body = await readJsonBody<ConversationEmbeddingBody>(request);
       const { conversationId, conversationName, summary, metadata } = body;
 
       if (!conversationId || !summary || summary.length < 20) {
-        return error('conversationId and summary (min 20 chars) required', 400);
+        return error("conversationId and summary (min 20 chars) required", 400);
       }
 
       // Generate embedding
-      const { createEmbeddingService, storeConversationEmbedding } = await import('../services/embedding.ts');
+      const { createEmbeddingService, storeConversationEmbedding } =
+        await import("../services/embedding.ts");
       const embeddingService = createEmbeddingService();
       if (!embeddingService) {
-        return error('Embedding service unavailable', 503);
+        return error("Embedding service unavailable", 503);
       }
-      const { embedding } = await embeddingService.embed(summary.slice(0, 4000));
+      const { embedding } = await embeddingService.embed(
+        summary.slice(0, 4000),
+      );
 
       // Store in Supabase
       await storeConversationEmbedding(
-        userId, conversationId, conversationName || 'Untitled', summary,
-        metadata || {}, embedding,
+        userId,
+        conversationId,
+        conversationName || "Untitled",
+        summary,
+        metadata || {},
+        embedding,
       );
 
       // Update topics hint in KV
       const fnIndex = getFnIndexBinding();
       if (fnIndex) {
         try {
-          const existing = (await fnIndex.get(`conversation-topics:${userId}`, 'json') as {
-            count: number;
-            recent: Array<{ id: string; name: string; timestamp: number; entities: string[] }>;
-          }) || { count: 0, recent: [] };
-          const recent = (existing.recent || []).filter((r: { id: string }) => r.id !== conversationId);
+          const existing =
+            (await fnIndex.get(`conversation-topics:${userId}`, "json") as {
+              count: number;
+              recent: Array<
+                {
+                  id: string;
+                  name: string;
+                  timestamp: number;
+                  entities: string[];
+                }
+              >;
+            }) || { count: 0, recent: [] };
+          const recent = (existing.recent || []).filter((r: { id: string }) =>
+            r.id !== conversationId
+          );
           recent.unshift({
             id: conversationId,
-            name: conversationName || 'Untitled',
+            name: conversationName || "Untitled",
             timestamp: Date.now(),
             entities: ((metadata?.entities || []) as string[]).slice(0, 10),
           });
-          await fnIndex.put(`conversation-topics:${userId}`, JSON.stringify({
-            count: Math.max(existing.count || 0, recent.length),
-            recent: recent.slice(0, 10),
-          }));
+          await fnIndex.put(
+            `conversation-topics:${userId}`,
+            JSON.stringify({
+              count: Math.max(existing.count || 0, recent.length),
+              recent: recent.slice(0, 10),
+            }),
+          );
         } catch (kvErr) {
-          console.warn('Failed to update conversation topics KV:', kvErr);
+          userLogger.warn("Failed to update conversation topics KV", {
+            user_id: userId,
+            conversation_id: conversationId,
+            error: kvErr,
+          });
         }
       }
 
       return json({ ok: true });
     } catch (err) {
-      console.error('Conversation embedding error:', err);
-      return error('Failed to embed conversation', 500);
+      userLogger.error("Conversation embedding failed", {
+        user_id: userId,
+        error: err,
+      });
+      return error("Failed to embed conversation", 500);
     }
   }
 
   // ============================================
   // PUT /api/user/system-agent-states - Sync system agent states for Flash context
   // ============================================
-  if (path === '/api/user/system-agent-states' && method === 'PUT') {
+  if (path === "/api/user/system-agent-states" && method === "PUT") {
     try {
       const body = await readJsonBody<SystemAgentStatesBody>(request);
       const states = body.states;
       if (!Array.isArray(states)) {
-        return error('states must be an array', 400);
+        return error("states must be an array", 400);
       }
       const fnIndex = getFnIndexBinding();
       if (fnIndex) {
@@ -778,31 +918,37 @@ export async function handleUser(request: Request): Promise<Response> {
       }
       return json({ ok: true });
     } catch (err) {
-      console.error('Sync system agent states error:', err);
-      return error('Failed to sync system agent states', 500);
+      userLogger.error("Failed to sync system agent states", {
+        user_id: userId,
+        error: err,
+      });
+      return error("Failed to sync system agent states", 500);
     }
   }
 
   // ============================================
   // GET /api/user - Get user profile
   // ============================================
-  if (path === '/api/user' && method === 'GET') {
+  if (path === "/api/user" && method === "GET") {
     try {
       const user = await userService.getUser(userId);
       if (!user) {
-        return error('User not found', 404);
+        return error("User not found", 404);
       }
       return json(user);
     } catch (err) {
-      console.error('Get user error:', err);
-      return error('Failed to get user profile', 500);
+      userLogger.error("Failed to get user profile", {
+        user_id: userId,
+        error: err,
+      });
+      return error("Failed to get user profile", 500);
     }
   }
 
   // ============================================
   // PATCH /api/user - Update user profile
   // ============================================
-  if (path === '/api/user' && method === 'PATCH') {
+  if (path === "/api/user" && method === "PATCH") {
     try {
       const body = await readJsonBody<UserProfilePatchBody>(request);
       const { display_name, country, featured_app_id } = body;
@@ -814,29 +960,40 @@ export async function handleUser(request: Request): Promise<Response> {
         if (display_name) {
           updates.profile_slug = display_name
             .toLowerCase()
-            .replace(/[^a-z0-9]+/g, '-')
-            .replace(/^-|-$/g, '')
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-|-$/g, "")
             .slice(0, 40);
         }
       }
       if (country !== undefined) {
         // Validate 2-letter ISO code or null
-        if (country !== null && (typeof country !== 'string' || !/^[A-Z]{2}$/i.test(country))) {
-          return error('Country must be a 2-letter ISO code (e.g. US, JP, BR) or null', 400);
+        if (
+          country !== null &&
+          (typeof country !== "string" || !/^[A-Z]{2}$/i.test(country))
+        ) {
+          return error(
+            "Country must be a 2-letter ISO code (e.g. US, JP, BR) or null",
+            400,
+          );
         }
         updates.country = country ? country.toUpperCase() : null;
       }
       if (featured_app_id !== undefined) {
         if (featured_app_id !== null) {
           // Validate the app belongs to this user
-          const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
+          const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
+            getSupabaseEnv();
           const appRes = await fetch(
             `${sbUrl}/rest/v1/apps?id=eq.${featured_app_id}&owner_id=eq.${userId}&deleted_at=is.null&select=id`,
-            { headers: { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` } }
+            {
+              headers: { "apikey": sbKey, "Authorization": `Bearer ${sbKey}` },
+            },
           );
-          const ownedApps = appRes.ok ? await readJsonRows<{ id: string }>(appRes) : [];
+          const ownedApps = appRes.ok
+            ? await readJsonRows<{ id: string }>(appRes)
+            : [];
           if (!appRes.ok || ownedApps.length === 0) {
-            return error('Featured app must be an app you own', 400);
+            return error("Featured app must be an app you own", 400);
           }
         }
         updates.featured_app_id = featured_app_id;
@@ -845,26 +1002,26 @@ export async function handleUser(request: Request): Promise<Response> {
       const user = await userService.updateUser(userId, updates);
       return json(user);
     } catch (err) {
-      console.error('Update user error:', err);
-      return error('Failed to update user profile', 500);
+      console.error("Update user error:", err);
+      return error("Failed to update user profile", 500);
     }
   }
 
   // ============================================
   // GET /api/user/byok - Get BYOK configs
   // ============================================
-  if (path === '/api/user/byok' && method === 'GET') {
+  if (path === "/api/user/byok" && method === "GET") {
     try {
       const user = await userService.getUser(userId);
       if (!user) {
-        return error('User not found', 404);
+        return error("User not found", 404);
       }
 
       return json({
         enabled: user.byok_enabled,
         primary_provider: user.byok_provider,
         configs: user.byok_configs,
-        available_providers: Object.values(BYOK_PROVIDERS).map(p => ({
+        available_providers: Object.values(BYOK_PROVIDERS).map((p) => ({
           id: p.id,
           name: p.name,
           description: p.description,
@@ -875,145 +1032,177 @@ export async function handleUser(request: Request): Promise<Response> {
         })),
       });
     } catch (err) {
-      console.error('Get BYOK error:', err);
-      return error('Failed to get BYOK configuration', 500);
+      console.error("Get BYOK error:", err);
+      return error("Failed to get BYOK configuration", 500);
     }
   }
 
   // ============================================
   // POST /api/user/byok - Add BYOK provider
   // ============================================
-  if (path === '/api/user/byok' && method === 'POST') {
-    try {
-      const body = await readJsonBody<ByokCreateBody>(request);
-      const { provider, api_key, model, validate = true } = body;
-      const providerEntry = getByokProviderEntry(provider);
+  if (path === "/api/user/byok" && method === "POST") {
+    return withSensitiveRouteRateLimit(userId, "user:byok_create", async () => {
+      try {
+        const body = await readJsonBody<ByokCreateBody>(request);
+        const { provider, api_key, model, validate = true } = body;
+        const providerEntry = getByokProviderEntry(provider);
 
-      // Validate provider
-      if (!providerEntry) {
-        return error('Invalid provider. Must be one of: ' + Object.keys(BYOK_PROVIDERS).join(', '), 400);
-      }
-
-      // Validate API key is provided
-      if (!api_key || typeof api_key !== 'string' || api_key.trim().length === 0) {
-        return error('API key is required', 400);
-      }
-
-      // Optionally validate the API key works
-      if (validate) {
-        try {
-          await validateAPIKey(providerEntry.provider, api_key.trim());
-        } catch (validationErr) {
-          return error(`API key validation failed: ${validationErr instanceof Error ? validationErr.message : 'Invalid key'}`, 400);
+        // Validate provider
+        if (!providerEntry) {
+          return error(
+            "Invalid provider. Must be one of: " +
+              Object.keys(BYOK_PROVIDERS).join(", "),
+            400,
+          );
         }
+
+        // Validate API key is provided
+        if (
+          !api_key || typeof api_key !== "string" || api_key.trim().length === 0
+        ) {
+          return error("API key is required", 400);
+        }
+
+        // Optionally validate the API key works
+        if (validate) {
+          try {
+            await validateAPIKey(providerEntry.provider, api_key.trim());
+          } catch (validationErr) {
+            return error(
+              `API key validation failed: ${
+                validationErr instanceof Error
+                  ? validationErr.message
+                  : "Invalid key"
+              }`,
+              400,
+            );
+          }
+        }
+
+        // Add the provider
+        const config = await userService.addBYOKProvider(
+          userId,
+          providerEntry.provider,
+          api_key.trim(),
+          model,
+        );
+
+        return json({
+          success: true,
+          config,
+          message: `${providerEntry.info.name} configured successfully`,
+        });
+      } catch (err) {
+        console.error("Add BYOK error:", err);
+        return error("Failed to add BYOK provider", 500);
       }
-
-      // Add the provider
-      const config = await userService.addBYOKProvider(
-        userId,
-        providerEntry.provider,
-        api_key.trim(),
-        model
-      );
-
-      return json({
-        success: true,
-        config,
-        message: `${providerEntry.info.name} configured successfully`,
-      });
-    } catch (err) {
-      console.error('Add BYOK error:', err);
-      return error('Failed to add BYOK provider', 500);
-    }
+    });
   }
 
   // ============================================
   // PATCH /api/user/byok/:provider - Update BYOK provider
   // ============================================
   const byokMatch = path.match(/^\/api\/user\/byok\/([a-z]+)$/);
-  if (byokMatch && method === 'PATCH') {
+  if (byokMatch && method === "PATCH") {
     const provider = byokMatch[1] as BYOKProvider;
     const providerInfo = BYOK_PROVIDERS[provider];
 
     if (!providerInfo) {
-      return error('Invalid provider', 400);
+      return error("Invalid provider", 400);
     }
 
-    try {
-      const body = await readJsonBody<ByokUpdateBody>(request);
-      const { api_key, model, validate = true } = body;
+    return withSensitiveRouteRateLimit(userId, "user:byok_update", async () => {
+      try {
+        const body = await readJsonBody<ByokUpdateBody>(request);
+        const { api_key, model, validate = true } = body;
 
-      // If updating API key, validate it
-      if (api_key && validate) {
-        try {
-          await validateAPIKey(provider, api_key.trim());
-        } catch (validationErr) {
-          return error(`API key validation failed: ${validationErr instanceof Error ? validationErr.message : 'Invalid key'}`, 400);
+        // If updating API key, validate it
+        if (api_key && validate) {
+          try {
+            await validateAPIKey(provider, api_key.trim());
+          } catch (validationErr) {
+            return error(
+              `API key validation failed: ${
+                validationErr instanceof Error
+                  ? validationErr.message
+                  : "Invalid key"
+              }`,
+              400,
+            );
+          }
         }
+
+        const config = await userService.updateBYOKProvider(userId, provider, {
+          apiKey: api_key?.trim(),
+          model,
+        });
+
+        return json({
+          success: true,
+          config,
+          message: `${providerInfo.name} updated successfully`,
+        });
+      } catch (err) {
+        console.error("Update BYOK error:", err);
+        return error("Failed to update BYOK provider", 500);
       }
-
-      const config = await userService.updateBYOKProvider(userId, provider, {
-        apiKey: api_key?.trim(),
-        model,
-      });
-
-      return json({
-        success: true,
-        config,
-        message: `${providerInfo.name} updated successfully`,
-      });
-    } catch (err) {
-      console.error('Update BYOK error:', err);
-      return error('Failed to update BYOK provider', 500);
-    }
+    });
   }
 
   // ============================================
   // DELETE /api/user/byok/:provider - Remove BYOK provider
   // ============================================
-  if (byokMatch && method === 'DELETE') {
+  if (byokMatch && method === "DELETE") {
     const provider = byokMatch[1] as BYOKProvider;
     const providerInfo = BYOK_PROVIDERS[provider];
 
     if (!providerInfo) {
-      return error('Invalid provider', 400);
+      return error("Invalid provider", 400);
     }
 
-    try {
-      await userService.removeBYOKProvider(userId, provider);
+    return withSensitiveRouteRateLimit(userId, "user:byok_delete", async () => {
+      try {
+        await userService.removeBYOKProvider(userId, provider);
 
-      return json({
-        success: true,
-        message: `${providerInfo.name} removed`,
-      });
-    } catch (err) {
-      console.error('Remove BYOK error:', err);
-      return error('Failed to remove BYOK provider', 500);
-    }
+        return json({
+          success: true,
+          message: `${providerInfo.name} removed`,
+        });
+      } catch (err) {
+        console.error("Remove BYOK error:", err);
+        return error("Failed to remove BYOK provider", 500);
+      }
+    });
   }
 
   // ============================================
   // POST /api/user/byok/primary - Set primary provider
   // ============================================
-  if (path === '/api/user/byok/primary' && method === 'POST') {
-    try {
-      const body = await readJsonBody<ByokPrimaryBody>(request);
-      const providerEntry = getByokProviderEntry(body.provider);
+  if (path === "/api/user/byok/primary" && method === "POST") {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:byok_primary",
+      async () => {
+        try {
+          const body = await readJsonBody<ByokPrimaryBody>(request);
+          const providerEntry = getByokProviderEntry(body.provider);
 
-      if (!providerEntry) {
-        return error('Invalid provider', 400);
-      }
+          if (!providerEntry) {
+            return error("Invalid provider", 400);
+          }
 
-      await userService.setPrimaryProvider(userId, providerEntry.provider);
+          await userService.setPrimaryProvider(userId, providerEntry.provider);
 
-      return json({
-        success: true,
-        message: `${providerEntry.info.name} set as primary provider`,
-      });
-    } catch (err) {
-      console.error('Set primary provider error:', err);
-      return error('Failed to set primary provider', 500);
-    }
+          return json({
+            success: true,
+            message: `${providerEntry.info.name} set as primary provider`,
+          });
+        } catch (err) {
+          console.error("Set primary provider error:", err);
+          return error("Failed to set primary provider", 500);
+        }
+      },
+    );
   }
 
   // ============================================
@@ -1021,7 +1210,7 @@ export async function handleUser(request: Request): Promise<Response> {
   // ============================================
 
   // GET /api/user/tokens - List all tokens
-  if (path === '/api/user/tokens' && method === 'GET') {
+  if (path === "/api/user/tokens" && method === "GET") {
     try {
       const tokens = await listTokens(userId);
       return json({
@@ -1039,103 +1228,138 @@ export async function handleUser(request: Request): Promise<Response> {
         })),
       });
     } catch (err) {
-      console.error('List tokens error:', err);
-      return error('Failed to list tokens', 500);
+      userLogger.error("Failed to list API tokens", {
+        user_id: userId,
+        error: err,
+      });
+      return error("Failed to list tokens", 500);
     }
   }
 
   // POST /api/user/tokens - Create a new token
-  if (path === '/api/user/tokens' && method === 'POST') {
-    try {
-      const body = await readJsonBody<TokenCreateBody>(request);
-      const { name, expires_in_days, app_ids, function_names } = body;
+  if (path === "/api/user/tokens" && method === "POST") {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:token_create",
+      async () => {
+        try {
+          const body = await readJsonBody<TokenCreateBody>(request);
+          const { name, expires_in_days, app_ids, function_names } = body;
 
-      if (!name || typeof name !== 'string' || name.trim().length === 0) {
-        return error('Token name is required', 400);
-      }
+          if (!name || typeof name !== "string" || name.trim().length === 0) {
+            return error("Token name is required", 400);
+          }
 
-      if (name.length > 50) {
-        return error('Token name must be 50 characters or less', 400);
-      }
+          if (name.length > 50) {
+            return error("Token name must be 50 characters or less", 400);
+          }
 
-      // Validate expires_in_days if provided
-      if (expires_in_days !== undefined) {
-        if (typeof expires_in_days !== 'number' || expires_in_days < 1 || expires_in_days > 365) {
-          return error('expires_in_days must be between 1 and 365', 400);
+          // Validate expires_in_days if provided
+          if (expires_in_days !== undefined) {
+            if (
+              typeof expires_in_days !== "number" || expires_in_days < 1 ||
+              expires_in_days > 365
+            ) {
+              return error("expires_in_days must be between 1 and 365", 400);
+            }
+          }
+
+          // Validate token scoping (Pro feature — accepts but stores for all tiers)
+          if (
+            app_ids !== undefined &&
+            (!Array.isArray(app_ids) ||
+              app_ids.some((id: unknown) => typeof id !== "string"))
+          ) {
+            return error("app_ids must be an array of strings", 400);
+          }
+          if (
+            function_names !== undefined &&
+            (!Array.isArray(function_names) ||
+              function_names.some((n: unknown) => typeof n !== "string"))
+          ) {
+            return error("function_names must be an array of strings", 400);
+          }
+
+          const result = await createToken(userId, name.trim(), {
+            expiresInDays: expires_in_days,
+            app_ids: app_ids || undefined,
+            function_names: function_names || undefined,
+          });
+
+          return json({
+            success: true,
+            token: {
+              id: result.token.id,
+              name: result.token.name,
+              token_prefix: result.token.token_prefix,
+              app_ids: result.token.app_ids,
+              function_names: result.token.function_names,
+              expires_at: result.token.expires_at,
+              created_at: result.token.created_at,
+            },
+            // IMPORTANT: This is the only time the full token is returned!
+            plaintext_token: result.plaintext_token,
+            message:
+              "Token created. Copy it now - you won't be able to see it again!",
+          });
+        } catch (err) {
+          console.error("Create token error:", err);
+          if (err instanceof Error && err.message.includes("already exists")) {
+            return error(err.message, 409);
+          }
+          if (
+            err instanceof Error && err.message.includes("Token limit reached")
+          ) {
+            return error(err.message, 403);
+          }
+          return error("Failed to create token", 500);
         }
-      }
-
-      // Validate token scoping (Pro feature — accepts but stores for all tiers)
-      if (app_ids !== undefined && (!Array.isArray(app_ids) || app_ids.some((id: unknown) => typeof id !== 'string'))) {
-        return error('app_ids must be an array of strings', 400);
-      }
-      if (function_names !== undefined && (!Array.isArray(function_names) || function_names.some((n: unknown) => typeof n !== 'string'))) {
-        return error('function_names must be an array of strings', 400);
-      }
-
-      const result = await createToken(userId, name.trim(), {
-        expiresInDays: expires_in_days,
-        app_ids: app_ids || undefined,
-        function_names: function_names || undefined,
-      });
-
-      return json({
-        success: true,
-        token: {
-          id: result.token.id,
-          name: result.token.name,
-          token_prefix: result.token.token_prefix,
-          app_ids: result.token.app_ids,
-          function_names: result.token.function_names,
-          expires_at: result.token.expires_at,
-          created_at: result.token.created_at,
-        },
-        // IMPORTANT: This is the only time the full token is returned!
-        plaintext_token: result.plaintext_token,
-        message: 'Token created. Copy it now - you won\'t be able to see it again!',
-      });
-    } catch (err) {
-      console.error('Create token error:', err);
-      if (err instanceof Error && err.message.includes('already exists')) {
-        return error(err.message, 409);
-      }
-      if (err instanceof Error && err.message.includes('Token limit reached')) {
-        return error(err.message, 403);
-      }
-      return error('Failed to create token', 500);
-    }
+      },
+    );
   }
 
   // DELETE /api/user/tokens/:id - Revoke a specific token
   const tokenMatch = path.match(/^\/api\/user\/tokens\/([a-f0-9-]+)$/);
-  if (tokenMatch && method === 'DELETE') {
+  if (tokenMatch && method === "DELETE") {
     const tokenId = tokenMatch[1];
 
-    try {
-      await revokeToken(userId, tokenId);
-      return json({
-        success: true,
-        message: 'Token revoked',
-      });
-    } catch (err) {
-      console.error('Revoke token error:', err);
-      return error('Failed to revoke token', 500);
-    }
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:token_delete",
+      async () => {
+        try {
+          await revokeToken(userId, tokenId);
+          return json({
+            success: true,
+            message: "Token revoked",
+          });
+        } catch (err) {
+          console.error("Revoke token error:", err);
+          return error("Failed to revoke token", 500);
+        }
+      },
+    );
   }
 
   // DELETE /api/user/tokens - Revoke all tokens
-  if (path === '/api/user/tokens' && method === 'DELETE') {
-    try {
-      const count = await revokeAllTokens(userId);
-      return json({
-        success: true,
-        revoked_count: count,
-        message: `Revoked ${count} token(s)`,
-      });
-    } catch (err) {
-      console.error('Revoke all tokens error:', err);
-      return error('Failed to revoke tokens', 500);
-    }
+  if (path === "/api/user/tokens" && method === "DELETE") {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:token_delete_all",
+      async () => {
+        try {
+          const count = await revokeAllTokens(userId);
+          return json({
+            success: true,
+            revoked_count: count,
+            message: `Revoked ${count} token(s)`,
+          });
+        } catch (err) {
+          console.error("Revoke all tokens error:", err);
+          return error("Failed to revoke tokens", 500);
+        }
+      },
+    );
   }
 
   // ============================================
@@ -1143,141 +1367,174 @@ export async function handleUser(request: Request): Promise<Response> {
   // ============================================
 
   // GET /api/user/supabase - List all saved Supabase servers
-  if (path === '/api/user/supabase' && method === 'GET') {
+  if (path === "/api/user/supabase" && method === "GET") {
     try {
       const configs = await listSupabaseConfigs(userId);
       return json({ configs });
     } catch (err) {
-      console.error('List Supabase configs error:', err);
-      return error('Failed to list Supabase configurations', 500);
+      console.error("List Supabase configs error:", err);
+      return error("Failed to list Supabase configurations", 500);
     }
   }
 
   // POST /api/user/supabase - Create a new saved Supabase server
-  if (path === '/api/user/supabase' && method === 'POST') {
-    try {
-      const body = await readJsonBody<SupabaseConfigCreateBody>(request);
-      const { name, url: supabaseUrl, anon_key, service_key } = body;
+  if (path === "/api/user/supabase" && method === "POST") {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:supabase_create",
+      async () => {
+        try {
+          const body = await readJsonBody<SupabaseConfigCreateBody>(request);
+          const { name, url: supabaseUrl, anon_key, service_key } = body;
 
-      if (!name || typeof name !== 'string' || name.trim().length === 0) {
-        return error('Server name is required', 400);
-      }
-      if (name.length > 100) {
-        return error('Server name must be 100 characters or less', 400);
-      }
-      if (!supabaseUrl || typeof supabaseUrl !== 'string') {
-        return error('Supabase URL is required', 400);
-      }
-      try { new URL(supabaseUrl); } catch { return error('Invalid Supabase URL', 400); }
-      if (!anon_key || typeof anon_key !== 'string') {
-        return error('Anon key is required', 400);
-      }
-
-      const encryptedAnonKey = await encryptEnvVar(anon_key.trim());
-      const encryptedServiceKey = service_key ? await encryptEnvVar(service_key.trim()) : null;
-
-      const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } = getSupabaseEnv();
-
-      const response = await fetch(
-        `${SB_URL}/rest/v1/user_supabase_configs`,
-        {
-          method: 'POST',
-          headers: {
-            'apikey': SB_KEY,
-            'Authorization': `Bearer ${SB_KEY}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=representation',
-          },
-          body: JSON.stringify({
-            user_id: userId,
-            name: name.trim(),
-            supabase_url: supabaseUrl.trim(),
-            anon_key_encrypted: encryptedAnonKey,
-            service_key_encrypted: encryptedServiceKey,
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        const text = await response.text();
-        if (text.includes('unique') || text.includes('duplicate')) {
-          return error(`A server named "${name.trim()}" already exists`, 409);
-        }
-        throw new Error(`Failed to create: ${text}`);
-      }
-
-      const created = await readJsonResponse<
-        | {
-            id: string;
-            name: string;
-            supabase_url: string;
-            service_key_encrypted: string | null;
-            created_at: string;
+          if (!name || typeof name !== "string" || name.trim().length === 0) {
+            return error("Server name is required", 400);
           }
-        | Array<{
-            id: string;
-            name: string;
-            supabase_url: string;
-            service_key_encrypted: string | null;
-            created_at: string;
-          }>
-      >(response);
-      const config = Array.isArray(created) ? created[0] : created;
+          if (name.length > 100) {
+            return error("Server name must be 100 characters or less", 400);
+          }
+          if (!supabaseUrl || typeof supabaseUrl !== "string") {
+            return error("Supabase URL is required", 400);
+          }
+          try {
+            new URL(supabaseUrl);
+          } catch {
+            return error("Invalid Supabase URL", 400);
+          }
+          if (!anon_key || typeof anon_key !== "string") {
+            return error("Anon key is required", 400);
+          }
 
-      return json({
-        success: true,
-        config: {
-          id: config.id,
-          name: config.name,
-          supabase_url: config.supabase_url,
-          has_service_key: !!config.service_key_encrypted,
-          created_at: config.created_at,
-        },
-      });
-    } catch (err) {
-      console.error('Create Supabase config error:', err);
-      if (err instanceof Error && err.message.includes('already exists')) {
-        return error(err.message, 409);
-      }
-      return error('Failed to save Supabase configuration', 500);
-    }
+          const encryptedAnonKey = await encryptEnvVar(anon_key.trim());
+          const encryptedServiceKey = service_key
+            ? await encryptEnvVar(service_key.trim())
+            : null;
+
+          const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } =
+            getSupabaseEnv();
+
+          const response = await fetch(
+            `${SB_URL}/rest/v1/user_supabase_configs`,
+            {
+              method: "POST",
+              headers: {
+                "apikey": SB_KEY,
+                "Authorization": `Bearer ${SB_KEY}`,
+                "Content-Type": "application/json",
+                "Prefer": "return=representation",
+              },
+              body: JSON.stringify({
+                user_id: userId,
+                name: name.trim(),
+                supabase_url: supabaseUrl.trim(),
+                anon_key_encrypted: encryptedAnonKey,
+                service_key_encrypted: encryptedServiceKey,
+              }),
+            },
+          );
+
+          if (!response.ok) {
+            const text = await response.text();
+            if (text.includes("unique") || text.includes("duplicate")) {
+              return error(
+                `A server named "${name.trim()}" already exists`,
+                409,
+              );
+            }
+            throw new Error(`Failed to create: ${text}`);
+          }
+
+          const created = await readJsonResponse<
+            | {
+              id: string;
+              name: string;
+              supabase_url: string;
+              service_key_encrypted: string | null;
+              created_at: string;
+            }
+            | Array<{
+              id: string;
+              name: string;
+              supabase_url: string;
+              service_key_encrypted: string | null;
+              created_at: string;
+            }>
+          >(response);
+          const config = Array.isArray(created) ? created[0] : created;
+
+          return json({
+            success: true,
+            config: {
+              id: config.id,
+              name: config.name,
+              supabase_url: config.supabase_url,
+              has_service_key: !!config.service_key_encrypted,
+              created_at: config.created_at,
+            },
+          });
+        } catch (err) {
+          console.error("Create Supabase config error:", err);
+          if (err instanceof Error && err.message.includes("already exists")) {
+            return error(err.message, 409);
+          }
+          return error("Failed to save Supabase configuration", 500);
+        }
+      },
+    );
   }
 
   // DELETE /api/user/supabase/:id - Delete a saved Supabase server
-  const supabaseDeleteMatch = path.match(/^\/api\/user\/supabase\/([a-f0-9-]+)$/);
-  if (supabaseDeleteMatch && method === 'DELETE') {
-    try {
-      const configId = supabaseDeleteMatch[1];
-      const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } = getSupabaseEnv();
+  const supabaseDeleteMatch = path.match(
+    /^\/api\/user\/supabase\/([a-f0-9-]+)$/,
+  );
+  if (supabaseDeleteMatch && method === "DELETE") {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:supabase_delete",
+      async () => {
+        try {
+          const configId = supabaseDeleteMatch[1];
+          const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } =
+            getSupabaseEnv();
 
-      // Verify ownership
-      const checkRes = await fetch(
-        `${SB_URL}/rest/v1/user_supabase_configs?id=eq.${configId}&user_id=eq.${userId}&select=id`,
-        { headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` } }
-      );
-      const checkData = await readJsonRows<{ id: string }>(checkRes);
-      if (!Array.isArray(checkData) || checkData.length === 0) {
-        return error('Configuration not found', 404);
-      }
+          // Verify ownership
+          const checkRes = await fetch(
+            `${SB_URL}/rest/v1/user_supabase_configs?id=eq.${configId}&user_id=eq.${userId}&select=id`,
+            {
+              headers: {
+                "apikey": SB_KEY,
+                "Authorization": `Bearer ${SB_KEY}`,
+              },
+            },
+          );
+          const checkData = await readJsonRows<{ id: string }>(checkRes);
+          if (!Array.isArray(checkData) || checkData.length === 0) {
+            return error("Configuration not found", 404);
+          }
 
-      // Delete (cascade will SET NULL on apps.supabase_config_id)
-      const response = await fetch(
-        `${SB_URL}/rest/v1/user_supabase_configs?id=eq.${configId}&user_id=eq.${userId}`,
-        {
-          method: 'DELETE',
-          headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` },
+          // Delete (cascade will SET NULL on apps.supabase_config_id)
+          const response = await fetch(
+            `${SB_URL}/rest/v1/user_supabase_configs?id=eq.${configId}&user_id=eq.${userId}`,
+            {
+              method: "DELETE",
+              headers: {
+                "apikey": SB_KEY,
+                "Authorization": `Bearer ${SB_KEY}`,
+              },
+            },
+          );
+
+          if (!response.ok) {
+            throw new Error(`Failed to delete: ${await response.text()}`);
+          }
+
+          return json({ success: true, message: "Supabase server removed" });
+        } catch (err) {
+          console.error("Delete Supabase config error:", err);
+          return error("Failed to delete Supabase configuration", 500);
         }
-      );
-
-      if (!response.ok) {
-        throw new Error(`Failed to delete: ${await response.text()}`);
-      }
-
-      return json({ success: true, message: 'Supabase server removed' });
-    } catch (err) {
-      console.error('Delete Supabase config error:', err);
-      return error('Failed to delete Supabase configuration', 500);
-    }
+      },
+    );
   }
 
   // ============================================
@@ -1287,73 +1544,90 @@ export async function handleUser(request: Request): Promise<Response> {
   // ============================================
 
   // GET /api/user/supabase/oauth/authorize — Initiate OAuth flow
-  if (path === '/api/user/supabase/oauth/authorize' && method === 'GET') {
-    try {
-      const clientId = getEnv('SUPABASE_MGMT_OAUTH_CLIENT_ID');
-      if (!clientId) {
-        return error('Supabase OAuth not configured', 501);
-      }
+  if (path === "/api/user/supabase/oauth/authorize" && method === "GET") {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:supabase_oauth_authorize",
+      async () => {
+        try {
+          const clientId = getEnv("SUPABASE_MGMT_OAUTH_CLIENT_ID");
+          if (!clientId) {
+            return error("Supabase OAuth not configured", 501);
+          }
 
-      const baseUrl = `${url.protocol}//${url.host}`;
-      const redirectUri = `${baseUrl}/api/user/supabase/oauth/callback`;
+          const baseUrl = `${url.protocol}//${url.host}`;
+          const redirectUri = `${baseUrl}/api/user/supabase/oauth/callback`;
 
-      // Generate PKCE code_verifier (43-128 chars, URL-safe)
-      const verifierBytes = new Uint8Array(32);
-      crypto.getRandomValues(verifierBytes);
-      const codeVerifier = btoa(String.fromCharCode(...verifierBytes))
-        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+          // Generate PKCE code_verifier (43-128 chars, URL-safe)
+          const verifierBytes = new Uint8Array(32);
+          crypto.getRandomValues(verifierBytes);
+          const codeVerifier = btoa(String.fromCharCode(...verifierBytes))
+            .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
-      // Generate code_challenge = BASE64URL(SHA256(code_verifier))
-      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(codeVerifier));
-      const codeChallenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
-        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+          // Generate code_challenge = BASE64URL(SHA256(code_verifier))
+          const digest = await crypto.subtle.digest(
+            "SHA-256",
+            new TextEncoder().encode(codeVerifier),
+          );
+          const codeChallenge = btoa(
+            String.fromCharCode(...new Uint8Array(digest)),
+          )
+            .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
-      // Generate random state
-      const stateBytes = new Uint8Array(16);
-      crypto.getRandomValues(stateBytes);
-      const state = Array.from(stateBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+          // Generate random state
+          const stateBytes = new Uint8Array(16);
+          crypto.getRandomValues(stateBytes);
+          const state = Array.from(stateBytes).map((b) =>
+            b.toString(16).padStart(2, "0")
+          ).join("");
 
-      // Store state + verifier for callback validation
-      const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } = getSupabaseEnv();
-      await fetch(`${SB_URL}/rest/v1/supabase_oauth_state`, {
-        method: 'POST',
-        headers: {
-          'apikey': SB_KEY,
-          'Authorization': `Bearer ${SB_KEY}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=minimal',
-        },
-        body: JSON.stringify({
-          state: state,
-          user_id: userId,
-          code_verifier: codeVerifier,
-        }),
-      });
+          // Store state + verifier for callback validation
+          const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } =
+            getSupabaseEnv();
+          await fetch(`${SB_URL}/rest/v1/supabase_oauth_state`, {
+            method: "POST",
+            headers: {
+              "apikey": SB_KEY,
+              "Authorization": `Bearer ${SB_KEY}`,
+              "Content-Type": "application/json",
+              "Prefer": "return=minimal",
+            },
+            body: JSON.stringify({
+              state: state,
+              user_id: userId,
+              code_verifier: codeVerifier,
+            }),
+          });
 
-      const authUrl = `https://api.supabase.com/v1/oauth/authorize?` +
-        `client_id=${encodeURIComponent(clientId)}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&response_type=code` +
-        `&state=${state}` +
-        `&code_challenge=${codeChallenge}` +
-        `&code_challenge_method=S256`;
+          const authUrl = `https://api.supabase.com/v1/oauth/authorize?` +
+            `client_id=${encodeURIComponent(clientId)}` +
+            `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+            `&response_type=code` +
+            `&state=${state}` +
+            `&code_challenge=${codeChallenge}` +
+            `&code_challenge_method=S256`;
 
-      return json({ url: authUrl });
-    } catch (err) {
-      console.error('Supabase OAuth authorize error:', err);
-      return error('Failed to initiate Supabase OAuth', 500);
-    }
+          return json({ url: authUrl });
+        } catch (err) {
+          console.error("Supabase OAuth authorize error:", err);
+          return error("Failed to initiate Supabase OAuth", 500);
+        }
+      },
+    );
   }
 
   // GET /api/user/supabase/oauth/status — Check if user has OAuth connected
-  if (path === '/api/user/supabase/oauth/status' && method === 'GET') {
+  if (path === "/api/user/supabase/oauth/status" && method === "GET") {
     try {
-      const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } = getSupabaseEnv();
+      const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } =
+        getSupabaseEnv();
       const res = await fetch(
         `${SB_URL}/rest/v1/user_supabase_oauth?user_id=eq.${userId}&select=id,token_expires_at`,
-        { headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` } }
+        { headers: { "apikey": SB_KEY, "Authorization": `Bearer ${SB_KEY}` } },
       );
-      const rows = await readJsonRows<{ id: string; token_expires_at: string }>(res);
+      const rows = await readJsonRows<{ id: string; token_expires_at: string }>(
+        res,
+      );
       const connected = Array.isArray(rows) && rows.length > 0;
       return json({ connected: connected });
     } catch {
@@ -1362,20 +1636,23 @@ export async function handleUser(request: Request): Promise<Response> {
   }
 
   // GET /api/user/supabase/oauth/projects — List user's Supabase projects via Management API
-  if (path === '/api/user/supabase/oauth/projects' && method === 'GET') {
+  if (path === "/api/user/supabase/oauth/projects" && method === "GET") {
     try {
       const accessToken = await getSupabaseMgmtToken(userId);
       if (!accessToken) {
-        return error('Supabase account not connected. Please connect first.', 401);
+        return error(
+          "Supabase account not connected. Please connect first.",
+          401,
+        );
       }
 
-      const projRes = await fetch('https://api.supabase.com/v1/projects', {
-        headers: { 'Authorization': `Bearer ${accessToken}` },
+      const projRes = await fetch("https://api.supabase.com/v1/projects", {
+        headers: { "Authorization": `Bearer ${accessToken}` },
       });
 
       if (!projRes.ok) {
-        console.error('Supabase Management API error:', await projRes.text());
-        return error('Failed to fetch Supabase projects', 502);
+        console.error("Supabase Management API error:", await projRes.text());
+        return error("Failed to fetch Supabase projects", 502);
       }
 
       const projects = await projRes.json() as Array<{
@@ -1389,8 +1666,18 @@ export async function handleUser(request: Request): Promise<Response> {
 
       return json({
         projects: projects
-          .filter((p: { status: string }) => p.status === 'ACTIVE_HEALTHY' || p.status === 'ACTIVE_UNHEALTHY' || !p.status)
-          .map((p: { id: string; name: string; region: string; organization_id: string }) => ({
+          .filter((p: { status: string }) =>
+            p.status === "ACTIVE_HEALTHY" || p.status === "ACTIVE_UNHEALTHY" ||
+            !p.status
+          )
+          .map((
+            p: {
+              id: string;
+              name: string;
+              region: string;
+              organization_id: string;
+            },
+          ) => ({
             ref: p.id,
             name: p.name,
             region: p.region,
@@ -1399,165 +1686,225 @@ export async function handleUser(request: Request): Promise<Response> {
           })),
       });
     } catch (err) {
-      console.error('List Supabase projects error:', err);
-      return error('Failed to list Supabase projects', 500);
+      console.error("List Supabase projects error:", err);
+      return error("Failed to list Supabase projects", 500);
     }
   }
 
   // POST /api/user/supabase/oauth/connect — Wire a Supabase project to an app
-  if (path === '/api/user/supabase/oauth/connect' && method === 'POST') {
-    try {
-      const body = await readJsonBody<SupabaseOauthConnectBody>(request);
-      const { project_ref, app_id } = body;
+  if (path === "/api/user/supabase/oauth/connect" && method === "POST") {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:supabase_oauth_connect",
+      async () => {
+        try {
+          const { projectRef, appId } =
+            await validateSupabaseOauthConnectRequest(request);
 
-      if (!project_ref || typeof project_ref !== 'string') {
-        return error('project_ref is required', 400);
-      }
+          const accessToken = await getSupabaseMgmtToken(userId);
+          if (!accessToken) {
+            return error("Supabase account not connected", 401);
+          }
 
-      const accessToken = await getSupabaseMgmtToken(userId);
-      if (!accessToken) {
-        return error('Supabase account not connected', 401);
-      }
+          // Fetch API keys from Management API
+          const keysRes = await fetch(
+            `https://api.supabase.com/v1/projects/${projectRef}/api-keys`,
+            {
+              headers: { "Authorization": `Bearer ${accessToken}` },
+            },
+          );
 
-      // Fetch API keys from Management API
-      const keysRes = await fetch(`https://api.supabase.com/v1/projects/${project_ref}/api-keys`, {
-        headers: { 'Authorization': `Bearer ${accessToken}` },
-      });
+          if (!keysRes.ok) {
+            console.error("Fetch API keys error:", await keysRes.text());
+            return error("Failed to fetch project API keys", 502);
+          }
 
-      if (!keysRes.ok) {
-        console.error('Fetch API keys error:', await keysRes.text());
-        return error('Failed to fetch project API keys', 502);
-      }
+          const apiKeys = await keysRes.json() as Array<{
+            name: string;
+            api_key: string;
+          }>;
 
-      const apiKeys = await keysRes.json() as Array<{
-        name: string;
-        api_key: string;
-      }>;
+          // Find anon and service_role keys
+          const anonKeyObj = apiKeys.find((k: { name: string }) =>
+            k.name === "anon"
+          );
+          const serviceKeyObj = apiKeys.find((k: { name: string }) =>
+            k.name === "service_role"
+          );
 
-      // Find anon and service_role keys
-      const anonKeyObj = apiKeys.find((k: { name: string }) => k.name === 'anon');
-      const serviceKeyObj = apiKeys.find((k: { name: string }) => k.name === 'service_role');
+          if (!anonKeyObj) {
+            return error("Could not find anon key for this project", 404);
+          }
 
-      if (!anonKeyObj) {
-        return error('Could not find anon key for this project', 404);
-      }
+          const supabaseUrl = `https://${projectRef}.supabase.co`;
+          const anonKey = anonKeyObj.api_key;
+          const serviceKey = serviceKeyObj?.api_key;
 
-      const supabaseUrl = `https://${project_ref}.supabase.co`;
-      const anonKey = anonKeyObj.api_key;
-      const serviceKey = serviceKeyObj?.api_key;
+          // Encrypt keys
+          const encryptedAnonKey = await encryptEnvVar(anonKey);
+          const encryptedServiceKey = serviceKey
+            ? await encryptEnvVar(serviceKey)
+            : null;
 
-      // Encrypt keys
-      const encryptedAnonKey = await encryptEnvVar(anonKey);
-      const encryptedServiceKey = serviceKey ? await encryptEnvVar(serviceKey) : null;
+          // Fetch project name for the config name
+          const projRes = await fetch("https://api.supabase.com/v1/projects", {
+            headers: { "Authorization": `Bearer ${accessToken}` },
+          });
+          const projects = await projRes.json() as Array<
+            { id: string; name: string }
+          >;
+          const project = projects.find((p: { id: string }) =>
+            p.id === projectRef
+          );
+          const configName = project ? project.name : projectRef;
 
-      // Fetch project name for the config name
-      const projRes = await fetch('https://api.supabase.com/v1/projects', {
-        headers: { 'Authorization': `Bearer ${accessToken}` },
-      });
-      const projects = await projRes.json() as Array<{ id: string; name: string }>;
-      const project = projects.find((p: { id: string }) => p.id === project_ref);
-      const configName = project ? project.name : project_ref;
+          // Create or update user_supabase_configs entry
+          const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } =
+            getSupabaseEnv();
 
-      // Create or update user_supabase_configs entry
-      const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } = getSupabaseEnv();
+          // Check if config already exists for this URL
+          const existingRes = await fetch(
+            `${SB_URL}/rest/v1/user_supabase_configs?user_id=eq.${userId}&supabase_url=eq.${
+              encodeURIComponent(supabaseUrl)
+            }&select=id`,
+            {
+              headers: {
+                "apikey": SB_KEY,
+                "Authorization": `Bearer ${SB_KEY}`,
+              },
+            },
+          );
+          const existing = await readJsonRows<{ id: string }>(existingRes);
+          let configId: string;
 
-      // Check if config already exists for this URL
-      const existingRes = await fetch(
-        `${SB_URL}/rest/v1/user_supabase_configs?user_id=eq.${userId}&supabase_url=eq.${encodeURIComponent(supabaseUrl)}&select=id`,
-        { headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` } }
-      );
-      const existing = await readJsonRows<{ id: string }>(existingRes);
-      let configId: string;
+          if (Array.isArray(existing) && existing.length > 0) {
+            // Update existing config with fresh keys
+            configId = existing[0].id;
+            await fetch(
+              `${SB_URL}/rest/v1/user_supabase_configs?id=eq.${configId}`,
+              {
+                method: "PATCH",
+                headers: {
+                  "apikey": SB_KEY,
+                  "Authorization": `Bearer ${SB_KEY}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  anon_key_encrypted: encryptedAnonKey,
+                  service_key_encrypted: encryptedServiceKey,
+                  updated_at: new Date().toISOString(),
+                }),
+              },
+            );
+          } else {
+            // Create new config
+            const createRes = await fetch(
+              `${SB_URL}/rest/v1/user_supabase_configs`,
+              {
+                method: "POST",
+                headers: {
+                  "apikey": SB_KEY,
+                  "Authorization": `Bearer ${SB_KEY}`,
+                  "Content-Type": "application/json",
+                  "Prefer": "return=representation",
+                },
+                body: JSON.stringify({
+                  user_id: userId,
+                  name: configName,
+                  supabase_url: supabaseUrl,
+                  anon_key_encrypted: encryptedAnonKey,
+                  service_key_encrypted: encryptedServiceKey,
+                }),
+              },
+            );
 
-      if (Array.isArray(existing) && existing.length > 0) {
-        // Update existing config with fresh keys
-        configId = existing[0].id;
-        await fetch(`${SB_URL}/rest/v1/user_supabase_configs?id=eq.${configId}`, {
-          method: 'PATCH',
-          headers: {
-            'apikey': SB_KEY,
-            'Authorization': `Bearer ${SB_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            anon_key_encrypted: encryptedAnonKey,
-            service_key_encrypted: encryptedServiceKey,
-            updated_at: new Date().toISOString(),
-          }),
-        });
-      } else {
-        // Create new config
-        const createRes = await fetch(`${SB_URL}/rest/v1/user_supabase_configs`, {
-          method: 'POST',
-          headers: {
-            'apikey': SB_KEY,
-            'Authorization': `Bearer ${SB_KEY}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=representation',
-          },
-          body: JSON.stringify({
-            user_id: userId,
-            name: configName,
-            supabase_url: supabaseUrl,
-            anon_key_encrypted: encryptedAnonKey,
-            service_key_encrypted: encryptedServiceKey,
-          }),
-        });
+            if (!createRes.ok) {
+              throw new Error(
+                `Failed to create config: ${await createRes.text()}`,
+              );
+            }
 
-        if (!createRes.ok) {
-          throw new Error(`Failed to create config: ${await createRes.text()}`);
+            const created = await readJsonResponse<
+              { id: string } | Array<{ id: string }>
+            >(createRes);
+            configId = Array.isArray(created) ? created[0].id : created.id;
+          }
+
+          // Optionally assign to app
+          if (appId) {
+            const appsService = createAppsService();
+            const app = await appsService.findById(appId);
+            if (!app || app.owner_id !== userId) {
+              return error("App not found", 404);
+            }
+
+            await appsService.update(appId, {
+              supabase_config_id: configId,
+              supabase_enabled: true,
+              supabase_url: null,
+              supabase_anon_key_encrypted: null,
+              supabase_service_key_encrypted: null,
+            });
+          }
+
+          // Invalidate cached servers list
+          return json({
+            success: true,
+            config: {
+              id: configId,
+              name: configName,
+              supabase_url: supabaseUrl,
+              has_service_key: !!serviceKey,
+            },
+          });
+        } catch (err) {
+          if (err instanceof RequestValidationError) {
+            return error(err.message, err.status);
+          }
+          console.error("Supabase OAuth connect error:", err);
+          return error("Failed to wire Supabase project", 500);
         }
-
-        const created = await readJsonResponse<{ id: string } | Array<{ id: string }>>(createRes);
-        configId = Array.isArray(created) ? created[0].id : created.id;
-      }
-
-      // Optionally assign to app
-      if (app_id && typeof app_id === 'string') {
-        const appsService = createAppsService();
-        await appsService.update(app_id, {
-          supabase_config_id: configId,
-          supabase_enabled: true,
-        });
-      }
-
-      // Invalidate cached servers list
-      return json({
-        success: true,
-        config: {
-          id: configId,
-          name: configName,
-          supabase_url: supabaseUrl,
-          has_service_key: !!serviceKey,
-        },
-      });
-    } catch (err) {
-      console.error('Supabase OAuth connect error:', err);
-      return error('Failed to wire Supabase project', 500);
-    }
+      },
+    );
   }
 
   // DELETE /api/user/supabase/oauth/disconnect — Remove OAuth tokens
-  if (path === '/api/user/supabase/oauth/disconnect' && method === 'DELETE') {
-    try {
-      const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } = getSupabaseEnv();
-      await fetch(`${SB_URL}/rest/v1/user_supabase_oauth?user_id=eq.${userId}`, {
-        method: 'DELETE',
-        headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` },
-      });
-      return json({ success: true, message: 'Supabase account disconnected' });
-    } catch (err) {
-      console.error('Supabase OAuth disconnect error:', err);
-      return error('Failed to disconnect Supabase account', 500);
-    }
+  if (path === "/api/user/supabase/oauth/disconnect" && method === "DELETE") {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:supabase_oauth_disconnect",
+      async () => {
+        try {
+          const { SUPABASE_URL: SB_URL, SUPABASE_SERVICE_ROLE_KEY: SB_KEY } =
+            getSupabaseEnv();
+          await fetch(
+            `${SB_URL}/rest/v1/user_supabase_oauth?user_id=eq.${userId}`,
+            {
+              method: "DELETE",
+              headers: {
+                "apikey": SB_KEY,
+                "Authorization": `Bearer ${SB_KEY}`,
+              },
+            },
+          );
+          return json({
+            success: true,
+            message: "Supabase account disconnected",
+          });
+        } catch (err) {
+          console.error("Supabase OAuth disconnect error:", err);
+          return error("Failed to disconnect Supabase account", 500);
+        }
+      },
+    );
   }
 
   // ============================================
   // GET /api/user/usage - Get weekly usage stats
   // ============================================
-  if (path === '/api/user/usage' && method === 'GET') {
+  if (path === "/api/user/usage" && method === "GET") {
     try {
-      const { getWeeklyUsage } = await import('../services/weekly-calls.ts');
+      const { getWeeklyUsage } = await import("../services/weekly-calls.ts");
       const user = await userService.getUser(userId);
       const tier = toTier(user?.tier);
       const usage = await getWeeklyUsage(userId, tier);
@@ -1565,25 +1912,29 @@ export async function handleUser(request: Request): Promise<Response> {
         count: usage.count,
       });
     } catch (err) {
-      console.error('Get usage error:', err);
-      return error('Failed to get usage stats', 500);
+      console.error("Get usage error:", err);
+      return error("Failed to get usage stats", 500);
     }
   }
 
   // ============================================
   // GET /api/user/call-log - Get recent MCP call logs
   // ============================================
-  if (path === '/api/user/call-log' && method === 'GET') {
+  if (path === "/api/user/call-log" && method === "GET") {
     try {
-      const { getRecentCalls } = await import('../services/call-logger.ts');
-      const limit = parseInt(url.searchParams.get('limit') || '50', 10);
-      const since = url.searchParams.get('since') || undefined;
-      const appId = url.searchParams.get('app_id') || undefined;
-      const logs = await getRecentCalls(userId, { limit: Math.min(limit, 200), since, appId });
+      const { getRecentCalls } = await import("../services/call-logger.ts");
+      const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+      const since = url.searchParams.get("since") || undefined;
+      const appId = url.searchParams.get("app_id") || undefined;
+      const logs = await getRecentCalls(userId, {
+        limit: Math.min(limit, 200),
+        since,
+        appId,
+      });
       return json({ logs });
     } catch (err) {
-      console.error('Get call log error:', err);
-      return error('Failed to get call logs', 500);
+      console.error("Get call log error:", err);
+      return error("Failed to get call logs", 500);
     }
   }
 
@@ -1594,17 +1945,17 @@ export async function handleUser(request: Request): Promise<Response> {
   const permsMatch = path.match(/^\/api\/user\/permissions\/([a-f0-9-]+)$/);
 
   // GET /api/user/permissions/:appId - Get granted users + their permissions for an app
-  if (permsMatch && method === 'GET') {
+  if (permsMatch && method === "GET") {
     try {
       const appId = permsMatch[1];
-      const targetUserId = url.searchParams.get('user_id');
+      const targetUserId = url.searchParams.get("user_id");
       const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
       // Verify caller owns this app
       const appsService = createAppsService();
       const app = await appsService.findById(appId);
       if (!app || app.owner_id !== userId) {
-        return error('App not found', 404);
+        return error("App not found", 404);
       }
 
       if (targetUserId) {
@@ -1613,27 +1964,43 @@ export async function handleUser(request: Request): Promise<Response> {
           `${SUPABASE_URL}/rest/v1/user_app_permissions?app_id=eq.${appId}&granted_to_user_id=eq.${targetUserId}&select=id,function_name,allowed,allowed_args`,
           {
             headers: {
-              'apikey': SUPABASE_SERVICE_ROLE_KEY,
-              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+              "apikey": SUPABASE_SERVICE_ROLE_KEY,
+              "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
             },
-          }
+          },
         );
         if (!response.ok) throw new Error(await response.text());
-        const permissions = await response.json();
+        const permissionRows = await response.json() as Array<{
+          function_name: string;
+          allowed: boolean;
+          allowed_args?: unknown;
+        }>;
+        logLegacyPermissionNameCompatibility({
+          surface: "user_permissions_api",
+          appId,
+          appSlug: app.slug,
+          actorUserId: userId,
+          ownerUserId: app.owner_id,
+          rows: permissionRows,
+        });
+        const permissions = normalizeFunctionNamedRows(
+          app.slug,
+          permissionRows,
+        );
         return json({ permissions });
       } else {
         // Get all granted users for this app using the RPC
         const rpcRes = await fetch(
           `${SUPABASE_URL}/rest/v1/rpc/get_app_granted_users`,
           {
-            method: 'POST',
+            method: "POST",
             headers: {
-              'apikey': SUPABASE_SERVICE_ROLE_KEY,
-              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-              'Content-Type': 'application/json',
+              "apikey": SUPABASE_SERVICE_ROLE_KEY,
+              "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+              "Content-Type": "application/json",
             },
             body: JSON.stringify({ p_app_id: appId }),
-          }
+          },
         );
         if (!rpcRes.ok) throw new Error(await rpcRes.text());
         const users = await readJsonRows<GrantedUserSummary>(rpcRes);
@@ -1643,47 +2010,89 @@ export async function handleUser(request: Request): Promise<Response> {
           `${SUPABASE_URL}/rest/v1/pending_permissions?app_id=eq.${appId}&allowed=eq.true&select=invited_email,function_name`,
           {
             headers: {
-              'apikey': SUPABASE_SERVICE_ROLE_KEY,
-              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+              "apikey": SUPABASE_SERVICE_ROLE_KEY,
+              "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
             },
-          }
+          },
         );
-        let pendingUsers: Array<{ email: string; display_name: null; function_count: number; status: string }> = [];
+        let pendingUsers: Array<
+          {
+            email: string;
+            display_name: null;
+            function_count: number;
+            status: string;
+          }
+        > = [];
         if (pendingRes.ok) {
-          const pendingRows = await pendingRes.json() as Array<{ invited_email: string; function_name: string }>;
-          const pendingMap = new Map<string, { email: string; display_name: null; function_count: number; status: string }>();
+          const pendingPermissionRows = await pendingRes.json() as Array<
+            { invited_email: string; function_name: string }
+          >;
+          logLegacyPermissionNameCompatibility({
+            surface: "user_pending_permissions_api",
+            appId,
+            appSlug: app.slug,
+            actorUserId: userId,
+            ownerUserId: app.owner_id,
+            rows: pendingPermissionRows,
+          });
+          const pendingRows = normalizeFunctionNamedRows(
+            app.slug,
+            pendingPermissionRows,
+          );
+          const pendingMap = new Map<
+            string,
+            {
+              email: string;
+              display_name: null;
+              functions: Set<string>;
+              status: string;
+            }
+          >();
           for (const row of pendingRows) {
             if (!pendingMap.has(row.invited_email)) {
-              pendingMap.set(row.invited_email, { email: row.invited_email, display_name: null, function_count: 0, status: 'pending' });
+              pendingMap.set(row.invited_email, {
+                email: row.invited_email,
+                display_name: null,
+                functions: new Set<string>(),
+                status: "pending",
+              });
             }
-            pendingMap.get(row.invited_email)!.function_count++;
+            pendingMap.get(row.invited_email)!.functions.add(row.function_name);
           }
-          pendingUsers = Array.from(pendingMap.values());
+          pendingUsers = Array.from(
+            pendingMap.values(),
+            ({ email, display_name, functions, status }) => ({
+              email,
+              display_name,
+              function_count: functions.size,
+              status,
+            }),
+          );
         }
 
         return json({ users: [...users, ...pendingUsers] });
       }
     } catch (err) {
-      console.error('Get permissions error:', err);
-      return error('Failed to get permissions', 500);
+      console.error("Get permissions error:", err);
+      return error("Failed to get permissions", 500);
     }
   }
 
   // PUT /api/user/permissions/:appId - Set permissions for a user on an app
-  if (permsMatch && method === 'PUT') {
+  if (permsMatch && method === "PUT") {
     try {
       const appId = permsMatch[1];
       const body = await readJsonBody<PermissionGrantBody>(request);
       const { email, user_id: targetUserId, permissions: permsList } = body;
 
       if (!Array.isArray(permsList)) {
-        return error('permissions array required', 400);
+        return error("permissions array required", 400);
       }
-      if (email !== undefined && typeof email !== 'string') {
-        return error('email must be a string', 400);
+      if (email !== undefined && typeof email !== "string") {
+        return error("email must be a string", 400);
       }
-      if (targetUserId !== undefined && typeof targetUserId !== 'string') {
-        return error('user_id must be a string', 400);
+      if (targetUserId !== undefined && typeof targetUserId !== "string") {
+        return error("user_id must be a string", 400);
       }
 
       const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
@@ -1692,26 +2101,36 @@ export async function handleUser(request: Request): Promise<Response> {
       const appsService = createAppsService();
       const app = await appsService.findById(appId);
       if (!app || app.owner_id !== userId) {
-        return error('App not found', 404);
+        return error("App not found", 404);
       }
 
       // Resolve target user: either by user_id or email
       let resolvedUserId = targetUserId;
       if (!resolvedUserId && email) {
         const userRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/users?email=eq.${encodeURIComponent(email)}&select=id,tier`,
+          `${SUPABASE_URL}/rest/v1/users?email=eq.${
+            encodeURIComponent(email)
+          }&select=id,tier`,
           {
             headers: {
-              'apikey': SUPABASE_SERVICE_ROLE_KEY,
-              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+              "apikey": SUPABASE_SERVICE_ROLE_KEY,
+              "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
             },
-          }
+          },
         );
         if (!userRes.ok) throw new Error(await userRes.text());
-        const userRows = await readJsonRows<{ id: string; tier: string }>(userRes);
+        const userRows = await readJsonRows<{ id: string; tier: string }>(
+          userRes,
+        );
         if (userRows.length === 0) {
           // User doesn't exist — create pending invite
-          const pendingRows = permsList.map((p: { function_name: string; allowed: boolean }) => ({
+          const effectivePermsList = normalizePermissionNamedRows(
+            app.slug,
+            permsList as Array<{ function_name: string; allowed: boolean }>,
+          );
+          const pendingRows = effectivePermsList.map((
+            p: { function_name: string; allowed: boolean },
+          ) => ({
             app_id: appId,
             invited_email: email.toLowerCase(),
             granted_by_user_id: userId,
@@ -1720,33 +2139,42 @@ export async function handleUser(request: Request): Promise<Response> {
           }));
           // Delete existing pending for this email+app
           await fetch(
-            `${SUPABASE_URL}/rest/v1/pending_permissions?invited_email=eq.${encodeURIComponent(email.toLowerCase())}&app_id=eq.${appId}`,
+            `${SUPABASE_URL}/rest/v1/pending_permissions?invited_email=eq.${
+              encodeURIComponent(email.toLowerCase())
+            }&app_id=eq.${appId}`,
             {
-              method: 'DELETE',
-              headers: { 'apikey': SUPABASE_SERVICE_ROLE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
-            }
+              method: "DELETE",
+              headers: {
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+              },
+            },
           );
           // Insert pending rows
-          const hasAnyAllowed = pendingRows.some((p: { allowed: boolean }) => p.allowed);
+          const hasAnyAllowed = pendingRows.some((p: { allowed: boolean }) =>
+            p.allowed
+          );
           if (hasAnyAllowed) {
             await fetch(
               `${SUPABASE_URL}/rest/v1/pending_permissions`,
               {
-                method: 'POST',
+                method: "POST",
                 headers: {
-                  'apikey': SUPABASE_SERVICE_ROLE_KEY,
-                  'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-                  'Content-Type': 'application/json',
-                  'Prefer': 'resolution=merge-duplicates',
+                  "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                  "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                  "Content-Type": "application/json",
+                  "Prefer": "resolution=merge-duplicates",
                 },
-                body: JSON.stringify(pendingRows.filter((p: { allowed: boolean }) => p.allowed)),
-              }
+                body: JSON.stringify(
+                  pendingRows.filter((p: { allowed: boolean }) => p.allowed),
+                ),
+              },
             );
           }
           return json({
             success: true,
-            message: 'Invite created (user has not signed up yet)',
-            status: 'pending',
+            message: "Invite created (user has not signed up yet)",
+            status: "pending",
             email,
           });
         }
@@ -1754,32 +2182,47 @@ export async function handleUser(request: Request): Promise<Response> {
       }
 
       if (!resolvedUserId) {
-        return error('email or user_id is required', 400);
+        return error("email or user_id is required", 400);
       }
 
       // Can't grant permissions to yourself (owner already has full access)
       if (resolvedUserId === userId) {
-        return error('Cannot set permissions for the app owner', 400);
+        return error("Cannot set permissions for the app owner", 400);
       }
 
       // Granular per-function permissions — available to all users
-      const effectivePermsList = permsList;
+      const effectivePermsList = normalizePermissionNamedRows(
+        app.slug,
+        permsList as Array<
+          {
+            function_name: string;
+            allowed: boolean;
+            allowed_args?: Record<string, unknown> | null;
+          }
+        >,
+      );
 
       // Delete existing permissions for this user+app
       await fetch(
         `${SUPABASE_URL}/rest/v1/user_app_permissions?granted_to_user_id=eq.${resolvedUserId}&app_id=eq.${appId}`,
         {
-          method: 'DELETE',
+          method: "DELETE",
           headers: {
-            'apikey': SUPABASE_SERVICE_ROLE_KEY,
-            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            "apikey": SUPABASE_SERVICE_ROLE_KEY,
+            "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
           },
-        }
+        },
       );
 
       // Insert new permissions
       if (effectivePermsList.length > 0) {
-        const rows = effectivePermsList.map((p: { function_name: string; allowed: boolean; allowed_args?: Record<string, unknown> | null }) => ({
+        const rows = effectivePermsList.map((
+          p: {
+            function_name: string;
+            allowed: boolean;
+            allowed_args?: Record<string, unknown> | null;
+          },
+        ) => ({
           app_id: appId,
           granted_to_user_id: resolvedUserId,
           granted_by_user_id: userId,
@@ -1791,14 +2234,14 @@ export async function handleUser(request: Request): Promise<Response> {
         const insertRes = await fetch(
           `${SUPABASE_URL}/rest/v1/user_app_permissions`,
           {
-            method: 'POST',
+            method: "POST",
             headers: {
-              'apikey': SUPABASE_SERVICE_ROLE_KEY,
-              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-              'Content-Type': 'application/json',
+              "apikey": SUPABASE_SERVICE_ROLE_KEY,
+              "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+              "Content-Type": "application/json",
             },
             body: JSON.stringify(rows),
-          }
+          },
         );
 
         if (!insertRes.ok) throw new Error(await insertRes.text());
@@ -1809,26 +2252,26 @@ export async function handleUser(request: Request): Promise<Response> {
 
       return json({
         success: true,
-        message: 'Permissions saved',
+        message: "Permissions saved",
         user_id: resolvedUserId,
         granular: true,
       });
     } catch (err) {
-      console.error('Set permissions error:', err);
-      if (err instanceof Error && err.message.includes('No user found')) {
+      console.error("Set permissions error:", err);
+      if (err instanceof Error && err.message.includes("No user found")) {
         return error(err.message, 404);
       }
-      return error('Failed to save permissions', 500);
+      return error("Failed to save permissions", 500);
     }
   }
 
   // DELETE /api/user/permissions/:appId - Revoke all permissions for a user on an app
-  if (permsMatch && method === 'DELETE') {
+  if (permsMatch && method === "DELETE") {
     try {
       const appId = permsMatch[1];
-      const targetUserId = url.searchParams.get('user_id');
-      const pendingEmail = url.searchParams.get('email');
-      const isPending = url.searchParams.get('pending') === 'true';
+      const targetUserId = url.searchParams.get("user_id");
+      const pendingEmail = url.searchParams.get("email");
+      const isPending = url.searchParams.get("pending") === "true";
 
       const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
 
@@ -1836,47 +2279,49 @@ export async function handleUser(request: Request): Promise<Response> {
       const appsService = createAppsService();
       const app = await appsService.findById(appId);
       if (!app || app.owner_id !== userId) {
-        return error('App not found', 404);
+        return error("App not found", 404);
       }
 
       // Revoke pending invite by email
       if (isPending && pendingEmail) {
         await fetch(
-          `${SUPABASE_URL}/rest/v1/pending_permissions?invited_email=eq.${encodeURIComponent(pendingEmail.toLowerCase())}&app_id=eq.${appId}`,
+          `${SUPABASE_URL}/rest/v1/pending_permissions?invited_email=eq.${
+            encodeURIComponent(pendingEmail.toLowerCase())
+          }&app_id=eq.${appId}`,
           {
-            method: 'DELETE',
+            method: "DELETE",
             headers: {
-              'apikey': SUPABASE_SERVICE_ROLE_KEY,
-              'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+              "apikey": SUPABASE_SERVICE_ROLE_KEY,
+              "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
             },
-          }
+          },
         );
-        return json({ success: true, message: 'Pending invite revoked' });
+        return json({ success: true, message: "Pending invite revoked" });
       }
 
       if (!targetUserId) {
-        return error('user_id query parameter required', 400);
+        return error("user_id query parameter required", 400);
       }
 
       // Delete all permissions for this user+app
       await fetch(
         `${SUPABASE_URL}/rest/v1/user_app_permissions?granted_to_user_id=eq.${targetUserId}&app_id=eq.${appId}`,
         {
-          method: 'DELETE',
+          method: "DELETE",
           headers: {
-            'apikey': SUPABASE_SERVICE_ROLE_KEY,
-            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            "apikey": SUPABASE_SERVICE_ROLE_KEY,
+            "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
           },
-        }
+        },
       );
 
       // Invalidate permission cache for this user+app
       getPermissionCache().invalidateByUserAndApp(targetUserId, appId);
 
-      return json({ success: true, message: 'User access revoked' });
+      return json({ success: true, message: "User access revoked" });
     } catch (err) {
-      console.error('Revoke permissions error:', err);
-      return error('Failed to revoke permissions', 500);
+      console.error("Revoke permissions error:", err);
+      return error("Failed to revoke permissions", 500);
     }
   }
 
@@ -1885,70 +2330,93 @@ export async function handleUser(request: Request): Promise<Response> {
   // ============================================
 
   // GET /api/user/transactions — transaction history with current charge rate
-  if (path === '/api/user/transactions' && method === 'GET') {
+  if (path === "/api/user/transactions" && method === "GET") {
     try {
       const user = await authenticate(request);
-      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
-      const sbHeaders = { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` };
+      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
+        getSupabaseEnv();
+      const sbHeaders = { "apikey": sbKey, "Authorization": `Bearer ${sbKey}` };
 
       const url = new URL(request.url);
-      const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 100);
-      const offset = parseInt(url.searchParams.get('offset') || '0', 10);
-      const category = url.searchParams.get('category');
+      const limit = Math.min(
+        parseInt(url.searchParams.get("limit") || "50", 10),
+        100,
+      );
+      const offset = parseInt(url.searchParams.get("offset") || "0", 10);
+      const category = url.searchParams.get("category");
 
       // Fetch transactions
-      let query = `${sbUrl}/rest/v1/billing_transactions?user_id=eq.${user.id}&order=created_at.desc&limit=${limit}&offset=${offset}`;
+      let query =
+        `${sbUrl}/rest/v1/billing_transactions?user_id=eq.${user.id}&order=created_at.desc&limit=${limit}&offset=${offset}`;
       if (category) query += `&category=eq.${category}`;
 
       const [txRes, countRes] = await Promise.all([
-        fetch(query, { headers: { ...sbHeaders, 'Prefer': 'count=exact' } }),
+        fetch(query, { headers: { ...sbHeaders, "Prefer": "count=exact" } }),
         // Calculate current charge rate from published apps + pages
         Promise.all([
           fetch(
             `${sbUrl}/rest/v1/apps?owner_id=eq.${user.id}&deleted_at=is.null&hosting_suspended=eq.false&visibility=in.(public,unlisted)&select=storage_bytes`,
-            { headers: sbHeaders }
+            { headers: sbHeaders },
           ),
           fetch(
             `${sbUrl}/rest/v1/content?owner_id=eq.${user.id}&type=eq.page&hosting_suspended=eq.false&visibility=eq.public&select=size`,
-            { headers: sbHeaders }
+            { headers: sbHeaders },
           ),
           fetch(
             `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=storage_used_bytes,data_storage_used_bytes,storage_limit_bytes`,
-            { headers: sbHeaders }
+            { headers: sbHeaders },
           ),
         ]),
       ]);
 
-      const typedTransactions = txRes.ok ? await readJsonRows<JsonRecord>(txRes) : [];
-      const totalHeader = txRes.headers.get('content-range');
-      const total = totalHeader ? parseInt(totalHeader.split('/')[1] || '0', 10) : typedTransactions.length;
+      const typedTransactions = txRes.ok
+        ? await readJsonRows<JsonRecord>(txRes)
+        : [];
+      const totalHeader = txRes.headers.get("content-range");
+      const total = totalHeader
+        ? parseInt(totalHeader.split("/")[1] || "0", 10)
+        : typedTransactions.length;
 
       // Calculate current hourly rate
       const [appsRes, pagesRes, userDataRes] = countRes;
       let hostingMb = 0;
       let appCount = 0;
       if (appsRes.ok) {
-        const apps = await appsRes.json() as Array<{ storage_bytes: number | null }>;
+        const apps = await appsRes.json() as Array<
+          { storage_bytes: number | null }
+        >;
         appCount = apps.length;
-        hostingMb = apps.reduce((s: number, a: { storage_bytes: number | null }) => s + (a.storage_bytes || 0), 0) / (1024 * 1024);
+        hostingMb =
+          apps.reduce((s: number, a: { storage_bytes: number | null }) =>
+            s + (a.storage_bytes || 0), 0) / (1024 * 1024);
       }
       if (pagesRes.ok) {
         const pages = await pagesRes.json() as Array<{ size: number | null }>;
-        hostingMb += pages.reduce((s: number, p: { size: number | null }) => s + (p.size || 0), 0) / (1024 * 1024);
+        hostingMb += pages.reduce((s: number, p: { size: number | null }) =>
+          s + (p.size || 0), 0) / (1024 * 1024);
       }
 
       let dataOverageMb = 0;
       if (userDataRes.ok) {
-        const [ud] = await userDataRes.json() as Array<{ storage_used_bytes: number; data_storage_used_bytes: number; storage_limit_bytes: number }>;
+        const [ud] = await userDataRes.json() as Array<
+          {
+            storage_used_bytes: number;
+            data_storage_used_bytes: number;
+            storage_limit_bytes: number;
+          }
+        >;
         if (ud) {
-          const combined = (ud.storage_used_bytes || 0) + (ud.data_storage_used_bytes || 0);
+          const combined = (ud.storage_used_bytes || 0) +
+            (ud.data_storage_used_bytes || 0);
           const freeBytes = ud.storage_limit_bytes || 104857600;
           dataOverageMb = Math.max(0, combined - freeBytes) / (1024 * 1024);
         }
       }
 
-      const hostingLightPerHour = hostingMb * HOSTING_RATE_LIGHT_PER_MB_PER_HOUR;
-      const dataOverageLightPerHour = dataOverageMb * DATA_RATE_LIGHT_PER_MB_PER_HOUR;
+      const hostingLightPerHour = hostingMb *
+        HOSTING_RATE_LIGHT_PER_MB_PER_HOUR;
+      const dataOverageLightPerHour = dataOverageMb *
+        DATA_RATE_LIGHT_PER_MB_PER_HOUR;
 
       return json({
         transactions: typedTransactions,
@@ -1956,16 +2424,22 @@ export async function handleUser(request: Request): Promise<Response> {
         current_rate: {
           hosting_mb: Math.round(hostingMb * 100) / 100,
           hosting_apps: appCount,
-          hosting_light_per_hour: Math.round(hostingLightPerHour * 10000) / 10000,
+          hosting_light_per_hour: Math.round(hostingLightPerHour * 10000) /
+            10000,
           data_overage_mb: Math.round(dataOverageMb * 100) / 100,
-          data_overage_light_per_hour: Math.round(dataOverageLightPerHour * 10000) / 10000,
-          estimated_daily_light: Math.round((hostingLightPerHour + dataOverageLightPerHour) * 24 * 100) / 100,
-          estimated_monthly_light: Math.round((hostingLightPerHour + dataOverageLightPerHour) * 24 * 30 * 100) / 100,
+          data_overage_light_per_hour:
+            Math.round(dataOverageLightPerHour * 10000) / 10000,
+          estimated_daily_light: Math.round(
+            (hostingLightPerHour + dataOverageLightPerHour) * 24 * 100,
+          ) / 100,
+          estimated_monthly_light: Math.round(
+            (hostingLightPerHour + dataOverageLightPerHour) * 24 * 30 * 100,
+          ) / 100,
         },
       });
     } catch (err) {
-      console.error('Transactions error:', err);
-      return error('Failed to load transactions', 500);
+      console.error("Transactions error:", err);
+      return error("Failed to load transactions", 500);
     }
   }
 
@@ -1974,22 +2448,23 @@ export async function handleUser(request: Request): Promise<Response> {
   // ============================================
 
   // GET /api/user/hosting — get hosting balance, usage, and auto-topup settings
-  if (path === '/api/user/hosting' && method === 'GET') {
+  if (path === "/api/user/hosting" && method === "GET") {
     try {
       const user = await authenticate(request);
-      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
+      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
+        getSupabaseEnv();
       const userRes = await fetch(
         `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=balance_light,escrow_light,hosting_last_billed_at,auto_topup_enabled,auto_topup_threshold_light,auto_topup_amount_light,auto_topup_last_failed_at,stripe_customer_id`,
         {
           headers: {
-            'apikey': sbKey,
-            'Authorization': `Bearer ${sbKey}`,
+            "apikey": sbKey,
+            "Authorization": `Bearer ${sbKey}`,
           },
-        }
+        },
       );
-      if (!userRes.ok) throw new Error('Failed to read user');
+      if (!userRes.ok) throw new Error("Failed to read user");
       const rows = await readJsonRows<HostingBalanceRow>(userRes);
-      if (rows.length === 0) return error('User not found', 404);
+      if (rows.length === 0) return error("User not found", 404);
       const ud = rows[0];
 
       return json({
@@ -2005,303 +2480,394 @@ export async function handleUser(request: Request): Promise<Response> {
         has_payment_method: !!ud.stripe_customer_id,
       });
     } catch (err) {
-      return error(err instanceof Error ? err.message : 'Unauthorized', 401);
+      return error(err instanceof Error ? err.message : "Unauthorized", 401);
     }
   }
 
   // PATCH /api/user/hosting/auto-topup — configure auto top-up settings
   // Body: { enabled?: boolean, threshold_light?: number, amount_light?: number }
-  if (path === '/api/user/hosting/auto-topup' && method === 'PATCH') {
-    try {
-      const user = await authenticate(request);
-      const body = await request.json() as {
-        enabled?: boolean;
-        threshold_light?: number;
-        amount_light?: number;
-      };
+  if (path === "/api/user/hosting/auto-topup" && method === "PATCH") {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:hosting_auto_topup_update",
+      async () => {
+        try {
+          const user = await authenticate(request);
+          const body = await request.json() as {
+            enabled?: boolean;
+            threshold_light?: number;
+            amount_light?: number;
+          };
 
-      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
+          const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
+            getSupabaseEnv();
 
-      // If enabling, verify user has a saved payment method (stripe_customer_id)
-      if (body.enabled === true) {
-        const custRes = await fetch(
-          `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_customer_id`,
-          {
-            headers: {
-              'apikey': sbKey,
-              'Authorization': `Bearer ${sbKey}`,
-            },
+          // If enabling, verify user has a saved payment method (stripe_customer_id)
+          if (body.enabled === true) {
+            const custRes = await fetch(
+              `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_customer_id`,
+              {
+                headers: {
+                  "apikey": sbKey,
+                  "Authorization": `Bearer ${sbKey}`,
+                },
+              },
+            );
+            const custRows = await readJsonRows<
+              { stripe_customer_id: string | null }
+            >(custRes);
+            if (!custRows[0]?.stripe_customer_id) {
+              return error(
+                "No saved payment method. Make a deposit first to save your card, then enable auto top-up.",
+                400,
+              );
+            }
           }
-        );
-        const custRows = await readJsonRows<{ stripe_customer_id: string | null }>(custRes);
-        if (!custRows[0]?.stripe_customer_id) {
+
+          // Validate thresholds
+          if (body.threshold_light !== undefined) {
+            if (
+              typeof body.threshold_light !== "number" ||
+              body.threshold_light < 0 || body.threshold_light > 90_000
+            ) {
+              return error("threshold_light must be between 0 and 90000", 400);
+            }
+          }
+          if (body.amount_light !== undefined) {
+            if (
+              typeof body.amount_light !== "number" ||
+              body.amount_light < 500 || body.amount_light > 90_000
+            ) {
+              return error("amount_light must be between 500 and 90000", 400);
+            }
+          }
+
+          // Build update payload
+          const update: Record<string, unknown> = {};
+          if (body.enabled !== undefined) {
+            update.auto_topup_enabled = body.enabled;
+          }
+          if (body.threshold_light !== undefined) {
+            update
+              .auto_topup_threshold_light = body.threshold_light;
+          }
+          if (body.amount_light !== undefined) {
+            update.auto_topup_amount_light = body.amount_light;
+          }
+          // If re-enabling, clear the last failure timestamp
+          if (body.enabled === true) update.auto_topup_last_failed_at = null;
+
+          if (Object.keys(update).length === 0) {
+            return error(
+              "No fields to update. Provide enabled, threshold_light, or amount_light.",
+              400,
+            );
+          }
+
+          const updateRes = await fetch(
+            `${sbUrl}/rest/v1/users?id=eq.${user.id}`,
+            {
+              method: "PATCH",
+              headers: {
+                "apikey": sbKey,
+                "Authorization": `Bearer ${sbKey}`,
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal",
+              },
+              body: JSON.stringify(update),
+            },
+          );
+
+          if (!updateRes.ok) {
+            throw new Error("Failed to update auto top-up settings");
+          }
+
+          return json({ success: true, updated: update });
+        } catch (err) {
+          if (err instanceof SyntaxError) {
+            return error("Invalid JSON body", 400);
+          }
           return error(
-            'No saved payment method. Make a deposit first to save your card, then enable auto top-up.',
-            400
+            err instanceof Error ? err.message : "Unauthorized",
+            401,
           );
         }
-      }
-
-      // Validate thresholds
-      if (body.threshold_light !== undefined) {
-        if (typeof body.threshold_light !== 'number' || body.threshold_light < 0 || body.threshold_light > 90_000) {
-          return error('threshold_light must be between 0 and 90000', 400);
-        }
-      }
-      if (body.amount_light !== undefined) {
-        if (typeof body.amount_light !== 'number' || body.amount_light < 500 || body.amount_light > 90_000) {
-          return error('amount_light must be between 500 and 90000', 400);
-        }
-      }
-
-      // Build update payload
-      const update: Record<string, unknown> = {};
-      if (body.enabled !== undefined) update.auto_topup_enabled = body.enabled;
-      if (body.threshold_light !== undefined) update.auto_topup_threshold_light = body.threshold_light;
-      if (body.amount_light !== undefined) update.auto_topup_amount_light = body.amount_light;
-      // If re-enabling, clear the last failure timestamp
-      if (body.enabled === true) update.auto_topup_last_failed_at = null;
-
-      if (Object.keys(update).length === 0) {
-        return error('No fields to update. Provide enabled, threshold_light, or amount_light.', 400);
-      }
-
-      const updateRes = await fetch(
-        `${sbUrl}/rest/v1/users?id=eq.${user.id}`,
-        {
-          method: 'PATCH',
-          headers: {
-            'apikey': sbKey,
-            'Authorization': `Bearer ${sbKey}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=minimal',
-          },
-          body: JSON.stringify(update),
-        }
-      );
-
-      if (!updateRes.ok) throw new Error('Failed to update auto top-up settings');
-
-      return json({ success: true, updated: update });
-    } catch (err) {
-      if (err instanceof SyntaxError) return error('Invalid JSON body', 400);
-      return error(err instanceof Error ? err.message : 'Unauthorized', 401);
-    }
+      },
+    );
   }
 
   // POST /api/user/hosting/checkout — create a Stripe Checkout session for hosting deposit
   // Body: { amount_cents: number, source?: 'web' | 'desktop' } (minimum 500 = $5.00)
   // Returns: { checkout_url: string, light_amount: number } or error if Stripe not configured
-  if (path === '/api/user/hosting/checkout' && method === 'POST') {
-    try {
-      const user = await authenticate(request);
-      const body = await readJsonBody<HostingCheckoutBody>(request);
-      const amountCents = body.amount_cents;
-      const source = body.source || 'web';
+  if (path === "/api/user/hosting/checkout" && method === "POST") {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:hosting_checkout",
+      async () => {
+        try {
+          const user = await authenticate(request);
+          const { amountCents, source } = await validateHostingCheckoutRequest(
+            request,
+          );
 
-      if (!amountCents || typeof amountCents !== 'number' || amountCents < 500) {
-        return error('amount_cents must be at least 500 ($5.00 minimum deposit)', 400);
-      }
+          const STRIPE_SECRET_KEY = getEnv("STRIPE_SECRET_KEY");
+          const BASE_URL = getEnv("BASE_URL");
 
-      const STRIPE_SECRET_KEY = getEnv('STRIPE_SECRET_KEY');
-      const BASE_URL = getEnv('BASE_URL');
-
-      if (!STRIPE_SECRET_KEY) {
-        return error(
-          'Stripe is not yet configured. Hosting deposits will be available soon. ' +
-          'In the meantime, contact support to add funds manually.',
-          503
-        );
-      }
-
-      // Ensure user has a Stripe Customer (create if needed) so payment method is saved
-      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
-      const userDataRes = await fetch(
-        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_customer_id,email`,
-        {
-          headers: {
-            'apikey': sbKey,
-            'Authorization': `Bearer ${sbKey}`,
-          },
-        }
-      );
-      if (!userDataRes.ok) throw new Error('Failed to read user');
-      const userData = await readFirstJsonRow<StripeCustomerRow>(userDataRes);
-      let stripeCustomerId = userData?.stripe_customer_id;
-
-      if (!stripeCustomerId) {
-        // Create Stripe Customer
-        const custRes = await fetch('https://api.stripe.com/v1/customers', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${STRIPE_SECRET_KEY}`,
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: new URLSearchParams({
-            'email': userData?.email || '',
-            'metadata[user_id]': user.id,
-            'metadata[platform]': 'ultralight',
-          }).toString(),
-        });
-
-        if (!custRes.ok) {
-          console.error('[STRIPE] Customer creation failed:', await custRes.text());
-          return error('Failed to create payment profile', 500);
-        }
-
-        const customer = await custRes.json() as { id: string };
-        stripeCustomerId = customer.id;
-
-        // Save Stripe Customer ID to DB
-        await fetch(
-          `${sbUrl}/rest/v1/users?id=eq.${user.id}`,
-          {
-            method: 'PATCH',
-            headers: {
-              'apikey': sbKey,
-              'Authorization': `Bearer ${sbKey}`,
-              'Content-Type': 'application/json',
-              'Prefer': 'return=minimal',
-            },
-            body: JSON.stringify({ stripe_customer_id: stripeCustomerId }),
+          if (!STRIPE_SECRET_KEY) {
+            return error(
+              "Stripe is not yet configured. Hosting deposits will be available soon. " +
+                "In the meantime, contact support to add funds manually.",
+              503,
+            );
           }
-        );
-      }
 
-      // Charge exactly what the user deposits — platform absorbs Stripe fees.
-      // $10 deposit = $10 balance. No fee pass-through.
-      // Platform recovers via 10% fee on every transfer_balance() call.
-      const chargeCents = amountCents;
+          // Ensure user has a Stripe Customer (create if needed) so payment method is saved
+          const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
+            getSupabaseEnv();
+          const userDataRes = await fetch(
+            `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_customer_id,email`,
+            {
+              headers: {
+                "apikey": sbKey,
+                "Authorization": `Bearer ${sbKey}`,
+              },
+            },
+          );
+          if (!userDataRes.ok) throw new Error("Failed to read user");
+          const userData = await readFirstJsonRow<StripeCustomerRow>(
+            userDataRes,
+          );
+          let stripeCustomerId = userData?.stripe_customer_id;
 
-      // Calculate Light to credit based on source
-      const lightPerDollar = source === 'desktop' ? LIGHT_PER_DOLLAR_DESKTOP : LIGHT_PER_DOLLAR_WEB;
-      const lightAmount = Math.round(amountCents / 100 * lightPerDollar);
+          if (!stripeCustomerId) {
+            // Create Stripe Customer
+            const custRes = await fetch("https://api.stripe.com/v1/customers", {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${STRIPE_SECRET_KEY}`,
+                "Content-Type": "application/x-www-form-urlencoded",
+              },
+              body: new URLSearchParams({
+                "email": userData?.email || "",
+                "metadata[user_id]": user.id,
+                "metadata[platform]": "ultralight",
+              }).toString(),
+            });
 
-      // Create Stripe Checkout Session with card + ACH + Link
-      // - Cards: setup_future_usage saves for off-session auto top-ups
-      // - ACH (us_bank_account): lower fees (0.8% capped $5), Plaid bank-linking handled by Stripe
-      // - Link: one-click checkout, remembers payment methods across Stripe merchants
-      // - No tax at deposit — tax applies at service consumption (hosting/calls)
-      // - metadata.light_amount is the Light credited to the user's balance
-      const checkoutParams: Record<string, string> = {
-        'mode': 'payment',
-        'customer': stripeCustomerId,
-        'payment_method_types[0]': 'card',
-        'payment_method_types[1]': 'us_bank_account',
-        'payment_method_types[2]': 'link',
-        // Save card for future off-session charges (auto top-up)
-        'payment_method_options[card][setup_future_usage]': 'off_session',
-        // ACH: verification handled by Stripe/Plaid, mandate auto-created
-        'payment_method_options[us_bank_account][financial_connections][permissions][0]': 'payment_method',
-        'line_items[0][price_data][currency]': 'usd',
-        'line_items[0][price_data][product_data][name]': 'Ultralight Balance',
-        'line_items[0][price_data][product_data][description]':
-          `$${(amountCents / 100).toFixed(2)} platform credit (${formatLight(lightAmount)})`,
-        'line_items[0][price_data][unit_amount]': String(chargeCents),
-        'line_items[0][quantity]': '1',
-        'metadata[user_id]': user.id,
-        'metadata[light_amount]': String(lightAmount),
-        'metadata[type]': 'hosting_deposit',
-        'success_url': `${BASE_URL}/dash?topup=success&amount=${amountCents}`,
-        'cancel_url': `${BASE_URL}/dash?topup=cancelled`,
-      };
+            if (!custRes.ok) {
+              console.error(
+                "[STRIPE] Customer creation failed:",
+                await custRes.text(),
+              );
+              return error("Failed to create payment profile", 500);
+            }
 
-      const checkoutRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${STRIPE_SECRET_KEY}`,
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: new URLSearchParams(checkoutParams).toString(),
-      });
+            const customer = await custRes.json() as { id: string };
+            stripeCustomerId = customer.id;
 
-      if (!checkoutRes.ok) {
-        const stripeErr = await checkoutRes.text();
-        console.error('[STRIPE] Checkout session creation failed:', stripeErr);
-        return error('Failed to create checkout session', 500);
-      }
+            // Save Stripe Customer ID to DB
+            await fetch(
+              `${sbUrl}/rest/v1/users?id=eq.${user.id}`,
+              {
+                method: "PATCH",
+                headers: {
+                  "apikey": sbKey,
+                  "Authorization": `Bearer ${sbKey}`,
+                  "Content-Type": "application/json",
+                  "Prefer": "return=minimal",
+                },
+                body: JSON.stringify({ stripe_customer_id: stripeCustomerId }),
+              },
+            );
+          }
 
-      const session = await checkoutRes.json() as { url: string; id: string };
+          // Charge exactly what the user deposits — platform absorbs Stripe fees.
+          // $10 deposit = $10 balance. No fee pass-through.
+          // Platform recovers via 10% fee on every transfer_balance() call.
+          const chargeCents = amountCents;
 
-      return json({
-        checkout_url: session.url,
-        session_id: session.id,
-        deposit_cents: amountCents,
-        light_amount: lightAmount,
-      });
-    } catch (err) {
-      if (err instanceof SyntaxError) return error('Invalid JSON body', 400);
-      return error(err instanceof Error ? err.message : 'Unauthorized', 401);
-    }
+          // Calculate Light to credit based on source
+          const lightPerDollar = source === "desktop"
+            ? LIGHT_PER_DOLLAR_DESKTOP
+            : LIGHT_PER_DOLLAR_WEB;
+          const lightAmount = Math.round(amountCents / 100 * lightPerDollar);
+
+          // Create Stripe Checkout Session with card + ACH + Link
+          // - Cards: setup_future_usage saves for off-session auto top-ups
+          // - ACH (us_bank_account): lower fees (0.8% capped $5), Plaid bank-linking handled by Stripe
+          // - Link: one-click checkout, remembers payment methods across Stripe merchants
+          // - No tax at deposit — tax applies at service consumption (hosting/calls)
+          // - metadata.light_amount is the Light credited to the user's balance
+          const checkoutParams: Record<string, string> = {
+            "mode": "payment",
+            "customer": stripeCustomerId,
+            "payment_method_types[0]": "card",
+            "payment_method_types[1]": "us_bank_account",
+            "payment_method_types[2]": "link",
+            // Save card for future off-session charges (auto top-up)
+            "payment_method_options[card][setup_future_usage]": "off_session",
+            // ACH: verification handled by Stripe/Plaid, mandate auto-created
+            "payment_method_options[us_bank_account][financial_connections][permissions][0]":
+              "payment_method",
+            "line_items[0][price_data][currency]": "usd",
+            "line_items[0][price_data][product_data][name]":
+              "Ultralight Balance",
+            "line_items[0][price_data][product_data][description]": `$${
+              (amountCents / 100).toFixed(2)
+            } platform credit (${formatLight(lightAmount)})`,
+            "line_items[0][price_data][unit_amount]": String(chargeCents),
+            "line_items[0][quantity]": "1",
+            "metadata[user_id]": user.id,
+            "metadata[light_amount]": String(lightAmount),
+            "metadata[type]": "hosting_deposit",
+            "success_url":
+              `${BASE_URL}/dash?topup=success&amount=${amountCents}`,
+            "cancel_url": `${BASE_URL}/dash?topup=cancelled`,
+          };
+
+          const checkoutRes = await fetch(
+            "https://api.stripe.com/v1/checkout/sessions",
+            {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${STRIPE_SECRET_KEY}`,
+                "Content-Type": "application/x-www-form-urlencoded",
+              },
+              body: new URLSearchParams(checkoutParams).toString(),
+            },
+          );
+
+          if (!checkoutRes.ok) {
+            const stripeErr = await checkoutRes.text();
+            console.error(
+              "[STRIPE] Checkout session creation failed:",
+              stripeErr,
+            );
+            return error("Failed to create checkout session", 500);
+          }
+
+          const session = await checkoutRes.json() as {
+            url: string;
+            id: string;
+          };
+
+          return json({
+            checkout_url: session.url,
+            session_id: session.id,
+            deposit_cents: amountCents,
+            light_amount: lightAmount,
+          });
+        } catch (err) {
+          if (err instanceof RequestValidationError) {
+            return error(err.message, err.status);
+          }
+          return error(
+            err instanceof Error ? err.message : "Unauthorized",
+            401,
+          );
+        }
+      },
+    );
   }
 
   // GET /api/user/earnings — aggregate earnings across all owned apps
   // Returns: { total_earned_light, period_earned_light, total_withdrawn_light, withdrawable_light, by_app: [...], recent: [...] }
-  if (path === '/api/user/earnings' && method === 'GET') {
+  if (path === "/api/user/earnings" && method === "GET") {
     try {
       const user = await authenticate(request);
-      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
+      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
+        getSupabaseEnv();
       const headers = {
-        'apikey': sbKey,
-        'Authorization': `Bearer ${sbKey}`,
+        "apikey": sbKey,
+        "Authorization": `Bearer ${sbKey}`,
       };
 
       const url = new URL(request.url);
-      const period = url.searchParams.get('period') || '30d';
+      const period = url.searchParams.get("period") || "30d";
       let periodDays = 30;
-      if (period === '7d') periodDays = 7;
-      else if (period === '90d') periodDays = 90;
-      else if (period === 'all') periodDays = 3650;
+      if (period === "7d") periodDays = 7;
+      else if (period === "90d") periodDays = 90;
+      else if (period === "all") periodDays = 3650;
 
-      const cutoff = new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000).toISOString();
+      const cutoff = new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000)
+        .toISOString();
 
-      const [periodRes, lifetimeRes, recentRes, payoutsRes] = await Promise.all([
-        fetch(
-          `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&created_at=gte.${cutoff}&select=amount_light,app_id,function_name,reason,created_at&order=created_at.asc&limit=10000`,
-          { headers }
-        ),
-        fetch(
-          `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&select=amount_light`,
-          { headers: { ...headers, 'Prefer': 'count=exact' } }
-        ),
-        fetch(
-          `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&select=amount_light,app_id,function_name,reason,created_at&order=created_at.desc&limit=10`,
-          { headers }
-        ),
-        // Total withdrawals including held (for withdrawable calculation)
-        fetch(
-          `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(held,pending,processing,paid)&select=amount_light`,
-          { headers }
-        ),
-      ]);
+      const [periodRes, lifetimeRes, recentRes, payoutsRes] = await Promise.all(
+        [
+          fetch(
+            `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&created_at=gte.${cutoff}&select=amount_light,app_id,function_name,reason,created_at&order=created_at.asc&limit=10000`,
+            { headers },
+          ),
+          fetch(
+            `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&select=amount_light`,
+            { headers: { ...headers, "Prefer": "count=exact" } },
+          ),
+          fetch(
+            `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&select=amount_light,app_id,function_name,reason,created_at&order=created_at.desc&limit=10`,
+            { headers },
+          ),
+          // Total withdrawals including held (for withdrawable calculation)
+          fetch(
+            `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(held,pending,processing,paid)&select=amount_light`,
+            { headers },
+          ),
+        ],
+      );
 
       if (!periodRes.ok || !lifetimeRes.ok || !recentRes.ok) {
-        throw new Error('Failed to query transfers');
+        throw new Error("Failed to query transfers");
       }
 
       const periodTransfers = await periodRes.json() as Array<{
-        amount_light: number; app_id: string | null; function_name: string | null; reason: string; created_at: string;
+        amount_light: number;
+        app_id: string | null;
+        function_name: string | null;
+        reason: string;
+        created_at: string;
       }>;
-      const lifetimeTransfers = await lifetimeRes.json() as Array<{ amount_light: number }>;
+      const lifetimeTransfers = await lifetimeRes.json() as Array<
+        { amount_light: number }
+      >;
       const recentTransfers = await recentRes.json() as Array<{
-        amount_light: number; app_id: string | null; function_name: string | null; reason: string; created_at: string;
+        amount_light: number;
+        app_id: string | null;
+        function_name: string | null;
+        reason: string;
+        created_at: string;
       }>;
 
-      const totalEarnedLight = lifetimeTransfers.reduce((sum, t) => sum + t.amount_light, 0);
-      const periodEarnedLight = periodTransfers.reduce((sum, t) => sum + t.amount_light, 0);
+      const totalEarnedLight = lifetimeTransfers.reduce(
+        (sum, t) => sum + t.amount_light,
+        0,
+      );
+      const periodEarnedLight = periodTransfers.reduce(
+        (sum, t) => sum + t.amount_light,
+        0,
+      );
 
       // Calculate total withdrawn and withdrawable
       let totalWithdrawnLight = 0;
       if (payoutsRes.ok) {
-        const payouts = await payoutsRes.json() as Array<{ amount_light: number }>;
-        totalWithdrawnLight = payouts.reduce((sum, p) => sum + p.amount_light, 0);
+        const payouts = await payoutsRes.json() as Array<
+          { amount_light: number }
+        >;
+        totalWithdrawnLight = payouts.reduce(
+          (sum, p) => sum + p.amount_light,
+          0,
+        );
       }
-      const withdrawableLight = Math.max(0, totalEarnedLight - totalWithdrawnLight);
+      const withdrawableLight = Math.max(
+        0,
+        totalEarnedLight - totalWithdrawnLight,
+      );
 
       // By-app breakdown
-      const appMap = new Map<string, { earned_light: number; call_count: number }>();
+      const appMap = new Map<
+        string,
+        { earned_light: number; call_count: number }
+      >();
       for (const t of periodTransfers) {
-        const key = t.app_id || 'unknown';
+        const key = t.app_id || "unknown";
         const entry = appMap.get(key) || { earned_light: 0, call_count: 0 };
         entry.earned_light += t.amount_light;
         entry.call_count += 1;
@@ -2319,7 +2885,7 @@ export async function handleUser(request: Request): Promise<Response> {
         period_earned_light: periodEarnedLight,
         period_transfers: periodTransfers.length,
         by_app: byApp,
-        recent: recentTransfers.map(t => ({
+        recent: recentTransfers.map((t) => ({
           amount_light: t.amount_light,
           app_id: t.app_id,
           function_name: t.function_name,
@@ -2328,7 +2894,7 @@ export async function handleUser(request: Request): Promise<Response> {
         })),
       });
     } catch (err) {
-      return error(err instanceof Error ? err.message : 'Unauthorized', 401);
+      return error(err instanceof Error ? err.message : "Unauthorized", 401);
     }
   }
 
@@ -2338,83 +2904,98 @@ export async function handleUser(request: Request): Promise<Response> {
 
   // POST /api/user/connect/onboard — create or resume Stripe Connect onboarding
   // Returns: { onboarding_url: string, account_id: string }
-  if (path === '/api/user/connect/onboard' && method === 'POST') {
-    try {
-      const user = await authenticate(request);
-      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
-
-      // Get user's current connect state + email
-      const userRes = await fetch(
-        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_connect_account_id,email`,
-        { headers: { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` } }
-      );
-      if (!userRes.ok) throw new Error('Failed to read user');
-      const userData = await readFirstJsonRow<StripeCustomerRow & { stripe_connect_account_id: string | null }>(userRes);
-
-      const {
-        createConnectedAccount, createOnboardingLink
-      } = await import('../services/stripe-connect.ts');
-
-      let accountId = userData?.stripe_connect_account_id;
-
-      // Create a new connected account if none exists
-      if (!accountId) {
-        // Accept optional country for international developers (defaults to US)
-        let country = 'US';
+  if (path === "/api/user/connect/onboard" && method === "POST") {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:connect_onboard",
+      async () => {
         try {
-          const body = await readJsonBody<ConnectOnboardBody>(request);
-          if (body.country && /^[A-Z]{2}$/.test(body.country)) {
-            country = body.country;
+          const user = await authenticate(request);
+          const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
+            getSupabaseEnv();
+          const { country } = await validateConnectOnboardRequest(request);
+
+          // Get user's current connect state + email
+          const userRes = await fetch(
+            `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_connect_account_id,email`,
+            {
+              headers: { "apikey": sbKey, "Authorization": `Bearer ${sbKey}` },
+            },
+          );
+          if (!userRes.ok) throw new Error("Failed to read user");
+          const userData = await readFirstJsonRow<
+            StripeCustomerRow & { stripe_connect_account_id: string | null }
+          >(userRes);
+
+          const {
+            createConnectedAccount,
+            createOnboardingLink,
+          } = await import("../services/stripe-connect.ts");
+
+          let accountId = userData?.stripe_connect_account_id;
+
+          // Create a new connected account if none exists
+          if (!accountId) {
+            const result = await createConnectedAccount(
+              userData?.email || "",
+              user.id,
+              country,
+            );
+            accountId = result.account_id;
+
+            // Save the account ID to DB
+            await fetch(`${sbUrl}/rest/v1/users?id=eq.${user.id}`, {
+              method: "PATCH",
+              headers: {
+                "apikey": sbKey,
+                "Authorization": `Bearer ${sbKey}`,
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal",
+              },
+              body: JSON.stringify({ stripe_connect_account_id: accountId }),
+            });
           }
-        } catch { /* no body or invalid JSON — use default */ }
 
-        const result = await createConnectedAccount(userData?.email || '', user.id, country);
-        accountId = result.account_id;
+          const BASE_URL = getEnv("BASE_URL");
 
-        // Save the account ID to DB
-        await fetch(`${sbUrl}/rest/v1/users?id=eq.${user.id}`, {
-          method: 'PATCH',
-          headers: {
-            'apikey': sbKey,
-            'Authorization': `Bearer ${sbKey}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=minimal',
-          },
-          body: JSON.stringify({ stripe_connect_account_id: accountId }),
-        });
-      }
+          const link = await createOnboardingLink(
+            accountId,
+            `${BASE_URL}/settings/billing?connect=complete`,
+            `${BASE_URL}/settings/billing?connect=refresh`,
+          );
 
-      const BASE_URL = getEnv('BASE_URL');
-
-      const link = await createOnboardingLink(
-        accountId,
-        `${BASE_URL}/settings/billing?connect=complete`,
-        `${BASE_URL}/settings/billing?connect=refresh`
-      );
-
-      return json({
-        onboarding_url: link.url,
-        account_id: accountId,
-      });
-    } catch (err) {
-      const status = (err as Error & { status?: number }).status || 500;
-      return error(err instanceof Error ? err.message : 'Failed to start onboarding', status);
-    }
+          return json({
+            onboarding_url: link.url,
+            account_id: accountId,
+          });
+        } catch (err) {
+          if (err instanceof RequestValidationError) {
+            return error(err.message, err.status);
+          }
+          const status = (err as Error & { status?: number }).status || 500;
+          return error(
+            err instanceof Error ? err.message : "Failed to start onboarding",
+            status,
+          );
+        }
+      },
+    );
   }
 
   // GET /api/user/connect/status — check Stripe Connect onboarding status
   // Returns: { connected, onboarded, payouts_enabled, account_id, country, default_currency, withdrawable_earnings_light }
-  if (path === '/api/user/connect/status' && method === 'GET') {
+  if (path === "/api/user/connect/status" && method === "GET") {
     try {
       const user = await authenticate(request);
-      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
-      const sbHeaders = { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` };
+      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
+        getSupabaseEnv();
+      const sbHeaders = { "apikey": sbKey, "Authorization": `Bearer ${sbKey}` };
 
       const userRes = await fetch(
         `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled,total_earned_light`,
-        { headers: sbHeaders }
+        { headers: sbHeaders },
       );
-      if (!userRes.ok) throw new Error('Failed to read user');
+      if (!userRes.ok) throw new Error("Failed to read user");
       const userData = await readFirstJsonRow<StripeConnectStatusRow>(userRes);
 
       if (!userData?.stripe_connect_account_id) {
@@ -2432,23 +3013,35 @@ export async function handleUser(request: Request): Promise<Response> {
       // Calculate withdrawable earnings = total earned - total withdrawn (incl. held)
       const payoutsRes = await fetch(
         `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(held,pending,processing,paid)&select=amount_light`,
-        { headers: sbHeaders }
+        { headers: sbHeaders },
       );
       let totalWithdrawn = 0;
       if (payoutsRes.ok) {
-        const payouts = await payoutsRes.json() as Array<{ amount_light: number }>;
+        const payouts = await payoutsRes.json() as Array<
+          { amount_light: number }
+        >;
         totalWithdrawn = payouts.reduce((sum, p) => sum + p.amount_light, 0);
       }
-      const withdrawableEarnings = Math.max(0, (userData.total_earned_light || 0) - totalWithdrawn);
+      const withdrawableEarnings = Math.max(
+        0,
+        (userData.total_earned_light || 0) - totalWithdrawn,
+      );
 
       // If already fully set up, return cached values + earnings
-      if (userData.stripe_connect_onboarded && userData.stripe_connect_payouts_enabled) {
+      if (
+        userData.stripe_connect_onboarded &&
+        userData.stripe_connect_payouts_enabled
+      ) {
         // Still fetch account status for country/currency info
         let country: string | null = null;
         let defaultCurrency: string | null = null;
         try {
-          const { getAccountStatus } = await import('../services/stripe-connect.ts');
-          const connectStatus = await getAccountStatus(userData.stripe_connect_account_id);
+          const { getAccountStatus } = await import(
+            "../services/stripe-connect.ts"
+          );
+          const connectStatus = await getAccountStatus(
+            userData.stripe_connect_account_id,
+          );
           country = connectStatus.country || null;
           defaultCurrency = connectStatus.default_currency || null;
         } catch { /* Stripe unavailable */ }
@@ -2460,27 +3053,32 @@ export async function handleUser(request: Request): Promise<Response> {
           account_id: userData.stripe_connect_account_id,
           country: country,
           default_currency: defaultCurrency,
-          is_cross_border: country !== null && country !== 'US',
+          is_cross_border: country !== null && country !== "US",
           withdrawable_earnings_light: withdrawableEarnings,
         });
       }
 
       // Otherwise refresh from Stripe API
       try {
-        const { getAccountStatus } = await import('../services/stripe-connect.ts');
-        const connectStatus = await getAccountStatus(userData.stripe_connect_account_id);
+        const { getAccountStatus } = await import(
+          "../services/stripe-connect.ts"
+        );
+        const connectStatus = await getAccountStatus(
+          userData.stripe_connect_account_id,
+        );
 
         // Update cached status in DB if changed
         if (
           connectStatus.onboarded !== userData.stripe_connect_onboarded ||
-          connectStatus.payouts_enabled !== userData.stripe_connect_payouts_enabled
+          connectStatus.payouts_enabled !==
+            userData.stripe_connect_payouts_enabled
         ) {
           await fetch(`${sbUrl}/rest/v1/users?id=eq.${user.id}`, {
-            method: 'PATCH',
+            method: "PATCH",
             headers: {
               ...sbHeaders,
-              'Content-Type': 'application/json',
-              'Prefer': 'return=minimal',
+              "Content-Type": "application/json",
+              "Prefer": "return=minimal",
             },
             body: JSON.stringify({
               stripe_connect_onboarded: connectStatus.onboarded,
@@ -2497,7 +3095,8 @@ export async function handleUser(request: Request): Promise<Response> {
           account_id: userData.stripe_connect_account_id,
           country: connectStatus.country || null,
           default_currency: connectStatus.default_currency || null,
-          is_cross_border: connectStatus.country !== undefined && connectStatus.country !== 'US',
+          is_cross_border: connectStatus.country !== undefined &&
+            connectStatus.country !== "US",
           withdrawable_earnings_light: withdrawableEarnings,
         });
       } catch (stripeErr) {
@@ -2514,7 +3113,10 @@ export async function handleUser(request: Request): Promise<Response> {
       }
     } catch (err) {
       const status = (err as Error & { status?: number }).status || 500;
-      return error(err instanceof Error ? err.message : 'Failed to check connect status', status);
+      return error(
+        err instanceof Error ? err.message : "Failed to check connect status",
+        status,
+      );
     }
   }
 
@@ -2523,203 +3125,266 @@ export async function handleUser(request: Request): Promise<Response> {
   // Only earned funds (tool_call, page_view, marketplace_sale) can be withdrawn — deposits cannot.
   // Withdrawals are held for 14 days before Stripe transfer is executed.
   // Platform fee is already taken on every transfer_balance() call, not on withdrawal.
-  if (path === '/api/user/connect/withdraw' && method === 'POST') {
-    try {
-      const user = await authenticate(request);
-      const body = await readJsonBody<WithdrawalBody>(request);
-      const amountLight = body.amount_light;
+  if (path === "/api/user/connect/withdraw" && method === "POST") {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:connect_withdraw",
+      async () => {
+        try {
+          const user = await authenticate(request);
+          const { amountLight } = await validateWithdrawalRequest(request);
 
-      const {
-        estimatePayoutFee, getAccountStatus,
-        PAYOUT_HOLD_DAYS,
-      } = await import('../services/stripe-connect.ts');
+          const {
+            estimatePayoutFee,
+            getAccountStatus,
+            PAYOUT_HOLD_DAYS,
+          } = await import("../services/stripe-connect.ts");
 
-      if (!amountLight || typeof amountLight !== 'number' || amountLight < MIN_WITHDRAWAL_LIGHT) {
-        return error(
-          `amount_light must be at least ${MIN_WITHDRAWAL_LIGHT} (${formatLight(MIN_WITHDRAWAL_LIGHT)} minimum withdrawal)`,
-          400
-        );
-      }
+          const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
+            getSupabaseEnv();
+          const sbHeaders = {
+            "apikey": sbKey,
+            "Authorization": `Bearer ${sbKey}`,
+          };
 
-      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
-      const sbHeaders = { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` };
+          // Verify user has a connected, onboarded account with payouts enabled
+          const userRes = await fetch(
+            `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled,balance_light,escrow_light,total_earned_light`,
+            { headers: sbHeaders },
+          );
+          if (!userRes.ok) throw new Error("Failed to read user");
+          const userData = await readFirstJsonRow<StripeConnectWithdrawRow>(
+            userRes,
+          );
 
-      // Verify user has a connected, onboarded account with payouts enabled
-      const userRes = await fetch(
-        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled,balance_light,escrow_light,total_earned_light`,
-        { headers: sbHeaders }
-      );
-      if (!userRes.ok) throw new Error('Failed to read user');
-      const userData = await readFirstJsonRow<StripeConnectWithdrawRow>(userRes);
+          if (
+            !userData?.stripe_connect_account_id ||
+            !userData?.stripe_connect_payouts_enabled
+          ) {
+            return error(
+              "Connect your bank account first. Use the Wallet page to complete Stripe onboarding.",
+              400,
+            );
+          }
 
-      if (!userData?.stripe_connect_account_id || !userData?.stripe_connect_payouts_enabled) {
-        return error(
-          'Connect your bank account first. Use the Wallet page to complete Stripe onboarding.',
-          400
-        );
-      }
+          // Check available balance (balance minus escrowed)
+          const available = (userData.balance_light || 0) -
+            (userData.escrow_light || 0);
+          if (available < amountLight) {
+            return error(
+              `Insufficient available balance. You have ${
+                formatLight(available)
+              } available (after escrow holds).`,
+              400,
+            );
+          }
 
-      // Check available balance (balance minus escrowed)
-      const available = (userData.balance_light || 0) - (userData.escrow_light || 0);
-      if (available < amountLight) {
-        return error(
-          `Insufficient available balance. You have ${formatLight(available)} available (after escrow holds).`,
-          400
-        );
-      }
+          // Earnings-only withdrawal check (defense-in-depth — RPC also validates)
+          const payoutsRes = await fetch(
+            `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(held,pending,processing,paid)&select=amount_light`,
+            { headers: sbHeaders },
+          );
+          let totalWithdrawn = 0;
+          if (payoutsRes.ok) {
+            const payouts = await payoutsRes.json() as Array<
+              { amount_light: number }
+            >;
+            totalWithdrawn = payouts.reduce(
+              (sum, p) => sum + p.amount_light,
+              0,
+            );
+          }
+          const withdrawableEarnings = Math.max(
+            0,
+            (userData.total_earned_light || 0) - totalWithdrawn,
+          );
 
-      // Earnings-only withdrawal check (defense-in-depth — RPC also validates)
-      const payoutsRes = await fetch(
-        `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(held,pending,processing,paid)&select=amount_light`,
-        { headers: sbHeaders }
-      );
-      let totalWithdrawn = 0;
-      if (payoutsRes.ok) {
-        const payouts = await payoutsRes.json() as Array<{ amount_light: number }>;
-        totalWithdrawn = payouts.reduce((sum, p) => sum + p.amount_light, 0);
-      }
-      const withdrawableEarnings = Math.max(0, (userData.total_earned_light || 0) - totalWithdrawn);
+          if (withdrawableEarnings < amountLight) {
+            return error(
+              `Only earned funds can be withdrawn (deposits cannot be cashed out). ` +
+                `You have ${
+                  formatLight(withdrawableEarnings)
+                } in withdrawable earnings.`,
+              400,
+            );
+          }
 
-      if (withdrawableEarnings < amountLight) {
-        return error(
-          `Only earned funds can be withdrawn (deposits cannot be cashed out). ` +
-          `You have ${formatLight(withdrawableEarnings)} in withdrawable earnings.`,
-          400
-        );
-      }
+          // Detect cross-border for Stripe fee estimation
+          let isCrossBorder = false;
+          try {
+            const connectStatus = await getAccountStatus(
+              userData.stripe_connect_account_id,
+            );
+            isCrossBorder = connectStatus.country !== undefined &&
+              connectStatus.country !== "US";
+          } catch { /* Stripe unavailable — assume domestic */ }
 
-      // Detect cross-border for Stripe fee estimation
-      let isCrossBorder = false;
-      try {
-        const connectStatus = await getAccountStatus(userData.stripe_connect_account_id);
-        isCrossBorder = connectStatus.country !== undefined && connectStatus.country !== 'US';
-      } catch { /* Stripe unavailable — assume domestic */ }
+          // Calculate Stripe fee estimate (Stripe fees are in USD cents)
+          const estimate = estimatePayoutFee(amountLight, isCrossBorder);
 
-      // Calculate Stripe fee estimate (Stripe fees are in USD cents)
-      const estimate = estimatePayoutFee(amountLight, isCrossBorder);
+          // Atomic debit + held payout record creation + earnings validation
+          // Balance is debited immediately; Stripe transfer happens after 14-day hold
+          const rpcRes = await fetch(
+            `${sbUrl}/rest/v1/rpc/create_payout_record`,
+            {
+              method: "POST",
+              headers: {
+                ...sbHeaders,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                p_user_id: user.id,
+                p_amount_light: amountLight,
+                p_stripe_fee_cents: estimate.stripe_fee_cents,
+                p_net_cents: estimate.net_cents,
+              }),
+            },
+          );
 
-      // Atomic debit + held payout record creation + earnings validation
-      // Balance is debited immediately; Stripe transfer happens after 14-day hold
-      const rpcRes = await fetch(`${sbUrl}/rest/v1/rpc/create_payout_record`, {
-        method: 'POST',
-        headers: {
-          ...sbHeaders,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          p_user_id: user.id,
-          p_amount_light: amountLight,
-          p_stripe_fee_cents: estimate.stripe_fee_cents,
-          p_net_cents: estimate.net_cents,
-        }),
-      });
+          if (!rpcRes.ok) {
+            const rpcErr = await rpcRes.text();
+            console.error("[CONNECT] create_payout_record RPC failed:", rpcErr);
+            if (rpcErr.includes("Insufficient")) {
+              return error("Insufficient balance for withdrawal", 400);
+            }
+            if (rpcErr.includes("exceeds earnings")) {
+              return error(
+                "Withdrawal exceeds earned funds. Only earnings can be withdrawn — deposits cannot be cashed out.",
+                400,
+              );
+            }
+            return error("Failed to create payout record", 500);
+          }
 
-      if (!rpcRes.ok) {
-        const rpcErr = await rpcRes.text();
-        console.error('[CONNECT] create_payout_record RPC failed:', rpcErr);
-        if (rpcErr.includes('Insufficient')) return error('Insufficient balance for withdrawal', 400);
-        if (rpcErr.includes('exceeds earnings')) return error('Withdrawal exceeds earned funds. Only earnings can be withdrawn — deposits cannot be cashed out.', 400);
-        return error('Failed to create payout record', 500);
-      }
+          const payoutId = await rpcRes.json();
 
-      const payoutId = await rpcRes.json();
+          // Calculate release date for user messaging
+          const releaseDate = new Date(
+            Date.now() + PAYOUT_HOLD_DAYS * 24 * 60 * 60 * 1000,
+          );
+          const releaseDateStr = releaseDate.toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          });
 
-      // Calculate release date for user messaging
-      const releaseDate = new Date(Date.now() + PAYOUT_HOLD_DAYS * 24 * 60 * 60 * 1000);
-      const releaseDateStr = releaseDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+          const feeBreakdown = isCrossBorder
+            ? `Stripe fee: $${
+              (estimate.stripe_fee_cents / 100).toFixed(2)
+            } (incl. 2% FX)`
+            : `Stripe fee: $${(estimate.stripe_fee_cents / 100).toFixed(2)}`;
 
-      const feeBreakdown = isCrossBorder
-        ? `Stripe fee: $${(estimate.stripe_fee_cents / 100).toFixed(2)} (incl. 2% FX)`
-        : `Stripe fee: $${(estimate.stripe_fee_cents / 100).toFixed(2)}`;
-
-      return json({
-        success: true,
-        payout_id: payoutId,
-        amount_light: amountLight,
-        estimated_stripe_fee_cents: estimate.stripe_fee_cents,
-        estimated_net_cents: estimate.net_cents,
-        is_cross_border: isCrossBorder,
-        status: 'held',
-        release_at: releaseDate.toISOString(),
-        hold_days: PAYOUT_HOLD_DAYS,
-        message: `Withdrawal of ${formatLight(amountLight)} submitted. ` +
-          `${feeBreakdown}. ` +
-          `Estimated bank deposit: ~$${(estimate.net_cents / 100).toFixed(2)}. ` +
-          `Payout will be released on ${releaseDateStr}.`,
-      });
-    } catch (err) {
-      if (err instanceof SyntaxError) return error('Invalid JSON body', 400);
-      const status = (err as Error & { status?: number }).status || 500;
-      return error(err instanceof Error ? err.message : 'Withdrawal failed', status);
-    }
+          return json({
+            success: true,
+            payout_id: payoutId,
+            amount_light: amountLight,
+            estimated_stripe_fee_cents: estimate.stripe_fee_cents,
+            estimated_net_cents: estimate.net_cents,
+            is_cross_border: isCrossBorder,
+            status: "held",
+            release_at: releaseDate.toISOString(),
+            hold_days: PAYOUT_HOLD_DAYS,
+            message: `Withdrawal of ${formatLight(amountLight)} submitted. ` +
+              `${feeBreakdown}. ` +
+              `Estimated bank deposit: ~$${
+                (estimate.net_cents / 100).toFixed(2)
+              }. ` +
+              `Payout will be released on ${releaseDateStr}.`,
+          });
+        } catch (err) {
+          if (err instanceof RequestValidationError) {
+            return error(err.message, err.status);
+          }
+          const status = (err as Error & { status?: number }).status || 500;
+          return error(
+            err instanceof Error ? err.message : "Withdrawal failed",
+            status,
+          );
+        }
+      },
+    );
   }
 
   // GET /api/user/connect/liability — platform liability summary (admin use)
   // Returns: total unpaid earnings, held payouts, processing payouts, sweepable amount
-  if (path === '/api/user/connect/liability' && method === 'GET') {
+  if (path === "/api/user/connect/liability" && method === "GET") {
     try {
       const user = await authenticate(request);
-      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
-      const sbHeaders = { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` };
+      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
+        getSupabaseEnv();
+      const sbHeaders = { "apikey": sbKey, "Authorization": `Bearer ${sbKey}` };
 
       // Parallel queries for liability calculation
-      const [earningsRes, paidRes, heldRes, processingRes, pendingRes] = await Promise.all([
-        // Total earned across ALL users
-        fetch(
-          `${sbUrl}/rest/v1/users?total_earned_light=gt.0&select=total_earned_light`,
-          { headers: sbHeaders }
-        ),
-        // Total successfully paid out
-        fetch(
-          `${sbUrl}/rest/v1/payouts?status=eq.paid&select=amount_light`,
-          { headers: sbHeaders }
-        ),
-        // Currently held (14-day wait)
-        fetch(
-          `${sbUrl}/rest/v1/payouts?status=eq.held&select=amount_light,platform_fee_light,release_at`,
-          { headers: sbHeaders }
-        ),
-        // Currently processing (Stripe transfer in flight)
-        fetch(
-          `${sbUrl}/rest/v1/payouts?status=eq.processing&select=amount_light,platform_fee_light`,
-          { headers: sbHeaders }
-        ),
-        // Pending (marked for release, not yet transferred)
-        fetch(
-          `${sbUrl}/rest/v1/payouts?status=eq.pending&select=amount_light,platform_fee_light`,
-          { headers: sbHeaders }
-        ),
-      ]);
+      const [earningsRes, paidRes, heldRes, processingRes, pendingRes] =
+        await Promise.all([
+          // Total earned across ALL users
+          fetch(
+            `${sbUrl}/rest/v1/users?total_earned_light=gt.0&select=total_earned_light`,
+            { headers: sbHeaders },
+          ),
+          // Total successfully paid out
+          fetch(
+            `${sbUrl}/rest/v1/payouts?status=eq.paid&select=amount_light`,
+            { headers: sbHeaders },
+          ),
+          // Currently held (14-day wait)
+          fetch(
+            `${sbUrl}/rest/v1/payouts?status=eq.held&select=amount_light,platform_fee_light,release_at`,
+            { headers: sbHeaders },
+          ),
+          // Currently processing (Stripe transfer in flight)
+          fetch(
+            `${sbUrl}/rest/v1/payouts?status=eq.processing&select=amount_light,platform_fee_light`,
+            { headers: sbHeaders },
+          ),
+          // Pending (marked for release, not yet transferred)
+          fetch(
+            `${sbUrl}/rest/v1/payouts?status=eq.pending&select=amount_light,platform_fee_light`,
+            { headers: sbHeaders },
+          ),
+        ]);
 
       const totalEarned = earningsRes.ok
         ? (await earningsRes.json() as Array<{ total_earned_light: number }>)
-            .reduce((sum, u) => sum + (u.total_earned_light || 0), 0)
+          .reduce((sum, u) => sum + (u.total_earned_light || 0), 0)
         : 0;
 
       const totalPaid = paidRes.ok
         ? (await paidRes.json() as Array<{ amount_light: number }>)
-            .reduce((sum, p) => sum + p.amount_light, 0)
+          .reduce((sum, p) => sum + p.amount_light, 0)
         : 0;
 
       const heldPayouts = heldRes.ok
-        ? (await heldRes.json() as Array<{ amount_light: number; platform_fee_light: number; release_at: string }>)
+        ? (await heldRes.json() as Array<
+          {
+            amount_light: number;
+            platform_fee_light: number;
+            release_at: string;
+          }
+        >)
         : [];
       const heldTotal = heldPayouts.reduce((sum, p) => sum + p.amount_light, 0);
-      const heldPlatformFees = heldPayouts.reduce((sum, p) => sum + (p.platform_fee_light || 0), 0);
+      const heldPlatformFees = heldPayouts.reduce(
+        (sum, p) => sum + (p.platform_fee_light || 0),
+        0,
+      );
 
       // Next payout release date
       const nextRelease = heldPayouts.length > 0
-        ? heldPayouts.reduce((earliest, p) => p.release_at < earliest ? p.release_at : earliest, heldPayouts[0].release_at)
+        ? heldPayouts.reduce(
+          (earliest, p) => p.release_at < earliest ? p.release_at : earliest,
+          heldPayouts[0].release_at,
+        )
         : null;
 
       const processingTotal = processingRes.ok
         ? (await processingRes.json() as Array<{ amount_light: number }>)
-            .reduce((sum, p) => sum + p.amount_light, 0)
+          .reduce((sum, p) => sum + p.amount_light, 0)
         : 0;
 
       const pendingTotal = pendingRes.ok
         ? (await pendingRes.json() as Array<{ amount_light: number }>)
-            .reduce((sum, p) => sum + p.amount_light, 0)
+          .reduce((sum, p) => sum + p.amount_light, 0)
         : 0;
 
       // Liability = total earned - total paid out = unpaid developer earnings
@@ -2745,28 +3410,37 @@ export async function handleUser(request: Request): Promise<Response> {
         sweepable_display: formatLight(sweepable),
       });
     } catch (err) {
-      return error(err instanceof Error ? err.message : 'Failed to calculate liability', 500);
+      return error(
+        err instanceof Error ? err.message : "Failed to calculate liability",
+        500,
+      );
     }
   }
 
   // GET /api/user/connect/payouts — payout history
-  if (path === '/api/user/connect/payouts' && method === 'GET') {
+  if (path === "/api/user/connect/payouts" && method === "GET") {
     try {
       const user = await authenticate(request);
-      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } = getSupabaseEnv();
-      const limit = parseInt(url.searchParams.get('limit') || '20', 10);
+      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
+        getSupabaseEnv();
+      const limit = parseInt(url.searchParams.get("limit") || "20", 10);
 
       const payoutsRes = await fetch(
-        `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&select=*&order=created_at.desc&limit=${Math.min(limit, 100)}`,
-        { headers: { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` } }
+        `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&select=*&order=created_at.desc&limit=${
+          Math.min(limit, 100)
+        }`,
+        { headers: { "apikey": sbKey, "Authorization": `Bearer ${sbKey}` } },
       );
 
-      if (!payoutsRes.ok) throw new Error('Failed to query payouts');
+      if (!payoutsRes.ok) throw new Error("Failed to query payouts");
       const payouts = await payoutsRes.json();
 
       return json({ payouts });
     } catch (err) {
-      return error(err instanceof Error ? err.message : 'Failed to get payouts', 500);
+      return error(
+        err instanceof Error ? err.message : "Failed to get payouts",
+        500,
+      );
     }
   }
 
@@ -2775,230 +3449,335 @@ export async function handleUser(request: Request): Promise<Response> {
   // ============================================
 
   // GET /api/marketplace/listing/:appId — listing + active bids for an app
-  if (path.startsWith('/api/marketplace/listing/') && method === 'GET') {
+  if (path.startsWith("/api/marketplace/listing/") && method === "GET") {
     try {
-      const appId = path.replace('/api/marketplace/listing/', '');
-      if (!appId) return error('Missing app ID', 400);
-      const { getListing } = await import('../services/marketplace.ts');
+      const appId = path.replace("/api/marketplace/listing/", "");
+      if (!appId) return error("Missing app ID", 400);
+      const { getListing } = await import("../services/marketplace.ts");
       const listing = await getListing(appId);
       return json(listing);
     } catch (err) {
       const status = (err as Error & { status?: number }).status || 500;
-      return error(err instanceof Error ? err.message : 'Failed to get listing', status);
+      return error(
+        err instanceof Error ? err.message : "Failed to get listing",
+        status,
+      );
     }
   }
 
   // POST /api/marketplace/bid — place a bid
-  if (path === '/api/marketplace/bid' && method === 'POST') {
-    try {
-      const body = await readJsonBody<MarketplaceBidBody>(request);
-      const { app_id, amount_light, message, expires_in_hours } = body;
-      if (!app_id || !amount_light) return error('Missing app_id or amount_light', 400);
-      const { placeBid } = await import('../services/marketplace.ts');
-      const result = await placeBid(userId, app_id, amount_light, message, expires_in_hours);
-      return json(result);
-    } catch (err) {
-      const status = (err as Error & { status?: number }).status || 500;
-      return error(err instanceof Error ? err.message : 'Failed to place bid', status);
-    }
+  if (path === "/api/marketplace/bid" && method === "POST") {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:marketplace_bid",
+      async () => {
+        try {
+          const body = await validateMarketplaceBidRequest(request);
+          const { placeBid } = await import("../services/marketplace.ts");
+          const result = await placeBid(
+            userId,
+            body.appId,
+            body.amountLight,
+            body.message,
+            body.expiresInHours,
+          );
+          return json(result);
+        } catch (err) {
+          const status = (err as Error & { status?: number }).status || 500;
+          return error(
+            err instanceof Error ? err.message : "Failed to place bid",
+            status,
+          );
+        }
+      },
+    );
   }
 
   // POST /api/marketplace/ask — set ask price
-  if (path === '/api/marketplace/ask' && method === 'POST') {
-    try {
-      const body = await readJsonBody<MarketplaceAskBody>(request);
-      const { app_id, price_light, floor_light, instant_buy, note } = body;
-      if (!app_id) return error('Missing app_id', 400);
-      const { setAskPrice } = await import('../services/marketplace.ts');
-      const result = await setAskPrice(userId, app_id, price_light ?? null, floor_light, instant_buy, note ?? undefined);
-      return json(result);
-    } catch (err) {
-      const status = (err as Error & { status?: number }).status || 500;
-      return error(err instanceof Error ? err.message : 'Failed to set ask price', status);
-    }
+  if (path === "/api/marketplace/ask" && method === "POST") {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:marketplace_ask",
+      async () => {
+        try {
+          const body = await validateMarketplaceAskRequest(request);
+          const { setAskPrice } = await import("../services/marketplace.ts");
+          const result = await setAskPrice(
+            userId,
+            body.appId,
+            body.priceLight,
+            body.floorLight,
+            body.instantBuy,
+            body.note,
+          );
+          return json(result);
+        } catch (err) {
+          const status = (err as Error & { status?: number }).status || 500;
+          return error(
+            err instanceof Error ? err.message : "Failed to set ask price",
+            status,
+          );
+        }
+      },
+    );
   }
 
   // POST /api/marketplace/accept — accept a bid
-  if (path === '/api/marketplace/accept' && method === 'POST') {
-    try {
-      const body = await readJsonBody<MarketplaceBidActionBody>(request);
-      const { bid_id } = body;
-      if (!bid_id) return error('Missing bid_id', 400);
-      const { acceptBid } = await import('../services/marketplace.ts');
-      const result = await acceptBid(userId, bid_id);
-      return json(result);
-    } catch (err) {
-      const status = (err as Error & { status?: number }).status || 500;
-      return error(err instanceof Error ? err.message : 'Failed to accept bid', status);
-    }
+  if (path === "/api/marketplace/accept" && method === "POST") {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:marketplace_accept",
+      async () => {
+        try {
+          const body = await validateMarketplaceBidActionRequest(request);
+          const { acceptBid } = await import("../services/marketplace.ts");
+          const result = await acceptBid(userId, body.bidId);
+          return json(result);
+        } catch (err) {
+          const status = (err as Error & { status?: number }).status || 500;
+          return error(
+            err instanceof Error ? err.message : "Failed to accept bid",
+            status,
+          );
+        }
+      },
+    );
   }
 
   // POST /api/marketplace/reject — reject a bid
-  if (path === '/api/marketplace/reject' && method === 'POST') {
-    try {
-      const body = await readJsonBody<MarketplaceBidActionBody>(request);
-      const { bid_id } = body;
-      if (!bid_id) return error('Missing bid_id', 400);
-      const { rejectBid } = await import('../services/marketplace.ts');
-      await rejectBid(userId, bid_id);
-      return json({ success: true, message: 'Bid rejected. Escrow refunded to bidder.' });
-    } catch (err) {
-      const status = (err as Error & { status?: number }).status || 500;
-      return error(err instanceof Error ? err.message : 'Failed to reject bid', status);
-    }
+  if (path === "/api/marketplace/reject" && method === "POST") {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:marketplace_reject",
+      async () => {
+        try {
+          const body = await validateMarketplaceBidActionRequest(request);
+          const { rejectBid } = await import("../services/marketplace.ts");
+          await rejectBid(userId, body.bidId);
+          return json({
+            success: true,
+            message: "Bid rejected. Escrow refunded to bidder.",
+          });
+        } catch (err) {
+          const status = (err as Error & { status?: number }).status || 500;
+          return error(
+            err instanceof Error ? err.message : "Failed to reject bid",
+            status,
+          );
+        }
+      },
+    );
   }
 
   // POST /api/marketplace/cancel — cancel own bid
-  if (path === '/api/marketplace/cancel' && method === 'POST') {
-    try {
-      const body = await readJsonBody<MarketplaceBidActionBody>(request);
-      const { bid_id } = body;
-      if (!bid_id) return error('Missing bid_id', 400);
-      const { cancelBid } = await import('../services/marketplace.ts');
-      await cancelBid(userId, bid_id);
-      return json({ success: true, message: 'Bid cancelled. Escrow refunded.' });
-    } catch (err) {
-      const status = (err as Error & { status?: number }).status || 500;
-      return error(err instanceof Error ? err.message : 'Failed to cancel bid', status);
-    }
+  if (path === "/api/marketplace/cancel" && method === "POST") {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:marketplace_cancel",
+      async () => {
+        try {
+          const body = await validateMarketplaceBidActionRequest(request);
+          const { cancelBid } = await import("../services/marketplace.ts");
+          await cancelBid(userId, body.bidId);
+          return json({
+            success: true,
+            message: "Bid cancelled. Escrow refunded.",
+          });
+        } catch (err) {
+          const status = (err as Error & { status?: number }).status || 500;
+          return error(
+            err instanceof Error ? err.message : "Failed to cancel bid",
+            status,
+          );
+        }
+      },
+    );
   }
 
   // POST /api/marketplace/buy — instant buy
-  if (path === '/api/marketplace/buy' && method === 'POST') {
-    try {
-      const body = await readJsonBody<MarketplaceBuyBody>(request);
-      const { app_id } = body;
-      if (!app_id) return error('Missing app_id', 400);
-      const { buyNow } = await import('../services/marketplace.ts');
-      const result = await buyNow(userId, app_id);
-      return json(result);
-    } catch (err) {
-      const status = (err as Error & { status?: number }).status || 500;
-      return error(err instanceof Error ? err.message : 'Failed to buy app', status);
-    }
+  if (path === "/api/marketplace/buy" && method === "POST") {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:marketplace_buy",
+      async () => {
+        try {
+          const body = await validateMarketplaceBuyRequest(request);
+          const { buyNow } = await import("../services/marketplace.ts");
+          const result = await buyNow(userId, body.appId);
+          return json(result);
+        } catch (err) {
+          const status = (err as Error & { status?: number }).status || 500;
+          return error(
+            err instanceof Error ? err.message : "Failed to buy app",
+            status,
+          );
+        }
+      },
+    );
   }
 
   // GET /api/marketplace/offers — incoming + outgoing offers
-  if (path === '/api/marketplace/offers' && method === 'GET') {
+  if (path === "/api/marketplace/offers" && method === "GET") {
     try {
-      const appId = url.searchParams.get('app_id') || undefined;
-      const { getOffers } = await import('../services/marketplace.ts');
+      const appId = url.searchParams.get("app_id") || undefined;
+      const { getOffers } = await import("../services/marketplace.ts");
       const offers = await getOffers(userId, appId);
       return json(offers);
     } catch (err) {
       const status = (err as Error & { status?: number }).status || 500;
-      return error(err instanceof Error ? err.message : 'Failed to get offers', status);
+      return error(
+        err instanceof Error ? err.message : "Failed to get offers",
+        status,
+      );
     }
   }
 
   // GET /api/marketplace/history — sale history
-  if (path === '/api/marketplace/history' && method === 'GET') {
+  if (path === "/api/marketplace/history" && method === "GET") {
     try {
-      const appId = url.searchParams.get('app_id') || undefined;
-      const { getHistory } = await import('../services/marketplace.ts');
+      const appId = url.searchParams.get("app_id") || undefined;
+      const { getHistory } = await import("../services/marketplace.ts");
       const history = await getHistory(appId, userId);
       return json(history);
     } catch (err) {
       const status = (err as Error & { status?: number }).status || 500;
-      return error(err instanceof Error ? err.message : 'Failed to get history', status);
+      return error(
+        err instanceof Error ? err.message : "Failed to get history",
+        status,
+      );
     }
   }
 
   // PATCH /api/marketplace/metrics-visibility — toggle show_metrics on a listing (owner only)
-  if (path === '/api/marketplace/metrics-visibility' && method === 'PATCH') {
-    try {
-      const body = await readJsonBody<MarketplaceMetricsVisibilityBody>(request);
-      const appId = body.app_id;
-      const showMetrics = body.show_metrics;
+  if (path === "/api/marketplace/metrics-visibility" && method === "PATCH") {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:marketplace_metrics_visibility",
+      async () => {
+        try {
+          const body = await validateMarketplaceMetricsVisibilityRequest(
+            request,
+          );
+          const appId = body.appId;
+          const showMetrics = body.showMetrics;
 
-      if (!appId) return error('app_id required', 400);
-      if (typeof showMetrics !== 'boolean') return error('show_metrics must be a boolean', 400);
+          const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+          const headers: Record<string, string> = {
+            "apikey": SUPABASE_SERVICE_ROLE_KEY,
+            "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          };
 
-      const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
-      const headers: Record<string, string> = {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      };
-
-      // Verify ownership
-      const appCheck = await fetch(
-        `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}&owner_id=eq.${userId}&select=id`,
-        { headers }
-      );
-      const appRows = appCheck.ok ? await readJsonRows<{ id: string }>(appCheck) : [];
-      if (appRows.length === 0) return error('App not found or not owned by you', 403);
-
-      // Update listing
-      const updateRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/app_listings?app_id=eq.${appId}`,
-        {
-          method: 'PATCH',
-          headers: { ...headers, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-          body: JSON.stringify({ show_metrics: showMetrics }),
-        }
-      );
-
-      if (!updateRes.ok) {
-        // Listing may not exist yet — create it
-        const createRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/app_listings`,
-          {
-            method: 'POST',
-            headers: { ...headers, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-            body: JSON.stringify({ app_id: appId, owner_id: userId, show_metrics: showMetrics }),
+          // Verify ownership
+          const appCheck = await fetch(
+            `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}&owner_id=eq.${userId}&select=id`,
+            { headers },
+          );
+          const appRows = appCheck.ok
+            ? await readJsonRows<{ id: string }>(appCheck)
+            : [];
+          if (appRows.length === 0) {
+            return error("App not found or not owned by you", 403);
           }
-        );
-        if (!createRes.ok) return error('Failed to update metrics visibility', 500);
-      }
 
-      return json({ app_id: appId, show_metrics: showMetrics });
-    } catch (err) {
-      return error(err instanceof Error ? err.message : 'Failed to update metrics visibility', 500);
-    }
+          // Update listing
+          const updateRes = await fetch(
+            `${SUPABASE_URL}/rest/v1/app_listings?app_id=eq.${appId}`,
+            {
+              method: "PATCH",
+              headers: {
+                ...headers,
+                "Content-Type": "application/json",
+                "Prefer": "return=representation",
+              },
+              body: JSON.stringify({ show_metrics: showMetrics }),
+            },
+          );
+
+          if (!updateRes.ok) {
+            // Listing may not exist yet — create it
+            const createRes = await fetch(
+              `${SUPABASE_URL}/rest/v1/app_listings`,
+              {
+                method: "POST",
+                headers: {
+                  ...headers,
+                  "Content-Type": "application/json",
+                  "Prefer": "return=representation",
+                },
+                body: JSON.stringify({
+                  app_id: appId,
+                  owner_id: userId,
+                  show_metrics: showMetrics,
+                }),
+              },
+            );
+            if (!createRes.ok) {
+              return error("Failed to update metrics visibility", 500);
+            }
+          }
+
+          return json({ app_id: appId, show_metrics: showMetrics });
+        } catch (err) {
+          return error(
+            err instanceof Error
+              ? err.message
+              : "Failed to update metrics visibility",
+            500,
+          );
+        }
+      },
+    );
   }
 
   // GET /api/marketplace/metrics/:appId — get app metrics (if show_metrics enabled or owner)
-  if (path.startsWith('/api/marketplace/metrics/') && method === 'GET') {
+  if (path.startsWith("/api/marketplace/metrics/") && method === "GET") {
     try {
-      const appId = path.replace('/api/marketplace/metrics/', '');
-      if (!appId) return error('Missing app ID', 400);
+      const appId = path.replace("/api/marketplace/metrics/", "");
+      if (!appId) return error("Missing app ID", 400);
 
       const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
       const headers: Record<string, string> = {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
       };
 
       // Check if metrics are enabled or caller is owner
       const [listingRes, appRes] = await Promise.all([
         fetch(
           `${SUPABASE_URL}/rest/v1/app_listings?app_id=eq.${appId}&select=show_metrics`,
-          { headers }
+          { headers },
         ),
         fetch(
           `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}&select=owner_id`,
-          { headers }
+          { headers },
         ),
       ]);
 
-      const listings = listingRes.ok ? await readJsonRows<{ show_metrics: boolean | null }>(listingRes) : [];
-      const apps = appRes.ok ? await readJsonRows<{ owner_id: string }>(appRes) : [];
+      const listings = listingRes.ok
+        ? await readJsonRows<{ show_metrics: boolean | null }>(listingRes)
+        : [];
+      const apps = appRes.ok
+        ? await readJsonRows<{ owner_id: string }>(appRes)
+        : [];
       const isOwner = apps[0]?.owner_id === userId;
       const metricsEnabled = listings[0]?.show_metrics === true;
 
       if (!isOwner && !metricsEnabled) {
-        return error('Metrics are not enabled for this app', 403);
+        return error("Metrics are not enabled for this app", 403);
       }
 
-      const { getAppMetrics } = await import('../services/marketplace.ts');
+      const { getAppMetrics } = await import("../services/marketplace.ts");
       const metrics = await getAppMetrics(appId);
       return json(metrics);
     } catch (err) {
-      return error(err instanceof Error ? err.message : 'Failed to get metrics', 500);
+      return error(
+        err instanceof Error ? err.message : "Failed to get metrics",
+        500,
+      );
     }
   }
 
-  return error('User endpoint not found', 404);
+  return error("User endpoint not found", 404);
 }
 
 // ============================================
@@ -3012,7 +3791,7 @@ export async function handleUser(request: Request): Promise<Response> {
  */
 async function creditBalance(
   userId: string,
-  amountLight: number
+  amountLight: number,
 ): Promise<{
   previous_balance_light: number;
   added_light: number;
@@ -3026,17 +3805,17 @@ async function creditBalance(
   const rpcRes = await fetch(
     `${SUPABASE_URL}/rest/v1/rpc/credit_balance`,
     {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        'Content-Type': 'application/json',
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         p_user_id: userId,
         p_amount_light: amountLight,
       }),
-    }
+    },
   );
 
   if (!rpcRes.ok) {
@@ -3044,8 +3823,10 @@ async function creditBalance(
     throw new Error(`Failed to credit balance: ${err}`);
   }
 
-  const rows = await rpcRes.json() as Array<{ old_balance: number; new_balance: number }>;
-  if (!rows || rows.length === 0) throw new Error('User not found');
+  const rows = await rpcRes.json() as Array<
+    { old_balance: number; new_balance: number }
+  >;
+  if (!rows || rows.length === 0) throw new Error("User not found");
 
   const { old_balance, new_balance } = rows[0];
 
@@ -3057,10 +3838,10 @@ async function creditBalance(
 
   console.log(
     `[HOSTING] Credited ${formatLight(amountLight)} to user ${userId}: ` +
-    `${formatLight(old_balance)} → ${formatLight(new_balance)}` +
-    (unsuspended.apps + unsuspended.pages > 0
-      ? `, unsuspended ${unsuspended.apps} app(s) + ${unsuspended.pages} page(s)`
-      : '')
+      `${formatLight(old_balance)} → ${formatLight(new_balance)}` +
+      (unsuspended.apps + unsuspended.pages > 0
+        ? `, unsuspended ${unsuspended.apps} app(s) + ${unsuspended.pages} page(s)`
+        : ""),
   );
 
   return {
@@ -3083,18 +3864,18 @@ async function creditBalance(
 async function verifyStripeSignature(
   payload: string,
   signatureHeader: string,
-  secret: string
+  secret: string,
 ): Promise<boolean> {
   try {
     // Parse the signature header: t=timestamp,v1=signature
-    const parts = signatureHeader.split(',').reduce((acc, part) => {
-      const [key, value] = part.split('=');
+    const parts = signatureHeader.split(",").reduce((acc, part) => {
+      const [key, value] = part.split("=");
       acc[key] = value;
       return acc;
     }, {} as Record<string, string>);
 
-    const timestamp = parts['t'];
-    const expectedSig = parts['v1'];
+    const timestamp = parts["t"];
+    const expectedSig = parts["v1"];
 
     if (!timestamp || !expectedSig) return false;
 
@@ -3105,122 +3886,25 @@ async function verifyStripeSignature(
     // Compute expected signature
     const signedPayload = `${timestamp}.${payload}`;
     const key = await crypto.subtle.importKey(
-      'raw',
+      "raw",
       new TextEncoder().encode(secret),
-      { name: 'HMAC', hash: 'SHA-256' },
+      { name: "HMAC", hash: "SHA-256" },
       false,
-      ['sign']
+      ["sign"],
     );
-    const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(signedPayload));
+    const sig = await crypto.subtle.sign(
+      "HMAC",
+      key,
+      new TextEncoder().encode(signedPayload),
+    );
     const computedSig = Array.from(new Uint8Array(sig))
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
 
     return computedSig === expectedSig;
   } catch (err) {
-    console.error('[STRIPE] Signature verification failed:', err);
+    console.error("[STRIPE] Signature verification failed:", err);
     return false;
-  }
-}
-
-// ============================================
-// Supabase env helper
-// ============================================
-function getSupabaseEnv(): { SUPABASE_URL: string; SUPABASE_SERVICE_ROLE_KEY: string } {
-  return {
-    SUPABASE_URL: getEnv('SUPABASE_URL'),
-    SUPABASE_SERVICE_ROLE_KEY: getEnv('SUPABASE_SERVICE_ROLE_KEY'),
-  };
-}
-
-// ============================================
-// Helper: List user's saved Supabase servers
-// ============================================
-export async function listSupabaseConfigs(userId: string): Promise<Array<{
-  id: string;
-  name: string;
-  supabase_url: string;
-  has_service_key: boolean;
-  created_at: string;
-}>> {
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
-
-  const response = await fetch(
-    `${SUPABASE_URL}/rest/v1/user_supabase_configs?user_id=eq.${userId}&select=id,name,supabase_url,service_key_encrypted,created_at&order=created_at.asc`,
-    {
-      headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      },
-    }
-  );
-
-  if (!response.ok) {
-    throw new Error(`Failed to list configs: ${await response.text()}`);
-  }
-
-  const rows = await response.json() as Array<{
-    id: string;
-    name: string;
-    supabase_url: string;
-    service_key_encrypted: string | null;
-    created_at: string;
-  }>;
-
-  return rows.map(r => ({
-    id: r.id,
-    name: r.name,
-    supabase_url: r.supabase_url,
-    has_service_key: !!r.service_key_encrypted,
-    created_at: r.created_at,
-  }));
-}
-
-// ============================================
-// Helper: Get decrypted Supabase config by config ID
-// Used by MCP/HTTP handlers at runtime
-// ============================================
-export async function getDecryptedSupabaseConfig(configId: string): Promise<{
-  url: string;
-  anonKey: string;
-  serviceKey?: string;
-} | null> {
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
-
-  const response = await fetch(
-    `${SUPABASE_URL}/rest/v1/user_supabase_configs?id=eq.${configId}&select=supabase_url,anon_key_encrypted,service_key_encrypted`,
-    {
-      headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      },
-    }
-  );
-
-  if (!response.ok) return null;
-
-  const rows = await response.json() as Array<{
-    supabase_url: string;
-    anon_key_encrypted: string;
-    service_key_encrypted: string | null;
-  }>;
-
-  const config = rows[0];
-  if (!config) return null;
-
-  try {
-    const anonKey = await decryptEnvVar(config.anon_key_encrypted);
-    const result: { url: string; anonKey: string; serviceKey?: string } = {
-      url: config.supabase_url,
-      anonKey,
-    };
-    if (config.service_key_encrypted) {
-      result.serviceKey = await decryptEnvVar(config.service_key_encrypted);
-    }
-    return result;
-  } catch (err) {
-    console.error('Failed to decrypt Supabase config:', err);
-    return null;
   }
 }
 
@@ -3234,12 +3918,6 @@ export async function getUserPlatformSupabase(userId: string) {
     has_anon_key: !!first,
     has_service_key: first?.has_service_key || false,
   };
-}
-
-export async function getDecryptedPlatformSupabase(userId: string) {
-  const configs = await listSupabaseConfigs(userId);
-  if (configs.length === 0) return null;
-  return getDecryptedSupabaseConfig(configs[0].id);
 }
 
 // ============================================
@@ -3258,10 +3936,10 @@ async function getSupabaseMgmtToken(userId: string): Promise<string | null> {
     `${SUPABASE_URL}/rest/v1/user_supabase_oauth?user_id=eq.${userId}&select=*`,
     {
       headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
       },
-    }
+    },
   );
 
   const rows = await res.json();
@@ -3278,31 +3956,34 @@ async function getSupabaseMgmtToken(userId: string): Promise<string | null> {
   }
 
   // Token expired — refresh it
-  const clientId = getEnv('SUPABASE_MGMT_OAUTH_CLIENT_ID');
-  const clientSecret = getEnv('SUPABASE_MGMT_OAUTH_CLIENT_SECRET');
+  const clientId = getEnv("SUPABASE_MGMT_OAUTH_CLIENT_ID");
+  const clientSecret = getEnv("SUPABASE_MGMT_OAUTH_CLIENT_SECRET");
 
-  const tokenRes = await fetch('https://api.supabase.com/v1/oauth/token', {
-    method: 'POST',
+  const tokenRes = await fetch("https://api.supabase.com/v1/oauth/token", {
+    method: "POST",
     headers: {
-      'Authorization': 'Basic ' + btoa(`${clientId}:${clientSecret}`),
-      'Content-Type': 'application/x-www-form-urlencoded',
+      "Authorization": "Basic " + btoa(`${clientId}:${clientSecret}`),
+      "Content-Type": "application/x-www-form-urlencoded",
     },
     body: new URLSearchParams({
-      grant_type: 'refresh_token',
+      grant_type: "refresh_token",
       refresh_token: refreshToken,
     }).toString(),
   });
 
   if (!tokenRes.ok) {
-    console.error('Supabase token refresh failed:', await tokenRes.text());
+    console.error("Supabase token refresh failed:", await tokenRes.text());
     // Token revoked or invalid — clean up
-    await fetch(`${SUPABASE_URL}/rest/v1/user_supabase_oauth?user_id=eq.${userId}`, {
-      method: 'DELETE',
-      headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/user_supabase_oauth?user_id=eq.${userId}`,
+      {
+        method: "DELETE",
+        headers: {
+          "apikey": SUPABASE_SERVICE_ROLE_KEY,
+          "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        },
       },
-    });
+    );
     return null;
   }
 
@@ -3315,22 +3996,26 @@ async function getSupabaseMgmtToken(userId: string): Promise<string | null> {
   // Update stored tokens
   const encAccess = await encryptEnvVar(tokens.access_token);
   const encRefresh = await encryptEnvVar(tokens.refresh_token);
-  const newExpiry = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
+  const newExpiry = new Date(Date.now() + tokens.expires_in * 1000)
+    .toISOString();
 
-  await fetch(`${SUPABASE_URL}/rest/v1/user_supabase_oauth?user_id=eq.${userId}`, {
-    method: 'PATCH',
-    headers: {
-      'apikey': SUPABASE_SERVICE_ROLE_KEY,
-      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      'Content-Type': 'application/json',
+  await fetch(
+    `${SUPABASE_URL}/rest/v1/user_supabase_oauth?user_id=eq.${userId}`,
+    {
+      method: "PATCH",
+      headers: {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        access_token_encrypted: encAccess,
+        refresh_token_encrypted: encRefresh,
+        token_expires_at: newExpiry,
+        updated_at: new Date().toISOString(),
+      }),
     },
-    body: JSON.stringify({
-      access_token_encrypted: encAccess,
-      refresh_token_encrypted: encRefresh,
-      token_expires_at: newExpiry,
-      updated_at: new Date().toISOString(),
-    }),
-  });
+  );
 
   return tokens.access_token;
 }
@@ -3377,8 +4062,8 @@ button{background:#262626;color:#e5e5e5;border:1px solid #404040;padding:8px 20p
 // - null means no restrictions (owner, or non-private app)
 // ============================================
 
-import type { PermissionRow } from '../../shared/types/index.ts';
-import { getPermissionCache } from '../services/permission-cache.ts';
+import type { PermissionRow } from "../../shared/types/index.ts";
+import { getPermissionCache } from "../services/permission-cache.ts";
 
 /** Result of getPermissionsForUser — includes constraint rows for runtime enforcement */
 export interface PermissionsResult {
@@ -3391,7 +4076,8 @@ export async function getPermissionsForUser(
   callerUserId: string,
   appId: string,
   appOwnerId: string,
-  appVisibility: string
+  appVisibility: string,
+  appSlug: string,
 ): Promise<PermissionsResult | null> {
   // Owner always has full access
   if (callerUserId === appOwnerId) {
@@ -3399,7 +4085,7 @@ export async function getPermissionsForUser(
   }
 
   // Published and unlisted apps: open to all authenticated users
-  if (appVisibility === 'public' || appVisibility === 'unlisted') {
+  if (appVisibility === "public" || appVisibility === "unlisted") {
     return null; // No restrictions
   }
 
@@ -3417,18 +4103,26 @@ export async function getPermissionsForUser(
     `${SUPABASE_URL}/rest/v1/user_app_permissions?granted_to_user_id=eq.${callerUserId}&app_id=eq.${appId}&select=function_name,allowed,allowed_ips,time_window,budget_limit,budget_used,budget_period,expires_at,allowed_args,created_at,updated_at,granted_by_user_id,app_id,granted_to_user_id`,
     {
       headers: {
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
       },
-    }
+    },
   );
 
   if (!response.ok) {
-    console.error('Failed to fetch user permissions:', await response.text());
+    console.error("Failed to fetch user permissions:", await response.text());
     return { allowed: new Set<string>(), rows: [] }; // On error, deny access for safety
   }
 
   const rows = await response.json() as PermissionRow[];
+  logLegacyPermissionNameCompatibility({
+    surface: "runtime_permission_fetch",
+    appId,
+    appSlug,
+    actorUserId: callerUserId,
+    ownerUserId: appOwnerId,
+    rows,
+  });
 
   // If no permission rows exist, this user has no access to this private app
   if (rows.length === 0) {
@@ -3437,13 +4131,7 @@ export async function getPermissionsForUser(
     return { allowed: new Set<string>(), rows: [] };
   }
 
-  // Build set of allowed function names
-  const allowed = new Set<string>();
-  for (const row of rows) {
-    if (row.allowed) {
-      allowed.add(row.function_name);
-    }
-  }
+  const allowed = buildAllowedPermissionSet(appSlug, rows);
 
   // Store in cache
   cache.set(callerUserId, appId, allowed, rows);

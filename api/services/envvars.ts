@@ -6,8 +6,9 @@ import { getEnv } from '../lib/env.ts';
 const ENCRYPTION_KEY_ENV = 'ENV_VARS_ENCRYPTION_KEY';
 
 /**
- * Get the encryption key from environment
- * Falls back to BYOK_ENCRYPTION_KEY if ENV_VARS_ENCRYPTION_KEY is not set
+ * Get the encryption key from environment.
+ * Canonical env-var encryption uses ENV_VARS_ENCRYPTION_KEY when present,
+ * otherwise it shares BYOK_ENCRYPTION_KEY.
  */
 function getEncryptionKey(): string {
   const key = getEnv(ENCRYPTION_KEY_ENV) || getEnv('BYOK_ENCRYPTION_KEY');
@@ -17,9 +18,9 @@ function getEncryptionKey(): string {
   return key;
 }
 
-// Salt sizes: old format used a global string salt, new format uses a random 16-byte per-record salt.
-// Blob format v2: [salt(16) + IV(12) + ciphertext] — detected by trying v2 first on decrypt.
-// Blob format v1 (legacy): [IV(12) + ciphertext] — uses global 'ultralight-env-vars-salt' for backward compat.
+// Canonical blob format: [salt(16) + IV(12) + ciphertext].
+// Legacy v1 blobs used [IV(12) + ciphertext] with a global salt and are now
+// only supported by the migration helper below.
 const LEGACY_SALT = 'ultralight-env-vars-salt';
 const PER_RECORD_SALT_LENGTH = 16;
 const IV_LENGTH = 12;
@@ -79,7 +80,7 @@ export async function encryptEnvVar(value: string): Promise<string> {
 }
 
 /**
- * Decrypt a single environment variable value (supports v1 legacy and v2 per-record salt)
+ * Decrypt a single environment variable value using the canonical per-record salt format.
  */
 export async function decryptEnvVar(encryptedValue: string): Promise<string> {
   const masterKey = getEncryptionKey();
@@ -87,22 +88,25 @@ export async function decryptEnvVar(encryptedValue: string): Promise<string> {
     atob(encryptedValue).split('').map(c => c.charCodeAt(0))
   );
 
-  let decrypted: ArrayBuffer;
-  try {
-    // Try v2: per-record salt
-    const salt = combined.slice(0, PER_RECORD_SALT_LENGTH);
-    const iv = combined.slice(PER_RECORD_SALT_LENGTH, PER_RECORD_SALT_LENGTH + IV_LENGTH);
-    const data = combined.slice(PER_RECORD_SALT_LENGTH + IV_LENGTH);
-    const key = await deriveKey(masterKey, salt);
-    decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
-  } catch {
-    // Fall back to v1: legacy global salt
-    const legacySalt = new TextEncoder().encode(LEGACY_SALT);
-    const iv = combined.slice(0, IV_LENGTH);
-    const data = combined.slice(IV_LENGTH);
-    const key = await deriveKey(masterKey, legacySalt);
-    decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
-  }
+  const salt = combined.slice(0, PER_RECORD_SALT_LENGTH);
+  const iv = combined.slice(PER_RECORD_SALT_LENGTH, PER_RECORD_SALT_LENGTH + IV_LENGTH);
+  const data = combined.slice(PER_RECORD_SALT_LENGTH + IV_LENGTH);
+  const key = await deriveKey(masterKey, salt);
+  const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
+
+  return new TextDecoder().decode(decrypted);
+}
+
+export async function decryptLegacyEnvVarForMigration(encryptedValue: string): Promise<string> {
+  const masterKey = getEncryptionKey();
+  const combined = new Uint8Array(
+    atob(encryptedValue).split('').map(c => c.charCodeAt(0))
+  );
+  const legacySalt = new TextEncoder().encode(LEGACY_SALT);
+  const iv = combined.slice(0, IV_LENGTH);
+  const data = combined.slice(IV_LENGTH);
+  const key = await deriveKey(masterKey, legacySalt);
+  const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
 
   return new TextDecoder().decode(decrypted);
 }

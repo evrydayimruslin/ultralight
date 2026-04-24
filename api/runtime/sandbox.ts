@@ -2,14 +2,14 @@
 // Sandboxed execution with pre-bundled stdlib
 
 import type {
-  AIRequest,
-  AIResponse,
   LogEntry,
   D1RunResult,
   D1ExecResult,
 } from '../../shared/types/index.ts';
 import { formatLight } from '../../shared/types/index.ts';
+import type { AIRequest, AIResponse } from '../../shared/contracts/ai.ts';
 import type { D1DataService } from '../services/d1-data.ts';
+import type { D1TestFixtureConfig } from '../services/d1-test-fixtures.ts';
 
 
 // User context passed to apps (subset of full user, safe to expose)
@@ -36,6 +36,8 @@ export interface RuntimeConfig {
   appDataService: AppDataService;
   // D1 relational data service (per-app, lazy-provisioned)
   d1DataService: D1DataService | null;
+  // Fixture-backed D1 responses for ul.test without a live database
+  d1Fixtures?: D1TestFixtureConfig | null;
   // User memory (for unified Memory.md - optional, can be null)
   memoryService: MemoryService | null;
   aiService: AIService;

@@ -39,6 +39,7 @@ export interface BillingResult {
   usersProcessed: number;
   usersSuspended: number;
   totalChargedLight: number;
+  degraded: boolean;
   errors: string[];
   details: {
     userId: string;
@@ -68,12 +69,21 @@ export async function processHostingBilling(): Promise<BillingResult> {
     usersProcessed: 0,
     usersSuspended: 0,
     totalChargedLight: 0,
+    degraded: false,
     errors: [],
     details: [],
   };
 
+  const markDegraded = (message: string, detail?: unknown) => {
+    result.degraded = true;
+    result.errors.push(message);
+    if (detail !== undefined) {
+      console.error('[BILLING]', message, detail);
+    }
+  };
+
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    console.warn('[BILLING] Supabase not configured, skipping');
+    markDegraded('Supabase not configured; hosting billing skipped');
     return result;
   }
 
@@ -99,8 +109,7 @@ export async function processHostingBilling(): Promise<BillingResult> {
 
     if (!usersRes.ok) {
       const err = await usersRes.text();
-      result.errors.push(`Failed to query users: ${err}`);
-      console.error('[BILLING] User query failed:', err);
+      markDegraded(`Failed to query users: ${err}`);
       return result;
     }
 
@@ -147,6 +156,8 @@ export async function processHostingBilling(): Promise<BillingResult> {
               appCharges.push({ id: app.id, name: app.name, mb, hours, light });
             }
           }
+        } else {
+          markDegraded(`Failed to query published apps for ${user.id}: ${await appStorageRes.text()}`);
         }
 
         // 2b. Get all published pages with per-page billing clocks
@@ -176,6 +187,8 @@ export async function processHostingBilling(): Promise<BillingResult> {
               pageCharges.push({ id: page.id, name: page.title || 'Untitled page', mb, hours, light });
             }
           }
+        } else {
+          markDegraded(`Failed to query published pages for ${user.id}: ${await contentStorageRes.text()}`);
         }
 
         const totalHostingBytes = totalAppBytes + totalContentBytes;
@@ -221,7 +234,7 @@ export async function processHostingBilling(): Promise<BillingResult> {
 
         if (!debitRes.ok) {
           const err = await debitRes.text();
-          result.errors.push(`Failed to debit balance for ${user.id}: ${err}`);
+          markDegraded(`Failed to debit balance for ${user.id}: ${err}`);
           continue;
         }
 
@@ -232,7 +245,7 @@ export async function processHostingBilling(): Promise<BillingResult> {
         }>;
 
         if (!debitResult || debitResult.length === 0) {
-          result.errors.push(`Debit RPC returned empty for ${user.id}`);
+          markDegraded(`Debit RPC returned empty for ${user.id}`);
           continue;
         }
 
@@ -242,17 +255,31 @@ export async function processHostingBilling(): Promise<BillingResult> {
         const nowStr = now.toISOString();
         if (appCharges.length > 0) {
           const appIds = appCharges.map(a => a.id).join(',');
-          await fetch(
-            `${SUPABASE_URL}/rest/v1/apps?id=in.(${appIds})`,
-            { method: 'PATCH', headers: writeHeaders, body: JSON.stringify({ hosting_last_billed_at: nowStr }) }
-          ).catch(() => {});
+          try {
+            const updateAppsRes = await fetch(
+              `${SUPABASE_URL}/rest/v1/apps?id=in.(${appIds})`,
+              { method: 'PATCH', headers: writeHeaders, body: JSON.stringify({ hosting_last_billed_at: nowStr }) }
+            );
+            if (!updateAppsRes.ok) {
+              markDegraded(`Failed to update app billing clocks for ${user.id}: ${await updateAppsRes.text()}`);
+            }
+          } catch (clockErr) {
+            markDegraded(`Failed to update app billing clocks for ${user.id}`, clockErr);
+          }
         }
         if (pageCharges.length > 0) {
           const pageIds = pageCharges.map(p => p.id).join(',');
-          await fetch(
-            `${SUPABASE_URL}/rest/v1/content?id=in.(${pageIds})`,
-            { method: 'PATCH', headers: writeHeaders, body: JSON.stringify({ hosting_last_billed_at: nowStr }) }
-          ).catch(() => {});
+          try {
+            const updatePagesRes = await fetch(
+              `${SUPABASE_URL}/rest/v1/content?id=in.(${pageIds})`,
+              { method: 'PATCH', headers: writeHeaders, body: JSON.stringify({ hosting_last_billed_at: nowStr }) }
+            );
+            if (!updatePagesRes.ok) {
+              markDegraded(`Failed to update page billing clocks for ${user.id}: ${await updatePagesRes.text()}`);
+            }
+          } catch (clockErr) {
+            markDegraded(`Failed to update page billing clocks for ${user.id}`, clockErr);
+          }
         }
 
         // Log billing transaction(s) — separate line items for hosting vs data overage
@@ -317,25 +344,39 @@ export async function processHostingBilling(): Promise<BillingResult> {
         // 2g. If balance depleted, suspend all their published content
         if (suspended) {
           // Suspend apps
-          await fetch(
-            `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${user.id}&deleted_at=is.null&hosting_suspended=eq.false` +
-            `&visibility=in.(public,unlisted)`,
-            {
-              method: 'PATCH',
-              headers: writeHeaders,
-              body: JSON.stringify({ hosting_suspended: true }),
+          try {
+            const suspendAppsRes = await fetch(
+              `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${user.id}&deleted_at=is.null&hosting_suspended=eq.false` +
+              `&visibility=in.(public,unlisted)`,
+              {
+                method: 'PATCH',
+                headers: writeHeaders,
+                body: JSON.stringify({ hosting_suspended: true }),
+              }
+            );
+            if (!suspendAppsRes.ok) {
+              markDegraded(`Failed to suspend apps for ${user.id}: ${await suspendAppsRes.text()}`);
             }
-          ).catch(() => {});
+          } catch (suspendErr) {
+            markDegraded(`Failed to suspend apps for ${user.id}`, suspendErr);
+          }
 
           // Suspend pages
-          await fetch(
-            `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${user.id}&type=eq.page&hosting_suspended=eq.false`,
-            {
-              method: 'PATCH',
-              headers: writeHeaders,
-              body: JSON.stringify({ hosting_suspended: true }),
+          try {
+            const suspendPagesRes = await fetch(
+              `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${user.id}&type=eq.page&hosting_suspended=eq.false`,
+              {
+                method: 'PATCH',
+                headers: writeHeaders,
+                body: JSON.stringify({ hosting_suspended: true }),
+              }
+            );
+            if (!suspendPagesRes.ok) {
+              markDegraded(`Failed to suspend pages for ${user.id}: ${await suspendPagesRes.text()}`);
             }
-          ).catch(() => {});
+          } catch (suspendErr) {
+            markDegraded(`Failed to suspend pages for ${user.id}`, suspendErr);
+          }
 
           result.usersSuspended++;
           console.log(
@@ -360,8 +401,7 @@ export async function processHostingBilling(): Promise<BillingResult> {
         });
       } catch (userErr) {
         const msg = userErr instanceof Error ? userErr.message : String(userErr);
-        result.errors.push(`Error processing ${user.id}: ${msg}`);
-        console.error(`[BILLING] Error processing ${user.id}:`, msg);
+        markDegraded(`Error processing ${user.id}: ${msg}`);
       }
     }
 
@@ -375,8 +415,7 @@ export async function processHostingBilling(): Promise<BillingResult> {
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    result.errors.push(`Fatal error: ${msg}`);
-    console.error('[BILLING] Fatal error:', msg);
+    markDegraded(`Fatal error: ${msg}`);
   }
 
   return result;
@@ -590,7 +629,10 @@ export function startHostingBillingJob(): void {
   // interval would have fired). No charge is lost, no double-billing.
   setInterval(async () => {
     try {
-      await processHostingBilling();
+      const billingResult = await processHostingBilling();
+      if (billingResult.degraded || billingResult.errors.length > 0) {
+        console.error('[BILLING] Scheduled run completed in degraded mode:', billingResult.errors);
+      }
     } catch (err) {
       console.error('[BILLING] Scheduled billing failed:', err);
     }

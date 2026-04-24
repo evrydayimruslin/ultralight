@@ -3,12 +3,12 @@
 // Background job that drives GPU functions through the lifecycle:
 //   building → benchmarking → live
 //
-// Registered in main.ts via startGpuBuildProcessorJob().
+// Registered from the Worker scheduled/runtime path in api/src/worker-entry.ts.
 // Follows the setTimeout + setInterval pattern from embedding-processor.ts.
 
 import type { GpuType, GpuConfig, BenchmarkStats } from './types.ts';
 import { getGpuVram, GPU_RATE_TABLE } from './types.ts';
-import { getGPUProvider, isGpuAvailable } from './index.ts';
+import { getGPUProvider, isGpuAvailable } from './provider-singleton.ts';
 import { createR2Service } from '../storage.ts';
 import { getEnv } from '../../lib/env.ts';
 
@@ -38,7 +38,7 @@ const BATCH_LIMIT = 5;
 /**
  * Start the GPU build processor background job.
  *
- * Called once from main.ts on server startup. Polls every 15s for
+ * Called from the Worker runtime startup path. Polls every 15s for
  * apps in 'building' or 'benchmarking' status and drives them forward.
  */
 export function startGpuBuildProcessorJob(): void {

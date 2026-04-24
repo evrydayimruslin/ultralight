@@ -1,48 +1,7 @@
 // GPU Compute Runtime — Module Entry Point
-// Singleton factory for the GPU provider and re-exports for all GPU types.
+// Re-exports for GPU helpers and provider access.
 
-import type { GPUProvider } from './provider.ts';
-import { RunPodProvider } from './runpod.ts';
-import { getEnv } from '../../lib/env.ts';
-
-// ---------------------------------------------------------------------------
-// Provider Singleton
-// ---------------------------------------------------------------------------
-
-let _provider: GPUProvider | null = null;
-
-/**
- * Get the GPU compute provider singleton.
- *
- * Lazily initializes on first call. Throws if RUNPOD_API_KEY is not configured.
- * The provider is shared across all requests — it holds no per-request state.
- */
-export function getGPUProvider(): GPUProvider {
-  if (!_provider) {
-    const apiKey = getEnv('RUNPOD_API_KEY');
-    if (!apiKey) {
-      throw Object.assign(
-        new Error('GPU compute is not configured. RUNPOD_API_KEY environment variable is required.'),
-        { status: 503 },
-      );
-    }
-    _provider = new RunPodProvider(apiKey);
-  }
-  return _provider;
-}
-
-/**
- * Check if GPU compute is available (API key configured).
- * Use this for feature-gating without throwing.
- */
-export function isGpuAvailable(): boolean {
-  try {
-    getGPUProvider();
-    return true;
-  } catch {
-    return false;
-  }
-}
+export { getGPUProvider, isGpuAvailable } from './provider-singleton.ts';
 
 // ---------------------------------------------------------------------------
 // Re-exports

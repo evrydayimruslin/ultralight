@@ -1,5 +1,6 @@
 import { assert } from "https://deno.land/std@0.210.0/assert/assert.ts";
 import { assertEquals } from "https://deno.land/std@0.210.0/assert/assert_equals.ts";
+import { assertRejects } from "https://deno.land/std@0.210.0/assert/assert_rejects.ts";
 import { decryptApiKey, encryptApiKey } from "./api-key-crypto.ts";
 import {
   getStoredOpenRouterKey,
@@ -82,16 +83,13 @@ Deno.test("OpenRouter keys: decrypts encrypted platform-managed entries", async 
   });
 });
 
-Deno.test("OpenRouter keys: backfills legacy plaintext entries to encrypted storage", async () => {
+Deno.test("OpenRouter keys: rejects legacy plaintext entries at runtime", async () => {
   await runSerial(async () => {
-    let patchBody: Record<string, unknown> | null = null;
+    const methods: string[] = [];
 
     await withMockedEnvAndFetch(async (_input, init) => {
       const method = init?.method || "GET";
-      if (method === "PATCH") {
-        patchBody = JSON.parse(String(init?.body));
-        return new Response(null, { status: 204 });
-      }
+      methods.push(method);
 
       return jsonResponse([{
         byok_keys: {
@@ -106,24 +104,14 @@ Deno.test("OpenRouter keys: backfills legacy plaintext entries to encrypted stor
         },
       }]);
     }, async () => {
-      const key = await getStoredOpenRouterKey("user-1");
-      assertEquals(key, "or-legacy-key");
-      assert(patchBody !== null);
-      const body = patchBody as {
-        byok_keys: Record<string, Record<string, unknown>>;
-      };
-      const byokKeys = body.byok_keys;
-      const migratedEntry = byokKeys._platform_openrouter;
-      assert(migratedEntry !== undefined);
-      assertEquals(typeof migratedEntry.key, "undefined");
-      assertEquals(migratedEntry.managed_by_platform, true);
-      assertEquals(migratedEntry.provisioned_at, "2026-04-15T00:00:00Z");
-      assertEquals(
-        await decryptApiKey(migratedEntry.encrypted_key as string),
-        "or-legacy-key",
+      await assertRejects(
+        () => getStoredOpenRouterKey("user-1"),
+        Error,
+        "Legacy plaintext OpenRouter key entry is unsupported at runtime",
       );
-      assertEquals(byokKeys.openai.encrypted_key, "keep-existing-provider");
     });
+
+    assertEquals(methods, ["GET"]);
   });
 });
 

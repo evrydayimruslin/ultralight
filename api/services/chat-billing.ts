@@ -4,8 +4,9 @@
 // Uses debit_balance RPC with p_update_billed_at=false (chat doesn't affect hosting clock).
 
 import { getEnv } from '../lib/env.ts';
-import { CHAT_MIN_BALANCE_LIGHT, CHAT_PLATFORM_MARKUP, LIGHT_PER_DOLLAR_DESKTOP, formatLight } from '../../shared/types/index.ts';
-import type { ChatUsage, ChatBillingResult } from '../../shared/types/index.ts';
+import type { ChatUsage, ChatBillingResult } from '../../shared/contracts/ai.ts';
+import { CHAT_MIN_BALANCE_LIGHT, CHAT_PLATFORM_MARKUP } from '../../shared/contracts/ai.ts';
+import { LIGHT_PER_DOLLAR_DESKTOP, formatLight } from '../../shared/types/index.ts';
 
 function dbHeaders(): Record<string, string> {
   return {

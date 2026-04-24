@@ -3,10 +3,12 @@
 // dashboard display, and structured training data export.
 
 import { getEnv } from '../lib/env.ts';
+import { createServerLogger } from './logging.ts';
 
 
 /** Maximum size for input_args and output_result JSONB (bytes). */
 const MAX_IO_SIZE = 10_000;
+const telemetryLogger = createServerLogger('TELEMETRY');
 
 export interface McpCallLogEntry {
   userId: string;
@@ -68,7 +70,12 @@ function truncateForStorage(value: unknown): unknown {
 export function logMcpCall(entry: McpCallLogEntry): void {
   // Fire and forget — don't await
   _insertLog(entry).catch((err) => {
-    console.error('Failed to log MCP call:', err);
+    telemetryLogger.error('Failed to persist MCP call telemetry', {
+      function_name: entry.functionName,
+      app_id: entry.appId,
+      method: entry.method,
+      error: err,
+    });
   });
 }
 
@@ -118,7 +125,12 @@ async function _insertLog(entry: McpCallLogEntry): Promise<void> {
   );
 
   if (!response.ok) {
-    console.error('MCP call log insert failed:', await response.text());
+    telemetryLogger.error('MCP call telemetry insert returned a non-OK response', {
+      status: response.status,
+      function_name: entry.functionName,
+      app_id: entry.appId,
+      body: await response.text(),
+    });
   }
 }
 

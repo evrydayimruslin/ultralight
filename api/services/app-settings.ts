@@ -1,8 +1,9 @@
-import type { AppManifest, EnvSchemaEntry } from '../../shared/types/index.ts';
+import type { EnvSchemaEntry } from '../../shared/contracts/env.ts';
+import type { AppManifest } from '../../shared/contracts/manifest.ts';
 import {
   normalizeEnvSchema,
   resolveManifestEnvSchema,
-} from '../../shared/types/index.ts';
+} from '../../shared/contracts/manifest.ts';
 
 export function parseAppManifest(manifest: unknown): AppManifest | null {
   if (!manifest) return null;

@@ -13,13 +13,33 @@
 
 import type { RuntimeConfig, ExecutionResult } from './sandbox.ts';
 
+interface DynamicWorkerEntrypointExports {
+  DatabaseBinding(input: { props: { databaseId: string; appId: string; userId: string } }): unknown;
+  FixtureDatabaseBinding(
+    input: {
+      props: {
+        appId: string;
+        userId: string;
+        fixtures: NonNullable<RuntimeConfig['d1Fixtures']>;
+      };
+    },
+  ): unknown;
+  AppDataBinding(input: { props: { appId: string; userId: string } }): unknown;
+  MemoryBinding(input: { props: { userId: string } }): unknown;
+  AIBinding(input: { props: { userId: string; apiKey: string | null; provider: string } }): unknown;
+}
+
+type DynamicWorkerExecutionContext = ExecutionContext & {
+  exports?: DynamicWorkerEntrypointExports;
+};
+
 export async function executeInDynamicSandbox(
   config: RuntimeConfig,
   functionName: string,
   args: unknown[],
 ): Promise<ExecutionResult> {
   const startTime = Date.now();
-  const loader = (globalThis as any).__env?.LOADER;
+  const loader = globalThis.__env?.LOADER;
 
   if (!loader) {
     return {
@@ -174,10 +194,18 @@ export default {
 `;
 
     // 4. Create RPC bindings
-    const ctx = (globalThis as any).__ctx;
+    const ctx = globalThis.__ctx as DynamicWorkerExecutionContext;
     const bindings: Record<string, unknown> = {};
 
-    if (config.d1DataService) {
+    if (config.d1Fixtures && ctx?.exports?.FixtureDatabaseBinding) {
+      bindings.DB = ctx.exports.FixtureDatabaseBinding({
+        props: {
+          appId: config.appId,
+          userId: config.userId,
+          fixtures: config.d1Fixtures,
+        },
+      });
+    } else if (config.d1DataService) {
       const { getD1DatabaseId } = await import('../services/d1-provisioning.ts');
       const dbId = await getD1DatabaseId(config.appId);
       if (dbId && ctx?.exports?.DatabaseBinding) {
@@ -207,14 +235,14 @@ export default {
 
     // Network: pass SELF binding so Dynamic Worker can call /api/net/* internally
     // (Direct fetch() to Worker URL goes through CDN which blocks it)
-    const env = (globalThis as any).__env;
+    const env = globalThis.__env;
     if (config.permissions.includes('net:connect') && env?.SELF) {
       bindings.SELF = env.SELF;
     }
 
     // 5. Create Dynamic Worker
     const hasNetConnect = config.permissions.includes('net:connect');
-    const loadConfig: Record<string, unknown> = {
+    const loadConfig: Parameters<typeof loader.load>[0] = {
       compatibilityDate: '2026-03-01',
       mainModule: 'wrapper.js',
       modules: {
@@ -226,9 +254,7 @@ export default {
       globalOutbound: null,
     };
     // net:connect apps need outbound fetch() for internal TCP endpoints — remove restriction
-    if (hasNetConnect) {
-      delete loadConfig.globalOutbound;
-    }
+    if (hasNetConnect) loadConfig.globalOutbound = undefined;
     const worker = loader.load(loadConfig);
 
     // 6. Execute with timeout

@@ -3,7 +3,7 @@
 // - Sets tier to 'free'
 // - Sets public apps to 'unlisted' (soft degradation — shared links still work)
 // - Clears tier_expires_at
-// - Runs hourly via setInterval in main.ts
+// - Runs hourly via the scheduled runtime in api/src/worker-entry.ts
 
 import { getEnv } from '../lib/env.ts';
 

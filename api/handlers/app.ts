@@ -14,17 +14,26 @@ import { handleOAuth } from './oauth.ts';
 import { handleDiscover, handleOnboarding } from './discover.ts';
 import { handleMcpConfig } from './config.ts';
 import { handleHttpEndpoint, handleHttpOptions } from './http.ts';
+import { handleGpuCodeProxy, handleInternalD1Query } from './internal-proxy.ts';
 import { handleTierChange } from './tier.ts';
 import { handleAdmin } from './admin.ts';
 import { handleDeveloper } from './developer.ts';
-import { handleChatStream, handleChatModels, handleProvisionKey, handleFunctionIndex, handleChatContext, handleOrchestrate } from './chat.ts';
+import { handleChatStream, handleChatModels, handleProvisionKey, handleFunctionIndex, handleChatContext, handleOrchestrate, handlePlanConfirm, handlePlanCancel } from './chat.ts';
+import { error, json, toResponseBody } from './response.ts';
 import { getLayoutHTML } from '../../web/layout.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
 import { getCodeCache } from '../services/codecache.ts';
-import type { AppManifest } from '../../shared/types/index.ts';
-import { createD1DataService } from '../services/d1-data.ts';
-import { getD1DatabaseId } from '../services/d1-provisioning.ts';
+import {
+  logAppContractResolution,
+  resolveAppFunctionContracts,
+  type AppFunctionContract,
+  type AppContractResolution,
+} from '../services/app-contracts.ts';
+import { hasValidPageShareSession } from '../services/page-share-session.ts';
+import { fetchAppEntryCode } from '../services/app-runtime-resources.ts';
+import { getEnv } from '../lib/env.ts';
+import type { AppManifest } from '../../shared/contracts/manifest.ts';
 
 // ============================================
 // CACHE HELPERS
@@ -85,110 +94,6 @@ function addCacheHeaders(headers: Record<string, string>, etag: string, immutabl
     'ETag': etag,
     'Vary': 'Accept-Encoding',
   };
-}
-
-import { getEnv } from '../lib/env.ts';
-
-export function toResponseBody(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-}
-
-/**
- * GPU Code Proxy — serves developer code bundles to RunPod workers.
- *
- * Route: GET /internal/gpu/code/:appId/:version
- * Auth: X-GPU-Secret header must match GPU_INTERNAL_SECRET env var.
- * Returns: JSON code bundle { files: { "main.py": "...", ... }, version: "..." }
- *
- * This avoids exposing R2 credentials to RunPod workers and has no URL expiry.
- */
-async function handleGpuCodeProxy(request: Request, path: string): Promise<Response> {
-  // Authenticate via shared secret
-  const expectedSecret = getEnv('GPU_INTERNAL_SECRET');
-  const providedSecret = request.headers.get('X-GPU-Secret') || '';
-
-  if (!expectedSecret || providedSecret !== expectedSecret) {
-    console.error('[GPU-CODE-PROXY] Auth failed — invalid or missing X-GPU-Secret');
-    return json({ error: 'Unauthorized' }, 401);
-  }
-
-  // Parse path: /internal/gpu/code/{appId}/{version}
-  const parts = path.replace('/internal/gpu/code/', '').split('/');
-  const appId = parts[0];
-  const version = parts[1];
-
-  if (!appId || !version) {
-    return json({ error: 'Missing appId or version' }, 400);
-  }
-
-  try {
-    const r2 = createR2Service();
-    const bundleKey = `apps/${appId}/${version}/_bundle.json`;
-    const content = await r2.fetchTextFile(bundleKey);
-    return new Response(content, {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'private, max-age=3600',
-      },
-    });
-  } catch (err) {
-    console.error(`[GPU-CODE-PROXY] Failed to fetch bundle for ${appId}@${version}:`, err);
-    return json({ error: 'Code bundle not found' }, 404);
-  }
-}
-
-/**
- * Internal D1 Query Proxy — allows GPU workers to execute D1 queries.
- *
- * Route: POST /internal/d1/query
- * Auth: X-GPU-Secret header must match GPU_INTERNAL_SECRET env var.
- * Body: { appId, userId, sql, params?, mode?: 'all' | 'first' | 'run' }
- * Returns: { results, meta } or { result, meta } or { row, meta }
- */
-async function handleInternalD1Query(request: Request): Promise<Response> {
-  const expectedSecret = getEnv('GPU_INTERNAL_SECRET');
-  const providedSecret = request.headers.get('X-GPU-Secret') || '';
-
-  if (!expectedSecret || providedSecret !== expectedSecret) {
-    return json({ error: 'Unauthorized' }, 401);
-  }
-
-  try {
-    const body = await request.json() as {
-      appId: string;
-      userId: string;
-      sql: string;
-      params?: unknown[];
-      mode?: 'all' | 'first' | 'run';
-    };
-
-    if (!body.appId || !body.sql) {
-      return json({ error: 'Missing appId or sql' }, 400);
-    }
-
-    const databaseId = await getD1DatabaseId(body.appId);
-    if (!databaseId) {
-      return json({ error: 'D1 database not provisioned for this app' }, 404);
-    }
-
-    const d1 = createD1DataService(body.appId, databaseId);
-    const mode = body.mode || 'all';
-
-    if (mode === 'run') {
-      const result = await d1.run(body.sql, body.params);
-      return json({ result });
-    } else if (mode === 'first') {
-      const row = await d1.first(body.sql, body.params);
-      return json({ row });
-    } else {
-      const results = await d1.all(body.sql, body.params);
-      return json({ results });
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return json({ error: message }, 500);
-  }
 }
 
 export function createApp() {
@@ -521,7 +426,7 @@ export function createApp() {
 
       // Platform Skills.md — plain HTTP access for any agent
       if (path === '/api/skills' && method === 'GET') {
-        return handleSkills();
+        return handleSkills(request);
       }
 
       // GPU code proxy — serves developer code bundles to RunPod workers
@@ -560,6 +465,15 @@ export function createApp() {
       // Server-side orchestration — Flash broker + heavy model + recipe execution
       if (path === '/chat/orchestrate' && method === 'POST') {
         return handleOrchestrate(request);
+      }
+
+      const planRouteMatch = path.match(/^\/chat\/plan\/([a-f0-9-]{36})\/(confirm|cancel)$/);
+      if (planRouteMatch && method === 'POST') {
+        const [, planId, action] = planRouteMatch;
+        if (action === 'confirm') {
+          return handlePlanConfirm(request, planId);
+        }
+        return handlePlanCancel(request, planId);
       }
 
       // Pre-provision per-user OpenRouter key (called on login, before first chat)
@@ -645,7 +559,7 @@ export function createApp() {
         }
       }
 
-      // Debug: add dev credits to authenticated user ($5.00) — temporary, for testing
+      // Debug route for crediting the authenticated user with test balance.
       if (path === '/debug/add-credits' && method === 'POST') {
         const { authenticate } = await import('./auth.ts');
         try {
@@ -751,7 +665,7 @@ export function createApp() {
 
         // Handle CORS preflight
         if (method === 'OPTIONS') {
-          return handleHttpOptions(appId);
+          return handleHttpOptions(request, appId);
         }
 
         // Platform-level generic dashboard at /_ui
@@ -764,6 +678,10 @@ export function createApp() {
 
       // Published markdown pages - GET /p/:userId/:slug
       // Public, no auth required. Renders user-published markdown as styled HTML.
+      if (path.startsWith('/share/p/') && method === 'GET') {
+        return handleSharedPageEntry(path);
+      }
+
       if (path.startsWith('/p/') && method === 'GET') {
         return handlePublishedPage(request, path);
       }
@@ -813,7 +731,6 @@ export function createApp() {
         }
 
         try {
-          const r2Service = createR2Service();
           const { app } = await resolvePublicFacingApp(request, appId, { allowPrivateOwner: true });
           if (!app) {
             return json({ error: 'App not found' }, 404);
@@ -830,27 +747,14 @@ export function createApp() {
           // Fetch the app code — check in-memory cache first, then R2
           const storageKey = app.storage_key;
           const codeCache = getCodeCache();
-          let code: string | null = null;
-
-          // Check cache for code
-          code = codeCache.get(appId, storageKey);
-          if (code) {
-            console.log(`App runner: code cache HIT for app ${appId}`);
-          }
-
-          if (!code) {
-            const entryFiles = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
-            for (const entryFile of entryFiles) {
-              try {
-                code = await r2Service.fetchTextFile(`${storageKey}${entryFile}`);
-                console.log(`App runner: loaded ${entryFile} for app ${appId}`);
-                codeCache.set(appId, storageKey, code);
-                break;
-              } catch {
-                // Try next entry file
-              }
-            }
-          }
+          const code = await fetchAppEntryCode(
+            { id: appId, storage_key: storageKey },
+            {
+              codeCache,
+              onCacheHit: () => console.log(`App runner: code cache HIT for app ${appId}`),
+              onFileLoaded: (entryFile) => console.log(`App runner: loaded ${entryFile} for app ${appId}`),
+            },
+          );
 
           if (!code) {
             console.error(`App runner: no entry file found for app ${appId}, storageKey: ${storageKey}`);
@@ -895,8 +799,25 @@ export function createApp() {
             const isEmbed = url.searchParams.get('embed') === '1';
 
             if (isEmbed) {
+              const contractResolution = resolveAppFunctionContracts(app, {
+                allowLegacySkills: true,
+                allowLegacyExports: true,
+                allowGpuExports: true,
+              });
+              logAppContractResolution({
+                appId: app.id,
+                ownerId: app.owner_id,
+                appSlug: app.slug,
+                runtime: app.runtime,
+                surface: 'app_embed_info',
+                source: contractResolution.source,
+                legacySourceDetected: contractResolution.legacySourceDetected,
+                functionCount: contractResolution.functions.length,
+                manifestBacked: contractResolution.manifestBacked,
+                migrationRequired: contractResolution.migrationRequired,
+              });
               // Return an info page for the iframe showing MCP tools
-              return new Response(getMcpAppInfoHTML(appId, escapeHtml(app.name || app.slug), app.skills_parsed?.functions || []), {
+              return new Response(getMcpAppInfoHTML(appId, escapeHtml(app.name || app.slug), contractResolution), {
                 headers: {
                   ...cacheHeaders,
                   'Content-Security-Policy': "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'none'",
@@ -993,15 +914,29 @@ async function executeServerApp(
  * Generate an info page for MCP-only apps
  * Shows available tools and how to use them
  */
-function getMcpAppInfoHTML(appId: string, appName: string, skills: Array<{ name: string; description?: string }>): string {
-  const toolsList = skills.length > 0
-    ? skills.map(s => `
+function buildLegacyContractNotice(resolution: AppContractResolution): string {
+  if (!resolution.migrationRequired || !resolution.message) {
+    return '';
+  }
+
+  return `
+    <div class="section warning">
+      <div class="section-title">Contract Migration Required</div>
+      <p class="info-text">${escapeHtml(resolution.message)}</p>
+    </div>
+  `;
+}
+
+function getMcpAppInfoHTML(appId: string, appName: string, resolution: AppContractResolution): string {
+  const tools = resolution.functions;
+  const toolsList = tools.length > 0
+    ? tools.map((s) => `
       <div class="tool-item">
         <div class="tool-name">${escapeHtml(s.name)}</div>
         ${s.description ? `<div class="tool-desc">${escapeHtml(s.description)}</div>` : ''}
       </div>
     `).join('')
-    : '<p class="no-tools">No tools documented yet. Generate documentation in app settings.</p>';
+    : '<p class="no-tools">No documentation published yet. Generate docs in app settings when you are ready.</p>';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1052,6 +987,10 @@ function getMcpAppInfoHTML(appId: string, appName: string, skills: Array<{ name:
       border-radius: 12px;
       padding: 1.5rem;
       margin-bottom: 1.5rem;
+    }
+    .warning {
+      border-color: rgba(245, 158, 11, 0.35);
+      background: rgba(245, 158, 11, 0.08);
     }
     .section-title {
       font-size: 0.875rem;
@@ -1112,8 +1051,10 @@ function getMcpAppInfoHTML(appId: string, appName: string, skills: Array<{ name:
       </p>
     </div>
 
+    ${buildLegacyContractNotice(resolution)}
+
     <div class="section">
-      <div class="section-title">Available Tools (${skills.length})</div>
+      <div class="section-title">Available Tools (${tools.length})</div>
       ${toolsList}
     </div>
 
@@ -1180,17 +1121,27 @@ async function handleGenericDashboard(request: Request, appId: string): Promise<
     }
 
     const appName = escapeHtml(app.name || app.slug);
-    const skills = app.skills_parsed || [];
-    const functions = Array.isArray(skills)
-      ? skills as Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>
-      : (skills as { functions?: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }> }).functions || [];
+    const contractResolution = resolveAppFunctionContracts(app, {
+      allowLegacySkills: true,
+      allowLegacyExports: true,
+      allowGpuExports: true,
+    });
+    logAppContractResolution({
+      appId: app.id,
+      ownerId: app.owner_id,
+      appSlug: app.slug,
+      runtime: app.runtime,
+      surface: 'app_generic_dashboard',
+      source: contractResolution.source,
+      legacySourceDetected: contractResolution.legacySourceDetected,
+      functionCount: contractResolution.functions.length,
+      manifestBacked: contractResolution.manifestBacked,
+      migrationRequired: contractResolution.migrationRequired,
+    });
 
-    // Token is now read client-side from URL fragment hash (#token=...) to avoid Referrer leaks.
-    // We still accept ?token= server-side for backward compat, but the client-side JS prefers the hash.
-    const url = new URL(request.url);
-    const tokenFromQuery = url.searchParams.get('token') || '';
-
-    const html = generateGenericDashboardHTML(appId, appName, functions, tokenFromQuery);
+    const html = contractResolution.manifestBacked
+      ? generateGenericDashboardHTML(appId, appName, contractResolution.functions)
+      : generateLegacyContractDashboardHTML(appId, appName, contractResolution);
     return new Response(html, {
       headers: {
         'Content-Type': 'text/html',
@@ -1210,8 +1161,7 @@ async function handleGenericDashboard(request: Request, appId: string): Promise<
 function generateGenericDashboardHTML(
   appId: string,
   appName: string,
-  functions: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>,
-  tokenFromQuery: string
+  functions: AppFunctionContract[],
 ): string {
   // Build tool definitions as JSON for the client-side JS
   const toolDefs = JSON.stringify(functions.map(fn => ({
@@ -1299,7 +1249,6 @@ button{cursor:pointer;border:none;border-radius:8px;font-size:13px;font-weight:6
 <p>Enter your Ultralight API token to access this app's dashboard. Your token stays in the browser only.</p>
 <input type="password" id="token-input" class="token-input" placeholder="ul_..." />
 <button class="btn-primary" onclick="submitToken()">Connect</button>
-<p style="font-size:11px;color:var(--text2)">Tip: add #token=ul_... to the URL to skip this step</p>
 </div>
 
 <!-- Main app -->
@@ -1314,7 +1263,7 @@ button{cursor:pointer;border:none;border-radius:8px;font-size:13px;font-weight:6
 <div id="custom-ui-banner"></div>
 
 <div id="tool-grid" class="tool-grid">
-<div class="empty"><div class="empty-icon">&#9881;</div>Loading tools...</div>
+<div class="empty"><div class="empty-icon">&#9881;</div>Loading app functions...</div>
 </div>
 </div>
 
@@ -1329,21 +1278,22 @@ var TOKEN = sessionStorage.getItem(STORAGE_KEY) || "";
 var TOOL_PREFIX = "";
 var TOOLS = ${toolDefs};
 
-// Read token from fragment hash (#token=...) to avoid Referrer leaks, fall back to query param for backward compat
 (function() {
-  var hashToken = "";
-  if (location.hash) {
-    var m = location.hash.match(/[#&]token=([^&]*)/);
-    if (m) { hashToken = decodeURIComponent(m[1]); }
-  }
-  var paramToken = ${JSON.stringify(tokenFromQuery)};
-  var newToken = hashToken || paramToken;
-  if (newToken) { TOKEN = newToken; sessionStorage.setItem(STORAGE_KEY, TOKEN); }
-  // Strip token from URL (both hash and query) to avoid leaking in browser history
-  if (hashToken || paramToken) {
-    var cleanUrl = location.pathname + location.search.replace(/[?&]token=[^&]*/g, "").replace(/^\?$/, "");
-    history.replaceState(null, "", cleanUrl);
-  }
+  try {
+    var cleanUrl = new URL(location.href);
+    var changed = false;
+    if (cleanUrl.searchParams.has("token")) {
+      cleanUrl.searchParams.delete("token");
+      changed = true;
+    }
+    if (location.hash && location.hash.indexOf("token=") !== -1) {
+      cleanUrl.hash = "";
+      changed = true;
+    }
+    if (changed) {
+      history.replaceState(null, "", cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
+    }
+  } catch (e) {}
 })();
 if (TOKEN) { showApp(); }
 
@@ -1383,7 +1333,7 @@ async function discoverPrefix() {
       });
       if (hasCustomUI) {
         document.getElementById("custom-ui-banner").innerHTML =
-          '<a class="custom-ui-link" href="/http/' + APP_ID + '/ui' + (TOKEN ? '#token=' + encodeURIComponent(TOKEN) : '') + '">&#10024; This app has a custom UI &rarr; Open it</a>';
+          '<a class="custom-ui-link" href="/http/' + APP_ID + '/ui">&#10024; This app has a custom UI &rarr; Open it</a>';
       }
     }
   } catch(e) { console.warn("Could not discover prefix:", e); }
@@ -1531,6 +1481,53 @@ function escAttr(s) { return String(s).replace(/"/g, "&quot;").replace(/'/g, "&#
 </html>`;
 }
 
+function generateLegacyContractDashboardHTML(
+  appId: string,
+  appName: string,
+  resolution: AppContractResolution,
+): string {
+  const functionList = resolution.functions.length > 0
+    ? `<ul style="margin-top:12px;padding-left:20px;color:#a1a1aa;">${resolution.functions.map((fn) => `<li><code>${escapeHtml(fn.name)}</code>${fn.description ? ` - ${escapeHtml(fn.description)}` : ''}</li>`).join('')}</ul>`
+    : '<p style="margin-top:12px;color:#a1a1aa;">No function metadata was detected outside <code>manifest.json</code>.</p>';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${appName} — Dashboard Migration Required</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0a;color:#e5e5e5;min-height:100vh;padding:32px 16px}
+.container{max-width:760px;margin:0 auto}
+.card{background:#171717;border:1px solid #2a2a2a;border-radius:16px;padding:24px}
+.badge{display:inline-block;background:rgba(245,158,11,.14);color:#fbbf24;border:1px solid rgba(245,158,11,.25);padding:6px 10px;border-radius:999px;font-size:12px;font-weight:600;margin-bottom:16px}
+h1{font-size:24px;margin-bottom:12px}
+p{line-height:1.6;color:#d4d4d8}
+code{font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;color:#a78bfa}
+.section{margin-top:20px;padding-top:20px;border-top:1px solid #2a2a2a}
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <div class="badge">Manifest Migration Required</div>
+      <h1>${appName}</h1>
+      <p>${escapeHtml(resolution.message || 'This app needs a manifest-backed contract before the generic dashboard can execute tools safely.')}</p>
+      <div class="section">
+        <p>The dashboard is read-only until this app is republished with a valid <code>manifest.json</code>. Detected function metadata outside <code>manifest.json</code>:</p>
+        ${functionList}
+      </div>
+      <div class="section">
+        <p>App ID: <code>${appId}</code></p>
+        <p>Next step: regenerate docs or publish a new version that stores function definitions in <code>manifest.json</code>.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
 // ============================================
 // PUBLIC APP PAGE
 // ============================================
@@ -1643,7 +1640,6 @@ function getPublicAppPageHTML(
   const ownerProfileUrl = `/u/${escapeHtml(app.owner_id)}`;
   const tags = Array.isArray(app.tags) ? app.tags.filter(t => typeof t === 'string').slice(0, 5) : [];
 
-  // Phase 2: screenshots and long description.
   const screenshots: string[] = Array.isArray(app.screenshots)
     ? app.screenshots.filter((s): s is string => typeof s === 'string')
     : [];
@@ -2043,6 +2039,50 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
     font-size: 0.75rem;
     color: #777;
   }
+  .settings-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 1rem 1.1rem;
+    border: 1px dashed rgba(0,0,0,0.08);
+    border-radius: 8px;
+    text-align: center;
+    background: #fafafa;
+    color: #666;
+  }
+  .settings-state.loading {
+    background: #fff;
+  }
+  .settings-state.error {
+    background: #fef2f2;
+    border-color: #fecaca;
+  }
+  .settings-state-icon {
+    width: 2rem;
+    height: 2rem;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.04);
+    color: #555;
+  }
+  .settings-state.error .settings-state-icon {
+    background: rgba(239,68,68,0.12);
+    color: #b91c1c;
+  }
+  .settings-state-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #111;
+  }
+  .settings-state-desc {
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    color: #666;
+    max-width: 34rem;
+  }
 
   /* Screenshots carousel — horizontal snap scroller, bleeds to edges on mobile */
   .app-screenshots {
@@ -2299,11 +2339,11 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
   <div id="appStoreCTA"
        class="cta-area"
        data-app-id="${escapeHtml(app.id)}"
-       data-app-name="${escapeHtml(app.name || app.slug)}"
-       data-is-embed="${isEmbed ? 'true' : 'false'}">
+      data-app-name="${escapeHtml(app.name || app.slug)}"
+      data-is-embed="${isEmbed ? 'true' : 'false'}">
     <div class="cta-row">
       <button class="btn btn-primary btn-lg" disabled>
-        <span class="spinner"></span> Loading...
+        <span class="spinner"></span> Loading install status...
       </button>
     </div>
   </div>
@@ -2314,7 +2354,7 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
     <!-- Description -->
     ${description ? `<p class="app-desc">${description}</p>` : ''}
 
-    <!-- Screenshots carousel (Phase 2) — horizontal scroll with snap points -->
+    <!-- Screenshots carousel -->
     ${hasScreenshots ? `
     <section class="app-screenshots">
       <div class="screenshots-scroller">
@@ -2326,7 +2366,7 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
       </div>
     </section>` : ''}
 
-    <!-- Long description (Phase 2) — markdown-rendered body -->
+    <!-- Long description -->
     ${longDescriptionHtml ? `
     <section class="section app-long-desc">
       <div class="docs-content">${longDescriptionHtml}</div>
@@ -2342,7 +2382,11 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
   <section id="settingsPanel" class="section tab-panel is-hidden" aria-live="polite">
     <div class="section-title">Settings</div>
     <div id="settingsContent" class="settings-shell">
-      <p class="no-docs">Install this app to configure your own settings.</p>
+      <div class="settings-state">
+        <div class="settings-state-icon">⚙️</div>
+        <div class="settings-state-title">Settings will appear here</div>
+        <div class="settings-state-desc">Install this app to save your own settings and connection details.</div>
+      </div>
     </div>
   </section>
 
@@ -2388,41 +2432,57 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
   // Detect embed via SSR hint OR parent frame (handles token-only refreshes)
   var inDesktop = IS_EMBED_SSR || (window.parent && window.parent !== window);
 
+  function readHashParam(name) {
+    try {
+      if (!location.hash) return '';
+      var match = location.hash.match(new RegExp('[#&]' + name + '=([^&]*)'));
+      return match ? decodeURIComponent(match[1]) : '';
+    } catch (e) {
+      return '';
+    }
+  }
+
   // ── Token discovery ───────────────────────────────────────────
-  // Priority: URL hash (#token=) → URL query (?token=, desktop iframe) →
-  //           localStorage (standard web session).
   function readTokenState() {
     try {
-      if (location.hash) {
-        var m = location.hash.match(/[#&]token=([^&]*)/);
-        if (m) return { token: decodeURIComponent(m[1]), source: 'hash' };
+      if (inDesktop) {
+        var bridge = readHashParam('bridge_token');
+        if (bridge) return { token: bridge, source: 'bridge' };
       }
-      var qs = new URLSearchParams(location.search);
-      var q = qs.get('token');
-      if (q) return { token: q, source: 'query' };
-      return {
-        token: localStorage.getItem('ultralight_token') || '',
-        source: 'storage',
-      };
+      return { token: '', source: 'none' };
     } catch (e) {
       return { token: '', source: 'none' };
     }
   }
   function stripTokenFromUrl() {
     try {
-      var cleaned = location.search
-        .replace(/[?&]token=[^&]*/g, '')
-        .replace(/^\\?&/, '?')
-        .replace(/^\\?$/, '');
-      var newHash = location.hash.replace(/[#&]token=[^&]*/g, '').replace(/^#&/, '#').replace(/^#$/, '');
-      history.replaceState(null, '', location.pathname + cleaned + newHash);
+      var cleanUrl = new URL(location.href);
+      var changed = false;
+      if (cleanUrl.searchParams.has('token')) {
+        cleanUrl.searchParams.delete('token');
+        changed = true;
+      }
+      if (location.hash && (
+        location.hash.indexOf('bridge_token=') !== -1 ||
+        location.hash.indexOf('token=') !== -1
+      )) {
+        cleanUrl.hash = '';
+        changed = true;
+      }
+      if (changed) {
+        history.replaceState(null, '', cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
+      }
     } catch (e) {}
   }
 
   var tokenState = readTokenState();
   var token = tokenState.token;
-  var isAuthenticated = !!token;
-  if (token && (tokenState.source === 'query' || tokenState.source === 'hash')) {
+  var authSource = tokenState.source;
+  var isAuthenticated = !!token && authSource !== 'bridge';
+  var hasLegacyUrlAuthArtifact = location.search.indexOf('token=') !== -1
+    || location.hash.indexOf('bridge_token=') !== -1
+    || location.hash.indexOf('token=') !== -1;
+  if ((token && authSource === 'bridge') || hasLegacyUrlAuthArtifact) {
     stripTokenFromUrl();
   }
 
@@ -2449,7 +2509,7 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
     var headers = new Headers(nextInit.headers || ((input && input.headers) ? input.headers : undefined));
 
     if (sameOrigin) {
-      if (token && !headers.has('Authorization')) {
+      if (token && authSource !== 'bridge' && !headers.has('Authorization')) {
         headers.set('Authorization', 'Bearer ' + token);
       } else if (!token && shouldStripAuthHeader(headers.get('Authorization') || '')) {
         headers.delete('Authorization');
@@ -2478,28 +2538,30 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
     return response;
   };
 
-  async function migrateLegacyBrowserSession() {
-    if (inDesktop) return;
-    if (tokenState.source !== 'storage' || !token || token.startsWith('ul_')) return;
+  async function bootstrapEmbedBridgeSession() {
+    if (!inDesktop || authSource !== 'bridge' || !token) return;
+
+    var bridgeToken = token;
+    token = '';
 
     try {
-      var legacyRefresh = localStorage.getItem('ultralight_refresh_token') || '';
-      var res = await nativeFetch('/auth/session', {
+      var response = await nativeFetch('/auth/embed/exchange', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({
-          access_token: token,
-          refresh_token: legacyRefresh,
-        }),
+        body: JSON.stringify({ bridge_token: bridgeToken }),
       });
-      if (res.ok) {
-        localStorage.removeItem('ultralight_token');
-        localStorage.removeItem('ultralight_refresh_token');
-        token = '';
+      if (response.ok) {
+        authSource = 'cookie';
         isAuthenticated = true;
+        return;
       }
-    } catch (e) {}
+      isAuthenticated = false;
+      console.warn('[embed] Failed to exchange desktop embed bridge token');
+    } catch (e) {
+      isAuthenticated = false;
+      console.warn('[embed] Desktop embed bridge exchange failed', e);
+    }
   }
 
   async function detectBrowserSession() {
@@ -2515,6 +2577,7 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
       }
       var data = await res.json();
       isAuthenticated = !!(data && data.id);
+      authSource = isAuthenticated ? 'cookie' : authSource;
     } catch (e) {
       isAuthenticated = false;
     }
@@ -2540,7 +2603,7 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
   var settingsData = null;
   var settingsLoaded = false;
   var settingsLoading = false;
-  var settingsMessage = 'Install this app to configure your own settings.';
+  var settingsMessage = 'Install this app to save your own settings and connection details.';
 
   async function fetchStatus() {
     if (!isAuthenticated) return emptyStatus();
@@ -2568,12 +2631,18 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
     settingsData = null;
     settingsLoaded = false;
     settingsLoading = false;
-    settingsMessage = 'Install this app to configure your own settings.';
+    settingsMessage = 'Install this app to save your own settings and connection details.';
   }
 
-  function setSettingsPlaceholder(message) {
+  function setSettingsPlaceholder(message, kind) {
     settingsMessage = message;
-    settingsContentEl.innerHTML = '<p class="no-docs">' + escHtml(message) + '</p>';
+    var nextKind = kind || 'empty';
+    var title = nextKind === 'error'
+      ? 'Could not load settings'
+      : nextKind === 'loading'
+        ? 'Loading settings'
+        : 'Settings will appear here';
+    settingsContentEl.innerHTML = renderSettingsState(nextKind, title, message);
   }
 
   function renderTabs() {
@@ -2598,31 +2667,41 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
 
   function renderSettingsContent() {
     if (!canShowSettings()) {
-      setSettingsPlaceholder('Install this app to configure your own settings.');
+      setSettingsPlaceholder('Install this app to save your own settings and connection details.', 'empty');
       return;
     }
 
     if (settingsLoading) {
-      settingsContentEl.innerHTML =
-        '<div class="settings-status"><span class="spinner"></span> Loading your settings...</div>';
+      settingsContentEl.innerHTML = renderSettingsState('loading', 'Loading your settings', 'Pulling your saved configuration for this app.');
       return;
     }
 
     if (!settingsLoaded || !settingsData) {
-      settingsContentEl.innerHTML = '<p class="no-docs">' + escHtml(settingsMessage || 'Open Settings to load your saved configuration.') + '</p>';
+      settingsContentEl.innerHTML = renderSettingsState('empty', 'Settings will appear here', settingsMessage || 'Open Settings to load your saved configuration.');
       return;
     }
 
     var settings = Array.isArray(settingsData.settings) ? settingsData.settings : [];
+    var settingsDiagnostics = settingsData.diagnostics && typeof settingsData.diagnostics === 'object'
+      ? settingsData.diagnostics
+      : null;
     if (settings.length === 0) {
-      setSettingsPlaceholder('This app does not declare any User Settings yet.');
+      var emptyMessage = settingsDiagnostics && settingsDiagnostics.message
+        ? settingsDiagnostics.message
+        : 'This app is connected, but it does not declare any per-user settings yet.';
+      settingsContentEl.innerHTML = renderSettingsState('empty', 'No user settings required', emptyMessage);
       return;
     }
 
-    var statusText = settingsData.fully_connected
+    var statusText = settingsDiagnostics && settingsDiagnostics.message
+      ? settingsDiagnostics.message
+      : settingsData.fully_connected
       ? 'Your User Settings are ready.'
       : 'Setup required. Add: ' + (settingsData.missing_required || []).join(', ');
     var statusClass = 'settings-status' + (settingsData.fully_connected ? '' : ' warning');
+    var remediationNote = settingsDiagnostics && settingsDiagnostics.remediation && settingsDiagnostics.remediation !== 'No action needed.'
+      ? '<p class="settings-note">' + escHtml(settingsDiagnostics.remediation) + '</p>'
+      : '';
     var ownerNote = '';
     if (settingsData.app_settings_count > 0) {
       if (settingsData.owner_manage_url) {
@@ -2634,6 +2713,7 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
 
     settingsContentEl.innerHTML =
       '<div class="' + statusClass + '">' + escHtml(statusText) + '</div>' +
+      remediationNote +
       ownerNote +
       '<form id="userSettingsForm" class="settings-form">' +
         settings.map(function(setting) {
@@ -2696,8 +2776,9 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
         settingsLoaded = false;
         settingsData = null;
         setSettingsPlaceholder(res.status === 403
-          ? 'Install this app to configure your own settings.'
-          : 'Could not load settings right now.');
+          ? 'Install this app to save your own settings and connection details.'
+          : 'We could not load your settings right now.',
+          res.status === 403 ? 'empty' : 'error');
         return;
       }
 
@@ -2707,7 +2788,7 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
     } catch (e) {
       settingsLoaded = false;
       settingsData = null;
-      setSettingsPlaceholder('Network error while loading settings.');
+      setSettingsPlaceholder('Network error while loading settings.', 'error');
     } finally {
       settingsLoading = false;
       renderSettingsContent();
@@ -3013,6 +3094,19 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
     return String(s == null ? '' : s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
+  function renderSettingsState(kind, title, message) {
+    var icon = kind === 'loading'
+      ? '<span class="spinner"></span>'
+      : kind === 'error'
+        ? '&#10005;'
+        : '&#9881;';
+    return '<div class="settings-state ' + escAttr(kind || 'empty') + '">' +
+      '<div class="settings-state-icon">' + icon + '</div>' +
+      '<div class="settings-state-title">' + escHtml(title) + '</div>' +
+      (message ? '<div class="settings-state-desc">' + escHtml(message) + '</div>' : '') +
+    '</div>';
+  }
+
   // ── Legacy helpers used by the <details> block ────────────────
   window.copyUrl = function() {
     var url = document.getElementById('mcpUrl').textContent;
@@ -3061,7 +3155,7 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
 
   // ── Bootstrap ─────────────────────────────────────────────────
   async function bootstrap() {
-    await migrateLegacyBrowserSession();
+    await bootstrapEmbedBridgeSession();
     await detectBrowserSession();
     status = await fetchStatus();
     state = pickState(status);
@@ -3557,6 +3651,117 @@ async function handleHomepageApi(request: Request): Promise<Response> {
 // PUBLISHED MARKDOWN PAGES
 // ============================================
 
+function handleSharedPageEntry(path: string): Response {
+  const parts = path.slice('/share/p/'.length).split('/');
+  if (parts.length < 2) {
+    return new Response('Not found', { status: 404 });
+  }
+
+  const ownerId = parts[0];
+  let slug = parts.slice(1).join('/');
+  if (slug.endsWith('.md')) slug = slug.slice(0, -3);
+
+  const pagePath = `/p/${ownerId}/${slug}`;
+  const config = JSON.stringify({
+    ownerId,
+    slug,
+    pagePath,
+    signInPath: `/auth/login?return_to=${encodeURIComponent(pagePath)}`,
+  }).replace(/</g, '\\u003c');
+
+  return new Response(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Opening Shared Page...</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #f5f7fb; color: #101828; font-family: system-ui, -apple-system, sans-serif; }
+    .card { width: min(92vw, 560px); background: #fff; border: 1px solid #e4e7ec; border-radius: 24px; padding: 32px; box-shadow: 0 24px 60px rgba(16, 24, 40, 0.08); }
+    h1 { margin: 0 0 12px; font-size: 24px; }
+    p { margin: 0; line-height: 1.6; color: #475467; }
+    .spinner { width: 40px; height: 40px; border-radius: 999px; border: 3px solid #d0d5dd; border-top-color: #101828; animation: spin 1s linear infinite; margin-bottom: 20px; }
+    .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 24px; }
+    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 16px; border-radius: 999px; text-decoration: none; font-weight: 600; }
+    .button.primary { background: #101828; color: #fff; }
+    .button.secondary { background: #f2f4f7; color: #101828; }
+    .help { margin-top: 18px; font-size: 14px; color: #667085; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div id="spinner" class="spinner" aria-hidden="true"></div>
+    <h1>Opening shared page</h1>
+    <p id="status">Authorizing your secure share link...</p>
+    <div id="help" class="help" hidden>
+      This page can still open if it was shared directly with your account.
+    </div>
+    <div id="actions" class="actions" hidden>
+      <a id="signin-link" class="button primary" href="/">Sign in</a>
+      <a id="page-link" class="button secondary" href="/">Open page directly</a>
+    </div>
+  </main>
+  <script>
+    const config = ${config};
+    const spinnerEl = document.getElementById('spinner');
+    const statusEl = document.getElementById('status');
+    const helpEl = document.getElementById('help');
+    const actionsEl = document.getElementById('actions');
+    const signInLinkEl = document.getElementById('signin-link');
+    const pageLinkEl = document.getElementById('page-link');
+    const hashParams = new URLSearchParams(window.location.hash.slice(1));
+    const shareToken = hashParams.get('share_token');
+
+    signInLinkEl.href = config.signInPath;
+    pageLinkEl.href = config.pagePath;
+
+    function showFallback(message) {
+      statusEl.textContent = message;
+      spinnerEl.hidden = true;
+      helpEl.hidden = false;
+      actionsEl.hidden = false;
+    }
+
+    async function bootstrapShareSession(token) {
+      history.replaceState(null, '', window.location.pathname);
+      const response = await fetch('/auth/page-share/exchange', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          owner_id: config.ownerId,
+          slug: config.slug,
+          share_token: token,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('page_share_exchange_failed');
+      }
+
+      window.location.replace(config.pagePath);
+    }
+
+    if (shareToken) {
+      bootstrapShareSession(shareToken).catch(() => {
+        showFallback('We could not authorize this share link. It may have expired or been revoked.');
+      });
+    } else {
+      showFallback('This shared page needs its secure share token or a signed-in recipient session.');
+    }
+  </script>
+</body>
+</html>`, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+    },
+  });
+}
+
 async function handlePublishedPage(request: Request, path: string): Promise<Response> {
   // Parse /p/{userId}/{slug} or /p/{userId}/{slug}.md
   const parts = path.slice(3).split('/'); // Remove '/p/'
@@ -3680,16 +3885,12 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
         return new Response('Not found', { status: 404 });
       }
     } else if (contentRow.visibility === 'shared') {
-      // Check token param OR authenticated user in content_shares
-      const url = new URL(request.url);
-      const tokenParam = url.searchParams.get('token');
-
-      let authorized = false;
-
-      // Check access_token in URL
-      if (tokenParam && contentRow.access_token && tokenParam === contentRow.access_token) {
-        authorized = true;
-      }
+      let authorized = await hasValidPageShareSession(request, {
+        contentId: contentRow.id,
+        ownerId: userId,
+        slug,
+        accessToken: contentRow.access_token,
+      });
 
       // Check if authenticated user has a share
       if (!authorized) {
@@ -3972,20 +4173,6 @@ function escapeHtml(str: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
-}
-
-export function json(data: unknown, status = 200): Response {
-  return new Response(
-    JSON.stringify(data),
-    {
-      status,
-      headers: { 'Content-Type': 'application/json' },
-    },
-  );
-}
-
-export function error(message: string, status = 400): Response {
-  return json({ error: message }, status);
 }
 
 // ============================================

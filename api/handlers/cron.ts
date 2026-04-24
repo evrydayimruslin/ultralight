@@ -11,7 +11,7 @@
 //   POST   /api/cron/jobs/:jobId/run   - Manually trigger a job
 //   GET    /api/cron/jobs/:jobId/logs  - Get job run logs
 
-import { json, error } from './app.ts';
+import { json, error } from './response.ts';
 import { authenticate } from './auth.ts';
 import { createAppsService } from '../services/apps.ts';
 import {

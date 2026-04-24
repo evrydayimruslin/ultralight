@@ -5,12 +5,21 @@
 // This wraps Ultralight's existing Supabase Google OAuth + ul_ token system
 // into the standard OAuth 2.1 shape that MCP clients (Claude Desktop, etc.) expect.
 
-import { json, error } from './app.ts';
+import { json, error } from './response.ts';
 import { createToken, revokeByToken } from '../services/tokens.ts';
-import { authenticate, hasScope } from './auth.ts';
+import { authenticate } from './auth.ts';
+import { hasScope } from '../services/request-auth.ts';
 import { createUserService } from '../services/user.ts';
 import { createClient } from '@supabase/supabase-js';
 import { getEnv } from '../lib/env.ts';
+import { withAuthRouteRateLimit } from '../services/auth-rate-limit.ts';
+import {
+  RequestValidationError,
+  validateAuthorizeQuery,
+  validateDynamicClientRegistrationRequest,
+  validateOAuthRevocationRequest,
+  validateOAuthTokenExchangeRequest,
+} from '../services/auth-request-validation.ts';
 
 // Lazy Supabase client — CF Workers env not available at module init
 let _supabase: ReturnType<typeof createClient>;
@@ -275,18 +284,13 @@ async function getAndDeleteAuthorizationCode(code: string): Promise<Authorizatio
     .delete()
     .eq('code', code);
 
-  // Decrypt Supabase tokens, with backward compat for legacy plaintext rows
+  // Decrypt Supabase tokens from the canonical encrypted format.
   const authCode = data as OAuthAuthorizationCodeRow;
 
-  let accessToken = authCode.supabase_access_token;
-  let refreshToken = authCode.supabase_refresh_token || undefined;
-
-  if (accessToken && isEncryptedBlob(accessToken)) {
-    accessToken = await decryptToken(accessToken);
-  }
-  if (refreshToken && isEncryptedBlob(refreshToken)) {
-    refreshToken = await decryptToken(refreshToken);
-  }
+  const accessToken = await decryptToken(authCode.supabase_access_token);
+  const refreshToken = authCode.supabase_refresh_token
+    ? await decryptToken(authCode.supabase_refresh_token)
+    : undefined;
 
   return {
     code: authCode.code,
@@ -367,16 +371,6 @@ async function decryptToken(encryptedToken: string): Promise<string> {
   const key = await deriveTokenEncryptionKey(salt);
   const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
   return new TextDecoder().decode(decrypted);
-}
-
-/**
- * Check if a string looks like an encrypted blob (base64-encoded, long enough for salt+IV+tag).
- * Supabase JWTs are plaintext and start with "eyJ" (base64-encoded JSON header).
- * Encrypted blobs are also base64 but their decoded form starts with random salt bytes.
- */
-function isEncryptedBlob(value: string): boolean {
-  // Supabase JWTs always start with eyJ (base64 of '{"'), encrypted blobs do not
-  return !value.startsWith('eyJ');
 }
 
 // ============================================
@@ -505,12 +499,12 @@ export async function handleOAuth(request: Request): Promise<Response> {
 
   // Dynamic Client Registration (RFC 7591)
   if (path === '/oauth/register' && method === 'POST') {
-    return handleClientRegistration(request);
+    return withAuthRouteRateLimit(request, 'oauth:register', () => handleClientRegistration(request));
   }
 
   // Authorization endpoint
   if (path === '/oauth/authorize' && method === 'GET') {
-    return handleAuthorize(request);
+    return withAuthRouteRateLimit(request, 'oauth:authorize', () => handleAuthorize(request));
   }
 
   // OAuth callback — internal, handles Supabase redirect back
@@ -520,7 +514,7 @@ export async function handleOAuth(request: Request): Promise<Response> {
 
   // Token endpoint
   if (path === '/oauth/token' && method === 'POST') {
-    return handleTokenExchange(request);
+    return withAuthRouteRateLimit(request, 'oauth:token', () => handleTokenExchange(request));
   }
 
   // Userinfo endpoint (OIDC-compatible)
@@ -530,22 +524,22 @@ export async function handleOAuth(request: Request): Promise<Response> {
 
   // Consent approval (POST from consent screen form)
   if (path === '/oauth/consent/approve' && method === 'POST') {
-    return handleConsentApprove(request);
+    return withAuthRouteRateLimit(request, 'oauth:consent_approve', () => handleConsentApprove(request));
   }
 
   // Consent denial
   if (path === '/oauth/consent/deny' && method === 'POST') {
-    return handleConsentDeny(request);
+    return withAuthRouteRateLimit(request, 'oauth:consent_deny', () => handleConsentDeny(request));
   }
 
   // Token revocation (RFC 7009)
   if (path === '/oauth/revoke' && method === 'POST') {
-    return handleTokenRevocation(request);
+    return withAuthRouteRateLimit(request, 'oauth:revoke', () => handleTokenRevocation(request));
   }
 
   // Implicit flow completion (called from browser JS in the callback HTML)
   if (path === '/oauth/callback/complete' && method === 'POST') {
-    return handleOAuthCallbackComplete(request);
+    return withAuthRouteRateLimit(request, 'oauth:callback_complete', () => handleOAuthCallbackComplete(request));
   }
 
   return error('OAuth endpoint not found', 404);
@@ -983,54 +977,42 @@ function handleAuthorizationServerMetadata(request: Request): Response {
 // ============================================
 
 async function handleClientRegistration(request: Request): Promise<Response> {
-  let body: Record<string, unknown>;
   try {
-    body = await request.json();
-  } catch {
-    return error('Invalid JSON', 400);
-  }
+    const payload = await validateDynamicClientRegistrationRequest(request);
+    const clientId = crypto.randomUUID();
 
-  const redirectUris = body.redirect_uris as string[] | undefined;
-  if (!redirectUris || !Array.isArray(redirectUris) || redirectUris.length === 0) {
-    return error('redirect_uris is required', 400);
-  }
+    const client: OAuthClient = {
+      client_id: clientId,
+      client_name: payload.clientName,
+      redirect_uris: payload.redirectUris,
+      grant_types: payload.grantTypes,
+      response_types: payload.responseTypes,
+      token_endpoint_auth_method: payload.tokenEndpointAuthMethod,
+    };
 
-  // Validate redirect URIs
-  for (const uri of redirectUris) {
+    // Persist to Supabase so clients survive restarts and work across instances
     try {
-      new URL(uri);
-    } catch {
-      return error(`Invalid redirect_uri: ${uri}`, 400);
+      await saveOAuthClient(client);
+    } catch (err) {
+      console.error('OAuth client registration failed:', err);
+      return error('Failed to register client', 500);
     }
-  }
 
-  const clientId = crypto.randomUUID();
-
-  const client: OAuthClient = {
-    client_id: clientId,
-    client_name: (body.client_name as string) || undefined,
-    redirect_uris: redirectUris,
-    grant_types: (body.grant_types as string[]) || ['authorization_code'],
-    response_types: (body.response_types as string[]) || ['code'],
-    token_endpoint_auth_method: (body.token_endpoint_auth_method as string) || 'none',
-  };
-
-  // Persist to Supabase so clients survive restarts and work across instances
-  try {
-    await saveOAuthClient(client);
+    return json({
+      client_id: clientId,
+      client_name: client.client_name,
+      redirect_uris: client.redirect_uris,
+      grant_types: client.grant_types,
+      response_types: client.response_types,
+      token_endpoint_auth_method: client.token_endpoint_auth_method,
+    }, 201);
   } catch (err) {
-    console.error('OAuth client registration failed:', err);
+    if (err instanceof RequestValidationError) {
+      return error(err.message, err.status);
+    }
+    console.error('OAuth client registration validation failed:', err);
     return error('Failed to register client', 500);
   }
-
-  return json({
-    client_id: clientId,
-    client_name: client.client_name,
-    redirect_uris: client.redirect_uris,
-    grant_types: client.grant_types,
-    response_types: client.response_types,
-    token_endpoint_auth_method: client.token_endpoint_auth_method,
-  }, 201);
 }
 
 // ============================================
@@ -1041,27 +1023,19 @@ async function handleAuthorize(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const baseUrl = getBaseUrl(request);
 
-  const clientId = url.searchParams.get('client_id');
-  const redirectUri = url.searchParams.get('redirect_uri');
-  const codeChallenge = url.searchParams.get('code_challenge');
-  const codeChallengeMethod = url.searchParams.get('code_challenge_method') || 'S256';
-  const state = url.searchParams.get('state');
-  const scope = url.searchParams.get('scope') || 'mcp:read mcp:write';
-
-  // Validate required params
-  if (!clientId) {
-    return error('Missing client_id', 400);
-  }
-  if (!redirectUri) {
-    return error('Missing redirect_uri', 400);
-  }
-  if (!codeChallenge) {
-    return error('Missing code_challenge (PKCE required)', 400);
+  let query;
+  try {
+    query = validateAuthorizeQuery(url);
+  } catch (err) {
+    if (err instanceof RequestValidationError) {
+      return error(err.message, err.status);
+    }
+    throw err;
   }
 
   // Validate client exists and redirect_uri is registered
-  const client = await getOAuthClient(clientId);
-  if (client && !client.redirect_uris.includes(redirectUri)) {
+  const client = await getOAuthClient(query.clientId);
+  if (client && !client.redirect_uris.includes(query.redirectUri)) {
     return error('redirect_uri not registered for this client', 400);
   }
 
@@ -1069,12 +1043,12 @@ async function handleAuthorize(request: Request): Promise<Response> {
   // We encode the OAuth params into our callback URL so we can reconstruct the flow.
   // The state is HMAC-signed to prevent forgery of redirect_uri, code_challenge, etc.
   const oauthState = JSON.stringify({
-    client_id: clientId,
-    redirect_uri: redirectUri,
-    code_challenge: codeChallenge,
-    code_challenge_method: codeChallengeMethod,
-    state: state || '',
-    scope,
+    client_id: query.clientId,
+    redirect_uri: query.redirectUri,
+    code_challenge: query.codeChallenge,
+    code_challenge_method: query.codeChallengeMethod,
+    state: query.state,
+    scope: query.scope,
   });
   const encodedState = btoa(oauthState);
   const signedState = await signState(encodedState);
@@ -1211,51 +1185,33 @@ async function generateAuthCodeAndRedirect(
 // ============================================
 
 async function handleTokenExchange(request: Request): Promise<Response> {
-  let body: Record<string, string>;
+  let payload;
   try {
-    // Token endpoint can receive application/x-www-form-urlencoded or JSON
-    const contentType = request.headers.get('content-type') || '';
-    if (contentType.includes('application/x-www-form-urlencoded')) {
-      const text = await request.text();
-      const params = new URLSearchParams(text);
-      body = Object.fromEntries(params.entries());
-    } else {
-      body = await request.json();
+    payload = await validateOAuthTokenExchangeRequest(request);
+  } catch (err) {
+    if (err instanceof RequestValidationError) {
+      return oauthError(err.oauthErrorCode || 'invalid_request', err.message, err.status);
     }
-  } catch {
     return oauthError('invalid_request', 'Could not parse request body', 400);
   }
 
-  const grantType = body.grant_type;
-
-  if (grantType !== 'authorization_code') {
-    return oauthError('unsupported_grant_type', 'Only authorization_code grant is supported', 400);
-  }
-
-  const code = body.code;
-  const codeVerifier = body.code_verifier;
-  const redirectUri = body.redirect_uri;
-
-  if (!code) {
-    return oauthError('invalid_request', 'Missing code', 400);
-  }
-  if (!codeVerifier) {
-    return oauthError('invalid_request', 'Missing code_verifier (PKCE required)', 400);
-  }
-
   // Look up and atomically delete authorization code (one-time use, checks expiry)
-  const codeEntry = await getAndDeleteAuthorizationCode(code);
+  const codeEntry = await getAndDeleteAuthorizationCode(payload.code);
   if (!codeEntry) {
     return oauthError('invalid_grant', 'Invalid or expired authorization code', 400);
   }
 
+  if (payload.clientId && payload.clientId !== codeEntry.client_id) {
+    return oauthError('invalid_grant', 'client_id mismatch', 400);
+  }
+
   // Verify redirect_uri matches
-  if (redirectUri && redirectUri !== codeEntry.redirect_uri) {
+  if (payload.redirectUri && payload.redirectUri !== codeEntry.redirect_uri) {
     return oauthError('invalid_grant', 'redirect_uri mismatch', 400);
   }
 
   // Verify PKCE
-  const pkceValid = await verifyPKCE(codeVerifier, codeEntry.code_challenge, codeEntry.code_challenge_method);
+  const pkceValid = await verifyPKCE(payload.codeVerifier, codeEntry.code_challenge, codeEntry.code_challenge_method);
   if (!pkceValid) {
     return oauthError('invalid_grant', 'PKCE verification failed', 400);
   }
@@ -1263,7 +1219,7 @@ async function handleTokenExchange(request: Request): Promise<Response> {
   // For developer apps, verify client_secret
   const client = await getOAuthClientFull(codeEntry.client_id);
   if (client && client.is_developer_app && client.client_secret_hash) {
-    const clientSecret = body.client_secret;
+    const clientSecret = payload.clientSecret;
     if (!clientSecret) {
       return oauthError('invalid_client', 'client_secret required for this application', 401);
     }
@@ -1301,28 +1257,19 @@ async function handleTokenExchange(request: Request): Promise<Response> {
 // ============================================
 
 async function handleTokenRevocation(request: Request): Promise<Response> {
-  let body: Record<string, string>;
+  let payload;
   try {
-    const contentType = request.headers.get('content-type') || '';
-    if (contentType.includes('application/x-www-form-urlencoded')) {
-      const text = await request.text();
-      const params = new URLSearchParams(text);
-      body = Object.fromEntries(params.entries());
-    } else {
-      body = await request.json();
+    payload = await validateOAuthRevocationRequest(request);
+  } catch (err) {
+    if (err instanceof RequestValidationError) {
+      return oauthError(err.oauthErrorCode || 'invalid_request', err.message, err.status);
     }
-  } catch {
     return oauthError('invalid_request', 'Could not parse request body', 400);
-  }
-
-  const token = body.token;
-  if (!token) {
-    return oauthError('invalid_request', 'Missing token parameter', 400);
   }
 
   // Attempt to revoke — per RFC 7009, always return 200 regardless of outcome
   try {
-    await revokeByToken(token);
+    await revokeByToken(payload.token);
   } catch (err) {
     console.error('Token revocation error:', err);
     // Still return 200 per spec

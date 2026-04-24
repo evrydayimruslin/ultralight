@@ -7,19 +7,17 @@
 // streams tokens and captures usage for post-stream cost deduction.
 
 import { authenticate } from './auth.ts';
-import { json, error } from './app.ts';
+import { json, error } from './response.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
 import { checkChatBalance, deductChatCost } from '../services/chat-billing.ts';
 import { getOrCreateOpenRouterKey } from '../services/openrouter-keys.ts';
 import { createUserService } from '../services/user.ts';
 import type { SystemAgentContext } from '../services/flash-broker.ts';
-import {
-  CHAT_MIN_BALANCE_LIGHT,
-  type ChatStreamRequest,
-  type ChatUsage,
-} from '../../shared/types/index.ts';
+import { CHAT_MIN_BALANCE_LIGHT, type ChatStreamRequest, type ChatUsage } from '../../shared/contracts/ai.ts';
+import { createServerLogger } from '../services/logging.ts';
 
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+const chatLogger = createServerLogger('CHAT');
 
 // ============================================
 // MODEL VALIDATION
@@ -53,7 +51,12 @@ async function enforceChatGuards(
 
   try {
     const balance = await checkChatBalance(userId);
-    console.log(`[CHAT] Balance for ${userId}: ${balance} cents (min: ${CHAT_MIN_BALANCE_LIGHT})`);
+    chatLogger.info('Checked chat balance', {
+      user_id: userId,
+      balance_light: balance,
+      minimum_light: CHAT_MIN_BALANCE_LIGHT,
+      resource,
+    });
 
     if (balance < CHAT_MIN_BALANCE_LIGHT) {
       return json({
@@ -66,7 +69,11 @@ async function enforceChatGuards(
 
     return { balance };
   } catch (err) {
-    console.error(`[CHAT] Balance check unavailable for ${userId}, blocking ${resource}:`, err);
+    chatLogger.error('Balance check unavailable; blocking chat request', {
+      user_id: userId,
+      resource,
+      error: err,
+    });
     return json({
       error: 'Billing service temporarily unavailable. Please try again shortly.',
     }, 503);
@@ -80,20 +87,28 @@ async function enforceChatGuards(
 export async function handleChatStream(request: Request): Promise<Response> {
   // ── 1. Auth ──
   const authHeader = request.headers.get('Authorization');
-  console.log(`[CHAT] Auth attempt — header present: ${!!authHeader}, prefix: ${authHeader?.substring(0, 12)}...`);
+  chatLogger.info('Chat auth attempt', {
+    authorization_present: !!authHeader,
+  });
 
   let user: { id: string; email: string; tier: string; provisional?: boolean };
   try {
     user = await authenticate(request);
-    console.log(`[CHAT] Auth success — user: ${user.id}, email: ${user.email}, tier: ${user.tier}, provisional: ${user.provisional}`);
+    chatLogger.info('Chat auth succeeded', {
+      user_id: user.id,
+      tier: user.tier,
+      provisional: !!user.provisional,
+    });
   } catch (err) {
-    console.error(`[CHAT] Auth FAILED:`, err instanceof Error ? err.message : err);
+    chatLogger.warn('Chat auth failed', {
+      error: err,
+    });
     return json({ error: 'Unauthorized', detail: err instanceof Error ? err.message : 'Auth failed' }, 401);
   }
 
   // Block provisional users (no balance, no billing)
   if (user.provisional) {
-    console.log(`[CHAT] Blocked provisional user: ${user.id}`);
+    chatLogger.info('Blocked provisional user from chat', { user_id: user.id });
     return json({ error: 'Chat requires a full account. Sign in at ultralight.dev' }, 403);
   }
 
@@ -101,18 +116,26 @@ export async function handleChatStream(request: Request): Promise<Response> {
   let body: ChatStreamRequest;
   try {
     body = await request.json() as ChatStreamRequest;
-    console.log(`[CHAT] Request body — model: ${body.model}, messages: ${body.messages?.length}, tools: ${body.tools?.length || 0}`);
+    chatLogger.info('Parsed chat request body', {
+      user_id: user.id,
+      model: body.model,
+      message_count: body.messages?.length ?? 0,
+      tool_count: body.tools?.length || 0,
+    });
   } catch (parseErr) {
-    console.error('[CHAT] JSON parse failed:', parseErr);
+    chatLogger.warn('Chat JSON parse failed', { error: parseErr });
     return error('Invalid JSON body', 400);
   }
 
   if (!body.model || typeof body.model !== 'string') {
-    console.error('[CHAT] Missing model field');
+    chatLogger.warn('Chat request missing model field', { user_id: user.id });
     return error('model is required', 400);
   }
   if (!isValidModelId(body.model)) {
-    console.error(`[CHAT] Invalid model ID format: ${body.model}`);
+    chatLogger.warn('Chat request used invalid model id format', {
+      user_id: user.id,
+      model: body.model,
+    });
     return json({
       error: `Invalid model ID format: ${body.model}. Expected format: provider/model-name`,
     }, 400);
@@ -143,20 +166,28 @@ export async function handleChatStream(request: Request): Promise<Response> {
         const byokKey = await userService.getDecryptedApiKey(user.id, 'openrouter');
         if (byokKey) {
           userOpenRouterKey = byokKey;
-          console.log(`[CHAT] Using BYOK OpenRouter key for ${user.id}`);
+          chatLogger.info('Using BYOK OpenRouter key for chat request', {
+            user_id: user.id,
+          });
         } else {
           throw new Error('Empty BYOK key');
         }
       } catch (byokErr) {
-        console.warn(`[CHAT] BYOK key failed for ${user.id}, falling back to platform key:`, byokErr);
+        chatLogger.warn('BYOK OpenRouter key failed; falling back to platform key', {
+          user_id: user.id,
+          error: byokErr,
+        });
         userOpenRouterKey = await getOrCreateOpenRouterKey(user.id, user.email);
       }
     } else {
       userOpenRouterKey = await getOrCreateOpenRouterKey(user.id, user.email);
     }
-    console.log(`[CHAT] OpenRouter key ready for ${user.id}`);
+    chatLogger.info('OpenRouter key ready for chat request', { user_id: user.id });
   } catch (err) {
-    console.error(`[CHAT] Failed to get/create OpenRouter key for ${user.id}:`, err);
+    chatLogger.error('Failed to prepare OpenRouter key for chat request', {
+      user_id: user.id,
+      error: err,
+    });
     return json({
       error: 'Chat service unavailable',
       detail: err instanceof Error ? err.message : 'OpenRouter key provisioning failed',
@@ -174,7 +205,11 @@ export async function handleChatStream(request: Request): Promise<Response> {
     ...(body.tools && body.tools.length > 0 ? { tools: body.tools } : {}),
   };
 
-  console.log(`[CHAT] Forwarding to OpenRouter — model: ${body.model}, messages: ${body.messages.length}`);
+  chatLogger.info('Forwarding chat request to OpenRouter', {
+    user_id: user.id,
+    model: body.model,
+    message_count: body.messages.length,
+  });
 
   let openRouterRes: Response;
   try {
@@ -188,9 +223,17 @@ export async function handleChatStream(request: Request): Promise<Response> {
       },
       body: JSON.stringify(openRouterBody),
     });
-    console.log(`[CHAT] OpenRouter responded — status: ${openRouterRes.status}`);
+    chatLogger.info('OpenRouter responded to chat request', {
+      user_id: user.id,
+      model: body.model,
+      status: openRouterRes.status,
+    });
   } catch (err) {
-    console.error('[CHAT] OpenRouter fetch failed:', err);
+    chatLogger.error('OpenRouter fetch failed', {
+      user_id: user.id,
+      model: body.model,
+      error: err,
+    });
     return json({ error: 'Upstream service unavailable', detail: err instanceof Error ? err.message : 'fetch failed' }, 502);
   }
 
@@ -200,7 +243,12 @@ export async function handleChatStream(request: Request): Promise<Response> {
     try {
       const errBody = await openRouterRes.json() as { error?: { message?: string } };
       errMsg = errBody?.error?.message || errMsg;
-      console.error(`[CHAT] OpenRouter error ${openRouterRes.status}: ${errMsg}`);
+      chatLogger.warn('OpenRouter returned an error response', {
+        user_id: user.id,
+        model: body.model,
+        status: openRouterRes.status,
+        upstream_message: errMsg,
+      });
     } catch { /* use default */ }
     return json(
       { error: errMsg, detail: `OpenRouter returned ${openRouterRes.status}` },
@@ -265,24 +313,39 @@ export async function handleChatStream(request: Request): Promise<Response> {
       if (capturedUsage && capturedUsage.total_tokens > 0) {
         deductChatCost(userId, capturedUsage, model, capturedTotalCost)
           .then(result => {
-            console.log(
-              `[CHAT] Billed ${userId}: ${result.cost_light.toFixed(4)}✦ ` +
-              `(${capturedUsage!.prompt_tokens}+${capturedUsage!.completion_tokens} tokens, ${model})` +
-              `${result.was_depleted ? ' [BALANCE DEPLETED]' : ''}`
-            );
+            chatLogger.info('Post-stream chat billing succeeded', {
+              user_id: userId,
+              model,
+              cost_light: result.cost_light,
+              prompt_tokens: capturedUsage!.prompt_tokens,
+              completion_tokens: capturedUsage!.completion_tokens,
+              total_tokens: capturedUsage!.total_tokens,
+              balance_depleted: result.was_depleted,
+            });
           })
           .catch(err => {
-            console.error(`[CHAT] Post-stream billing failed for ${userId}:`, err);
+            chatLogger.error('Post-stream chat billing failed', {
+              user_id: userId,
+              model,
+              error: err,
+            });
           });
       } else {
-        console.warn(`[CHAT] No usage captured for ${userId} (model=${model})`);
+        chatLogger.warn('No usage captured for completed chat stream', {
+          user_id: userId,
+          model,
+        });
       }
     },
   });
 
   // Pipe OpenRouter response through the transform (runs in background)
   openRouterRes.body.pipeTo(transformStream.writable).catch(err => {
-    console.error(`[CHAT] Stream pipe error for ${userId}:`, err);
+    chatLogger.error('Chat stream pipe failed', {
+      user_id: userId,
+      model,
+      error: err,
+    });
   });
 
   // ── 8. Return streaming response ──
@@ -365,7 +428,10 @@ export async function handleFunctionIndex(request: Request): Promise<Response> {
     try {
       index = await rebuildFunctionIndex(user.id);
     } catch (err) {
-      console.error('Failed to build function index:', err);
+      chatLogger.error('Failed to build function index on demand', {
+        user_id: user.id,
+        error: err,
+      });
       return json({ functions: {}, widgets: [], types: '', updatedAt: null });
     }
   }
@@ -409,7 +475,10 @@ export async function handleChatContext(request: Request): Promise<Response> {
     const context = await resolveContext(body.prompt, user.id);
     return json(context);
   } catch (err) {
-    console.error('[CHAT] Context resolution failed:', err);
+    chatLogger.error('Chat context resolution failed', {
+      user_id: user.id,
+      error: err,
+    });
     return json({
       entities: [],
       functions: [],
@@ -444,10 +513,13 @@ export async function handleProvisionKey(request: Request): Promise<Response> {
   // Get or create key
   try {
     await getOrCreateOpenRouterKey(user.id, user.email);
-    console.log(`[CHAT] Provisioned OpenRouter key for ${user.id}`);
+    chatLogger.info('Provisioned OpenRouter key', { user_id: user.id });
     return json({ ok: true, provisioned: true });
   } catch (err) {
-    console.error(`[CHAT] Key provisioning failed for ${user.id}:`, err);
+    chatLogger.error('Key provisioning failed', {
+      user_id: user.id,
+      error: err,
+    });
     return json({
       ok: false,
       error: err instanceof Error ? err.message : 'Key provisioning failed',
@@ -558,4 +630,46 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
       'X-Accel-Buffering': 'no',
     },
   });
+}
+
+// ============================================
+// POST /chat/plan/:id/confirm — resume pending execution
+// ============================================
+
+export async function handlePlanConfirm(request: Request, planId: string): Promise<Response> {
+  let user: { id: string; email: string; tier: string; provisional?: boolean };
+  try {
+    user = await authenticate(request);
+  } catch (err) {
+    return json({ error: 'Unauthorized', detail: err instanceof Error ? err.message : 'Auth failed' }, 401);
+  }
+
+  const { confirmExecutionPlanGate } = await import('../services/plan-gate.ts');
+  const result = await confirmExecutionPlanGate(planId, user.id);
+  if (!result.ok) {
+    return json({ error: result.message }, result.status);
+  }
+
+  return json({ ok: true, status: result.message, planId });
+}
+
+// ============================================
+// POST /chat/plan/:id/cancel — cancel pending execution
+// ============================================
+
+export async function handlePlanCancel(request: Request, planId: string): Promise<Response> {
+  let user: { id: string; email: string; tier: string; provisional?: boolean };
+  try {
+    user = await authenticate(request);
+  } catch (err) {
+    return json({ error: 'Unauthorized', detail: err instanceof Error ? err.message : 'Auth failed' }, 401);
+  }
+
+  const { cancelExecutionPlanGate } = await import('../services/plan-gate.ts');
+  const result = await cancelExecutionPlanGate(planId, user.id);
+  if (!result.ok) {
+    return json({ error: result.message }, result.status);
+  }
+
+  return json({ ok: true, status: result.message, planId });
 }

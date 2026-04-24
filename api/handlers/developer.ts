@@ -3,11 +3,12 @@
 // Accessed via dev.ultralight-api.rgn4jz429m.workers.dev subdomain
 // or /developer path on main domain.
 
-import { json, error } from './app.ts';
+import { json, error } from './response.ts';
 import { authenticate } from './auth.ts';
 import { generateClientSecret, generateSecretSalt, hashClientSecret } from './oauth.ts';
 import { createClient } from '@supabase/supabase-js';
 import { getEnv } from '../lib/env.ts';
+import { withSensitiveRouteRateLimit } from '../services/sensitive-route-rate-limit.ts';
 
 // Lazy Supabase client — CF Workers env not available at module init
 let _supabase: ReturnType<typeof createClient>;
@@ -78,71 +79,72 @@ async function handleListApps(request: Request): Promise<Response> {
 
 async function handleCreateApp(request: Request): Promise<Response> {
   const user = await authenticate(request);
-
-  let body: Record<string, unknown>;
-  try {
-    body = await request.json();
-  } catch {
-    return error('Invalid JSON', 400);
-  }
-
-  const name = body.name as string;
-  const description = (body.description as string) || '';
-  const redirectUris = body.redirect_uris as string[];
-  const logoUrl = (body.logo_url as string) || null;
-
-  if (!name || !name.trim()) {
-    return error('name is required', 400);
-  }
-  if (!redirectUris || !Array.isArray(redirectUris) || redirectUris.length === 0) {
-    return error('redirect_uris is required (at least one)', 400);
-  }
-
-  // Validate redirect URIs
-  for (const uri of redirectUris) {
+  return withSensitiveRouteRateLimit(user.id, 'developer:app_create', async () => {
+    let body: Record<string, unknown>;
     try {
-      new URL(uri);
+      body = await request.json();
     } catch {
-      return error(`Invalid redirect_uri: ${uri}`, 400);
+      return error('Invalid JSON', 400);
     }
-  }
 
-  // Generate client credentials
-  const clientId = crypto.randomUUID();
-  const clientSecret = generateClientSecret();
-  const secretSalt = generateSecretSalt();
-  const secretHash = await hashClientSecret(clientSecret, secretSalt);
+    const name = body.name as string;
+    const description = (body.description as string) || '';
+    const redirectUris = body.redirect_uris as string[];
+    const logoUrl = (body.logo_url as string) || null;
 
-  const { error: insertErr } = await getSupabase()
-    .from('oauth_clients')
-    .insert({
+    if (!name || !name.trim()) {
+      return error('name is required', 400);
+    }
+    if (!redirectUris || !Array.isArray(redirectUris) || redirectUris.length === 0) {
+      return error('redirect_uris is required (at least one)', 400);
+    }
+
+    // Validate redirect URIs
+    for (const uri of redirectUris) {
+      try {
+        new URL(uri);
+      } catch {
+        return error(`Invalid redirect_uri: ${uri}`, 400);
+      }
+    }
+
+    // Generate client credentials
+    const clientId = crypto.randomUUID();
+    const clientSecret = generateClientSecret();
+    const secretSalt = generateSecretSalt();
+    const secretHash = await hashClientSecret(clientSecret, secretSalt);
+
+    const { error: insertErr } = await getSupabase()
+      .from('oauth_clients')
+      .insert({
+        client_id: clientId,
+        client_name: name.trim(),
+        redirect_uris: redirectUris,
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        token_endpoint_auth_method: 'client_secret_post',
+        owner_user_id: user.id,
+        client_secret_hash: secretHash,
+        client_secret_salt: secretSalt,
+        logo_url: logoUrl,
+        description: description,
+        is_developer_app: true,
+      } as any);
+
+    if (insertErr) {
+      console.error('Failed to create developer app:', insertErr);
+      return error('Failed to create app', 500);
+    }
+
+    return json({
       client_id: clientId,
+      client_secret: clientSecret, // Only shown once!
       client_name: name.trim(),
       redirect_uris: redirectUris,
-      grant_types: ['authorization_code'],
-      response_types: ['code'],
-      token_endpoint_auth_method: 'client_secret_post',
-      owner_user_id: user.id,
-      client_secret_hash: secretHash,
-      client_secret_salt: secretSalt,
       logo_url: logoUrl,
-      description: description,
-      is_developer_app: true,
-    } as any);
-
-  if (insertErr) {
-    console.error('Failed to create developer app:', insertErr);
-    return error('Failed to create app', 500);
-  }
-
-  return json({
-    client_id: clientId,
-    client_secret: clientSecret, // Only shown once!
-    client_name: name.trim(),
-    redirect_uris: redirectUris,
-    logo_url: logoUrl,
-    description,
-  }, 201);
+      description,
+    }, 201);
+  });
 }
 
 async function handleGetApp(request: Request, clientId: string): Promise<Response> {
@@ -163,114 +165,117 @@ async function handleGetApp(request: Request, clientId: string): Promise<Respons
 
 async function handleUpdateApp(request: Request, clientId: string): Promise<Response> {
   const user = await authenticate(request);
+  return withSensitiveRouteRateLimit(user.id, 'developer:app_update', async () => {
+    // Verify ownership
+    const { data: existing } = await getSupabase()
+      .from('oauth_clients')
+      .select('client_id')
+      .eq('client_id', clientId)
+      .eq('owner_user_id', user.id)
+      .eq('is_developer_app', true)
+      .single();
 
-  // Verify ownership
-  const { data: existing } = await getSupabase()
-    .from('oauth_clients')
-    .select('client_id')
-    .eq('client_id', clientId)
-    .eq('owner_user_id', user.id)
-    .eq('is_developer_app', true)
-    .single();
+    if (!existing) return error('App not found', 404);
 
-  if (!existing) return error('App not found', 404);
-
-  let body: Record<string, unknown>;
-  try {
-    body = await request.json();
-  } catch {
-    return error('Invalid JSON', 400);
-  }
-
-  const updates: Record<string, unknown> = {};
-  if (body.name !== undefined) updates.client_name = (body.name as string).trim();
-  if (body.description !== undefined) updates.description = body.description;
-  if (body.logo_url !== undefined) updates.logo_url = body.logo_url;
-  if (body.redirect_uris !== undefined) {
-    const uris = body.redirect_uris as string[];
-    if (!Array.isArray(uris) || uris.length === 0) {
-      return error('redirect_uris must have at least one URI', 400);
+    let body: Record<string, unknown>;
+    try {
+      body = await request.json();
+    } catch {
+      return error('Invalid JSON', 400);
     }
-    for (const uri of uris) {
-      try { new URL(uri); } catch { return error(`Invalid redirect_uri: ${uri}`, 400); }
+
+    const updates: Record<string, unknown> = {};
+    if (body.name !== undefined) updates.client_name = (body.name as string).trim();
+    if (body.description !== undefined) updates.description = body.description;
+    if (body.logo_url !== undefined) updates.logo_url = body.logo_url;
+    if (body.redirect_uris !== undefined) {
+      const uris = body.redirect_uris as string[];
+      if (!Array.isArray(uris) || uris.length === 0) {
+        return error('redirect_uris must have at least one URI', 400);
+      }
+      for (const uri of uris) {
+        try { new URL(uri); } catch { return error(`Invalid redirect_uri: ${uri}`, 400); }
+      }
+      updates.redirect_uris = uris;
     }
-    updates.redirect_uris = uris;
-  }
 
-  if (Object.keys(updates).length === 0) {
-    return error('No fields to update', 400);
-  }
+    if (Object.keys(updates).length === 0) {
+      return error('No fields to update', 400);
+    }
 
-  const { error: updateErr } = await (getSupabase()
-    .from('oauth_clients') as any)
-    .update(updates)
-    .eq('client_id', clientId)
-    .eq('owner_user_id', user.id);
+    const { error: updateErr } = await (getSupabase()
+      .from('oauth_clients') as any)
+      .update(updates)
+      .eq('client_id', clientId)
+      .eq('owner_user_id', user.id);
 
-  if (updateErr) return error('Failed to update app', 500);
+    if (updateErr) return error('Failed to update app', 500);
 
-  return json({ ok: true });
+    return json({ ok: true });
+  });
 }
 
 async function handleDeleteApp(request: Request, clientId: string): Promise<Response> {
   const user = await authenticate(request);
+  return withSensitiveRouteRateLimit(user.id, 'developer:app_delete', async () => {
+    const { error: deleteErr } = await getSupabase()
+      .from('oauth_clients')
+      .delete()
+      .eq('client_id', clientId)
+      .eq('owner_user_id', user.id)
+      .eq('is_developer_app', true);
 
-  const { error: deleteErr } = await getSupabase()
-    .from('oauth_clients')
-    .delete()
-    .eq('client_id', clientId)
-    .eq('owner_user_id', user.id)
-    .eq('is_developer_app', true);
+    if (deleteErr) return error('Failed to delete app', 500);
 
-  if (deleteErr) return error('Failed to delete app', 500);
+    // Also revoke all tokens created via this client
+    await getSupabase()
+      .from('user_api_tokens')
+      .delete()
+      .like('name', `oauth-${clientId.slice(0, 8)}%`);
 
-  // Also revoke all tokens created via this client
-  await getSupabase()
-    .from('user_api_tokens')
-    .delete()
-    .like('name', `oauth-${clientId.slice(0, 8)}%`);
+    // Clean up consent records
+    await getSupabase()
+      .from('oauth_consents')
+      .delete()
+      .eq('client_id', clientId);
 
-  // Clean up consent records
-  await getSupabase()
-    .from('oauth_consents')
-    .delete()
-    .eq('client_id', clientId);
-
-  return json({ ok: true });
+    return json({ ok: true });
+  });
 }
 
 async function handleRotateSecret(request: Request, clientId: string): Promise<Response> {
   const user = await authenticate(request);
+  return withSensitiveRouteRateLimit(user.id, 'developer:app_rotate_secret', async () => {
+    // Verify ownership
+    const { data: existing } = await getSupabase()
+      .from('oauth_clients')
+      .select('client_id')
+      .eq('client_id', clientId)
+      .eq('owner_user_id', user.id)
+      .eq('is_developer_app', true)
+      .single();
 
-  // Verify ownership
-  const { data: existing } = await getSupabase()
-    .from('oauth_clients')
-    .select('client_id')
-    .eq('client_id', clientId)
-    .eq('owner_user_id', user.id)
-    .eq('is_developer_app', true)
-    .single();
+    if (!existing) return error('App not found', 404);
 
-  if (!existing) return error('App not found', 404);
+    // Generate new secret
+    const clientSecret = generateClientSecret();
+    const secretSalt = generateSecretSalt();
+    const secretHash = await hashClientSecret(clientSecret, secretSalt);
 
-  // Generate new secret
-  const clientSecret = generateClientSecret();
-  const secretSalt = generateSecretSalt();
-  const secretHash = await hashClientSecret(clientSecret, secretSalt);
+    const { error: updateErr } = await (getSupabase()
+      .from('oauth_clients') as any)
+      .update({
+        client_secret_hash: secretHash,
+        client_secret_salt: secretSalt,
+      })
+      .eq('client_id', clientId)
+      .eq('owner_user_id', user.id);
 
-  const { error: updateErr } = await (getSupabase()
-    .from('oauth_clients') as any)
-    .update({
-      client_secret_hash: secretHash,
-      client_secret_salt: secretSalt,
-    })
-    .eq('client_id', clientId)
-    .eq('owner_user_id', user.id);
+    if (updateErr) return error('Failed to rotate secret', 500);
 
-  if (updateErr) return error('Failed to rotate secret', 500);
-
-  return json({
-    client_secret: clientSecret, // Only shown once!
+    return json({
+      client_secret: clientSecret, // Only shown once!
+    });
   });
 }
 
@@ -512,33 +517,10 @@ export const { handlers, auth } = NextAuth({
     const COOKIE_AUTH_SENTINEL = '__cookie_session__';
     let currentApps = [];
     let currentAppId = null;
-    let authToken = localStorage.getItem('ul_token') || null;
-    if (authToken && !authToken.startsWith('ul_')) authToken = null;
+    let authToken = null;
 
     function hasRealBearerToken() {
       return !!authToken && authToken !== COOKIE_AUTH_SENTINEL;
-    }
-
-    async function migrateLegacyBrowserSession() {
-      const legacyToken = localStorage.getItem('ultralight_token') || '';
-      if (!legacyToken) return;
-
-      try {
-        const res = await fetch(API_BASE + '/auth/session', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({
-            access_token: legacyToken,
-            refresh_token: localStorage.getItem('ultralight_refresh_token') || '',
-          }),
-        });
-        if (res.ok) {
-          localStorage.removeItem('ultralight_token');
-          localStorage.removeItem('ultralight_refresh_token');
-          authToken = COOKIE_AUTH_SENTINEL;
-        }
-      } catch (e) {}
     }
 
     async function detectBrowserSession() {
@@ -691,7 +673,6 @@ export const { handlers, auth } = NextAuth({
 
     // Check auth on load — try to get user info
     async function init() {
-      await migrateLegacyBrowserSession();
       await detectBrowserSession();
       try {
         const res = await apiFetch('/api/developer/apps');

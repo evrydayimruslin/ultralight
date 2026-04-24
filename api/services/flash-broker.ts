@@ -17,6 +17,10 @@ import { getEnv } from '../lib/env.ts';
 import { getFunctionIndex, rebuildFunctionIndex, type FunctionIndex } from './function-index.ts';
 import { createR2Service } from './storage.ts';
 import { getD1DatabaseId } from './d1-provisioning.ts';
+import { createAppsService } from './apps.ts';
+import { createEmbeddingService } from './embedding.ts';
+import type { App } from '../../shared/types/index.ts';
+import { buildJsonSchemaDescriptors, type AppForCodemode } from './codemode-tools.ts';
 
 // ── Types ──
 
@@ -45,7 +49,7 @@ export interface FlashBrokerResult {
   }>;
   conventions: Array<{ appName: string; key: string; value: string }>;
   involvedAppIds: string[];
-  toolMap: Record<string, { appId: string; fnName: string; appSlug: string }>;
+  toolMap: Record<string, { appId: string; appName: string; fnName: string; appSlug: string; origin: 'library' | 'marketplace' }>;
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
   /** System agent delegations recommended by Flash analysis */
   systemAgentDelegations?: Array<{ agentType: string; task: string; originalPrompt: string }>;
@@ -60,8 +64,31 @@ interface ConversationSummary {
   updatedAt: number;
 }
 
+interface MarketplaceCandidate {
+  app: Pick<App, 'id' | 'name' | 'slug' | 'description' | 'icon_url' | 'runtime' | 'manifest' | 'exports' | 'owner_id' | 'app_type'>;
+  similarity: number;
+  keyFunctions: string[];
+}
+
+type FunctionEntry = FunctionIndex['functions'][string];
+
 export type FlashEvent =
   | { type: 'analyzing'; text: string }
+  | {
+    type: 'ambient_suggestions';
+    suggestions: Array<{
+      id: string;
+      slug: string;
+      name: string;
+      description: string;
+      icon_url: string | null;
+      similarity: number;
+      source: 'marketplace';
+      type: 'app';
+      connected: false;
+      runtime?: string;
+    }>;
+  }
   | { type: 'searching'; query: string; apps: string[] }
   | { type: 'magnifying'; text: string; apps: string[] }
   | { type: 'magnified'; app: string; tables: number; rows: number }
@@ -121,6 +148,7 @@ Rules:
 - updatedSummary: ALWAYS output this field. Maintain a rolling summary of this conversation. You receive the previous summary (in "Conversation Summary") and the latest exchange (in "Last Exchange"). Merge them into an updated summary (200-400 tokens max). Include: key decisions made, entities referenced by name, user preferences expressed, task progress, and commitments/follow-ups. Omit exact data values and IDs (those are available via raw history if needed). If no summary section is provided, create one from whatever conversation context is available. On the very first message with no prior context, summarize just the current request.
 - contextQuery: If the user's current message references specific details from earlier in THIS conversation that aren't captured in the summary (exact values, previous results, specific numbers, "the same format as before"), put a descriptive search query here to retrieve relevant raw exchanges. Leave empty when the summary provides sufficient context. This is different from conversationSearch (which searches PAST conversations).
 - NAMES OVER IDs: Always identify entities by human-readable names, not opaque IDs. When a user says "my Fantasy RPG world" or "the weather app", match by name from the catalog or data. Never ask users for UUIDs or internal IDs.
+- When selecting apps for relevantApps, prefer [saved] candidates over [marketplace] candidates when both match the user's intent. Only elevate [marketplace] when it clearly fills a gap not covered by [saved] options.
 - Always return valid JSON, nothing else`;
 
 const FLASH_READ_RESPONSE_SYSTEM = `You are a helpful AI assistant responding to a user's question using live data from their apps. Write a clear, well-formatted response using markdown.
@@ -167,6 +195,11 @@ When the task involves creating or modifying LOCAL PROJECT FILES (not platform a
 \`\`\`
 <!-- /file:write -->
 The client will parse these markers and write files to the user's local project directory.
+
+When the task uses tools/functions, the final prompt should also tell the code-writing model:
+- The execution widget carries the tool-by-tool detail. Keep narration brief and focus on why the action matters and what the result means.
+- Do not repeat full argument payloads or raw execution results in narration when the UI already shows them.
+- Always name each tool you use. If the prompt explicitly identifies a tool as coming from the user's library or from the marketplace, mention that origin in narration too.
 
 Output ONLY valid JSON:
 {
@@ -350,8 +383,6 @@ export async function* runFlashBroker(
     console.log(`[FLASH-BROKER] Scope applied: ${Object.keys(normalizedScope).length} apps, ${Object.keys(filtered).length}/${originalCount} functions`);
   }
 
-  // Build compact catalog for Flash (function signatures + conventions only, no data)
-  const catalog = buildCatalog(fnIndex, loadedSystemAgentStates);
   // Build conversation context from rolling summary + unsummarized exchanges
   let summaryStr = '';
   let lastExchangeStr = '';
@@ -376,6 +407,40 @@ export async function* runFlashBroker(
     yield { type: 'error', message: 'OpenRouter API key not configured' };
     return;
   }
+
+  const conversationSummary = [summaryStr, lastExchangeStr]
+    .filter(Boolean)
+    .join('\n\n')
+    .slice(0, 2000);
+  const marketplaceCandidates = scope && Object.keys(scope).length > 0
+    ? []
+    : await retrieveMarketplaceCandidates(
+      message,
+      conversationSummary,
+      userId,
+      fnIndex,
+    );
+
+  if (marketplaceCandidates.length > 0) {
+    yield {
+      type: 'ambient_suggestions',
+      suggestions: marketplaceCandidates.map((candidate) => ({
+        id: candidate.app.id,
+        slug: candidate.app.slug,
+        name: candidate.app.name,
+        description: candidate.app.description || '',
+        icon_url: candidate.app.icon_url,
+        similarity: candidate.similarity,
+        source: 'marketplace' as const,
+        type: 'app' as const,
+        connected: false as const,
+        ...(candidate.app.runtime ? { runtime: candidate.app.runtime } : {}),
+      })),
+    };
+  }
+
+  // Build compact catalog for Flash (function signatures + conventions only, no data)
+  const catalog = buildCatalog(fnIndex, loadedSystemAgentStates, marketplaceCandidates);
 
   // Build persona-aware system prompt
   const analyzeSystem = systemAgentContext
@@ -468,6 +533,14 @@ export async function* runFlashBroker(
     }
   }
   const actionFunctions = analyzeResult.actionFunctions || [];
+  const provisionalFunctions = buildProvisionalFunctionEntries(marketplaceCandidates);
+  const combinedFunctions: FunctionIndex['functions'] = {
+    ...fnIndex.functions,
+    ...provisionalFunctions,
+  };
+  const marketplaceCandidateBySlug = new Map(
+    marketplaceCandidates.map((candidate) => [candidate.app.slug, candidate] as const)
+  );
 
   // Resolve app slugs to app IDs
   const involvedAppIds = new Set<string>();
@@ -476,9 +549,15 @@ export async function* runFlashBroker(
 
   // First, map from action functions
   for (const fnName of actionFunctions) {
-    const fn = fnIndex.functions[fnName];
+    const fn = combinedFunctions[fnName];
     if (fn) {
-      toolMap[fnName] = { appId: fn.appId, fnName: fn.fnName, appSlug: fn.appSlug };
+      toolMap[fnName] = {
+        appId: fn.appId,
+        appName: extractAppNameFromDescription(fn.description, fn.appSlug),
+        fnName: fn.fnName,
+        appSlug: fn.appSlug,
+        origin: provisionalFunctions[fnName] ? 'marketplace' : 'library',
+      };
       involvedAppIds.add(fn.appId);
       appSlugToId[fn.appSlug] = fn.appId;
     }
@@ -488,18 +567,30 @@ export async function* runFlashBroker(
   for (const slug of relevantAppSlugs) {
     if (!appSlugToId[slug]) {
       // Find any function with this app slug to get the appId
-      const fn = Object.values(fnIndex.functions).find(f => f.appSlug === slug);
+      const fn = Object.values(combinedFunctions).find(f => f.appSlug === slug);
       if (fn) {
         involvedAppIds.add(fn.appId);
         appSlugToId[slug] = fn.appId;
+      } else {
+        const marketplaceCandidate = marketplaceCandidateBySlug.get(slug);
+        if (marketplaceCandidate) {
+          involvedAppIds.add(marketplaceCandidate.app.id);
+          appSlugToId[slug] = marketplaceCandidate.app.id;
+        }
       }
     }
   }
 
   // Also include ALL functions for involved apps in the toolMap
-  for (const [fnName, fn] of Object.entries(fnIndex.functions)) {
+  for (const [fnName, fn] of Object.entries(combinedFunctions)) {
     if (involvedAppIds.has(fn.appId) && !toolMap[fnName]) {
-      toolMap[fnName] = { appId: fn.appId, fnName: fn.fnName, appSlug: fn.appSlug };
+      toolMap[fnName] = {
+        appId: fn.appId,
+        appName: extractAppNameFromDescription(fn.description, fn.appSlug),
+        fnName: fn.fnName,
+        appSlug: fn.appSlug,
+        origin: provisionalFunctions[fnName] ? 'marketplace' : 'library',
+      };
     }
   }
 
@@ -541,12 +632,13 @@ export async function* runFlashBroker(
   const appNames: Record<string, string> = {};
   const appSlugs: string[] = [];
   for (const id of appIds) {
-    const fn = Object.values(fnIndex.functions).find(f => f.appId === id)
+    const fn = Object.values(combinedFunctions).find(f => f.appId === id)
       || Object.values(fullFnIndex.functions).find(f => f.appId === id);
-    const slug = fn?.appSlug || id.slice(0, 8);
+    const candidate = marketplaceCandidates.find(entry => entry.app.id === id);
+    const slug = fn?.appSlug || candidate?.app.slug || id.slice(0, 8);
     appSlugs.push(slug);
     const match = fn?.description.match(/^\[([^\]]+)\]/);
-    appNames[slug] = match ? match[1] : slug;
+    appNames[slug] = candidate?.app.name || (match ? match[1] : slug);
   }
 
   yield {
@@ -578,7 +670,7 @@ export async function* runFlashBroker(
   // ── Collect conventions for involved apps ──
   const allConventions: Array<{ appName: string; key: string; value: string }> = [];
   const seenConv = new Set<string>();
-  for (const fn of Object.values(fnIndex.functions)) {
+  for (const fn of Object.values(combinedFunctions)) {
     if (!involvedAppIds.has(fn.appId)) continue;
     for (const conv of fn.conventions || []) {
       if (seenConv.has(conv)) continue;
@@ -667,13 +759,14 @@ export async function* runFlashBroker(
   // Build type declarations for ALL functions of involved apps
   const typeDeclLines: string[] = [];
   for (const [fnName] of Object.entries(toolMap)) {
-    const fn = fnIndex.functions[fnName];
+    const fn = combinedFunctions[fnName];
     if (!fn) continue;
+    const originLabel = toolMap[fnName]?.origin === 'marketplace' ? 'from marketplace' : 'from your library';
     const params = Object.entries(fn.params || {})
       .map(([p, info]) => `${p}${info.required ? '' : '?'}: ${info.type}`)
       .join(', ');
     const returns = fn.returns && fn.returns !== 'unknown' ? fn.returns : 'unknown';
-    typeDeclLines.push(`  /** ${fn.description} */`);
+    typeDeclLines.push(`  /** ${fn.description} (${originLabel}) */`);
     typeDeclLines.push(`  ${fnName}(args: { ${params} }): Promise<${returns}>;`);
   }
   const functionsDecl = typeDeclLines.length > 0
@@ -690,13 +783,14 @@ export async function* runFlashBroker(
   }
   promptInput += `## Available Functions\n`;
   for (const [fnName] of Object.entries(toolMap)) {
-    const fn = fnIndex.functions[fnName];
+    const fn = combinedFunctions[fnName];
     if (!fn || fn.fnName === '__context') continue; // skip skill context entries
+    const originLabel = toolMap[fnName]?.origin === 'marketplace' ? 'from marketplace' : 'from your library';
     const params = Object.entries(fn.params || {})
       .map(([p, info]) => `${p}${info.required ? '' : '?'}: ${info.type}`)
       .join(', ');
     const rw = isReadOnly(fnName, fn.description) ? '[READ]' : '[WRITE]';
-    promptInput += `- codemode.${fnName}({ ${params} }) ${rw} — ${fn.description}\n`;
+    promptInput += `- codemode.${fnName}({ ${params} }) ${rw} [${originLabel}] — ${fn.description}\n`;
   }
   if (allConventions.length > 0) {
     promptInput += `\n## Conventions\n`;
@@ -741,7 +835,10 @@ export async function* runFlashBroker(
     for (const [slug, data] of Object.entries(magnifiedData)) {
       finalPrompt += `Data from ${slug}:\n${data}\n\n`;
     }
-    finalPrompt += `Write a codemode recipe that fulfills the user's request.`;
+    finalPrompt += 'Write a codemode recipe that fulfills the user\'s request.\n';
+    finalPrompt += 'Keep narration brief and focused on why the action matters.\n';
+    finalPrompt += 'Do not repeat full tool arguments or raw execution results when the UI already shows them.\n';
+    finalPrompt += 'Always name each tool you use; mention the origin too when it is explicitly provided.\n';
     finalModel = resolveModel(analyzeResult.model, heavyModel);
   }
 
@@ -1133,7 +1230,11 @@ export async function callFlashText(
 
 // ── Catalog Builder (Stage 1 — functions + conventions only, no data) ──
 
-function buildCatalog(fnIndex: FunctionIndex, systemAgentStates?: SystemAgentState[]): string {
+function buildCatalog(
+  fnIndex: FunctionIndex,
+  systemAgentStates?: SystemAgentState[],
+  marketplaceCandidates: MarketplaceCandidate[] = [],
+): string {
   const sections: string[] = [];
 
   // Group functions by app
@@ -1147,12 +1248,12 @@ function buildCatalog(fnIndex: FunctionIndex, systemAgentStates?: SystemAgentSta
     // Skill entries — show as available context, not callable functions
     if (fns.length === 1 && fns[0].fn.fnName === '__context') {
       const desc = fns[0].fn.description.replace(/^\[[^\]]+\]\s*/, '');
-      sections.push(`\n### ${slug} [SKILL/CONTEXT] — ${desc}`);
+      sections.push(`\n### [saved] ${slug} [SKILL/CONTEXT] — ${desc}`);
       continue;
     }
 
     const appDesc = fns[0]?.fn.description?.match(/^\[([^\]]+)\]/)?.[1] || slug;
-    sections.push(`\n### ${slug} (${appDesc})`);
+    sections.push(`\n### [saved] ${slug} (${appDesc})`);
     for (const { name, fn } of fns) {
       if (fn.fnName === '__context') continue; // skip skill entries mixed in
       const params = Object.entries(fn.params || {})
@@ -1188,7 +1289,155 @@ function buildCatalog(fnIndex: FunctionIndex, systemAgentStates?: SystemAgentSta
     }
   }
 
+  if (marketplaceCandidates.length > 0) {
+    sections.push('\n## Marketplace candidates (not yet in your library)');
+    for (const candidate of marketplaceCandidates) {
+      const description = candidate.app.description || 'No description available';
+      const keyFns = candidate.keyFunctions.length > 0
+        ? ` — key_functions: ${candidate.keyFunctions.join(', ')}`
+        : '';
+      sections.push(
+        `- [marketplace] ${candidate.app.slug} (${candidate.app.name}) — ${description}${keyFns}`
+      );
+    }
+  }
+
   return sections.join('\n');
+}
+
+function buildProvisionalFunctionEntries(
+  marketplaceCandidates: MarketplaceCandidate[],
+): FunctionIndex['functions'] {
+  const apps: AppForCodemode[] = marketplaceCandidates
+    .map((candidate) => {
+      if (!candidate.app.manifest) return null;
+      try {
+        const manifest = typeof candidate.app.manifest === 'string'
+          ? JSON.parse(candidate.app.manifest) as AppForCodemode['manifest']
+          : candidate.app.manifest as AppForCodemode['manifest'];
+        return {
+          id: candidate.app.id,
+          name: candidate.app.name,
+          slug: candidate.app.slug,
+          manifest,
+        } satisfies AppForCodemode;
+      } catch {
+        return null;
+      }
+    })
+    .filter((app): app is AppForCodemode => !!app);
+
+  if (apps.length === 0) return {};
+
+  const { descriptors, toolMap } = buildJsonSchemaDescriptors(apps);
+  const functions: FunctionIndex['functions'] = {};
+
+  for (const [sanitizedName, mapping] of Object.entries(toolMap)) {
+    const descriptor = descriptors[sanitizedName];
+    const params: FunctionEntry['params'] = {};
+    const properties = descriptor?.inputSchema?.properties || {};
+    const required = new Set(descriptor?.inputSchema?.required || []);
+
+    for (const [paramName, schema] of Object.entries(properties)) {
+      const typedSchema = schema as { type?: string; description?: string };
+      params[paramName] = {
+        type: typedSchema.type || 'unknown',
+        required: required.has(paramName),
+        description: typedSchema.description,
+      };
+    }
+
+    functions[sanitizedName] = {
+      appId: mapping.appId,
+      appSlug: mapping.appSlug,
+      fnName: mapping.fnName,
+      description: descriptor?.description || `[${mapping.appName}] ${mapping.fnName}`,
+      params,
+      returns: 'unknown',
+      conventions: [],
+      dependsOn: [],
+    };
+  }
+
+  return functions;
+}
+
+function extractAppNameFromDescription(description: string, fallbackSlug: string): string {
+  const match = description.match(/^\[([^\]]+)\]/);
+  return match ? match[1] : fallbackSlug;
+}
+
+async function retrieveMarketplaceCandidates(
+  userMessage: string,
+  conversationSummary: string,
+  userId: string,
+  fnIndex: FunctionIndex,
+  limit = 8,
+): Promise<MarketplaceCandidate[]> {
+  const embedding = createEmbeddingService();
+  if (!embedding) return [];
+
+  const savedAppIds = new Set(Object.values(fnIndex.functions).map((fn) => fn.appId));
+  const savedAppSlugs = new Set(Object.values(fnIndex.functions).map((fn) => fn.appSlug));
+  const query = [userMessage, conversationSummary].filter(Boolean).join('\n\n').slice(0, 2000);
+
+  try {
+    const { embedding: vec } = await embedding.embed(query);
+    const appsService = createAppsService();
+    const matches = await appsService.searchByEmbedding(vec, userId, false, limit * 2, 0.6);
+
+    return matches
+      .filter((app) => app.app_type !== 'skill')
+      .filter((app) => !savedAppIds.has(app.id) && !savedAppSlugs.has(app.slug))
+      .slice(0, limit)
+      .map((app) => ({
+        app: {
+          id: app.id,
+          name: app.name,
+          slug: app.slug,
+          description: app.description,
+          icon_url: app.icon_url,
+          runtime: app.runtime,
+          manifest: app.manifest,
+          exports: app.exports,
+          owner_id: app.owner_id,
+          app_type: app.app_type,
+        },
+        similarity: app.similarity,
+        keyFunctions: extractMarketplaceKeyFunctions(app),
+      }));
+  } catch (err) {
+    console.warn('[FLASH-BROKER] Marketplace retrieval failed:', err);
+    return [];
+  }
+}
+
+function extractMarketplaceKeyFunctions(app: Pick<App, 'manifest' | 'exports'>): string[] {
+  const fnNames = new Set<string>();
+
+  if (app.manifest) {
+    try {
+      const manifest = typeof app.manifest === 'string'
+        ? JSON.parse(app.manifest) as { functions?: Record<string, unknown> }
+        : app.manifest as { functions?: Record<string, unknown> };
+
+      for (const fnName of Object.keys(manifest?.functions || {})) {
+        if (fnName.startsWith('widget_')) continue;
+        fnNames.add(fnName);
+        if (fnNames.size >= 4) break;
+      }
+    } catch {
+      // Ignore malformed manifests — exports fallback covers this.
+    }
+  }
+
+  for (const fnName of app.exports || []) {
+    if (fnName.startsWith('widget_')) continue;
+    fnNames.add(fnName);
+    if (fnNames.size >= 4) break;
+  }
+
+  return [...fnNames];
 }
 
 // ── Helpers ──
@@ -1337,7 +1586,13 @@ function heuristicFallback(
   const typeDeclLines: string[] = [];
 
   for (const { name, fn } of topFunctions) {
-    toolMap[name] = { appId: fn.appId, fnName: fn.fnName, appSlug: fn.appSlug };
+    toolMap[name] = {
+      appId: fn.appId,
+      appName: extractAppNameFromDescription(fn.description, fn.appSlug),
+      fnName: fn.fnName,
+      appSlug: fn.appSlug,
+      origin: 'library',
+    };
     involvedAppIds.add(fn.appId);
     const params = Object.entries(fn.params || {})
       .map(([p, info]) => `${p}${info.required ? '' : '?'}: ${info.type}`)

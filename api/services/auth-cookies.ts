@@ -2,6 +2,12 @@ const ACCESS_COOKIE_NAME = '__Host-ul_session';
 const REFRESH_COOKIE_NAME = '__Host-ul_refresh';
 const REFRESH_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
+export interface CookieOptions {
+  maxAge?: number;
+  httpOnly?: boolean;
+  path?: string;
+}
+
 function parseCookieHeader(cookieHeader: string | null): Record<string, string> {
   if (!cookieHeader) return {};
 
@@ -20,13 +26,10 @@ function parseCookieHeader(cookieHeader: string | null): Record<string, string> 
     }, {});
 }
 
-function buildCookie(name: string, value: string, options: {
-  maxAge?: number;
-  httpOnly?: boolean;
-} = {}): string {
+function buildCookie(name: string, value: string, options: CookieOptions = {}): string {
   const parts = [
     `${name}=${encodeURIComponent(value)}`,
-    'Path=/',
+    `Path=${options.path || '/'}`,
     'Secure',
     'SameSite=Lax',
   ];
@@ -41,14 +44,28 @@ function buildCookie(name: string, value: string, options: {
   return parts.join('; ');
 }
 
-export function getAuthAccessTokenFromRequest(request: Request): string | null {
+export function getCookieValueFromRequest(request: Request, name: string): string | null {
   const cookies = parseCookieHeader(request.headers.get('cookie'));
-  return cookies[ACCESS_COOKIE_NAME] || null;
+  return cookies[name] || null;
+}
+
+export function appendCookie(headers: Headers, name: string, value: string, options: CookieOptions = {}): void {
+  headers.append('Set-Cookie', buildCookie(name, value, options));
+}
+
+export function clearCookie(headers: Headers, name: string, options: CookieOptions = {}): void {
+  headers.append('Set-Cookie', buildCookie(name, '', {
+    ...options,
+    maxAge: 0,
+  }));
+}
+
+export function getAuthAccessTokenFromRequest(request: Request): string | null {
+  return getCookieValueFromRequest(request, ACCESS_COOKIE_NAME);
 }
 
 export function getAuthRefreshTokenFromRequest(request: Request): string | null {
-  const cookies = parseCookieHeader(request.headers.get('cookie'));
-  return cookies[REFRESH_COOKIE_NAME] || null;
+  return getCookieValueFromRequest(request, REFRESH_COOKIE_NAME);
 }
 
 export function appendAuthSessionCookies(
@@ -59,32 +76,20 @@ export function appendAuthSessionCookies(
     accessTokenTtlSeconds?: number | null;
   },
 ): void {
-  headers.append(
-    'Set-Cookie',
-    buildCookie(ACCESS_COOKIE_NAME, session.accessToken, {
-      maxAge: session.accessTokenTtlSeconds ?? undefined,
-      httpOnly: true,
-    }),
-  );
+  appendCookie(headers, ACCESS_COOKIE_NAME, session.accessToken, {
+    maxAge: session.accessTokenTtlSeconds ?? undefined,
+    httpOnly: true,
+  });
 
   if (session.refreshToken) {
-    headers.append(
-      'Set-Cookie',
-      buildCookie(REFRESH_COOKIE_NAME, session.refreshToken, {
-        maxAge: REFRESH_COOKIE_MAX_AGE_SECONDS,
-        httpOnly: true,
-      }),
-    );
+    appendCookie(headers, REFRESH_COOKIE_NAME, session.refreshToken, {
+      maxAge: REFRESH_COOKIE_MAX_AGE_SECONDS,
+      httpOnly: true,
+    });
   }
 }
 
 export function clearAuthSessionCookies(headers: Headers): void {
-  headers.append(
-    'Set-Cookie',
-    buildCookie(ACCESS_COOKIE_NAME, '', { maxAge: 0, httpOnly: true }),
-  );
-  headers.append(
-    'Set-Cookie',
-    buildCookie(REFRESH_COOKIE_NAME, '', { maxAge: 0, httpOnly: true }),
-  );
+  clearCookie(headers, ACCESS_COOKIE_NAME, { httpOnly: true });
+  clearCookie(headers, REFRESH_COOKIE_NAME, { httpOnly: true });
 }

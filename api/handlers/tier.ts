@@ -6,7 +6,7 @@
 // (customer.subscription.updated / customer.subscription.deleted).
 // For now, accepts manual tier changes with a service-role secret.
 
-import { json, error } from './app.ts';
+import { json, error } from './response.ts';
 import { TIER_LIMITS, type Tier } from '../../shared/types/index.ts';
 import { getEnv } from '../lib/env.ts';
 

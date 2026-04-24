@@ -8,6 +8,7 @@ import { createAppsService } from './apps.ts';
 import { buildJsonSchemaDescriptors, generateTypes, sanitizeToolName } from './codemode-tools.ts';
 import type { AppForCodemode } from './codemode-tools.ts';
 import { createD1DataService } from './d1-data.ts';
+import { parseStoredSkillsParsed } from './app-contracts.ts';
 
 // ── Types ──
 
@@ -82,7 +83,7 @@ export async function rebuildFunctionIndex(userId: string): Promise<FunctionInde
   for (const app of [...ownedApps, ...likedApps]) {
     if (!allAppsMap.has(app.id) && app.manifest) {
       const manifest = typeof app.manifest === 'string' ? JSON.parse(app.manifest) : app.manifest;
-      const skillsParsed = typeof app.skills_parsed === 'string' ? JSON.parse(app.skills_parsed) : app.skills_parsed;
+      const skillsParsed = parseStoredSkillsParsed(app.skills_parsed);
       allAppsMap.set(app.id, {
         id: app.id,
         name: app.name,
@@ -128,7 +129,7 @@ export async function rebuildFunctionIndex(userId: string): Promise<FunctionInde
   const appReturnTypes = new Map<string, Map<string, string>>(); // appId → (fnName → returnType)
 
   for (const app of apps) {
-    const sp = app.skills_parsed as { functions?: Array<{ name: string; returns?: unknown }> } | null;
+    const sp = parseStoredSkillsParsed(app.skills_parsed);
     if (!sp?.functions) continue;
 
     const fnReturns = new Map<string, string>();

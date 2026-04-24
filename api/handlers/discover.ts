@@ -11,7 +11,7 @@
 //   GET  /api/discover/openapi.json             — OpenAPI 3.1 spec for self-describing API
 //   GET  /api/onboarding/instructions           — Dynamic onboarding copy template
 
-import { json, error } from './app.ts';
+import { json, error } from './response.ts';
 import { authenticate } from './auth.ts';
 import { logOnboardingRequest } from '../services/provisional.ts';
 import {
@@ -933,7 +933,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
 // CORE SEARCH — Full appstore ranking
 // ============================================
 // Composite score: (similarity * 0.7) + (native_boost * 0.15) + (like_signal * 0.15)
-// Same algorithm as ul.discover.appstore in platform-mcp.ts
+// Same algorithm as the canonical appstore discover flow in platform-mcp.ts
 
 async function executeSearch(
   query: string,

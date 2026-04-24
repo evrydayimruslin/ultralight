@@ -38,6 +38,8 @@ export interface Env {
   GPU_SECRET: string;
   BASE_URL: string;
   ENVIRONMENT: string;
+  CORS_ALLOWED_ORIGINS: string;
+  PLATFORM_MCP_DISABLED_ALIASES: string;
 
   // Index signature for dynamic access
   [key: string]: unknown;

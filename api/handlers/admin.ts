@@ -12,9 +12,20 @@
 //   POST  /api/admin/cleanup-provisionals — Delete expired provisional users
 //   GET   /api/admin/analytics?days=30  — Distribution pipeline analytics dashboard
 
-import { json, error } from './app.ts';
+import { json, error } from './response.ts';
 import { unsuspendContent } from '../services/hosting-billing.ts';
 import { getEnv } from '../lib/env.ts';
+import { getSensitiveRouteClientKey, withSensitiveRouteRateLimit } from '../services/sensitive-route-rate-limit.ts';
+import { RequestValidationError } from '../services/request-validation.ts';
+import {
+  validateApproveAssessmentRequest,
+  validateCreateGapRequest,
+  validateRecordAssessmentRequest,
+  validateSetAppCategoryRequest,
+  validateSetAppFeaturedRequest,
+  validateTopUpBalanceRequest,
+  validateUpdateGapRequest,
+} from '../services/admin-request-validation.ts';
 
 interface UserIdRow {
   id: string;
@@ -93,6 +104,23 @@ function authenticateAdmin(request: Request): boolean {
   return !!token && token === SUPABASE_SERVICE_ROLE_KEY;
 }
 
+function withAdminSensitiveRouteRateLimit(
+  request: Request,
+  route:
+    | 'admin:gaps_create'
+    | 'admin:gaps_update'
+    | 'admin:assess'
+    | 'admin:approve'
+    | 'admin:reject'
+    | 'admin:balance_topup'
+    | 'admin:cleanup_provisionals'
+    | 'admin:app_category'
+    | 'admin:app_featured',
+  handler: () => Promise<Response> | Response,
+): Promise<Response> {
+  return withSensitiveRouteRateLimit(`admin:${getSensitiveRouteClientKey(request)}`, route, handler);
+}
+
 export async function handleAdmin(request: Request): Promise<Response> {
   if (!authenticateAdmin(request)) {
     return error('Unauthorized: invalid service secret', 401);
@@ -104,54 +132,54 @@ export async function handleAdmin(request: Request): Promise<Response> {
 
   // POST /api/admin/gaps — Create a gap
   if (path === '/api/admin/gaps' && method === 'POST') {
-    return createGap(request);
+    return withAdminSensitiveRouteRateLimit(request, 'admin:gaps_create', () => createGap(request));
   }
 
   // PATCH /api/admin/gaps/:id — Update a gap
   const gapMatch = path.match(/^\/api\/admin\/gaps\/([0-9a-f-]+)$/);
   if (gapMatch && method === 'PATCH') {
-    return updateGap(request, gapMatch[1]);
+    return withAdminSensitiveRouteRateLimit(request, 'admin:gaps_update', () => updateGap(request, gapMatch[1]));
   }
 
   // POST /api/admin/assess/:id — Record assessment for a gap_assessment
   const assessMatch = path.match(/^\/api\/admin\/assess\/([0-9a-f-]+)$/);
   if (assessMatch && method === 'POST') {
-    return recordAssessment(request, assessMatch[1]);
+    return withAdminSensitiveRouteRateLimit(request, 'admin:assess', () => recordAssessment(request, assessMatch[1]));
   }
 
   // POST /api/admin/approve/:id — Approve assessment, grant points
   const approveMatch = path.match(/^\/api\/admin\/approve\/([0-9a-f-]+)$/);
   if (approveMatch && method === 'POST') {
-    return approveAssessment(request, approveMatch[1]);
+    return withAdminSensitiveRouteRateLimit(request, 'admin:approve', () => approveAssessment(request, approveMatch[1]));
   }
 
   // POST /api/admin/reject/:id — Reject assessment
   const rejectMatch = path.match(/^\/api\/admin\/reject\/([0-9a-f-]+)$/);
   if (rejectMatch && method === 'POST') {
-    return rejectAssessment(rejectMatch[1]);
+    return withAdminSensitiveRouteRateLimit(request, 'admin:reject', () => rejectAssessment(rejectMatch[1]));
   }
 
   // POST /api/admin/balance/:userId — Top up hosting balance
   const balanceMatch = path.match(/^\/api\/admin\/balance\/([0-9a-f-]+)$/);
   if (balanceMatch && method === 'POST') {
-    return topUpBalance(request, balanceMatch[1]);
+    return withAdminSensitiveRouteRateLimit(request, 'admin:balance_topup', () => topUpBalance(request, balanceMatch[1]));
   }
 
   // POST /api/admin/cleanup-provisionals — Delete expired provisional users
   if (path === '/api/admin/cleanup-provisionals' && method === 'POST') {
-    return cleanupProvisionals();
+    return withAdminSensitiveRouteRateLimit(request, 'admin:cleanup_provisionals', () => cleanupProvisionals());
   }
 
   // PATCH /api/admin/apps/:appId/category — Set app category
   const categoryMatch = path.match(/^\/api\/admin\/apps\/([0-9a-f-]+)\/category$/);
   if (categoryMatch && method === 'PATCH') {
-    return setAppCategory(request, categoryMatch[1]);
+    return withAdminSensitiveRouteRateLimit(request, 'admin:app_category', () => setAppCategory(request, categoryMatch[1]));
   }
 
   // PATCH /api/admin/apps/:appId/featured — Toggle featured status
   const featuredMatch = path.match(/^\/api\/admin\/apps\/([0-9a-f-]+)\/featured$/);
   if (featuredMatch && method === 'PATCH') {
-    return setAppFeatured(request, featuredMatch[1]);
+    return withAdminSensitiveRouteRateLimit(request, 'admin:app_featured', () => setAppFeatured(request, featuredMatch[1]));
   }
 
   // GET /api/admin/analytics — Distribution pipeline analytics dashboard
@@ -216,59 +244,43 @@ async function cleanupProvisionals(): Promise<Response> {
 
 async function createGap(request: Request): Promise<Response> {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
-
-  let body: {
-    title: string;
-    description: string;
-    severity?: string;
-    points_value?: number;
-    season?: number;
-    source_shortcoming_ids?: string[];
-    source_query_ids?: string[];
-  };
   try {
-    body = await request.json();
-  } catch {
-    return error('Invalid JSON body', 400);
-  }
+    const body = await validateCreateGapRequest(request);
+    const payload = {
+      title: body.title,
+      description: body.description,
+      severity: body.severity,
+      points_value: body.pointsValue,
+      season: body.season,
+      status: 'open',
+      source_shortcoming_ids: body.sourceShortcomingIds,
+      source_query_ids: body.sourceQueryIds,
+    };
 
-  if (!body.title || !body.description) {
-    return error('title and description are required', 400);
-  }
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/gaps`,
+      {
+        method: 'POST',
+        headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
+        body: JSON.stringify(payload),
+      }
+    );
 
-  const severity = body.severity || 'medium';
-  if (!['low', 'medium', 'high', 'critical'].includes(severity)) {
-    return error('severity must be low, medium, high, or critical', 400);
-  }
-
-  const payload = {
-    title: body.title,
-    description: body.description,
-    severity,
-    points_value: body.points_value ?? 100,
-    season: body.season ?? 1,
-    status: 'open',
-    source_shortcoming_ids: body.source_shortcoming_ids || [],
-    source_query_ids: body.source_query_ids || [],
-  };
-
-  const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/gaps`,
-    {
-      method: 'POST',
-      headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
-      body: JSON.stringify(payload),
+    if (!res.ok) {
+      const err = await res.text();
+      return error(`Failed to create gap: ${err}`, 500);
     }
-  );
 
-  if (!res.ok) {
-    const err = await res.text();
-    return error(`Failed to create gap: ${err}`, 500);
+    const rows = await res.json() as Record<string, unknown>[] | Record<string, unknown>;
+    const created = Array.isArray(rows) ? rows[0] : rows;
+    return json({ success: true, gap: created }, 201);
+  } catch (err) {
+    if (err instanceof RequestValidationError) {
+      return error(err.message, err.status);
+    }
+    console.error('[ADMIN] createGap failed:', err);
+    return error('Failed to create gap', 500);
   }
-
-  const rows = await res.json() as Record<string, unknown>[] | Record<string, unknown>;
-  const created = Array.isArray(rows) ? rows[0] : rows;
-  return json({ success: true, gap: created }, 201);
 }
 
 // ============================================
@@ -277,38 +289,44 @@ async function createGap(request: Request): Promise<Response> {
 
 async function updateGap(request: Request, gapId: string): Promise<Response> {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
-
-  let body: Record<string, unknown>;
   try {
-    body = await request.json();
-  } catch {
-    return error('Invalid JSON body', 400);
-  }
+    const body = await validateUpdateGapRequest(request);
+    const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
 
-  // Whitelist allowed fields
-  const allowed = ['title', 'description', 'severity', 'points_value', 'season', 'status',
-    'source_shortcoming_ids', 'source_query_ids', 'fulfilled_by_app_id', 'fulfilled_by_user_id'];
-  const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
-  for (const key of allowed) {
-    if (key in body) update[key] = body[key];
-  }
+    if (body.title !== undefined) update.title = body.title;
+    if (body.description !== undefined) update.description = body.description;
+    if (body.severity !== undefined) update.severity = body.severity;
+    if (body.pointsValue !== undefined) update.points_value = body.pointsValue;
+    if (body.season !== undefined) update.season = body.season;
+    if (body.status !== undefined) update.status = body.status;
+    if (body.sourceShortcomingIds !== undefined) update.source_shortcoming_ids = body.sourceShortcomingIds;
+    if (body.sourceQueryIds !== undefined) update.source_query_ids = body.sourceQueryIds;
+    if (body.fulfilledByAppId !== undefined) update.fulfilled_by_app_id = body.fulfilledByAppId;
+    if (body.fulfilledByUserId !== undefined) update.fulfilled_by_user_id = body.fulfilledByUserId;
 
-  const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/gaps?id=eq.${gapId}`,
-    {
-      method: 'PATCH',
-      headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
-      body: JSON.stringify(update),
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/gaps?id=eq.${gapId}`,
+      {
+        method: 'PATCH',
+        headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
+        body: JSON.stringify(update),
+      }
+    );
+
+    if (!res.ok) {
+      const err = await res.text();
+      return error(`Failed to update gap: ${err}`, 500);
     }
-  );
 
-  if (!res.ok) {
-    const err = await res.text();
-    return error(`Failed to update gap: ${err}`, 500);
+    const rows = await res.json() as Record<string, unknown>[] | Record<string, unknown>;
+    return json({ success: true, gap: Array.isArray(rows) ? rows[0] : rows });
+  } catch (err) {
+    if (err instanceof RequestValidationError) {
+      return error(err.message, err.status);
+    }
+    console.error('[ADMIN] updateGap failed:', err);
+    return error('Failed to update gap', 500);
   }
-
-  const rows = await res.json() as Record<string, unknown>[] | Record<string, unknown>;
-  return json({ success: true, gap: Array.isArray(rows) ? rows[0] : rows });
 }
 
 // ============================================
@@ -317,43 +335,36 @@ async function updateGap(request: Request, gapId: string): Promise<Response> {
 
 async function recordAssessment(request: Request, assessmentId: string): Promise<Response> {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
-
-  let body: {
-    agent_score?: number;
-    agent_notes?: string;
-    proposed_points?: number;
-  };
   try {
-    body = await request.json();
-  } catch {
-    return error('Invalid JSON body', 400);
-  }
+    const body = await validateRecordAssessmentRequest(request);
+    const update: Record<string, unknown> = {};
+    if (body.agentScore !== undefined) update.agent_score = body.agentScore;
+    if (body.agentNotes !== undefined) update.agent_notes = body.agentNotes;
+    if (body.proposedPoints !== undefined) update.proposed_points = body.proposedPoints;
 
-  const update: Record<string, unknown> = {};
-  if (body.agent_score !== undefined) update.agent_score = body.agent_score;
-  if (body.agent_notes !== undefined) update.agent_notes = body.agent_notes;
-  if (body.proposed_points !== undefined) update.proposed_points = body.proposed_points;
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/gap_assessments?id=eq.${assessmentId}`,
+      {
+        method: 'PATCH',
+        headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
+        body: JSON.stringify(update),
+      }
+    );
 
-  if (Object.keys(update).length === 0) {
-    return error('At least one of agent_score, agent_notes, proposed_points required', 400);
-  }
-
-  const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/gap_assessments?id=eq.${assessmentId}`,
-    {
-      method: 'PATCH',
-      headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
-      body: JSON.stringify(update),
+    if (!res.ok) {
+      const err = await res.text();
+      return error(`Failed to update assessment: ${err}`, 500);
     }
-  );
 
-  if (!res.ok) {
-    const err = await res.text();
-    return error(`Failed to update assessment: ${err}`, 500);
+    const rows = await res.json() as Record<string, unknown>[] | Record<string, unknown>;
+    return json({ success: true, assessment: Array.isArray(rows) ? rows[0] : rows });
+  } catch (err) {
+    if (err instanceof RequestValidationError) {
+      return error(err.message, err.status);
+    }
+    console.error('[ADMIN] recordAssessment failed:', err);
+    return error('Failed to update assessment', 500);
   }
-
-  const rows = await res.json() as Record<string, unknown>[] | Record<string, unknown>;
-  return json({ success: true, assessment: Array.isArray(rows) ? rows[0] : rows });
 }
 
 // ============================================
@@ -364,89 +375,92 @@ async function approveAssessment(request: Request, assessmentId: string): Promis
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   const headers = writeHeaders(SUPABASE_SERVICE_ROLE_KEY);
 
-  let body: { awarded_points?: number; reviewed_by?: string };
   try {
-    body = await request.json();
-  } catch {
-    body = {};
-  }
+    const body = await validateApproveAssessmentRequest(request);
 
-  // 1. Fetch the assessment
-  const assessRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/gap_assessments?id=eq.${assessmentId}&select=*&limit=1`,
-    { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
-  );
-  if (!assessRes.ok) return error('Failed to fetch assessment', 500);
-  const assessments = await assessRes.json() as Array<{
-    id: string; gap_id: string; app_id: string; user_id: string;
-    proposed_points: number | null; status: string;
-  }>;
-  if (assessments.length === 0) return error('Assessment not found', 404);
-  const assessment = assessments[0];
+    // 1. Fetch the assessment
+    const assessRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/gap_assessments?id=eq.${assessmentId}&select=*&limit=1`,
+      { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
+    );
+    if (!assessRes.ok) return error('Failed to fetch assessment', 500);
+    const assessments = await assessRes.json() as Array<{
+      id: string; gap_id: string; app_id: string; user_id: string;
+      proposed_points: number | null; status: string;
+    }>;
+    if (assessments.length === 0) return error('Assessment not found', 404);
+    const assessment = assessments[0];
 
-  if (assessment.status === 'approved') {
-    return error('Assessment already approved', 409);
-  }
-
-  const awardedPoints = body.awarded_points ?? assessment.proposed_points ?? 100;
-  const reviewedBy = body.reviewed_by || 'admin';
-
-  // 2. Update assessment to approved
-  const updateRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/gap_assessments?id=eq.${assessmentId}`,
-    {
-      method: 'PATCH',
-      headers,
-      body: JSON.stringify({
-        status: 'approved',
-        awarded_points: awardedPoints,
-        reviewed_by: reviewedBy,
-        reviewed_at: new Date().toISOString(),
-      }),
+    if (assessment.status === 'approved') {
+      return error('Assessment already approved', 409);
     }
-  );
-  if (!updateRes.ok) return error('Failed to approve assessment', 500);
 
-  // 3. Write points to ledger
-  const pointsRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/points_ledger`,
-    {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        user_id: assessment.user_id,
-        amount: awardedPoints,
-        reason: `Gap fulfilled: ${assessment.gap_id}`,
-        gap_assessment_id: assessmentId,
-        season: 1, // TODO: read from active season
-      }),
+    const awardedPoints = body.awardedPoints ?? assessment.proposed_points ?? 100;
+    const reviewedBy = body.reviewedBy || 'admin';
+
+    // 2. Update assessment to approved
+    const updateRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/gap_assessments?id=eq.${assessmentId}`,
+      {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({
+          status: 'approved',
+          awarded_points: awardedPoints,
+          reviewed_by: reviewedBy,
+          reviewed_at: new Date().toISOString(),
+        }),
+      }
+    );
+    if (!updateRes.ok) return error('Failed to approve assessment', 500);
+
+    // 3. Write points to ledger
+    const pointsRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/points_ledger`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          user_id: assessment.user_id,
+          amount: awardedPoints,
+          reason: `Gap fulfilled: ${assessment.gap_id}`,
+          gap_assessment_id: assessmentId,
+          season: 1, // TODO: read from active season
+        }),
+      }
+    );
+    if (!pointsRes.ok) {
+      console.error('[ADMIN] Failed to write points ledger:', await pointsRes.text());
     }
-  );
-  if (!pointsRes.ok) {
-    console.error('[ADMIN] Failed to write points ledger:', await pointsRes.text());
+
+    // 4. Update gap status to fulfilled
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/gaps?id=eq.${assessment.gap_id}`,
+      {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({
+          status: 'fulfilled',
+          fulfilled_by_app_id: assessment.app_id,
+          fulfilled_by_user_id: assessment.user_id,
+          updated_at: new Date().toISOString(),
+        }),
+      }
+    ).catch(() => {});
+
+    return json({
+      success: true,
+      awarded_points: awardedPoints,
+      user_id: assessment.user_id,
+      gap_id: assessment.gap_id,
+    });
+  } catch (err) {
+    if (err instanceof RequestValidationError) {
+      return error(err.message, err.status);
+    }
+    console.error('[ADMIN] approveAssessment failed:', err);
+    return error('Failed to approve assessment', 500);
   }
-
-  // 4. Update gap status to fulfilled
-  await fetch(
-    `${SUPABASE_URL}/rest/v1/gaps?id=eq.${assessment.gap_id}`,
-    {
-      method: 'PATCH',
-      headers,
-      body: JSON.stringify({
-        status: 'fulfilled',
-        fulfilled_by_app_id: assessment.app_id,
-        fulfilled_by_user_id: assessment.user_id,
-        updated_at: new Date().toISOString(),
-      }),
-    }
-  ).catch(() => {});
-
-  return json({
-    success: true,
-    awarded_points: awardedPoints,
-    user_id: assessment.user_id,
-    gap_id: assessment.gap_id,
-  });
 }
 
 // ============================================
@@ -482,54 +496,52 @@ async function rejectAssessment(assessmentId: string): Promise<Response> {
 
 async function topUpBalance(request: Request, userId: string): Promise<Response> {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
-
-  let body: { amount_light: number };
   try {
-    body = await request.json();
-  } catch {
-    return error('Invalid JSON body', 400);
-  }
+    const body = await validateTopUpBalanceRequest(request);
 
-  if (!body.amount_light || typeof body.amount_light !== 'number' || body.amount_light <= 0) {
-    return error('amount_light must be a positive number', 400);
-  }
+    // Credit balance via RPC
+    const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/credit_balance`, {
+      method: 'POST',
+      headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
+      body: JSON.stringify({
+        p_user_id: userId,
+        p_amount_light: body.amountLight,
+      }),
+    });
 
-  // Credit balance via RPC
-  const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/credit_balance`, {
-    method: 'POST',
-    headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
-    body: JSON.stringify({
-      p_user_id: userId,
-      p_amount_light: body.amount_light,
-    }),
-  });
+    if (!rpcRes.ok) {
+      const err = await rpcRes.text();
+      if (err.includes('no rows')) return error('User not found', 404);
+      return error('Failed to update balance', 500);
+    }
 
-  if (!rpcRes.ok) {
-    const err = await rpcRes.text();
-    if (err.includes('no rows')) return error('User not found', 404);
+    const result = await rpcRes.json();
+    const row = Array.isArray(result) ? result[0] : result;
+    const oldBalance = row?.old_balance ?? 0;
+    const newBalance = row?.new_balance ?? 0;
+
+    // If was at zero, unsuspend content
+    let unsuspended = { apps: 0, pages: 0 };
+    if (oldBalance <= 0) {
+      unsuspended = await unsuspendContent(userId);
+    }
+
+    return json({
+      success: true,
+      user_id: userId,
+      previous_balance_light: oldBalance,
+      added_light: body.amountLight,
+      new_balance_light: newBalance,
+      unsuspended_apps: unsuspended.apps,
+      unsuspended_pages: unsuspended.pages,
+    });
+  } catch (err) {
+    if (err instanceof RequestValidationError) {
+      return error(err.message, err.status);
+    }
+    console.error('[ADMIN] topUpBalance failed:', err);
     return error('Failed to update balance', 500);
   }
-
-  const result = await rpcRes.json();
-  const row = Array.isArray(result) ? result[0] : result;
-  const oldBalance = row?.old_balance ?? 0;
-  const newBalance = row?.new_balance ?? 0;
-
-  // If was at zero, unsuspend content
-  let unsuspended = { apps: 0, pages: 0 };
-  if (oldBalance <= 0) {
-    unsuspended = await unsuspendContent(userId);
-  }
-
-  return json({
-    success: true,
-    user_id: userId,
-    previous_balance_light: oldBalance,
-    added_light: body.amount_light,
-    new_balance_light: newBalance,
-    unsuspended_apps: unsuspended.apps,
-    unsuspended_pages: unsuspended.pages,
-  });
 }
 
 // ============================================
@@ -791,8 +803,8 @@ async function getAnalytics(days: number): Promise<Response> {
 async function setAppCategory(request: Request, appId: string): Promise<Response> {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   try {
-    const body = await request.json() as { category: string | null };
-    const category = body.category ?? null;
+    const body = await validateSetAppCategoryRequest(request);
+    const category = body.category;
 
     const res = await fetch(
       `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}`,
@@ -809,6 +821,9 @@ async function setAppCategory(request: Request, appId: string): Promise<Response
     const updated = await res.json() as UpdatedAppRow[];
     return json({ success: true, app_id: appId, category, app: updated[0] || null });
   } catch (err) {
+    if (err instanceof RequestValidationError) {
+      return error(err.message, err.status);
+    }
     console.error('[ADMIN] setAppCategory failed:', err);
     return error('Failed to set category', 500);
   }
@@ -817,7 +832,7 @@ async function setAppCategory(request: Request, appId: string): Promise<Response
 async function setAppFeatured(request: Request, appId: string): Promise<Response> {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   try {
-    const body = await request.json() as { featured: boolean };
+    const body = await validateSetAppFeaturedRequest(request);
     const featured_at = body.featured ? new Date().toISOString() : null;
 
     const res = await fetch(
@@ -835,6 +850,9 @@ async function setAppFeatured(request: Request, appId: string): Promise<Response
     const updated = await res.json() as UpdatedAppRow[];
     return json({ success: true, app_id: appId, featured: !!featured_at, featured_at, app: updated[0] || null });
   } catch (err) {
+    if (err instanceof RequestValidationError) {
+      return error(err.message, err.status);
+    }
     console.error('[ADMIN] setAppFeatured failed:', err);
     return error('Failed to set featured status', 500);
   }

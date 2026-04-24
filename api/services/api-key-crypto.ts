@@ -57,32 +57,33 @@ export async function encryptApiKey(apiKey: string): Promise<string> {
 
 export async function decryptApiKey(encryptedKey: string): Promise<string> {
   const combined = Uint8Array.from(atob(encryptedKey), (c) => c.charCodeAt(0));
+  const salt = combined.slice(0, PER_RECORD_SALT_LENGTH);
+  const iv = combined.slice(
+    PER_RECORD_SALT_LENGTH,
+    PER_RECORD_SALT_LENGTH + IV_LENGTH,
+  );
+  const data = combined.slice(PER_RECORD_SALT_LENGTH + IV_LENGTH);
+  const key = await deriveEncryptionKey(salt);
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: iv as BufferSource },
+    key,
+    data as BufferSource,
+  );
 
-  let decrypted: ArrayBuffer;
-  try {
-    const salt = combined.slice(0, PER_RECORD_SALT_LENGTH);
-    const iv = combined.slice(
-      PER_RECORD_SALT_LENGTH,
-      PER_RECORD_SALT_LENGTH + IV_LENGTH,
-    );
-    const data = combined.slice(PER_RECORD_SALT_LENGTH + IV_LENGTH);
-    const key = await deriveEncryptionKey(salt);
-    decrypted = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: iv as BufferSource },
-      key,
-      data as BufferSource,
-    );
-  } catch {
-    const legacySalt = new TextEncoder().encode(LEGACY_SALT);
-    const iv = combined.slice(0, IV_LENGTH);
-    const data = combined.slice(IV_LENGTH);
-    const key = await deriveEncryptionKey(legacySalt);
-    decrypted = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: iv as BufferSource },
-      key,
-      data as BufferSource,
-    );
-  }
+  return new TextDecoder().decode(decrypted);
+}
+
+export async function decryptLegacyApiKeyForMigration(encryptedKey: string): Promise<string> {
+  const combined = Uint8Array.from(atob(encryptedKey), (c) => c.charCodeAt(0));
+  const legacySalt = new TextEncoder().encode(LEGACY_SALT);
+  const iv = combined.slice(0, IV_LENGTH);
+  const data = combined.slice(IV_LENGTH);
+  const key = await deriveEncryptionKey(legacySalt);
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: iv as BufferSource },
+    key,
+    data as BufferSource,
+  );
 
   return new TextDecoder().decode(decrypted);
 }

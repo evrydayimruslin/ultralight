@@ -4,7 +4,7 @@
 //
 // Inspired by @cloudflare/codemode but inlined for Deno compatibility.
 
-import type { ManifestFunction, ManifestParameter } from '../../shared/types/index.ts';
+import type { ManifestFunction, ManifestParameter } from '../../shared/contracts/manifest.ts';
 
 // ── Types ──
 

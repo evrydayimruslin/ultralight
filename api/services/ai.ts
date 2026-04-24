@@ -1,7 +1,8 @@
 // AI Service Implementation (BYOK)
 // Single provider: OpenRouter (covers 100+ models via one API key)
 
-import type { AIRequest, AIResponse, AIContentPart, BYOKProvider } from '../../shared/types/index.ts';
+import type { AIRequest, AIResponse, AIContentPart } from '../../shared/contracts/ai.ts';
+import type { BYOKProvider } from '../../shared/types/index.ts';
 
 // ============================================
 // TYPES

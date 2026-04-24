@@ -2,14 +2,17 @@
 // Processes file uploads, validates, bundles, stores to R2, creates app record
 // Supports both new app creation and draft uploads for existing apps
 
-import { error, json } from './app.ts';
-import type { BuildLogEntry, UploadResponse, AppManifest } from '../../shared/types/index.ts';
+import { error, json } from './response.ts';
+import type { AppManifest } from '../../shared/contracts/manifest.ts';
+import {
+  resolveManifestEnvSchema,
+  validateManifest,
+} from '../../shared/contracts/manifest.ts';
+import type { BuildLogEntry, UploadResponse } from '../../shared/types/index.ts';
 import {
   ALLOWED_EXTENSIONS,
   MAX_FILES_PER_UPLOAD,
   MAX_UPLOAD_SIZE_BYTES,
-  resolveManifestEnvSchema,
-  validateManifest,
 } from '../../shared/types/index.ts';
 import { createR2Service, type FileUpload } from '../services/storage.ts';
 import { createAppsService } from '../services/apps.ts';
@@ -28,6 +31,7 @@ import {
 import { checkStorageQuota, recordUploadStorage, formatBytes } from '../services/storage-quota.ts';
 import { detectGpuConfig, parseGpuConfig } from '../services/gpu/config.ts';
 import type { GpuConfig } from '../services/gpu/types.ts';
+import { assertGpuBuildPreflight } from '../services/gpu/builder.ts';
 import {
   parseMigrationFiles,
   validateMigrationSchema,
@@ -36,6 +40,16 @@ import {
   type MigrationFile,
 } from '../services/d1-migrations.ts';
 import { provisionD1ForApp, getD1DatabaseId } from '../services/d1-provisioning.ts';
+import {
+  validateProgrammaticUploadOptions,
+  validateUploadFormMetadata,
+} from '../services/platform-request-validation.ts';
+import { withSensitiveRouteRateLimit } from '../services/sensitive-route-rate-limit.ts';
+import {
+  hydrateManifestForSource,
+  upsertManifestUploadFile,
+} from '../services/app-manifest-generation.ts';
+import { createServerLogger } from '../services/logging.ts';
 
 // Export file type for programmatic uploads
 export interface UploadFile {
@@ -55,10 +69,49 @@ interface DraftUploadResponse {
   message: string;
 }
 
+const uploadLogger = createServerLogger('UPLOAD');
+const storageLogger = createServerLogger('STORAGE');
+const integrityLogger = createServerLogger('INTEGRITY');
+const gpuBuildLogger = createServerLogger('GPU-BUILD');
+const skillsLogger = createServerLogger('SKILLS');
+
 function createHttpError(message: string, status: number): Error & { status: number } {
   const err = new Error(message) as Error & { status: number };
   err.status = status;
   return err;
+}
+
+function parseUploadedManifest(
+  files: Array<{ name: string; content: string }>,
+): AppManifest | null {
+  const manifestFile = files.find((file) => {
+    const fileName = file.name.split('/').pop() || file.name;
+    return fileName === 'manifest.json';
+  });
+
+  if (!manifestFile) {
+    return null;
+  }
+
+  let manifestJson: unknown;
+  try {
+    manifestJson = JSON.parse(manifestFile.content);
+  } catch (err) {
+    throw createHttpError(
+      `Failed to parse manifest.json: ${err instanceof Error ? err.message : String(err)}`,
+      400,
+    );
+  }
+
+  const validation = validateManifest(manifestJson);
+  if (!validation.valid) {
+    throw createHttpError(
+      `Invalid manifest.json: ${validation.errors.map((entry) => `${entry.path}: ${entry.message}`).join(', ')}`,
+      400,
+    );
+  }
+
+  return validation.manifest || null;
 }
 
 function assertUploadQuota(quotaCheck: {
@@ -85,45 +138,59 @@ function assertUploadQuota(quotaCheck: {
 
 export async function handleUpload(request: Request): Promise<Response> {
   try {
-    // Debug: Log all headers
-    console.log('=== UPLOAD REQUEST ===');
-    console.log('Headers:', Object.fromEntries(request.headers.entries()));
+    uploadLogger.info('Upload request received', {
+      method: request.method,
+      content_type: request.headers.get('content-type') || '',
+      content_length: request.headers.get('content-length') || '',
+      header_names: Array.from(request.headers.keys()),
+    });
 
     // Authenticate user - required for upload
     let userId: string;
     try {
       const user = await authenticate(request);
       userId = user.id;
-      console.log('Auth successful, userId:', userId);
+      uploadLogger.info('Upload request authenticated', { user_id: userId });
     } catch (authErr: unknown) {
-      console.error('Auth failed:', authErr instanceof Error ? authErr.message : authErr);
+      uploadLogger.warn('Upload authentication failed', { error: authErr });
       return error('Authentication required. Please sign in to upload.', 401);
     }
     // Note: FK constraint on apps.owner_id has been removed, so no user record needed
 
+    return await withSensitiveRouteRateLimit(userId, 'upload:create', async () => {
     // Parse multipart form data
     const formData = await request.formData();
     const files: File[] = [];
-    let providedName: string | null = null;
-    let providedDescription: string | null = null;
-    let providedAppType: 'mcp' | 'skill' | null = null;
-    let providedFunctionsEntry: string | null = null;
+    let rawProvidedName: string | undefined;
+    let rawProvidedDescription: string | undefined;
+    let rawProvidedAppType: string | undefined;
+    let rawProvidedFunctionsEntry: string | undefined;
 
     for (const [name, value] of formData.entries()) {
       if (value instanceof File) {
         files.push(value);
       } else if (name === 'name' && typeof value === 'string') {
-        providedName = value.trim();
+        rawProvidedName = value;
       } else if (name === 'description' && typeof value === 'string') {
-        providedDescription = value.trim();
+        rawProvidedDescription = value;
       } else if (name === 'app_type' && typeof value === 'string') {
-        if (value === 'mcp' || value === 'skill') {
-          providedAppType = value as 'mcp' | 'skill';
-        }
+        rawProvidedAppType = value;
       } else if (name === 'functions_entry' && typeof value === 'string') {
-        providedFunctionsEntry = value.trim();
+        rawProvidedFunctionsEntry = value;
       }
     }
+
+    const {
+      name: providedName,
+      description: providedDescription,
+      appType: providedAppType,
+      functionsEntry: providedFunctionsEntry,
+    } = validateUploadFormMetadata({
+      name: rawProvidedName,
+      description: rawProvidedDescription,
+      app_type: rawProvidedAppType,
+      functions_entry: rawProvidedFunctionsEntry,
+    });
 
     // Validate file count
     if (files.length === 0) {
@@ -176,7 +243,10 @@ export async function handleUpload(request: Request): Promise<Response> {
           return error(`Invalid manifest.json: ${validation.errors.map(e => `${e.path}: ${e.message}`).join(', ')}`, 400);
         }
         manifest = validation.manifest!;
-        console.log('Manifest found:', manifest.name, 'type:', manifest.type);
+        uploadLogger.info('Upload manifest detected', {
+          manifest_name: manifest.name,
+          manifest_type: manifest.type,
+        });
       } catch (parseErr) {
         return error(`Failed to parse manifest.json: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`, 400);
       }
@@ -244,7 +314,10 @@ export async function handleUpload(request: Request): Promise<Response> {
         );
       }
       gpuConfig = gpuValidation.config!;
-      console.log('GPU config detected:', gpuConfig.gpu_type, 'python:', gpuConfig.python);
+      uploadLogger.info('GPU upload config detected', {
+        gpu_type: gpuConfig.gpu_type,
+        python: gpuConfig.python || '3.11',
+      });
     }
 
     // --- GPU UPLOAD BRANCH ---
@@ -332,6 +405,17 @@ export async function handleUpload(request: Request): Promise<Response> {
       });
       assertUploadQuota(quotaCheck, totalUploadBytes);
 
+      try {
+        assertGpuBuildPreflight(appId, version);
+      } catch (err) {
+        throw createHttpError(
+          err instanceof Error ? err.message : 'GPU build preflight failed',
+          typeof err === 'object' && err !== null && 'status' in err
+            ? Number((err as { status?: number }).status) || 503
+            : 503,
+        );
+      }
+
       // Upload raw files to R2 (no bundling for GPU functions)
       log('info', 'Uploading GPU function files to storage...');
       const storageKey = `apps/${appId}/${version}/`;
@@ -367,13 +451,18 @@ export async function handleUpload(request: Request): Promise<Response> {
           name: normalizeFileName(f.name),
           content: f.content,
         })), gpuConfig!).catch(err =>
-          console.error(`[GPU-BUILD] Build failed for ${appId}:`, err)
+          gpuBuildLogger.error('GPU build trigger failed', { app_id: appId, version, error: err })
         );
-      }).catch(err => console.error('[GPU-BUILD] Import failed:', err));
+      }).catch(err => gpuBuildLogger.error('GPU builder import failed', { app_id: appId, error: err }));
 
       // Record storage usage (fire-and-forget)
       recordUploadStorage(userId, appId, version, totalUploadBytes).catch(err =>
-        console.error('[STORAGE] recordUploadStorage failed:', err)
+        storageLogger.error('recordUploadStorage failed after GPU upload', {
+          user_id: userId,
+          app_id: appId,
+          version,
+          error: err,
+        })
       );
 
       log('success', 'GPU build triggered in background');
@@ -414,7 +503,10 @@ export async function handleUpload(request: Request): Promise<Response> {
       }
 
       manifest = formManifest;
-      console.log('Using form-provided manifest override:', manifest.type, manifest.entry);
+      uploadLogger.info('Applied form-provided manifest override', {
+        manifest_type: manifest.type,
+        entry: manifest.entry,
+      });
     }
 
     // Determine entry file based on manifest, form fields, or fallback to auto-detection
@@ -443,29 +535,63 @@ export async function handleUpload(request: Request): Promise<Response> {
     }
 
     if (!entryFile) {
-      console.log('Files received:', validatedFiles.map(f => f.name));
+      uploadLogger.warn('Upload rejected because no entry file was found', {
+        file_names: validatedFiles.map((f) => f.name),
+      });
       return error('Entry file required. Either provide manifest.json or include index.ts/index.tsx');
     }
-    console.log('Entry file found:', entryFile.name);
+    uploadLogger.info('Resolved upload entry file', { entry_file: entryFile.name });
+
+    const normalizeFileName = (name: string): string => {
+      const parts = name.split('/');
+      if (parts.length > 1) {
+        const firstPart = validatedFiles[0]?.name.split('/')[0];
+        const allSameRoot = validatedFiles.every(f => f.name.startsWith(firstPart + '/'));
+        if (allSameRoot && parts[0] === firstPart) {
+          return parts.slice(1).join('/');
+        }
+      }
+      return name;
+    };
+
+    const normalizedEntryName = normalizeFileName(entryFile.name);
+    const manifestHydration = await hydrateManifestForSource({
+      app: {
+        name: manifest?.name || providedName || 'Untitled App',
+        slug: providedName || 'uploaded-app',
+        description: providedDescription || manifest?.description || null,
+      },
+      existingManifest: manifest,
+      sourceCode: entryFile.content,
+      filename: normalizedEntryName,
+      version: manifest?.version || '1.0.0',
+    });
+    manifest = manifestHydration.manifest;
 
     log('info', `Starting build for ${validatedFiles.length} files...`);
 
     if (manifest) {
       log('info', `Using manifest.json (type: ${manifest.type})`);
     }
+    if (manifestHydration.source !== 'uploaded') {
+      log(
+        'info',
+        manifestHydration.source === 'merged'
+          ? 'Normalized manifest-backed contracts from uploaded manifest and source code'
+          : 'Generated manifest-backed contracts from source code',
+      );
+    }
+    for (const parseError of manifestHydration.parseResult.parseErrors) {
+      log('warn', `[Manifest] ${parseError}`);
+    }
+    for (const parseWarning of manifestHydration.parseResult.parseWarnings) {
+      log('warn', `[Manifest] ${parseWarning}`);
+    }
 
     // Extract exports - prefer manifest declarations over code parsing
     log('info', 'Determining exports...');
-    let exports: string[];
-    if (manifest?.functions) {
-      // Use manifest-declared functions
-      exports = Object.keys(manifest.functions);
-      log('success', `Found ${exports.length} functions from manifest: ${exports.join(', ')}`);
-    } else {
-      // Fallback to parsing code (legacy behavior)
-      exports = extractExports(entryFile.content);
-      log('success', `Found ${exports.length} exports from code: ${exports.join(', ')}`);
-    }
+    const exports = manifest?.functions ? Object.keys(manifest.functions) : [];
+    log('success', `Found ${exports.length} functions from manifest: ${exports.join(', ')}`);
 
     // ── Skill upload path — simplified, no bundling/manifest/D1 ──
     if (providedAppType === 'skill') {
@@ -507,7 +633,10 @@ export async function handleUpload(request: Request): Promise<Response> {
 
       // Rebuild function index to include the new skill
       import('../services/function-index.ts').then(m => m.rebuildFunctionIndex(userId))
-        .catch(err => console.error('Function index rebuild failed:', err));
+        .catch(err => uploadLogger.error('Function index rebuild failed after skill upload', {
+          user_id: userId,
+          error: err,
+        }));
 
       return json({
         id: appId,
@@ -592,24 +721,6 @@ export async function handleUpload(request: Request): Promise<Response> {
     const r2Service = createR2Service();
     const appsService = createAppsService();
 
-    // Normalize file names - strip folder prefix for consistent storage
-    // e.g., "myapp/index.ts" -> "index.ts", "myapp/lib/utils.ts" -> "lib/utils.ts"
-    const normalizeFileName = (name: string): string => {
-      const parts = name.split('/');
-      // If all files share a common prefix folder, strip it
-      if (parts.length > 1) {
-        // Check if this looks like a folder upload (has a common root folder)
-        const firstPart = validatedFiles[0]?.name.split('/')[0];
-        const allSameRoot = validatedFiles.every(f => f.name.startsWith(firstPart + '/'));
-        if (allSameRoot && parts[0] === firstPart) {
-          return parts.slice(1).join('/');
-        }
-      }
-      return name;
-    };
-
-    // Get normalized entry file name
-    const normalizedEntryName = normalizeFileName(entryFile.name);
     log('info', `Entry file normalized: ${entryFile.name} -> ${normalizedEntryName}`);
 
     // Prepare files for upload
@@ -617,7 +728,8 @@ export async function handleUpload(request: Request): Promise<Response> {
     // - index.tsx (IIFE bundle) - for MCP sandbox execution
     // - index.esm.js (ESM bundle) - for browser UI rendering
     // - _source_index.tsx - original source for generate-docs
-    const filesToUpload = bundleUsed
+    const filesToUpload = upsertManifestUploadFile(
+      bundleUsed
       ? [
           // Upload IIFE bundled code as the entry file (for MCP sandbox)
           {
@@ -651,7 +763,14 @@ export async function handleUpload(request: Request): Promise<Response> {
           name: normalizeFileName(f.name),
           content: new TextEncoder().encode(f.content),
           contentType: getContentType(f.name),
-        }));
+        })),
+      manifest,
+      (manifestJson) => ({
+        name: 'manifest.json',
+        content: new TextEncoder().encode(manifestJson),
+        contentType: 'application/json',
+      }),
+    );
 
     // Check app count limit (10 apps max)
     const appLimitErr = await checkAppLimit(userId);
@@ -704,7 +823,12 @@ export async function handleUpload(request: Request): Promise<Response> {
     // Record storage usage for billing (fire-and-forget)
     const totalSizeBytes = filesToUpload.reduce((sum, f) => sum + f.content.byteLength, 0);
     recordUploadStorage(userId, appId, version, totalSizeBytes).catch(err =>
-      console.error('[STORAGE] recordUploadStorage failed:', err)
+      storageLogger.error('recordUploadStorage failed after upload', {
+        user_id: userId,
+        app_id: appId,
+        version,
+        error: err,
+      })
     );
 
     // D1 provisioning — SYNCHRONOUS, eager (not fire-and-forget)
@@ -728,7 +852,10 @@ export async function handleUpload(request: Request): Promise<Response> {
         safety_status: safetyResult.summary.warnings > 0 ? 'warned' : 'clean',
         integrity_checked_at: new Date().toISOString(),
       });
-    }).catch(err => console.error('[INTEGRITY] Fingerprint storage failed:', err));
+    }).catch(err => integrityLogger.error('Fingerprint storage failed after upload', {
+      app_id: appId,
+      error: err,
+    }));
 
     // Auto-generate Skills.md (fire-and-forget, non-blocking)
     log('info', 'Generating Skills.md...');
@@ -736,22 +863,43 @@ export async function handleUpload(request: Request): Promise<Response> {
     if (appsForSkills) {
       generateSkillsForVersion(appsForSkills, storageKey, version)
         .then(skills => {
-          if (skills.skillsMd) console.log(`Skills.md generated for ${appId}`);
+          if (skills.skillsMd) {
+            skillsLogger.info('Generated Skills.md after upload', {
+              app_id: appId,
+              version,
+            });
+          }
         })
-        .catch(err => console.error('Skills generation failed (non-fatal):', err));
+        .catch(err => skillsLogger.error('Skills generation failed after upload', {
+          app_id: appId,
+          version,
+          error: err,
+        }));
     }
 
     // Always rebuild library + function index after upload (independent of skills gen)
     // Run synchronously to ensure it completes before the Worker exits
     try {
       await rebuildUserLibrary(userId);
-      console.log(`[UPLOAD] Library rebuilt for ${userId}`);
-    } catch (err) { console.error('Library rebuild failed:', err); }
+      uploadLogger.info('Rebuilt user library after upload', { user_id: userId, app_id: appId });
+    } catch (err) {
+      uploadLogger.error('Library rebuild failed after upload', {
+        user_id: userId,
+        app_id: appId,
+        error: err,
+      });
+    }
     try {
       const { rebuildFunctionIndex } = await import('../services/function-index.ts');
       await rebuildFunctionIndex(userId);
-      console.log(`[UPLOAD] Function index rebuilt for ${userId}`);
-    } catch (err) { console.error('Function index rebuild failed:', err); }
+      uploadLogger.info('Rebuilt function index after upload', { user_id: userId, app_id: appId });
+    } catch (err) {
+      uploadLogger.error('Function index rebuild failed after upload', {
+        user_id: userId,
+        app_id: appId,
+        error: err,
+      });
+    }
 
     log('success', 'Build complete!');
 
@@ -766,8 +914,9 @@ export async function handleUpload(request: Request): Promise<Response> {
     };
 
     return json(response, 201);
+    });
   } catch (err) {
-    console.error('Upload error:', err);
+    uploadLogger.error('Upload request failed', { error: err });
     const status = typeof err === 'object' && err !== null && 'status' in err
       ? Number((err as { status?: number }).status) || 500
       : 500;
@@ -855,7 +1004,7 @@ export async function handleDraftUpload(request: Request, appId: string): Promis
       const user = await authenticate(request);
       userId = user.id;
     } catch (authErr: unknown) {
-      console.error('Auth failed:', authErr instanceof Error ? authErr.message : authErr);
+      uploadLogger.warn('Draft upload authentication failed', { app_id: appId, error: authErr });
       return error('Authentication required', 401);
     }
 
@@ -871,6 +1020,7 @@ export async function handleDraftUpload(request: Request, appId: string): Promis
       return error('Unauthorized', 403);
     }
 
+    return await withSensitiveRouteRateLimit(userId, 'upload:draft', async () => {
     // Check if there's already a draft - warn but allow overwrite
     const hasDraft = !!app.draft_storage_key;
 
@@ -921,6 +1071,32 @@ export async function handleDraftUpload(request: Request, appId: string): Promis
       return error('Entry file (index.ts, index.tsx, index.js, or index.jsx) required');
     }
 
+    const normalizeFileName = (name: string): string => {
+      const parts = name.split('/');
+      if (parts.length > 1) {
+        const firstPart = validatedFiles[0]?.name.split('/')[0];
+        const allSameRoot = validatedFiles.every(f => f.name.startsWith(firstPart + '/'));
+        if (allSameRoot && parts[0] === firstPart) {
+          return parts.slice(1).join('/');
+        }
+      }
+      return name;
+    };
+
+    const normalizedEntryName = normalizeFileName(entryFile.name);
+    const uploadedManifest = parseUploadedManifest(validatedFiles);
+    const manifestHydration = await hydrateManifestForSource({
+      app: {
+        name: app.name || app.slug,
+        slug: app.slug,
+        description: app.description,
+      },
+      existingManifest: uploadedManifest,
+      sourceCode: entryFile.content,
+      filename: normalizedEntryName,
+      version: app.current_version || '1.0.0',
+    });
+
     // Build logs
     const buildLogs: BuildLogEntry[] = [];
     const log = (level: BuildLogEntry['level'], message: string) => {
@@ -932,11 +1108,25 @@ export async function handleDraftUpload(request: Request, appId: string): Promis
     }
 
     log('info', `Starting draft build for ${validatedFiles.length} files...`);
+    log(
+      'info',
+      manifestHydration.source === 'merged'
+        ? 'Normalized manifest-backed contracts from uploaded manifest and source code'
+        : 'Generated manifest-backed contracts from source code',
+    );
+    for (const parseError of manifestHydration.parseResult.parseErrors) {
+      log('warn', `[Manifest] ${parseError}`);
+    }
+    for (const parseWarning of manifestHydration.parseResult.parseWarnings) {
+      log('warn', `[Manifest] ${parseWarning}`);
+    }
 
     // Extract exports
     log('info', 'Parsing entry file...');
-    const exports = extractExports(entryFile.content);
-    log('success', `Found ${exports.length} exports: ${exports.join(', ')}`);
+    const exports = manifestHydration.manifest.functions
+      ? Object.keys(manifestHydration.manifest.functions)
+      : [];
+    log('success', `Found ${exports.length} functions from manifest: ${exports.join(', ')}`);
 
     // Bundle the code
     log('info', 'Bundling code...');
@@ -997,23 +1187,9 @@ export async function handleDraftUpload(request: Request, appId: string): Promis
     // Initialize R2 service
     const r2Service = createR2Service();
 
-    // Normalize file names
-    const normalizeFileName = (name: string): string => {
-      const parts = name.split('/');
-      if (parts.length > 1) {
-        const firstPart = validatedFiles[0]?.name.split('/')[0];
-        const allSameRoot = validatedFiles.every(f => f.name.startsWith(firstPart + '/'));
-        if (allSameRoot && parts[0] === firstPart) {
-          return parts.slice(1).join('/');
-        }
-      }
-      return name;
-    };
-
-    const normalizedEntryName = normalizeFileName(entryFile.name);
-
     // Prepare files for upload
-    const filesToUpload = bundleUsed
+    const filesToUpload = upsertManifestUploadFile(
+      bundleUsed
       ? [
           {
             name: normalizedEntryName,
@@ -1044,7 +1220,14 @@ export async function handleDraftUpload(request: Request, appId: string): Promis
           name: normalizeFileName(f.name),
           content: new TextEncoder().encode(f.content),
           contentType: getContentType(f.name),
-        }));
+        })),
+      manifestHydration.manifest,
+      (manifestJson) => ({
+        name: 'manifest.json',
+        content: new TextEncoder().encode(manifestJson),
+        contentType: 'application/json',
+      }),
+    );
 
     // Upload to draft storage location
     log('info', 'Uploading draft to storage...');
@@ -1075,8 +1258,9 @@ export async function handleDraftUpload(request: Request, appId: string): Promis
     };
 
     return json(response, 200);
+    });
   } catch (err) {
-    console.error('Draft upload error:', err);
+    uploadLogger.error('Draft upload failed', { app_id: appId, error: err });
     const status = typeof err === 'object' && err !== null && 'status' in err
       ? Number((err as { status?: number }).status) || 500
       : 500;
@@ -1110,6 +1294,8 @@ export async function handleUploadFiles(
   files: UploadFile[],
   options: UploadOptions = {}
 ): Promise<UploadResponse & { docs_generated?: boolean; docs_error?: string }> {
+  const validatedOptions = validateProgrammaticUploadOptions(options);
+
   // Validate file count
   if (files.length === 0) {
     throw new Error('No files provided');
@@ -1139,10 +1325,10 @@ export async function handleUploadFiles(
   // ── Run shared pipeline (manifest, entry, exports, bundle, safety, migrations) ──
   const { processUploadPipeline, provisionAndMigrate } = await import('../services/upload-pipeline.ts');
   const pipeline = await processUploadPipeline(validatedFiles, {
-    appType: options.app_type,
-    functionsEntry: options.functions_entry,
-    name: options.name,
-    description: options.description,
+    appType: validatedOptions.app_type,
+    functionsEntry: validatedOptions.functions_entry,
+    name: validatedOptions.name,
+    description: validatedOptions.description,
   });
 
   const manifest = pipeline.manifest;
@@ -1151,9 +1337,9 @@ export async function handleUploadFiles(
   // Generate app identity
   const appId = crypto.randomUUID();
   const version = manifest?.version || '1.0.0';
-  const slug = options.slug || generateSlug(validatedFiles.find((f) => f.name === 'package.json')?.content);
-  const appName = manifest?.name || options.name || slug;
-  const appDescription = options.description || manifest?.description || null;
+  const slug = validatedOptions.slug || generateSlug(validatedFiles.find((f) => f.name === 'package.json')?.content);
+  const appName = manifest?.name || validatedOptions.name || slug;
+  const appDescription = validatedOptions.description || manifest?.description || null;
   const appType = manifest?.type || null;
 
   // Check app count limit
@@ -1173,13 +1359,24 @@ export async function handleUploadFiles(
   const storageKey = `apps/${appId}/${version}/`;
   await r2Service.uploadFiles(storageKey, pipeline.filesToUpload);
 
+  if (globalThis.__env?.CODE_CACHE?.put && pipeline.esmBundledCode) {
+    await globalThis.__env.CODE_CACHE.put(
+      `esm:${appId}:${version}`,
+      pipeline.esmBundledCode,
+    );
+    await globalThis.__env.CODE_CACHE.put(
+      `esm:${appId}:latest`,
+      pipeline.esmBundledCode,
+    );
+  }
+
   // Compute source fingerprint
   const { computeFingerprint, runOriginalityCheck, storeIntegrityResults } = await import('../services/originality.ts');
   const mdContent = validatedFiles.filter(f => f.name.endsWith('.md')).map(f => f.content).join('\n');
   const sourceFingerprint = await computeFingerprint(pipeline.entryFile.content, mdContent);
 
   // Visibility gating
-  const requestedVisibility = options.visibility || 'private';
+  const requestedVisibility = validatedOptions.visibility || 'private';
   if (requestedVisibility !== 'private') {
     const uploaderTier = await getUserTier(userId);
     const visibilityErr = checkVisibilityAllowed(uploaderTier, requestedVisibility);
@@ -1188,7 +1385,9 @@ export async function handleUploadFiles(
     const depositErr = await checkPublishDeposit(userId);
     if (depositErr) throw new Error(depositErr);
 
-    const originalityResult = await runOriginalityCheck(userId, appId, validatedFiles);
+    const originalityResult = await runOriginalityCheck(userId, appId, validatedFiles, undefined, {
+      mode: 'fail_closed',
+    });
     if (!originalityResult.passed) {
       throw new Error(`Publish blocked: ${originalityResult.reason} (originality score: ${(originalityResult.score * 100).toFixed(1)}%)`);
     }
@@ -1209,7 +1408,7 @@ export async function handleUploadFiles(
     env_schema: manifest ? resolveManifestEnvSchema(manifest) : {},
     app_type: appType,
   };
-  if (options.gap_id) createPayload.gap_id = options.gap_id;
+  if (validatedOptions.gap_id) createPayload.gap_id = validatedOptions.gap_id;
   await appsService.create(createPayload as Parameters<typeof appsService.create>[0]);
 
   // ── D1 provisioning — SYNCHRONOUS, eager ──
@@ -1231,21 +1430,46 @@ export async function handleUploadFiles(
     source_fingerprint: sourceFingerprint,
     safety_status: pipeline.safetyWarnings > 0 ? 'warned' : 'clean',
     integrity_checked_at: new Date().toISOString(),
-  }).catch(err => console.error('[INTEGRITY] Fingerprint storage failed:', err));
+  }).catch(err => integrityLogger.error('Fingerprint storage failed after programmatic upload', {
+    app_id: appId,
+    error: err,
+  }));
 
   recordUploadStorage(userId, appId, version, totalUploadSizeBytes).catch(err =>
-    console.error('[STORAGE] recordUploadStorage failed:', err)
+    storageLogger.error('recordUploadStorage failed after programmatic upload', {
+      user_id: userId,
+      app_id: appId,
+      version,
+      error: err,
+    })
   );
 
   const appsForSkills = await appsService.findById(appId);
   if (appsForSkills) {
     generateSkillsForVersion(appsForSkills, storageKey, version)
       .then(skills => {
-        if (skills.skillsMd) console.log(`Skills.md generated for ${appId}`);
-        rebuildUserLibrary(userId).catch(err => console.error('Library rebuild failed:', err));
-        import('../services/function-index.ts').then(m => m.rebuildFunctionIndex(userId)).catch(err => console.error('Function index rebuild failed:', err));
+        if (skills.skillsMd) {
+          skillsLogger.info('Generated Skills.md after programmatic upload', {
+            app_id: appId,
+            version,
+          });
+        }
+        rebuildUserLibrary(userId).catch(err => uploadLogger.error('Library rebuild failed after programmatic upload', {
+          user_id: userId,
+          app_id: appId,
+          error: err,
+        }));
+        import('../services/function-index.ts').then(m => m.rebuildFunctionIndex(userId)).catch(err => uploadLogger.error('Function index rebuild failed after programmatic upload', {
+          user_id: userId,
+          app_id: appId,
+          error: err,
+        }));
       })
-      .catch(err => console.error('Skills generation failed:', err));
+      .catch(err => skillsLogger.error('Skills generation failed after programmatic upload', {
+        app_id: appId,
+        version,
+        error: err,
+      }));
   }
 
   return {
@@ -1325,6 +1549,32 @@ export async function handleDraftUploadFiles(
     throw new Error('Entry file (index.ts, index.tsx, index.js, or index.jsx) required');
   }
 
+  const normalizeFileName = (name: string): string => {
+    const parts = name.split('/');
+    if (parts.length > 1) {
+      const firstPart = validatedFiles[0]?.name.split('/')[0];
+      const allSameRoot = validatedFiles.every(f => f.name.startsWith(firstPart + '/'));
+      if (allSameRoot && parts[0] === firstPart) {
+        return parts.slice(1).join('/');
+      }
+    }
+    return name;
+  };
+
+  const normalizedEntryName = normalizeFileName(entryFile.name);
+  const uploadedManifest = parseUploadedManifest(validatedFiles);
+  const manifestHydration = await hydrateManifestForSource({
+    app: {
+      name: app.name || app.slug,
+      slug: app.slug,
+      description: app.description,
+    },
+    existingManifest: uploadedManifest,
+    sourceCode: entryFile.content,
+    filename: normalizedEntryName,
+    version: app.current_version || '1.0.0',
+  });
+
   // Build logs
   const buildLogs: BuildLogEntry[] = [];
   const log = (level: BuildLogEntry['level'], message: string) => {
@@ -1337,11 +1587,25 @@ export async function handleDraftUploadFiles(
   }
 
   log('info', `Starting draft build for ${validatedFiles.length} files...`);
+  log(
+    'info',
+    manifestHydration.source === 'merged'
+      ? 'Normalized manifest-backed contracts from uploaded manifest and source code'
+      : 'Generated manifest-backed contracts from source code',
+  );
+  for (const parseError of manifestHydration.parseResult.parseErrors) {
+    log('warn', `[Manifest] ${parseError}`);
+  }
+  for (const parseWarning of manifestHydration.parseResult.parseWarnings) {
+    log('warn', `[Manifest] ${parseWarning}`);
+  }
 
   // Extract exports
   log('info', 'Parsing entry file...');
-  const exports = extractExports(entryFile.content);
-  log('success', `Found ${exports.length} exports: ${exports.join(', ')}`);
+  const exports = manifestHydration.manifest.functions
+    ? Object.keys(manifestHydration.manifest.functions)
+    : [];
+  log('success', `Found ${exports.length} functions from manifest: ${exports.join(', ')}`);
 
   // Bundle the code
   log('info', 'Bundling code...');
@@ -1401,23 +1665,9 @@ export async function handleDraftUploadFiles(
   // Initialize R2 service
   const r2Service = createR2Service();
 
-  // Normalize file names
-  const normalizeFileName = (name: string): string => {
-    const parts = name.split('/');
-    if (parts.length > 1) {
-      const firstPart = validatedFiles[0]?.name.split('/')[0];
-      const allSameRoot = validatedFiles.every(f => f.name.startsWith(firstPart + '/'));
-      if (allSameRoot && parts[0] === firstPart) {
-        return parts.slice(1).join('/');
-      }
-    }
-    return name;
-  };
-
-  const normalizedEntryName = normalizeFileName(entryFile.name);
-
   // Prepare files for upload
-  const filesToUpload = bundleUsed
+  const filesToUpload = upsertManifestUploadFile(
+    bundleUsed
     ? [
         {
           name: normalizedEntryName,
@@ -1448,7 +1698,14 @@ export async function handleDraftUploadFiles(
         name: normalizeFileName(f.name),
         content: new TextEncoder().encode(f.content),
         contentType: getContentType(f.name),
-      }));
+      })),
+    manifestHydration.manifest,
+    (manifestJson) => ({
+      name: 'manifest.json',
+      content: new TextEncoder().encode(manifestJson),
+      contentType: 'application/json',
+    }),
+  );
 
   // Upload to draft storage location
   log('info', 'Uploading draft to storage...');

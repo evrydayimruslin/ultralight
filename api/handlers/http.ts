@@ -1,22 +1,40 @@
 // HTTP Endpoints Handler
 // Enables apps to receive HTTP requests from external services (webhooks, APIs, etc.)
 
-import { json, error } from './app.ts';
-import { createAppsService } from '../services/apps.ts';
-import { createAppDataService } from '../services/appdata.ts';
-import { createR2Service } from '../services/storage.ts';
-import { createUserService } from '../services/user.ts';
-import { createAIService } from '../services/ai.ts';
-import { decryptEnvVars, decryptEnvVar } from '../services/envvars.ts';
-import { isApiToken, validateToken } from '../services/tokens.ts';
-import { executeInSandbox, type UserContext } from '../runtime/sandbox.ts';
-import { checkAndIncrementWeeklyCalls } from '../services/weekly-calls.ts';
-import { executeGpuFunction } from '../services/gpu/executor.ts';
-import { acquireGpuSlot } from '../services/gpu/concurrency.ts';
-import { settleGpuExecution } from '../services/gpu/billing.ts';
-import { getUserTier } from '../services/tier-enforcement.ts';
-import { createD1DataService } from '../services/d1-data.ts';
-import { getD1DatabaseId } from '../services/d1-provisioning.ts';
+import { error, json } from "./response.ts";
+import { createAppsService } from "../services/apps.ts";
+import { createAppDataService } from "../services/appdata.ts";
+import { createAIService } from "../services/ai.ts";
+import { checkAndIncrementWeeklyCalls } from "../services/weekly-calls.ts";
+import { executeGpuFunction } from "../services/gpu/executor.ts";
+import { acquireGpuSlot } from "../services/gpu/concurrency.ts";
+import { buildGpuNotReadyMessage } from "../services/gpu/status.ts";
+import { getUserTier } from "../services/tier-enforcement.ts";
+import {
+  buildCorsHeaders,
+  buildCorsPreflightResponse,
+} from "../services/cors.ts";
+import {
+  logExecutionResult,
+  settleAndLogGpuExecution,
+} from "../services/execution-settlement.ts";
+import {
+  buildMissingAppSecretsErrorDetails,
+  buildMissingAppSecretsMessage,
+  createAppD1Resources,
+  fetchAppEntryCode,
+  resolveAppRuntimeEnvVars,
+  resolveAppSupabaseConfig,
+  resolveManifestPermissions,
+  SupabaseConfigMigrationRequiredError,
+} from "../services/app-runtime-resources.ts";
+import { buildGpuStatusDiagnostics } from "../services/gpu/status.ts";
+import {
+  callerHasAppAccess,
+  callerHasFunctionAccess,
+  callerHasRequiredScope,
+  resolveRequestCallerContext,
+} from "../services/request-caller-context.ts";
 
 // ============================================
 // PER-APP IP-BASED HTTP RATE LIMITING
@@ -43,7 +61,7 @@ function cleanupHttpRateBuckets() {
 function checkHttpRateLimit(
   ip: string,
   appId: string,
-  limitPerMinute: number
+  limitPerMinute: number,
 ): { allowed: boolean; remaining: number; resetAt: Date } {
   const key = `${ip}:${appId}`;
   const now = Date.now();
@@ -80,88 +98,103 @@ function checkHttpRateLimit(
  *   return { received: true };
  * }
  */
-export async function handleHttpEndpoint(request: Request, appId: string, path: string): Promise<Response> {
+export async function handleHttpEndpoint(
+  request: Request,
+  appId: string,
+  path: string,
+): Promise<Response> {
   const startTime = Date.now();
 
   try {
     // Extract function name from path (first segment after appId)
-    const pathParts = path.split('/').filter(Boolean);
-    const functionName = pathParts[0] || 'handler';
-    const subPath = '/' + pathParts.slice(1).join('/');
+    const pathParts = path.split("/").filter(Boolean);
+    const functionName = pathParts[0] || "handler";
+    const subPath = "/" + pathParts.slice(1).join("/");
 
-    console.log(`[HTTP] ${request.method} /http/${appId}/${functionName}${subPath}`);
+    console.log(
+      `[HTTP] ${request.method} /http/${appId}/${functionName}${subPath}`,
+    );
 
     // Get app
     const appsService = createAppsService();
     const app = await appsService.findById(appId);
 
     if (!app) {
-      return json({ error: 'App not found' }, 404);
+      return json({ error: "App not found" }, 404);
     }
 
     // Check if HTTP endpoints are enabled for this app
     const httpEnabled = app.http_enabled !== false;
     if (!httpEnabled) {
-      return json({ error: 'HTTP endpoints are disabled for this app' }, 403);
+      return json({ error: "HTTP endpoints are disabled for this app" }, 403);
     }
 
     // Per-app IP-based rate limit (prevents unauthenticated flood / quota exhaustion)
-    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-      || request.headers.get('x-real-ip')
-      || 'unknown';
+    const clientIp =
+      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      request.headers.get("x-real-ip") ||
+      "unknown";
     const appRateLimit = app.http_rate_limit || 1000;
     const httpRateResult = checkHttpRateLimit(clientIp, appId, appRateLimit);
 
     if (!httpRateResult.allowed) {
       return new Response(
-        JSON.stringify({ error: 'Rate limit exceeded for this app' }),
+        JSON.stringify({ error: "Rate limit exceeded for this app" }),
         {
           status: 429,
           headers: {
-            'Content-Type': 'application/json',
-            'Retry-After': String(Math.ceil((httpRateResult.resetAt.getTime() - Date.now()) / 1000)),
-            'X-RateLimit-Limit': String(appRateLimit),
-            'X-RateLimit-Remaining': '0',
-            'X-RateLimit-Reset': String(Math.floor(httpRateResult.resetAt.getTime() / 1000)),
+            "Content-Type": "application/json",
+            "Retry-After": String(
+              Math.ceil((httpRateResult.resetAt.getTime() - Date.now()) / 1000),
+            ),
+            "X-RateLimit-Limit": String(appRateLimit),
+            "X-RateLimit-Remaining": "0",
+            "X-RateLimit-Reset": String(
+              Math.floor(httpRateResult.resetAt.getTime() / 1000),
+            ),
           },
-        }
+        },
       );
     }
 
     // Weekly call limit check (counts against app owner)
     const ownerTier = await getUserTier(app.owner_id);
-    const weeklyResult = await checkAndIncrementWeeklyCalls(app.owner_id, ownerTier);
+    const weeklyResult = await checkAndIncrementWeeklyCalls(
+      app.owner_id,
+      ownerTier,
+      {
+        mode: "fail_closed",
+        resource: "HTTP endpoint weekly call limit",
+      },
+    );
     if (!weeklyResult.allowed) {
+      if (weeklyResult.reason === "service_unavailable") {
+        return json({
+          error:
+            "Usage controls are temporarily unavailable for this app. Please try again shortly.",
+        }, 503);
+      }
       return json({
-        error: 'Weekly call limit exceeded for this app\'s owner. Try again next week.',
+        error:
+          "Weekly call limit exceeded for this app's owner. Try again next week.",
       }, 429);
     }
 
-    // Get app code from R2
-    const r2Service = createR2Service();
-    const storageKey = app.storage_key;
-    let code: string | null = null;
-
-    const entryFiles = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
-    for (const entryFile of entryFiles) {
-      try {
-        code = await r2Service.fetchTextFile(`${storageKey}${entryFile}`);
-        break;
-      } catch {
-        // Try next
-      }
-    }
+    const code = await fetchAppEntryCode(app);
 
     if (!code) {
-      return json({ error: 'App code not found' }, 404);
+      return json({ error: "App code not found" }, 404);
     }
 
     // Check if the function exists in exports
     const exports = app.exports || [];
-    if (!exports.includes(functionName) && functionName !== 'handler' && functionName !== 'default') {
+    if (
+      !exports.includes(functionName) && functionName !== "handler" &&
+      functionName !== "default"
+    ) {
       return json({
         error: `Function "${functionName}" not found`,
-        available_functions: exports.filter(e => !e.startsWith('_')),
+        available_functions: exports.filter((e) => !e.startsWith("_")),
       }, 404);
     }
 
@@ -169,131 +202,78 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
     // For HTTP endpoints, use a special "http" user ID since there's no authenticated user
     const appDataService = createAppDataService(appId);
 
-    // Decrypt environment variables
-    const encryptedEnvVars = app.env_vars || {};
-    let envVars: Record<string, string> = {};
+    const callerPromise = resolveRequestCallerContext(request, {
+      authSourcePolicy: "bearer_only",
+      allowAnonymous: true,
+      invalidAuthPolicy: "ignore",
+    });
+
+    let envResolution;
+    let supabaseConfig;
+    let d1DataService;
+    let caller;
     try {
-      envVars = await decryptEnvVars(encryptedEnvVars);
+      [envResolution, supabaseConfig, { d1DataService }, caller] = await Promise
+        .all([
+          callerPromise.then((resolvedCaller) =>
+            resolveAppRuntimeEnvVars(app, resolvedCaller.userId)
+          ),
+          resolveAppSupabaseConfig(app),
+          createAppD1Resources(app),
+          callerPromise,
+        ]);
     } catch (err) {
-      console.error('Failed to decrypt env vars:', err);
-    }
-
-    // Resolve Supabase config: prefer config_id, fall back to legacy app-level, then platform-level
-    let supabaseConfig: { url: string; anonKey: string; serviceKey?: string } | undefined;
-
-    if (app.supabase_config_id) {
-      try {
-        const { getDecryptedSupabaseConfig } = await import('./user.ts');
-        const config = await getDecryptedSupabaseConfig(app.supabase_config_id);
-        if (config) supabaseConfig = config;
-      } catch (err) {
-        console.error('Failed to get Supabase config by ID:', err);
+      if (err instanceof SupabaseConfigMigrationRequiredError) {
+        return json({ error: err.message }, 409);
       }
+      throw err;
     }
-
-    if (!supabaseConfig && app.supabase_enabled && app.supabase_url && app.supabase_anon_key_encrypted) {
-      try {
-        const anonKey = await decryptEnvVar(app.supabase_anon_key_encrypted as string);
-        supabaseConfig = { url: app.supabase_url as string, anonKey };
-        if (app.supabase_service_key_encrypted) {
-          supabaseConfig.serviceKey = await decryptEnvVar(app.supabase_service_key_encrypted as string);
-        }
-      } catch (err) {
-        console.error('Failed to decrypt legacy Supabase config:', err);
-      }
-    }
-
-    if (!supabaseConfig && app.supabase_enabled) {
-      try {
-        const { getDecryptedPlatformSupabase } = await import('./user.ts');
-        const platformConfig = await getDecryptedPlatformSupabase(app.owner_id);
-        if (platformConfig) supabaseConfig = platformConfig;
-      } catch (err) {
-        console.error('Failed to get platform Supabase config:', err);
-      }
-    }
-
-    // Extract user context from Authorization header or ?token= query param
-    let user: UserContext | null = null;
-    let userApiKey: string | null = null;
-    const authHeader = request.headers.get('Authorization');
+    const { envVars, missingRequiredSecrets } = envResolution;
+    const { user, userApiKey } = caller;
     const requestUrl = new URL(request.url);
-    const queryToken = requestUrl.searchParams.get('token');
 
-    // Determine auth token — prefer header, fall back to query param
-    const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
-    const authToken = bearerToken || queryToken;
+    if (missingRequiredSecrets.length > 0) {
+      return json({
+        error: buildMissingAppSecretsMessage(missingRequiredSecrets),
+        details: buildMissingAppSecretsErrorDetails(app.id, missingRequiredSecrets),
+      }, 400);
+    }
 
-    if (authToken && isApiToken(authToken)) {
-      // ul_ API token — resolve via token service
-      try {
-        const validated = await validateToken(authToken);
-        if (validated) {
-          const userService = createUserService();
-          const userData = await userService.getUser(validated.user_id);
-          user = {
-            id: validated.user_id,
-            email: userData?.email || '',
-            displayName: userData?.display_name || null,
-            avatarUrl: userData?.avatar_url || null,
-            tier: (userData?.tier as 'free' | 'pro' | 'scale' | 'enterprise') || 'free',
-          };
-          // Get BYOK API key for AI calls
-          if (userData?.byok_enabled && userData.byok_provider) {
-            try {
-              userApiKey = await userService.getDecryptedApiKey(validated.user_id, userData.byok_provider);
-            } catch {
-              // Continue without BYOK
-            }
-          }
-        }
-      } catch {
-        // Invalid API token, continue without user context
-      }
-    } else if (bearerToken) {
-      // JWT token — decode for user info
-      try {
-        const parts = bearerToken.split('.');
-        if (parts.length === 3) {
-          const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-          if (payload.sub && payload.exp * 1000 > Date.now()) {
-            user = {
-              id: payload.sub,
-              email: payload.email || '',
-              displayName: payload.user_metadata?.full_name || payload.user_metadata?.name || null,
-              avatarUrl: payload.user_metadata?.avatar_url || null,
-              tier: 'free',
-            };
+    if (!callerHasAppAccess(caller, [app.id, app.slug, appId])) {
+      return json({
+        error: `Token not authorized for this app. Scoped to: ${
+          (caller.tokenAppIds || []).join(", ")
+        }`,
+      }, 403);
+    }
 
-            // Try to get BYOK API key for this user
-            try {
-              const userService = createUserService();
-              const userData = await userService.getUser(payload.sub);
-              if (userData?.byok_enabled && userData.byok_provider) {
-                userApiKey = await userService.getDecryptedApiKey(payload.sub, userData.byok_provider);
-              }
-            } catch {
-              // Continue without BYOK
-            }
-          }
-        }
-      } catch {
-        // Invalid token, continue without user context
-      }
+    if (!callerHasFunctionAccess(caller, [functionName])) {
+      return json({
+        error:
+          `Token not authorized for function "${functionName}". Scoped to: ${
+            (caller.tokenFunctionNames || []).join(", ")
+          }`,
+      }, 403);
+    }
+
+    if (
+      caller.authState === "authenticated" &&
+      !callerHasRequiredScope(caller, "apps:call")
+    ) {
+      return json({ error: "Token missing required scope: apps:call" }, 403);
     }
 
     // Create AI service
     let aiService;
-    if (userApiKey) {
-      const aiServiceInstance = createAIService();
-      aiService = aiServiceInstance;
+    if (userApiKey && caller.userProfile?.byok_provider) {
+      aiService = createAIService(caller.userProfile.byok_provider, userApiKey);
     } else {
       aiService = {
         call: async () => ({
-          content: '',
-          model: 'none',
+          content: "",
+          model: "none",
           usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
-          error: 'BYOK not configured',
+          error: "BYOK not configured",
         }),
       };
     }
@@ -303,7 +283,7 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
     const ultralightRequest = {
       method: request.method,
       url: requestUrl.pathname + requestUrl.search,
-      path: subPath || '/',
+      path: subPath || "/",
       query: Object.fromEntries(requestUrl.searchParams),
       headers: Object.fromEntries(request.headers),
       // Body helpers
@@ -318,7 +298,7 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
         try {
           return await request.clone().text();
         } catch {
-          return '';
+          return "";
         }
       },
       formData: async () => {
@@ -331,16 +311,29 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
     };
 
     // ── GPU Runtime Branch ──
-    if (app.runtime === 'gpu') {
-      if (app.gpu_status !== 'live') {
-        return json({ error: 'GPU function not ready', status: app.gpu_status }, 503);
+    if (app.runtime === "gpu") {
+      if (app.gpu_status !== "live") {
+        return json(
+          {
+            error: "GPU function not ready",
+            status: app.gpu_status,
+            message: buildGpuNotReadyMessage(app.gpu_status),
+            details: buildGpuStatusDiagnostics(app.gpu_status, {
+              appId: app.id,
+            }),
+          },
+          503,
+        );
       }
 
       let gpuSlot;
       try {
-        gpuSlot = await acquireGpuSlot(app.gpu_endpoint_id!, app.gpu_concurrency_limit || 5);
+        gpuSlot = await acquireGpuSlot(
+          app.gpu_endpoint_id!,
+          app.gpu_concurrency_limit || 5,
+        );
       } catch {
-        return json({ error: 'GPU function at capacity' }, 429);
+        return json({ error: "GPU function at capacity" }, 429);
       }
 
       try {
@@ -352,47 +345,31 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
         });
         const gpuDurationMs = Date.now() - startTime;
 
-        // Settle billing (if authenticated caller !== owner)
-        let gpuCallChargeLight = 0;
-        if (user && user.id !== app.owner_id) {
-          const settlement = await settleGpuExecution(
-            user.id, app, functionName,
-            { request: ultralightRequest },
-            gpuResult,
-          );
-          if (settlement.insufficientBalance) {
-            return json({ error: settlement.insufficientBalanceMessage }, 402);
-          }
-          gpuCallChargeLight = settlement.chargedLight;
-        }
-
-        // Log (fire-and-forget)
-        const { logMcpCall: logHttpGpuCall } = await import('../services/call-logger.ts');
-        logHttpGpuCall({
-          userId: app.owner_id,
-          appId: app.id,
-          appName: app.name || app.slug,
+        const settlementUserId = user?.id || app.owner_id;
+        const { settlement } = await settleAndLogGpuExecution({
+          userId: settlementUserId,
+          user,
+          app,
           functionName,
-          method: 'http',
-          success: gpuResult.success,
+          inputArgs: { request: ultralightRequest },
+          method: "http",
+          gpuResult,
           durationMs: gpuDurationMs,
-          errorMessage: gpuResult.success ? undefined : (gpuResult.error?.message || 'GPU execution failed'),
-          outputResult: gpuResult.success ? gpuResult.result : gpuResult.error,
-          userTier: user?.tier,
-          appVersion: app.current_version || undefined,
-          // GPU telemetry
-          gpuType: gpuResult.gpuType,
-          gpuExitCode: gpuResult.exitCode,
-          gpuDurationMs: gpuResult.durationMs,
-          gpuCostLight: gpuResult.gpuCostLight,
-          gpuPeakVramGb: gpuResult.peakVramGb,
         });
 
-        console.log(`[HTTP-GPU] ${request.method} /http/${appId}/${functionName} - ${gpuResult.success ? 'OK' : gpuResult.exitCode} - ${gpuDurationMs}ms`);
+        if (settlement?.insufficientBalance) {
+          return json({ error: settlement.insufficientBalanceMessage }, 402);
+        }
+
+        console.log(
+          `[HTTP-GPU] ${request.method} /http/${appId}/${functionName} - ${
+            gpuResult.success ? "OK" : gpuResult.exitCode
+          } - ${gpuDurationMs}ms`,
+        );
 
         if (!gpuResult.success) {
           return json({
-            error: gpuResult.error?.message || 'GPU execution failed',
+            error: gpuResult.error?.message || "GPU execution failed",
             type: gpuResult.error?.type,
             logs: gpuResult.logs,
           }, 500);
@@ -405,17 +382,20 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
           return gpuFnResult;
         }
 
-        if (gpuFnResult && typeof gpuFnResult === 'object') {
+        if (gpuFnResult && typeof gpuFnResult === "object") {
           const resConfig = gpuFnResult as Record<string, unknown>;
-          if ('statusCode' in resConfig || 'status' in resConfig) {
-            const status = (resConfig.statusCode || resConfig.status || 200) as number;
-            const headers = new Headers(resConfig.headers as Record<string, string> || {});
+          if ("statusCode" in resConfig || "status" in resConfig) {
+            const status =
+              (resConfig.statusCode || resConfig.status || 200) as number;
+            const headers = new Headers(
+              resConfig.headers as Record<string, string> || {},
+            );
             const body = resConfig.body;
-            if (!headers.has('Content-Type')) {
-              headers.set('Content-Type', 'application/json');
+            if (!headers.has("Content-Type")) {
+              headers.set("Content-Type", "application/json");
             }
             return new Response(
-              typeof body === 'string' ? body : JSON.stringify(body),
+              typeof body === "string" ? body : JSON.stringify(body),
               { status, headers },
             );
           }
@@ -427,32 +407,21 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
       }
     }
 
-    // ── Deno Sandbox Path (existing, unchanged) ──
-    // D1 Data Service (lazy-provisioned)
-    const d1DatabaseId = app.d1_database_id || await getD1DatabaseId(app.id);
-    const d1DataService = createD1DataService(app.id, d1DatabaseId);
-
     // Execute the function in sandbox — AI-capable apps get 120s timeout
-    // Include manifest-declared permissions (e.g., net:connect for IMAP/SMTP)
-    const httpPermissions = ['memory:read', 'memory:write', 'ai:call', 'net:fetch'];
-    let manifestPerms: string[] = [];
-    try {
-      const rawManifest = (app as any).manifest;
-      const parsed = typeof rawManifest === 'string' ? JSON.parse(rawManifest) : rawManifest;
-      manifestPerms = parsed?.permissions || [];
-    } catch {}
-    if (!Array.isArray(manifestPerms)) manifestPerms = [];
-    for (const p of manifestPerms) {
-      if (p === 'net:connect' && !httpPermissions.includes(p)) {
-        httpPermissions.push(p);
-      }
-    }
+    const httpPermissions = resolveManifestPermissions(app, [
+      "memory:read",
+      "memory:write",
+      "ai:call",
+      "net:fetch",
+    ]);
     // Dynamic Worker sandbox — avoids `new Function()` restriction on CF Workers
-    const { executeInDynamicSandbox } = await import('../runtime/dynamic-sandbox.ts');
+    const { executeInDynamicSandbox } = await import(
+      "../runtime/dynamic-sandbox.ts"
+    );
     const result = await executeInDynamicSandbox(
       {
         appId: app.id,
-        userId: user?.id || 'anonymous',
+        userId: user?.id || "anonymous",
         ownerId: app.owner_id,
         executionId: crypto.randomUUID(),
         code,
@@ -462,39 +431,48 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
         appDataService,
         d1DataService,
         memoryService: null,
-        aiService: aiService as { call: (request: import('../../shared/types/index.ts').AIRequest, apiKey: string) => Promise<import('../../shared/types/index.ts').AIResponse> },
+        aiService: aiService as {
+          call: (
+            request: import("../../shared/types/index.ts").AIRequest,
+            apiKey: string,
+          ) => Promise<import("../../shared/types/index.ts").AIResponse>;
+        },
         envVars,
         supabase: supabaseConfig,
-        timeoutMs: httpPermissions.includes('ai:call') ? 120_000 : 30_000,
+        timeoutMs: httpPermissions.includes("ai:call") ? 120_000 : 30_000,
       },
       functionName,
-      [ultralightRequest]
+      [ultralightRequest],
     );
 
     const durationMs = Date.now() - startTime;
 
-    // Log the call (fire-and-forget)
-    const { logMcpCall } = await import('../services/call-logger.ts');
-    logMcpCall({
-      userId: app.owner_id,
+    logExecutionResult({
+      userId: user?.id || app.owner_id,
       appId: app.id,
       appName: app.name || app.slug,
       functionName,
-      method: 'http',
+      method: "http",
       success: result.success,
       durationMs,
-      errorMessage: result.success ? undefined : (result.error?.message || 'Execution failed'),
+      errorMessage: result.success
+        ? undefined
+        : (result.error?.message || "Execution failed"),
       outputResult: result.success ? result.result : result.error,
       userTier: user?.tier,
       appVersion: app.current_version || undefined,
       aiCostLight: result.aiCostLight || 0,
     });
 
-    console.log(`[HTTP] ${request.method} /http/${appId}/${functionName} - ${result.success ? 'OK' : 'ERROR'} - ${durationMs}ms`);
+    console.log(
+      `[HTTP] ${request.method} /http/${appId}/${functionName} - ${
+        result.success ? "OK" : "ERROR"
+      } - ${durationMs}ms`,
+    );
 
     if (!result.success) {
       return json({
-        error: result.error?.message || 'Execution failed',
+        error: result.error?.message || "Execution failed",
         type: result.error?.type,
         logs: result.logs,
       }, 500);
@@ -509,22 +487,25 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
     }
 
     // If the result has statusCode/status and body, treat it as a response config
-    if (fnResult && typeof fnResult === 'object') {
+    if (fnResult && typeof fnResult === "object") {
       const resConfig = fnResult as Record<string, unknown>;
 
       // Check for explicit response format
-      if ('statusCode' in resConfig || 'status' in resConfig) {
-        const status = (resConfig.statusCode || resConfig.status || 200) as number;
-        const headers = new Headers(resConfig.headers as Record<string, string> || {});
+      if ("statusCode" in resConfig || "status" in resConfig) {
+        const status =
+          (resConfig.statusCode || resConfig.status || 200) as number;
+        const headers = new Headers(
+          resConfig.headers as Record<string, string> || {},
+        );
         const body = resConfig.body;
 
-        if (!headers.has('Content-Type')) {
-          headers.set('Content-Type', 'application/json');
+        if (!headers.has("Content-Type")) {
+          headers.set("Content-Type", "application/json");
         }
 
         return new Response(
-          typeof body === 'string' ? body : JSON.stringify(body),
-          { status, headers }
+          typeof body === "string" ? body : JSON.stringify(body),
+          { status, headers },
         );
       }
     }
@@ -533,18 +514,15 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
     return new Response(JSON.stringify(fnResult), {
       status: 200,
       headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
-        'X-Execution-Time': `${durationMs}ms`,
+        "Content-Type": "application/json",
+        "X-Execution-Time": `${durationMs}ms`,
+        ...buildCorsHeaders(request),
       },
     });
-
   } catch (err) {
-    console.error('[HTTP] Error:', err);
+    console.error("[HTTP] Error:", err);
     return json({
-      error: 'Internal server error',
+      error: "Internal server error",
       message: err instanceof Error ? err.message : String(err),
     }, 500);
   }
@@ -553,14 +531,6 @@ export async function handleHttpEndpoint(request: Request, appId: string, path: 
 /**
  * Handle CORS preflight requests
  */
-export function handleHttpOptions(appId: string): Response {
-  return new Response(null, {
-    status: 204,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
-      'Access-Control-Max-Age': '86400',
-    },
-  });
+export function handleHttpOptions(request: Request, _appId: string): Response {
+  return buildCorsPreflightResponse(request);
 }
