@@ -61,6 +61,7 @@ CREATE EXTENSION IF NOT EXISTS "vector" WITH SCHEMA "public";
 
 CREATE OR REPLACE FUNCTION "public"."accept_bid"("p_owner_id" "uuid", "p_bid_id" "uuid") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public, extensions'
     AS $$
 DECLARE
   v_bid RECORD;
@@ -75,13 +76,13 @@ DECLARE
   v_provenance JSONB;
 BEGIN
   -- Lock and fetch the bid
-  SELECT * INTO v_bid FROM app_bids WHERE id = p_bid_id AND status = 'active' FOR UPDATE;
+  SELECT * INTO v_bid FROM public.app_bids WHERE id = p_bid_id AND status = 'active' FOR UPDATE;
   IF v_bid IS NULL THEN
     RAISE EXCEPTION 'Bid not found or not active';
   END IF;
 
   -- Fetch the app
-  SELECT * INTO v_app FROM apps WHERE id = v_bid.app_id FOR UPDATE;
+  SELECT * INTO v_app FROM public.apps WHERE id = v_bid.app_id FOR UPDATE;
   IF v_app IS NULL THEN
     RAISE EXCEPTION 'App not found';
   END IF;
@@ -92,69 +93,69 @@ BEGIN
   END IF;
 
   -- Get seller email for provenance
-  SELECT email INTO v_seller_email FROM users WHERE id = p_owner_id;
+  SELECT email INTO v_seller_email FROM public.users WHERE id = p_owner_id;
 
   -- Calculate fee (10%) and payout (90%)
   v_fee := v_bid.amount_light * 0.10;
   v_payout := v_bid.amount_light - v_fee;
 
   -- 1. Release buyer escrow
-  UPDATE users
+  UPDATE public.users
   SET escrow_light = escrow_light - v_bid.amount_light
   WHERE id = v_bid.bidder_id;
 
   -- 2. Credit seller 90% + track earnings
-  UPDATE users
+  UPDATE public.users
   SET balance_light = balance_light + v_payout,
       total_earned_light = total_earned_light + v_payout
   WHERE id = p_owner_id;
 
   -- 3. Transfer ownership — handle slug conflict
   SELECT EXISTS(
-    SELECT 1 FROM apps
+    SELECT 1 FROM public.apps
     WHERE owner_id = v_bid.bidder_id AND slug = v_app.slug AND id != v_app.id
   ) INTO v_slug_exists;
 
   IF v_slug_exists THEN
     v_new_slug := v_app.slug || '-acquired';
-    WHILE EXISTS(SELECT 1 FROM apps WHERE owner_id = v_bid.bidder_id AND slug = v_new_slug AND id != v_app.id) LOOP
-      v_new_slug := v_new_slug || '-' || substr(gen_random_uuid()::text, 1, 4);
+    WHILE EXISTS(SELECT 1 FROM public.apps WHERE owner_id = v_bid.bidder_id AND slug = v_new_slug AND id != v_app.id) LOOP
+      v_new_slug := v_new_slug || '-' || substr(extensions.gen_random_uuid()::text, 1, 4);
     END LOOP;
-    UPDATE apps SET owner_id = v_bid.bidder_id, slug = v_new_slug, updated_at = now() WHERE id = v_app.id;
+    UPDATE public.apps SET owner_id = v_bid.bidder_id, slug = v_new_slug, updated_at = now() WHERE id = v_app.id;
   ELSE
-    UPDATE apps SET owner_id = v_bid.bidder_id, updated_at = now() WHERE id = v_app.id;
+    UPDATE public.apps SET owner_id = v_bid.bidder_id, updated_at = now() WHERE id = v_app.id;
   END IF;
 
   -- 4. Clear permissions (seller's grants shouldn't carry over)
-  DELETE FROM user_app_permissions WHERE app_id = v_app.id;
+  DELETE FROM public.user_app_permissions WHERE app_id = v_app.id;
 
   -- 5. Clear secrets (seller's env vars shouldn't transfer)
-  DELETE FROM user_app_secrets WHERE app_id = v_app.id;
+  DELETE FROM public.user_app_secrets WHERE app_id = v_app.id;
 
   -- 6. Update the accepted bid
-  UPDATE app_bids
+  UPDATE public.app_bids
   SET status = 'accepted', escrow_status = 'released', resolved_at = now()
   WHERE id = p_bid_id;
 
   -- 7. Reject + refund all other active bids on this app
   FOR v_other_bid IN
-    SELECT * FROM app_bids
+    SELECT * FROM public.app_bids
     WHERE app_id = v_app.id AND status = 'active' AND id != p_bid_id
     FOR UPDATE
   LOOP
-    UPDATE users
+    UPDATE public.users
     SET balance_light = balance_light + v_other_bid.amount_light,
         escrow_light = escrow_light - v_other_bid.amount_light
     WHERE id = v_other_bid.bidder_id;
 
-    UPDATE app_bids
+    UPDATE public.app_bids
     SET status = 'rejected', escrow_status = 'refunded', resolved_at = now()
     WHERE id = v_other_bid.id;
   END LOOP;
 
   -- 8. Update listing provenance and owner
   SELECT COALESCE(provenance, '[]'::JSONB) INTO v_provenance
-  FROM app_listings WHERE app_id = v_app.id;
+  FROM public.app_listings WHERE app_id = v_app.id;
 
   v_provenance := v_provenance || jsonb_build_object(
     'owner_id', p_owner_id,
@@ -164,7 +165,7 @@ BEGIN
     'method', 'marketplace_sale'
   );
 
-  UPDATE app_listings
+  UPDATE public.app_listings
   SET owner_id = v_bid.bidder_id,
       status = 'sold',
       provenance = v_provenance,
@@ -172,12 +173,12 @@ BEGIN
   WHERE app_id = v_app.id;
 
   -- 9. Insert sale record
-  INSERT INTO app_sales (app_id, seller_id, buyer_id, sale_price_light, platform_fee_light, seller_payout_light, bid_id)
+  INSERT INTO public.app_sales (app_id, seller_id, buyer_id, sale_price_light, platform_fee_light, seller_payout_light, bid_id)
   VALUES (v_app.id, p_owner_id, v_bid.bidder_id, v_bid.amount_light, v_fee, v_payout, p_bid_id)
   RETURNING id INTO v_sale_id;
 
   -- 10. Log transfer
-  INSERT INTO transfers (from_user_id, to_user_id, amount_light, reason, app_id)
+  INSERT INTO public.transfers (from_user_id, to_user_id, amount_light, reason, app_id)
   VALUES (v_bid.bidder_id, p_owner_id, v_payout, 'marketplace_sale', v_app.id);
 
   RETURN jsonb_build_object(
@@ -200,7 +201,7 @@ CREATE OR REPLACE FUNCTION "public"."adjust_data_storage"("p_user_id" "uuid", "p
     LANGUAGE "sql"
     SET "search_path" TO 'public, extensions'
     AS $$
-  UPDATE users
+  UPDATE public.users
   SET data_storage_used_bytes = GREATEST(0::BIGINT, data_storage_used_bytes + p_delta_bytes),
       updated_at = NOW()
   WHERE id = p_user_id
@@ -222,7 +223,7 @@ CREATE OR REPLACE FUNCTION "public"."cancel_bid"("p_bidder_id" "uuid", "p_bid_id
 DECLARE
   v_bid RECORD;
 BEGIN
-  SELECT * INTO v_bid FROM app_bids WHERE id = p_bid_id AND status = 'active' FOR UPDATE;
+  SELECT * INTO v_bid FROM public.app_bids WHERE id = p_bid_id AND status = 'active' FOR UPDATE;
   IF v_bid IS NULL THEN
     RAISE EXCEPTION 'Bid not found or not active';
   END IF;
@@ -232,13 +233,13 @@ BEGIN
   END IF;
 
   -- Refund escrow
-  UPDATE users
+  UPDATE public.users
   SET hosting_balance_cents = hosting_balance_cents + v_bid.amount_cents,
       escrow_held_cents = escrow_held_cents - v_bid.amount_cents
   WHERE id = p_bidder_id;
 
   -- Mark cancelled
-  UPDATE app_bids
+  UPDATE public.app_bids
   SET status = 'cancelled', escrow_status = 'refunded', resolved_at = now()
   WHERE id = p_bid_id;
 END;
@@ -250,6 +251,7 @@ ALTER FUNCTION "public"."cancel_bid"("p_bidder_id" "uuid", "p_bid_id" "uuid") OW
 
 CREATE OR REPLACE FUNCTION "public"."check_d1_free_tier"("p_user_id" "uuid") RETURNS TABLE("within_free_tier" boolean, "rows_read_total" bigint, "rows_written_total" bigint, "storage_bytes" bigint)
     LANGUAGE "plpgsql"
+    SET "search_path" TO 'public, extensions'
     AS $$
 BEGIN
   RETURN QUERY
@@ -258,7 +260,7 @@ BEGIN
     u.d1_rows_read_total,
     u.d1_rows_written_total,
     u.d1_storage_bytes
-  FROM users u
+  FROM public.users u
   WHERE u.id = p_user_id;
 END;
 $$;
@@ -282,7 +284,7 @@ BEGIN
     u.storage_limit_bytes AS limit_bytes,
     GREATEST(0::BIGINT, u.storage_limit_bytes - u.storage_used_bytes - u.data_storage_used_bytes) AS remaining_bytes,
     (u.hosting_balance_cents > 0) AS has_hosting_balance
-  FROM users u
+  FROM public.users u
   WHERE u.id = p_user_id;
 END;
 $$;
@@ -302,14 +304,14 @@ DECLARE
 BEGIN
     -- Get app's rate limit
     SELECT COALESCE(http_rate_limit, 1000) INTO v_limit
-    FROM apps WHERE id = p_app_id;
+    FROM public.apps WHERE id = p_app_id;
 
     -- Calculate window start
     v_window_start := NOW() - (p_window_minutes || ' minutes')::INTERVAL;
 
     -- Count requests in window
     SELECT COUNT(*) INTO v_count
-    FROM http_requests
+    FROM public.http_requests
     WHERE app_id = p_app_id AND created_at >= v_window_start;
 
     RETURN QUERY SELECT
@@ -336,10 +338,10 @@ BEGIN
   v_window_start := date_trunc('minute', NOW());
 
   -- Upsert rate limit entry and get count
-  INSERT INTO rate_limits (user_id, endpoint, window_start, request_count)
+  INSERT INTO public.rate_limits (user_id, endpoint, window_start, request_count)
   VALUES (p_user_id, p_endpoint, v_window_start, 1)
   ON CONFLICT (user_id, endpoint, window_start)
-  DO UPDATE SET request_count = rate_limits.request_count + 1
+  DO UPDATE SET request_count = public.rate_limits.request_count + 1
   RETURNING request_count INTO v_count;
 
   -- Return true if under limit
@@ -358,7 +360,7 @@ CREATE OR REPLACE FUNCTION "public"."check_seller_relist"("p_uploader_id" "uuid"
 BEGIN
   RETURN EXISTS (
     SELECT 1
-    FROM app_code_fingerprints
+    FROM public.app_code_fingerprints
     WHERE seller_id = p_uploader_id
       AND fingerprint = p_fingerprint
   );
@@ -375,7 +377,7 @@ CREATE OR REPLACE FUNCTION "public"."cleanup_expired_provisionals"() RETURNS int
     AS $$
 DECLARE deleted_count INT;
 BEGIN
-  DELETE FROM users
+  DELETE FROM public.users
   WHERE provisional = TRUE
     AND last_active_at < NOW() - INTERVAL '30 days';
   GET DIAGNOSTICS deleted_count = ROW_COUNT;
@@ -394,7 +396,7 @@ CREATE OR REPLACE FUNCTION "public"."cleanup_http_requests"() RETURNS integer
 DECLARE
     deleted_count INTEGER;
 BEGIN
-    DELETE FROM http_requests
+    DELETE FROM public.http_requests
     WHERE created_at < NOW() - INTERVAL '24 hours';
 
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
@@ -411,7 +413,7 @@ CREATE OR REPLACE FUNCTION "public"."cleanup_rate_limits"() RETURNS "void"
     SET "search_path" TO 'public, extensions'
     AS $$
 BEGIN
-  DELETE FROM rate_limits WHERE window_start < NOW() - INTERVAL '1 hour';
+  DELETE FROM public.rate_limits WHERE window_start < NOW() - INTERVAL '1 hour';
 END;
 $$;
 
@@ -426,7 +428,7 @@ CREATE OR REPLACE FUNCTION "public"."cleanup_stale_oauth_clients"() RETURNS inte
 DECLARE
     deleted_count INTEGER;
 BEGIN
-    DELETE FROM oauth_clients
+    DELETE FROM public.oauth_clients
     WHERE created_at < NOW() - INTERVAL '30 days'
       AND is_developer_app = FALSE;
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
@@ -443,7 +445,7 @@ CREATE OR REPLACE FUNCTION "public"."compute_quality_scores"() RETURNS "void"
     SET "search_path" TO 'public, extensions'
     AS $$
 BEGIN
-  UPDATE apps
+  UPDATE public.apps
   SET quality_score = ROUND((
     -- 40%: Success rate (with Wilson-like smoothing)
     CASE
@@ -475,7 +477,7 @@ CREATE OR REPLACE FUNCTION "public"."count_provisional_by_ip"("p_ip" "text", "p_
 DECLARE cnt INT;
 BEGIN
   SELECT COUNT(*)::INT INTO cnt
-  FROM users
+  FROM public.users
   WHERE provisional = TRUE
     AND provisional_created_ip = p_ip
     AND provisional_created_at >= NOW() - make_interval(hours => p_window_hours);
@@ -489,6 +491,7 @@ ALTER FUNCTION "public"."count_provisional_by_ip"("p_ip" "text", "p_window_hours
 
 CREATE OR REPLACE FUNCTION "public"."create_payout_record"("p_user_id" "uuid", "p_amount_light" double precision, "p_stripe_fee_cents" double precision, "p_net_cents" double precision) RETURNS "uuid"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public, extensions'
     AS $$
 DECLARE
   v_payout_id UUID;
@@ -501,7 +504,7 @@ BEGIN
   SELECT balance_light - COALESCE(escrow_light, 0),
          COALESCE(total_earned_light, 0)
   INTO v_available, v_total_earned
-  FROM users WHERE id = p_user_id FOR UPDATE;
+  FROM public.users WHERE id = p_user_id FOR UPDATE;
 
   IF v_available IS NULL THEN
     RAISE EXCEPTION 'User not found';
@@ -513,7 +516,7 @@ BEGIN
 
   -- Check earnings-only withdrawal constraint
   SELECT COALESCE(SUM(amount_light), 0) INTO v_total_withdrawn
-  FROM payouts
+  FROM public.payouts
   WHERE user_id = p_user_id AND status IN ('held', 'pending', 'processing', 'paid');
 
   v_withdrawable := v_total_earned - v_total_withdrawn;
@@ -523,12 +526,12 @@ BEGIN
   END IF;
 
   -- Debit the balance (no platform fee on withdrawal — fee is per-transaction)
-  UPDATE users
+  UPDATE public.users
   SET balance_light = balance_light - p_amount_light
   WHERE id = p_user_id;
 
   -- Insert payout record with 14-day hold
-  INSERT INTO payouts (
+  INSERT INTO public.payouts (
     user_id, amount_light, stripe_fee_cents, net_cents,
     platform_fee_light, status, release_at
   )
@@ -539,8 +542,8 @@ BEGIN
   RETURNING id INTO v_payout_id;
 
   -- Log the withdrawal transfer for audit trail
-  INSERT INTO transfers (id, from_user_id, to_user_id, amount_light, reason, created_at)
-  VALUES (gen_random_uuid(), p_user_id, p_user_id, p_amount_light, 'withdrawal', now());
+  INSERT INTO public.transfers (id, from_user_id, to_user_id, amount_light, reason, created_at)
+  VALUES (extensions.gen_random_uuid(), p_user_id, p_user_id, p_amount_light, 'withdrawal', now());
 
   RETURN v_payout_id;
 END;
@@ -552,11 +555,12 @@ ALTER FUNCTION "public"."create_payout_record"("p_user_id" "uuid", "p_amount_lig
 
 CREATE OR REPLACE FUNCTION "public"."credit_balance"("p_user_id" "uuid", "p_amount_light" double precision) RETURNS TABLE("old_balance" double precision, "new_balance" double precision)
     LANGUAGE "sql"
+    SET "search_path" TO 'public, extensions'
     AS $$
   WITH old AS (
-    SELECT balance_light FROM users WHERE id = p_user_id
+    SELECT balance_light FROM public.users WHERE id = p_user_id
   )
-  UPDATE users
+  UPDATE public.users
   SET balance_light = balance_light + p_amount_light
   WHERE id = p_user_id
   RETURNING
@@ -570,11 +574,12 @@ ALTER FUNCTION "public"."credit_balance"("p_user_id" "uuid", "p_amount_light" do
 
 CREATE OR REPLACE FUNCTION "public"."debit_balance"("p_user_id" "uuid", "p_amount" double precision, "p_update_billed_at" boolean DEFAULT true) RETURNS TABLE("old_balance" double precision, "new_balance" double precision, "was_depleted" boolean)
     LANGUAGE "sql"
+    SET "search_path" TO 'public, extensions'
     AS $$
   WITH old AS (
-    SELECT balance_light FROM users WHERE id = p_user_id
+    SELECT balance_light FROM public.users WHERE id = p_user_id
   )
-  UPDATE users
+  UPDATE public.users
   SET
     balance_light = GREATEST(balance_light - p_amount, 0),
     hosting_last_billed_at = CASE WHEN p_update_billed_at THEN NOW() ELSE hosting_last_billed_at END
@@ -594,7 +599,7 @@ CREATE OR REPLACE FUNCTION "public"."ensure_user_exists"("user_id" "uuid", "user
     SET "search_path" TO 'public, extensions'
     AS $$
 BEGIN
-  INSERT INTO users (id, email, display_name, avatar_url)
+  INSERT INTO public.users (id, email, display_name, avatar_url)
   VALUES (user_id, user_email, COALESCE(user_display_name, split_part(user_email, '@', 1)), user_avatar_url)
   ON CONFLICT (id) DO NOTHING;
 END;
@@ -615,7 +620,7 @@ DECLARE
   v_new_slug TEXT;
 BEGIN
   -- Get app owner
-  SELECT owner_id INTO v_app_owner FROM apps WHERE id = p_app_id;
+  SELECT owner_id INTO v_app_owner FROM public.apps WHERE id = p_app_id;
   IF v_app_owner IS NULL THEN
     RAISE EXCEPTION 'App not found';
   END IF;
@@ -627,7 +632,7 @@ BEGIN
 
   -- Check available balance (balance minus already escrowed funds)
   SELECT hosting_balance_cents - escrow_held_cents INTO v_available
-  FROM users WHERE id = p_bidder_id FOR UPDATE;
+  FROM public.users WHERE id = p_bidder_id FOR UPDATE;
 
   IF v_available IS NULL THEN
     RAISE EXCEPTION 'User not found';
@@ -638,25 +643,25 @@ BEGIN
   END IF;
 
   -- Check floor price if listing exists
-  PERFORM 1 FROM app_listings
+  PERFORM 1 FROM public.app_listings
   WHERE app_id = p_app_id AND floor_price_cents IS NOT NULL AND p_amount_cents < floor_price_cents;
   IF FOUND THEN
     RAISE EXCEPTION 'Bid below floor price';
   END IF;
 
   -- Deduct balance and increase escrow
-  UPDATE users
+  UPDATE public.users
   SET hosting_balance_cents = hosting_balance_cents - p_amount_cents,
       escrow_held_cents = escrow_held_cents + p_amount_cents
   WHERE id = p_bidder_id;
 
   -- Insert the bid
-  INSERT INTO app_bids (app_id, bidder_id, amount_cents, message, expires_at)
+  INSERT INTO public.app_bids (app_id, bidder_id, amount_cents, message, expires_at)
   VALUES (p_app_id, p_bidder_id, p_amount_cents, p_message, p_expires_at)
   RETURNING id INTO v_bid_id;
 
   -- Lazy-create listing if it doesn't exist
-  INSERT INTO app_listings (app_id, owner_id)
+  INSERT INTO public.app_listings (app_id, owner_id)
   VALUES (p_app_id, v_app_owner)
   ON CONFLICT (app_id) DO NOTHING;
 
@@ -677,17 +682,17 @@ DECLARE
   v_count INT := 0;
 BEGIN
   FOR v_expired IN
-    SELECT * FROM app_bids
+    SELECT * FROM public.app_bids
     WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at < now()
     FOR UPDATE
   LOOP
     -- Refund escrow
-    UPDATE users
+    UPDATE public.users
     SET hosting_balance_cents = hosting_balance_cents + v_expired.amount_cents,
         escrow_held_cents = escrow_held_cents - v_expired.amount_cents
     WHERE id = v_expired.bidder_id;
 
-    UPDATE app_bids
+    UPDATE public.app_bids
     SET status = 'expired', escrow_status = 'refunded', resolved_at = now()
     WHERE id = v_expired.id;
 
@@ -704,12 +709,13 @@ ALTER FUNCTION "public"."expire_old_bids"() OWNER TO "postgres";
 
 CREATE OR REPLACE FUNCTION "public"."fail_payout_refund"("p_payout_id" "uuid", "p_failure_reason" "text" DEFAULT NULL::"text") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public, extensions'
     AS $$
 DECLARE
   v_payout RECORD;
 BEGIN
   -- Lock the payout row
-  SELECT * INTO v_payout FROM payouts WHERE id = p_payout_id FOR UPDATE;
+  SELECT * INTO v_payout FROM public.payouts WHERE id = p_payout_id FOR UPDATE;
 
   IF v_payout IS NULL THEN
     RAISE EXCEPTION 'Payout not found';
@@ -720,20 +726,20 @@ BEGIN
   END IF;
 
   -- Refund the full balance
-  UPDATE users
+  UPDATE public.users
   SET balance_light = balance_light + v_payout.amount_light
   WHERE id = v_payout.user_id;
 
   -- Mark payout as failed
-  UPDATE payouts
+  UPDATE public.payouts
   SET status = 'failed',
       failure_reason = p_failure_reason,
       completed_at = now()
   WHERE id = p_payout_id;
 
   -- Log refund transfer for audit trail
-  INSERT INTO transfers (id, from_user_id, to_user_id, amount_light, reason, created_at)
-  VALUES (gen_random_uuid(), v_payout.user_id, v_payout.user_id, v_payout.amount_light, 'withdrawal_refund', now());
+  INSERT INTO public.transfers (id, from_user_id, to_user_id, amount_light, reason, created_at)
+  VALUES (extensions.gen_random_uuid(), v_payout.user_id, v_payout.user_id, v_payout.amount_light, 'withdrawal_refund', now());
 END;
 $$;
 
@@ -752,40 +758,40 @@ BEGIN
   SELECT jsonb_build_object(
     -- Provisionals
     'provisionals_created', (
-      SELECT COUNT(*) FROM users
+      SELECT COUNT(*) FROM public.users
       WHERE provisional = TRUE AND provisional_created_at >= v_since
     ),
     'provisionals_active', (
-      SELECT COUNT(*) FROM users
+      SELECT COUNT(*) FROM public.users
       WHERE provisional = TRUE
     ),
     -- Conversions
     'conversions_total', (
-      SELECT COUNT(*) FROM conversion_events
+      SELECT COUNT(*) FROM public.conversion_events
       WHERE created_at >= v_since
     ),
     'conversions_by_method', (
       SELECT COALESCE(jsonb_object_agg(merge_method, cnt), '{}'::JSONB)
       FROM (
         SELECT merge_method, COUNT(*) as cnt
-        FROM conversion_events
+        FROM public.conversion_events
         WHERE created_at >= v_since
         GROUP BY merge_method
       ) sub
     ),
     'avg_time_to_convert_minutes', (
       SELECT COALESCE(AVG(time_to_convert_minutes), 0)::INT
-      FROM conversion_events
+      FROM public.conversion_events
       WHERE created_at >= v_since AND time_to_convert_minutes IS NOT NULL
     ),
     'avg_calls_before_convert', (
       SELECT COALESCE(AVG(calls_as_provisional), 0)::INT
-      FROM conversion_events
+      FROM public.conversion_events
       WHERE created_at >= v_since
     ),
     -- Onboarding funnel
     'template_fetches', (
-      SELECT COUNT(*) FROM onboarding_requests
+      SELECT COUNT(*) FROM public.onboarding_requests
       WHERE created_at >= v_since
     ),
     'template_to_provisional_rate', (
@@ -793,7 +799,7 @@ BEGIN
         WHEN COUNT(*) = 0 THEN 0
         ELSE ROUND(COUNT(*) FILTER (WHERE provisional_created = TRUE)::NUMERIC / COUNT(*)::NUMERIC * 100, 1)
       END
-      FROM onboarding_requests
+      FROM public.onboarding_requests
       WHERE created_at >= v_since
     ),
     -- App usage
@@ -805,7 +811,7 @@ BEGIN
                COUNT(DISTINCT user_id) as unique_users,
                COUNT(*) FILTER (WHERE success = TRUE) as successful_calls,
                ROUND(AVG(duration_ms)::NUMERIC, 0) as avg_duration_ms
-        FROM mcp_call_logs
+        FROM public.mcp_call_logs
         WHERE created_at >= v_since AND app_id IS NOT NULL
         GROUP BY app_name, app_id
         ORDER BY calls DESC
@@ -819,7 +825,7 @@ BEGIN
         SELECT query, COUNT(*) as count,
                ROUND(AVG(top_similarity)::NUMERIC, 3) as avg_similarity,
                ROUND(AVG(result_count)::NUMERIC, 0) as avg_results
-        FROM appstore_queries
+        FROM public.appstore_queries
         WHERE created_at >= v_since
         GROUP BY query
         ORDER BY count DESC
@@ -831,7 +837,7 @@ BEGIN
       FROM (
         SELECT query, COUNT(*) as count,
                ROUND(AVG(top_similarity)::NUMERIC, 3) as avg_similarity
-        FROM appstore_queries
+        FROM public.appstore_queries
         WHERE created_at >= v_since
           AND (top_similarity < 0.5 OR result_count = 0)
         GROUP BY query
@@ -845,23 +851,23 @@ BEGIN
         WHEN COUNT(*) = 0 THEN 0
         ELSE ROUND(COUNT(*) FILTER (WHERE success = FALSE)::NUMERIC / COUNT(*)::NUMERIC * 100, 1)
       END
-      FROM mcp_call_logs
+      FROM public.mcp_call_logs
       WHERE created_at >= v_since
     ),
     'total_calls', (
-      SELECT COUNT(*) FROM mcp_call_logs
+      SELECT COUNT(*) FROM public.mcp_call_logs
       WHERE created_at >= v_since
     ),
     'unique_users', (
-      SELECT COUNT(DISTINCT user_id) FROM mcp_call_logs
+      SELECT COUNT(DISTINCT user_id) FROM public.mcp_call_logs
       WHERE created_at >= v_since
     ),
-    -- First app attribution (what apps do provisional users try first?)
+    -- First app attribution (what public.apps do provisional public.users try first?)
     'first_app_distribution', (
       SELECT COALESCE(jsonb_agg(row_to_json(sub)), '[]'::JSONB)
       FROM (
         SELECT first_app_name, first_app_id, COUNT(*) as count
-        FROM conversion_events
+        FROM public.conversion_events
         WHERE created_at >= v_since AND first_app_id IS NOT NULL
         GROUP BY first_app_name, first_app_id
         ORDER BY count DESC
@@ -892,8 +898,8 @@ BEGIN
       u.email,
       u.display_name,
       COUNT(uap.function_name) AS function_count
-    FROM user_app_permissions uap
-    JOIN users u ON u.id = uap.granted_to_user_id
+    FROM public.user_app_permissions uap
+    JOIN public.users u ON u.id = uap.granted_to_user_id
     WHERE uap.app_id = p_app_id
       AND uap.allowed = true
     GROUP BY u.id, u.email, u.display_name
@@ -927,7 +933,7 @@ BEGIN
   WITH earnings AS (
     -- Revenue from tool calls and page views
     SELECT t.to_user_id AS uid, SUM(t.amount_cents)::BIGINT AS earned
-    FROM transfers t
+    FROM public.transfers t
     WHERE t.reason IN ('tool_call', 'page_view')
       AND t.created_at >= NOW() - v_interval
     GROUP BY t.to_user_id
@@ -936,7 +942,7 @@ BEGIN
 
     -- Revenue from marketplace sales (seller payout)
     SELECT s.seller_id AS uid, SUM(s.seller_payout_cents)::BIGINT AS earned
-    FROM app_sales s
+    FROM public.app_sales s
     WHERE s.created_at >= NOW() - v_interval
     GROUP BY s.seller_id
   ),
@@ -959,8 +965,8 @@ BEGIN
     a.name AS featured_app_name,
     a.slug AS featured_app_slug
   FROM ranked r
-  JOIN users u ON u.id = r.uid
-  LEFT JOIN apps a ON a.id = u.featured_app_id AND a.deleted_at IS NULL
+  JOIN public.users u ON u.id = r.uid
+  LEFT JOIN public.apps a ON a.id = u.featured_app_id AND a.deleted_at IS NULL
   ORDER BY r.total_earned DESC;
 END;
 $$;
@@ -984,25 +990,25 @@ DECLARE
 BEGIN
   -- GMV last 30 days (total sale prices)
   SELECT COALESCE(SUM(sale_price_cents), 0) INTO v_gmv_30d
-  FROM app_sales WHERE created_at >= NOW() - INTERVAL '30 days';
+  FROM public.app_sales WHERE created_at >= NOW() - INTERVAL '30 days';
 
   -- GMV previous 30 days (for change %)
   SELECT COALESCE(SUM(sale_price_cents), 0) INTO v_gmv_prev
-  FROM app_sales WHERE created_at >= NOW() - INTERVAL '60 days'
+  FROM public.app_sales WHERE created_at >= NOW() - INTERVAL '60 days'
     AND created_at < NOW() - INTERVAL '30 days';
 
   -- Acquisitions last 30 days
   SELECT COUNT(*) INTO v_acq_30d
-  FROM app_sales WHERE created_at >= NOW() - INTERVAL '30 days';
+  FROM public.app_sales WHERE created_at >= NOW() - INTERVAL '30 days';
 
   -- Acquisitions previous 30 days
   SELECT COUNT(*) INTO v_acq_prev
-  FROM app_sales WHERE created_at >= NOW() - INTERVAL '60 days'
+  FROM public.app_sales WHERE created_at >= NOW() - INTERVAL '60 days'
     AND created_at < NOW() - INTERVAL '30 days';
 
   -- Total public capabilities
   SELECT COUNT(*) INTO v_capabilities
-  FROM apps WHERE visibility = 'public' AND deleted_at IS NULL;
+  FROM public.apps WHERE visibility = 'public' AND deleted_at IS NULL;
 
   -- Calculate change percentage
   IF v_gmv_prev > 0 THEN
@@ -1029,11 +1035,12 @@ ALTER FUNCTION "public"."get_platform_stats"() OWNER TO "postgres";
 
 CREATE OR REPLACE FUNCTION "public"."get_releasable_payouts"() RETURNS TABLE("id" "uuid", "user_id" "uuid", "amount_light" double precision, "stripe_fee_cents" double precision, "net_cents" double precision, "platform_fee_light" double precision, "created_at" timestamp with time zone, "release_at" timestamp with time zone)
     LANGUAGE "sql" SECURITY DEFINER
+    SET "search_path" TO 'public, extensions'
     AS $$
   SELECT id, user_id, amount_light, stripe_fee_cents, net_cents,
          COALESCE(platform_fee_light, 0) as platform_fee_light,
          created_at, release_at
-  FROM payouts
+  FROM public.payouts
   WHERE status = 'held'
     AND release_at <= now()
   ORDER BY release_at ASC
@@ -1051,7 +1058,7 @@ CREATE OR REPLACE FUNCTION "public"."get_user_allowed_functions"("p_user_id" "uu
 BEGIN
   RETURN QUERY
     SELECT uap.function_name
-    FROM user_app_permissions uap
+    FROM public.user_app_permissions uap
     WHERE uap.granted_to_user_id = p_user_id
       AND uap.app_id = p_app_id
       AND uap.allowed = true;
@@ -1071,17 +1078,17 @@ DECLARE
   v_published INT;
   v_acquired INT;
 BEGIN
-  -- Lifetime gross (total_earned_cents from users table)
+  -- Lifetime gross (total_earned_cents from public.users table)
   SELECT COALESCE(u.total_earned_cents, 0)::BIGINT INTO v_lifetime_gross
-  FROM users u WHERE u.id = p_user_id;
+  FROM public.users u WHERE u.id = p_user_id;
 
   -- Published count
   SELECT COUNT(*) INTO v_published
-  FROM apps WHERE owner_id = p_user_id AND visibility = 'public' AND deleted_at IS NULL;
+  FROM public.apps WHERE owner_id = p_user_id AND visibility = 'public' AND deleted_at IS NULL;
 
-  -- Acquired count (apps bought)
+  -- Acquired count (public.apps bought)
   SELECT COUNT(*) INTO v_acquired
-  FROM app_sales WHERE buyer_id = p_user_id;
+  FROM public.app_sales WHERE buyer_id = p_user_id;
 
   RETURN jsonb_build_object(
     'lifetime_gross_cents', v_lifetime_gross,
@@ -1102,7 +1109,7 @@ CREATE OR REPLACE FUNCTION "public"."get_weekly_usage"("p_user_id" "uuid", "p_we
 BEGIN
   RETURN QUERY
     SELECT COALESCE(wcu.call_count, 0)
-    FROM weekly_call_usage wcu
+    FROM public.weekly_call_usage wcu
     WHERE wcu.user_id = p_user_id AND wcu.week_start = p_week_start;
 
   -- If no rows returned, return 0
@@ -1121,7 +1128,7 @@ CREATE OR REPLACE FUNCTION "public"."increment_app_runs"("app_id" "uuid") RETURN
     SET "search_path" TO 'public, extensions'
     AS $$
 BEGIN
-  UPDATE apps
+  UPDATE public.apps
   SET total_runs = COALESCE(total_runs, 0) + 1,
       runs_7d = COALESCE(runs_7d, 0) + 1,
       runs_30d = COALESCE(runs_30d, 0) + 1,
@@ -1139,7 +1146,7 @@ CREATE OR REPLACE FUNCTION "public"."increment_budget_used"("p_user_id" "uuid", 
     SET "search_path" TO 'public, extensions'
     AS $$
 BEGIN
-  UPDATE user_app_permissions
+  UPDATE public.user_app_permissions
   SET budget_used = COALESCE(budget_used, 0) + 1,
       updated_at = NOW()
   WHERE granted_to_user_id = p_user_id
@@ -1156,11 +1163,11 @@ CREATE OR REPLACE FUNCTION "public"."increment_caller_usage"("p_app_id" "uuid", 
     LANGUAGE "sql"
     SET "search_path" TO 'public, extensions'
     AS $$
-  INSERT INTO app_caller_usage (app_id, user_id, counter_key, call_count, first_call_at, last_call_at)
+  INSERT INTO public.app_caller_usage (app_id, user_id, counter_key, call_count, first_call_at, last_call_at)
   VALUES (p_app_id, p_user_id, p_counter_key, 1, NOW(), NOW())
   ON CONFLICT (app_id, user_id, counter_key)
   DO UPDATE SET
-    call_count = app_caller_usage.call_count + 1,
+    call_count = public.app_caller_usage.call_count + 1,
     last_call_at = NOW()
   RETURNING call_count;
 $$;
@@ -1174,16 +1181,16 @@ CREATE OR REPLACE FUNCTION "public"."increment_weekly_calls"("p_user_id" "uuid",
     SET "search_path" TO 'public, extensions'
     AS $$
 BEGIN
-  INSERT INTO weekly_call_usage (user_id, week_start, call_count)
+  INSERT INTO public.weekly_call_usage (user_id, week_start, call_count)
   VALUES (p_user_id, p_week_start, 1)
   ON CONFLICT (user_id, week_start)
   DO UPDATE SET
-    call_count = weekly_call_usage.call_count + 1,
+    call_count = public.weekly_call_usage.call_count + 1,
     updated_at = NOW();
 
   RETURN QUERY
     SELECT wcu.call_count
-    FROM weekly_call_usage wcu
+    FROM public.weekly_call_usage wcu
     WHERE wcu.user_id = p_user_id AND wcu.week_start = p_week_start;
 END;
 $$;
@@ -1199,7 +1206,7 @@ CREATE OR REPLACE FUNCTION "public"."mark_payout_releasing"("p_payout_id" "uuid"
 DECLARE
   v_updated INT;
 BEGIN
-  UPDATE payouts
+  UPDATE public.payouts
   SET status = 'pending'
   WHERE id = p_payout_id
     AND status = 'held';
@@ -1223,35 +1230,35 @@ DECLARE
   storage_transferred BIGINT;
 BEGIN
   -- Verify source is actually provisional
-  IF NOT EXISTS (SELECT 1 FROM users WHERE id = p_provisional_id AND provisional = TRUE) THEN
+  IF NOT EXISTS (SELECT 1 FROM public.users WHERE id = p_provisional_id AND provisional = TRUE) THEN
     RETURN jsonb_build_object('error', 'Source user is not provisional');
   END IF;
 
   -- Verify target is a real (non-provisional) user
-  IF NOT EXISTS (SELECT 1 FROM users WHERE id = p_real_id AND provisional = FALSE) THEN
+  IF NOT EXISTS (SELECT 1 FROM public.users WHERE id = p_real_id AND provisional = FALSE) THEN
     RETURN jsonb_build_object('error', 'Target user is not a real account');
   END IF;
 
-  -- Transfer apps
-  UPDATE apps SET owner_id = p_real_id, updated_at = NOW()
+  -- Transfer public.apps
+  UPDATE public.apps SET owner_id = p_real_id, updated_at = NOW()
   WHERE owner_id = p_provisional_id;
   GET DIAGNOSTICS apps_moved = ROW_COUNT;
 
   -- Transfer API tokens (re-assign to real user)
-  UPDATE user_api_tokens SET user_id = p_real_id
+  UPDATE public.user_api_tokens SET user_id = p_real_id
   WHERE user_id = p_provisional_id;
   GET DIAGNOSTICS tokens_moved = ROW_COUNT;
 
   -- Transfer storage accounting
   SELECT COALESCE(storage_used_bytes, 0) INTO storage_transferred
-  FROM users WHERE id = p_provisional_id;
+  FROM public.users WHERE id = p_provisional_id;
 
-  UPDATE users
+  UPDATE public.users
   SET storage_used_bytes = COALESCE(storage_used_bytes, 0) + storage_transferred
   WHERE id = p_real_id;
 
   -- Delete provisional user record
-  DELETE FROM users WHERE id = p_provisional_id;
+  DELETE FROM public.users WHERE id = p_provisional_id;
 
   RETURN jsonb_build_object(
     'apps_moved', apps_moved,
@@ -1273,11 +1280,11 @@ DECLARE
   v_fingerprint TEXT;
 BEGIN
   SELECT source_fingerprint INTO v_fingerprint
-  FROM apps WHERE id = p_app_id;
+  FROM public.apps WHERE id = p_app_id;
 
   -- Only record if the app has a fingerprint (computed at upload time)
   IF v_fingerprint IS NOT NULL THEN
-    INSERT INTO app_code_fingerprints
+    INSERT INTO public.app_code_fingerprints
       (app_id, seller_id, buyer_id, fingerprint, sale_id)
     VALUES
       (p_app_id, p_seller_id, p_buyer_id, v_fingerprint, p_sale_id);
@@ -1297,12 +1304,12 @@ DECLARE
   v_existing_metadata JSONB;
   v_new_entry JSONB;
 BEGIN
-  UPDATE users
+  UPDATE public.users
   SET storage_used_bytes = storage_used_bytes + p_size_bytes,
       updated_at = NOW()
   WHERE id = p_user_id;
 
-  UPDATE apps
+  UPDATE public.apps
   SET storage_bytes = p_size_bytes,
       updated_at = NOW()
   WHERE id = p_app_id;
@@ -1315,10 +1322,10 @@ BEGIN
 
   SELECT COALESCE(version_metadata, '[]'::JSONB)
   INTO v_existing_metadata
-  FROM apps
+  FROM public.apps
   WHERE id = p_app_id;
 
-  UPDATE apps
+  UPDATE public.apps
   SET version_metadata = v_existing_metadata || jsonb_build_array(v_new_entry)
   WHERE id = p_app_id;
 END;
@@ -1347,25 +1354,25 @@ DECLARE
   v_bid RECORD;
   v_app_owner UUID;
 BEGIN
-  SELECT * INTO v_bid FROM app_bids WHERE id = p_bid_id AND status = 'active' FOR UPDATE;
+  SELECT * INTO v_bid FROM public.app_bids WHERE id = p_bid_id AND status = 'active' FOR UPDATE;
   IF v_bid IS NULL THEN
     RAISE EXCEPTION 'Bid not found or not active';
   END IF;
 
   -- Verify owner
-  SELECT owner_id INTO v_app_owner FROM apps WHERE id = v_bid.app_id;
+  SELECT owner_id INTO v_app_owner FROM public.apps WHERE id = v_bid.app_id;
   IF v_app_owner != p_owner_id THEN
     RAISE EXCEPTION 'Only the app owner can reject bids';
   END IF;
 
   -- Refund escrow to bidder
-  UPDATE users
+  UPDATE public.users
   SET hosting_balance_cents = hosting_balance_cents + v_bid.amount_cents,
       escrow_held_cents = escrow_held_cents - v_bid.amount_cents
   WHERE id = v_bid.bidder_id;
 
   -- Mark rejected
-  UPDATE app_bids
+  UPDATE public.app_bids
   SET status = 'rejected', escrow_status = 'refunded', resolved_at = now()
   WHERE id = p_bid_id;
 END;
@@ -1383,12 +1390,12 @@ DECLARE
   v_30d_ago TIMESTAMPTZ := now() - INTERVAL '30 days';
 BEGIN
   -- Reset all to 0 first
-  UPDATE apps
+  UPDATE public.apps
   SET calls_success_30d = 0, calls_error_30d = 0
   WHERE (calls_success_30d > 0 OR calls_error_30d > 0);
 
-  -- Aggregate from mcp_call_logs
-  UPDATE apps a
+  -- Aggregate from public.mcp_call_logs
+  UPDATE public.apps a
   SET
     calls_success_30d = COALESCE(sub.successes, 0),
     calls_error_30d = COALESCE(sub.errors, 0)
@@ -1397,7 +1404,7 @@ BEGIN
       app_id,
       COUNT(*) FILTER (WHERE success = TRUE) AS successes,
       COUNT(*) FILTER (WHERE success = FALSE) AS errors
-    FROM mcp_call_logs
+    FROM public.mcp_call_logs
     WHERE created_at >= v_30d_ago AND app_id IS NOT NULL
     GROUP BY app_id
   ) sub
@@ -1414,9 +1421,9 @@ CREATE OR REPLACE FUNCTION "public"."rollup_discovery_metrics"() RETURNS "void"
     SET "search_path" TO 'public, extensions'
     AS $$
 BEGIN
-  PERFORM rollup_impressions();
-  PERFORM rollup_call_metrics();
-  PERFORM compute_quality_scores();
+  PERFORM public.rollup_impressions();
+  PERFORM public.rollup_call_metrics();
+  PERFORM public.compute_quality_scores();
 END;
 $$;
 
@@ -1431,13 +1438,13 @@ CREATE OR REPLACE FUNCTION "public"."rollup_impressions"() RETURNS "void"
 DECLARE
   v_7d_ago TIMESTAMPTZ := now() - INTERVAL '7 days';
 BEGIN
-  -- Reset all to 0 first (handles apps whose impressions were deleted)
-  UPDATE apps
+  -- Reset all to 0 first (handles public.apps whose impressions were deleted)
+  UPDATE public.apps
   SET impressions_total = 0, impressions_7d = 0
   WHERE (impressions_total > 0 OR impressions_7d > 0);
 
-  -- Aggregate from app_impressions and update
-  UPDATE apps a
+  -- Aggregate from public.app_impressions and update
+  UPDATE public.apps a
   SET
     impressions_total = sub.total,
     impressions_7d = sub.recent
@@ -1446,7 +1453,7 @@ BEGIN
       app_id,
       COUNT(*) AS total,
       COUNT(*) FILTER (WHERE created_at >= v_7d_ago) AS recent
-    FROM app_impressions
+    FROM public.app_impressions
     WHERE app_id IS NOT NULL
     GROUP BY app_id
   ) sub
@@ -1472,7 +1479,7 @@ BEGIN
     COALESCE(a.dislikes, 0),
     COALESCE(a.weighted_likes, 0),
     COALESCE(a.weighted_dislikes, 0)
-  FROM apps a
+  FROM public.apps a
   WHERE
     a.deleted_at IS NULL
     AND a.skills_embedding IS NOT NULL
@@ -1509,11 +1516,11 @@ BEGIN
     COALESCE(c.dislikes, 0),
     COALESCE(c.weighted_likes, 0),
     COALESCE(c.weighted_dislikes, 0)
-  FROM content c
-  LEFT JOIN content_shares cs
+  FROM public.content c
+  LEFT JOIN public.content_shares cs
     ON cs.content_id = c.id
     AND (cs.shared_with_user_id = p_user_id OR cs.shared_with_email = (
-      SELECT email FROM users WHERE id = p_user_id LIMIT 1
+      SELECT email FROM public.users WHERE id = p_user_id LIMIT 1
     ))
     AND (cs.expires_at IS NULL OR cs.expires_at > NOW())
   WHERE
@@ -1557,13 +1564,13 @@ BEGIN
 
   RETURN QUERY
   WITH accessible AS (
-    -- Base: all accessible content (same visibility logic as search_content)
+    -- Base: all accessible public.content (same visibility logic as search_content)
     SELECT DISTINCT ON (c.id) c.*
-    FROM content c
-    LEFT JOIN content_shares cs
+    FROM public.content c
+    LEFT JOIN public.content_shares cs
       ON cs.content_id = c.id
       AND (cs.shared_with_user_id = p_user_id OR cs.shared_with_email = (
-        SELECT email FROM users WHERE users.id = p_user_id LIMIT 1
+        SELECT email FROM public.users WHERE public.users.id = p_user_id LIMIT 1
       ))
       AND (cs.expires_at IS NULL OR cs.expires_at > NOW())
     WHERE
@@ -1636,7 +1643,7 @@ BEGIN
     COALESCE(c.weighted_likes, 0),
     COALESCE(c.weighted_dislikes, 0)
   FROM fused f
-  JOIN content c ON c.id = f.fused_id
+  JOIN public.content c ON c.id = f.fused_id
   ORDER BY f.f_score DESC
   LIMIT p_limit;
 END;
@@ -1652,6 +1659,7 @@ COMMENT ON FUNCTION "public"."search_content_fusion"("p_query_embedding" "public
 
 CREATE OR REPLACE FUNCTION "public"."search_conversation_embeddings"("p_query_embedding" "public"."vector", "p_user_id" "uuid", "p_match_threshold" double precision DEFAULT 0.5, "p_match_count" integer DEFAULT 3) RETURNS TABLE("conversation_id" "text", "conversation_name" "text", "summary" "text", "metadata" "jsonb", "similarity" double precision, "created_at" timestamp with time zone)
     LANGUAGE "plpgsql"
+    SET "search_path" TO 'public, extensions'
     AS $$
 BEGIN
   RETURN QUERY
@@ -1662,7 +1670,7 @@ BEGIN
     ce.metadata,
     1 - (ce.embedding <=> p_query_embedding) AS similarity,
     ce.created_at
-  FROM conversation_embeddings ce
+  FROM public.conversation_embeddings ce
   WHERE ce.user_id = p_user_id
     AND 1 - (ce.embedding <=> p_query_embedding) > p_match_threshold
   ORDER BY ce.embedding <=> p_query_embedding
@@ -1676,9 +1684,10 @@ ALTER FUNCTION "public"."search_conversation_embeddings"("p_query_embedding" "pu
 
 CREATE OR REPLACE FUNCTION "public"."sync_d1_usage"("p_user_id" "uuid", "p_rows_read" bigint, "p_rows_written" bigint, "p_storage_bytes" bigint) RETURNS "void"
     LANGUAGE "plpgsql"
+    SET "search_path" TO 'public, extensions'
     AS $$
 BEGIN
-  UPDATE users SET
+  UPDATE public.users SET
     d1_rows_read_total = d1_rows_read_total + p_rows_read,
     d1_rows_written_total = d1_rows_written_total + p_rows_written,
     d1_storage_bytes = GREATEST(d1_storage_bytes, p_storage_bytes),
@@ -1693,19 +1702,20 @@ ALTER FUNCTION "public"."sync_d1_usage"("p_user_id" "uuid", "p_rows_read" bigint
 
 CREATE OR REPLACE FUNCTION "public"."transfer_balance"("p_from_user" "uuid", "p_to_user" "uuid", "p_amount_light" double precision) RETURNS TABLE("from_new_balance" double precision, "to_new_balance" double precision, "platform_fee" double precision)
     LANGUAGE "sql"
+    SET "search_path" TO 'public, extensions'
     AS $$
   WITH
   fee AS (SELECT p_amount_light * 0.10 AS val),
   net AS (SELECT p_amount_light - (SELECT val FROM fee) AS val),
   debit AS (
-    UPDATE users
+    UPDATE public.users
     SET balance_light = balance_light - p_amount_light
     WHERE id = p_from_user
       AND balance_light >= p_amount_light
     RETURNING balance_light
   ),
   credit AS (
-    UPDATE users
+    UPDATE public.users
     SET balance_light = balance_light + (SELECT val FROM net),
         total_earned_light = total_earned_light + (SELECT val FROM net)
     WHERE id = p_to_user
@@ -1728,7 +1738,7 @@ CREATE OR REPLACE FUNCTION "public"."update_app_embedding"("p_app_id" "uuid", "p
     SET "search_path" TO 'public, extensions'
     AS $$
 BEGIN
-  UPDATE apps
+  UPDATE public.apps
   SET skills_embedding = p_embedding,
       updated_at = NOW()
   WHERE id = p_app_id;
@@ -1763,11 +1773,11 @@ BEGIN
       COUNT(*) FILTER (WHERE al.positive AND u.tier != 'free'),
       COUNT(*) FILTER (WHERE NOT al.positive AND u.tier != 'free')
     INTO like_count, dislike_count, w_like_count, w_dislike_count
-    FROM app_likes al
-    JOIN users u ON u.id = al.user_id
+    FROM public.app_likes al
+    JOIN public.users u ON u.id = al.user_id
     WHERE al.app_id = OLD.app_id;
 
-    UPDATE apps SET
+    UPDATE public.apps SET
       likes = like_count,
       dislikes = dislike_count,
       weighted_likes = w_like_count,
@@ -1782,11 +1792,11 @@ BEGIN
     COUNT(*) FILTER (WHERE al.positive AND u.tier != 'free'),
     COUNT(*) FILTER (WHERE NOT al.positive AND u.tier != 'free')
   INTO like_count, dislike_count, w_like_count, w_dislike_count
-  FROM app_likes al
-  JOIN users u ON u.id = al.user_id
+  FROM public.app_likes al
+  JOIN public.users u ON u.id = al.user_id
   WHERE al.app_id = target_app_id;
 
-  UPDATE apps SET
+  UPDATE public.apps SET
     likes = like_count,
     dislikes = dislike_count,
     weighted_likes = w_like_count,
@@ -1822,7 +1832,7 @@ BEGIN
     target_content_id := NEW.content_id;
   END IF;
 
-  -- If UPDATE changed content_id, also recompute old content
+  -- If UPDATE changed content_id, also recompute old public.content
   IF TG_OP = 'UPDATE' AND OLD.content_id IS DISTINCT FROM NEW.content_id THEN
     SELECT
       COUNT(*) FILTER (WHERE cl.positive),
@@ -1830,11 +1840,11 @@ BEGIN
       COUNT(*) FILTER (WHERE cl.positive AND u.tier != 'free'),
       COUNT(*) FILTER (WHERE NOT cl.positive AND u.tier != 'free')
     INTO like_count, dislike_count, w_like_count, w_dislike_count
-    FROM content_likes cl
-    JOIN users u ON u.id = cl.user_id
+    FROM public.content_likes cl
+    JOIN public.users u ON u.id = cl.user_id
     WHERE cl.content_id = OLD.content_id;
 
-    UPDATE content SET
+    UPDATE public.content SET
       likes = like_count,
       dislikes = dislike_count,
       weighted_likes = w_like_count,
@@ -1843,18 +1853,18 @@ BEGIN
     WHERE id = OLD.content_id;
   END IF;
 
-  -- Recompute for the target content
+  -- Recompute for the target public.content
   SELECT
     COUNT(*) FILTER (WHERE cl.positive),
     COUNT(*) FILTER (WHERE NOT cl.positive),
     COUNT(*) FILTER (WHERE cl.positive AND u.tier != 'free'),
     COUNT(*) FILTER (WHERE NOT cl.positive AND u.tier != 'free')
   INTO like_count, dislike_count, w_like_count, w_dislike_count
-  FROM content_likes cl
-  JOIN users u ON u.id = cl.user_id
+  FROM public.content_likes cl
+  JOIN public.users u ON u.id = cl.user_id
   WHERE cl.content_id = target_content_id;
 
-  UPDATE content SET
+  UPDATE public.content SET
     likes = like_count,
     dislikes = dislike_count,
     weighted_likes = w_like_count,
