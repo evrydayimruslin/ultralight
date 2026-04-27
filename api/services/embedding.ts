@@ -144,10 +144,9 @@ export class EmbeddingService {
  * Key priority:
  *   1. User's BYOK key (direct OpenRouter API key)
  *   2. OPENROUTER_EMBEDDING_KEY — dedicated platform embedding key (regular API key)
- *   3. OPENROUTER_API_KEY — legacy fallback (may be a provisioning key, won't work for embeddings)
  *
  * Note: OPENROUTER_API_KEY is often a provisioning key (used to create per-user sub-keys)
- * which cannot call the embeddings endpoint. Use OPENROUTER_EMBEDDING_KEY for platform operations.
+ * which cannot call the embeddings endpoint. It is intentionally not used here.
  */
 export function createEmbeddingService(userApiKey?: string): EmbeddingService | null {
   // Try user's BYOK key first
@@ -161,12 +160,6 @@ export function createEmbeddingService(userApiKey?: string): EmbeddingService | 
     return new EmbeddingService({ apiKey: embeddingKey });
   }
 
-  // Legacy fallback — may be a provisioning key that can't do embeddings
-  const systemKey = getEnv('OPENROUTER_API_KEY');
-  if (systemKey) {
-    return new EmbeddingService({ apiKey: systemKey });
-  }
-
   return null;
 }
 
@@ -175,7 +168,7 @@ export function createEmbeddingService(userApiKey?: string): EmbeddingService | 
  */
 export function isEmbeddingAvailable(userApiKey?: string): boolean {
   if (userApiKey) return true;
-  return !!(getEnv('OPENROUTER_EMBEDDING_KEY') || getEnv('OPENROUTER_API_KEY'));
+  return !!getEnv('OPENROUTER_EMBEDDING_KEY');
 }
 
 // ============================================

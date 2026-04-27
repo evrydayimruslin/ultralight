@@ -7,6 +7,7 @@ import { streamChat, embedConversation } from './api';
 import { syncSystemAgentStates } from './api';
 import { SYSTEM_AGENTS } from './systemAgents';
 import { createDesktopLogger } from './logging';
+import { DEFAULT_INTERPRETER_MODEL, getInferencePreference } from './storage';
 import type { Agent } from '../hooks/useAgentFleet';
 
 const STATE_SUMMARY_SYSTEM = `Summarize this system agent's current state in 1-2 sentences. Focus on: what the user is working on with this agent, any pending actions, and key context. Be extremely concise — max 100 words.`;
@@ -30,13 +31,14 @@ export async function generateStateSummary(
   let summary = '';
   try {
     for await (const event of streamChat({
-      model: 'google/gemini-3.1-flash-lite-preview:nitro',
+      model: DEFAULT_INTERPRETER_MODEL,
       messages: [
         { role: 'system', content: STATE_SUMMARY_SYSTEM },
         { role: 'user', content: formatted },
       ],
       max_tokens: 150,
       temperature: 0,
+      inference: getInferencePreference() ?? undefined,
     })) {
       if (event.type === 'delta' && event.content) {
         summary += event.content;

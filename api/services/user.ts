@@ -2,7 +2,7 @@
 // Handles user settings, BYOK configuration, and preferences
 
 import type { BYOKProvider, BYOKConfig, User } from '../../shared/types/index.ts';
-import { BYOK_PROVIDERS } from '../../shared/types/index.ts';
+import { isActiveBYOKProvider } from '../../shared/types/index.ts';
 import { getEnv } from '../lib/env.ts';
 import { decryptApiKey, encryptApiKey } from './api-key-crypto.ts';
 
@@ -54,7 +54,13 @@ interface UserRow {
 }
 
 function isKnownByokProvider(provider: string): provider is BYOKProvider {
-  return provider in BYOK_PROVIDERS;
+  return isActiveBYOKProvider(provider);
+}
+
+function hasUsableByokKey(
+  entry: { encrypted_key?: string; [key: string]: unknown } | undefined,
+): boolean {
+  return typeof entry?.encrypted_key === 'string' && entry.encrypted_key.length > 0;
 }
 
 export function createUserService(): UserService {
@@ -80,10 +86,14 @@ export function createUserService(): UserService {
 
     const user = users[0];
     const byokConfigs = parseByokConfigs(user.byok_keys);
-    const configProviders = new Set(byokConfigs.map(config => config.provider));
+    const configProviders = new Set(
+      byokConfigs
+        .filter(config => config.has_key)
+        .map(config => config.provider),
+    );
     const primaryProvider = user.byok_provider && configProviders.has(user.byok_provider as BYOKProvider)
       ? user.byok_provider as BYOKProvider
-      : byokConfigs[0]?.provider || null;
+      : byokConfigs.find(config => config.has_key)?.provider || null;
 
     return {
       id: user.id,
@@ -94,7 +104,7 @@ export function createUserService(): UserService {
       country: user.country || null,
       featured_app_id: user.featured_app_id || null,
       profile_slug: user.profile_slug || null,
-      byok_enabled: (user.byok_enabled || false) && byokConfigs.length > 0,
+      byok_enabled: (user.byok_enabled || false) && configProviders.size > 0,
       byok_provider: primaryProvider,
       byok_configs: byokConfigs,
     };
@@ -160,7 +170,7 @@ export function createUserService(): UserService {
     // If this is the first provider, set it as primary
     const isPrimaryUpdate = !user?.byok_provider || !isKnownByokProvider(user.byok_provider);
 
-    await fetch(
+    const response = await fetch(
       `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}`,
       {
         method: 'PATCH',
@@ -177,6 +187,9 @@ export function createUserService(): UserService {
         }),
       }
     );
+    if (!response.ok) {
+      throw new Error(`Failed to add BYOK provider: ${await response.text()}`);
+    }
 
     return {
       provider,
@@ -197,9 +210,14 @@ export function createUserService(): UserService {
       throw new Error(`Provider ${provider} not configured`);
     }
 
+    const trimmedApiKey = updates.apiKey?.trim();
+    if (!trimmedApiKey && !hasUsableByokKey(currentKeys[provider])) {
+      throw new Error(`Provider ${provider} not configured`);
+    }
+
     const updatedConfig = {
       ...currentKeys[provider],
-      ...(updates.apiKey ? { encrypted_key: await encryptApiKey(updates.apiKey) } : {}),
+      ...(trimmedApiKey ? { encrypted_key: await encryptApiKey(trimmedApiKey) } : {}),
       ...(updates.model !== undefined ? { model: updates.model } : {}),
     };
 
@@ -208,7 +226,7 @@ export function createUserService(): UserService {
       [provider]: updatedConfig,
     };
 
-    await fetch(
+    const response = await fetch(
       `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}`,
       {
         method: 'PATCH',
@@ -223,10 +241,13 @@ export function createUserService(): UserService {
         }),
       }
     );
+    if (!response.ok) {
+      throw new Error(`Failed to update BYOK provider: ${await response.text()}`);
+    }
 
     return {
       provider,
-      has_key: true,
+      has_key: hasUsableByokKey(updatedConfig),
       model: updatedConfig.model,
       added_at: updatedConfig.added_at || new Date(0).toISOString(),
     };
@@ -241,12 +262,12 @@ export function createUserService(): UserService {
 
     // If this was the primary provider, clear it or set a new one
     const remainingProviders = Object.entries(currentKeys)
-      .filter(([provider, config]) => isKnownByokProvider(provider) && !!config.encrypted_key)
+      .filter(([provider, config]) => isKnownByokProvider(provider) && hasUsableByokKey(config))
       .map(([provider]) => provider as BYOKProvider);
     const newPrimary = remainingProviders[0] || null;
     const byokEnabled = remainingProviders.length > 0;
 
-    await fetch(
+    const response = await fetch(
       `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}`,
       {
         method: 'PATCH',
@@ -263,16 +284,19 @@ export function createUserService(): UserService {
         }),
       }
     );
+    if (!response.ok) {
+      throw new Error(`Failed to remove BYOK provider: ${await response.text()}`);
+    }
   }
 
   async function setPrimaryProvider(userId: string, provider: BYOKProvider): Promise<void> {
     const currentKeys = await getRawByokKeys(userId);
 
-    if (!currentKeys[provider]) {
+    if (!hasUsableByokKey(currentKeys[provider])) {
       throw new Error(`Provider ${provider} not configured`);
     }
 
-    await fetch(
+    const response = await fetch(
       `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}`,
       {
         method: 'PATCH',
@@ -287,6 +311,9 @@ export function createUserService(): UserService {
         }),
       }
     );
+    if (!response.ok) {
+      throw new Error(`Failed to set primary BYOK provider: ${await response.text()}`);
+    }
   }
 
   async function getDecryptedApiKey(userId: string, provider: BYOKProvider): Promise<string | null> {
@@ -333,7 +360,7 @@ export function createUserService(): UserService {
       .filter(([provider]) => isKnownByokProvider(provider))
       .map(([provider, config]) => ({
         provider: provider as BYOKProvider,
-        has_key: !!config.encrypted_key,
+        has_key: hasUsableByokKey(config),
         model: config.model,
         added_at: config.added_at || new Date(0).toISOString(),
       }));

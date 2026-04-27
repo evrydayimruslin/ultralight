@@ -26,7 +26,16 @@ interface DynamicWorkerEntrypointExports {
   ): unknown;
   AppDataBinding(input: { props: { appId: string; userId: string } }): unknown;
   MemoryBinding(input: { props: { userId: string } }): unknown;
-  AIBinding(input: { props: { userId: string; apiKey: string | null; provider: string } }): unknown;
+  AIBinding(input: {
+    props: {
+      userId: string;
+      apiKey: string | null;
+      provider: string | null;
+      baseUrl: string | null;
+      defaultModel: string | null;
+      shouldDebitLight: boolean;
+    };
+  }): unknown;
 }
 
 type DynamicWorkerExecutionContext = ExecutionContext & {
@@ -229,7 +238,14 @@ export default {
 
     if (ctx?.exports?.AIBinding) {
       bindings.AI = ctx.exports.AIBinding({
-        props: { userId: config.userId, apiKey: config.userApiKey, provider: 'openrouter' },
+        props: {
+          userId: config.userId,
+          apiKey: config.aiRoute?.apiKey || config.userApiKey,
+          provider: config.aiRoute?.provider || null,
+          baseUrl: config.aiRoute?.baseUrl || null,
+          defaultModel: config.aiRoute?.model || null,
+          shouldDebitLight: !!config.aiRoute?.shouldDebitLight,
+        },
       });
     }
 

@@ -2953,7 +2953,7 @@ export function getLayoutHTML(options: {
             <!-- BYOK: Bring Your Own Key -->
             <div style="margin-top:var(--space-8);padding-top:var(--space-6);border-top:1px solid var(--border);">
               <h3 style="font-size:16px;font-weight:600;margin-bottom:var(--space-1);">AI Keys (Bring Your Own)</h3>
-              <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Use your own API keys for model access. OpenRouter gives access to 100+ models from all providers with a single key.</p>
+              <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Use your own provider keys for inference. BYOK calls skip Light debits; Light balance remains available through OpenRouter when no BYOK route is selected.</p>
 
               <div id="byokProviderList" style="display:flex;flex-direction:column;gap:var(--space-2);">
                 <div style="font-size:12px;color:var(--text-muted);">Loading saved AI keys...</div>
@@ -5321,23 +5321,37 @@ export function getLayoutHTML(options: {
     // Wallet sub-tab state
     var activeWalletTab = 'balance';
 
+    function selectWalletTab(tab) {
+      activeWalletTab = tab;
+      document.querySelectorAll('[data-wallet-tab]').forEach(function(btn) {
+        btn.classList.toggle('active', btn.dataset.walletTab === activeWalletTab);
+      });
+      ['walletBalanceTab', 'walletTransactionsTab', 'walletEarningsTab', 'walletOffersTab'].forEach(function(id) {
+        var tabEl = document.getElementById(id);
+        if (tabEl) tabEl.style.display = 'none';
+      });
+      var tabMap = { balance: 'walletBalanceTab', transactions: 'walletTransactionsTab', earnings: 'walletEarningsTab', offers: 'walletOffersTab' };
+      var activeEl = document.getElementById(tabMap[activeWalletTab]);
+      if (activeEl) activeEl.style.display = 'block';
+      if (activeWalletTab === 'transactions') { loadTransactions(true); }
+      else if (activeWalletTab === 'earnings') { loadEarnings(); loadPayouts(); }
+      else if (activeWalletTab === 'offers') { loadMyOffers(); }
+    }
+
+    window.openWalletBalance = function() {
+      switchDashboardSection('billing');
+      selectWalletTab('balance');
+    };
+
+    window.openWalletTransactions = function() {
+      switchDashboardSection('billing');
+      selectWalletTab('transactions');
+    };
+
     // Wallet filter tabs
     document.querySelectorAll('[data-wallet-tab]').forEach(function(el) {
       el.addEventListener('click', function() {
-        activeWalletTab = this.dataset.walletTab;
-        document.querySelectorAll('[data-wallet-tab]').forEach(function(btn) {
-          btn.classList.toggle('active', btn.dataset.walletTab === activeWalletTab);
-        });
-        ['walletBalanceTab', 'walletTransactionsTab', 'walletEarningsTab', 'walletOffersTab'].forEach(function(id) {
-          var tabEl = document.getElementById(id);
-          if (tabEl) tabEl.style.display = 'none';
-        });
-        var tabMap = { balance: 'walletBalanceTab', transactions: 'walletTransactionsTab', earnings: 'walletEarningsTab', offers: 'walletOffersTab' };
-        var activeEl = document.getElementById(tabMap[activeWalletTab]);
-        if (activeEl) activeEl.style.display = 'block';
-        if (activeWalletTab === 'transactions') { loadTransactions(true); }
-        else if (activeWalletTab === 'earnings') { loadEarnings(); loadPayouts(); }
-        else if (activeWalletTab === 'offers') { loadMyOffers(); }
+        selectWalletTab(this.dataset.walletTab);
       });
     });
 
@@ -7742,107 +7756,234 @@ export function getLayoutHTML(options: {
     // --- BYOK (Bring Your Own Key) ---
     var byokConfig = null;
 
+    function byokHeaders() {
+      return { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' };
+    }
+
+    function byokProviderById(providerId) {
+      var providers = (byokConfig && byokConfig.available_providers) || [];
+      return providers.find(function(p) { return p.id === providerId; }) || null;
+    }
+
+    function byokConfigByProvider(providerId) {
+      var configs = (byokConfig && byokConfig.configs) || [];
+      return configs.find(function(c) { return c.provider === providerId; }) || null;
+    }
+
+    function byokDisplayModel(modelId) {
+      if (!modelId) return '';
+      var name = String(modelId).split('/').pop() || String(modelId);
+      return name.replace(/:nitro$/, '');
+    }
+
+    function byokMaskedKey(provider) {
+      var prefix = provider && provider.apiKeyPrefix ? provider.apiKeyPrefix : 'sk-';
+      return prefix + '\\u2022'.repeat(12);
+    }
+
+    function byokSelectedModel(providerId) {
+      var select = document.getElementById('byokModel_' + providerId);
+      if (select && select.value) return select.value;
+      var provider = byokProviderById(providerId);
+      return provider ? provider.defaultModel : undefined;
+    }
+
     async function loadByokConfig() {
       var container = document.getElementById('byokProviderList');
       if (!container) return;
+      container.innerHTML = renderShellState('loading', 'Loading AI keys', 'Checking configured BYOK providers.', { compact: true });
       try {
         var res = await fetch('/api/user/byok', {
           headers: { 'Authorization': 'Bearer ' + authToken },
         });
-        if (!res.ok) { container.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">Failed to load</div>'; return; }
+        if (!res.ok) {
+          container.innerHTML = renderShellState('error', 'AI keys unavailable', 'We could not load provider settings right now.', { compact: true });
+          return;
+        }
         byokConfig = await res.json();
         renderByokProviders();
-      } catch { container.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">Failed to load</div>'; }
+      } catch {
+        container.innerHTML = renderShellState('error', 'AI keys unavailable', 'We could not load provider settings right now.', { compact: true });
+      }
+    }
+
+    function renderByokModelSelect(provider, cfg) {
+      var selectedModel = (cfg && cfg.model) || provider.defaultModel || '';
+      var models = provider.models || [];
+      if (models.length === 0) {
+        return '<input id="byokModel_' + escapeHtml(provider.id) + '" type="text" value="' + escapeHtml(selectedModel) + '" placeholder="Default model" style="width:100%;padding:6px 8px;background:var(--bg-base);border:1px solid var(--border);color:var(--text-primary);font-size:12px;font-family:var(--font-mono);" ' + (cfg ? 'onchange="updateByokModel(\\\'' + provider.id + '\\\', this.value)"' : '') + '>';
+      }
+
+      var hasSelected = models.some(function(m) { return m.id === selectedModel; });
+      var html = '<select id="byokModel_' + escapeHtml(provider.id) + '" style="width:100%;padding:6px 8px;background:var(--bg-base);border:1px solid var(--border);color:var(--text-primary);font-size:12px;font-family:var(--font-mono);" ' + (cfg ? 'onchange="updateByokModel(\\\'' + provider.id + '\\\', this.value)"' : '') + '>';
+      if (selectedModel && !hasSelected) {
+        html += '<option value="' + escapeHtml(selectedModel) + '" selected>' + escapeHtml(byokDisplayModel(selectedModel)) + '</option>';
+      }
+      models.forEach(function(model) {
+        var label = model.name || byokDisplayModel(model.id);
+        var selected = model.id === selectedModel ? ' selected' : '';
+        html += '<option value="' + escapeHtml(model.id) + '"' + selected + '>' + escapeHtml(label) + '</option>';
+      });
+      html += '</select>';
+      return html;
     }
 
     function renderByokProviders() {
       var container = document.getElementById('byokProviderList');
       if (!container || !byokConfig) return;
 
-      var providers = [
-        { id: 'openrouter', name: 'OpenRouter', desc: 'Access 100+ models', prefix: 'sk-or-' },
-        { id: 'anthropic', name: 'Anthropic', desc: 'Claude models direct', prefix: 'sk-ant-' },
-        { id: 'openai', name: 'OpenAI', desc: 'GPT models direct', prefix: 'sk-' },
-      ];
+      var providers = byokConfig.available_providers || [];
       var configs = byokConfig.configs || [];
       var primaryProvider = byokConfig.primary_provider;
 
-      var html = '';
+      if (providers.length === 0) {
+        container.innerHTML = renderShellState('empty', 'No BYOK providers available', 'Provider settings are not configured on this server.', { compact: true });
+        return;
+      }
+
+      var configuredCount = configs.length;
+      var html = '<div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-3);margin-bottom:var(--space-2);">';
+      html += '<div><div style="font-size:13px;font-weight:600;color:var(--text-primary);">Provider routing</div><div style="font-size:11px;color:var(--text-muted);margin-top:2px;">' + configuredCount + ' configured · primary ' + escapeHtml(primaryProvider || 'Light balance') + '</div></div>';
+      html += '<button class="btn btn-sm" style="border:1px solid var(--border);border-radius:0;" onclick="addByokKey()">Add API Key</button>';
+      html += '</div>';
+
+      if (configuredCount === 0) {
+        html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);background:var(--bg-subtle);border:1px solid var(--border);padding:var(--space-3);margin-bottom:var(--space-2);">';
+        html += '<div style="min-width:0;"><div style="font-size:13px;font-weight:600;color:var(--text-primary);">Using Light balance</div><div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Until a BYOK provider is configured, platform inference runs through OpenRouter and appears in your Light transaction history.</div></div>';
+        html += '<div style="display:flex;gap:var(--space-2);flex-shrink:0;flex-wrap:wrap;justify-content:flex-end;">';
+        html += '<button class="btn btn-sm" style="font-size:11px;border:1px solid var(--border);border-radius:0;" onclick="openWalletTransactions()">Transaction history</button>';
+        html += '<button class="btn btn-primary btn-sm" style="font-size:11px;border-radius:0;" onclick="openWalletBalance()">Add Light</button>';
+        html += '</div></div>';
+      }
+
       providers.forEach(function(p) {
-        var cfg = configs.find(function(c) { return c.provider === p.id; });
+        var cfg = byokConfigByProvider(p.id);
         var isPrimary = primaryProvider === p.id;
         var hasKey = !!cfg;
+        var configuredDate = cfg && cfg.added_at ? new Date(cfg.added_at).toLocaleDateString() : '';
 
-        html += '<div style="display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3);background:var(--bg-raised);border:1px solid var(--border);border-radius:6px;">';
-        html += '<div style="flex:1;min-width:0;">';
-        html += '<div style="display:flex;align-items:center;gap:var(--space-2);">';
-        html += '<span style="font-size:13px;font-weight:500;">' + p.name + '</span>';
-        if (isPrimary) html += '<span style="font-size:10px;background:var(--text-primary);color:var(--bg-base);padding:1px 6px;border-radius:3px;font-weight:500;">Primary</span>';
+        html += '<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(180px,260px) auto;gap:var(--space-3);align-items:center;padding:var(--space-3);background:var(--bg-raised);border:1px solid var(--border);">';
+        html += '<div style="min-width:0;">';
+        html += '<div style="display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap;">';
+        html += '<span style="font-size:13px;font-weight:600;color:var(--text-primary);">' + escapeHtml(p.name) + '</span>';
+        if (isPrimary) html += '<span style="font-size:10px;background:var(--text-primary);color:var(--bg-base);padding:1px 6px;font-weight:500;">Primary</span>';
+        html += '<span style="font-size:10px;border:1px solid var(--border);padding:1px 6px;color:' + (hasKey ? 'var(--success)' : 'var(--text-muted)') + ';">' + (hasKey ? 'Configured' : 'No key') + '</span>';
         html += '</div>';
+        html += '<div style="font-size:11px;color:var(--text-muted);margin-top:3px;">' + escapeHtml(p.description || '') + '</div>';
+        html += '<div style="font-size:11px;color:var(--text-muted);margin-top:3px;font-family:var(--font-mono);">' + (hasKey ? byokMaskedKey(p) : escapeHtml(p.baseUrl || '')) + '</div>';
+        if (configuredDate) html += '<div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Added ' + escapeHtml(configuredDate) + '</div>';
+        html += '</div>';
+
+        html += '<div style="min-width:0;">';
+        html += '<label style="font-size:10px;color:var(--text-muted);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.04em;">Default model</label>';
+        html += renderByokModelSelect(p, cfg);
+        html += '</div>';
+
+        html += '<div style="display:flex;gap:var(--space-2);align-items:center;justify-content:flex-end;flex-wrap:wrap;">';
+        if (p.apiKeyUrl) {
+          html += '<a href="' + escapeHtml(p.apiKeyUrl) + '" target="_blank" class="btn btn-sm" style="font-size:11px;border:1px solid var(--border);border-radius:0;">Get key</a>';
+        }
         if (hasKey) {
-          var maskedKey = cfg.api_key_preview || (p.prefix + '\\u2022'.repeat(12));
-          html += '<div style="font-size:11px;color:var(--text-muted);margin-top:2px;font-family:monospace;">' + maskedKey + '</div>';
+          if (!isPrimary) html += '<button class="btn btn-sm" style="font-size:11px;border:1px solid var(--border);border-radius:0;" onclick="setPrimaryByok(\\\'' + p.id + '\\\')">Set Primary</button>';
+          html += '<button class="btn btn-sm" style="font-size:11px;border:1px solid var(--border);border-radius:0;" onclick="addByokKeyForProvider(\\\'' + p.id + '\\\')">Replace</button>';
+          html += '<button class="btn btn-sm" style="font-size:11px;color:var(--error);border:1px solid var(--border);border-radius:0;" onclick="removeByokKey(\\\'' + p.id + '\\\')">Remove</button>';
         } else {
-          html += '<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">' + p.desc + '</div>';
+          html += '<button class="btn btn-primary btn-sm" style="font-size:11px;border-radius:0;" onclick="addByokKeyForProvider(\\\'' + p.id + '\\\')">Add Key</button>';
         }
         html += '</div>';
-
-        if (hasKey) {
-          if (!isPrimary) html += '<button class="btn btn-sm" style="font-size:11px;border:1px solid var(--border);" onclick="setPrimaryByok(\\\'' + p.id + '\\\')">Set Primary</button>';
-          html += '<button class="btn btn-sm" style="font-size:11px;color:var(--error);border:1px solid var(--border);" onclick="removeByokKey(\\\'' + p.id + '\\\')">Remove</button>';
-        } else {
-          html += '<button class="btn btn-sm" style="font-size:11px;border:1px solid var(--border);" onclick="addByokKeyForProvider(\\\'' + p.id + '\\\')">Add Key</button>';
-        }
         html += '</div>';
       });
 
       container.innerHTML = html;
     }
 
-    window.addByokKey = function() { addByokKeyForProvider('openrouter'); };
+    window.addByokKey = function() {
+      if (!byokConfig) { loadByokConfig(); return; }
+      var providers = byokConfig.available_providers || [];
+      var preferred = ['deepseek', 'openrouter', 'nvidia', 'openai', 'google', 'xai'];
+      var provider = null;
+      for (var i = 0; i < preferred.length; i++) {
+        var candidate = providers.find(function(p) {
+          return p.id === preferred[i] && !byokConfigByProvider(p.id);
+        });
+        if (candidate) { provider = candidate; break; }
+      }
+      if (!provider) provider = providers.find(function(p) { return !byokConfigByProvider(p.id); }) || providers[0];
+      if (provider) addByokKeyForProvider(provider.id);
+    };
 
     window.addByokKeyForProvider = async function(provider) {
-      var key = prompt('Enter your ' + provider.charAt(0).toUpperCase() + provider.slice(1) + ' API key:');
+      var p = byokProviderById(provider);
+      var providerName = p ? p.name : provider.charAt(0).toUpperCase() + provider.slice(1);
+      var key = prompt('Enter your ' + providerName + ' API key:');
       if (!key || !key.trim()) return;
+      var model = byokSelectedModel(provider);
 
       try {
         var res = await fetch('/api/user/byok', {
           method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider: provider, api_key: key.trim(), validate: true }),
+          headers: byokHeaders(),
+          body: JSON.stringify({ provider: provider, api_key: key.trim(), model: model, validate: true }),
         });
         if (!res.ok) {
           var err = await res.json().catch(function() { return {}; });
           showToast(err.error || 'Failed to add key', 'error');
           return;
         }
-        showToast(provider.charAt(0).toUpperCase() + provider.slice(1) + ' key added!');
+        showToast(providerName + ' key saved');
         await loadByokConfig();
       } catch { showToast('Failed to add key', 'error'); }
     };
 
+    window.updateByokModel = async function(provider, model) {
+      var cfg = byokConfigByProvider(provider);
+      if (!cfg) return;
+      var p = byokProviderById(provider);
+      try {
+        var res = await fetch('/api/user/byok/' + provider, {
+          method: 'PATCH',
+          headers: byokHeaders(),
+          body: JSON.stringify({ model: model || undefined, validate: false }),
+        });
+        if (!res.ok) {
+          var err = await res.json().catch(function() { return {}; });
+          showToast(err.error || 'Failed to update model', 'error');
+          await loadByokConfig();
+          return;
+        }
+        showToast((p ? p.name : provider) + ' model updated');
+        await loadByokConfig();
+      } catch {
+        showToast('Failed to update model', 'error');
+        await loadByokConfig();
+      }
+    };
+
     window.removeByokKey = async function(provider) {
-      if (!confirm('Remove your ' + provider + ' API key?')) return;
+      var p = byokProviderById(provider);
+      var providerName = p ? p.name : provider;
+      if (!confirm('Remove your ' + providerName + ' API key?')) return;
       try {
         var res = await fetch('/api/user/byok/' + provider, {
           method: 'DELETE',
           headers: { 'Authorization': 'Bearer ' + authToken },
         });
         if (!res.ok) { showToast('Failed to remove key', 'error'); return; }
-        showToast('Key removed');
+        showToast(providerName + ' key removed');
         await loadByokConfig();
       } catch { showToast('Failed to remove key', 'error'); }
     };
 
     window.setPrimaryByok = async function(provider) {
+      var p = byokProviderById(provider);
       try {
         var res = await fetch('/api/user/byok/primary', {
           method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          headers: byokHeaders(),
           body: JSON.stringify({ provider: provider }),
         });
         if (!res.ok) { showToast('Failed to set primary', 'error'); return; }
-        showToast(provider + ' set as primary');
+        showToast((p ? p.name : provider) + ' set as primary');
         await loadByokConfig();
       } catch { showToast('Failed to set primary', 'error'); }
     };

@@ -64,7 +64,7 @@ const DEFAULT_RATES = { inputPerMillion: 5, outputPerMillion: 15 };
  * Calculate cost in Light from usage data.
  * Prefers OpenRouter's reported total_cost (USD) if available.
  * Falls back to static per-model rate table.
- * Applies platform markup (1.2x = 20%).
+ * Applies platform markup (currently 1.0x pass-through).
  */
 export function calculateCostLight(
   usage: ChatUsage,

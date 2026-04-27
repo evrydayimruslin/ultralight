@@ -231,3 +231,203 @@ Deno.test("User service: internal platform key does not count as BYOK-enabled st
     });
   });
 });
+
+Deno.test("User service: active provider rows without encrypted keys are not usable BYOK state", async () => {
+  await runSerial(async () => {
+    await withMockedEnvAndFetch(async () =>
+      jsonResponse([{
+        id: "user-1",
+        email: "user@example.com",
+        display_name: null,
+        avatar_url: null,
+        tier: "free",
+        country: null,
+        featured_app_id: null,
+        profile_slug: null,
+        byok_enabled: true,
+        byok_provider: "openai",
+        byok_keys: {
+          openai: {
+            model: "gpt-4o-mini",
+            added_at: "2026-04-11T00:00:00Z",
+          },
+        },
+      }]), async () => {
+      const user = await createUserService().getUser("user-1");
+      assert(user !== null);
+      assertEquals(user.byok_enabled, false);
+      assertEquals(user.byok_provider, null);
+      assertEquals(user.byok_configs.length, 1);
+      assertEquals(user.byok_configs[0].provider, "openai");
+      assertEquals(user.byok_configs[0].has_key, false);
+    });
+  });
+});
+
+Deno.test("User service: primary provider requires an encrypted key", async () => {
+  await runSerial(async () => {
+    let patchCalled = false;
+
+    await withMockedEnvAndFetch(async (_input, init) => {
+      if ((init?.method || "GET") === "PATCH") {
+        patchCalled = true;
+        return new Response(null, { status: 204 });
+      }
+      return jsonResponse([{
+        byok_keys: {
+          openai: {
+            model: "gpt-4o-mini",
+            added_at: "2026-04-11T00:00:00Z",
+          },
+        },
+      }]);
+    }, async () => {
+      await assertRejects(
+        () => createUserService().setPrimaryProvider("user-1", "openai"),
+        Error,
+        "Provider openai not configured",
+      );
+    });
+
+    assertEquals(patchCalled, false);
+  });
+});
+
+Deno.test("User service: updating a stale provider row requires a replacement key", async () => {
+  await runSerial(async () => {
+    let patchCalled = false;
+
+    await withMockedEnvAndFetch(async (_input, init) => {
+      if ((init?.method || "GET") === "PATCH") {
+        patchCalled = true;
+        return new Response(null, { status: 204 });
+      }
+      return jsonResponse([{
+        byok_keys: {
+          openai: {
+            model: "gpt-4o-mini",
+            added_at: "2026-04-11T00:00:00Z",
+          },
+        },
+      }]);
+    }, async () => {
+      await assertRejects(
+        () => createUserService().updateBYOKProvider("user-1", "openai", {
+          model: "gpt-4o",
+        }),
+        Error,
+        "Provider openai not configured",
+      );
+    });
+
+    assertEquals(patchCalled, false);
+  });
+});
+
+Deno.test("User service: replacing a stale provider key makes the row usable", async () => {
+  await runSerial(async () => {
+    let patchBody: Record<string, unknown> | null = null;
+
+    await withMockedEnvAndFetch(async (_input, init) => {
+      if ((init?.method || "GET") === "PATCH") {
+        patchBody = JSON.parse(String(init?.body));
+        return new Response(null, { status: 204 });
+      }
+      return jsonResponse([{
+        byok_keys: {
+          openai: {
+            model: "gpt-4o-mini",
+            added_at: "2026-04-11T00:00:00Z",
+          },
+        },
+      }]);
+    }, async () => {
+      const config = await createUserService().updateBYOKProvider("user-1", "openai", {
+        apiKey: "  sk-new-openai-key  ",
+        model: "gpt-4o",
+      });
+
+      assertEquals(config.has_key, true);
+      assertEquals(config.model, "gpt-4o");
+      assert(patchBody !== null);
+      const byokKeys = (patchBody as {
+        byok_keys: Record<string, Record<string, unknown>>;
+      }).byok_keys;
+      assertEquals(
+        await decryptApiKey(byokKeys.openai.encrypted_key as string),
+        "sk-new-openai-key",
+      );
+    });
+  });
+});
+
+Deno.test("User service: BYOK writes surface persistence failures", async () => {
+  await runSerial(async () => {
+    let encryptedKey = "";
+
+    await withMockedEnvAndFetch(async (_input, init) => {
+      if ((init?.method || "GET") === "PATCH") {
+        return new Response("database unavailable", { status: 503 });
+      }
+      return jsonResponse([{
+        byok_keys: {
+          openai: {
+            encrypted_key: encryptedKey,
+            model: "gpt-4o-mini",
+            added_at: "2026-04-11T00:00:00Z",
+          },
+        },
+      }]);
+    }, async () => {
+      encryptedKey = await encryptApiKey("sk-existing-openai-key");
+      await assertRejects(
+        () => createUserService().updateBYOKProvider("user-1", "openai", {
+          model: "gpt-4o",
+        }),
+        Error,
+        "Failed to update BYOK provider: database unavailable",
+      );
+    });
+  });
+});
+
+Deno.test("User service: legacy BYOK providers are ignored without breaking hydration", async () => {
+  await runSerial(async () => {
+    let anthropicKey = "";
+    let moonshotKey = "";
+
+    await withMockedEnvAndFetch(async () =>
+      jsonResponse([{
+        id: "user-1",
+        email: "user@example.com",
+        display_name: null,
+        avatar_url: null,
+        tier: "free",
+        country: null,
+        featured_app_id: null,
+        profile_slug: null,
+        byok_enabled: true,
+        byok_provider: "anthropic",
+        byok_keys: {
+          anthropic: {
+            encrypted_key: anthropicKey,
+            model: "claude-3-5-sonnet-latest",
+            added_at: "2026-04-10T00:00:00Z",
+          },
+          moonshot: {
+            encrypted_key: moonshotKey,
+            model: "kimi-k2",
+            added_at: "2026-04-11T00:00:00Z",
+          },
+        },
+      }]), async () => {
+      anthropicKey = await encryptApiKey("anthropic-legacy-key");
+      moonshotKey = await encryptApiKey("moonshot-legacy-key");
+      const user = await createUserService().getUser("user-1");
+      assert(user !== null);
+      assertEquals(user.byok_enabled, false);
+      assertEquals(user.byok_provider, null);
+      assertEquals(user.byok_configs.length, 0);
+    });
+  });
+});

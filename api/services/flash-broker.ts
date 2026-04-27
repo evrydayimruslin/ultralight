@@ -19,6 +19,8 @@ import { createR2Service } from './storage.ts';
 import { getD1DatabaseId } from './d1-provisioning.ts';
 import { createAppsService } from './apps.ts';
 import { createEmbeddingService } from './embedding.ts';
+import { fetchInferenceChatCompletion, selectInferenceModel } from './inference-client.ts';
+import { resolveInferenceRoute, type ResolvedInferenceRoute } from './inference-route.ts';
 import type { App } from '../../shared/types/index.ts';
 import { buildJsonSchemaDescriptors, type AppForCodemode } from './codemode-tools.ts';
 
@@ -105,7 +107,7 @@ export type FlashEvent =
 
 const DEFAULT_FLASH_MODEL = 'google/gemini-3.1-flash-lite-preview:nitro';
 const DEFAULT_HEAVY_FLASH = 'google/gemini-3.1-flash-lite-preview:nitro';
-const DEFAULT_HEAVY_SONNET = 'anthropic/claude-sonnet-4';
+const DEFAULT_HEAVY_SONNET = 'deepseek/deepseek-v4-pro';
 
 // ── Flash System Prompts ──
 
@@ -295,8 +297,21 @@ export async function* runFlashBroker(
   projectContext?: string,
   conversationId?: string,
   files?: ChatFileAttachment[],
+  inferenceRoute?: ResolvedInferenceRoute,
 ): AsyncGenerator<FlashEvent> {
-  const flashModel = interpreterModel || DEFAULT_FLASH_MODEL;
+  let route: ResolvedInferenceRoute;
+  try {
+    route = inferenceRoute ?? await resolveInferenceRoute({ userId, userEmail });
+  } catch (err) {
+    yield {
+      type: 'error',
+      message: `Inference route unavailable: ${err instanceof Error ? err.message : String(err)}`,
+    };
+    return;
+  }
+
+  const flashModel = selectInferenceModel(route, interpreterModel || DEFAULT_FLASH_MODEL);
+  const defaultHeavyModel = selectInferenceModel(route, heavyModel || DEFAULT_HEAVY_FLASH);
 
   yield { type: 'analyzing', text: 'Analyzing your request...' };
 
@@ -322,7 +337,7 @@ export async function* runFlashBroker(
     const result: FlashBrokerResult = {
       needsTool: false,
       directResponse: "I don't have any apps or functions set up yet. Install an app to get started.",
-      model: DEFAULT_HEAVY_FLASH,
+      model: defaultHeavyModel,
       prompt: '', functions: '', entities: [], conventions: [],
       involvedAppIds: [], toolMap: {},
     };
@@ -401,13 +416,6 @@ export async function* runFlashBroker(
     lastExchangeStr = conversationHistory.slice(-6).map(m => `${m.role}: ${m.content}`).join('\n');
   }
 
-  // ── Stage 1: Analyze — identify relevant apps ──
-  const apiKey = getEnv('OPENROUTER_API_KEY');
-  if (!apiKey) {
-    yield { type: 'error', message: 'OpenRouter API key not configured' };
-    return;
-  }
-
   const conversationSummary = [summaryStr, lastExchangeStr]
     .filter(Boolean)
     .join('\n\n')
@@ -460,9 +468,9 @@ export async function* runFlashBroker(
   if (lastExchangeStr) analyzeContent += `## Last Exchange\n${lastExchangeStr}\n\n`;
   analyzeContent += `## Current Message\n${message}\n\n## Available Functions\n${catalog}`;
 
-  const analyzeResult = await callFlash(flashModel, analyzeSystem, buildMultimodalContent(analyzeContent, files), apiKey);
+  const analyzeResult = await callFlash(flashModel, analyzeSystem, buildMultimodalContent(analyzeContent, files), route);
   if (!analyzeResult) {
-    const result = heuristicFallback(message, fnIndex, heavyModel);
+    const result = heuristicFallback(message, fnIndex, defaultHeavyModel);
     yield { type: 'done', result };
     return;
   }
@@ -506,7 +514,7 @@ export async function* runFlashBroker(
     const result: FlashBrokerResult = {
       needsTool: false,
       directResponse: analyzeResult.directResponse || 'I can help with that!',
-      model: heavyModel || DEFAULT_HEAVY_FLASH,
+      model: defaultHeavyModel,
       prompt: '', functions: '', entities: [], conventions: [],
       involvedAppIds: [], toolMap: {},
       usage: analyzeResult._usage,
@@ -733,7 +741,7 @@ export async function* runFlashBroker(
     const readSystem = systemAgentContext
       ? `You are "${systemAgentContext.persona}". ${FLASH_READ_RESPONSE_SYSTEM}`
       : FLASH_READ_RESPONSE_SYSTEM;
-    const responseText = await callFlashText(flashModel, readSystem, buildMultimodalContent(readInput, files), apiKey)
+    const responseText = await callFlashText(flashModel, readSystem, buildMultimodalContent(readInput, files), route)
       || "I found the data but had trouble formatting the response. Could you try rephrasing your question?";
 
     const result: FlashBrokerResult = {
@@ -813,7 +821,7 @@ export async function* runFlashBroker(
   const promptSystem = systemAgentContext
     ? `You are constructing a prompt for "${systemAgentContext.persona}". Include their skills and conventions in the prompt.\n\n${FLASH_PROMPT_SYSTEM}`
     : FLASH_PROMPT_SYSTEM;
-  const promptResult = await callFlash(flashModel, promptSystem, buildMultimodalContent(promptInput, files), apiKey);
+  const promptResult = await callFlash(flashModel, promptSystem, buildMultimodalContent(promptInput, files), route);
 
   let finalPrompt: string;
   let finalModel: string;
@@ -822,7 +830,7 @@ export async function* runFlashBroker(
 
   if (promptResult) {
     finalPrompt = promptResult.prompt || '';
-    finalModel = resolveModel(promptResult.model, heavyModel);
+    finalModel = selectInferenceModel(route, resolveModel(promptResult.model, heavyModel));
     resolvedEntities = (promptResult.entities || []).map((e: any) => ({
       name: e.name || '', type: e.type || '', id: String(e.id || ''),
       appId: e.appId || '', appName: e.appName || '', context: e.context || '',
@@ -839,7 +847,7 @@ export async function* runFlashBroker(
     finalPrompt += 'Keep narration brief and focused on why the action matters.\n';
     finalPrompt += 'Do not repeat full tool arguments or raw execution results when the UI already shows them.\n';
     finalPrompt += 'Always name each tool you use; mention the origin too when it is explicitly provided.\n';
-    finalModel = resolveModel(analyzeResult.model, heavyModel);
+    finalModel = selectInferenceModel(route, resolveModel(analyzeResult.model, heavyModel));
   }
 
   yield { type: 'prompt_ready', prompt: finalPrompt.slice(0, 200) + '...', model: finalModel };
@@ -1137,18 +1145,12 @@ async function callFlash(
   model: string,
   systemPrompt: string,
   userContent: string | unknown[],
-  apiKey: string,
+  route: ResolvedInferenceRoute,
 ): Promise<any | null> {
   try {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://ultralight.dev',
-        'X-Title': 'Ultralight Flash Broker',
-      },
-      body: JSON.stringify({
+    const response = await fetchInferenceChatCompletion(
+      route,
+      {
         model,
         messages: [
           { role: 'system', content: systemPrompt },
@@ -1157,8 +1159,12 @@ async function callFlash(
         temperature: 0,
         max_tokens: 2048,
         response_format: { type: 'json_object' },
-      }),
-    });
+      },
+      {
+        title: 'Ultralight Flash Broker',
+        referer: 'https://ultralight.dev',
+      },
+    );
 
     if (!response.ok) {
       console.error(`[FLASH-BROKER] Flash failed: ${response.status}`);
@@ -1189,18 +1195,12 @@ export async function callFlashText(
   model: string,
   systemPrompt: string,
   userContent: string | unknown[],
-  apiKey: string,
+  route: ResolvedInferenceRoute,
 ): Promise<string> {
   try {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://ultralight.dev',
-        'X-Title': 'Ultralight Flash Broker',
-      },
-      body: JSON.stringify({
+    const response = await fetchInferenceChatCompletion(
+      route,
+      {
         model,
         messages: [
           { role: 'system', content: systemPrompt },
@@ -1209,8 +1209,12 @@ export async function callFlashText(
         temperature: 0.3,
         max_tokens: 2048,
         // No response_format — plain text output
-      }),
-    });
+      },
+      {
+        title: 'Ultralight Flash Broker',
+        referer: 'https://ultralight.dev',
+      },
+    );
 
     if (!response.ok) {
       console.error(`[FLASH-BROKER] Flash text call failed: ${response.status}`);

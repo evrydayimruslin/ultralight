@@ -30,6 +30,7 @@ export interface RuntimeConfig {
   code: string;
   permissions: string[];
   userApiKey: string | null;
+  aiRoute?: RuntimeAIRoute | null;
   // Authenticated user context (null if anonymous)
   user: UserContext | null;
   // App data storage (R2-based, zero config) — LEGACY, kept for internal R2 ops
@@ -58,6 +59,14 @@ export interface RuntimeConfig {
   workerBaseUrl?: string;
   // Per-execution timeout override (default: 30s, max: 120s)
   timeoutMs?: number;
+}
+
+export interface RuntimeAIRoute {
+  provider: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  shouldDebitLight: boolean;
 }
 
 interface RpcToolCallEnvelope {
@@ -1609,16 +1618,15 @@ export async function executeInSandbox(
         return value;
       },
 
-      // AI - Requires BYOK or platform credits
+      // AI - Routes through BYOK when configured, otherwise platform credits.
       ai: async (request: AIRequest): Promise<AIResponse> => {
         if (!config.permissions.includes('ai:call')) {
           throw new Error('ai:call permission required');
         }
         capturedConsole.log(`[SDK] ai()`);
-        // The AI service now has the API key bound to it, so we just pass the request
-        // If BYOK is not configured, the service will return an error in the response
+        // The AI service now has the provider route bound to it, so we just pass the request.
         const response = await config.aiService.call(request, config.userApiKey || '');
-        // Check for error in response (returned by placeholder service when BYOK not configured)
+        // Check for route/provider errors returned by the service.
         const aiError = (response as AIResponse & { error?: string }).error;
         if (aiError) {
           throw new Error(aiError);

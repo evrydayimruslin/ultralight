@@ -100,4 +100,41 @@ describe('secure desktop storage', () => {
     });
     expect(invokeMock).toHaveBeenNthCalledWith(3, 'secure_clear_auth_token');
   });
+
+  it('uses DeepSeek defaults for chat, interpreter, and heavy model slots', async () => {
+    const storage = await import('./storage');
+
+    expect(storage.getModel()).toBe('deepseek/deepseek-v4-flash');
+    expect(storage.getInterpreterModel()).toBe('deepseek/deepseek-v4-flash');
+    expect(storage.getHeavyModel()).toBe('deepseek/deepseek-v4-pro');
+  });
+
+  it('persists and validates inference route preferences', async () => {
+    const storage = await import('./storage');
+
+    storage.setInferencePreference({
+      billingMode: 'byok',
+      provider: 'deepseek',
+      model: 'deepseek-v4-pro',
+    });
+
+    expect(storage.getInferencePreference()).toEqual({
+      billingMode: 'byok',
+      provider: 'deepseek',
+      model: 'deepseek-v4-pro',
+    });
+
+    localStorage.setItem('ul_inference_preference', JSON.stringify({
+      billingMode: 'byok',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4',
+    }));
+
+    expect(storage.getInferencePreference()).toBeNull();
+    expect(localStorage.getItem('ul_inference_preference')).toBeNull();
+
+    localStorage.setItem('ul_inference_preference', '{bad json');
+    expect(storage.getInferencePreference()).toBeNull();
+    expect(localStorage.getItem('ul_inference_preference')).toBeNull();
+  });
 });

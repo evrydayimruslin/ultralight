@@ -4,7 +4,7 @@
 import { error, json } from "./response.ts";
 import { createAppsService } from "../services/apps.ts";
 import { createAppDataService } from "../services/appdata.ts";
-import { createAIService } from "../services/ai.ts";
+import { createRuntimeAIContext, createUnavailableAIService } from "../services/runtime-ai.ts";
 import { checkAndIncrementWeeklyCalls } from "../services/weekly-calls.ts";
 import { executeGpuFunction } from "../services/gpu/executor.ts";
 import { acquireGpuSlot } from "../services/gpu/concurrency.ts";
@@ -229,7 +229,7 @@ export async function handleHttpEndpoint(
       throw err;
     }
     const { envVars, missingRequiredSecrets } = envResolution;
-    const { user, userApiKey } = caller;
+    const { user } = caller;
     const requestUrl = new URL(request.url);
 
     if (missingRequiredSecrets.length > 0) {
@@ -261,21 +261,6 @@ export async function handleHttpEndpoint(
       !callerHasRequiredScope(caller, "apps:call")
     ) {
       return json({ error: "Token missing required scope: apps:call" }, 403);
-    }
-
-    // Create AI service
-    let aiService;
-    if (userApiKey && caller.userProfile?.byok_provider) {
-      aiService = createAIService(caller.userProfile.byok_provider, userApiKey);
-    } else {
-      aiService = {
-        call: async () => ({
-          content: "",
-          model: "none",
-          usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
-          error: "BYOK not configured",
-        }),
-      };
     }
 
     // Build the UltralightRequest object to pass to the function
@@ -414,6 +399,14 @@ export async function handleHttpEndpoint(
       "ai:call",
       "net:fetch",
     ]);
+    const runtimeAI = httpPermissions.includes("ai:call")
+      ? await createRuntimeAIContext(user)
+      : {
+        route: null,
+        resolvedRoute: null,
+        userApiKey: null,
+        aiService: createUnavailableAIService("ai:call permission not granted."),
+      };
     // Dynamic Worker sandbox — avoids `new Function()` restriction on CF Workers
     const { executeInDynamicSandbox } = await import(
       "../runtime/dynamic-sandbox.ts"
@@ -426,12 +419,13 @@ export async function handleHttpEndpoint(
         executionId: crypto.randomUUID(),
         code,
         permissions: httpPermissions,
-        userApiKey,
+        userApiKey: runtimeAI.userApiKey,
+        aiRoute: runtimeAI.route,
         user,
         appDataService,
         d1DataService,
         memoryService: null,
-        aiService: aiService as {
+        aiService: runtimeAI.aiService as {
           call: (
             request: import("../../shared/types/index.ts").AIRequest,
             apiKey: string,

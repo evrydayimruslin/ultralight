@@ -1,8 +1,9 @@
 // AI Service Implementation (BYOK)
-// Single provider: OpenRouter (covers 100+ models via one API key)
+// OpenAI-compatible provider adapter for first-tier BYOK providers.
 
 import type { AIRequest, AIResponse, AIContentPart } from '../../shared/contracts/ai.ts';
-import type { BYOKProvider } from '../../shared/types/index.ts';
+import type { ActiveBYOKProvider, BYOKProvider } from '../../shared/types/index.ts';
+import { BYOK_PROVIDERS, isActiveBYOKProvider } from '../../shared/types/index.ts';
 
 // ============================================
 // TYPES
@@ -94,69 +95,91 @@ function translateContentParts(parts: AIContentPart[]): Array<Record<string, unk
 }
 
 // ============================================
-// PROVIDER CONFIGURATION (OpenRouter only)
+// PROVIDER CONFIGURATION
 // ============================================
 
+const formatOpenAICompatibleHeaders = (apiKey: string): Record<string, string> => ({
+  'Authorization': `Bearer ${apiKey}`,
+  'Content-Type': 'application/json',
+  'HTTP-Referer': 'https://ultralight-api.rgn4jz429m.workers.dev',
+  'X-Title': 'Ultralight',
+});
+
+const formatOpenAICompatibleRequest = (request: AIRequest, model: string): unknown => ({
+  model,
+  messages: request.messages.map(msg => {
+    const m: Record<string, unknown> = { role: msg.role };
+    if (msg.cache_control) m.cache_control = msg.cache_control;
+
+    // String content — pass through as-is
+    if (typeof msg.content === 'string') {
+      m.content = msg.content;
+      return m;
+    }
+
+    // Array content — translate to OpenAI-compatible multimodal format
+    if (Array.isArray(msg.content)) {
+      m.content = translateContentParts(msg.content as AIContentPart[]);
+      return m;
+    }
+
+    m.content = msg.content;
+    return m;
+  }),
+  temperature: request.temperature ?? 0.7,
+  max_tokens: request.max_tokens,
+  tools: request.tools,
+});
+
+const parseOpenAICompatibleResponse = (data: unknown): AIResponse => {
+  const d = data as {
+    choices?: Array<{ message?: { content?: string } }>;
+    model?: string;
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  };
+  return {
+    content: d.choices?.[0]?.message?.content || '',
+    model: d.model || 'unknown',
+    usage: {
+      input_tokens: d.usage?.prompt_tokens || 0,
+      output_tokens: d.usage?.completion_tokens || 0,
+      cost_light: 0,
+    },
+  };
+};
+
+function createOpenAICompatibleConfig(provider: keyof typeof BYOK_PROVIDERS): ProviderConfig {
+  const info = BYOK_PROVIDERS[provider];
+  return {
+    baseUrl: info.baseUrl,
+    endpoint: '/chat/completions',
+    defaultModel: info.defaultModel,
+    formatHeaders: formatOpenAICompatibleHeaders,
+    formatRequest: formatOpenAICompatibleRequest,
+    parseResponse: parseOpenAICompatibleResponse,
+  };
+}
+
 const OPENROUTER_CONFIG: ProviderConfig = {
-  baseUrl: 'https://openrouter.ai/api/v1',
-  endpoint: '/chat/completions',
-  defaultModel: 'anthropic/claude-3.5-sonnet',
+  ...createOpenAICompatibleConfig('openrouter'),
   formatHeaders: (apiKey: string) => ({
     'Authorization': `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
     'HTTP-Referer': 'https://ultralight-api.rgn4jz429m.workers.dev',
     'X-Title': 'Ultralight',
   }),
-  formatRequest: (request: AIRequest, model: string) => ({
-    model,
-    messages: request.messages.map(msg => {
-      const m: Record<string, unknown> = { role: msg.role };
-      if (msg.cache_control) m.cache_control = msg.cache_control;
-
-      // String content — pass through as-is
-      if (typeof msg.content === 'string') {
-        m.content = msg.content;
-        return m;
-      }
-
-      // Array content — translate to OpenAI/OpenRouter multimodal format
-      if (Array.isArray(msg.content)) {
-        m.content = translateContentParts(msg.content as AIContentPart[]);
-        return m;
-      }
-
-      m.content = msg.content;
-      return m;
-    }),
-    temperature: request.temperature ?? 0.7,
-    max_tokens: request.max_tokens,
-    tools: request.tools,
-  }),
-  parseResponse: (data: unknown): AIResponse => {
-    const d = data as {
-      choices?: Array<{ message?: { content?: string } }>;
-      model?: string;
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
-    };
-    return {
-      content: d.choices?.[0]?.message?.content || '',
-      model: d.model || 'unknown',
-      usage: {
-        input_tokens: d.usage?.prompt_tokens || 0,
-        output_tokens: d.usage?.completion_tokens || 0,
-        cost_light: 0,
-      },
-    };
-  },
 };
 
-// All providers route through OpenRouter (legacy provider values accepted but use OpenRouter)
+// Active providers use the shared OpenAI-compatible adapter. Legacy provider
+// values still resolve to OpenRouter so old rows do not crash runtime paths.
 const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
   openrouter: OPENROUTER_CONFIG,
-  // Legacy providers — route through OpenRouter
-  openai: OPENROUTER_CONFIG,
+  openai: createOpenAICompatibleConfig('openai'),
+  deepseek: createOpenAICompatibleConfig('deepseek'),
+  nvidia: createOpenAICompatibleConfig('nvidia'),
+  google: createOpenAICompatibleConfig('google'),
+  xai: createOpenAICompatibleConfig('xai'),
   anthropic: OPENROUTER_CONFIG,
-  deepseek: OPENROUTER_CONFIG,
   moonshot: OPENROUTER_CONFIG,
 };
 
@@ -172,17 +195,20 @@ export class AIService {
   constructor(config: AIServiceConfig) {
     this.provider = config.provider;
     this.apiKey = config.apiKey;
-    this.defaultModel = config.defaultModel || OPENROUTER_CONFIG.defaultModel;
+    this.defaultModel = config.defaultModel ||
+      (isActiveBYOKProvider(config.provider)
+        ? BYOK_PROVIDERS[config.provider].defaultModel
+        : OPENROUTER_CONFIG.defaultModel);
   }
 
   /**
-   * Make an AI call using OpenRouter
+   * Make an AI call using the configured OpenAI-compatible provider.
    */
   async call(request: AIRequest): Promise<AIResponse> {
     const providerConfig = PROVIDER_CONFIGS[this.provider] || OPENROUTER_CONFIG;
     const model = request.model || this.defaultModel;
 
-    const url = `${providerConfig.baseUrl}${providerConfig.endpoint}`;
+    const url = `${providerConfig.baseUrl.replace(/\/$/, '')}${providerConfig.endpoint}`;
     const headers = providerConfig.formatHeaders(this.apiKey);
     const body = providerConfig.formatRequest(request, model);
 
@@ -203,7 +229,7 @@ export class AIService {
         errorMessage = errorText;
       }
 
-      throw new Error(`OpenRouter API error (${response.status}): ${errorMessage}`);
+      throw new Error(`AI provider error (${response.status}): ${errorMessage}`);
     }
 
     const data = await response.json();
@@ -231,7 +257,7 @@ export class AIService {
 
 /**
  * Create an AI service for a specific provider with an API key.
- * All providers now route through OpenRouter.
+ * Active providers route through their configured OpenAI-compatible base URL.
  */
 export function createAIService(provider: BYOKProvider = 'openrouter', apiKey: string = '', defaultModel?: string): AIService {
   return new AIService({
@@ -258,7 +284,8 @@ export async function validateAPIKey(provider: BYOKProvider, apiKey: string): Pr
   } catch (error) {
     // Check if it's an auth error vs other error
     const message = error instanceof Error ? error.message : String(error);
-    if (message.includes('401') || message.includes('403') || message.includes('invalid') || message.includes('unauthorized')) {
+    const normalized = message.toLowerCase();
+    if (normalized.includes('401') || normalized.includes('403') || normalized.includes('invalid') || normalized.includes('unauthorized')) {
       throw new Error(`Invalid API key for ${provider}`);
     }
     // For other errors (rate limit, etc), assume key is valid
@@ -269,13 +296,15 @@ export async function validateAPIKey(provider: BYOKProvider, apiKey: string): Pr
 /**
  * Get the list of supported providers
  */
-export function getSupportedProviders(): BYOKProvider[] {
-  return ['openrouter'];
+export function getSupportedProviders(): ActiveBYOKProvider[] {
+  return Object.keys(BYOK_PROVIDERS) as ActiveBYOKProvider[];
 }
 
 /**
  * Get the default model for a provider
  */
-export function getDefaultModel(_provider: BYOKProvider): string {
-  return OPENROUTER_CONFIG.defaultModel;
+export function getDefaultModel(provider: BYOKProvider): string {
+  return isActiveBYOKProvider(provider)
+    ? BYOK_PROVIDERS[provider].defaultModel
+    : OPENROUTER_CONFIG.defaultModel;
 }

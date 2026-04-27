@@ -10,7 +10,7 @@ import type {
 } from "../../shared/types/index.ts";
 import { createAppsService } from "../services/apps.ts";
 import { createAppDataService } from "../services/appdata.ts";
-import { createAIService } from "../services/ai.ts";
+import { createRuntimeAIContext, createUnavailableAIService } from "../services/runtime-ai.ts";
 import { executeGpuFunction } from "../services/gpu/executor.ts";
 import { acquireGpuSlot } from "../services/gpu/concurrency.ts";
 import { buildGpuNotReadyMessage } from "../services/gpu/status.ts";
@@ -247,6 +247,14 @@ export async function handleRun(
       "ai:call",
       "net:fetch",
     ]);
+    const runtimeAI = permissions.includes("ai:call")
+      ? await createRuntimeAIContext(user)
+      : {
+        route: null,
+        resolvedRoute: null,
+        userApiKey: null,
+        aiService: createUnavailableAIService("ai:call permission not granted."),
+      };
 
     // Execute in sandbox — AI-capable apps get 120s timeout
     // Dynamic Worker sandbox — avoids `new Function()` restriction on CF Workers
@@ -261,31 +269,14 @@ export async function handleRun(
         executionId: crypto.randomUUID(),
         code,
         permissions,
-        userApiKey: null,
+        userApiKey: runtimeAI.userApiKey,
+        aiRoute: runtimeAI.route,
         user,
         appDataService,
         d1DataService,
         memoryService: null,
-        aiService: {
-          call: async (
-            request: AIRequest,
-            _apiKey: string,
-          ): Promise<AIResponse> => {
-            if (caller.userApiKey && caller.userProfile?.byok_provider) {
-              return await createAIService(
-                caller.userProfile.byok_provider,
-                caller.userApiKey,
-              ).call(request);
-            }
-
-            return {
-              content: "",
-              model: request.model || "none",
-              usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
-              error:
-                "BYOK not configured. Please add your API key in Settings.",
-            };
-          },
+        aiService: runtimeAI.aiService as {
+          call: (request: AIRequest, apiKey: string) => Promise<AIResponse>;
         },
         envVars,
         supabase: supabaseConfig,

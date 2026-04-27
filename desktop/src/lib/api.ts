@@ -1,7 +1,20 @@
 // API client for Ultralight chat endpoints
 // All requests route through the Ultralight server proxy (auth + billing).
 
-import { fetchFromApi, getToken } from './storage';
+import type {
+  ChatInferenceOptionsResponse,
+  ChatInferenceProviderOption,
+  InferenceBillingMode,
+  InferenceRoutePreference,
+} from '../../../shared/contracts/ai.ts';
+import { BYOK_PROVIDERS, type ActiveBYOKProvider } from '../../../shared/types/index.ts';
+import {
+  DEFAULT_CHAT_MODEL,
+  DEFAULT_HEAVY_MODEL,
+  DEFAULT_INTERPRETER_MODEL,
+  fetchFromApi,
+  getToken,
+} from './storage';
 import { parseSSEStream, type ChatStreamEvent } from './sse';
 import type { ToolUsed } from '../types/executionPlan';
 import type { AmbientSuggestion } from '../types/ambientSuggestion';
@@ -38,6 +51,7 @@ export interface ModelInfo {
 export interface ApiError {
   error: string;
   detail?: string;
+  code?: string;
   balance_light?: number;
   minimum_light?: number;
   topup_url?: string;
@@ -47,16 +61,118 @@ export interface ApiError {
 
 /** Fallback model list when server is unreachable */
 const FALLBACK_MODELS: ModelInfo[] = [
-  { id: 'anthropic/claude-sonnet-4-20250514', name: 'claude-sonnet-4-20250514', provider: 'anthropic' },
-  { id: 'anthropic/claude-3.5-sonnet', name: 'claude-3.5-sonnet', provider: 'anthropic' },
-  { id: 'anthropic/claude-3-opus', name: 'claude-3-opus', provider: 'anthropic' },
-  { id: 'openai/gpt-4o', name: 'gpt-4o', provider: 'openai' },
-  { id: 'openai/gpt-4o-mini', name: 'gpt-4o-mini', provider: 'openai' },
-  { id: 'google/gemini-pro-1.5', name: 'gemini-pro-1.5', provider: 'google' },
-  { id: 'deepseek/deepseek-chat', name: 'deepseek-chat', provider: 'deepseek' },
+  { id: DEFAULT_INTERPRETER_MODEL, name: 'DeepSeek V4 Flash', provider: 'deepseek' },
+  { id: DEFAULT_HEAVY_MODEL, name: 'DeepSeek V4 Pro', provider: 'deepseek' },
+  { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai' },
+  { id: 'openai/gpt-4o', name: 'GPT-4o', provider: 'openai' },
+  { id: 'google/gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', provider: 'google' },
+  { id: 'x-ai/grok-4.20-reasoning', name: 'Grok 4.20 Reasoning', provider: 'x-ai' },
 ];
 
 const apiLogger = createDesktopLogger('api');
+
+export type InferenceSettings = ChatInferenceOptionsResponse;
+export type InferenceSetupState =
+  | 'ready'
+  | 'needs_light_balance'
+  | 'needs_byok_key'
+  | 'needs_inference_setup';
+
+export type InferenceSetupAction = 'open_settings' | 'open_wallet' | 'use_light';
+
+export interface InferenceSetupPrompt {
+  state: Exclude<InferenceSetupState, 'ready'>;
+  title: string;
+  message: string;
+  primaryAction: {
+    label: string;
+    action: InferenceSetupAction;
+  };
+  secondaryAction?: {
+    label: string;
+    action: InferenceSetupAction;
+  };
+}
+
+export interface InferenceProviderChoice {
+  key: string;
+  billingMode: InferenceBillingMode;
+  provider: ActiveBYOKProvider;
+  label: string;
+  description: string;
+  usable: boolean;
+  configured: boolean;
+  reason?: string;
+}
+
+export interface InferenceModelOption extends ModelInfo {
+  billingMode: InferenceBillingMode;
+  providerName: string;
+  contextWindow?: number;
+  inputPrice?: number;
+  outputPrice?: number;
+}
+
+function modelNameFromId(id: string): string {
+  return id.split('/').pop()?.replace(/:nitro$/, '') || id;
+}
+
+function providerModelOptions(
+  provider: ChatInferenceProviderOption,
+  billingMode: InferenceBillingMode,
+): InferenceModelOption[] {
+  return provider.models.map((model) => ({
+    id: model.id,
+    name: model.name || modelNameFromId(model.id),
+    provider: provider.id,
+    providerName: provider.name,
+    billingMode,
+    contextWindow: model.contextWindow,
+    inputPrice: model.inputPrice,
+    outputPrice: model.outputPrice,
+  }));
+}
+
+function buildFallbackInferenceSettings(): InferenceSettings {
+  const providers = Object.values(BYOK_PROVIDERS).map((provider) => ({
+    id: provider.id,
+    name: provider.name,
+    description: provider.description,
+    protocol: provider.protocol,
+    baseUrl: provider.baseUrl,
+    defaultModel: provider.defaultModel,
+    models: provider.models,
+    capabilities: provider.capabilities,
+    apiKeyPrefix: provider.apiKeyPrefix,
+    docsUrl: provider.docsUrl,
+    apiKeyUrl: provider.apiKeyUrl,
+    configured: false,
+    primary: false,
+    configuredModel: null,
+    addedAt: null,
+  }));
+
+  return {
+    defaultBillingMode: 'light',
+    selected: {
+      billingMode: 'light',
+      provider: 'openrouter',
+      model: DEFAULT_CHAT_MODEL,
+    },
+    light: {
+      provider: 'openrouter',
+      defaultModel: DEFAULT_CHAT_MODEL,
+      models: BYOK_PROVIDERS.openrouter.models,
+      balanceLight: null,
+      minimumBalanceLight: 50,
+      usable: false,
+      markup: 1,
+      unavailableReason: 'Inference settings unavailable',
+    },
+    providers,
+    configuredProviderIds: [],
+  };
+}
 
 // ── Headers ──
 
@@ -81,6 +197,7 @@ export async function* streamChat(opts: {
   tools?: ChatTool[];
   temperature?: number;
   max_tokens?: number;
+  inference?: InferenceRoutePreference;
 }): AsyncGenerator<ChatStreamEvent> {
   let res: Response;
   try {
@@ -93,6 +210,7 @@ export async function* streamChat(opts: {
         tools: opts.tools,
         temperature: opts.temperature ?? 0.7,
         max_tokens: opts.max_tokens ?? 4096,
+        inference: opts.inference,
       }),
     });
   } catch (err) {
@@ -152,6 +270,191 @@ export async function fetchModels(): Promise<ModelInfo[]> {
   } catch {
     return FALLBACK_MODELS;
   }
+}
+
+// ── Inference Settings ──
+
+/**
+ * Fetch provider-aware inference settings for the signed-in user.
+ * Falls back to the static first-tier registry so UI controls can still render offline.
+ */
+export async function fetchInferenceSettings(): Promise<InferenceSettings> {
+  const token = getToken();
+  if (!token) return buildFallbackInferenceSettings();
+
+  try {
+    const res = await fetchFromApi('/chat/inference-options', {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to fetch inference settings: ${res.status}`);
+    }
+    return await res.json() as InferenceSettings;
+  } catch (err) {
+    apiLogger.warn('Falling back to static inference settings', { error: err });
+    return buildFallbackInferenceSettings();
+  }
+}
+
+export function getInferenceProviderChoices(settings: InferenceSettings): InferenceProviderChoice[] {
+  const lightReason = settings.light.unavailableReason ||
+    (settings.light.balanceLight !== null
+      ? `Light balance below ${settings.light.minimumBalanceLight}`
+      : 'Light balance unavailable');
+
+  return [
+    {
+      key: 'light:openrouter',
+      billingMode: 'light',
+      provider: 'openrouter',
+      label: 'Light balance',
+      description: 'Platform inference through OpenRouter at pass-through cost',
+      usable: settings.light.usable,
+      configured: true,
+      reason: settings.light.usable ? undefined : lightReason,
+    },
+    ...settings.providers.map((provider) => ({
+      key: `byok:${provider.id}`,
+      billingMode: 'byok' as const,
+      provider: provider.id,
+      label: provider.name,
+      description: provider.description,
+      usable: provider.configured,
+      configured: provider.configured,
+      reason: provider.configured ? undefined : 'API key not configured',
+    })),
+  ];
+}
+
+export function getUsableInferenceProviderChoices(settings: InferenceSettings): InferenceProviderChoice[] {
+  return getInferenceProviderChoices(settings).filter((choice) => choice.usable);
+}
+
+export function getEffectiveInferencePreference(
+  settings: InferenceSettings,
+  preference: InferenceRoutePreference = {},
+): Required<InferenceRoutePreference> {
+  const billingMode = preference.billingMode || settings.selected.billingMode;
+
+  if (billingMode === 'light') {
+    return {
+      billingMode: 'light',
+      provider: 'openrouter',
+      model: preference.model || settings.light.defaultModel || DEFAULT_CHAT_MODEL,
+    };
+  }
+
+  const requestedProvider = preference.provider;
+  const selectedProvider = requestedProvider || settings.selected.provider;
+  const selectedProviderOption = settings.providers.find((option) => option.id === selectedProvider);
+  const provider = requestedProvider
+    ? selectedProviderOption
+    : selectedProviderOption && selectedProviderOption.configured
+      ? selectedProviderOption
+      : settings.providers.find((option) => option.primary) ||
+        settings.providers.find((option) => option.configured) ||
+        selectedProviderOption;
+
+  return {
+    billingMode: 'byok',
+    provider: provider?.id || selectedProvider,
+    model: preference.model || provider?.configuredModel || provider?.defaultModel || settings.selected.model,
+  };
+}
+
+export function getInferenceModelOptions(
+  settings: InferenceSettings,
+  preference: InferenceRoutePreference = {},
+): InferenceModelOption[] {
+  const effective = getEffectiveInferencePreference(settings, preference);
+
+  if (effective.billingMode === 'light') {
+    const openrouter = settings.providers.find((provider) => provider.id === 'openrouter');
+    if (openrouter) {
+      return providerModelOptions({
+        ...openrouter,
+        models: settings.light.models,
+      }, 'light');
+    }
+    return settings.light.models.map((model) => ({
+      id: model.id,
+      name: model.name || modelNameFromId(model.id),
+      provider: 'openrouter',
+      providerName: 'OpenRouter',
+      billingMode: 'light',
+      contextWindow: model.contextWindow,
+      inputPrice: model.inputPrice,
+      outputPrice: model.outputPrice,
+    }));
+  }
+
+  const provider = settings.providers.find((option) => option.id === effective.provider);
+  return provider ? providerModelOptions(provider, 'byok') : [];
+}
+
+export function getInferenceSetupState(
+  settings: InferenceSettings,
+  preference: InferenceRoutePreference = {},
+): InferenceSetupState {
+  const effective = getEffectiveInferencePreference(settings, preference);
+
+  if (effective.billingMode === 'light') {
+    if (settings.light.usable) return 'ready';
+    return settings.configuredProviderIds.length > 0 ? 'needs_light_balance' : 'needs_inference_setup';
+  }
+
+  const provider = settings.providers.find((option) => option.id === effective.provider);
+  return provider?.configured ? 'ready' : 'needs_byok_key';
+}
+
+export function buildInferenceSetupPrompt(
+  settings: InferenceSettings,
+  preference: InferenceRoutePreference = {},
+): InferenceSetupPrompt | null {
+  const state = getInferenceSetupState(settings, preference);
+  if (state === 'ready') return null;
+
+  const effective = getEffectiveInferencePreference(settings, preference);
+  const selectedProvider = settings.providers.find((provider) => provider.id === effective.provider);
+  const configuredProviders = settings.providers.filter((provider) => provider.configured);
+
+  if (state === 'needs_light_balance') {
+    const balanceText = settings.light.balanceLight === null
+      ? 'Your Light balance could not be verified.'
+      : `Your Light balance is ${formatLight(settings.light.balanceLight)}; chat needs at least ${formatLight(settings.light.minimumBalanceLight)}.`;
+    return {
+      state,
+      title: 'Light balance needed',
+      message: `${balanceText} Add Light or switch to a configured BYOK provider before sending.`,
+      primaryAction: { label: 'Top up Light', action: 'open_wallet' },
+      secondaryAction: configuredProviders.length > 0
+        ? { label: 'Manage providers', action: 'open_settings' }
+        : undefined,
+    };
+  }
+
+  if (state === 'needs_byok_key') {
+    return {
+      state,
+      title: 'Provider key needed',
+      message: `${selectedProvider?.name || effective.provider} is selected for BYOK inference, but no API key is configured for it.`,
+      primaryAction: { label: 'Add provider key', action: 'open_settings' },
+      secondaryAction: settings.light.usable
+        ? { label: 'Use Light balance', action: 'use_light' }
+        : undefined,
+    };
+  }
+
+  return {
+    state,
+    title: 'Inference setup needed',
+    message: 'Add a provider API key or top up Light balance before starting a chat.',
+    primaryAction: { label: 'Add provider key', action: 'open_settings' },
+    secondaryAction: { label: 'Top up Light', action: 'open_wallet' },
+  };
 }
 
 // ── Function Index (per-user typed function catalog for codemode) ──
@@ -434,6 +737,13 @@ export interface OrchestrateEvent {
   flash?: unknown;
   heavy?: unknown;
   message?: string;
+  status?: number;
+  error?: string;
+  balance_light?: number;
+  minimum_light?: number;
+  topup_url?: string;
+  allowed_models?: string[];
+  resetAt?: string;
   query?: string;
   apps?: string[];
   suggestions?: AmbientSuggestion[];
@@ -468,6 +778,7 @@ export async function* streamOrchestrate(opts: {
   conversationHistory?: Array<{ role: string; content: string }>;
   interpreterModel?: string;
   heavyModel?: string;
+  inference?: InferenceRoutePreference;
   scope?: Record<string, { access: 'all' | 'functions' | 'data'; functions?: string[]; conventions?: Record<string, string> }>;
   /** Behavioral instructions from the agent's admin notes */
   adminNotes?: string;
@@ -493,8 +804,24 @@ export async function* streamOrchestrate(opts: {
   }
 
   if (!res.ok) {
-    const errText = await res.text().catch(() => res.statusText);
-    yield { type: 'error', message: `Server error (${res.status}): ${errText}` };
+    let apiError: ApiError;
+    try {
+      apiError = await res.json() as ApiError;
+    } catch {
+      apiError = { error: `HTTP ${res.status}: ${res.statusText}` };
+    }
+    yield {
+      type: 'error',
+      message: formatApiError(apiError, res.status),
+      status: res.status,
+      code: apiError.code,
+      detail: apiError.detail,
+      balance_light: apiError.balance_light,
+      minimum_light: apiError.minimum_light,
+      topup_url: apiError.topup_url,
+      allowed_models: apiError.allowed_models,
+      resetAt: apiError.resetAt,
+    };
     return;
   }
 

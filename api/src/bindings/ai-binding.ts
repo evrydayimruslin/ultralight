@@ -3,7 +3,7 @@
 // The Dynamic Worker sees env.AI.call() but never has the API key.
 
 import { WorkerEntrypoint } from 'cloudflare:workers';
-import { getEnv } from '../../lib/env.ts';
+import { deductChatCost } from '../../services/chat-billing.ts';
 
 // ============================================
 // TYPES
@@ -13,6 +13,9 @@ interface AIBindingProps {
   userId: string;
   apiKey: string | null;
   provider: string | null;
+  baseUrl: string | null;
+  defaultModel: string | null;
+  shouldDebitLight: boolean;
 }
 
 type ContentPart = { type: 'text'; text: string }
@@ -67,14 +70,14 @@ function translateParts(parts: ContentPart[]): unknown[] {
 export class AIBinding extends WorkerEntrypoint<unknown, AIBindingProps> {
 
   async call(request: AIRequest) {
-    const { apiKey, provider } = this.ctx.props;
+    const { apiKey, provider, baseUrl, defaultModel, shouldDebitLight, userId } = this.ctx.props;
 
-    if (!apiKey || !provider) {
+    if (!apiKey || !provider || !baseUrl) {
       return {
         content: '',
         model: 'none',
         usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
-        error: 'BYOK not configured. Please add your API key in Settings.',
+        error: 'AI is not configured for this request.',
       };
     }
 
@@ -85,18 +88,17 @@ export class AIBinding extends WorkerEntrypoint<unknown, AIBindingProps> {
       return { role: msg.role, content: msg.content };
     });
 
-    // Route through OpenRouter (same as existing AI service)
-    const openRouterKey = apiKey;
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const model = request.model || defaultModel || 'openai/gpt-4o-mini';
+    const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${openRouterKey}`,
+        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
         'HTTP-Referer': 'https://ultralight.dev',
         'X-Title': 'Ultralight',
       },
       body: JSON.stringify({
-        model: request.model || 'openai/gpt-4o-mini',
+        model,
         messages,
         max_tokens: request.max_tokens || 4096,
         temperature: request.temperature ?? 0.7,
@@ -107,7 +109,7 @@ export class AIBinding extends WorkerEntrypoint<unknown, AIBindingProps> {
       const errText = await response.text();
       return {
         content: '',
-        model: request.model || 'unknown',
+        model,
         usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
         error: `AI call failed (${response.status}): ${errText}`,
       };
@@ -118,14 +120,35 @@ export class AIBinding extends WorkerEntrypoint<unknown, AIBindingProps> {
       model: string;
       usage: { prompt_tokens: number; completion_tokens: number };
     };
+    const promptTokens = data.usage?.prompt_tokens || 0;
+    const completionTokens = data.usage?.completion_tokens || 0;
+    const responseModel = data.model || model;
+    let costLight = 0;
+
+    if (shouldDebitLight && promptTokens + completionTokens > 0) {
+      try {
+        const billing = await deductChatCost(
+          userId,
+          {
+            prompt_tokens: promptTokens,
+            completion_tokens: completionTokens,
+            total_tokens: promptTokens + completionTokens,
+          },
+          responseModel,
+        );
+        costLight = billing.cost_light;
+      } catch (err) {
+        console.error('[AI-BINDING] Failed to debit Light for AI call:', err);
+      }
+    }
 
     return {
       content: data.choices?.[0]?.message?.content || '',
-      model: data.model || request.model || 'unknown',
+      model: responseModel,
       usage: {
-        input_tokens: data.usage?.prompt_tokens || 0,
-        output_tokens: data.usage?.completion_tokens || 0,
-        cost_light: 0, // Computed by caller
+        input_tokens: promptTokens,
+        output_tokens: completionTokens,
+        cost_light: costLight,
       },
     };
   }

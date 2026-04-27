@@ -4,6 +4,8 @@
 // fail over to a validated Worker origin if the vanity domain is temporarily broken.
 
 import { invoke } from '@tauri-apps/api/core';
+import type { InferenceRoutePreference } from '../../../shared/contracts/ai.ts';
+import { isActiveBYOKProvider } from '../../../shared/types/index.ts';
 import { DESKTOP_API_BASE } from './environment';
 import { createDesktopLogger } from './logging';
 
@@ -12,9 +14,14 @@ const STORAGE_KEYS = {
   model: 'ul_model',
   interpreterModel: 'ul_interpreter_model',
   heavyModel: 'ul_heavy_model',
+  inferencePreference: 'ul_inference_preference',
   autoApproveLight: 'ul_auto_approve_light',
   onboardingComplete: 'ul_onboarding_complete',
 } as const;
+
+export const DEFAULT_INTERPRETER_MODEL = 'deepseek/deepseek-v4-flash';
+export const DEFAULT_HEAVY_MODEL = 'deepseek/deepseek-v4-pro';
+export const DEFAULT_CHAT_MODEL = DEFAULT_INTERPRETER_MODEL;
 
 const LEGACY_API_BASE_STORAGE_KEY = 'ul_api_base';
 const RUNTIME_API_BASE_STORAGE_KEY = 'ul_runtime_api_base';
@@ -276,25 +283,86 @@ export async function clearToken(): Promise<void> {
 }
 
 export function getModel(): string {
-  return localStorage.getItem(STORAGE_KEYS.model) || 'google/gemini-3.1-flash-lite-preview:nitro';
+  return localStorage.getItem(STORAGE_KEYS.model) || DEFAULT_CHAT_MODEL;
 }
 
 export function setModel(model: string): void {
   localStorage.setItem(STORAGE_KEYS.model, model);
 }
 
-// Two-model architecture: interpreter (Flash) + heavy (Sonnet)
+// Two-model architecture: interpreter (Flash) + heavy
 export function getInterpreterModel(): string {
-  return localStorage.getItem(STORAGE_KEYS.interpreterModel) || 'google/gemini-3.1-flash-lite-preview:nitro';
+  return localStorage.getItem(STORAGE_KEYS.interpreterModel) || DEFAULT_INTERPRETER_MODEL;
 }
 export function setInterpreterModel(model: string): void {
   localStorage.setItem(STORAGE_KEYS.interpreterModel, model);
 }
 export function getHeavyModel(): string {
-  return localStorage.getItem(STORAGE_KEYS.heavyModel) || 'anthropic/claude-sonnet-4';
+  return localStorage.getItem(STORAGE_KEYS.heavyModel) || DEFAULT_HEAVY_MODEL;
 }
 export function setHeavyModel(model: string): void {
   localStorage.setItem(STORAGE_KEYS.heavyModel, model);
+}
+
+function coerceInferencePreference(raw: unknown): InferenceRoutePreference | null {
+  if (!raw || typeof raw !== 'object') return null;
+
+  const candidate = raw as Record<string, unknown>;
+  const billingMode = candidate.billingMode === 'light' || candidate.billingMode === 'byok'
+    ? candidate.billingMode
+    : undefined;
+  if (candidate.provider !== undefined && !isActiveBYOKProvider(candidate.provider)) {
+    return null;
+  }
+  const provider = isActiveBYOKProvider(candidate.provider) ? candidate.provider : undefined;
+  const model = typeof candidate.model === 'string' && candidate.model.trim()
+    ? candidate.model.trim()
+    : undefined;
+
+  if (!billingMode && !provider && !model) return null;
+
+  const preference: InferenceRoutePreference = {};
+  if (billingMode) preference.billingMode = billingMode;
+  if (provider) preference.provider = provider;
+  if (model) preference.model = model;
+  return preference;
+}
+
+function dispatchInferencePreferenceChanged(): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('ul-inference-preference-changed'));
+}
+
+export function getInferencePreference(): InferenceRoutePreference | null {
+  const raw = localStorage.getItem(STORAGE_KEYS.inferencePreference);
+  if (!raw) return null;
+
+  try {
+    const parsed = coerceInferencePreference(JSON.parse(raw));
+    if (parsed) return parsed;
+  } catch {
+    // Clear malformed preferences and fall back to server-selected routing.
+  }
+
+  localStorage.removeItem(STORAGE_KEYS.inferencePreference);
+  return null;
+}
+
+export function setInferencePreference(preference: InferenceRoutePreference): void {
+  const parsed = coerceInferencePreference(preference);
+  if (!parsed) {
+    localStorage.removeItem(STORAGE_KEYS.inferencePreference);
+    dispatchInferencePreferenceChanged();
+    return;
+  }
+
+  localStorage.setItem(STORAGE_KEYS.inferencePreference, JSON.stringify(parsed));
+  dispatchInferencePreferenceChanged();
+}
+
+export function clearInferencePreference(): void {
+  localStorage.removeItem(STORAGE_KEYS.inferencePreference);
+  dispatchInferencePreferenceChanged();
 }
 
 export function getApiBase(): string {

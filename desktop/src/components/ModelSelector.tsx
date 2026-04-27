@@ -1,9 +1,11 @@
-// Two-model selector: Interpreter (Flash) → Heavy (Sonnet).
+// Two-model selector: Interpreter (Flash) -> Heavy.
 // Stacked rows with separate dropdowns for each slot.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { fetchModels, type ModelInfo } from '../lib/api';
 import {
+  DEFAULT_HEAVY_MODEL,
+  DEFAULT_INTERPRETER_MODEL,
   getInterpreterModel, setInterpreterModel,
   getHeavyModel, setHeavyModel,
 } from '../lib/storage';
@@ -31,11 +33,12 @@ export default function ModelSelector() {
       .then(m => setModels(m))
       .catch(() => {
         setModels([
-          { id: 'google/gemini-3.1-flash-lite-preview:nitro', name: 'gemini-3.1-flash-lite-preview', provider: 'google' },
-          { id: 'anthropic/claude-sonnet-4', name: 'claude-sonnet-4', provider: 'anthropic' },
-          { id: 'anthropic/claude-3.5-sonnet', name: 'claude-3.5-sonnet', provider: 'anthropic' },
-          { id: 'openai/gpt-4o', name: 'gpt-4o', provider: 'openai' },
-          { id: 'deepseek/deepseek-chat', name: 'deepseek-chat', provider: 'deepseek' },
+          { id: DEFAULT_INTERPRETER_MODEL, name: 'DeepSeek V4 Flash', provider: 'deepseek' },
+          { id: DEFAULT_HEAVY_MODEL, name: 'DeepSeek V4 Pro', provider: 'deepseek' },
+          { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai' },
+          { id: 'openai/gpt-4o', name: 'GPT-4o', provider: 'openai' },
+          { id: 'google/gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', provider: 'google' },
+          { id: 'x-ai/grok-4.20-reasoning', name: 'Grok 4.20 Reasoning', provider: 'x-ai' },
         ]);
       });
   }, []);
@@ -122,7 +125,7 @@ export default function ModelSelector() {
           )}
         </div>
 
-        {/* Heavy (Sonnet) row */}
+        {/* Heavy row */}
         <div className="flex items-center gap-2">
           <span className="w-1.5 h-1.5 rounded-full bg-ul-success flex-shrink-0" />
           <span className="text-caption text-ul-text-muted w-9 flex-shrink-0">Heavy</span>
