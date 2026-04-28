@@ -113,6 +113,8 @@ export interface InferenceModelOption extends ModelInfo {
   outputPrice?: number;
 }
 
+type ModelDetailInput = Pick<InferenceModelOption, 'contextWindow' | 'inputPrice' | 'outputPrice'>;
+
 function modelNameFromId(id: string): string {
   return id.split('/').pop()?.replace(/:nitro$/, '') || id;
 }
@@ -393,6 +395,47 @@ export function getInferenceModelOptions(
 
   const provider = settings.providers.find((option) => option.id === effective.provider);
   return provider ? providerModelOptions(provider, 'byok') : [];
+}
+
+function compactNumber(value: number): string {
+  if (value >= 1_000_000) {
+    return `${Number((value / 1_000_000).toFixed(1))}M`;
+  }
+  if (value >= 1_000) {
+    return `${Math.round(value / 1_000)}K`;
+  }
+  return String(value);
+}
+
+function formatUsd(value: number): string {
+  if (value >= 10) return `$${value.toFixed(0)}`;
+  if (value >= 1) return `$${value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}`;
+  return `$${value.toFixed(2)}`;
+}
+
+export function formatInferenceModelContext(contextWindow?: number): string | null {
+  if (!contextWindow || contextWindow <= 0) return null;
+  return `${compactNumber(contextWindow)} ctx`;
+}
+
+export function formatInferenceModelPrice(inputPrice?: number, outputPrice?: number): string | null {
+  if (inputPrice === undefined && outputPrice === undefined) return null;
+  if (inputPrice !== undefined && outputPrice !== undefined) {
+    return `${formatUsd(inputPrice)} in / ${formatUsd(outputPrice)} out per 1M`;
+  }
+  if (inputPrice !== undefined) return `${formatUsd(inputPrice)} input per 1M`;
+  return `${formatUsd(outputPrice!)} output per 1M`;
+}
+
+export function describeInferenceModel(model?: ModelDetailInput | null): string {
+  if (!model) return 'Model details unavailable';
+
+  const details = [
+    formatInferenceModelContext(model.contextWindow),
+    formatInferenceModelPrice(model.inputPrice, model.outputPrice),
+  ].filter(Boolean);
+
+  return details.length > 0 ? details.join(' | ') : 'Provider pricing varies';
 }
 
 export function getInferenceSetupState(

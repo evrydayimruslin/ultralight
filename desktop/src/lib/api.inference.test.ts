@@ -158,6 +158,9 @@ describe('inference API helpers', () => {
     const {
       getEffectiveInferencePreference,
       buildInferenceSetupPrompt,
+      describeInferenceModel,
+      formatInferenceModelContext,
+      formatInferenceModelPrice,
       getInferenceModelOptions,
       getInferenceProviderChoices,
       getInferenceSetupState,
@@ -211,6 +214,15 @@ describe('inference API helpers', () => {
       state: 'needs_byok_key',
       secondaryAction: { action: 'use_light' },
     });
+
+    expect(formatInferenceModelContext(1_048_576)).toBe('1M ctx');
+    expect(formatInferenceModelContext(128_000)).toBe('128K ctx');
+    expect(formatInferenceModelPrice(0.14, 0.28)).toBe('$0.14 in / $0.28 out per 1M');
+    expect(describeInferenceModel({
+      contextWindow: 1_048_576,
+      inputPrice: 1.74,
+      outputPrice: 3.48,
+    })).toBe('1M ctx | $1.74 in / $3.48 out per 1M');
   });
 
   it('includes inference preferences in chat stream requests', async () => {

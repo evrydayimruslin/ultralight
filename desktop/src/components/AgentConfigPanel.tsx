@@ -6,6 +6,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import type { InferenceRoutePreference } from '../../../shared/contracts/ai.ts';
 import type { Agent } from '../hooks/useAgentFleet';
 import {
+  describeInferenceModel,
   fetchInferenceSettings,
   fetchModels,
   getEffectiveInferencePreference,
@@ -16,6 +17,7 @@ import {
   type ModelInfo,
 } from '../lib/api';
 import { getInferencePreference, setInferencePreference } from '../lib/storage';
+import { openViewWindow } from '../lib/multiWindow';
 import ConfigDropdown, { type DropdownOption } from './ConfigDropdown';
 
 // ── Types ──
@@ -155,6 +157,37 @@ function formatInferenceState(state: ReturnType<typeof getInferenceSetupState>):
     case 'needs_inference_setup':
       return 'Needs setup';
   }
+}
+
+function inferenceStateTone(state: ReturnType<typeof getInferenceSetupState> | null): string {
+  switch (state) {
+    case 'ready':
+      return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+    case 'needs_light_balance':
+    case 'needs_byok_key':
+    case 'needs_inference_setup':
+      return 'bg-amber-50 text-amber-700 border-amber-200';
+    default:
+      return 'bg-gray-100 text-gray-500 border-gray-200';
+  }
+}
+
+function inferenceStateDot(state: ReturnType<typeof getInferenceSetupState> | null): string {
+  switch (state) {
+    case 'ready':
+      return 'bg-emerald-400';
+    case 'needs_light_balance':
+    case 'needs_byok_key':
+    case 'needs_inference_setup':
+      return 'bg-amber-400';
+    default:
+      return 'bg-gray-300';
+  }
+}
+
+function formatLightBalance(balance: number | null): string {
+  if (balance === null) return 'balance unavailable';
+  return `✦${balance % 1 === 0 ? balance.toLocaleString() : balance.toFixed(2)}`;
 }
 
 /** Inspect an app and build the function list */
@@ -485,6 +518,19 @@ export default function AgentConfigPanel({
     ? `${effectiveInference.billingMode}:${effectiveInference.provider}`
     : undefined;
   const selectedInferenceProvider = providerChoices.find(choice => choice.key === selectedInferenceProviderKey);
+  const selectedInferenceModel = effectiveInference
+    ? inferenceModelOptions.find(model => model.id === effectiveInference.model)
+    : null;
+  const selectedProviderConfig = effectiveInference
+    ? inferenceSettings?.providers.find(provider => provider.id === effectiveInference.provider)
+    : null;
+  const configuredProviderCount = inferenceSettings?.configuredProviderIds.length ?? 0;
+  const inferenceRouteSummary = effectiveInference?.billingMode === 'light'
+    ? `Light balance via OpenRouter at ${inferenceSettings?.light.markup ?? 1}x cost`
+    : `${selectedProviderConfig?.name || selectedInferenceProvider?.label || 'BYOK'} key${selectedProviderConfig?.configured ? ' saved' : ' needed'}; no Light debit`;
+  const inferenceBalanceSummary = effectiveInference?.billingMode === 'light'
+    ? `${formatLightBalance(inferenceSettings?.light.balanceLight ?? null)} available`
+    : `${configuredProviderCount} BYOK provider${configuredProviderCount === 1 ? '' : 's'} configured`;
 
   const persistInferencePreference = useCallback((preference: InferenceRoutePreference) => {
     setInferencePreferenceState(preference);
@@ -768,7 +814,11 @@ export default function AgentConfigPanel({
   const inferenceProviderOptions: DropdownOption[] = providerChoices.map(choice => ({
     value: choice.key,
     label: choice.label,
-    description: choice.reason || choice.description,
+    description: choice.billingMode === 'light'
+      ? (choice.usable
+        ? `${formatLightBalance(inferenceSettings?.light.balanceLight ?? null)} available | OpenRouter at cost`
+        : choice.reason || 'Light balance unavailable')
+      : (choice.configured ? 'Key saved | BYOK, no Light debit' : choice.reason || choice.description),
     icon: (
       <span
         className={`w-1.5 h-1.5 rounded-full shrink-0 ${
@@ -780,7 +830,7 @@ export default function AgentConfigPanel({
   const inferenceModelDropdownOptions: DropdownOption[] = inferenceModelOptions.map(model => ({
     value: model.id,
     label: model.name || displayModelName(model.id),
-    description: model.billingMode === 'light' ? model.providerName : `${model.providerName} BYOK`,
+    description: `${model.billingMode === 'light' ? model.providerName : `${model.providerName} BYOK`} | ${describeInferenceModel(model)}`,
   }));
 
   // Approval dropdown options
@@ -813,9 +863,15 @@ export default function AgentConfigPanel({
 
       {/* ── Inference ── */}
       <div className={cardClass}>
-        <div className="flex items-center justify-between mb-1.5">
-          <span className={labelClass}>Inference</span>
-          <span className="text-[11px] text-gray-400">
+        <div className="flex items-start justify-between gap-3 mb-2">
+          <div className="min-w-0">
+            <span className={labelClass}>Inference</span>
+            <div className="mt-0.5 text-[11px] text-gray-400 truncate">
+              {inferenceRouteSummary}
+            </div>
+          </div>
+          <span className={`inline-flex items-center gap-1.5 border px-2 py-0.5 text-[10.5px] font-medium ${inferenceStateTone(inferenceSetupState)}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${inferenceStateDot(inferenceSetupState)}`} />
             {loadingInferenceSettings
               ? 'Loading'
               : inferenceSetupState
@@ -856,6 +912,30 @@ export default function AgentConfigPanel({
               </div>
             }
           />
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-gray-400">
+          <span className="min-w-0 truncate">{inferenceBalanceSummary}</span>
+          <span className="text-gray-300">|</span>
+          <span className="min-w-0 truncate">{describeInferenceModel(selectedInferenceModel)}</span>
+        </div>
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void openViewWindow({ kind: 'settings' })}
+            className="px-2 py-1 text-[11px] font-medium border border-gray-200 bg-white text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-colors"
+          >
+            Keys
+          </button>
+          <button
+            type="button"
+            onClick={() => void openViewWindow({ kind: 'wallet' })}
+            className="px-2 py-1 text-[11px] font-medium border border-gray-200 bg-white text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-colors"
+          >
+            Wallet
+          </button>
+          {selectedProviderConfig && !selectedProviderConfig.configured && effectiveInference?.billingMode === 'byok' && (
+            <span className="text-[11px] text-amber-600">Add a key before sending.</span>
+          )}
         </div>
       </div>
 

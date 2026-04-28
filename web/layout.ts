@@ -3131,6 +3131,26 @@ export function getLayoutHTML(options: {
     </div>
   </div>
 
+  <!-- BYOK API Key Modal -->
+  <div id="byokKeyModal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:480px;">
+      <div class="modal-header">
+        <h2 id="byokKeyModalTitle">Add Provider Key</h2>
+        <button class="modal-close" onclick="closeByokKeyModal()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:18px;">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="byokKeyModalProviderMeta" style="font-size:12px;color:var(--text-muted);margin-bottom:var(--space-3);"></div>
+        <label style="font-size:12px;font-weight:600;color:var(--text-secondary);display:block;margin-bottom:var(--space-2);">API key</label>
+        <input id="byokKeyInput" type="password" autocomplete="off" class="input" placeholder="Paste provider API key" style="width:100%;font-family:var(--font-mono);">
+        <div id="byokKeyModalModelMeta" style="font-size:11px;color:var(--text-muted);margin-top:var(--space-2);"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost btn-sm" onclick="closeByokKeyModal()">Cancel</button>
+        <button id="byokKeySaveBtn" class="btn btn-primary btn-sm" onclick="submitByokKeyModal()">Save Key</button>
+      </div>
+    </div>
+  </div>
+
     <!-- ==========================================
          PROFILE VIEW
          ========================================== -->
@@ -7755,6 +7775,7 @@ export function getLayoutHTML(options: {
 
     // --- BYOK (Bring Your Own Key) ---
     var byokConfig = null;
+    var pendingByokProvider = null;
 
     function byokHeaders() {
       return { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' };
@@ -7786,6 +7807,117 @@ export function getLayoutHTML(options: {
       if (select && select.value) return select.value;
       var provider = byokProviderById(providerId);
       return provider ? provider.defaultModel : undefined;
+    }
+
+    async function loadByokLightTransactionsPreview() {
+      var el = document.getElementById('byokLightTransactionsPreview');
+      if (!el) return;
+      try {
+        var res = await fetch('/api/user/transactions?limit=12&offset=0', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) {
+          el.innerHTML = '<div style="font-size:11px;color:var(--text-muted);">Transaction preview unavailable.</div>';
+          return;
+        }
+        var data = await res.json();
+        var txs = (data.transactions || []).filter(function(tx) { return tx.category === 'chat_inference'; }).slice(0, 3);
+        if (txs.length === 0) {
+          el.innerHTML = '<div style="font-size:11px;color:var(--text-muted);">Inference charges will appear here after Light-debit calls.</div>';
+          return;
+        }
+        var html = '<div style="display:flex;flex-direction:column;gap:6px;">';
+        txs.forEach(function(tx) {
+          var when = tx.created_at ? relTime(tx.created_at) : '';
+          html += '<div style="display:flex;justify-content:space-between;gap:var(--space-3);font-size:11px;">'
+            + '<span style="min-width:0;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(tx.description || 'Chat inference') + '</span>'
+            + '<span style="color:var(--text-muted);white-space:nowrap;">' + (when ? escapeHtml(when) + ' · ' : '') + formatLight(Math.abs(tx.amount_light || 0)) + '</span>'
+            + '</div>';
+        });
+        html += '</div>';
+        el.innerHTML = html;
+      } catch {
+        el.innerHTML = '<div style="font-size:11px;color:var(--text-muted);">Transaction preview unavailable.</div>';
+      }
+    }
+
+    function closeByokKeyModal() {
+      var modal = document.getElementById('byokKeyModal');
+      var keyInput = document.getElementById('byokKeyInput');
+      var saveBtn = document.getElementById('byokKeySaveBtn');
+      pendingByokProvider = null;
+      if (keyInput) keyInput.value = '';
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Key'; }
+      if (modal) modal.classList.add('hidden');
+    }
+    window.closeByokKeyModal = closeByokKeyModal;
+
+    function openByokKeyModal(providerId) {
+      var provider = byokProviderById(providerId);
+      if (!provider) return;
+      pendingByokProvider = providerId;
+      var cfg = byokConfigByProvider(providerId);
+      var title = document.getElementById('byokKeyModalTitle');
+      var meta = document.getElementById('byokKeyModalProviderMeta');
+      var modelMeta = document.getElementById('byokKeyModalModelMeta');
+      var keyInput = document.getElementById('byokKeyInput');
+      var modal = document.getElementById('byokKeyModal');
+      var model = byokSelectedModel(providerId);
+
+      if (title) title.textContent = (cfg ? 'Replace ' : 'Add ') + provider.name + ' Key';
+      if (meta) {
+        meta.innerHTML = escapeHtml(provider.description || '') +
+          '<div style="font-family:var(--font-mono);margin-top:4px;">' + escapeHtml(provider.baseUrl || '') + '</div>';
+      }
+      if (modelMeta) {
+        modelMeta.textContent = 'Default model: ' + (model || provider.defaultModel || 'provider default') + '. BYOK calls skip Light debits.';
+      }
+      if (modal) modal.classList.remove('hidden');
+      if (keyInput) {
+        keyInput.placeholder = provider.apiKeyPrefix ? provider.apiKeyPrefix + '...' : 'Paste provider API key';
+        setTimeout(function() { keyInput.focus(); }, 0);
+      }
+    }
+
+    async function submitByokKeyModal() {
+      if (!pendingByokProvider) return;
+      var provider = byokProviderById(pendingByokProvider);
+      var providerName = provider ? provider.name : pendingByokProvider;
+      var keyInput = document.getElementById('byokKeyInput');
+      var saveBtn = document.getElementById('byokKeySaveBtn');
+      var key = keyInput && keyInput.value ? keyInput.value.trim() : '';
+      if (!key) { showToast('API key is required', 'error'); return; }
+      var model = byokSelectedModel(pendingByokProvider);
+
+      try {
+        if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
+        var res = await fetch('/api/user/byok', {
+          method: 'POST',
+          headers: byokHeaders(),
+          body: JSON.stringify({ provider: pendingByokProvider, api_key: key, model: model, validate: true }),
+        });
+        if (!res.ok) {
+          var err = await res.json().catch(function() { return {}; });
+          showToast(err.error || 'Failed to save key', 'error');
+          return;
+        }
+        closeByokKeyModal();
+        showToast(providerName + ' key saved');
+        await loadByokConfig();
+      } catch {
+        showToast('Failed to save key', 'error');
+      } finally {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Key'; }
+      }
+    }
+    window.submitByokKeyModal = submitByokKeyModal;
+
+    var byokKeyInputEl = document.getElementById('byokKeyInput');
+    if (byokKeyInputEl) {
+      byokKeyInputEl.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') submitByokKeyModal();
+        if (e.key === 'Escape') closeByokKeyModal();
+      });
     }
 
     async function loadByokConfig() {
@@ -7854,6 +7986,13 @@ export function getLayoutHTML(options: {
         html += '<button class="btn btn-sm" style="font-size:11px;border:1px solid var(--border);border-radius:0;" onclick="openWalletTransactions()">Transaction history</button>';
         html += '<button class="btn btn-primary btn-sm" style="font-size:11px;border-radius:0;" onclick="openWalletBalance()">Add Light</button>';
         html += '</div></div>';
+        html += '<div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-3);margin-bottom:var(--space-2);">';
+        html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);margin-bottom:var(--space-2);">';
+        html += '<div style="font-size:12px;font-weight:600;color:var(--text-primary);">Recent Light inference charges</div>';
+        html += '<button class="btn btn-sm" style="font-size:11px;border:1px solid var(--border);border-radius:0;" onclick="openWalletTransactions()">View all</button>';
+        html += '</div>';
+        html += '<div id="byokLightTransactionsPreview" style="min-height:18px;font-size:11px;color:var(--text-muted);">Loading recent charges...</div>';
+        html += '</div>';
       }
 
       providers.forEach(function(p) {
@@ -7895,6 +8034,7 @@ export function getLayoutHTML(options: {
       });
 
       container.innerHTML = html;
+      if (configuredCount === 0) loadByokLightTransactionsPreview();
     }
 
     window.addByokKey = function() {
@@ -7913,26 +8053,7 @@ export function getLayoutHTML(options: {
     };
 
     window.addByokKeyForProvider = async function(provider) {
-      var p = byokProviderById(provider);
-      var providerName = p ? p.name : provider.charAt(0).toUpperCase() + provider.slice(1);
-      var key = prompt('Enter your ' + providerName + ' API key:');
-      if (!key || !key.trim()) return;
-      var model = byokSelectedModel(provider);
-
-      try {
-        var res = await fetch('/api/user/byok', {
-          method: 'POST',
-          headers: byokHeaders(),
-          body: JSON.stringify({ provider: provider, api_key: key.trim(), model: model, validate: true }),
-        });
-        if (!res.ok) {
-          var err = await res.json().catch(function() { return {}; });
-          showToast(err.error || 'Failed to add key', 'error');
-          return;
-        }
-        showToast(providerName + ' key saved');
-        await loadByokConfig();
-      } catch { showToast('Failed to add key', 'error'); }
+      openByokKeyModal(provider);
     };
 
     window.updateByokModel = async function(provider, model) {
