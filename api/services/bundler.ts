@@ -53,9 +53,9 @@ async function ensureEsbuild(): Promise<void> {
       await esbuild.initialize({ worker: false });
     } else {
       // CF Workers: load the wrangler-bundled .wasm module via a separate
-      // loader file with a static import. Dynamic import with a literal path
-      // keeps Deno's analyzer from touching the loader while still letting
-      // wrangler see the static wasm import inside it.
+      // loader file with a static import so wrangler can attach the wasm asset.
+      // api/deno.check.json maps that wasm import to a source stub for Deno's
+      // analyzer; the production Worker build still sees the real wasm import.
       const loaderMod = await import('./esbuild-wasm-loader.ts');
       const wasmModule = loaderMod.default;
       await esbuild.initialize({

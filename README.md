@@ -250,6 +250,25 @@ ultralight docs generate my-app       # Generate Skills.md
 
 ---
 
+## Maintainer Verification
+
+Use these repo-level checks before shipping marketplace, desktop, or Worker-adjacent changes
+(`$HOME/.deno/bin/deno task ...` also works when Deno is not on PATH):
+
+```bash
+deno task verify              # API tsc baseline + API Deno check + desktop tsc + web layout check
+deno task verify:marketplace  # verify plus focused marketplace Deno tests
+```
+
+The API has two complementary type paths:
+
+```bash
+npm run typecheck --prefix api       # Worker-aware TypeScript baseline
+npm run typecheck:deno --prefix api  # Deno analyzer check with Worker types and wasm stubs
+```
+
+---
+
 ## Tiers
 
 | | Free | Fun | Pro | Scale | Enterprise |

@@ -517,7 +517,7 @@ class StringSchema extends BaseSchema<string> {
   private _email = false;
   private _url = false;
 
-  safeParse(value: unknown): { success: true; data: string } | { success: false; error: string } {
+  override safeParse(value: unknown): { success: true; data: string } | { success: false; error: string } {
     if (value === undefined && this._default !== undefined) {
       return { success: true, data: this._default };
     }
@@ -555,7 +555,7 @@ class NumberSchema extends BaseSchema<number> {
   private _max?: number;
   private _int = false;
 
-  safeParse(value: unknown): { success: true; data: number } | { success: false; error: string } {
+  override safeParse(value: unknown): { success: true; data: number } | { success: false; error: string } {
     if (value === undefined && this._default !== undefined) {
       return { success: true, data: this._default };
     }
@@ -582,7 +582,7 @@ class NumberSchema extends BaseSchema<number> {
 }
 
 class BooleanSchema extends BaseSchema<boolean> {
-  safeParse(value: unknown): { success: true; data: boolean } | { success: false; error: string } {
+  override safeParse(value: unknown): { success: true; data: boolean } | { success: false; error: string } {
     if (value === undefined && this._default !== undefined) {
       return { success: true, data: this._default };
     }
@@ -599,7 +599,7 @@ class ArraySchema<T> extends BaseSchema<T[]> {
 
   constructor(private itemSchema: BaseSchema<T>) { super(); }
 
-  safeParse(value: unknown): { success: true; data: T[] } | { success: false; error: string } {
+  override safeParse(value: unknown): { success: true; data: T[] } | { success: false; error: string } {
     if (!Array.isArray(value)) {
       return { success: false, error: 'Expected array' };
     }
@@ -628,7 +628,7 @@ class ArraySchema<T> extends BaseSchema<T[]> {
 class ObjectSchema<T extends Record<string, BaseSchema<unknown>>> extends BaseSchema<{ [K in keyof T]: T[K] extends BaseSchema<infer U> ? U : never }> {
   constructor(private shape: T) { super(); }
 
-  safeParse(value: unknown): { success: true; data: { [K in keyof T]: T[K] extends BaseSchema<infer U> ? U : never } } | { success: false; error: string } {
+  override safeParse(value: unknown): { success: true; data: { [K in keyof T]: T[K] extends BaseSchema<infer U> ? U : never } } | { success: false; error: string } {
     if (typeof value !== 'object' || value === null) {
       return { success: false, error: 'Expected object' };
     }
@@ -647,7 +647,7 @@ class ObjectSchema<T extends Record<string, BaseSchema<unknown>>> extends BaseSc
 class OptionalSchema<T> extends BaseSchema<T | undefined> {
   constructor(private innerSchema: BaseSchema<T>) { super(); }
 
-  safeParse(value: unknown): { success: true; data: T | undefined } | { success: false; error: string } {
+  override safeParse(value: unknown): { success: true; data: T | undefined } | { success: false; error: string } {
     if (value === undefined || value === null) {
       return { success: true, data: undefined };
     }
@@ -658,7 +658,7 @@ class OptionalSchema<T> extends BaseSchema<T | undefined> {
 class UnionSchema<T extends BaseSchema<unknown>[]> extends BaseSchema<T[number] extends BaseSchema<infer U> ? U : never> {
   constructor(private schemas: T) { super(); }
 
-  safeParse(value: unknown): { success: true; data: T[number] extends BaseSchema<infer U> ? U : never } | { success: false; error: string } {
+  override safeParse(value: unknown): { success: true; data: T[number] extends BaseSchema<infer U> ? U : never } | { success: false; error: string } {
     for (const schema of this.schemas) {
       const result = schema.safeParse(value);
       if (result.success) {
@@ -672,7 +672,7 @@ class UnionSchema<T extends BaseSchema<unknown>[]> extends BaseSchema<T[number] 
 class LiteralSchema<T extends string | number | boolean> extends BaseSchema<T> {
   constructor(private literalValue: T) { super(); }
 
-  safeParse(value: unknown): { success: true; data: T } | { success: false; error: string } {
+  override safeParse(value: unknown): { success: true; data: T } | { success: false; error: string } {
     if (value !== this.literalValue) {
       return { success: false, error: `Expected ${JSON.stringify(this.literalValue)}` };
     }
@@ -683,7 +683,7 @@ class LiteralSchema<T extends string | number | boolean> extends BaseSchema<T> {
 class EnumSchema<T extends string[]> extends BaseSchema<T[number]> {
   constructor(private values: T) { super(); }
 
-  safeParse(value: unknown): { success: true; data: T[number] } | { success: false; error: string } {
+  override safeParse(value: unknown): { success: true; data: T[number] } | { success: false; error: string } {
     if (!this.values.includes(value as string)) {
       return { success: false, error: `Expected one of: ${this.values.join(', ')}` };
     }
@@ -692,7 +692,7 @@ class EnumSchema<T extends string[]> extends BaseSchema<T[number]> {
 }
 
 class AnySchema extends BaseSchema<unknown> {
-  safeParse(value: unknown): { success: true; data: unknown } {
+  override safeParse(value: unknown): { success: true; data: unknown } {
     return { success: true, data: value };
   }
 }
@@ -1001,11 +1001,13 @@ const http = {
  * Create a lightweight Supabase client
  * Provides core functionality compatible with @supabase/supabase-js
  */
+type SandboxFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 function createSupabaseClient(
   supabaseUrl: string,
   anonKey: string,
   serviceKey: string | undefined,
-  fetchFn: typeof fetch
+  fetchFn: SandboxFetch
 ) {
   const apiUrl = `${supabaseUrl}/rest/v1`;
   const authUrl = `${supabaseUrl}/auth/v1`;

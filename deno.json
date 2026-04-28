@@ -11,18 +11,24 @@
     "deploy": "cd api && npx wrangler deploy",
     "deploy:staging": "cd api && npx wrangler deploy --env staging",
     "tail": "cd api && npx wrangler tail",
-    "fmt": "deno fmt",
-    "lint": "deno lint",
-    "cli": "deno run --allow-net --allow-read --allow-write --allow-env cli/mod.ts",
-    "cli:install": "deno install --allow-net --allow-read --allow-write --allow-env -n ultralight cli/mod.ts",
-    "cli:compile": "deno compile --allow-net --allow-read --allow-write --allow-env --output=ultralight cli/mod.ts"
+    "fmt": "scripts/deno-bin.sh fmt",
+    "lint": "scripts/deno-bin.sh lint",
+    "check:web": "scripts/deno-bin.sh check --no-lock web/layout.ts",
+    "check:api-deno": "npm run typecheck:deno --prefix api",
+    "verify": "npm run typecheck --prefix api && npm run typecheck:deno --prefix api && npm run typecheck --prefix desktop && scripts/deno-bin.sh check --no-lock web/layout.ts",
+    "verify:api": "npm run typecheck --prefix api && npm run typecheck:deno --prefix api",
+    "verify:desktop": "npm run typecheck --prefix desktop",
+    "verify:marketplace": "npm run typecheck --prefix api && npm run typecheck:deno --prefix api && npm run typecheck --prefix desktop && scripts/deno-bin.sh check --no-lock web/layout.ts && npm run test:marketplace --prefix api",
+    "cli": "scripts/deno-bin.sh run --allow-net --allow-read --allow-write --allow-env cli/mod.ts",
+    "cli:install": "scripts/deno-bin.sh install --allow-net --allow-read --allow-write --allow-env -n ultralight cli/mod.ts",
+    "cli:compile": "scripts/deno-bin.sh compile --allow-net --allow-read --allow-write --allow-env --output=ultralight cli/mod.ts"
   },
   "imports": {
     "@std/": "https://deno.land/std@0.210.0/",
-    "esbuild-wasm": "npm:esbuild-wasm",
-    "typescript": "npm:typescript",
-    "yaml": "npm:yaml",
-    "@supabase/supabase-js": "npm:@supabase/supabase-js"
+    "esbuild-wasm": "npm:esbuild-wasm@0.24.2",
+    "typescript": "npm:typescript@5.9.3",
+    "yaml": "npm:yaml@2.8.3",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.103.2"
   },
   "compilerOptions": {
     "strict": true,

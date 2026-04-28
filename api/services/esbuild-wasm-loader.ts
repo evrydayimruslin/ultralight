@@ -8,9 +8,8 @@
 // `No such module "esbuild-wasm/esbuild.wasm"`.
 //
 // This file is ONLY imported by bundler.ts inside the CF Workers branch.
-// The CLI (Deno) never loads this file — it stays outside the CLI's
-// transitive import graph, so Deno's static analyzer doesn't try to
-// resolve `esbuild-wasm/esbuild.wasm` during `deno task cli`.
+// api/deno.check.json maps the wasm import to a TypeScript stub for Deno-only
+// checking, while wrangler sees this real static wasm import for Worker builds.
 
 // @ts-ignore — wrangler bundles .wasm files as WebAssembly.Module
 import wasmModule from 'esbuild-wasm/esbuild.wasm';
