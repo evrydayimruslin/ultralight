@@ -18,6 +18,8 @@ import { executeDynamicCodeMode } from '../runtime/dynamic-executor.ts';
 import { getD1DatabaseId } from './d1-provisioning.ts';
 import { createAppsService } from './apps.ts';
 import { registerExecutionPlanGate } from './plan-gate.ts';
+import { fetchInferenceChatCompletion, selectInferenceModel } from './inference-client.ts';
+import { resolveInferenceRoute, type ResolvedInferenceRoute } from './inference-route.ts';
 import { getCallPriceLight, type AppPricingConfig } from '../../shared/types/index.ts';
 
 // ── Types ──
@@ -102,6 +104,10 @@ export interface OrchestrateRequest {
   files?: ChatFileAttachment[];
 }
 
+export interface OrchestrateOptions {
+  inferenceRoute?: ResolvedInferenceRoute;
+}
+
 // ── Main Orchestration Loop ──
 
 /**
@@ -112,8 +118,18 @@ export async function* orchestrate(
   request: OrchestrateRequest,
   userId: string,
   userEmail: string,
+  options: OrchestrateOptions = {},
 ): AsyncGenerator<OrchestrateEvent> {
   const { message, conversationHistory, interpreterModel, heavyModel, scope, systemAgentStates, systemAgentContext, projectContext, conversationId, files } = request;
+
+  let inferenceRoute: ResolvedInferenceRoute;
+  try {
+    inferenceRoute = options.inferenceRoute ?? await resolveInferenceRoute({ userId, userEmail });
+  } catch (err) {
+    yield { type: 'error', message: `Inference route unavailable: ${err instanceof Error ? err.message : String(err)}` };
+    yield { type: 'done' };
+    return;
+  }
 
   // ── Phase 1: Flash Broker (yields live events) ──
 
@@ -132,6 +148,7 @@ export async function* orchestrate(
       projectContext,
       conversationId,
       files,
+      inferenceRoute,
     );
 
     // Forward Flash events to client as they happen
@@ -274,15 +291,8 @@ export async function* orchestrate(
   }
 
   // ── Phase 3: Heavy Model ──
-  const modelId = brokerResult.model;
+  const modelId = selectInferenceModel(inferenceRoute, brokerResult.model);
   yield { type: 'heavy_status', text: `Writing with ${modelDisplayName(modelId)}...`, model: modelId };
-
-  const apiKey = getEnv('OPENROUTER_API_KEY');
-  if (!apiKey) {
-    yield { type: 'error', message: 'OpenRouter API key not configured' };
-    yield { type: 'done' };
-    return;
-  }
 
   const codemodeToolDef = buildCodemodeToolDef(brokerResult, files);
 
@@ -309,7 +319,7 @@ export async function* orchestrate(
 
   try {
     // ── Call 1: Heavy model writes recipe (or responds directly) ──
-    const call1Result = await callHeavyModel(apiKey, modelId, heavyMessages, [codemodeToolDef]);
+    const call1Result = await callHeavyModel(inferenceRoute, modelId, heavyMessages, [codemodeToolDef]);
 
     // Stream text deltas from call 1
     for (const delta of call1Result.textDeltas) {
@@ -373,8 +383,16 @@ export async function* orchestrate(
         const confirmInput = `## User's Request\n${request.message}\n\n## Execution Result\n${truncatedResult}`;
         const CONFIRM_SYSTEM = 'You are confirming the result of an action. Write a brief, clear confirmation (1-3 sentences) of what was done. Include specific details from the result. Use markdown formatting.';
 
-        const interpreterModel = request.interpreterModel || 'google/gemini-3.1-flash-lite-preview:nitro';
-        const confirmation = await callFlashText(interpreterModel, CONFIRM_SYSTEM, confirmInput, apiKey);
+        const interpreterModel = selectInferenceModel(
+          inferenceRoute,
+          request.interpreterModel || 'google/gemini-3.1-flash-lite-preview:nitro',
+        );
+        const confirmation = await callFlashText(
+          interpreterModel,
+          CONFIRM_SYSTEM,
+          confirmInput,
+          inferenceRoute,
+        );
 
         if (confirmation) {
           yield { type: 'heavy_text', content: confirmation };
@@ -416,20 +434,14 @@ interface PlannedToolUse {
  * Call the heavy model and parse its streaming response.
  */
 async function callHeavyModel(
-  apiKey: string,
+  route: ResolvedInferenceRoute,
   modelId: string,
   messages: Array<{ role: string; content: unknown; tool_call_id?: string; tool_calls?: unknown[] }>,
   tools: object[],
 ): Promise<StreamResult> {
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://ultralight.dev',
-      'X-Title': 'Ultralight Chat',
-    },
-    body: JSON.stringify({
+  const response = await fetchInferenceChatCompletion(
+    route,
+    {
       model: modelId,
       messages,
       tools,
@@ -437,8 +449,12 @@ async function callHeavyModel(
       max_tokens: 4096,
       stream: true,
       stream_options: { include_usage: true },
-    }),
-  });
+    },
+    {
+      title: 'Ultralight Chat',
+      referer: 'https://ultralight.dev',
+    },
+  );
 
   if (!response.ok) {
     const errText = await response.text().catch(() => 'unknown');

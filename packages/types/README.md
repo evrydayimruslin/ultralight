@@ -50,7 +50,7 @@ await ultralight.list('prefix/');
 await ultralight.query('prefix/', { limit: 10, sort: { field: 'date', order: 'desc' } });
 ```
 
-### AI (BYOK)
+### AI (BYOK Or Light)
 ```typescript
 const response = await ultralight.ai({
   messages: [{ role: 'user', content: 'Hello!' }],

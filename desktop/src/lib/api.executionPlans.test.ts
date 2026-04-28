@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./storage', () => ({
+  DEFAULT_CHAT_MODEL: 'deepseek/deepseek-v4-flash',
+  DEFAULT_INTERPRETER_MODEL: 'deepseek/deepseek-v4-flash',
+  DEFAULT_HEAVY_MODEL: 'deepseek/deepseek-v4-pro',
   getApiBase: () => 'https://api.ultralight.dev',
   getToken: () => 'desktop-test-token',
   fetchFromApi: (path: string, init?: RequestInit) => fetch(`https://api.ultralight.dev${path}`, init),

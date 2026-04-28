@@ -5,9 +5,32 @@
 // USER & AUTH
 // ============================================
 
-// Supported BYOK providers (OpenRouter only — covers 100+ models via single API)
-// Legacy provider values kept in union for backward compatibility with existing DB records.
-export type BYOKProvider = 'openrouter' | 'openai' | 'anthropic' | 'deepseek' | 'moonshot';
+// Supported BYOK providers.
+// Legacy provider values stay in the union so old DB records continue to hydrate safely.
+export const ACTIVE_BYOK_PROVIDER_IDS = [
+  'openrouter',
+  'openai',
+  'deepseek',
+  'nvidia',
+  'google',
+  'xai',
+] as const;
+
+export const LEGACY_BYOK_PROVIDER_IDS = ['anthropic', 'moonshot'] as const;
+
+export type ActiveBYOKProvider = typeof ACTIVE_BYOK_PROVIDER_IDS[number];
+export type LegacyBYOKProvider = typeof LEGACY_BYOK_PROVIDER_IDS[number];
+export type BYOKProvider = ActiveBYOKProvider | LegacyBYOKProvider;
+
+export function isActiveBYOKProvider(value: unknown): value is ActiveBYOKProvider {
+  return typeof value === 'string' &&
+    (ACTIVE_BYOK_PROVIDER_IDS as readonly string[]).includes(value);
+}
+
+export function isLegacyBYOKProvider(value: unknown): value is LegacyBYOKProvider {
+  return typeof value === 'string' &&
+    (LEGACY_BYOK_PROVIDER_IDS as readonly string[]).includes(value);
+}
 
 // BYOK configuration for a single provider
 export interface BYOKConfig {
@@ -1129,42 +1152,143 @@ export interface DiscoveredApp {
 // ============================================
 
 export interface BYOKProviderInfo {
-  id: BYOKProvider;
+  id: ActiveBYOKProvider;
   name: string;
   description: string;
+  protocol: 'openai-compatible';
   baseUrl: string;
   defaultModel: string;
   models: BYOKModel[];
+  capabilities: BYOKProviderCapabilities;
+  apiKeyPrefix?: string;
   docsUrl: string;
   apiKeyUrl: string; // Where users get their API key
+}
+
+export interface BYOKProviderCapabilities {
+  chat: boolean;
+  streaming: boolean;
+  tools: boolean;
+  jsonMode: boolean;
+  multimodal: boolean;
 }
 
 export interface BYOKModel {
   id: string;
   name: string;
   contextWindow: number;
-  inputPrice: number; // per 1M tokens in USD
-  outputPrice: number; // per 1M tokens in USD
+  inputPrice?: number; // per 1M tokens in USD, omitted when provider pricing is not pinned here
+  outputPrice?: number; // per 1M tokens in USD, omitted when provider pricing is not pinned here
 }
 
-// Provider configurations — OpenRouter only (covers 100+ models via single API key)
-export const BYOK_PROVIDERS: Partial<Record<BYOKProvider, BYOKProviderInfo>> & { openrouter: BYOKProviderInfo } = {
+const OPENAI_COMPAT_TEXT_CAPABILITIES: BYOKProviderCapabilities = {
+  chat: true,
+  streaming: true,
+  tools: true,
+  jsonMode: true,
+  multimodal: false,
+};
+
+// First-tier BYOK provider registry. Runtime routing still chooses how each entry is used.
+export const BYOK_PROVIDERS: Record<ActiveBYOKProvider, BYOKProviderInfo> = {
   openrouter: {
     id: 'openrouter',
     name: 'OpenRouter',
-    description: 'Access 100+ models (Claude, GPT-4, Gemini, DeepSeek, and more) from one API key',
+    description: 'Access 100+ models from one API key',
+    protocol: 'openai-compatible',
     baseUrl: 'https://openrouter.ai/api/v1',
-    defaultModel: 'anthropic/claude-3.5-sonnet',
+    defaultModel: 'deepseek/deepseek-v4-flash',
     models: [
-      { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', contextWindow: 200000, inputPrice: 3, outputPrice: 15 },
-      { id: 'anthropic/claude-3-opus', name: 'Claude 3 Opus', contextWindow: 200000, inputPrice: 15, outputPrice: 75 },
+      { id: 'deepseek/deepseek-v4-flash', name: 'DeepSeek V4 Flash', contextWindow: 1048576, inputPrice: 0.14, outputPrice: 0.28 },
+      { id: 'deepseek/deepseek-v4-pro', name: 'DeepSeek V4 Pro', contextWindow: 1048576, inputPrice: 1.74, outputPrice: 3.48 },
       { id: 'openai/gpt-4o', name: 'GPT-4o', contextWindow: 128000, inputPrice: 5, outputPrice: 15 },
       { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', contextWindow: 128000, inputPrice: 0.15, outputPrice: 0.6 },
-      { id: 'google/gemini-pro-1.5', name: 'Gemini 1.5 Pro', contextWindow: 1000000, inputPrice: 2.5, outputPrice: 7.5 },
-      { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat', contextWindow: 64000, inputPrice: 0.14, outputPrice: 0.28 },
+      { id: 'google/gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', contextWindow: 1000000 },
+      { id: 'x-ai/grok-4.20-reasoning', name: 'Grok 4.20 Reasoning', contextWindow: 256000 },
     ],
+    capabilities: { ...OPENAI_COMPAT_TEXT_CAPABILITIES, multimodal: true },
+    apiKeyPrefix: 'sk-or-',
     docsUrl: 'https://openrouter.ai/docs',
     apiKeyUrl: 'https://openrouter.ai/keys',
+  },
+  openai: {
+    id: 'openai',
+    name: 'OpenAI',
+    description: 'Use GPT and OpenAI-compatible models with your own OpenAI key',
+    protocol: 'openai-compatible',
+    baseUrl: 'https://api.openai.com/v1',
+    defaultModel: 'gpt-4o-mini',
+    models: [
+      { id: 'gpt-4o-mini', name: 'GPT-4o Mini', contextWindow: 128000, inputPrice: 0.15, outputPrice: 0.6 },
+      { id: 'gpt-4o', name: 'GPT-4o', contextWindow: 128000, inputPrice: 5, outputPrice: 15 },
+    ],
+    capabilities: { ...OPENAI_COMPAT_TEXT_CAPABILITIES, multimodal: true },
+    apiKeyPrefix: 'sk-',
+    docsUrl: 'https://platform.openai.com/docs',
+    apiKeyUrl: 'https://platform.openai.com/api-keys',
+  },
+  deepseek: {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    description: 'Use DeepSeek models directly with your own DeepSeek key',
+    protocol: 'openai-compatible',
+    baseUrl: 'https://api.deepseek.com',
+    defaultModel: 'deepseek-v4-flash',
+    models: [
+      { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', contextWindow: 1048576, inputPrice: 0.14, outputPrice: 0.28 },
+      { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', contextWindow: 1048576, inputPrice: 1.74, outputPrice: 3.48 },
+    ],
+    capabilities: OPENAI_COMPAT_TEXT_CAPABILITIES,
+    apiKeyPrefix: 'sk-',
+    docsUrl: 'https://api-docs.deepseek.com',
+    apiKeyUrl: 'https://platform.deepseek.com/api_keys',
+  },
+  nvidia: {
+    id: 'nvidia',
+    name: 'NVIDIA NIM',
+    description: 'Use NVIDIA hosted NIM models with your own NVIDIA API key',
+    protocol: 'openai-compatible',
+    baseUrl: 'https://integrate.api.nvidia.com/v1',
+    defaultModel: 'deepseek-ai/deepseek-v4-flash',
+    models: [
+      { id: 'deepseek-ai/deepseek-v4-flash', name: 'DeepSeek V4 Flash', contextWindow: 1048576, inputPrice: 0.14, outputPrice: 0.28 },
+      { id: 'deepseek-ai/deepseek-v4-pro', name: 'DeepSeek V4 Pro', contextWindow: 1048576, inputPrice: 1.74, outputPrice: 3.48 },
+      { id: 'minimaxai/minimax-m2.7', name: 'MiniMax M2.7', contextWindow: 204800 },
+    ],
+    capabilities: OPENAI_COMPAT_TEXT_CAPABILITIES,
+    docsUrl: 'https://docs.api.nvidia.com/nim/reference/llm-apis',
+    apiKeyUrl: 'https://build.nvidia.com/models',
+  },
+  google: {
+    id: 'google',
+    name: 'Google Gemini',
+    description: 'Use Gemini through Google AI Studio with your own key',
+    protocol: 'openai-compatible',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    defaultModel: 'gemini-3-flash-preview',
+    models: [
+      { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', contextWindow: 1000000 },
+      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', contextWindow: 1000000 },
+    ],
+    capabilities: { ...OPENAI_COMPAT_TEXT_CAPABILITIES, multimodal: true },
+    docsUrl: 'https://ai.google.dev/gemini-api/docs/openai',
+    apiKeyUrl: 'https://aistudio.google.com/app/apikey',
+  },
+  xai: {
+    id: 'xai',
+    name: 'xAI Grok',
+    description: 'Use Grok models with your own xAI key',
+    protocol: 'openai-compatible',
+    baseUrl: 'https://api.x.ai/v1',
+    defaultModel: 'grok-4.20-reasoning',
+    models: [
+      { id: 'grok-4.20-reasoning', name: 'Grok 4.20 Reasoning', contextWindow: 256000 },
+      { id: 'grok-4.20-fast', name: 'Grok 4.20 Fast', contextWindow: 256000 },
+    ],
+    capabilities: { ...OPENAI_COMPAT_TEXT_CAPABILITIES, multimodal: true },
+    apiKeyPrefix: 'xai-',
+    docsUrl: 'https://docs.x.ai',
+    apiKeyUrl: 'https://console.x.ai',
   },
 };
 
@@ -1825,4 +1949,4 @@ export interface ChatBillingResult {
 export const CHAT_MIN_BALANCE_LIGHT = 50; // ✦50
 
 /** Platform markup multiplier on OpenRouter costs */
-export const CHAT_PLATFORM_MARKUP = 1.2; // 20% margin
+export const CHAT_PLATFORM_MARKUP = 1.0; // Pass through OpenRouter cost in Light-debit mode

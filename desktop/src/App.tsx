@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { fetchFromApi, getToken, isOnboardingComplete, setOnboardingComplete, resetOnboarding } from './lib/storage';
+import { DEFAULT_HEAVY_MODEL, fetchFromApi, getToken, isOnboardingComplete, setOnboardingComplete, resetOnboarding } from './lib/storage';
 import { useAppState } from './hooks/useAppState';
 import { useDeepLink } from './hooks/useDeepLink';
 import { useDesktopUpdater } from './hooks/useDesktopUpdater';
@@ -102,7 +102,7 @@ export default function App() {
           systemPrompt: null,
           initialTask: null,
           projectDir: null,
-          model: 'anthropic/claude-sonnet-4-20250514',
+          model: DEFAULT_HEAVY_MODEL,
           parentAgentId: null,
           permissionLevel: 'auto_edit',
           adminNotes: null,
@@ -247,7 +247,7 @@ export default function App() {
 
       // Copy model from the canonical agent if it exists
       const canonical = agents.find(a => a.is_system === 1 && a.system_agent_type === agentType);
-      const model = canonical?.model || 'anthropic/claude-sonnet-4-20250514';
+      const model = canonical?.model || DEFAULT_HEAVY_MODEL;
 
       // Auto-increment instance number
       const instanceCount = agents.filter(a => a.system_agent_type === agentType).length;

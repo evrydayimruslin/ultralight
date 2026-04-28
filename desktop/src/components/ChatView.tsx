@@ -16,29 +16,51 @@ import PermissionModal from './PermissionModal';
 import SpendingApprovalModal from './SpendingApprovalModal';
 import AgentHeader from './AgentHeader';
 import DiscoverWidget from './DiscoverWidget';
-import { clearToken, fetchFromApi, getToken, getApiBase, getModel, getInterpreterModel, getHeavyModel } from '../lib/storage';
+import {
+  DEFAULT_HEAVY_MODEL,
+  DEFAULT_INTERPRETER_MODEL,
+  clearToken,
+  fetchFromApi,
+  getToken,
+  getApiBase,
+  getModel,
+  getInterpreterModel,
+  getHeavyModel,
+  getInferencePreference,
+  setInferencePreference,
+} from '../lib/storage';
 import { getContextWindow } from '../lib/tokens';
 import { buildSystemPrompt, buildCodeModeAppsPrompt } from '../lib/systemPrompt';
 import { SYSTEM_AGENTS } from '../lib/systemAgents';
 import { gatherProjectContext } from '../lib/projectContext';
 import { parseFileOperations } from '../lib/parseFileOps';
 import { updateSystemAgentState, maybeEmbedConversation } from '../lib/agentStateSummary';
-import { confirmExecutionPlan, fetchFunctionIndex, fetchTaskContext, streamOrchestrate, streamChat } from '../lib/api';
+import {
+  buildInferenceSetupPrompt,
+  confirmExecutionPlan,
+  fetchFunctionIndex,
+  fetchInferenceSettings,
+  fetchTaskContext,
+  streamOrchestrate,
+  streamChat,
+  type InferenceSetupAction,
+  type InferenceSetupPrompt,
+} from '../lib/api';
 import type { ExecutionPlan } from '../types/executionPlan';
 import { agentRunner } from '../lib/agentRunner';
 import { dispatchAmbientSuggestions, useAmbientSuggestions } from '../hooks/useAmbientSuggestions';
 import { createDesktopLogger } from '../lib/logging';
+import { openViewWindow } from '../lib/multiWindow';
 
 /** Map flash broker's model suggestion to a real OpenRouter model ID */
 function resolveModelFromBroker(suggestion?: string): string | undefined {
   if (!suggestion) return undefined;
   switch (suggestion.toLowerCase()) {
     case 'flash':
-      return 'google/gemini-3.1-flash-lite-preview:nitro';
+      return DEFAULT_INTERPRETER_MODEL;
     case 'sonnet':
-      return 'anthropic/claude-sonnet-4';
     case 'opus':
-      return 'anthropic/claude-opus-4';
+      return DEFAULT_HEAVY_MODEL;
     default:
       // If the broker returns a full model ID, use it directly
       if (suggestion.includes('/')) return suggestion;
@@ -114,6 +136,7 @@ export default function ChatView({
   } = useAgentFleet();
 
   const [diagnostics, setDiagnostics] = useState<string | null>(null);
+  const [inferenceNotice, setInferenceNotice] = useState<InferenceSetupPrompt | null>(null);
   const [queuedMessages, setQueuedMessages] = useState<string[]>([]);
   const [ambientOpen, setAmbientOpen] = useState(false);
   const {
@@ -563,6 +586,7 @@ export default function ChatView({
     const agentModels = parseAgentModels(currentAgent?.model || null);
     const executeWindowSeconds = currentAgent?.execute_window_seconds ?? 8;
     const resolvedConversationId = conversationIdOverride || activeId || currentAgent?.conversation_id || assistantId;
+    const inference = getInferencePreference() ?? undefined;
 
     // Attach pending files (from ChatInput)
     const chatFiles = pendingFilesRef.current || undefined;
@@ -573,6 +597,7 @@ export default function ChatView({
       conversationHistory: history,
       interpreterModel: agentModels.interpreter,
       heavyModel: agentModels.heavy,
+      inference,
       scope,
       adminNotes: currentAgent?.admin_notes || undefined,
       systemAgentStates: systemAgentStates.length > 0 ? systemAgentStates : undefined,
@@ -912,11 +937,13 @@ export default function ChatView({
 
       // Run orchestrate with the system agent's context and its configured models
       const sysModels = parseAgentModels(agent.model || null);
+      const inference = getInferencePreference() ?? undefined;
       let resultContent = '';
       for await (const ev of streamOrchestrate({
         message: delegationMessage,
         interpreterModel: sysModels.interpreter,
         heavyModel: sysModels.heavy,
+        inference,
         adminNotes: agent.admin_notes || undefined,
         systemAgentContext: { type: config.type, persona: config.persona, skillsPath: config.skillsPath },
         projectContext: delegatedProjectContext,
@@ -964,7 +991,18 @@ export default function ChatView({
     }
   }, [agents]);
 
+  const ensureInferenceReady = useCallback(async (): Promise<boolean> => {
+    const settings = await fetchInferenceSettings();
+    const notice = buildInferenceSetupPrompt(settings, getInferencePreference() ?? {});
+    setInferenceNotice(notice);
+    return notice === null;
+  }, []);
+
   const sendMessage = useCallback(async (content: string, files?: ChatFile[]) => {
+    if (!(await ensureInferenceReady())) {
+      return;
+    }
+
     // Stash files on ref so runOrchestrateStream can pick them up
     pendingFilesRef.current = files || null;
 
@@ -1055,6 +1093,7 @@ export default function ChatView({
               messages: [{ role: 'user', content: `Generate a short title (3-6 words, no quotes) for a chat that starts with this message:\n\n${content.slice(0, 200)}` }],
               temperature: 0.3,
               max_tokens: 30,
+              inference: getInferencePreference() ?? undefined,
             })) {
               if (ev.type === 'delta') title += ev.content || '';
             }
@@ -1087,7 +1126,7 @@ export default function ChatView({
     }
     // This shouldn't be reached — orchestrate path returns above
     await chatSendMessage(content);
-  }, [activeAgent, isRunnerManaged, activeId, createAgent, systemPrompt, chatSendMessage, switchConversation, setActiveAgent, onNavigateToAgent, preChatApps, messages, runOrchestrateStream]);
+  }, [activeAgent, isRunnerManaged, activeId, createAgent, systemPrompt, chatSendMessage, switchConversation, setActiveAgent, onNavigateToAgent, preChatApps, messages, runOrchestrateStream, ensureInferenceReady]);
 
   // New agent (from sidebar [+])
   const handleNewAgent = useCallback(() => {
@@ -1158,6 +1197,15 @@ export default function ChatView({
       chatViewLogger.error('Failed to clear secure desktop token', { error });
       setDiagnostics('Unable to clear your saved sign-in token securely. Please try again.');
     }
+  }, []);
+
+  const handleInferenceNoticeAction = useCallback((action: InferenceSetupAction) => {
+    if (action === 'use_light') {
+      setInferencePreference({ billingMode: 'light', provider: 'openrouter' });
+      setInferenceNotice(null);
+      return;
+    }
+    void openViewWindow(action === 'open_wallet' ? { kind: 'wallet' } : { kind: 'settings' });
   }, []);
 
   // Child agents of current active agent
@@ -1362,6 +1410,53 @@ export default function ChatView({
             >
               Select Folder
             </button>
+          </div>
+        </div>
+      )}
+
+      {inferenceNotice && (
+        <div className="fixed bottom-5 right-5 z-40 w-[min(420px,calc(100vw-2rem))] border border-amber-200 bg-white shadow-[0_18px_48px_rgba(0,0,0,0.14)]">
+          <div className="flex items-start gap-3 p-3">
+            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center border border-amber-200 bg-amber-50">
+              <svg className="h-4 w-4 text-amber-600" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-small font-medium text-ul-text">{inferenceNotice.title}</div>
+                  <div className="mt-0.5 text-caption leading-5 text-ul-text-secondary">{inferenceNotice.message}</div>
+                </div>
+                <button
+                  onClick={() => setInferenceNotice(null)}
+                  className="text-gray-400 hover:text-gray-600"
+                  title="Dismiss"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+                {inferenceNotice.secondaryAction && (
+                  <button
+                    onClick={() => handleInferenceNoticeAction(inferenceNotice.secondaryAction!.action)}
+                    className="px-3 py-1 text-caption font-medium border border-gray-200 text-gray-600 bg-white hover:border-gray-300 transition-colors"
+                  >
+                    {inferenceNotice.secondaryAction.label}
+                  </button>
+                )}
+                <button
+                  onClick={() => handleInferenceNoticeAction(inferenceNotice.primaryAction.action)}
+                  className="px-3 py-1 text-caption font-medium border border-ul-text bg-ul-text text-white hover:bg-black transition-colors"
+                >
+                  {inferenceNotice.primaryAction.label}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -18,7 +18,7 @@ import { handleGpuCodeProxy, handleInternalD1Query } from './internal-proxy.ts';
 import { handleTierChange } from './tier.ts';
 import { handleAdmin } from './admin.ts';
 import { handleDeveloper } from './developer.ts';
-import { handleChatStream, handleChatModels, handleProvisionKey, handleFunctionIndex, handleChatContext, handleOrchestrate, handlePlanConfirm, handlePlanCancel } from './chat.ts';
+import { handleChatStream, handleChatModels, handleChatInferenceOptions, handleProvisionKey, handleFunctionIndex, handleChatContext, handleOrchestrate, handlePlanConfirm, handlePlanCancel } from './chat.ts';
 import { error, json, toResponseBody } from './response.ts';
 import { getLayoutHTML } from '../../web/layout.ts';
 import { createAppsService } from '../services/apps.ts';
@@ -441,7 +441,7 @@ export function createApp() {
         return handleInternalD1Query(request);
       }
 
-      // Chat stream endpoint — metered OpenRouter proxy with SSE streaming
+      // Chat stream endpoint — routed inference with SSE streaming.
       // Also serves /v1/chat/completions for OpenAI-compatible clients
       if ((path === '/chat/stream' || path === '/v1/chat/completions') && method === 'POST') {
         return handleChatStream(request);
@@ -450,6 +450,10 @@ export function createApp() {
       // Chat models endpoint — available model list for model picker
       if (path === '/chat/models' && method === 'GET') {
         return handleChatModels(request);
+      }
+
+      if (path === '/chat/inference-options' && method === 'GET') {
+        return handleChatInferenceOptions(request);
       }
 
       // Function index — per-user typed function list for codemode
@@ -4331,7 +4335,7 @@ function getDownloadPageHTML(): string {
         <li>Create and manage AI agents with connected MCP tools</li>
         <li>Activity inbox with widget-based approval workflows</li>
         <li>Project-based agent organization with kanban boards</li>
-        <li>Runs locally with your own OpenRouter API key</li>
+        <li>Runs locally with BYOK or Light-debit platform inference</li>
         <li>Full access to the Ultralight app ecosystem</li>
       </ul>
     </div>

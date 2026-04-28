@@ -1,3 +1,9 @@
+import type {
+  ActiveBYOKProvider,
+  BYOKModel,
+  BYOKProviderCapabilities,
+} from '../types/index.ts';
+
 export interface AITextPart {
   type: 'text';
   text: string;
@@ -51,6 +57,7 @@ export interface ChatStreamRequest {
   temperature?: number;
   max_tokens?: number;
   stream?: boolean;
+  inference?: InferenceRoutePreference;
 }
 
 export interface ChatMessage {
@@ -91,5 +98,50 @@ export interface ChatBillingResult {
   was_depleted: boolean;
 }
 
+export type InferenceBillingMode = 'light' | 'byok';
+
+export interface InferenceRoutePreference {
+  billingMode?: InferenceBillingMode;
+  provider?: ActiveBYOKProvider;
+  model?: string;
+}
+
+export interface ChatInferenceProviderOption {
+  id: ActiveBYOKProvider;
+  name: string;
+  description: string;
+  protocol: 'openai-compatible';
+  baseUrl: string;
+  defaultModel: string;
+  models: BYOKModel[];
+  capabilities: BYOKProviderCapabilities;
+  apiKeyPrefix?: string;
+  docsUrl: string;
+  apiKeyUrl: string;
+  configured: boolean;
+  primary: boolean;
+  configuredModel: string | null;
+  addedAt: string | null;
+}
+
+export interface ChatInferenceLightOption {
+  provider: 'openrouter';
+  defaultModel: string;
+  models: BYOKModel[];
+  balanceLight: number | null;
+  minimumBalanceLight: number;
+  usable: boolean;
+  markup: number;
+  unavailableReason?: string;
+}
+
+export interface ChatInferenceOptionsResponse {
+  defaultBillingMode: InferenceBillingMode;
+  selected: Required<InferenceRoutePreference>;
+  light: ChatInferenceLightOption;
+  providers: ChatInferenceProviderOption[];
+  configuredProviderIds: ActiveBYOKProvider[];
+}
+
 export const CHAT_MIN_BALANCE_LIGHT = 50;
-export const CHAT_PLATFORM_MARKUP = 1.2;
+export const CHAT_PLATFORM_MARKUP = 1.0;

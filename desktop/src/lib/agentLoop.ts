@@ -6,6 +6,7 @@ import { streamChat, type ChatMessage, type ChatTool } from './api';
 import { accumulateToolCalls, type AccumulatedToolCall } from './sse';
 import { countAllTokens, shouldSummarize } from './tokens';
 import { summarizeMessages } from './summarizer';
+import { getInferencePreference } from './storage';
 import { LIGHT_PER_DOLLAR_DESKTOP, CHAT_PLATFORM_MARKUP } from '../../../shared/types/index';
 
 // ── Tool Result Truncation ──
@@ -337,6 +338,7 @@ async function streamWithRetry(
         model,
         messages: apiMessages,
         tools: tools && tools.length > 0 ? tools : undefined,
+        inference: getInferencePreference() ?? undefined,
       })) {
         if (signal?.aborted) return null;
 

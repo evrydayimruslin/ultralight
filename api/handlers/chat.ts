@@ -1,6 +1,6 @@
 // Chat Stream Handler
-// Authenticated streaming proxy to OpenRouter with metered billing.
-// Uses per-user OpenRouter API keys (provisioned via management key).
+// Authenticated streaming proxy to OpenAI-compatible providers.
+// Light mode uses per-user OpenRouter keys; BYOK mode uses the user's provider key.
 //
 // Architecture: Client-side tool dispatch — the Tauri app
 // handles the tool-use loop. This endpoint is a billing/auth proxy that
@@ -11,27 +11,21 @@ import { json, error } from './response.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
 import { checkChatBalance, deductChatCost } from '../services/chat-billing.ts';
 import { getOrCreateOpenRouterKey } from '../services/openrouter-keys.ts';
-import { createUserService } from '../services/user.ts';
+import { fetchInferenceChatCompletion } from '../services/inference-client.ts';
+import { InferenceRouteError, resolveInferenceRoute } from '../services/inference-route.ts';
+import { buildInferenceOptions } from '../services/inference-options.ts';
 import type { SystemAgentContext } from '../services/flash-broker.ts';
-import { CHAT_MIN_BALANCE_LIGHT, type ChatStreamRequest, type ChatUsage } from '../../shared/contracts/ai.ts';
+import { CHAT_MIN_BALANCE_LIGHT, type ChatStreamRequest, type ChatUsage, type InferenceRoutePreference } from '../../shared/contracts/ai.ts';
 import { createServerLogger } from '../services/logging.ts';
+import { isValidModelId } from '../services/model-validation.ts';
 
-const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 const chatLogger = createServerLogger('CHAT');
-
-// ============================================
-// MODEL VALIDATION
-// ============================================
-
-/** Basic model ID format validation — must be provider/model-name */
-function isValidModelId(model: string): boolean {
-  return /^[a-z0-9_-]+\/[a-z0-9._-]+(:[a-z0-9_-]+)?$/i.test(model);
-}
 
 async function enforceChatGuards(
   userId: string,
   resource: string,
-): Promise<{ balance: number } | Response> {
+  options: { requireBalance?: boolean } = {},
+): Promise<{ balance: number | null } | Response> {
   const rateResult = await checkRateLimit(userId, 'chat:stream', undefined, undefined, {
     mode: 'fail_closed',
     resource,
@@ -47,6 +41,14 @@ async function enforceChatGuards(
       { error: 'Rate limit exceeded', resetAt: rateResult.resetAt.toISOString() },
       429,
     );
+  }
+
+  if (options.requireBalance === false) {
+    chatLogger.info('Skipped chat balance gate for non-Light inference route', {
+      user_id: userId,
+      resource,
+    });
+    return { balance: null };
   }
 
   try {
@@ -137,7 +139,12 @@ export async function handleChatStream(request: Request): Promise<Response> {
       model: body.model,
     });
     return json({
-      error: `Invalid model ID format: ${body.model}. Expected format: provider/model-name`,
+      error: `Invalid model ID format: ${body.model}. Expected a provider-native model ID`,
+    }, 400);
+  }
+  if (body.inference?.model && !isValidModelId(body.inference.model)) {
+    return json({
+      error: `Invalid model ID format: ${body.inference.model}. Expected a provider-native model ID`,
     }, 400);
   }
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
@@ -149,54 +156,55 @@ export async function handleChatStream(request: Request): Promise<Response> {
     }
   }
 
-  // ── 3. Rate limit + balance gate ──
-  const guardResult = await enforceChatGuards(user.id, 'chat stream');
+  // ── 3. Resolve inference route ──
+  let route: Awaited<ReturnType<typeof resolveInferenceRoute>>;
+  try {
+    route = await resolveInferenceRoute({
+      userId: user.id,
+      userEmail: user.email,
+      requestedModel: body.model,
+      selection: body.inference,
+    });
+    chatLogger.info('Resolved chat inference route', {
+      user_id: user.id,
+      provider: route.provider,
+      billing_mode: route.billingMode,
+      key_source: route.keySource,
+      model: route.model,
+      require_balance: route.shouldRequireBalance,
+      debit_light: route.shouldDebitLight,
+    });
+  } catch (err) {
+    chatLogger.error('Failed to resolve chat inference route', {
+      user_id: user.id,
+      error: err,
+    });
+
+    if (err instanceof InferenceRouteError) {
+      return json({
+        error: 'Chat service unavailable',
+        code: err.code,
+        detail: err.message,
+      }, err.status);
+    }
+
+    return json({
+      error: 'Chat service unavailable',
+      detail: err instanceof Error ? err.message : 'Inference route resolution failed',
+    }, 503);
+  }
+
+  // ── 4. Rate limit + conditional balance gate ──
+  const guardResult = await enforceChatGuards(user.id, 'chat stream', {
+    requireBalance: route.shouldRequireBalance,
+  });
   if (guardResult instanceof Response) {
     return guardResult;
   }
 
-  // ── 5. Get API key — prefer BYOK if configured, fallback to platform key ──
-  let userOpenRouterKey: string;
-  try {
-    // Check if user has BYOK configured
-    const userService = createUserService();
-    const fullUser = await userService.getUser(user.id);
-    if (fullUser?.byok_enabled && fullUser?.byok_provider === 'openrouter') {
-      try {
-        const byokKey = await userService.getDecryptedApiKey(user.id, 'openrouter');
-        if (byokKey) {
-          userOpenRouterKey = byokKey;
-          chatLogger.info('Using BYOK OpenRouter key for chat request', {
-            user_id: user.id,
-          });
-        } else {
-          throw new Error('Empty BYOK key');
-        }
-      } catch (byokErr) {
-        chatLogger.warn('BYOK OpenRouter key failed; falling back to platform key', {
-          user_id: user.id,
-          error: byokErr,
-        });
-        userOpenRouterKey = await getOrCreateOpenRouterKey(user.id, user.email);
-      }
-    } else {
-      userOpenRouterKey = await getOrCreateOpenRouterKey(user.id, user.email);
-    }
-    chatLogger.info('OpenRouter key ready for chat request', { user_id: user.id });
-  } catch (err) {
-    chatLogger.error('Failed to prepare OpenRouter key for chat request', {
-      user_id: user.id,
-      error: err,
-    });
-    return json({
-      error: 'Chat service unavailable',
-      detail: err instanceof Error ? err.message : 'OpenRouter key provisioning failed',
-    }, 503);
-  }
-
-  // ── 6. Forward to OpenRouter with streaming ──
-  const openRouterBody = {
-    model: body.model,
+  // ── 5. Forward to the resolved OpenAI-compatible provider with streaming ──
+  const providerBody = {
+    model: route.model,
     messages: body.messages,
     temperature: body.temperature ?? 0.7,
     max_tokens: body.max_tokens ?? 4096,
@@ -205,66 +213,66 @@ export async function handleChatStream(request: Request): Promise<Response> {
     ...(body.tools && body.tools.length > 0 ? { tools: body.tools } : {}),
   };
 
-  chatLogger.info('Forwarding chat request to OpenRouter', {
+  chatLogger.info('Forwarding chat request to AI provider', {
     user_id: user.id,
-    model: body.model,
+    provider: route.provider,
+    billing_mode: route.billingMode,
+    model: route.model,
     message_count: body.messages.length,
   });
 
-  let openRouterRes: Response;
+  let providerRes: Response;
   try {
-    openRouterRes = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${userOpenRouterKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://ultralight-api.rgn4jz429m.workers.dev',
-        'X-Title': 'Ultralight Chat',
-      },
-      body: JSON.stringify(openRouterBody),
+    providerRes = await fetchInferenceChatCompletion(route, providerBody, {
+      title: 'Ultralight Chat',
     });
-    chatLogger.info('OpenRouter responded to chat request', {
+    chatLogger.info('AI provider responded to chat request', {
       user_id: user.id,
-      model: body.model,
-      status: openRouterRes.status,
+      provider: route.provider,
+      model: route.model,
+      status: providerRes.status,
     });
   } catch (err) {
-    chatLogger.error('OpenRouter fetch failed', {
+    chatLogger.error('AI provider fetch failed', {
       user_id: user.id,
-      model: body.model,
+      provider: route.provider,
+      model: route.model,
       error: err,
     });
     return json({ error: 'Upstream service unavailable', detail: err instanceof Error ? err.message : 'fetch failed' }, 502);
   }
 
-  // Handle non-streaming error from OpenRouter
-  if (!openRouterRes.ok) {
+  // Handle non-streaming error from provider
+  if (!providerRes.ok) {
     let errMsg = 'Upstream error';
     try {
-      const errBody = await openRouterRes.json() as { error?: { message?: string } };
+      const errBody = await providerRes.json() as { error?: { message?: string } };
       errMsg = errBody?.error?.message || errMsg;
-      chatLogger.warn('OpenRouter returned an error response', {
+      chatLogger.warn('AI provider returned an error response', {
         user_id: user.id,
-        model: body.model,
-        status: openRouterRes.status,
+        provider: route.provider,
+        model: route.model,
+        status: providerRes.status,
         upstream_message: errMsg,
       });
     } catch { /* use default */ }
     return json(
-      { error: errMsg, detail: `OpenRouter returned ${openRouterRes.status}` },
-      openRouterRes.status >= 500 ? 502 : openRouterRes.status,
+      { error: errMsg, detail: `${route.provider} returned ${providerRes.status}` },
+      providerRes.status >= 500 ? 502 : providerRes.status,
     );
   }
 
-  if (!openRouterRes.body) {
+  if (!providerRes.body) {
     return error('No response body from upstream', 502);
   }
 
-  // ── 7. Create pass-through transform that captures usage ──
+  // ── 6. Create pass-through transform that captures usage ──
   let capturedUsage: ChatUsage | null = null;
   let capturedTotalCost: number | undefined = undefined;
   const userId = user.id;
-  const model = body.model;
+  const model = route.model;
+  const provider = route.provider;
+  const shouldDebitLight = route.shouldDebitLight;
   const decoder = new TextDecoder();
 
   const transformStream = new TransformStream<Uint8Array, Uint8Array>({
@@ -309,8 +317,7 @@ export async function handleChatStream(request: Request): Promise<Response> {
     },
 
     flush() {
-      // Stream complete — deduct billing (fire-and-forget)
-      if (capturedUsage && capturedUsage.total_tokens > 0) {
+      if (capturedUsage && capturedUsage.total_tokens > 0 && shouldDebitLight) {
         deductChatCost(userId, capturedUsage, model, capturedTotalCost)
           .then(result => {
             chatLogger.info('Post-stream chat billing succeeded', {
@@ -330,6 +337,15 @@ export async function handleChatStream(request: Request): Promise<Response> {
               error: err,
             });
           });
+      } else if (capturedUsage && capturedUsage.total_tokens > 0) {
+        chatLogger.info('Skipped post-stream Light debit for BYOK chat route', {
+          user_id: userId,
+          provider,
+          model,
+          prompt_tokens: capturedUsage.prompt_tokens,
+          completion_tokens: capturedUsage.completion_tokens,
+          total_tokens: capturedUsage.total_tokens,
+        });
       } else {
         chatLogger.warn('No usage captured for completed chat stream', {
           user_id: userId,
@@ -339,8 +355,8 @@ export async function handleChatStream(request: Request): Promise<Response> {
     },
   });
 
-  // Pipe OpenRouter response through the transform (runs in background)
-  openRouterRes.body.pipeTo(transformStream.writable).catch(err => {
+  // Pipe provider response through the transform (runs in background)
+  providerRes.body.pipeTo(transformStream.writable).catch(err => {
     chatLogger.error('Chat stream pipe failed', {
       user_id: userId,
       model,
@@ -348,7 +364,7 @@ export async function handleChatStream(request: Request): Promise<Response> {
     });
   });
 
-  // ── 8. Return streaming response ──
+  // ── 7. Return streaming response ──
   return new Response(transformStream.readable, {
     status: 200,
     headers: {
@@ -382,9 +398,9 @@ export async function handleChatModels(request: Request): Promise<Response> {
 
   // Suggested models — not an allowlist, just popular options for the UI
   const suggested = [
+    'deepseek/deepseek-v4-flash',
+    'deepseek/deepseek-v4-pro',
     'google/gemini-3.1-flash-lite-preview:nitro',
-    'anthropic/claude-sonnet-4.6',
-    'anthropic/claude-sonnet-4-20250514',
     'openai/gpt-4o',
     'google/gemini-2.5-pro-preview-05-06',
     'deepseek/deepseek-chat',
@@ -397,6 +413,41 @@ export async function handleChatModels(request: Request): Promise<Response> {
   });
 
   return json({ models });
+}
+
+// ============================================
+// GET /chat/inference-options — User-specific inference options
+// ============================================
+
+export async function handleChatInferenceOptions(request: Request): Promise<Response> {
+  let user: { id: string; email: string; provisional?: boolean };
+  try {
+    user = await authenticate(request);
+  } catch (err) {
+    return json({ error: 'Unauthorized', detail: err instanceof Error ? err.message : 'Auth failed' }, 401);
+  }
+
+  if (user.provisional) {
+    return json({ error: 'A full account is required for inference options.' }, 403);
+  }
+
+  const rateResult = await checkRateLimit(user.id, 'chat:models');
+  if (!rateResult.allowed) {
+    return json({ error: 'Rate limit exceeded' }, 429);
+  }
+
+  try {
+    return json(await buildInferenceOptions({ userId: user.id }));
+  } catch (err) {
+    chatLogger.error('Failed to build inference options', {
+      user_id: user.id,
+      error: err,
+    });
+    return json({
+      error: 'Inference options unavailable',
+      detail: err instanceof Error ? err.message : 'Failed to load inference options',
+    }, 500);
+  }
 }
 
 // ============================================
@@ -472,7 +523,7 @@ export async function handleChatContext(request: Request): Promise<Response> {
   // Resolve context
   try {
     const { resolveContext } = await import('../services/context-resolver.ts');
-    const context = await resolveContext(body.prompt, user.id);
+    const context = await resolveContext(body.prompt, user.id, user.email);
     return json(context);
   } catch (err) {
     chatLogger.error('Chat context resolution failed', {
@@ -556,6 +607,7 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
     preferredModel?: string;
     interpreterModel?: string;
     heavyModel?: string;
+    inference?: InferenceRoutePreference;
     scope?: Record<string, { access: 'all' | 'functions' | 'data'; functions?: string[] }>;
     systemAgentContext?: SystemAgentContext;
     projectContext?: string;
@@ -571,14 +623,58 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
   if (!body.message || typeof body.message !== 'string') {
     return error('message is required', 400);
   }
+  if (body.inference?.model && !isValidModelId(body.inference.model)) {
+    return json({
+      error: `Invalid model ID format: ${body.inference.model}. Expected a provider-native model ID`,
+    }, 400);
+  }
 
-  // ── 3. Rate limit + balance gate ──
-  const guardResult = await enforceChatGuards(user.id, 'chat orchestration');
+  // ── 3. Resolve inference route ──
+  let route: Awaited<ReturnType<typeof resolveInferenceRoute>>;
+  try {
+    route = await resolveInferenceRoute({
+      userId: user.id,
+      userEmail: user.email,
+      selection: body.inference,
+    });
+    chatLogger.info('Resolved orchestration inference route', {
+      user_id: user.id,
+      provider: route.provider,
+      billing_mode: route.billingMode,
+      key_source: route.keySource,
+      model: route.model,
+      require_balance: route.shouldRequireBalance,
+      debit_light: route.shouldDebitLight,
+    });
+  } catch (err) {
+    chatLogger.error('Failed to resolve orchestration inference route', {
+      user_id: user.id,
+      error: err,
+    });
+
+    if (err instanceof InferenceRouteError) {
+      return json({
+        error: 'Orchestration service unavailable',
+        code: err.code,
+        detail: err.message,
+      }, err.status);
+    }
+
+    return json({
+      error: 'Orchestration service unavailable',
+      detail: err instanceof Error ? err.message : 'Inference route resolution failed',
+    }, 503);
+  }
+
+  // ── 4. Rate limit + conditional balance gate ──
+  const guardResult = await enforceChatGuards(user.id, 'chat orchestration', {
+    requireBalance: route.shouldRequireBalance,
+  });
   if (guardResult instanceof Response) {
     return guardResult;
   }
 
-  // ── 4. Stream orchestration events as SSE ──
+  // ── 5. Stream orchestration events as SSE ──
   const { orchestrate } = await import('../services/orchestrator.ts');
 
   const encoder = new TextEncoder();
@@ -599,6 +695,7 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
           },
           user.id,
           user.email,
+          { inferenceRoute: route },
         )) {
           const sseData = `data: ${JSON.stringify(event)}\n\n`;
           controller.enqueue(encoder.encode(sseData));

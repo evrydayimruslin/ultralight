@@ -6765,7 +6765,7 @@ function executeScaffold(args: Record<string, unknown>): unknown {
   }
   if (storage === "supabase") indexLines.push("// Storage: BYOS Supabase");
   if (detectedPerms.includes("ai:call")) {
-    indexLines.push("// AI: ultralight.ai() via OpenRouter");
+    indexLines.push("// AI: ultralight.ai() via configured inference route");
   }
   if (detectedPerms.includes("net:fetch")) {
     indexLines.push("// Network: fetch() for external API calls");

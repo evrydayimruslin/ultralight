@@ -2,9 +2,22 @@
 // Supports editable Directive, Admin Notes, granular function selection per connected app,
 // per-function conventions, and model display.
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import type { InferenceRoutePreference } from '../../../shared/contracts/ai.ts';
 import type { Agent } from '../hooks/useAgentFleet';
-import { fetchModels, type ModelInfo } from '../lib/api';
+import {
+  describeInferenceModel,
+  fetchInferenceSettings,
+  fetchModels,
+  getEffectiveInferencePreference,
+  getInferenceModelOptions,
+  getInferenceProviderChoices,
+  getInferenceSetupState,
+  type InferenceSettings,
+  type ModelInfo,
+} from '../lib/api';
+import { getInferencePreference, setInferencePreference } from '../lib/storage';
+import { openViewWindow } from '../lib/multiWindow';
 import ConfigDropdown, { type DropdownOption } from './ConfigDropdown';
 
 // ── Types ──
@@ -133,6 +146,50 @@ function formatExecuteWindowDescription(seconds: number): string {
   return `Waits ${seconds} seconds before firing`;
 }
 
+function formatInferenceState(state: ReturnType<typeof getInferenceSetupState>): string {
+  switch (state) {
+    case 'ready':
+      return 'Ready';
+    case 'needs_light_balance':
+      return 'Needs Light';
+    case 'needs_byok_key':
+      return 'Needs key';
+    case 'needs_inference_setup':
+      return 'Needs setup';
+  }
+}
+
+function inferenceStateTone(state: ReturnType<typeof getInferenceSetupState> | null): string {
+  switch (state) {
+    case 'ready':
+      return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+    case 'needs_light_balance':
+    case 'needs_byok_key':
+    case 'needs_inference_setup':
+      return 'bg-amber-50 text-amber-700 border-amber-200';
+    default:
+      return 'bg-gray-100 text-gray-500 border-gray-200';
+  }
+}
+
+function inferenceStateDot(state: ReturnType<typeof getInferenceSetupState> | null): string {
+  switch (state) {
+    case 'ready':
+      return 'bg-emerald-400';
+    case 'needs_light_balance':
+    case 'needs_byok_key':
+    case 'needs_inference_setup':
+      return 'bg-amber-400';
+    default:
+      return 'bg-gray-300';
+  }
+}
+
+function formatLightBalance(balance: number | null): string {
+  if (balance === null) return 'balance unavailable';
+  return `✦${balance % 1 === 0 ? balance.toLocaleString() : balance.toFixed(2)}`;
+}
+
 /** Inspect an app and build the function list */
 async function inspectApp(
   executeMcpTool: (name: string, args: Record<string, unknown>) => Promise<string>,
@@ -199,6 +256,7 @@ async function inspectApp(
 interface CachedApp { id: string; slug: string; name: string; description: string | null; functions?: AppFunction[] }
 let _cachedUserApps: CachedApp[] | null = null;
 let _cachedModels: ModelInfo[] | null = null;
+let _cachedInferenceSettings: InferenceSettings | null = null;
 
 export default function AgentConfigPanel({
   agent,
@@ -221,6 +279,9 @@ export default function AgentConfigPanel({
       : '8',
   );
   const [models, setModels] = useState<ModelInfo[]>(_cachedModels || []);
+  const [inferenceSettings, setInferenceSettings] = useState<InferenceSettings | null>(_cachedInferenceSettings);
+  const [inferencePreference, setInferencePreferenceState] = useState<InferenceRoutePreference>(() => getInferencePreference() ?? {});
+  const [loadingInferenceSettings, setLoadingInferenceSettings] = useState(!_cachedInferenceSettings);
 
   // Scope state
   const [scopedApps, setScopedApps] = useState<ScopedApp[]>([]);
@@ -233,6 +294,46 @@ export default function AgentConfigPanel({
   const [searchingApps, setSearchingApps] = useState(false);
   const appSearchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    function loadInferenceSettings(showLoading: boolean) {
+      if (showLoading) {
+        setLoadingInferenceSettings(true);
+      }
+      fetchInferenceSettings()
+        .then(settings => {
+          if (cancelled) return;
+          _cachedInferenceSettings = settings;
+          setInferenceSettings(settings);
+        })
+        .finally(() => {
+          if (!cancelled) setLoadingInferenceSettings(false);
+        });
+    }
+
+    function refreshLocalInferenceState() {
+      setInferencePreferenceState(getInferencePreference() ?? {});
+      loadInferenceSettings(false);
+    }
+
+    if (_cachedInferenceSettings) {
+      setInferenceSettings(_cachedInferenceSettings);
+      setLoadingInferenceSettings(false);
+      loadInferenceSettings(false);
+    } else {
+      loadInferenceSettings(true);
+    }
+
+    window.addEventListener('focus', refreshLocalInferenceState);
+    window.addEventListener('ul-inference-preference-changed', refreshLocalInferenceState);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', refreshLocalInferenceState);
+      window.removeEventListener('ul-inference-preference-changed', refreshLocalInferenceState);
+    };
+  }, []);
 
   // Track agent ID to re-init state when agent changes
   const prevAgentIdRef = useRef<string | null>(null);
@@ -396,6 +497,74 @@ export default function AgentConfigPanel({
     const name = parts.length > 1 ? parts[1] : id;
     return name.replace(/:nitro$/, '');
   };
+
+  const providerChoices = useMemo(
+    () => inferenceSettings ? getInferenceProviderChoices(inferenceSettings) : [],
+    [inferenceSettings],
+  );
+  const effectiveInference = useMemo(
+    () => inferenceSettings ? getEffectiveInferencePreference(inferenceSettings, inferencePreference) : null,
+    [inferenceSettings, inferencePreference],
+  );
+  const inferenceModelOptions = useMemo(
+    () => inferenceSettings ? getInferenceModelOptions(inferenceSettings, inferencePreference) : [],
+    [inferenceSettings, inferencePreference],
+  );
+  const inferenceSetupState = useMemo(
+    () => inferenceSettings ? getInferenceSetupState(inferenceSettings, inferencePreference) : null,
+    [inferenceSettings, inferencePreference],
+  );
+  const selectedInferenceProviderKey = effectiveInference
+    ? `${effectiveInference.billingMode}:${effectiveInference.provider}`
+    : undefined;
+  const selectedInferenceProvider = providerChoices.find(choice => choice.key === selectedInferenceProviderKey);
+  const selectedInferenceModel = effectiveInference
+    ? inferenceModelOptions.find(model => model.id === effectiveInference.model)
+    : null;
+  const selectedProviderConfig = effectiveInference
+    ? inferenceSettings?.providers.find(provider => provider.id === effectiveInference.provider)
+    : null;
+  const configuredProviderCount = inferenceSettings?.configuredProviderIds.length ?? 0;
+  const inferenceRouteSummary = effectiveInference?.billingMode === 'light'
+    ? `Light balance via OpenRouter at ${inferenceSettings?.light.markup ?? 1}x cost`
+    : `${selectedProviderConfig?.name || selectedInferenceProvider?.label || 'BYOK'} key${selectedProviderConfig?.configured ? ' saved' : ' needed'}; no Light debit`;
+  const inferenceBalanceSummary = effectiveInference?.billingMode === 'light'
+    ? `${formatLightBalance(inferenceSettings?.light.balanceLight ?? null)} available`
+    : `${configuredProviderCount} BYOK provider${configuredProviderCount === 1 ? '' : 's'} configured`;
+
+  const persistInferencePreference = useCallback((preference: InferenceRoutePreference) => {
+    setInferencePreferenceState(preference);
+    setInferencePreference(preference);
+  }, []);
+
+  const handleSelectInferenceProvider = useCallback((key: string) => {
+    if (!inferenceSettings) return;
+
+    const choice = providerChoices.find(option => option.key === key);
+    if (!choice) return;
+
+    const basePreference: InferenceRoutePreference = {
+      billingMode: choice.billingMode,
+      provider: choice.provider,
+    };
+    const availableModels = getInferenceModelOptions(inferenceSettings, basePreference);
+    const currentModel = inferencePreference.model;
+    const model = currentModel && availableModels.some(option => option.id === currentModel)
+      ? currentModel
+      : getEffectiveInferencePreference(inferenceSettings, basePreference).model;
+
+    persistInferencePreference({ ...basePreference, model });
+  }, [inferencePreference.model, inferenceSettings, persistInferencePreference, providerChoices]);
+
+  const handleSelectInferenceModel = useCallback((model: string) => {
+    if (!inferenceSettings) return;
+    const effective = getEffectiveInferencePreference(inferenceSettings, inferencePreference);
+    persistInferencePreference({
+      billingMode: effective.billingMode,
+      provider: effective.provider,
+      model,
+    });
+  }, [inferencePreference, inferenceSettings, persistInferencePreference]);
 
   const handleSelectFlashModel = useCallback(async (value: string) => {
     setFlashModelValue(value);
@@ -642,6 +811,27 @@ export default function AgentConfigPanel({
     label: displayModelName(m.id),
     description: m.provider,
   }));
+  const inferenceProviderOptions: DropdownOption[] = providerChoices.map(choice => ({
+    value: choice.key,
+    label: choice.label,
+    description: choice.billingMode === 'light'
+      ? (choice.usable
+        ? `${formatLightBalance(inferenceSettings?.light.balanceLight ?? null)} available | OpenRouter at cost`
+        : choice.reason || 'Light balance unavailable')
+      : (choice.configured ? 'Key saved | BYOK, no Light debit' : choice.reason || choice.description),
+    icon: (
+      <span
+        className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+          choice.usable ? 'bg-emerald-400' : 'bg-gray-300'
+        }`}
+      />
+    ),
+  }));
+  const inferenceModelDropdownOptions: DropdownOption[] = inferenceModelOptions.map(model => ({
+    value: model.id,
+    label: model.name || displayModelName(model.id),
+    description: `${model.billingMode === 'light' ? model.providerName : `${model.providerName} BYOK`} | ${describeInferenceModel(model)}`,
+  }));
 
   // Approval dropdown options
   const approvalOptions: DropdownOption[] = [
@@ -671,9 +861,87 @@ export default function AgentConfigPanel({
   return (
     <div className="space-y-1">
 
-      {/* ── Model ── */}
+      {/* ── Inference ── */}
       <div className={cardClass}>
-        <span className={`${labelClass} block mb-1.5`}>Model</span>
+        <div className="flex items-start justify-between gap-3 mb-2">
+          <div className="min-w-0">
+            <span className={labelClass}>Inference</span>
+            <div className="mt-0.5 text-[11px] text-gray-400 truncate">
+              {inferenceRouteSummary}
+            </div>
+          </div>
+          <span className={`inline-flex items-center gap-1.5 border px-2 py-0.5 text-[10.5px] font-medium ${inferenceStateTone(inferenceSetupState)}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${inferenceStateDot(inferenceSetupState)}`} />
+            {loadingInferenceSettings
+              ? 'Loading'
+              : inferenceSetupState
+                ? formatInferenceState(inferenceSetupState)
+                : 'Unavailable'}
+          </span>
+        </div>
+        <div className="space-y-1">
+          <ConfigDropdown
+            options={inferenceProviderOptions}
+            selected={selectedInferenceProviderKey}
+            onSelect={handleSelectInferenceProvider}
+            width="w-80"
+            trigger={
+              <div className="flex items-center w-[calc(100%+1.5rem)] -mx-3 pl-4 pr-3 py-0.5 hover:bg-white transition-colors">
+                <span className="text-[12px] font-mono text-gray-400 mr-3 shrink-0">Provider</span>
+                <span className="flex-1 min-w-0 text-left text-[12px] font-mono text-gray-500 truncate">
+                  {selectedInferenceProvider?.label || (loadingInferenceSettings ? 'loading' : 'not set')}
+                </span>
+              </div>
+            }
+          />
+          <ConfigDropdown
+            options={inferenceModelDropdownOptions}
+            selected={effectiveInference?.model}
+            onSelect={handleSelectInferenceModel}
+            searchable
+            searchPlaceholder="Search models..."
+            allowCustom
+            customLabel="Use"
+            width="w-80"
+            trigger={
+              <div className="flex items-center w-[calc(100%+1.5rem)] -mx-3 pl-4 pr-3 py-0.5 hover:bg-white transition-colors">
+                <span className="text-[12px] font-mono text-gray-400 mr-3 shrink-0">Model</span>
+                <span className="flex-1 min-w-0 text-left text-[12px] font-mono text-gray-500 truncate">
+                  {effectiveInference?.model ? displayModelName(effectiveInference.model) : <span className="text-gray-500">not set</span>}
+                </span>
+              </div>
+            }
+          />
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-gray-400">
+          <span className="min-w-0 truncate">{inferenceBalanceSummary}</span>
+          <span className="text-gray-300">|</span>
+          <span className="min-w-0 truncate">{describeInferenceModel(selectedInferenceModel)}</span>
+        </div>
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void openViewWindow({ kind: 'settings' })}
+            className="px-2 py-1 text-[11px] font-medium border border-gray-200 bg-white text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-colors"
+          >
+            Keys
+          </button>
+          <button
+            type="button"
+            onClick={() => void openViewWindow({ kind: 'wallet' })}
+            className="px-2 py-1 text-[11px] font-medium border border-gray-200 bg-white text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-colors"
+          >
+            Wallet
+          </button>
+          {selectedProviderConfig && !selectedProviderConfig.configured && effectiveInference?.billingMode === 'byok' && (
+            <span className="text-[11px] text-amber-600">Add a key before sending.</span>
+          )}
+        </div>
+      </div>
+
+      {/* ── Pipeline ── */}
+      <div className={cardClass}>
+        <span className={`${labelClass} block mb-1.5`}>Pipeline</span>
         <div className="space-y-1">
           {/* Flash */}
           <ConfigDropdown

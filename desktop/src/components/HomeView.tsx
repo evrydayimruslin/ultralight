@@ -10,6 +10,7 @@ import { usePermissions } from '../hooks/usePermissions';
 import { buildAgentSystemPrompt, inspectAndBuildMcpSchemas, generateConnectedAppsSchema } from '../lib/systemPrompt';
 import { loadBaseContext, readAbsoluteFile, fileNameWithoutExt } from '../lib/templates';
 import { agentRunner, type AgentEvent } from '../lib/agentRunner';
+import { DEFAULT_HEAVY_MODEL } from '../lib/storage';
 
 import KanbanBoard from './KanbanBoard';
 import CardDetailModal from './CardDetailModal';
@@ -466,7 +467,7 @@ export default function HomeView({
       initialTask: card.id ? `[Card: ${card.id}]\n\n${taskText}` : taskText,
       systemPrompt,
       projectDir: selectedProjectDir,
-      model: 'anthropic/claude-sonnet-4',
+      model: DEFAULT_HEAVY_MODEL,
       parentAgentId: discussAgentId,
       launchMode: 'build_now',
       context: `Approved plan:\n${plan}`,
@@ -862,7 +863,7 @@ export default function HomeView({
       {createAgentCard && (
         <CreateAgentModal
           card={createAgentCard}
-          defaultModel="anthropic/claude-sonnet-4"
+          defaultModel={DEFAULT_HEAVY_MODEL}
           projectDir={selectedProjectDir}
           executeMcpTool={executeMcpTool}
           onCreateAndStart={handleCreateAndStartAgent}

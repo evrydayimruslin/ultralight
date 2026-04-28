@@ -16,10 +16,11 @@ CF_API_TOKEN=
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 
-# OpenRouter
+# OpenRouter management key for Light-debit platform inference.
+# BYOK provider keys are saved per user and encrypted in Supabase.
 OPENROUTER_API_KEY=
 
-# Encryption
+# Encryption key for user BYOK provider API keys.
 BYOK_ENCRYPTION_KEY=
 
 # RunPod GPU

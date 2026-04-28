@@ -3,6 +3,7 @@
 
 import { streamChat, type ChatMessage } from './api';
 import { KEEP_RECENT } from './tokens';
+import { getInferencePreference } from './storage';
 
 /**
  * Find a safe split point in the message array.
@@ -89,6 +90,7 @@ export async function summarizeMessages(
       messages: summaryPrompt,
       max_tokens: 1024,
       temperature: 0.3,
+      inference: getInferencePreference() ?? undefined,
     })) {
       if (event.type === 'delta' && event.content) {
         summaryText += event.content;

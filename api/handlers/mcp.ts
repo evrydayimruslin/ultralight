@@ -19,7 +19,7 @@ import { getPermissionsForUser } from "./user.ts";
 import type { Tier } from "../../shared/contracts/runtime.ts";
 import { type UserContext } from "../runtime/sandbox.ts";
 import { createR2Service } from "../services/storage.ts";
-import { createAIService } from "../services/ai.ts";
+import { createRuntimeAIContext, createUnavailableAIService } from "../services/runtime-ai.ts";
 import { getCodeCache } from "../services/codecache.ts";
 import { getPermissionCache } from "../services/permission-cache.ts";
 import {
@@ -546,7 +546,7 @@ const SDK_TOOLS: MCPTool[] = [
     name: "ultralight.ai",
     title: "Call AI Model",
     description:
-      "Call an AI model. Requires BYOK (Bring Your Own Key) to be enabled.",
+      "Call an AI model using BYOK when configured, otherwise Light-debit platform inference.",
     inputSchema: {
       type: "object",
       properties: {
@@ -567,7 +567,7 @@ const SDK_TOOLS: MCPTool[] = [
         },
         model: {
           type: "string",
-          description: "Model ID (default: gpt-4).",
+          description: "Model ID. Light-debit calls may request any OpenRouter-compatible model; BYOK calls use the configured provider model.",
         },
         temperature: {
           type: "number",
@@ -1708,31 +1708,6 @@ async function executeSDKTool(
 
       // AI
       case "ultralight.ai": {
-        const userProfile = callerContext.userProfile;
-        const apiKey = callerContext.userApiKey;
-
-        if (!userProfile?.byok_enabled || !userProfile.byok_provider) {
-          result = {
-            content: "",
-            model: "none",
-            usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
-            error: "BYOK not configured. Please add your API key in Settings.",
-          };
-          break;
-        }
-
-        if (!apiKey) {
-          result = {
-            content: "",
-            model: "none",
-            usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
-            error: "API key not found. Please re-add your API key in Settings.",
-          };
-          break;
-        }
-
-        // Create AI service with user's provider and key
-        const aiService = createAIService(userProfile.byok_provider, apiKey);
         const aiMessages = toAiMessages(args.messages);
         if (!aiMessages) {
           result = {
@@ -1747,7 +1722,8 @@ async function executeSDKTool(
 
         // Make the AI call
         try {
-          result = await aiService.call({
+          const runtimeAI = await createRuntimeAIContext(callerContext.user);
+          result = await runtimeAI.aiService.call({
             messages: aiMessages,
             model: args.model as string | undefined,
             temperature: args.temperature as number | undefined,
@@ -2116,44 +2092,6 @@ async function executeAppFunction(
 
     const { envVars, missingRequiredSecrets } = envResolution;
 
-    let aiServiceInstance: { call: (request: unknown) => Promise<unknown> };
-
-    if (
-      callerContext.userProfile?.byok_enabled &&
-      callerContext.userProfile.byok_provider
-    ) {
-      if (callerContext.userApiKey) {
-        const actualAiService = createAIService(
-          callerContext.userProfile.byok_provider,
-          callerContext.userApiKey,
-        );
-        aiServiceInstance = {
-          call: async (request: unknown) =>
-            actualAiService.call(
-              request as Parameters<typeof actualAiService.call>[0],
-            ),
-        };
-      } else {
-        aiServiceInstance = {
-          call: async () => ({
-            content: "",
-            model: "none",
-            usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
-            error: "API key not found. Please re-add your API key in Settings.",
-          }),
-        };
-      }
-    } else {
-      aiServiceInstance = {
-        call: async () => ({
-          content: "",
-          model: "none",
-          usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
-          error: "BYOK not configured. Please add your API key in Settings.",
-        }),
-      };
-    }
-
     // Convert args object to array (positional arguments)
     // For now, pass as single object argument
     // Always pass args object so functions can destructure (even if empty)
@@ -2194,6 +2132,14 @@ async function executeAppFunction(
       "app:call",
     ]);
     const timeoutMs = permissions.includes("ai:call") ? 120_000 : 30_000;
+    const runtimeAI = permissions.includes("ai:call")
+      ? await createRuntimeAIContext(user)
+      : {
+        route: null,
+        resolvedRoute: null,
+        userApiKey: null,
+        aiService: createUnavailableAIService("ai:call permission not granted."),
+      };
 
     // ── Async promotion threshold: if execution exceeds this, return a job envelope ──
     // Set high to avoid promotion — CF Workers Dynamic Worker sub-isolates don't survive
@@ -2210,12 +2156,13 @@ async function executeAppFunction(
       executionId,
       code,
       permissions,
-      userApiKey: callerContext.userApiKey,
+      userApiKey: runtimeAI.userApiKey,
+      aiRoute: runtimeAI.route,
       user,
       appDataService,
       d1DataService,
       memoryService: memoryAdapter,
-      aiService: aiServiceInstance as {
+      aiService: runtimeAI.aiService as {
         call: (request: AIRequest, apiKey: string) => Promise<AIResponse>;
       },
       envVars,

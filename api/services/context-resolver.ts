@@ -12,7 +12,9 @@
 
 import { getFunctionIndex, type FunctionIndex } from './function-index.ts';
 import { getEntityIndex, type EntityIndex } from './entity-index.ts';
-import { getEnv } from '../lib/env.ts';
+import { deductChatCost } from './chat-billing.ts';
+import { fetchInferenceChatCompletion, selectInferenceModel } from './inference-client.ts';
+import { resolveInferenceRoute, type ResolvedInferenceRoute } from './inference-route.ts';
 
 // ── Types ──
 
@@ -80,7 +82,9 @@ Rules:
 export async function resolveContext(
   prompt: string,
   userId: string,
+  userEmail: string,
   conversationHistory?: string,
+  inferenceRoute?: ResolvedInferenceRoute,
 ): Promise<TaskContext> {
   // Load indexes concurrently
   const [fnIndex, entityIndex] = await Promise.all([
@@ -95,8 +99,16 @@ export async function resolveContext(
   // Build the catalog for the flash model
   const catalog = buildCatalog(fnIndex, entityIndex);
 
+  let route: ResolvedInferenceRoute;
+  try {
+    route = inferenceRoute ?? await resolveInferenceRoute({ userId, userEmail });
+  } catch (err) {
+    console.warn('[CONTEXT] Inference route unavailable; using heuristic fallback:', err);
+    return heuristicFallback(prompt, fnIndex, entityIndex);
+  }
+
   // Call flash model
-  const flashResult = await callFlashBroker(prompt, catalog, conversationHistory);
+  const flashResult = await callFlashBroker(prompt, catalog, route, userId, conversationHistory);
 
   if (!flashResult) {
     // Flash model failed — fall back to heuristic matching
@@ -159,26 +171,20 @@ interface FlashBrokerResult {
 async function callFlashBroker(
   prompt: string,
   catalog: string,
+  route: ResolvedInferenceRoute,
+  userId: string,
   conversationHistory?: string,
 ): Promise<FlashBrokerResult | null> {
-  const apiKey = getEnv('OPENROUTER_API_KEY');
-  if (!apiKey) return null;
-
   const userMessage = conversationHistory
     ? `## Conversation History (condensed)\n${conversationHistory}\n\n## Current Message\n${prompt}\n\n## Available Functions & Entities\n${catalog}`
     : `## User Message\n${prompt}\n\n## Available Functions & Entities\n${catalog}`;
+  const model = selectInferenceModel(route, 'google/gemini-3.1-flash-lite-preview:nitro');
 
   try {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://ultralight.dev',
-        'X-Title': 'Ultralight Context Broker',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-3.1-flash-lite-preview:nitro',
+    const response = await fetchInferenceChatCompletion(
+      route,
+      {
+        model,
         messages: [
           { role: 'system', content: FLASH_BROKER_SYSTEM },
           { role: 'user', content: userMessage },
@@ -186,8 +192,12 @@ async function callFlashBroker(
         temperature: 0,     // Deterministic — same input always gives same output
         max_tokens: 1024,
         response_format: { type: 'json_object' },
-      }),
-    });
+      },
+      {
+        title: 'Ultralight Context Broker',
+        referer: 'https://ultralight.dev',
+      },
+    );
 
     if (!response.ok) {
       console.error(`[CONTEXT] Flash broker failed: ${response.status}`);
@@ -196,10 +206,31 @@ async function callFlashBroker(
 
     const data = await response.json() as {
       choices: Array<{ message: { content: string } }>;
+      model?: string;
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+        total_cost?: number;
+      };
     };
 
     const content = data.choices?.[0]?.message?.content;
     if (!content) return null;
+
+    if (route.shouldDebitLight && data.usage) {
+      deductChatCost(
+        userId,
+        {
+          prompt_tokens: data.usage.prompt_tokens || 0,
+          completion_tokens: data.usage.completion_tokens || 0,
+          total_tokens: data.usage.total_tokens ||
+            (data.usage.prompt_tokens || 0) + (data.usage.completion_tokens || 0),
+        },
+        data.model || model,
+        data.usage.total_cost,
+      ).catch((err) => console.error('[CONTEXT] Light debit failed:', err));
+    }
 
     // Parse JSON response
     const parsed = JSON.parse(content) as FlashBrokerResult;

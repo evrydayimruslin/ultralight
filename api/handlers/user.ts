@@ -7,7 +7,8 @@ import { createUserService, type UserProfile } from "../services/user.ts";
 import { validateAPIKey } from "../services/ai.ts";
 import {
   BYOK_PROVIDERS,
-  type BYOKProvider,
+  isActiveBYOKProvider,
+  type ActiveBYOKProvider,
   type BYOKProviderInfo,
   DATA_RATE_LIGHT_PER_MB_PER_HOUR,
   formatLight,
@@ -63,6 +64,7 @@ import {
   validateMarketplaceMetricsVisibilityRequest,
 } from "../services/marketplace-request-validation.ts";
 import { createServerLogger } from "../services/logging.ts";
+import { isValidModelId } from "../services/model-validation.ts";
 
 const stripeLogger = createServerLogger("STRIPE");
 const userLogger = createServerLogger("USER");
@@ -237,23 +239,31 @@ function toTier(value: unknown): Tier {
   return isTier(value) ? value : "free";
 }
 
-function isByokProvider(value: unknown): value is BYOKProvider {
-  return value === "openrouter" ||
-    value === "openai" ||
-    value === "anthropic" ||
-    value === "deepseek" ||
-    value === "moonshot";
-}
-
 function getByokProviderEntry(
   value: unknown,
-): { provider: BYOKProvider; info: BYOKProviderInfo } | null {
-  if (!isByokProvider(value)) {
+): { provider: ActiveBYOKProvider; info: BYOKProviderInfo } | null {
+  if (!isActiveBYOKProvider(value)) {
     return null;
   }
 
   const info = BYOK_PROVIDERS[value];
-  return info ? { provider: value, info } : null;
+  return { provider: value, info };
+}
+
+function normalizeOptionalModel(value: unknown): string | undefined | Response {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    return error("model must be a string", 400);
+  }
+  if (!isValidModelId(value)) {
+    return error(
+      `Invalid model ID format: ${value}. Expected a provider-native model ID`,
+      400,
+    );
+  }
+  return value;
 }
 
 function getFnIndexBinding(): KVNamespace | null {
@@ -1025,8 +1035,12 @@ export async function handleUser(request: Request): Promise<Response> {
           id: p.id,
           name: p.name,
           description: p.description,
+          protocol: p.protocol,
+          baseUrl: p.baseUrl,
           defaultModel: p.defaultModel,
           models: p.models,
+          capabilities: p.capabilities,
+          apiKeyPrefix: p.apiKeyPrefix,
           docsUrl: p.docsUrl,
           apiKeyUrl: p.apiKeyUrl,
         })),
@@ -1046,6 +1060,8 @@ export async function handleUser(request: Request): Promise<Response> {
         const body = await readJsonBody<ByokCreateBody>(request);
         const { provider, api_key, model, validate = true } = body;
         const providerEntry = getByokProviderEntry(provider);
+        const normalizedModel = normalizeOptionalModel(model);
+        if (normalizedModel instanceof Response) return normalizedModel;
 
         // Validate provider
         if (!providerEntry) {
@@ -1084,7 +1100,7 @@ export async function handleUser(request: Request): Promise<Response> {
           userId,
           providerEntry.provider,
           api_key.trim(),
-          model,
+          normalizedModel,
         );
 
         return json({
@@ -1104,22 +1120,32 @@ export async function handleUser(request: Request): Promise<Response> {
   // ============================================
   const byokMatch = path.match(/^\/api\/user\/byok\/([a-z]+)$/);
   if (byokMatch && method === "PATCH") {
-    const provider = byokMatch[1] as BYOKProvider;
-    const providerInfo = BYOK_PROVIDERS[provider];
+    const providerEntry = getByokProviderEntry(byokMatch[1]);
 
-    if (!providerInfo) {
+    if (!providerEntry) {
       return error("Invalid provider", 400);
     }
+    const { provider, info: providerInfo } = providerEntry;
 
     return withSensitiveRouteRateLimit(userId, "user:byok_update", async () => {
       try {
         const body = await readJsonBody<ByokUpdateBody>(request);
         const { api_key, model, validate = true } = body;
+        const normalizedModel = normalizeOptionalModel(model);
+        if (normalizedModel instanceof Response) return normalizedModel;
+
+        if (api_key !== undefined && typeof api_key !== "string") {
+          return error("api_key must be a string", 400);
+        }
+        const normalizedApiKey = api_key?.trim();
+        if (api_key !== undefined && !normalizedApiKey) {
+          return error("API key must not be empty", 400);
+        }
 
         // If updating API key, validate it
-        if (api_key && validate) {
+        if (normalizedApiKey && validate) {
           try {
-            await validateAPIKey(provider, api_key.trim());
+            await validateAPIKey(provider, normalizedApiKey);
           } catch (validationErr) {
             return error(
               `API key validation failed: ${
@@ -1133,8 +1159,8 @@ export async function handleUser(request: Request): Promise<Response> {
         }
 
         const config = await userService.updateBYOKProvider(userId, provider, {
-          apiKey: api_key?.trim(),
-          model,
+          apiKey: normalizedApiKey,
+          model: normalizedModel,
         });
 
         return json({
@@ -1144,6 +1170,9 @@ export async function handleUser(request: Request): Promise<Response> {
         });
       } catch (err) {
         console.error("Update BYOK error:", err);
+        if (err instanceof Error && err.message.includes("not configured")) {
+          return error(err.message, 400);
+        }
         return error("Failed to update BYOK provider", 500);
       }
     });
@@ -1153,12 +1182,12 @@ export async function handleUser(request: Request): Promise<Response> {
   // DELETE /api/user/byok/:provider - Remove BYOK provider
   // ============================================
   if (byokMatch && method === "DELETE") {
-    const provider = byokMatch[1] as BYOKProvider;
-    const providerInfo = BYOK_PROVIDERS[provider];
+    const providerEntry = getByokProviderEntry(byokMatch[1]);
 
-    if (!providerInfo) {
+    if (!providerEntry) {
       return error("Invalid provider", 400);
     }
+    const { provider, info: providerInfo } = providerEntry;
 
     return withSensitiveRouteRateLimit(userId, "user:byok_delete", async () => {
       try {
@@ -1199,6 +1228,9 @@ export async function handleUser(request: Request): Promise<Response> {
           });
         } catch (err) {
           console.error("Set primary provider error:", err);
+          if (err instanceof Error && err.message.includes("not configured")) {
+            return error(err.message, 400);
+          }
           return error("Failed to set primary provider", 500);
         }
       },
