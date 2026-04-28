@@ -22,6 +22,11 @@ import { createAppsService } from '../services/apps.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
 import { resolveAppEnvSchema } from '../services/app-settings.ts';
 import { buildAppTrustCard } from '../services/trust.ts';
+import {
+  buildMarketplaceListingSummary,
+  type MarketplaceListingSummary,
+  type MarketplaceListingSummaryListing,
+} from '../services/marketplace.ts';
 import type { EnvSchemaEntry } from '../../shared/types/index.ts';
 import { getEnv } from '../lib/env.ts';
 
@@ -62,6 +67,22 @@ interface AppRow {
   gpu_status?: string | null;
 }
 
+interface MarketplaceListingRow extends MarketplaceListingSummaryListing {
+  app_id: string;
+  listing_note?: string | null;
+  updated_at?: string | null;
+}
+
+interface MarketplaceBidRow {
+  app_id: string;
+  amount_light: number | null;
+}
+
+type MarketplaceListingSnapshot = MarketplaceListingSummary & {
+  listing_note: string | null;
+  updated_at: string | null;
+};
+
 function buildTrustCardForAppRow(app: AppRow): unknown {
   return buildAppTrustCard({
     current_version: app.current_version || '',
@@ -76,6 +97,67 @@ function buildTrustCardForAppRow(app: AppRow): unknown {
     download_access: app.download_access || 'owner',
     env_schema: app.env_schema || {},
   } as never);
+}
+
+async function fetchMarketplaceListingMap(
+  supabaseUrl: string,
+  dbHeaders: Record<string, string>,
+  apps: Array<Pick<AppRow, 'id' | 'had_external_db'>>,
+): Promise<Map<string, MarketplaceListingSnapshot>> {
+  const uniqueApps = Array.from(
+    new Map(apps.filter(app => app.id).map(app => [app.id, app])).values(),
+  ).slice(0, 100);
+  const summaries = new Map<string, MarketplaceListingSnapshot>();
+
+  if (uniqueApps.length === 0) {
+    return summaries;
+  }
+
+  const appIds = uniqueApps.map(app => encodeURIComponent(app.id)).join(',');
+  const [listingsRes, bidsRes] = await Promise.all([
+    fetch(
+      `${supabaseUrl}/rest/v1/app_listings?app_id=in.(${appIds})&select=app_id,ask_price_light,floor_price_light,instant_buy,status,listing_note,show_metrics,updated_at`,
+      { headers: dbHeaders },
+    ),
+    fetch(
+      `${supabaseUrl}/rest/v1/app_bids?app_id=in.(${appIds})&status=eq.active&select=app_id,amount_light`,
+      { headers: dbHeaders },
+    ),
+  ]);
+
+  const listingsByApp = new Map<string, MarketplaceListingRow>();
+  if (listingsRes.ok) {
+    const rows = await listingsRes.json() as MarketplaceListingRow[];
+    for (const row of rows) {
+      listingsByApp.set(row.app_id, row);
+    }
+  }
+
+  const bidsByApp = new Map<string, Array<{ amount_light: number }>>();
+  if (bidsRes.ok) {
+    const rows = await bidsRes.json() as MarketplaceBidRow[];
+    for (const row of rows) {
+      if (typeof row.amount_light !== 'number') continue;
+      const existing = bidsByApp.get(row.app_id) || [];
+      existing.push({ amount_light: row.amount_light });
+      bidsByApp.set(row.app_id, existing);
+    }
+  }
+
+  for (const app of uniqueApps) {
+    const listing = listingsByApp.get(app.id) || null;
+    summaries.set(app.id, {
+      ...buildMarketplaceListingSummary(
+        listing,
+        bidsByApp.get(app.id) || [],
+        { had_external_db: app.had_external_db },
+      ),
+      listing_note: listing?.listing_note ?? null,
+      updated_at: listing?.updated_at ?? null,
+    });
+  }
+
+  return summaries;
 }
 
 interface ScoredApp {
@@ -460,6 +542,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
     function appToResult(a: AppRow) {
       const schema = resolveAppEnvSchema(a);
       const perUserEntries = Object.entries(schema).filter(([, v]) => v.scope === 'per_user');
+      const marketplace = listingMap.get(a.id) || null;
       return {
         id: a.id,
         name: a.name,
@@ -474,6 +557,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
         runtime: a.runtime || 'deno',
         gpu_type: a.gpu_type || null,
         trust_card: buildTrustCardForAppRow(a),
+        marketplace,
       };
     }
 
@@ -506,6 +590,15 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
         }
       } catch (err) {
         console.error('[MARKETPLACE] Apps query error:', err);
+      }
+    }
+
+    let listingMap = new Map<string, MarketplaceListingSnapshot>();
+    if (includeApps && allApps.length > 0) {
+      try {
+        listingMap = await fetchMarketplaceListingMap(supabaseUrl, dbHeaders, allApps);
+      } catch (err) {
+        console.error('[MARKETPLACE] Listing summary query error:', err);
       }
     }
 
@@ -633,6 +726,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
       runtime?: string;
       gpu_type?: string | null;
       trust_card?: unknown;
+      marketplace?: MarketplaceListingSnapshot | null;
     }
 
     const scored: MarketplaceResult[] = [];
@@ -890,6 +984,21 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
     scored.sort((a, b) => b.final_score - a.final_score);
 
     const finalResults = scored.slice(0, limit);
+    let enrichedResults = finalResults;
+    const appResultsForListings = finalResults
+      .filter((r): r is MarketplaceResult & { type: 'app' } => r.type === 'app')
+      .map(r => ({ id: r.id, had_external_db: r.had_external_db }));
+    if (appResultsForListings.length > 0) {
+      try {
+        const listingMap = await fetchMarketplaceListingMap(supabaseUrl, dbHeaders, appResultsForListings);
+        enrichedResults = finalResults.map((result) => result.type === 'app'
+          ? { ...result, marketplace: listingMap.get(result.id) || null }
+          : result
+        );
+      } catch (err) {
+        console.error('[MARKETPLACE] Listing summary query error:', err);
+      }
+    }
 
     // ── LOG QUERY + IMPRESSIONS (fire-and-forget) ──
     const queryId = crypto.randomUUID();
@@ -940,8 +1049,8 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
     return json({
       mode: 'search',
       query: query,
-      results: finalResults,
-      total: finalResults.length,
+      results: enrichedResults,
+      total: enrichedResults.length,
     });
 
   } catch (err) {

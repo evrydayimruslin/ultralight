@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchFromApi, getToken } from '../lib/storage';
-import type { AmbientSuggestion, AmbientTrustCard } from '../types/ambientSuggestion';
+import type {
+  AmbientMarketplaceSummary,
+  AmbientSuggestion,
+  AmbientTrustCard,
+} from '../types/ambientSuggestion';
 
 type DiscoverResult = AmbientSuggestion;
 
@@ -18,6 +22,11 @@ function asTrustCard(value: unknown): AmbientTrustCard | undefined {
   return value as AmbientTrustCard;
 }
 
+function asMarketplaceSummary(value: unknown): AmbientMarketplaceSummary | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as AmbientMarketplaceSummary;
+}
+
 function trustCapabilityLabels(trust?: AmbientTrustCard): string[] {
   const summary = trust?.capability_summary || {};
   return [
@@ -27,6 +36,15 @@ function trustCapabilityLabels(trust?: AmbientTrustCard): string[] {
     summary.memory ? 'Memory' : '',
     summary.gpu ? 'GPU' : '',
   ].filter(Boolean);
+}
+
+function formatLightAmount(amount: number): string {
+  const abs = Math.abs(amount);
+  const sign = amount < 0 ? '-' : '';
+  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(2)}M Light`;
+  if (abs >= 5_000) return `${sign}${(abs / 1_000).toFixed(1)}K Light`;
+  if (Number.isInteger(abs)) return `${sign}${abs} Light`;
+  return `${sign}${abs.toFixed(2)} Light`;
 }
 
 async function searchDiscoverResults(query: string): Promise<DiscoverResult[]> {
@@ -75,6 +93,7 @@ async function searchDiscoverResults(query: string): Promise<DiscoverResult[]> {
           connected: true,
           icon_url: result.icon_url || null,
           trust_card: asTrustCard(result.trust_card),
+          marketplace: asMarketplaceSummary(result.marketplace),
         });
       }
     }
@@ -101,6 +120,7 @@ async function searchDiscoverResults(query: string): Promise<DiscoverResult[]> {
           connected: !!result.connected,
           icon_url: result.icon_url || null,
           trust_card: asTrustCard(result.trust_card),
+          marketplace: asMarketplaceSummary(result.marketplace),
         });
       }
     }
@@ -204,6 +224,45 @@ export default function DiscoverWidget({ mode, onInjectScope }: DiscoverWidgetPr
     );
   };
 
+  const renderMarketplaceSummary = (result: DiscoverResult) => {
+    const marketplace = result.marketplace;
+    if (result.type !== 'app' || !marketplace) return null;
+
+    const hasAsk = typeof marketplace.ask_price_light === 'number'
+      && Number.isFinite(marketplace.ask_price_light);
+    const hasBid = typeof marketplace.highest_bid_light === 'number'
+      && Number.isFinite(marketplace.highest_bid_light);
+
+    let label = '';
+    let tone = 'bg-gray-100 text-gray-600';
+
+    if (marketplace.status === 'sold') {
+      label = 'Sold';
+    } else if (marketplace.status === 'ineligible') {
+      label = 'Not tradable';
+      tone = 'bg-red-50 text-red-700';
+    } else if (hasAsk) {
+      label = marketplace.instant_buy
+        ? `Buy now ${formatLightAmount(marketplace.ask_price_light!)}`
+        : `Listed ${formatLightAmount(marketplace.ask_price_light!)}`;
+      tone = marketplace.instant_buy
+        ? 'bg-emerald-100 text-emerald-700'
+        : 'bg-gray-100 text-gray-700';
+    } else if (hasBid) {
+      label = `Top bid ${formatLightAmount(marketplace.highest_bid_light!)}`;
+    } else if (marketplace.status === 'open_to_offers') {
+      label = 'Open to offers';
+    }
+
+    if (!label) return null;
+
+    return (
+      <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${tone}`}>
+        {label}
+      </span>
+    );
+  };
+
   if (added) {
     return (
       <div className="rounded-xl border border-ul-border bg-ul-bg-raised p-5 text-center">
@@ -299,6 +358,7 @@ export default function DiscoverWidget({ mode, onInjectScope }: DiscoverWidgetPr
                         GPU
                       </span>
                     )}
+                    {renderMarketplaceSummary(result)}
                   </div>
 
                   <p className="mt-0.5 truncate text-caption font-normal text-ul-text-muted">

@@ -112,6 +112,11 @@ import {
   generateGpuManifest,
 } from "../services/trust.ts";
 import {
+  buildMarketplaceListingSummary,
+  type MarketplaceListingSummary,
+  type MarketplaceListingSummaryListing,
+} from "../services/marketplace.ts";
+import {
   resolveUlTestD1Fixtures,
   resolveUlTestEnvVars,
   resolveUlTestInvocation,
@@ -438,6 +443,7 @@ interface AppWithResolvedSchemaRow {
   runtime?: string | null;
   visibility?: App["visibility"];
   download_access?: App["download_access"];
+  had_external_db?: boolean | null;
 }
 
 function buildDiscoveryTrustCard(row: {
@@ -471,6 +477,82 @@ function buildDiscoveryTrustCard(row: {
     | "download_access"
     | "env_schema"
   >);
+}
+
+async function fetchMarketplaceListingMap(
+  supabaseUrl: string,
+  headers: Record<string, string>,
+  apps: Array<{ id: string; had_external_db?: boolean | null }>,
+): Promise<Map<string, MarketplaceListingSnapshot>> {
+  const uniqueApps = Array.from(
+    new Map(apps.filter((app) => app.id).map((app) => [app.id, app])).values(),
+  ).slice(0, 100);
+  const summaries = new Map<string, MarketplaceListingSnapshot>();
+
+  if (uniqueApps.length === 0) {
+    return summaries;
+  }
+
+  const appIds = uniqueApps.map((app) => encodeURIComponent(app.id)).join(",");
+  const [listingsRes, bidsRes, eligibilityRes] = await Promise.all([
+    fetch(
+      `${supabaseUrl}/rest/v1/app_listings?app_id=in.(${appIds})&select=app_id,ask_price_light,floor_price_light,instant_buy,status,listing_note,show_metrics,updated_at`,
+      { headers },
+    ),
+    fetch(
+      `${supabaseUrl}/rest/v1/app_bids?app_id=in.(${appIds})&status=eq.active&select=app_id,amount_light`,
+      { headers },
+    ),
+    fetch(
+      `${supabaseUrl}/rest/v1/apps?id=in.(${appIds})&select=id,had_external_db`,
+      { headers },
+    ),
+  ]);
+
+  const listingsByApp = new Map<string, MarketplaceListingRow>();
+  if (listingsRes.ok) {
+    const rows = await readJsonArray<MarketplaceListingRow>(listingsRes);
+    for (const row of rows) {
+      listingsByApp.set(row.app_id, row);
+    }
+  }
+
+  const bidsByApp = new Map<string, Array<{ amount_light: number }>>();
+  if (bidsRes.ok) {
+    const rows = await readJsonArray<MarketplaceBidRow>(bidsRes);
+    for (const row of rows) {
+      if (typeof row.amount_light !== "number") continue;
+      const existing = bidsByApp.get(row.app_id) || [];
+      existing.push({ amount_light: row.amount_light });
+      bidsByApp.set(row.app_id, existing);
+    }
+  }
+
+  const eligibilityByApp = new Map<string, boolean | null>();
+  if (eligibilityRes.ok) {
+    const rows = await readJsonArray<MarketplaceEligibilityRow>(eligibilityRes);
+    for (const row of rows) {
+      eligibilityByApp.set(row.id, row.had_external_db);
+    }
+  }
+
+  for (const app of uniqueApps) {
+    const listing = listingsByApp.get(app.id) || null;
+    const hadExternalDb = eligibilityByApp.has(app.id)
+      ? eligibilityByApp.get(app.id)
+      : app.had_external_db;
+    summaries.set(app.id, {
+      ...buildMarketplaceListingSummary(
+        listing,
+        bidsByApp.get(app.id) || [],
+        { had_external_db: hadExternalDb },
+      ),
+      listing_note: listing?.listing_note ?? null,
+      updated_at: listing?.updated_at ?? null,
+    });
+  }
+
+  return summaries;
 }
 
 interface UserAppKeyRow {
@@ -698,6 +780,7 @@ interface DiscoverAppResult {
   runtime?: string;
   gpu_type?: string | null;
   trust_card?: unknown;
+  marketplace?: MarketplaceListingSnapshot | null;
 }
 
 interface DiscoverContentResult {
@@ -727,6 +810,7 @@ interface DiscoverAppstoreResult {
   runtime?: string;
   gpu_type?: string | null;
   trust_card?: unknown;
+  marketplace?: MarketplaceListingSnapshot | null;
   url?: string;
   tags?: string[];
 }
@@ -740,6 +824,28 @@ type AppstoreFeaturedAppRow = Omit<App, "env_schema"> & {
   weighted_dislikes: number;
   env_schema: Record<string, EnvSchemaEntry> | null;
   manifest?: unknown;
+  had_external_db?: boolean | null;
+};
+
+interface MarketplaceListingRow extends MarketplaceListingSummaryListing {
+  app_id: string;
+  listing_note?: string | null;
+  updated_at?: string | null;
+}
+
+interface MarketplaceBidRow {
+  app_id: string;
+  amount_light: number | null;
+}
+
+interface MarketplaceEligibilityRow {
+  id: string;
+  had_external_db: boolean | null;
+}
+
+type MarketplaceListingSnapshot = MarketplaceListingSummary & {
+  listing_note: string | null;
+  updated_at: string | null;
 };
 
 interface AppstoreFeaturedResult {
@@ -755,6 +861,7 @@ interface AppstoreFeaturedResult {
   runtime: string;
   gpu_type?: string | null;
   trust_card?: unknown;
+  marketplace?: MarketplaceListingSnapshot | null;
   required_secrets?: Array<
     { key: string; description: string | null; required: boolean }
   >;
@@ -782,6 +889,7 @@ interface AppstoreScoredResult {
   tags?: string[];
   runtime?: string;
   gpu_type?: string | null;
+  marketplace?: MarketplaceListingSnapshot | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1051,6 +1159,7 @@ function serializeLibraryResult(
       ...(result.runtime ? { runtime: result.runtime } : {}),
       ...(result.gpu_type ? { gpu_type: result.gpu_type } : {}),
       ...(result.trust_card ? { trust_card: result.trust_card } : {}),
+      ...(result.marketplace ? { marketplace: result.marketplace } : {}),
     };
   }
 
@@ -3831,8 +3940,8 @@ async function handleToolsCall(
               balance_light: balance,
               balance_display: formatLight(balance),
               escrow_light: escrow,
-              available_light: balance - escrow,
-              available_display: formatLight(balance - escrow),
+              available_light: balance,
+              available_display: formatLight(balance),
               total_earned_light: totalEarned,
               total_earned_display: formatLight(totalEarned),
               storage: {
@@ -3858,7 +3967,7 @@ async function handleToolsCall(
               },
               can_withdraw:
                 (wUserData?.stripe_connect_payouts_enabled || false) &&
-                (balance - escrow) >= MIN_WITHDRAWAL_LIGHT,
+                balance >= MIN_WITHDRAWAL_LIGHT,
             };
             break;
           }
@@ -3999,8 +4108,7 @@ async function handleToolsCall(
               );
             }
 
-            const wdAvailable = (wdUserData.balance_light || 0) -
-              (wdUserData.escrow_light || 0);
+            const wdAvailable = wdUserData.balance_light || 0;
             if (wdAvailable < wdAmount) {
               throw new ToolError(
                 INVALID_PARAMS,
@@ -10331,6 +10439,7 @@ async function executeDiscoverLibrary(
                 ...(r.runtime ? { runtime: r.runtime } : {}),
                 ...(r.gpu_type ? { gpu_type: r.gpu_type } : {}),
                 ...(r.trust_card ? { trust_card: r.trust_card } : {}),
+                ...(r.marketplace ? { marketplace: r.marketplace } : {}),
               };
             }
             return {
@@ -10410,7 +10519,7 @@ async function executeDiscoverAppstore(
     const overFetchLimit = limit + blockedAppIds.size + 5; // over-fetch to cover filtered-out blocks
     const topRes = await fetch(
       `${SUPABASE_URL}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&hosting_suspended=eq.false` +
-        `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,manifest,current_version,version_metadata,download_access,runs_30d,runtime,gpu_type,gpu_status` +
+        `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,manifest,current_version,version_metadata,download_access,runs_30d,runtime,gpu_type,gpu_status,had_external_db` +
         `&order=weighted_likes.desc,likes.desc,runs_30d.desc` +
         `&limit=${overFetchLimit}`,
       { headers },
@@ -10428,6 +10537,17 @@ async function executeDiscoverAppstore(
 
     // Fetch user connections for these apps
     const appIds = filtered.map((a) => a.id);
+    let listingMap = new Map<string, MarketplaceListingSnapshot>();
+    if (appIds.length > 0) {
+      try {
+        listingMap = await fetchMarketplaceListingMap(SUPABASE_URL, headers, filtered);
+      } catch (err) {
+        platformTelemetryLogger.warn("Failed to fetch appstore listing summaries", {
+          error: err,
+        });
+      }
+    }
+
     let userConnections = new Map<string, string[]>();
     if (appIds.length > 0) {
       try {
@@ -10478,6 +10598,7 @@ async function executeDiscoverAppstore(
         dislikes: a.dislikes ?? 0,
         runtime: a.runtime || "deno",
         gpu_type: a.runtime === "gpu" ? a.gpu_type : undefined,
+        marketplace: listingMap.get(a.id) || null,
         trust_card: buildDiscoveryTrustCard({
           ...a,
           visibility: "public",
@@ -10533,6 +10654,16 @@ async function executeDiscoverAppstore(
         (a.description || "").toLowerCase().includes(searchLower) ||
         (a.tags || []).some((t) => t.toLowerCase().includes(searchLower)))
     );
+    let listingMap = new Map<string, MarketplaceListingSnapshot>();
+    if (matches.length > 0) {
+      try {
+        listingMap = await fetchMarketplaceListingMap(SUPABASE_URL, headers, matches);
+      } catch (err) {
+        platformTelemetryLogger.warn("Failed to fetch appstore listing summaries", {
+          error: err,
+        });
+      }
+    }
     return {
       mode: "search" as const,
       query: searchTerm,
@@ -10543,6 +10674,7 @@ async function executeDiscoverAppstore(
         description: a.description,
         type: "app" as const,
         mcp_endpoint: `/mcp/${a.id}`,
+        marketplace: listingMap.get(a.id) || null,
       })),
       total: matches.length,
     };
@@ -10598,7 +10730,7 @@ async function executeDiscoverAppstore(
         const schemaRes = await fetch(
           `${SUPABASE_URL}/rest/v1/apps?id=in.(${
             appIds.join(",")
-          })&select=id,name,slug,env_schema,manifest,current_version,version_metadata,runtime,visibility,download_access`,
+          })&select=id,name,slug,env_schema,manifest,current_version,version_metadata,runtime,visibility,download_access,had_external_db`,
           { headers },
         );
         if (schemaRes.ok) {
@@ -10631,6 +10763,27 @@ async function executeDiscoverAppstore(
           }
         }
       } catch { /* best effort */ }
+    }
+
+    let listingMap = new Map<string, MarketplaceListingSnapshot>();
+    if (appIds.length > 0) {
+      try {
+        listingMap = await fetchMarketplaceListingMap(
+          SUPABASE_URL,
+          headers,
+          appIds.map((id) => ({
+            id,
+            had_external_db: trustRows.get(id)?.had_external_db ??
+              (filteredResults.find((result) => result.id === id) as
+                | { had_external_db?: boolean | null }
+                | undefined)?.had_external_db,
+          })),
+        );
+      } catch (err) {
+        platformTelemetryLogger.warn("Failed to fetch appstore listing summaries", {
+          error: err,
+        });
+      }
     }
 
     // ── COMPOSITE RE-RANKING ──
@@ -10691,6 +10844,7 @@ async function executeDiscoverAppstore(
         type: "app",
         runtime: rr.runtime || "deno",
         gpu_type: rr.runtime === "gpu" ? rr.gpu_type : undefined,
+        marketplace: listingMap.get(rr.id) || null,
         trust_card: buildDiscoveryTrustCard({
           ...(trustRows.get(rr.id) || {}),
           runtime: rr.runtime || trustRows.get(rr.id)?.runtime || "deno",
@@ -10908,6 +11062,7 @@ async function executeDiscoverAppstore(
       ...(r.runtime ? { runtime: r.runtime } : {}),
       ...(r.gpu_type ? { gpu_type: r.gpu_type } : {}),
       ...(r.trust_card ? { trust_card: r.trust_card } : {}),
+      ...(r.marketplace ? { marketplace: r.marketplace } : {}),
       ...(r.requiredSecrets && r.requiredSecrets.length > 0
         ? { required_secrets: r.requiredSecrets }
         : {}),

@@ -1185,6 +1185,76 @@ export function getLayoutHTML(options: {
       display: flex;
       align-items: center;
       gap: var(--space-3);
+      flex-wrap: wrap;
+    }
+
+    .hero-eyebrow {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-secondary);
+      margin-bottom: var(--space-5);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .hero-subcopy {
+      max-width: 660px;
+      color: var(--text-secondary);
+      font-size: 18px;
+      line-height: 1.55;
+      margin-bottom: var(--space-6);
+    }
+
+    .hero-secondary-link {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      padding: 0 var(--space-5);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .hero-secondary-link:hover {
+      background: var(--bg-hover);
+    }
+
+    .hero-market-strip {
+      width: 100%;
+      margin-top: var(--space-10);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .hero-market-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: var(--space-4);
+      align-items: center;
+      min-height: 44px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+
+    .hero-market-row:last-child {
+      border-bottom: none;
+    }
+
+    .hero-market-title {
+      min-width: 0;
+      color: var(--text-primary);
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .hero-market-meta {
+      color: var(--text-muted);
+      font-size: 12px;
+      white-space: nowrap;
     }
 
     .hero-grid {
@@ -1934,6 +2004,45 @@ export function getLayoutHTML(options: {
       color: var(--text-tertiary);
     }
 
+    .marketplace-commerce-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-2);
+      margin-top: var(--space-2);
+      padding-top: var(--space-2);
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+    }
+
+    .marketplace-price {
+      min-width: 0;
+      font-weight: 600;
+      color: var(--text-primary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .marketplace-commerce-chip {
+      flex: 0 0 auto;
+      max-width: 120px;
+      padding: 1px 6px;
+      border: 1px solid var(--border);
+      color: var(--text-tertiary);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .marketplace-commerce-chip.buy {
+      border-color: var(--success);
+      color: var(--success);
+    }
+
     .marketplace-trust-row {
       margin-top: var(--space-2);
       gap: 6px;
@@ -2481,6 +2590,18 @@ export function getLayoutHTML(options: {
         width: 100%;
       }
 
+      .hero-secondary-link {
+        width: 100%;
+        justify-content: center;
+      }
+
+      .hero-market-row {
+        grid-template-columns: 1fr;
+        gap: 2px;
+        align-items: start;
+        padding: 9px 0;
+      }
+
       .cap-grid {
         grid-template-columns: 1fr;
       }
@@ -2694,13 +2815,37 @@ export function getLayoutHTML(options: {
          ========================================== -->
     <div id="homeView"${initialView !== 'home' ? ' style="display:none;"' : ''}>
       <section class="hero">
-        <h1>Give your agent<br>superpowers</h1>
-        <p style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-top:var(--space-8);margin-bottom:0;letter-spacing:0.08em;text-transform:uppercase;">Just paste and go</p>
+        <div class="hero-eyebrow">Ultralight</div>
+        <h1>The agent app economy</h1>
+        <p class="hero-subcopy">Deploy once. Agents discover it. Users run it without per-app setup. Creators earn, sell, and build resale value around useful capabilities.</p>
         <div class="hero-actions" style="margin-top:var(--space-4);">
           <button id="heroCTA" class="btn btn-primary btn-lg" style="gap:var(--space-2);border-radius:0;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
             <span id="heroCTAText">Copy agent instructions</span>
           </button>
+          <a class="hero-secondary-link" href="/marketplace">Browse market</a>
+        </div>
+        <div class="hero-market-strip" aria-label="Marketplace examples">
+          <div class="hero-market-row">
+            <span class="hero-market-title">Run a video captioner</span>
+            <span class="hero-market-meta">use instantly</span>
+          </div>
+          <div class="hero-market-row">
+            <span class="hero-market-title">Call a scraping agent</span>
+            <span class="hero-market-meta">pay per run</span>
+          </div>
+          <div class="hero-market-row">
+            <span class="hero-market-title">Use a GPU image pipeline</span>
+            <span class="hero-market-meta">GPU runtime</span>
+          </div>
+          <div class="hero-market-row">
+            <span class="hero-market-title">Generate a legal clause diff</span>
+            <span class="hero-market-meta">agent-ready</span>
+          </div>
+          <div class="hero-market-row">
+            <span class="hero-market-title">Buy an app's revenue stream</span>
+            <span class="hero-market-meta">resale market</span>
+          </div>
         </div>
       </section>
 
@@ -2714,17 +2859,17 @@ export function getLayoutHTML(options: {
         <div id="connectionStatus" style="margin-top:var(--space-3);font-size:12px;color:var(--text-muted);"></div>
       </div>
 
-      <!-- Section 1: Agent native infrastructure -->
+      <!-- Section 1: Agent app economy -->
       <section class="cap-section">
-        <div class="cap-section-heading">Agent native infrastructure</div>
+        <div class="cap-section-heading">What ships at MVP</div>
         <div class="cap-grid">
           <!-- Free instant deployments -->
           <div class="cap-card">
             <div class="cap-card-icon">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
             </div>
-            <div class="cap-card-title">Free instant deployments</div>
-            <div class="cap-card-desc">Ship to production in one command. No config, no Docker, no waiting.</div>
+            <div class="cap-card-title">Deploy agent apps</div>
+            <div class="cap-card-desc">Ship MCP, HTTP, markdown, and GPU-backed capabilities to production from the same marketplace surface.</div>
             <div class="cap-card-visual">
               <div class="cap-flow">
                 <div class="cap-flow-row">
@@ -2746,8 +2891,8 @@ export function getLayoutHTML(options: {
             <div class="cap-card-icon">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             </div>
-            <div class="cap-card-title">Take everything with you</div>
-            <div class="cap-card-desc">Switch agents without starting over. Your apps, skills, and memories follow you everywhere.</div>
+            <div class="cap-card-title">Distribute everywhere</div>
+            <div class="cap-card-desc">One app can be discovered from web market pages, desktop chat widgets, and agent-side appstore search.</div>
             <div class="cap-card-visual">
               <div class="cap-pills">
                 <span>Custom apps</span>
@@ -2762,8 +2907,8 @@ export function getLayoutHTML(options: {
             <div class="cap-card-icon">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
             </div>
-            <div class="cap-card-title">Works with any agent</div>
-            <div class="cap-card-desc">One standard, every agent. No vendor lock-in.</div>
+            <div class="cap-card-title">Run without setup</div>
+            <div class="cap-card-desc">Users connect Ultralight once. Apps inherit shared auth, permissions, wallet, and per-user settings.</div>
             <div class="cap-card-visual">
               <div class="cap-carousel">
                 <div class="cap-carousel-inner">
@@ -2789,23 +2934,23 @@ export function getLayoutHTML(options: {
             <div class="cap-card-icon">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
             </div>
-            <div class="cap-card-title">Granular permissions</div>
-            <div class="cap-card-desc">Per-function access control with IP allowlists, time windows, budget constraints, and argument whitelisting.</div>
+            <div class="cap-card-title">Monetize and resell</div>
+            <div class="cap-card-desc">Creators can charge per call, receive payouts, list apps for acquisition, accept bids, and transfer ownership.</div>
           </div>
         </div>
       </section>
 
       <!-- Section 2: Agent app store -->
       <section class="cap-section" style="padding-top:var(--space-16);">
-        <div class="cap-section-heading">Agent app store</div>
+        <div class="cap-section-heading">Marketplace primitives</div>
         <div class="cap-grid">
           <!-- One connection -->
           <div class="cap-card">
             <div class="cap-card-icon">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
             </div>
-            <div class="cap-card-title">One connection, infinite possibilities</div>
-            <div class="cap-card-desc">All Ultralight agents inherit every published app and skill. Add Ultralight once and extend its capabilities forever.</div>
+            <div class="cap-card-title">One connection</div>
+            <div class="cap-card-desc">No separate auth or payment setup for every app. The platform handles identity, wallet, and execution access.</div>
           </div>
 
           <!-- Publish and monetize -->
@@ -2813,8 +2958,8 @@ export function getLayoutHTML(options: {
             <div class="cap-card-icon">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
             </div>
-            <div class="cap-card-title">Publish and charge per call</div>
-            <div class="cap-card-desc">Extend the capabilities of all Ultralight-connected agents and set per-function pricing with micropayments.</div>
+            <div class="cap-card-title">Usage revenue</div>
+            <div class="cap-card-desc">Per-function pricing, Light balances, creator earnings, and withdrawal paths are wired into the same flow.</div>
           </div>
 
           <!-- One auth for everything -->
@@ -2822,8 +2967,8 @@ export function getLayoutHTML(options: {
             <div class="cap-card-icon">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
             </div>
-            <div class="cap-card-title">One auth for everything</div>
-            <div class="cap-card-desc">A single token connects your agent to every app in the ecosystem. No per-app API keys, no OAuth flows per service.</div>
+            <div class="cap-card-title">Trust cards</div>
+            <div class="cap-card-desc">Listings expose signed manifest state, permissions, required secrets, runtime, and execution receipt readiness.</div>
           </div>
 
           <!-- One payment for everything -->
@@ -2831,8 +2976,8 @@ export function getLayoutHTML(options: {
             <div class="cap-card-icon">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
             </div>
-            <div class="cap-card-title">One payment for everything</div>
-            <div class="cap-card-desc">A single prepaid balance covers every app your agent uses. No separate subscriptions, no surprise bills.</div>
+            <div class="cap-card-title">Acquisition market</div>
+            <div class="cap-card-desc">Apps can be listed with asks, instant buy, open offers, escrowed bids, and public market signals.</div>
           </div>
         </div>
       </section>
@@ -4978,12 +5123,48 @@ export function getLayoutHTML(options: {
       });
     }
 
+    function renderMarketplaceCommerce(item) {
+      if (!item || item.type !== 'app' || !item.marketplace) return '';
+      var market = item.marketplace;
+      var hasAsk = typeof market.ask_price_light === 'number' && Number.isFinite(market.ask_price_light);
+      var hasBid = typeof market.highest_bid_light === 'number' && Number.isFinite(market.highest_bid_light);
+      var label = '';
+      var chip = '';
+      var chipClass = '';
+
+      if (market.status === 'sold') {
+        label = 'Sold';
+        chip = 'Closed';
+      } else if (market.status === 'ineligible') {
+        label = 'Not tradable';
+        chip = 'Data-bound';
+      } else if (hasAsk) {
+        label = formatLight(market.ask_price_light);
+        chip = market.instant_buy ? 'Buy now' : 'Listed';
+        chipClass = market.instant_buy ? ' buy' : '';
+      } else if (hasBid) {
+        label = 'Top bid ' + formatLight(market.highest_bid_light);
+        chip = market.active_bid_count === 1 ? '1 bid' : market.active_bid_count + ' bids';
+      } else if (market.status === 'open_to_offers') {
+        label = 'Open to offers';
+        chip = 'Offers';
+      }
+
+      if (!label) return '';
+
+      return '<div class="marketplace-commerce-row">' +
+        '<span class="marketplace-price">' + escapeHtml(label) + '</span>' +
+        '<span class="marketplace-commerce-chip' + chipClass + '">' + escapeHtml(chip) + '</span>' +
+      '</div>';
+    }
+
     function renderMarketplaceCard(item) {
       var badge = item.type === 'app' ? (item.runtime === 'gpu' ? 'GPU' : 'MCP') : '.MD';
       var desc = item.description || '';
       var shortDesc = desc.length > 120 ? desc.slice(0, 120) + '...' : desc;
       var stats = '';
       var trustHtml = '';
+      var commerceHtml = renderMarketplaceCommerce(item);
       if (item.type === 'app') {
         var parts = [];
         if (item.likes > 0) parts.push(item.likes + ' likes');
@@ -5025,6 +5206,7 @@ export function getLayoutHTML(options: {
         + heartSvg
         + '</div>'
         + (shortDesc ? '<div class="marketplace-card-desc">' + escapeHtml(shortDesc) + '</div>' : '')
+        + commerceHtml
         + trustHtml
         + stats
         + '</div>';
@@ -6556,11 +6738,66 @@ export function getLayoutHTML(options: {
           var floorVal = listing && listing.floor_price_light ? String(listing.floor_price_light) : '';
           var instantBuy = listing ? listing.instant_buy : false;
           var noteVal = listing && listing.listing_note ? listing.listing_note : '';
+          var summary = data.marketplace_summary || {};
+          var statusLabels = {
+            ineligible: 'Ineligible',
+            unlisted: 'Unlisted',
+            open_to_offers: 'Open to offers',
+            listed: 'Listed',
+            sold: 'Sold',
+          };
+          var statusLabel = statusLabels[summary.status] || (listing ? 'Listed' : 'Unlisted');
+          var statusColor = summary.status === 'listed' || summary.status === 'open_to_offers'
+            ? 'var(--success)'
+            : summary.status === 'ineligible'
+              ? 'var(--error)'
+              : 'var(--text-primary)';
+          var summaryAsk = typeof summary.ask_price_light === 'number' ? formatLight(summary.ask_price_light) : 'No ask';
+          var summaryBid = typeof summary.highest_bid_light === 'number'
+            ? formatLight(summary.highest_bid_light)
+            : 'No active bids';
+          var bidSubtext = typeof summary.active_bid_count === 'number'
+            ? (summary.active_bid_count === 1 ? '1 active bid' : summary.active_bid_count + ' active bids')
+            : (bids.length === 1 ? '1 active bid' : bids.length + ' active bids');
+          var payoutDisplay = typeof summary.seller_payout_at_ask_light === 'number'
+            ? formatLight(summary.seller_payout_at_ask_light)
+            : 'Set ask';
+          var feeDisplay = typeof summary.platform_fee_at_ask_light === 'number'
+            ? 'Fee ' + formatLight(summary.platform_fee_at_ask_light)
+            : 'No fee yet';
+          var readinessHtml = summary.eligible === false
+            ? '<div style="margin-top:var(--space-3);padding:var(--space-3);border:1px solid var(--error);color:var(--error);font-size:13px">Trading blocked: ' + escapeHtml((summary.blockers || []).join(', ') || 'not eligible') + '</div>'
+            : '';
 
           contentEl.innerHTML =
             '<div class="section-card">' +
+              '<h3 class="section-title">Marketplace Status</h3>' +
+              '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:var(--space-3)">' +
+                '<div style="padding:var(--space-3);background:var(--bg-secondary);border:1px solid var(--border)">' +
+                  '<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.04em">Status</div>' +
+                  '<div style="font-size:15px;font-weight:700;color:' + statusColor + '">' + escapeHtml(statusLabel) + '</div>' +
+                  '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">' + (summary.instant_buy ? 'Instant buy enabled' : 'Bids enabled') + '</div>' +
+                '</div>' +
+                '<div style="padding:var(--space-3);background:var(--bg-secondary);border:1px solid var(--border)">' +
+                  '<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.04em">Ask</div>' +
+                  '<div style="font-size:15px;font-weight:700;color:var(--text-primary)">' + escapeHtml(summaryAsk) + '</div>' +
+                  '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">' + (summary.show_metrics ? 'Metrics public' : 'Metrics hidden') + '</div>' +
+                '</div>' +
+                '<div style="padding:var(--space-3);background:var(--bg-secondary);border:1px solid var(--border)">' +
+                  '<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.04em">Highest Bid</div>' +
+                  '<div style="font-size:15px;font-weight:700;color:var(--text-primary)">' + escapeHtml(summaryBid) + '</div>' +
+                  '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">' + escapeHtml(bidSubtext) + '</div>' +
+                '</div>' +
+                '<div style="padding:var(--space-3);background:var(--bg-secondary);border:1px solid var(--border)">' +
+                  '<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.04em">Seller Payout</div>' +
+                  '<div style="font-size:15px;font-weight:700;color:var(--text-primary)">' + escapeHtml(payoutDisplay) + '</div>' +
+                  '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">' + escapeHtml(feeDisplay) + '</div>' +
+                '</div>' +
+              '</div>' +
+              readinessHtml +
+            '</div>' +
+            '<div class="section-card">' +
               '<h3 class="section-title">Sell This App</h3>' +
-              '<p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4)">Set an ask price to list this app for sale on the marketplace. Buyers can also place bids without an ask price.</p>' +
               '<div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3);margin-bottom:var(--space-3)">' +
                 '<div>' +
                   '<label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">Ask Price (\\u2726)</label>' +
@@ -7037,7 +7274,7 @@ export function getLayoutHTML(options: {
           .then(function(r) { return r.ok ? r.json() : null; })
           .then(function(d) {
             if (d && balDiv) {
-              var avail = (d.balance_light || 0) - (d.escrow_light || 0);
+              var avail = d.balance_light || 0;
               balDiv.innerHTML = 'Available balance: <span>' + formatLight(avail) + '</span>';
             }
           }).catch(function() {});

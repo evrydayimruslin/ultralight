@@ -3199,14 +3199,13 @@ export async function handleUser(request: Request): Promise<Response> {
             );
           }
 
-          // Check available balance (balance minus escrowed)
-          const available = (userData.balance_light || 0) -
-            (userData.escrow_light || 0);
+          // balance_light is already spendable; escrow_light is a separate hold bucket.
+          const available = userData.balance_light || 0;
           if (available < amountLight) {
             return error(
               `Insufficient available balance. You have ${
                 formatLight(available)
-              } available (after escrow holds).`,
+              } available.`,
               400,
             );
           }

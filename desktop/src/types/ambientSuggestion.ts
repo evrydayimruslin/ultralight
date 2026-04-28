@@ -17,6 +17,19 @@ export interface AmbientTrustCard {
   };
 }
 
+export interface AmbientMarketplaceSummary {
+  eligible?: boolean;
+  status?: 'ineligible' | 'unlisted' | 'open_to_offers' | 'listed' | 'sold';
+  ask_price_light?: number | null;
+  floor_price_light?: number | null;
+  instant_buy?: boolean;
+  show_metrics?: boolean;
+  active_bid_count?: number;
+  highest_bid_light?: number | null;
+  platform_fee_at_ask_light?: number | null;
+  seller_payout_at_ask_light?: number | null;
+}
+
 export interface AmbientSuggestion {
   id: string;
   slug: string;
@@ -29,4 +42,5 @@ export interface AmbientSuggestion {
   connected: boolean;
   runtime?: string;
   trust_card?: AmbientTrustCard;
+  marketplace?: AmbientMarketplaceSummary | null;
 }

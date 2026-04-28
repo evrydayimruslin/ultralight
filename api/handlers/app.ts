@@ -33,7 +33,13 @@ import {
 import { hasValidPageShareSession } from '../services/page-share-session.ts';
 import { fetchAppEntryCode } from '../services/app-runtime-resources.ts';
 import { buildAppTrustCard, type TrustCard } from '../services/trust.ts';
+import {
+  buildMarketplaceListingSummary,
+  type MarketplaceListingSummary,
+  type MarketplaceListingSummaryListing,
+} from '../services/marketplace.ts';
 import { getEnv } from '../lib/env.ts';
+import { formatLight } from '../../shared/types/index.ts';
 import type { AppManifest } from '../../shared/contracts/manifest.ts';
 
 // ============================================
@@ -1543,6 +1549,75 @@ code{font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;col
 // occasional missed impression, which is fine.
 const BOT_UA_PATTERN = /bot|crawler|spider|facebookexternalhit|slackbot|whatsapp|twitterbot|linkedinbot|discordbot|preview|headless|pinterest|telegram|vkshare|embedly|bitlybot|quora|outbrain|pocket|redditbot|applebot/i;
 
+interface PublicMarketplaceListingRow extends MarketplaceListingSummaryListing {
+  listing_note?: string | null;
+  updated_at?: string | null;
+}
+
+interface PublicMarketplaceBidRow {
+  amount_light: number | null;
+}
+
+interface PublicMarketplaceEligibilityRow {
+  had_external_db: boolean | null;
+}
+
+type PublicMarketplaceSummary = MarketplaceListingSummary & {
+  listing_note: string | null;
+  updated_at: string | null;
+};
+
+async function fetchPublicMarketplaceSummary(
+  appId: string,
+  supabaseUrl: string,
+  dbHeaders: Record<string, string>,
+): Promise<PublicMarketplaceSummary | null> {
+  const [listingRes, bidsRes, eligibilityRes] = await Promise.all([
+    fetch(
+      `${supabaseUrl}/rest/v1/app_listings?app_id=eq.${appId}&select=ask_price_light,floor_price_light,instant_buy,status,listing_note,show_metrics,updated_at&limit=1`,
+      { headers: dbHeaders },
+    ),
+    fetch(
+      `${supabaseUrl}/rest/v1/app_bids?app_id=eq.${appId}&status=eq.active&select=amount_light`,
+      { headers: dbHeaders },
+    ),
+    fetch(
+      `${supabaseUrl}/rest/v1/apps?id=eq.${appId}&select=had_external_db&limit=1`,
+      { headers: dbHeaders },
+    ),
+  ]);
+
+  if (!listingRes.ok && !bidsRes.ok) {
+    return null;
+  }
+
+  const listings = listingRes.ok
+    ? await listingRes.json() as PublicMarketplaceListingRow[]
+    : [];
+  const bids = bidsRes.ok
+    ? (await bidsRes.json() as PublicMarketplaceBidRow[])
+      .filter((bid): bid is { amount_light: number } => typeof bid.amount_light === 'number')
+    : [];
+  const eligibilityRows = eligibilityRes.ok
+    ? await eligibilityRes.json() as PublicMarketplaceEligibilityRow[]
+    : [];
+
+  const listing = listings[0] || null;
+  if (!listing && bids.length === 0) {
+    return null;
+  }
+
+  return {
+    ...buildMarketplaceListingSummary(
+      listing,
+      bids,
+      { had_external_db: eligibilityRows[0]?.had_external_db ?? null },
+    ),
+    listing_note: listing?.listing_note ?? null,
+    updated_at: listing?.updated_at ?? null,
+  };
+}
+
 async function handlePublicAppPage(request: Request, appId: string): Promise<Response> {
   try {
     const appsService = createAppsService();
@@ -1592,8 +1667,19 @@ async function handlePublicAppPage(request: Request, appId: string): Promise<Res
       }
     } catch { /* best effort */ }
 
+    let marketplaceSummary: PublicMarketplaceSummary | null = null;
+    try {
+      marketplaceSummary = await fetchPublicMarketplaceSummary(app.id, SUPABASE_URL, dbHeaders);
+    } catch (err) {
+      console.warn('[PublicAppPage] Failed to fetch marketplace summary:', err);
+    }
+
     const trustCard = buildAppTrustCard({ ...app, env_schema: {} });
-    const html = getPublicAppPageHTML(app, ownerName, baseUrl, { isEmbed, trustCard });
+    const html = getPublicAppPageHTML(app, ownerName, baseUrl, {
+      isEmbed,
+      trustCard,
+      marketplaceSummary,
+    });
     return new Response(html, {
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
@@ -1628,7 +1714,11 @@ function getPublicAppPageHTML(
   },
   ownerName: string,
   baseUrl: string,
-  opts: { isEmbed: boolean; trustCard?: TrustCard }
+  opts: {
+    isEmbed: boolean;
+    trustCard?: TrustCard;
+    marketplaceSummary?: PublicMarketplaceSummary | null;
+  }
 ): string {
   const { isEmbed } = opts;
   const appName = escapeHtml(app.name || app.slug);
@@ -1673,6 +1763,58 @@ function getPublicAppPageHTML(
   const trustChipHtml = (labels: string[], empty: string) => labels.length > 0
     ? labels.map((label) => `<span class="trust-chip">${escapeHtml(label)}</span>`).join('')
     : `<span class="trust-chip">${escapeHtml(empty)}</span>`;
+  const marketplace = opts.marketplaceSummary;
+  const hasMarketAsk = typeof marketplace?.ask_price_light === 'number';
+  const hasMarketBid = typeof marketplace?.highest_bid_light === 'number';
+  const showMarketplace = !!marketplace && (
+    marketplace.status !== 'unlisted' || marketplace.active_bid_count > 0
+  );
+  const marketStatusLabel = marketplace?.status === 'sold'
+    ? 'Sold'
+    : marketplace?.status === 'ineligible'
+    ? 'Not tradable'
+    : hasMarketAsk
+    ? marketplace?.instant_buy ? 'Buy now' : 'Listed'
+    : hasMarketBid
+    ? 'Active bids'
+    : marketplace?.status === 'open_to_offers'
+    ? 'Open to offers'
+    : 'Marketplace';
+  const marketAskDisplay = hasMarketAsk
+    ? formatLight(marketplace!.ask_price_light!)
+    : marketplace?.status === 'open_to_offers'
+    ? 'Open to offers'
+    : 'No ask';
+  const marketBidDisplay = hasMarketBid
+    ? formatLight(marketplace!.highest_bid_light!)
+    : 'No active bids';
+  const marketPayoutDisplay = typeof marketplace?.seller_payout_at_ask_light === 'number'
+    ? formatLight(marketplace.seller_payout_at_ask_light)
+    : 'Set by bid';
+  const marketFeeDisplay = typeof marketplace?.platform_fee_at_ask_light === 'number'
+    ? `Platform fee ${formatLight(marketplace.platform_fee_at_ask_light)}`
+    : 'No platform fee until sale';
+  const marketplaceHtml = showMarketplace ? `
+    <section class="section market-section">
+      <div class="market-header">
+        <div>
+          <div class="section-title">Marketplace</div>
+          <div class="market-title">${escapeHtml(marketStatusLabel)}</div>
+        </div>
+        <span class="market-status ${marketplace?.instant_buy ? 'buy' : ''}">${escapeHtml(marketplace?.instant_buy ? 'Instant acquisition' : marketStatusLabel)}</span>
+      </div>
+      <div class="market-grid">
+        <div><span>Ask</span><strong>${escapeHtml(marketAskDisplay)}</strong></div>
+        <div><span>Highest Bid</span><strong>${escapeHtml(marketBidDisplay)}</strong></div>
+        <div><span>Seller Payout</span><strong>${escapeHtml(marketPayoutDisplay)}</strong></div>
+      </div>
+      <div class="market-foot">
+        <span>${escapeHtml(marketFeeDisplay)}</span>
+        <a href="${escapeHtml(deepLink)}">${marketplace?.instant_buy ? 'Open to buy' : 'Open to bid'} &rarr;</a>
+      </div>
+      ${marketplace?.listing_note ? `<p class="market-note">${escapeHtml(marketplace.listing_note)}</p>` : ''}
+    </section>
+  ` : '';
   const trustCardHtml = trustCard ? `
     <section class="section trust-section">
       <div class="trust-header">
@@ -2127,6 +2269,88 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
     color: #666;
     max-width: 34rem;
   }
+  .market-section {
+    background: #fff;
+  }
+  .market-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.9rem;
+  }
+  .market-title {
+    color: #111;
+    font-size: 1rem;
+    font-weight: 700;
+    margin-top: -0.25rem;
+  }
+  .market-status {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.18rem 0.55rem;
+    border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 999px;
+    background: #fafafa;
+    color: #555;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .market-status.buy {
+    background: #f0fdf4;
+    border-color: #bbf7d0;
+    color: #15803d;
+  }
+  .market-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+    gap: 0.65rem;
+    margin-bottom: 0.8rem;
+  }
+  .market-grid > div {
+    min-width: 0;
+    padding: 0.65rem 0.7rem;
+    border: 1px solid rgba(0,0,0,0.08);
+    background: #fafafa;
+  }
+  .market-grid span {
+    display: block;
+    color: #999;
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.18rem;
+  }
+  .market-grid strong {
+    display: block;
+    min-width: 0;
+    color: #111;
+    font-size: 0.875rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .market-foot {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    color: #777;
+    font-size: 0.8125rem;
+  }
+  .market-foot a {
+    color: #0a0a0a;
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .market-note {
+    margin-top: 0.75rem;
+    color: #555;
+    font-size: 0.875rem;
+    line-height: 1.55;
+  }
   .trust-header {
     display: flex;
     align-items: flex-start;
@@ -2486,6 +2710,8 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
   <section id="overviewPanel" class="tab-panel">
     <!-- Description -->
     ${description ? `<p class="app-desc">${description}</p>` : ''}
+
+    ${marketplaceHtml}
 
     ${trustCardHtml}
 

@@ -27,6 +27,28 @@ export interface ListingResult {
   instant_buy: boolean;
 }
 
+export interface MarketplaceListingSummary {
+  eligible: boolean;
+  status: 'ineligible' | 'unlisted' | 'open_to_offers' | 'listed' | 'sold';
+  blockers: string[];
+  ask_price_light: number | null;
+  floor_price_light: number | null;
+  instant_buy: boolean;
+  show_metrics: boolean;
+  active_bid_count: number;
+  highest_bid_light: number | null;
+  platform_fee_at_ask_light: number | null;
+  seller_payout_at_ask_light: number | null;
+}
+
+export interface MarketplaceListingSummaryListing {
+  ask_price_light: number | null;
+  floor_price_light?: number | null;
+  instant_buy?: boolean | null;
+  status?: string | null;
+  show_metrics?: boolean | null;
+}
+
 export interface SaleResult {
   sale_id: string;
   app_id: string;
@@ -47,6 +69,7 @@ export interface ListingDetails {
     instant_buy: boolean;
     status: string;
     listing_note: string | null;
+    show_metrics: boolean;
     provenance: Array<{ owner_id: string; email: string; acquired_at: string; price_light: number; method: string; d1_database_id?: string }>;
     created_at: string;
   } | null;
@@ -68,8 +91,10 @@ export interface ListingDetails {
     total_runs: number;
     runs_30d: number;
     description: string | null;
+    had_external_db?: boolean | null;
     trust_card?: unknown;
   } | null;
+  marketplace_summary: MarketplaceListingSummary;
 }
 
 export interface OffersSummary {
@@ -126,6 +151,7 @@ interface ListingRow {
   instant_buy: boolean;
   status?: string;
   listing_note?: string | null;
+  show_metrics?: boolean;
   provenance?: ListingDetails['listing'] extends { provenance: infer P } ? P : never;
   created_at?: string;
 }
@@ -178,6 +204,55 @@ interface ListingAppRow {
   runtime?: string | null;
   manifest?: unknown;
   env_schema?: Record<string, unknown> | null;
+  had_external_db?: boolean | null;
+}
+
+export function buildMarketplaceListingSummary(
+  listing: MarketplaceListingSummaryListing | null | undefined,
+  bids: Array<{ amount_light: number }>,
+  app: { had_external_db?: boolean | null } | null | undefined,
+): MarketplaceListingSummary {
+  const askPrice = listing?.ask_price_light ?? null;
+  const floorPrice = listing?.floor_price_light ?? null;
+  const instantBuy = listing?.instant_buy === true;
+  const showMetrics = listing?.show_metrics === true;
+  const highestBid = bids.length > 0
+    ? bids.reduce((highest, bid) => Math.max(highest, bid.amount_light || 0), 0)
+    : null;
+  const platformFee = askPrice !== null ? Math.round(askPrice * 0.10 * 100) / 100 : null;
+  const sellerPayout = askPrice !== null ? Math.round(askPrice * 0.90 * 100) / 100 : null;
+  const blockers: string[] = [];
+
+  if (app?.had_external_db) {
+    blockers.push('external_db');
+  }
+
+  let status: MarketplaceListingSummary['status'];
+  if (app?.had_external_db) {
+    status = 'ineligible';
+  } else if (listing?.status === 'sold') {
+    status = 'sold';
+  } else if (!listing) {
+    status = 'unlisted';
+  } else if (askPrice !== null || instantBuy) {
+    status = 'listed';
+  } else {
+    status = 'open_to_offers';
+  }
+
+  return {
+    eligible: blockers.length === 0,
+    status,
+    blockers,
+    ask_price_light: askPrice,
+    floor_price_light: floorPrice,
+    instant_buy: instantBuy,
+    show_metrics: showMetrics,
+    active_bid_count: bids.length,
+    highest_bid_light: highestBid,
+    platform_fee_at_ask_light: platformFee,
+    seller_payout_at_ask_light: sellerPayout,
+  };
 }
 
 function buildListingTrustCard(app: ListingAppRow): unknown {
@@ -466,38 +541,50 @@ export async function cancelBid(bidderId: string, bidId: string): Promise<void> 
 }
 
 /**
- * Buy now — for listings with instant_buy enabled.
- * Creates a bid at the ask price and immediately accepts it.
+ * Buy now — atomically purchases a listing with instant_buy enabled.
  */
 export async function buyNow(buyerId: string, appId: string): Promise<SaleResult> {
-  // Get listing
-  const listingRes = await fetch(
-    `${getEnv('SUPABASE_URL')}/rest/v1/app_listings?app_id=eq.${appId}&select=*`,
-    { headers: dbHeaders() }
-  );
-  const listings = listingRes.ok ? await listingRes.json() as ListingRow[] : [];
-  const listing = listings[0];
+  const res = await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/rpc/buy_now`, {
+    method: 'POST',
+    headers: rpcHeaders(),
+    body: JSON.stringify({
+      p_buyer_id: buyerId,
+      p_app_id: appId,
+    }),
+  });
 
-  if (!listing) throw createError('No listing found for this app', 404);
-  if (!listing.instant_buy) throw createError('This listing does not allow instant buy', 400);
-  if (!listing.ask_price_light) throw createError('No ask price set', 400);
-
-  // Place bid at ask price
-  const bidResult = await placeBid(buyerId, appId, listing.ask_price_light);
-
-  // Immediately accept (as the owner) — if this fails, auto-cancel to refund escrow
-  try {
-    return await acceptBid(listing.owner_id, bidResult.bid_id);
-  } catch (err) {
-    // Accept failed — clean up by cancelling the bid to refund escrow
-    console.error('[MARKETPLACE] buyNow accept failed, auto-cancelling bid:', err);
-    try {
-      await cancelBid(buyerId, bidResult.bid_id);
-    } catch (cancelErr) {
-      console.error('[MARKETPLACE] CRITICAL: buyNow cleanup cancel also failed:', cancelErr);
+  if (!res.ok) {
+    const errText = await res.text();
+    console.error('[MARKETPLACE] buy_now RPC failed:', errText);
+    if (errText.includes('No active listing')) throw createError('No listing found for this app', 404);
+    if (errText.includes('does not allow instant buy')) throw createError('This listing does not allow instant buy', 400);
+    if (errText.includes('No ask price')) throw createError('No ask price set', 400);
+    if (errText.includes('Cannot buy your own')) throw createError('Cannot buy your own app', 400);
+    if (errText.includes('external database')) {
+      throw createError('This app is permanently ineligible for trading because it has used an external database.', 400);
     }
-    throw createError('Purchase failed. Your funds have been refunded.', 500);
+    if (errText.includes('Insufficient balance')) throw createError('Insufficient balance', 402);
+    throw createError('Purchase failed', 500);
   }
+
+  const result = await res.json() as SaleRpcResult;
+
+  console.log(`[MARKETPLACE] Instant buy completed: ${result.sale_id} — ${result.seller_id} → ${result.buyer_id} for ${formatLight(result.sale_price_light)}`);
+
+  import('./originality.ts').then(({ recordSaleFingerprint }) => {
+    recordSaleFingerprint(result.sale_id, result.app_id, result.seller_id, result.buyer_id)
+      .catch(err => console.error('[MARKETPLACE] Failed to record sale fingerprint:', err));
+  }).catch(err => console.error('[MARKETPLACE] Failed to import originality service:', err));
+
+  return {
+    sale_id: result.sale_id,
+    app_id: result.app_id,
+    seller_id: result.seller_id,
+    buyer_id: result.buyer_id,
+    sale_price_light: result.sale_price_light,
+    platform_fee_light: result.platform_fee_light,
+    seller_payout_light: result.seller_payout_light,
+  };
 }
 
 /**
@@ -617,7 +704,7 @@ export async function getListing(appId: string): Promise<ListingDetails> {
       { headers: dbHeaders() }
     ),
     fetch(
-      `${getEnv('SUPABASE_URL')}/rest/v1/apps?id=eq.${appId}&select=id,name,slug,owner_id,total_runs,runs_30d,description,visibility,current_version,version_metadata,download_access,runtime,manifest,env_schema`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/apps?id=eq.${appId}&select=id,name,slug,owner_id,total_runs,runs_30d,description,visibility,current_version,version_metadata,download_access,runtime,manifest,env_schema,had_external_db`,
       { headers: dbHeaders() }
     ),
   ]);
@@ -649,15 +736,19 @@ export async function getListing(appId: string): Promise<ListingDetails> {
     expires_at: b.expires_at || null,
   }));
 
+  const listing = listings[0] || null;
+  const app = apps[0] || null;
+
   return {
-    listing: listings[0] || null,
+    listing,
     bids: enrichedBids,
-    app: apps[0]
+    app: app
       ? {
-        ...apps[0],
-        trust_card: buildListingTrustCard(apps[0]),
+        ...app,
+        trust_card: buildListingTrustCard(app),
       }
       : null,
+    marketplace_summary: buildMarketplaceListingSummary(listing, enrichedBids, app),
   };
 }
 
