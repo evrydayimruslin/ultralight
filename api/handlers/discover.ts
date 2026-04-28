@@ -21,6 +21,7 @@ import {
 import { createAppsService } from '../services/apps.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
 import { resolveAppEnvSchema } from '../services/app-settings.ts';
+import { buildAppTrustCard } from '../services/trust.ts';
 import type { EnvSchemaEntry } from '../../shared/types/index.ts';
 import { getEnv } from '../lib/env.ts';
 
@@ -40,6 +41,9 @@ interface AppRow {
   description: string | null;
   owner_id: string;
   visibility: string;
+  current_version?: string | null;
+  version_metadata?: unknown;
+  download_access?: 'owner' | 'public' | null;
   likes: number;
   dislikes: number;
   weighted_likes: number;
@@ -56,6 +60,22 @@ interface AppRow {
   runtime?: string | null;
   gpu_type?: string | null;
   gpu_status?: string | null;
+}
+
+function buildTrustCardForAppRow(app: AppRow): unknown {
+  return buildAppTrustCard({
+    current_version: app.current_version || '',
+    runtime: app.runtime || 'deno',
+    manifest: typeof app.manifest === 'string'
+      ? app.manifest
+      : app.manifest ? JSON.stringify(app.manifest) : null,
+    version_metadata: Array.isArray(app.version_metadata)
+      ? app.version_metadata as never
+      : [],
+    visibility: app.visibility as never,
+    download_access: app.download_access || 'owner',
+    env_schema: app.env_schema || {},
+  } as never);
 }
 
 interface ScoredApp {
@@ -76,6 +96,7 @@ interface ScoredApp {
   // GPU metadata
   runtime?: string;
   gpu_type?: string | null;
+  trust_card?: unknown;
 }
 
 const DISCOVER_VERSION = '1.1.0';
@@ -452,6 +473,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
         had_external_db: !!a.had_external_db,
         runtime: a.runtime || 'deno',
         gpu_type: a.gpu_type || null,
+        trust_card: buildTrustCardForAppRow(a),
       };
     }
 
@@ -462,7 +484,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
         const overFetchLimit = limit * 5 + blockedAppIds.size + 10;
         let browseQuery =
           `${supabaseUrl}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&hosting_suspended=eq.false` +
-          `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,manifest,runs_30d,category,featured_at,had_external_db,runtime,gpu_type,gpu_status` +
+          `&select=id,name,slug,description,owner_id,visibility,current_version,version_metadata,download_access,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,manifest,runs_30d,category,featured_at,had_external_db,runtime,gpu_type,gpu_status` +
           `&order=weighted_likes.desc,likes.desc,runs_30d.desc` +
           `&limit=${overFetchLimit}`;
         // Runtime filter
@@ -610,6 +632,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
       // GPU metadata
       runtime?: string;
       gpu_type?: string | null;
+      trust_card?: unknown;
     }
 
     const scored: MarketplaceResult[] = [];
@@ -646,12 +669,12 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
           // Fetch env schemas + metadata
           const appIds = filteredApps.map(r => r.id);
           let envSchemas = new Map<string, Record<string, EnvSchemaEntry>>();
-          let appMeta = new Map<string, { weighted_likes: number; weighted_dislikes: number; runs_30d: number; had_external_db: boolean; runtime?: string | null; gpu_type?: string | null; gpu_status?: string | null }>();
+          let appMeta = new Map<string, { weighted_likes: number; weighted_dislikes: number; runs_30d: number; had_external_db: boolean; runtime?: string | null; gpu_type?: string | null; gpu_status?: string | null; trust_card?: unknown }>();
 
           if (appIds.length > 0) {
             try {
               const metaRes = await fetch(
-                `${supabaseUrl}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,env_schema,manifest,weighted_likes,weighted_dislikes,runs_30d,likes,dislikes,had_external_db,runtime,gpu_type,gpu_status`,
+                `${supabaseUrl}/rest/v1/apps?id=in.(${appIds.join(',')})&select=id,name,slug,description,owner_id,visibility,current_version,version_metadata,download_access,env_schema,manifest,weighted_likes,weighted_dislikes,runs_30d,likes,dislikes,had_external_db,runtime,gpu_type,gpu_status`,
                 { headers: dbHeaders }
               );
               if (metaRes.ok) {
@@ -667,6 +690,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
                     runtime: row.runtime,
                     gpu_type: row.gpu_type,
                     gpu_status: row.gpu_status,
+                    trust_card: buildTrustCardForAppRow(row),
                   });
                 }
               }
@@ -718,6 +742,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
               had_external_db: meta?.had_external_db ?? false,
               runtime: appRuntime,
               gpu_type: meta?.gpu_type || null,
+              trust_card: meta?.trust_card,
             });
           }
         } catch { /* best effort */ }
@@ -787,7 +812,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
         let keywordQuery =
           `${supabaseUrl}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&hosting_suspended=eq.false` +
           `&or=(name.ilike.*${encodeURIComponent(escapedQuery)}*,description.ilike.*${encodeURIComponent(escapedQuery)}*)` +
-          `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,manifest,runs_30d,had_external_db,runtime,gpu_type,gpu_status` +
+          `&select=id,name,slug,description,owner_id,visibility,current_version,version_metadata,download_access,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,manifest,runs_30d,had_external_db,runtime,gpu_type,gpu_status` +
           `&order=weighted_likes.desc,likes.desc` +
           `&limit=${overFetchLimit}`;
         if (runtimeFilter === 'gpu') {
@@ -819,6 +844,7 @@ async function handleMarketplace(request: Request, url: URL): Promise<Response> 
               had_external_db: !!a.had_external_db,
               runtime: a.runtime || 'deno',
               gpu_type: a.gpu_type || null,
+              trust_card: buildTrustCardForAppRow(a),
             });
           }
         }

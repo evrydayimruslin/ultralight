@@ -23,6 +23,7 @@ import { fetchInferenceChatCompletion, selectInferenceModel } from './inference-
 import { resolveInferenceRoute, type ResolvedInferenceRoute } from './inference-route.ts';
 import type { App } from '../../shared/types/index.ts';
 import { buildJsonSchemaDescriptors, type AppForCodemode } from './codemode-tools.ts';
+import { buildAppTrustCard, type TrustCard } from './trust.ts';
 
 // ── Types ──
 
@@ -67,7 +68,7 @@ interface ConversationSummary {
 }
 
 interface MarketplaceCandidate {
-  app: Pick<App, 'id' | 'name' | 'slug' | 'description' | 'icon_url' | 'runtime' | 'manifest' | 'exports' | 'owner_id' | 'app_type'>;
+  app: Pick<App, 'id' | 'name' | 'slug' | 'description' | 'icon_url' | 'runtime' | 'manifest' | 'exports' | 'owner_id' | 'app_type' | 'current_version' | 'version_metadata' | 'visibility' | 'download_access' | 'env_schema'>;
   similarity: number;
   keyFunctions: string[];
 }
@@ -89,6 +90,7 @@ export type FlashEvent =
       type: 'app';
       connected: false;
       runtime?: string;
+      trust_card?: TrustCard;
     }>;
   }
   | { type: 'searching'; query: string; apps: string[] }
@@ -443,6 +445,7 @@ export async function* runFlashBroker(
         type: 'app' as const,
         connected: false as const,
         ...(candidate.app.runtime ? { runtime: candidate.app.runtime } : {}),
+        trust_card: buildAppTrustCard(candidate.app),
       })),
     };
   }
@@ -1406,6 +1409,11 @@ async function retrieveMarketplaceCandidates(
           exports: app.exports,
           owner_id: app.owner_id,
           app_type: app.app_type,
+          current_version: app.current_version,
+          version_metadata: app.version_metadata,
+          visibility: app.visibility,
+          download_access: app.download_access,
+          env_schema: app.env_schema,
         },
         similarity: app.similarity,
         keyFunctions: extractMarketplaceKeyFunctions(app),

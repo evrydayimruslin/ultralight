@@ -18,6 +18,7 @@ import {
   logExecutionResult,
   settleAndLogGpuExecution,
 } from "../services/execution-settlement.ts";
+import { createExecutionReceiptId } from "../services/call-logger.ts";
 import {
   buildMissingAppSecretsErrorDetails,
   buildMissingAppSecretsMessage,
@@ -25,7 +26,7 @@ import {
   fetchAppEntryCode,
   resolveAppRuntimeEnvVars,
   resolveAppSupabaseConfig,
-  resolveManifestPermissions,
+  resolveStrictManifestPermissions,
   SupabaseConfigMigrationRequiredError,
 } from "../services/app-runtime-resources.ts";
 import { buildGpuStatusDiagnostics } from "../services/gpu/status.ts";
@@ -322,6 +323,7 @@ export async function handleHttpEndpoint(
       }
 
       try {
+        const receiptId = createExecutionReceiptId();
         const gpuResult = await executeGpuFunction({
           app,
           functionName,
@@ -332,6 +334,7 @@ export async function handleHttpEndpoint(
 
         const settlementUserId = user?.id || app.owner_id;
         const { settlement } = await settleAndLogGpuExecution({
+          receiptId,
           userId: settlementUserId,
           user,
           app,
@@ -353,18 +356,26 @@ export async function handleHttpEndpoint(
         );
 
         if (!gpuResult.success) {
-          return json({
+          return new Response(JSON.stringify({
             error: gpuResult.error?.message || "GPU execution failed",
             type: gpuResult.error?.type,
             logs: gpuResult.logs,
-          }, 500);
+            receipt_id: receiptId,
+          }), {
+            status: 500,
+            headers: {
+              "Content-Type": "application/json",
+              "X-Light-Receipt-Id": receiptId,
+              ...buildCorsHeaders(request),
+            },
+          });
         }
 
         // Handle the response (same formatting as Deno path below)
         const gpuFnResult = gpuResult.result;
 
         if (gpuFnResult instanceof Response) {
-          return gpuFnResult;
+          return withReceiptHeader(gpuFnResult, receiptId);
         }
 
         if (gpuFnResult && typeof gpuFnResult === "object") {
@@ -386,19 +397,25 @@ export async function handleHttpEndpoint(
           }
         }
 
-        return json(gpuFnResult);
+        return new Response(JSON.stringify(attachHttpReceipt(gpuFnResult, receiptId)), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            "X-Light-Receipt-Id": receiptId,
+            ...buildCorsHeaders(request),
+          },
+        });
       } finally {
         gpuSlot.release();
       }
     }
 
+    if (!app.manifest) {
+      return json({ error: "App manifest required for runtime execution" }, 422);
+    }
+
     // Execute the function in sandbox — AI-capable apps get 120s timeout
-    const httpPermissions = resolveManifestPermissions(app, [
-      "memory:read",
-      "memory:write",
-      "ai:call",
-      "net:fetch",
-    ]);
+    const httpPermissions = resolveStrictManifestPermissions(app).permissions;
     const runtimeAI = httpPermissions.includes("ai:call")
       ? await createRuntimeAIContext(user)
       : {
@@ -411,6 +428,7 @@ export async function handleHttpEndpoint(
     const { executeInDynamicSandbox } = await import(
       "../runtime/dynamic-sandbox.ts"
     );
+    const receiptId = createExecutionReceiptId();
     const result = await executeInDynamicSandbox(
       {
         appId: app.id,
@@ -442,6 +460,7 @@ export async function handleHttpEndpoint(
     const durationMs = Date.now() - startTime;
 
     logExecutionResult({
+      receiptId,
       userId: user?.id || app.owner_id,
       appId: app.id,
       appName: app.name || app.slug,
@@ -469,6 +488,7 @@ export async function handleHttpEndpoint(
         error: result.error?.message || "Execution failed",
         type: result.error?.type,
         logs: result.logs,
+        receipt_id: receiptId,
       }, 500);
     }
 
@@ -477,7 +497,7 @@ export async function handleHttpEndpoint(
 
     // If the result is already a Response object, return it
     if (fnResult instanceof Response) {
-      return fnResult;
+      return withReceiptHeader(fnResult, receiptId);
     }
 
     // If the result has statusCode/status and body, treat it as a response config
@@ -496,6 +516,7 @@ export async function handleHttpEndpoint(
         if (!headers.has("Content-Type")) {
           headers.set("Content-Type", "application/json");
         }
+        headers.set("X-Light-Receipt-Id", receiptId);
 
         return new Response(
           typeof body === "string" ? body : JSON.stringify(body),
@@ -505,11 +526,12 @@ export async function handleHttpEndpoint(
     }
 
     // Default: wrap result as JSON response with CORS headers
-    return new Response(JSON.stringify(fnResult), {
+    return new Response(JSON.stringify(attachHttpReceipt(fnResult, receiptId)), {
       status: 200,
       headers: {
         "Content-Type": "application/json",
         "X-Execution-Time": `${durationMs}ms`,
+        "X-Light-Receipt-Id": receiptId,
         ...buildCorsHeaders(request),
       },
     });
@@ -520,6 +542,23 @@ export async function handleHttpEndpoint(
       message: err instanceof Error ? err.message : String(err),
     }, 500);
   }
+}
+
+function attachHttpReceipt(result: unknown, receiptId: string): unknown {
+  if (result && typeof result === "object" && !Array.isArray(result)) {
+    return { ...(result as Record<string, unknown>), receipt_id: receiptId };
+  }
+  return { result, receipt_id: receiptId };
+}
+
+function withReceiptHeader(response: Response, receiptId: string): Response {
+  const headers = new Headers(response.headers);
+  headers.set("X-Light-Receipt-Id", receiptId);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 /**

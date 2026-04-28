@@ -5,6 +5,7 @@
 
 import { getEnv } from '../lib/env.ts';
 import { formatLight } from '../../shared/types/index.ts';
+import { buildAppTrustCard } from './trust.ts';
 
 
 // ============================================
@@ -67,6 +68,7 @@ export interface ListingDetails {
     total_runs: number;
     runs_30d: number;
     description: string | null;
+    trust_card?: unknown;
   } | null;
 }
 
@@ -169,6 +171,29 @@ interface ListingAppRow {
   total_runs: number;
   runs_30d: number;
   description: string | null;
+  visibility?: 'private' | 'unlisted' | 'public';
+  current_version?: string | null;
+  version_metadata?: unknown;
+  download_access?: 'owner' | 'public' | null;
+  runtime?: string | null;
+  manifest?: unknown;
+  env_schema?: Record<string, unknown> | null;
+}
+
+function buildListingTrustCard(app: ListingAppRow): unknown {
+  return buildAppTrustCard({
+    current_version: app.current_version || '',
+    runtime: app.runtime || 'deno',
+    manifest: typeof app.manifest === 'string'
+      ? app.manifest
+      : app.manifest ? JSON.stringify(app.manifest) : null,
+    version_metadata: Array.isArray(app.version_metadata)
+      ? app.version_metadata as never
+      : [],
+    visibility: app.visibility || 'public',
+    download_access: app.download_access || 'owner',
+    env_schema: app.env_schema || {},
+  } as never);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -592,7 +617,7 @@ export async function getListing(appId: string): Promise<ListingDetails> {
       { headers: dbHeaders() }
     ),
     fetch(
-      `${getEnv('SUPABASE_URL')}/rest/v1/apps?id=eq.${appId}&select=id,name,slug,owner_id,total_runs,runs_30d,description`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/apps?id=eq.${appId}&select=id,name,slug,owner_id,total_runs,runs_30d,description,visibility,current_version,version_metadata,download_access,runtime,manifest,env_schema`,
       { headers: dbHeaders() }
     ),
   ]);
@@ -627,7 +652,12 @@ export async function getListing(appId: string): Promise<ListingDetails> {
   return {
     listing: listings[0] || null,
     bids: enrichedBids,
-    app: apps[0] || null,
+    app: apps[0]
+      ? {
+        ...apps[0],
+        trust_card: buildListingTrustCard(apps[0]),
+      }
+      : null,
   };
 }
 

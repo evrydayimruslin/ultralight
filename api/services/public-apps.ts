@@ -29,6 +29,7 @@ export const PUBLIC_APP_SERVING_FIELDS = [
   'manifest',
   'exports',
   'runtime',
+  'version_metadata',
 ] as const satisfies readonly (keyof App)[];
 
 export const PUBLIC_DISCOVERY_APP_FIELDS = [

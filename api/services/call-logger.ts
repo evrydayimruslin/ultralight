@@ -11,6 +11,7 @@ const MAX_IO_SIZE = 10_000;
 const telemetryLogger = createServerLogger('TELEMETRY');
 
 export interface McpCallLogEntry {
+  receiptId?: string;
   userId: string;
   appId?: string;
   appName?: string;
@@ -42,6 +43,10 @@ export interface McpCallLogEntry {
   gpuPeakVramGb?: number;
   gpuDeveloperFeeLight?: number;
   gpuFailurePolicy?: string;
+}
+
+export function createExecutionReceiptId(): string {
+  return crypto.randomUUID();
 }
 
 /**
@@ -90,6 +95,7 @@ async function _insertLog(entry: McpCallLogEntry): Promise<void> {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
+        id: entry.receiptId,
         user_id: entry.userId,
         app_id: entry.appId || null,
         app_name: entry.appName || null,

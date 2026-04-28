@@ -105,13 +105,13 @@ globalThis.ultralight = {
   env: ${envVarsJson},
   isAuthenticated() { return ${config.user ? 'true' : 'false'}; },
   requireAuth() { ${config.user ? `return ${userJson};` : 'throw new Error("Authentication required.");'} },
-  store(k, v) { const e = globalThis.__rpcEnv; return e.DATA ? e.DATA.store(k, v) : Promise.reject(new Error('Data not available')); },
-  load(k) { const e = globalThis.__rpcEnv; return e.DATA ? e.DATA.load(k) : Promise.resolve(null); },
-  remove(k) { const e = globalThis.__rpcEnv; return e.DATA ? e.DATA.remove(k) : Promise.reject(new Error('Data not available')); },
-  list(p) { const e = globalThis.__rpcEnv; return e.DATA ? e.DATA.list(p) : Promise.resolve([]); },
-  query(p, o) { const e = globalThis.__rpcEnv; return e.DATA?.query?.(p, o) || Promise.resolve([]); },
-  remember(k, v) { const e = globalThis.__rpcEnv; return e.MEMORY ? e.MEMORY.remember(k, v) : Promise.resolve(); },
-  recall(k) { const e = globalThis.__rpcEnv; return e.MEMORY ? e.MEMORY.recall(k) : Promise.resolve(null); },
+  store(k, v) { if (!${config.permissions.includes('storage:write')}) return Promise.reject(new Error('storage:write permission not granted.')); const e = globalThis.__rpcEnv; return e.DATA ? e.DATA.store(k, v) : Promise.reject(new Error('Data not available')); },
+  load(k) { if (!${config.permissions.includes('storage:read')}) return Promise.reject(new Error('storage:read permission not granted.')); const e = globalThis.__rpcEnv; return e.DATA ? e.DATA.load(k) : Promise.resolve(null); },
+  remove(k) { if (!${config.permissions.includes('storage:delete')}) return Promise.reject(new Error('storage:delete permission not granted.')); const e = globalThis.__rpcEnv; return e.DATA ? e.DATA.remove(k) : Promise.reject(new Error('Data not available')); },
+  list(p) { if (!${config.permissions.includes('storage:read')}) return Promise.reject(new Error('storage:read permission not granted.')); const e = globalThis.__rpcEnv; return e.DATA ? e.DATA.list(p) : Promise.resolve([]); },
+  query(p, o) { if (!${config.permissions.includes('storage:read')}) return Promise.reject(new Error('storage:read permission not granted.')); const e = globalThis.__rpcEnv; return e.DATA?.query?.(p, o) || Promise.resolve([]); },
+  remember(k, v) { if (!${config.permissions.includes('memory:write')}) return Promise.reject(new Error('memory:write permission not granted.')); const e = globalThis.__rpcEnv; return e.MEMORY ? e.MEMORY.remember(k, v) : Promise.resolve(); },
+  recall(k) { if (!${config.permissions.includes('memory:read')}) return Promise.reject(new Error('memory:read permission not granted.')); const e = globalThis.__rpcEnv; return e.MEMORY ? e.MEMORY.recall(k) : Promise.resolve(null); },
   ai(r) { const e = globalThis.__rpcEnv; return e.AI ? e.AI.call(r) : Promise.resolve({ content: '', error: 'AI not available' }); },
   call() { throw new Error('ultralight.call() not available in sandbox. Use ul.call platform tool.'); },
   // net:connect — high-level protocol methods via internal HTTP (gated by permission)
@@ -224,19 +224,24 @@ export default {
       }
     }
 
-    if (ctx?.exports?.AppDataBinding) {
+    const hasStorageRead = config.permissions.includes('storage:read');
+    const hasStorageWrite = config.permissions.includes('storage:write');
+    const hasStorageDelete = config.permissions.includes('storage:delete');
+    if ((hasStorageRead || hasStorageWrite || hasStorageDelete) && ctx?.exports?.AppDataBinding) {
       bindings.DATA = ctx.exports.AppDataBinding({
         props: { appId: config.appId, userId: config.userId },
       });
     }
 
-    if (config.memoryService && ctx?.exports?.MemoryBinding) {
+    const hasMemory = config.permissions.includes('memory:read') ||
+      config.permissions.includes('memory:write');
+    if (hasMemory && config.memoryService && ctx?.exports?.MemoryBinding) {
       bindings.MEMORY = ctx.exports.MemoryBinding({
         props: { userId: config.userId },
       });
     }
 
-    if (ctx?.exports?.AIBinding) {
+    if (config.permissions.includes('ai:call') && ctx?.exports?.AIBinding) {
       bindings.AI = ctx.exports.AIBinding({
         props: {
           userId: config.userId,
@@ -257,7 +262,8 @@ export default {
     }
 
     // 5. Create Dynamic Worker
-    const hasNetConnect = config.permissions.includes('net:connect');
+    const hasOutboundNetwork = config.permissions.includes('net:connect') ||
+      config.permissions.includes('net:fetch');
     const loadConfig: Parameters<typeof loader.load>[0] = {
       compatibilityDate: '2026-03-01',
       mainModule: 'wrapper.js',
@@ -269,8 +275,8 @@ export default {
       env: bindings,
       globalOutbound: null,
     };
-    // net:connect apps need outbound fetch() for internal TCP endpoints — remove restriction
-    if (hasNetConnect) loadConfig.globalOutbound = undefined;
+    // Network-capable apps need outbound fetch() for external APIs and internal TCP endpoints.
+    if (hasOutboundNetwork) loadConfig.globalOutbound = undefined;
     const worker = loader.load(loadConfig);
 
     // 6. Execute with timeout

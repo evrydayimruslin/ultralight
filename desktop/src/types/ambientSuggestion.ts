@@ -1,3 +1,22 @@
+export interface AmbientTrustCard {
+  signed_manifest?: boolean;
+  runtime?: string | null;
+  permissions?: string[];
+  capability_summary?: {
+    ai?: boolean;
+    network?: boolean;
+    storage?: boolean;
+    memory?: boolean;
+    gpu?: boolean;
+  };
+  required_secrets?: string[];
+  per_user_secrets?: string[];
+  execution_receipts?: {
+    enabled?: boolean;
+    field?: string;
+  };
+}
+
 export interface AmbientSuggestion {
   id: string;
   slug: string;
@@ -9,4 +28,5 @@ export interface AmbientSuggestion {
   type: 'app' | 'skill';
   connected: boolean;
   runtime?: string;
+  trust_card?: AmbientTrustCard;
 }

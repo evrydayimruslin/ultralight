@@ -581,6 +581,144 @@ export function getLayoutHTML(options: {
       margin-bottom: var(--space-4);
     }
 
+    .trust-card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: var(--space-3);
+      margin-bottom: var(--space-4);
+    }
+
+    .trust-card-header .section-title {
+      margin-bottom: 0;
+    }
+
+    .trust-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px;
+      border: 1px solid var(--border);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-tertiary);
+      white-space: nowrap;
+    }
+
+    .trust-status::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+
+    .trust-status.ok {
+      color: var(--success);
+      border-color: rgba(34, 197, 94, 0.25);
+      background: var(--success-soft);
+    }
+
+    .trust-status.ok::before {
+      background: var(--success);
+    }
+
+    .trust-status.warn {
+      color: var(--warning);
+      border-color: rgba(245, 158, 11, 0.25);
+      background: var(--warning-soft);
+    }
+
+    .trust-status.warn::before {
+      background: var(--warning);
+    }
+
+    .trust-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: var(--space-3);
+      margin-bottom: var(--space-4);
+    }
+
+    .trust-field {
+      min-width: 0;
+      padding: var(--space-3);
+      border: 1px solid var(--border);
+      background: var(--bg-base);
+      border-radius: var(--radius-md);
+    }
+
+    .trust-field-label {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-muted);
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .trust-field-value {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      min-width: 0;
+      font-size: 13px;
+      color: var(--text-primary);
+    }
+
+    .trust-field-value code {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .trust-copy-btn {
+      flex: 0 0 auto;
+      padding: 2px 6px;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    .trust-copy-btn:hover {
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+    }
+
+    .trust-chip-row,
+    .marketplace-trust-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: var(--space-2);
+    }
+
+    .trust-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 7px;
+      border: 1px solid var(--border);
+      background: var(--bg-base);
+      color: var(--text-secondary);
+      font-size: 11px;
+      line-height: 1.5;
+      white-space: nowrap;
+    }
+
+    .trust-note {
+      margin-top: var(--space-3);
+      padding-top: var(--space-3);
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
     .form-group {
       display: flex;
       flex-direction: column;
@@ -1794,6 +1932,27 @@ export function getLayoutHTML(options: {
       margin-top: var(--space-2);
       font-size: 11px;
       color: var(--text-tertiary);
+    }
+
+    .marketplace-trust-row {
+      margin-top: var(--space-2);
+      gap: 6px;
+    }
+
+    .marketplace-trust-row .trust-status {
+      padding: 1px 6px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .marketplace-trust-text {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
     }
 
     .marketplace-section {
@@ -3016,6 +3175,7 @@ export function getLayoutHTML(options: {
             <div id="appOverviewHeader" class="app-overview-header"></div>
             <h2 class="app-section-title">Overview</h2>
             <div id="appGeneralSettings"></div>
+            <div id="appTrustSection"></div>
             <div id="appFunctionsSection"></div>
             <div id="skillsContent"></div>
           </section>
@@ -3402,6 +3562,155 @@ export function getLayoutHTML(options: {
       return '<tr><td colspan="' + String(colspan) + '" style="padding:0;">' +
         renderShellState(kind, title, description, { compact: true }) +
       '</td></tr>';
+    }
+
+    function shortHash(value) {
+      if (!value) return '';
+      var str = String(value);
+      return str.length > 12 ? str.slice(0, 12) : str;
+    }
+
+    function parseJsonMaybe(value) {
+      if (!value) return null;
+      if (typeof value === 'object') return value;
+      if (typeof value !== 'string') return null;
+      try { return JSON.parse(value); } catch (e) { return null; }
+    }
+
+    function getLatestVersionTrustFromApp(app) {
+      if (!app || !Array.isArray(app.version_metadata)) return null;
+      for (var i = app.version_metadata.length - 1; i >= 0; i--) {
+        var entry = app.version_metadata[i];
+        if (entry && entry.trust && (!app.current_version || entry.version === app.current_version)) {
+          return entry.trust;
+        }
+      }
+      return null;
+    }
+
+    function inferTrustCapabilities(runtime, permissions) {
+      permissions = Array.isArray(permissions) ? permissions : [];
+      return {
+        ai: permissions.indexOf('ai:call') !== -1,
+        network: permissions.some(function(p) { return p === 'net:fetch' || p === 'net:connect' || String(p).indexOf('net:') === 0; }),
+        storage: permissions.some(function(p) { return String(p).indexOf('storage:') === 0; }),
+        memory: permissions.some(function(p) { return String(p).indexOf('memory:') === 0; }),
+        gpu: permissions.indexOf('gpu:execute') !== -1 || runtime === 'gpu'
+      };
+    }
+
+    function getTrustCard(entity) {
+      if (!entity) return null;
+      if (entity.trust_card && typeof entity.trust_card === 'object') return entity.trust_card;
+
+      var trust = getLatestVersionTrustFromApp(entity);
+      var manifest = parseJsonMaybe(entity.manifest);
+      var permissions = trust && Array.isArray(trust.permissions)
+        ? trust.permissions
+        : (manifest && Array.isArray(manifest.permissions) ? manifest.permissions.filter(function(p) { return typeof p === 'string'; }) : []);
+
+      return {
+        signed_manifest: !!(trust && trust.signature && trust.manifest_hash),
+        signer: trust && trust.signature ? trust.signature.signer : null,
+        signed_at: trust && trust.signature ? trust.signature.signed_at : null,
+        version: (trust && trust.version) || entity.current_version || null,
+        runtime: (trust && trust.runtime) || entity.runtime || 'deno',
+        manifest_hash: trust ? trust.manifest_hash : null,
+        artifact_hash: trust ? trust.artifact_hash : null,
+        artifact_count: trust && trust.artifact_hashes ? Object.keys(trust.artifact_hashes).length : 0,
+        permissions: permissions,
+        capability_summary: inferTrustCapabilities((trust && trust.runtime) || entity.runtime, permissions),
+        required_secrets: trust && Array.isArray(trust.required_secrets) ? trust.required_secrets : [],
+        per_user_secrets: trust && Array.isArray(trust.per_user_secrets) ? trust.per_user_secrets : [],
+        execution_receipts: { enabled: true, field: 'receipt_id' }
+      };
+    }
+
+    function trustCapabilityLabels(trust) {
+      var summary = trust && trust.capability_summary ? trust.capability_summary : {};
+      var labels = [];
+      if (summary.ai) labels.push('AI');
+      if (summary.network) labels.push('Network');
+      if (summary.storage) labels.push('Storage');
+      if (summary.memory) labels.push('Memory');
+      if (summary.gpu) labels.push('GPU');
+      return labels;
+    }
+
+    function renderTrustChips(labels, emptyLabel) {
+      if (!labels || labels.length === 0) {
+        return '<span class="trust-chip">' + escapeHtml(emptyLabel || 'No broad access') + '</span>';
+      }
+      return labels.map(function(label) {
+        return '<span class="trust-chip">' + escapeHtml(label) + '</span>';
+      }).join('');
+    }
+
+    function renderMarketplaceTrust(trust) {
+      if (!trust) return '';
+      var signed = !!trust.signed_manifest;
+      var labels = trustCapabilityLabels(trust);
+      var scopeText = labels.length > 0 ? labels.slice(0, 3).join(', ') : 'No broad access';
+      var extraCount = labels.length > 3 ? ' +' + (labels.length - 3) : '';
+      return '<div class="marketplace-trust-row">' +
+        '<span class="trust-status ' + (signed ? 'ok' : 'warn') + '">' + (signed ? 'Signed' : 'Legacy') + '</span>' +
+        '<span class="marketplace-trust-text">' + escapeHtml(scopeText + extraCount) + '</span>' +
+      '</div>';
+    }
+
+    function renderTrustField(label, value, copyField) {
+      var display = value ? escapeHtml(value) : 'Not available';
+      var copy = value && copyField
+        ? '<button class="trust-copy-btn" onclick="copyTrustValue(\\\'' + copyField + '\\\')">Copy</button>'
+        : '';
+      return '<div class="trust-field">' +
+        '<div class="trust-field-label">' + escapeHtml(label) + '</div>' +
+        '<div class="trust-field-value">' +
+          (value ? '<code title="' + escapeHtml(value) + '">' + display + '</code>' : '<span style="color:var(--text-muted);">' + display + '</span>') +
+          copy +
+        '</div>' +
+      '</div>';
+    }
+
+    function renderTrustOverview(app) {
+      var trust = getTrustCard(app);
+      if (!trust) return '';
+      var signed = !!trust.signed_manifest;
+      var labels = trustCapabilityLabels(trust);
+      var permissions = Array.isArray(trust.permissions) ? trust.permissions : [];
+      var requiredSecrets = Array.isArray(trust.required_secrets) ? trust.required_secrets : [];
+      var perUserSecrets = Array.isArray(trust.per_user_secrets) ? trust.per_user_secrets : [];
+      var permissionLabels = permissions.length > 0 ? permissions.slice(0, 8) : [];
+      var secretLabels = requiredSecrets.concat(perUserSecrets.map(function(key) { return key + ' (per user)'; }));
+      var note = signed
+        ? 'Execution receipts are returned on calls and tied to the owner call log.'
+        : 'Publish a manifest-backed version to create signed trust metadata for this app.';
+
+      return '<div class="section-card">' +
+        '<div class="trust-card-header">' +
+          '<h3 class="section-title">Trust & Runtime</h3>' +
+          '<span class="trust-status ' + (signed ? 'ok' : 'warn') + '">' + (signed ? 'Signed Manifest' : 'Unsigned Legacy') + '</span>' +
+        '</div>' +
+        '<div class="trust-grid">' +
+          renderTrustField('Runtime', String(trust.runtime || app.runtime || 'deno'), '') +
+          renderTrustField('Version', String(trust.version || app.current_version || 'current'), '') +
+          renderTrustField('Manifest Hash', shortHash(trust.manifest_hash), 'manifest_hash') +
+          renderTrustField('Artifact Hash', shortHash(trust.artifact_hash), 'artifact_hash') +
+          renderTrustField('Artifacts', String(trust.artifact_count || 0), '') +
+          renderTrustField('Receipt Field', trust.execution_receipts && trust.execution_receipts.enabled ? 'receipt_id' : 'Disabled', '') +
+        '</div>' +
+        '<div class="trust-chip-row" style="margin-bottom:var(--space-2);">' +
+          renderTrustChips(labels, 'No broad access') +
+        '</div>' +
+        '<div class="trust-chip-row" style="margin-bottom:var(--space-2);">' +
+          renderTrustChips(permissionLabels, 'No permission scopes') +
+          (permissions.length > permissionLabels.length ? '<span class="trust-chip">+' + (permissions.length - permissionLabels.length) + ' more scopes</span>' : '') +
+        '</div>' +
+        '<div class="trust-chip-row">' +
+          renderTrustChips(secretLabels, 'No required secrets') +
+        '</div>' +
+        '<div class="trust-note">' + escapeHtml(note) + '</div>' +
+      '</div>';
     }
 
     // Resolve function list from best available source: manifest first, then legacy metadata
@@ -4674,6 +4983,7 @@ export function getLayoutHTML(options: {
       var desc = item.description || '';
       var shortDesc = desc.length > 120 ? desc.slice(0, 120) + '...' : desc;
       var stats = '';
+      var trustHtml = '';
       if (item.type === 'app') {
         var parts = [];
         if (item.likes > 0) parts.push(item.likes + ' likes');
@@ -4681,6 +4991,7 @@ export function getLayoutHTML(options: {
         if (item.runtime === 'gpu' && item.gpu_type) parts.push(item.gpu_type);
         else if (item.fully_native) parts.push('native');
         if (parts.length > 0) stats = '<div class="marketplace-stats">' + parts.join(' &middot; ') + '</div>';
+        trustHtml = renderMarketplaceTrust(getTrustCard(item));
       } else {
         var tagStr = (item.tags || []).slice(0, 3).join(', ');
         if (tagStr) stats = '<div class="marketplace-stats">' + tagStr + '</div>';
@@ -4714,6 +5025,7 @@ export function getLayoutHTML(options: {
         + heartSvg
         + '</div>'
         + (shortDesc ? '<div class="marketplace-card-desc">' + escapeHtml(shortDesc) + '</div>' : '')
+        + trustHtml
         + stats
         + '</div>';
     }
@@ -5558,6 +5870,12 @@ export function getLayoutHTML(options: {
           '</div>';
       }
 
+      // -- Trust & runtime --
+      const trustEl = document.getElementById('appTrustSection');
+      if (trustEl) {
+        trustEl.innerHTML = renderTrustOverview(app);
+      }
+
       // -- Functions list --
       const fnsEl = document.getElementById('appFunctionsSection');
       if (fnsEl) {
@@ -5911,15 +6229,20 @@ export function getLayoutHTML(options: {
               '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Status</th>' +
               '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">User</th>' +
               '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Function</th>' +
+              '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Receipt</th>' +
               '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Duration</th>' +
               '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Time</th>' +
             '</tr></thead><tbody>' +
             logs.map(function(log) {
               var success = log.success !== false;
+              var receiptId = log.receipt_id || log.id || '';
               return '<tr style="border-bottom:1px solid var(--border)">' +
                 '<td style="padding:8px 12px"><div style="width:8px;height:8px;border-radius:50%;background:' + (success ? 'var(--success)' : 'var(--error)') + '"></div></td>' +
                 '<td style="padding:8px 12px;color:var(--text-muted);font-family:var(--font-mono);font-size:11px">' + escapeHtml((log.user_id || '').substring(0, 8)) + '</td>' +
                 '<td style="padding:8px 12px;font-family:var(--font-mono)">' + escapeHtml(log.function_name || log.method || '') + '</td>' +
+                '<td style="padding:8px 12px;color:var(--text-muted);font-family:var(--font-mono);font-size:11px;white-space:nowrap">' +
+                  (receiptId ? '<code title="' + escapeHtml(receiptId) + '">' + escapeHtml(shortHash(receiptId)) + '</code> <button class="trust-copy-btn" data-receipt-id="' + escapeHtml(receiptId) + '" onclick="copyReceiptId(this)">Copy</button>' : '-') +
+                '</td>' +
                 '<td style="padding:8px 12px;color:var(--text-muted)">' + (log.duration_ms ? log.duration_ms + 'ms' : '-') + '</td>' +
                 '<td style="padding:8px 12px;color:var(--text-muted)">' + relTime(log.created_at) + '</td>' +
               '</tr>';
@@ -6830,6 +7153,33 @@ export function getLayoutHTML(options: {
 
     window.copyPlatformMcpUrl = function() {
       navigator.clipboard.writeText(window.location.origin + '/mcp/platform').then(function() { showToast('Platform MCP URL copied!'); });
+    };
+
+    window.copyTrustValue = function(field) {
+      var trust = getTrustCard(window._currentApp || {});
+      var value = trust && trust[field];
+      if (!value) {
+        showToast('Trust value unavailable', 'error');
+        return;
+      }
+      navigator.clipboard.writeText(String(value)).then(function() {
+        showToast(field === 'manifest_hash' ? 'Manifest hash copied' : 'Artifact hash copied');
+      }).catch(function() {
+        showToast('Failed to copy trust value', 'error');
+      });
+    };
+
+    window.copyReceiptId = function(btn) {
+      var receiptId = btn && btn.dataset ? btn.dataset.receiptId : '';
+      if (!receiptId) {
+        showToast('Receipt unavailable', 'error');
+        return;
+      }
+      navigator.clipboard.writeText(receiptId).then(function() {
+        showToast('Receipt ID copied');
+      }).catch(function() {
+        showToast('Failed to copy receipt', 'error');
+      });
     };
 
     window.downloadAppCode = async function() {

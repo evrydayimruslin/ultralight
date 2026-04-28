@@ -21,6 +21,7 @@ import {
   hydrateManifestForSource,
   upsertManifestUploadFile,
 } from './app-manifest-generation.ts';
+import { generateGpuManifest } from './trust.ts';
 import {
   parseMigrationFiles,
   validateMigrationSchema,
@@ -541,10 +542,20 @@ export async function processUploadPipeline(
     }
 
     const mainPy = files.find(f => (f.name.split('/').pop() || f.name) === 'main.py')!;
-    const filesToUpload = files.map(f => ({
+    const manifest = generateGpuManifest({
+      name: options.name || 'Untitled GPU App',
+      version: options.version || '1.0.0',
+      description: options.description || null,
+      exports: gpuExports,
+    });
+    const filesToUpload = upsertManifestUploadFile(files.map(f => ({
       name: f.name,
       content: new TextEncoder().encode(f.content),
       contentType: f.name.endsWith('.py') ? 'text/x-python' : 'text/plain',
+    })), manifest, (manifestJson) => ({
+      name: 'manifest.json',
+      content: new TextEncoder().encode(manifestJson),
+      contentType: 'application/json',
     }));
 
     // D1 migrations not supported for GPU apps
@@ -555,7 +566,7 @@ export async function processUploadPipeline(
     return {
       runtime: 'gpu',
       gpuConfig,
-      manifest: null,
+      manifest,
       entryFile: mainPy,
       exports: gpuExports,
       bundledCode: mainPy.content,

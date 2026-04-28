@@ -40,6 +40,7 @@ export type OrchestrateEvent =
       type: 'app';
       connected: false;
       runtime?: string;
+      trust_card?: unknown;
     }>;
   }
   | { type: 'flash_search'; query: string; apps: string[] }

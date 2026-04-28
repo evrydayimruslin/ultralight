@@ -32,6 +32,7 @@ import {
 } from '../services/app-contracts.ts';
 import { hasValidPageShareSession } from '../services/page-share-session.ts';
 import { fetchAppEntryCode } from '../services/app-runtime-resources.ts';
+import { buildAppTrustCard, type TrustCard } from '../services/trust.ts';
 import { getEnv } from '../lib/env.ts';
 import type { AppManifest } from '../../shared/contracts/manifest.ts';
 
@@ -1591,7 +1592,8 @@ async function handlePublicAppPage(request: Request, appId: string): Promise<Res
       }
     } catch { /* best effort */ }
 
-    const html = getPublicAppPageHTML(app, ownerName, baseUrl, { isEmbed });
+    const trustCard = buildAppTrustCard({ ...app, env_schema: {} });
+    const html = getPublicAppPageHTML(app, ownerName, baseUrl, { isEmbed, trustCard });
     return new Response(html, {
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
@@ -1626,7 +1628,7 @@ function getPublicAppPageHTML(
   },
   ownerName: string,
   baseUrl: string,
-  opts: { isEmbed: boolean }
+  opts: { isEmbed: boolean; trustCard?: TrustCard }
 ): string {
   const { isEmbed } = opts;
   const appName = escapeHtml(app.name || app.slug);
@@ -1650,6 +1652,44 @@ function getPublicAppPageHTML(
   const hasScreenshots = screenshots.length > 0;
   const longDescriptionMd = typeof app.long_description === 'string' ? app.long_description : '';
   const longDescriptionHtml = longDescriptionMd ? markdownToHtml(longDescriptionMd) : '';
+  const trustCard = opts.trustCard;
+  const trustCapabilities = trustCard
+    ? [
+      trustCard.capability_summary.ai ? 'AI' : '',
+      trustCard.capability_summary.network ? 'Network' : '',
+      trustCard.capability_summary.storage ? 'Storage' : '',
+      trustCard.capability_summary.memory ? 'Memory' : '',
+      trustCard.capability_summary.gpu ? 'GPU' : '',
+    ].filter(Boolean)
+    : [];
+  const trustPermissions = trustCard ? trustCard.permissions.slice(0, 8) : [];
+  const trustSecretLabels = trustCard
+    ? [
+      ...trustCard.required_secrets,
+      ...trustCard.per_user_secrets.map((key) => `${key} (per user)`),
+    ].slice(0, 8)
+    : [];
+  const trustShortHash = (value: string | null | undefined) => value ? value.slice(0, 12) : 'Not available';
+  const trustChipHtml = (labels: string[], empty: string) => labels.length > 0
+    ? labels.map((label) => `<span class="trust-chip">${escapeHtml(label)}</span>`).join('')
+    : `<span class="trust-chip">${escapeHtml(empty)}</span>`;
+  const trustCardHtml = trustCard ? `
+    <section class="section trust-section">
+      <div class="trust-header">
+        <div class="section-title">Trust & Runtime</div>
+        <span class="trust-status ${trustCard.signed_manifest ? 'ok' : 'warn'}">${trustCard.signed_manifest ? 'Signed Manifest' : 'Unsigned Legacy'}</span>
+      </div>
+      <div class="trust-grid">
+        <div><span>Runtime</span><strong>${escapeHtml(trustCard.runtime || 'deno')}</strong></div>
+        <div><span>Version</span><strong>${escapeHtml(trustCard.version || version)}</strong></div>
+        <div><span>Manifest Hash</span><code title="${escapeHtml(trustCard.manifest_hash || '')}">${escapeHtml(trustShortHash(trustCard.manifest_hash))}</code></div>
+        <div><span>Receipt Field</span><strong>${trustCard.execution_receipts.enabled ? 'receipt_id' : 'Disabled'}</strong></div>
+      </div>
+      <div class="trust-chip-row">${trustChipHtml(trustCapabilities, 'No broad access')}</div>
+      <div class="trust-chip-row">${trustChipHtml(trustPermissions, 'No permission scopes')}</div>
+      <div class="trust-chip-row">${trustChipHtml(trustSecretLabels, 'No required secrets')}</div>
+    </section>
+  ` : '';
 
   // OpenGraph prefers the first screenshot over the icon — richer previews
   // in Slack/iMessage/Twitter when apps have visual content.
@@ -2087,6 +2127,95 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
     color: #666;
     max-width: 34rem;
   }
+  .trust-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.9rem;
+  }
+  .trust-header .section-title {
+    margin-bottom: 0;
+  }
+  .trust-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.18rem 0.5rem;
+    border-radius: 999px;
+    border: 1px solid rgba(0,0,0,0.08);
+    font-size: 0.6875rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .trust-status::before {
+    content: "";
+    width: 0.42rem;
+    height: 0.42rem;
+    border-radius: 999px;
+    background: currentColor;
+  }
+  .trust-status.ok {
+    color: #15803d;
+    background: #f0fdf4;
+    border-color: #bbf7d0;
+  }
+  .trust-status.warn {
+    color: #92400e;
+    background: #fffbeb;
+    border-color: #fde68a;
+  }
+  .trust-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+    gap: 0.65rem;
+    margin-bottom: 0.85rem;
+  }
+  .trust-grid > div {
+    min-width: 0;
+    padding: 0.65rem 0.7rem;
+    border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 6px;
+    background: #fff;
+  }
+  .trust-grid span {
+    display: block;
+    color: #999;
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.18rem;
+  }
+  .trust-grid strong,
+  .trust-grid code {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #111;
+    font-size: 0.8125rem;
+  }
+  .trust-grid code {
+    font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+  }
+  .trust-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    margin-top: 0.5rem;
+  }
+  .trust-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.12rem 0.45rem;
+    border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 999px;
+    background: #fff;
+    color: #555;
+    font-size: 0.72rem;
+  }
 
   /* Screenshots carousel — horizontal snap scroller, bleeds to edges on mobile */
   .app-screenshots {
@@ -2357,6 +2486,8 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
   <section id="overviewPanel" class="tab-panel">
     <!-- Description -->
     ${description ? `<p class="app-desc">${description}</p>` : ''}
+
+    ${trustCardHtml}
 
     <!-- Screenshots carousel -->
     ${hasScreenshots ? `

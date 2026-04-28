@@ -21,6 +21,7 @@ import {
   logAppSupabaseResolution,
 } from "./app-runtime-telemetry.ts";
 import { createServerLogger, type LoggerLike } from "./logging.ts";
+import { getManifestPermissions } from "./trust.ts";
 
 export const APP_ENTRY_FILES = [
   "index.tsx",
@@ -487,4 +488,45 @@ export function resolveManifestPermissions(
   }
 
   return permissions;
+}
+
+const STRICT_RUNTIME_PERMISSIONS = new Set([
+  "storage:read",
+  "storage:write",
+  "storage:delete",
+  "memory:read",
+  "memory:write",
+  "ai:call",
+  "net:fetch",
+  "net:connect",
+  "app:call",
+  "gpu:execute",
+]);
+
+export interface StrictRuntimePermissionResolution {
+  permissions: string[];
+  manifestBacked: boolean;
+  ignoredPermissions: string[];
+}
+
+export function resolveStrictManifestPermissions(
+  app: Pick<RuntimeApp, "manifest">,
+): StrictRuntimePermissionResolution {
+  const manifestPermissions = getManifestPermissions(app.manifest);
+  const permissions: string[] = [];
+  const ignoredPermissions: string[] = [];
+
+  for (const permission of manifestPermissions) {
+    if (STRICT_RUNTIME_PERMISSIONS.has(permission)) {
+      permissions.push(permission);
+    } else {
+      ignoredPermissions.push(permission);
+    }
+  }
+
+  return {
+    permissions: [...new Set(permissions)],
+    manifestBacked: !!app.manifest,
+    ignoredPermissions,
+  };
 }

@@ -43,6 +43,7 @@ import {
   settleAndLogGpuExecution,
   settleCallerAppCharge,
 } from "../services/execution-settlement.ts";
+import { createExecutionReceiptId } from "../services/call-logger.ts";
 import {
   AppContractMigrationRequiredError,
   logAppContractResolution,
@@ -56,7 +57,7 @@ import {
   fetchAppEntryCode,
   resolveAppRuntimeEnvVars,
   resolveAppSupabaseConfig,
-  resolveManifestPermissions,
+  resolveStrictManifestPermissions,
   SupabaseConfigMigrationRequiredError,
 } from "../services/app-runtime-resources.ts";
 import {
@@ -1936,6 +1937,7 @@ async function handleGpuExecution(
 
   try {
     // Execute on GPU
+    const receiptId = createExecutionReceiptId();
     const gpuExecStart = Date.now();
     const gpuResult = await executeGpuFunction({
       app,
@@ -1947,6 +1949,7 @@ async function handleGpuExecution(
 
     const gpuCallSource = user?.provisional ? "onboarding_template" : undefined;
     const { settlement: gpuSettlement } = await settleAndLogGpuExecution({
+      receiptId,
       userId,
       user,
       app,
@@ -1975,10 +1978,10 @@ async function handleGpuExecution(
     if (gpuResult.success) {
       return jsonRpcResponse(
         id,
-        formatToolResult(gpuResult.result, gpuResult.logs),
+        formatToolResult(gpuResult.result, gpuResult.logs, receiptId),
       );
     } else {
-      return jsonRpcResponse(id, formatToolError(gpuResult.error));
+      return jsonRpcResponse(id, formatToolError(gpuResult.error, receiptId));
     }
   } finally {
     gpuSlot.release();
@@ -2124,13 +2127,7 @@ async function executeAppFunction(
       : null;
 
     // AI-capable apps get a longer timeout (120s) since AI calls are inherently slow
-    const permissions = resolveManifestPermissions(app, [
-      "memory:read",
-      "memory:write",
-      "ai:call",
-      "net:fetch",
-      "app:call",
-    ]);
+    const permissions = resolveStrictManifestPermissions(app).permissions;
     const timeoutMs = permissions.includes("ai:call") ? 120_000 : 30_000;
     const runtimeAI = permissions.includes("ai:call")
       ? await createRuntimeAIContext(user)
@@ -2147,6 +2144,7 @@ async function executeAppFunction(
     const ASYNC_PROMOTION_MS = 120_000;
     const isAiCapable = permissions.includes("ai:call");
     const executionId = crypto.randomUUID();
+    const receiptId = createExecutionReceiptId();
 
     const execStart = Date.now();
     const sandboxConfig = {
@@ -2193,6 +2191,7 @@ async function executeAppFunction(
       });
       const callSource = user?.provisional ? "onboarding_template" : undefined;
       logExecutionResult({
+        receiptId,
         userId,
         appId: app.id,
         appName: app.name || app.slug,
@@ -2274,10 +2273,10 @@ async function executeAppFunction(
           }
           return jsonRpcResponse(
             id,
-            formatToolResult(result.result, result.logs),
+            formatToolResult(result.result, result.logs, receiptId),
           );
         } else {
-          return jsonRpcResponse(id, formatToolError(result.error));
+          return jsonRpcResponse(id, formatToolError(result.error, receiptId));
         }
       } else {
         // Slow path: promote to async job
@@ -2319,6 +2318,7 @@ async function executeAppFunction(
             text: JSON.stringify({
               _async: true,
               job_id: jobId,
+              receipt_id: receiptId,
               status: "running",
               message:
                 `Execution promoted to async job. Poll with ul.job({ job_id: "${jobId}" }) to get the result.`,
@@ -2327,6 +2327,7 @@ async function executeAppFunction(
           structuredContent: {
             _async: true,
             job_id: jobId,
+            receipt_id: receiptId,
             status: "running",
           },
           isError: false,
@@ -2353,10 +2354,10 @@ async function executeAppFunction(
         }
         return jsonRpcResponse(
           id,
-          formatToolResult(result.result, result.logs),
+          formatToolResult(result.result, result.logs, receiptId),
         );
       } else {
-        return jsonRpcResponse(id, formatToolError(result.error));
+        return jsonRpcResponse(id, formatToolError(result.error, receiptId));
       }
     }
   } catch (err) {
@@ -2378,8 +2379,12 @@ async function executeAppFunction(
 function formatToolResult(
   result: unknown,
   logs?: Array<{ message: string }> | string[],
+  receiptId?: string,
 ): MCPToolCallResponse {
   const content: MCPContent[] = [];
+  const responseResult = receiptId
+    ? attachExecutionReceipt(result, receiptId)
+    : result;
 
   // Add result as text
   if (result !== undefined && result !== null) {
@@ -2401,26 +2406,51 @@ function formatToolResult(
     });
   }
 
+  if (receiptId) {
+    content.push({
+      type: "text",
+      text: `\n--- Receipt ---\n${receiptId}`,
+    });
+  }
+
   return {
     content,
-    structuredContent: result,
+    structuredContent: responseResult,
     isError: false,
   };
+}
+
+function attachExecutionReceipt(result: unknown, receiptId: string): unknown {
+  if (result && typeof result === "object" && !Array.isArray(result)) {
+    return { ...(result as Record<string, unknown>), receipt_id: receiptId };
+  }
+  return { result, receipt_id: receiptId };
 }
 
 /**
  * Format tool error for MCP response
  */
-function formatToolError(err: unknown): MCPToolCallResponse {
+function formatToolError(err: unknown, receiptId?: string): MCPToolCallResponse {
   const message = err instanceof Error
     ? err.message
     : (err as { message?: string })?.message || String(err);
 
   return {
-    content: [{
-      type: "text",
-      text: `Error: ${message}`,
-    }],
+    content: [
+      {
+        type: "text",
+        text: `Error: ${message}`,
+      },
+      ...(receiptId
+        ? [{
+          type: "text" as const,
+          text: `\n--- Receipt ---\n${receiptId}`,
+        }]
+        : []),
+    ],
+    structuredContent: receiptId
+      ? { error: message, receipt_id: receiptId }
+      : undefined,
     isError: true,
   };
 }

@@ -63,6 +63,13 @@ import {
 import { resolveStoredManifestCoverage } from '../services/app-manifest-generation.ts';
 import { createServerLogger } from '../services/logging.ts';
 import {
+  appendVersionTrustMetadata,
+  buildAppTrustCard,
+  buildVersionMetadataEntry,
+  buildVersionTrustMetadata,
+  diffManifests,
+} from '../services/trust.ts';
+import {
   buildPerUserSettingsStatus,
   type UserAppSecretStatusRow as SharedUserAppSecretStatusRow,
   validatePerUserSettingsValues,
@@ -74,6 +81,13 @@ const docsLogger = createServerLogger('DOCS');
 const publishLogger = createServerLogger('PUBLISH');
 const rebuildLogger = createServerLogger('REBUILD');
 const callLogLogger = createServerLogger('CALL-LOG');
+
+function withOwnerTrustCard<T extends App>(app: T): T & { trust_card: ReturnType<typeof buildAppTrustCard> } {
+  return {
+    ...app,
+    trust_card: buildAppTrustCard(app),
+  };
+}
 
 type EmbeddingUser = Awaited<ReturnType<typeof authenticate>> & {
   openrouter_api_key?: string;
@@ -1428,7 +1442,7 @@ async function handleGetApp(request: Request, appId: string): Promise<Response> 
       if (userId && publicApp.owner_id === userId) {
         const ownerApp = await appsService.findById(appId);
         if (!ownerApp) return error('App not found', 404);
-        return json(ownerApp);
+        return json(withOwnerTrustCard(ownerApp));
       }
 
       return json(publicApp);
@@ -1443,7 +1457,7 @@ async function handleGetApp(request: Request, appId: string): Promise<Response> 
       return error('App not found', 404);
     }
 
-    return json(ownerApp);
+    return json(withOwnerTrustCard(ownerApp));
   } catch (err) {
     appsLogger.error('Failed to get app', { app_id: appId, error: err });
     return error('Failed to get app', 500);
@@ -2451,6 +2465,29 @@ async function handleGetDraft(request: Request, appId: string): Promise<Response
       });
     }
 
+    const includeDiff = new URL(request.url).searchParams.get('include_diff') === '1';
+    let diffPayload: Record<string, unknown> = {};
+    if (includeDiff) {
+      const publishedExports = Array.isArray(app.exports) ? app.exports : [];
+      const draftExports = Array.isArray(app.draft_exports) ? app.draft_exports : [];
+      const publishedExportSet = new Set(publishedExports);
+      const draftExportSet = new Set(draftExports);
+      let draftManifest: string | null = null;
+      try {
+        const r2Service = createR2Service();
+        draftManifest = await r2Service.fetchTextFile(`${app.draft_storage_key}manifest.json`);
+      } catch {
+        draftManifest = null;
+      }
+      diffPayload = {
+        exports_diff: {
+          added: draftExports.filter((name) => !publishedExportSet.has(name)).sort(),
+          removed: publishedExports.filter((name) => !draftExportSet.has(name)).sort(),
+        },
+        manifest_diff: diffManifests(app.manifest, draftManifest),
+      };
+    }
+
     return json({
       has_draft: true,
       draft_version: app.draft_version,
@@ -2458,6 +2495,7 @@ async function handleGetDraft(request: Request, appId: string): Promise<Response
       draft_exports: app.draft_exports,
       published_version: app.current_version,
       published_storage_key: app.storage_key,
+      ...diffPayload,
     });
 
   } catch (err) {
@@ -2567,12 +2605,14 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
     const draftStorageKey = app.draft_storage_key;
     const draftFiles = await r2Service.listFiles(draftStorageKey);
     let publishedSizeBytes = 0;
+    const publishedFilesForTrust: Array<{ name: string; content: Uint8Array }> = [];
 
     for (const fileKey of draftFiles) {
       const fileName = fileKey.replace(draftStorageKey, '');
       if (fileName) {
         const content = await r2Service.fetchFile(fileKey);
         publishedSizeBytes += content.byteLength;
+        publishedFilesForTrust.push({ name: fileName, content });
         await r2Service.uploadFile(`${newStorageKey}${fileName}`, {
           name: fileName,
           content,
@@ -2601,6 +2641,10 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
         contentType: 'application/json',
       });
       publishedSizeBytes += new TextEncoder().encode(publishedManifest).byteLength;
+      publishedFilesForTrust.push({
+        name: 'manifest.json',
+        content: new TextEncoder().encode(publishedManifest),
+      });
       publishLogger.info('Wrote manifest.json for published draft', {
         app_id: appId,
         source: manifestCoverage.source,
@@ -2669,6 +2713,20 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
         if (m.description) updateFields.description = m.description;
         updateFields.env_schema = resolveManifestEnvSchema(m);
       } catch {}
+    }
+    if (publishedManifest) {
+      const versionTrust = await buildVersionTrustMetadata({
+        appId,
+        version: newVersion,
+        runtime: app.runtime || 'deno',
+        manifest: publishedManifest,
+        files: publishedFilesForTrust,
+        storageKey: newStorageKey,
+      });
+      updateFields.version_metadata = appendVersionTrustMetadata(
+        app.version_metadata,
+        buildVersionMetadataEntry(newVersion, publishedSizeBytes, versionTrust),
+      );
     }
     await appsService.update(appId, updateFields);
 

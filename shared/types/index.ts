@@ -81,6 +81,31 @@ export interface VersionMetadata {
   version: string;
   size_bytes: number;
   created_at: string;
+  trust?: VersionTrustMetadata;
+}
+
+export interface VersionTrustSignature {
+  algorithm: 'HMAC-SHA256';
+  signer: string;
+  signed_at: string;
+  signature: string;
+  key_hint?: string;
+}
+
+export interface VersionTrustMetadata {
+  schema_version: 1;
+  app_id: string;
+  version: string;
+  runtime: 'deno' | 'gpu' | string;
+  manifest_hash: string | null;
+  artifact_hash: string;
+  artifact_hashes: Record<string, string>;
+  storage_key?: string;
+  permissions: string[];
+  entrypoints: string[];
+  required_secrets: string[];
+  per_user_secrets: string[];
+  signature: VersionTrustSignature;
 }
 
 export type AppGpuStatus =
@@ -468,6 +493,7 @@ export interface RunResponse {
   result: unknown;
   logs: LogEntry[];
   duration_ms: number;
+  receipt_id?: string;
   ai_usage?: {
     model: string;
     input_tokens: number;

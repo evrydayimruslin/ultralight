@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchFromApi, getToken } from '../lib/storage';
-import type { AmbientSuggestion } from '../types/ambientSuggestion';
+import type { AmbientSuggestion, AmbientTrustCard } from '../types/ambientSuggestion';
 
 type DiscoverResult = AmbientSuggestion;
 
@@ -11,6 +11,22 @@ export type DiscoverWidgetMode =
 interface DiscoverWidgetProps {
   mode: DiscoverWidgetMode;
   onInjectScope: (apps: Array<{ id: string; slug: string; name: string; access: string }>) => void;
+}
+
+function asTrustCard(value: unknown): AmbientTrustCard | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  return value as AmbientTrustCard;
+}
+
+function trustCapabilityLabels(trust?: AmbientTrustCard): string[] {
+  const summary = trust?.capability_summary || {};
+  return [
+    summary.ai ? 'AI' : '',
+    summary.network ? 'Network' : '',
+    summary.storage ? 'Storage' : '',
+    summary.memory ? 'Memory' : '',
+    summary.gpu ? 'GPU' : '',
+  ].filter(Boolean);
 }
 
 async function searchDiscoverResults(query: string): Promise<DiscoverResult[]> {
@@ -58,6 +74,7 @@ async function searchDiscoverResults(query: string): Promise<DiscoverResult[]> {
           source: 'library',
           connected: true,
           icon_url: result.icon_url || null,
+          trust_card: asTrustCard(result.trust_card),
         });
       }
     }
@@ -83,6 +100,7 @@ async function searchDiscoverResults(query: string): Promise<DiscoverResult[]> {
           source: result.connected ? 'library' : 'marketplace',
           connected: !!result.connected,
           icon_url: result.icon_url || null,
+          trust_card: asTrustCard(result.trust_card),
         });
       }
     }
@@ -158,6 +176,32 @@ export default function DiscoverWidget({ mode, onInjectScope }: DiscoverWidgetPr
 
     onInjectScope(apps);
     setAdded(true);
+  };
+
+  const renderTrustSummary = (result: DiscoverResult) => {
+    if (result.type !== 'app' || !result.trust_card) return null;
+    const labels = trustCapabilityLabels(result.trust_card);
+    const accessText = labels.length > 0 ? labels.slice(0, 3).join(', ') : 'No broad access';
+    const extra = labels.length > 3 ? ` +${labels.length - 3}` : '';
+    const signed = !!result.trust_card.signed_manifest;
+
+    return (
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+          signed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+        }`}>
+          {signed ? 'Signed' : 'Legacy'}
+        </span>
+        <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600">
+          {accessText}{extra}
+        </span>
+        {result.trust_card.execution_receipts?.enabled && (
+          <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600">
+            Receipts
+          </span>
+        )}
+      </div>
+    );
   };
 
   if (added) {
@@ -260,6 +304,7 @@ export default function DiscoverWidget({ mode, onInjectScope }: DiscoverWidgetPr
                   <p className="mt-0.5 truncate text-caption font-normal text-ul-text-muted">
                     {result.description}
                   </p>
+                  {renderTrustSummary(result)}
                 </div>
               </div>
             </button>

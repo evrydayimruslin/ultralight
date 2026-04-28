@@ -49,6 +49,10 @@ import {
   hydrateManifestForSource,
   upsertManifestUploadFile,
 } from '../services/app-manifest-generation.ts';
+import {
+  buildVersionMetadataEntry,
+  buildVersionTrustMetadata,
+} from '../services/trust.ts';
 import { createServerLogger } from '../services/logging.ts';
 
 // Export file type for programmatic uploads
@@ -804,6 +808,14 @@ export async function handleUpload(request: Request): Promise<Response> {
     }
 
     // Create app record in database
+    const versionTrust = await buildVersionTrustMetadata({
+      appId,
+      version,
+      runtime: 'deno',
+      manifest,
+      files: filesToUpload,
+      storageKey,
+    });
     log('info', 'Creating app record...');
     await appsService.create({
       id: appId,
@@ -817,6 +829,9 @@ export async function handleUpload(request: Request): Promise<Response> {
       manifest: manifest ? JSON.stringify(manifest) : null,
       env_schema: manifest ? resolveManifestEnvSchema(manifest) : {},
       app_type: appType,
+      version_metadata: [
+        buildVersionMetadataEntry(version, totalUploadBytes, versionTrust),
+      ],
     });
     log('success', 'App record created');
 
@@ -1395,6 +1410,14 @@ export async function handleUploadFiles(
 
   // Create app record
   const appsService = createAppsService();
+  const versionTrust = await buildVersionTrustMetadata({
+    appId,
+    version,
+    runtime: pipeline.runtime,
+    manifest,
+    files: pipeline.filesToUpload,
+    storageKey,
+  });
   const createPayload: Record<string, unknown> = {
     id: appId,
     owner_id: userId,
@@ -1407,6 +1430,19 @@ export async function handleUploadFiles(
     manifest: manifest ? JSON.stringify(manifest) : null,
     env_schema: manifest ? resolveManifestEnvSchema(manifest) : {},
     app_type: appType,
+    runtime: pipeline.runtime,
+    ...(pipeline.runtime === 'gpu'
+      ? {
+          gpu_type: pipeline.gpuConfig?.gpu_type,
+          gpu_status: 'building',
+          gpu_config: pipeline.gpuConfig as unknown as Record<string, unknown> | undefined,
+          gpu_max_duration_ms: pipeline.gpuConfig?.max_duration_ms || null,
+          gpu_concurrency_limit: 5,
+        }
+      : {}),
+    version_metadata: [
+      buildVersionMetadataEntry(version, totalUploadSizeBytes, versionTrust),
+    ],
   };
   if (validatedOptions.gap_id) createPayload.gap_id = validatedOptions.gap_id;
   await appsService.create(createPayload as Parameters<typeof appsService.create>[0]);

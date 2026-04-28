@@ -21,7 +21,7 @@ import {
   fetchAppEntryCode,
   resolveAppRuntimeEnvVars,
   resolveAppSupabaseConfig,
-  resolveManifestPermissions,
+  resolveStrictManifestPermissions,
   SupabaseConfigMigrationRequiredError,
 } from "../services/app-runtime-resources.ts";
 import { buildGpuStatusDiagnostics } from "../services/gpu/status.ts";
@@ -35,6 +35,7 @@ import {
   logExecutionResult,
   settleAndLogGpuExecution,
 } from "../services/execution-settlement.ts";
+import { createExecutionReceiptId } from "../services/call-logger.ts";
 
 function toLogEntries(lines: string[]): LogEntry[] {
   return lines.map((message) => ({
@@ -143,6 +144,7 @@ export async function handleRun(
       }
 
       try {
+        const receiptId = createExecutionReceiptId();
         const gpuStartTime = Date.now();
         const gpuResult = await executeGpuFunction({
           app,
@@ -160,6 +162,7 @@ export async function handleRun(
           ? userId
           : app.owner_id;
         const { settlement } = await settleAndLogGpuExecution({
+          receiptId,
           userId: settlementUserId,
           user,
           app,
@@ -184,6 +187,7 @@ export async function handleRun(
           result: gpuResult.result,
           logs: toLogEntries(gpuResult.logs),
           duration_ms: gpuResult.durationMs,
+          receipt_id: receiptId,
           error: gpuResult.error,
         };
         return json(gpuResponse);
@@ -240,13 +244,12 @@ export async function handleRun(
       );
     }
 
-    // ── Deno Sandbox Path (existing, unchanged) ──
-    const permissions = resolveManifestPermissions(app, [
-      "memory:read",
-      "memory:write",
-      "ai:call",
-      "net:fetch",
-    ]);
+    if (!app.manifest) {
+      return error("App manifest required for runtime execution", 422);
+    }
+
+    // ── Deno Sandbox Path ──
+    const permissions = resolveStrictManifestPermissions(app).permissions;
     const runtimeAI = permissions.includes("ai:call")
       ? await createRuntimeAIContext(user)
       : {
@@ -261,6 +264,8 @@ export async function handleRun(
     const { executeInDynamicSandbox } = await import(
       "../runtime/dynamic-sandbox.ts"
     );
+    const argsArray = Array.isArray(args) ? args : [args];
+    const receiptId = createExecutionReceiptId();
     const result = await executeInDynamicSandbox(
       {
         appId,
@@ -283,10 +288,11 @@ export async function handleRun(
         timeoutMs: permissions.includes("ai:call") ? 120_000 : 30_000,
       },
       functionName,
-      args,
+      argsArray,
     );
 
     logExecutionResult({
+      receiptId,
       userId: user?.id || app.owner_id,
       appId: app.id,
       appName: app.name || app.slug,
@@ -301,9 +307,9 @@ export async function handleRun(
       userTier: user?.tier,
       appVersion: app.current_version || undefined,
       aiCostLight: result.aiCostLight || 0,
-      inputArgs: typeof args === "object" && !Array.isArray(args)
+      inputArgs: typeof args === "object" && args !== null && !Array.isArray(args)
         ? args as Record<string, unknown>
-        : undefined,
+        : { _args: args },
     });
 
     const response: RunResponse = {
@@ -311,6 +317,7 @@ export async function handleRun(
       result: result.result,
       logs: result.logs,
       duration_ms: result.durationMs,
+      receipt_id: receiptId,
       error: result.error,
     };
 

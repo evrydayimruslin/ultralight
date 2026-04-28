@@ -105,6 +105,13 @@ import {
 import { createServerLogger } from "../services/logging.ts";
 import { logLegacyPermissionNameCompatibility } from "../services/permission-name-telemetry.ts";
 import {
+  appendVersionTrustMetadata,
+  buildAppTrustCard,
+  buildVersionMetadataEntry,
+  buildVersionTrustMetadata,
+  generateGpuManifest,
+} from "../services/trust.ts";
+import {
   resolveUlTestD1Fixtures,
   resolveUlTestEnvVars,
   resolveUlTestInvocation,
@@ -426,6 +433,44 @@ interface AppWithResolvedSchemaRow {
   slug: string;
   env_schema: Record<string, EnvSchemaEntry> | null;
   manifest?: unknown;
+  current_version?: string | null;
+  version_metadata?: unknown;
+  runtime?: string | null;
+  visibility?: App["visibility"];
+  download_access?: App["download_access"];
+}
+
+function buildDiscoveryTrustCard(row: {
+  current_version?: string | null;
+  runtime?: string | null;
+  manifest?: unknown;
+  version_metadata?: unknown;
+  visibility?: App["visibility"];
+  download_access?: App["download_access"];
+  env_schema?: Record<string, EnvSchemaEntry> | null;
+}) {
+  return buildAppTrustCard({
+    current_version: row.current_version || "",
+    runtime: row.runtime || "deno",
+    manifest: typeof row.manifest === "string"
+      ? row.manifest
+      : row.manifest ? JSON.stringify(row.manifest) : null,
+    version_metadata: Array.isArray(row.version_metadata)
+      ? row.version_metadata as App["version_metadata"]
+      : [],
+    visibility: row.visibility || "public",
+    download_access: row.download_access || "owner",
+    env_schema: row.env_schema || {},
+  } as Pick<
+    App,
+    | "current_version"
+    | "runtime"
+    | "manifest"
+    | "version_metadata"
+    | "visibility"
+    | "download_access"
+    | "env_schema"
+  >);
 }
 
 interface UserAppKeyRow {
@@ -652,6 +697,7 @@ interface DiscoverAppResult {
   mcp_endpoint: string;
   runtime?: string;
   gpu_type?: string | null;
+  trust_card?: unknown;
 }
 
 interface DiscoverContentResult {
@@ -680,6 +726,7 @@ interface DiscoverAppstoreResult {
   mcp_endpoint?: string;
   runtime?: string;
   gpu_type?: string | null;
+  trust_card?: unknown;
   url?: string;
   tags?: string[];
 }
@@ -707,6 +754,7 @@ interface AppstoreFeaturedResult {
   dislikes: number;
   runtime: string;
   gpu_type?: string | null;
+  trust_card?: unknown;
   required_secrets?: Array<
     { key: string; description: string | null; required: boolean }
   >;
@@ -725,6 +773,7 @@ interface AppstoreScoredResult {
   dislikes: number;
   finalScore: number;
   type: "app" | "page";
+  trust_card?: unknown;
   requiredSecrets?: Array<
     { key: string; description: string | null; required: boolean }
   >;
@@ -1001,6 +1050,7 @@ function serializeLibraryResult(
       mcp_endpoint: result.mcp_endpoint,
       ...(result.runtime ? { runtime: result.runtime } : {}),
       ...(result.gpu_type ? { gpu_type: result.gpu_type } : {}),
+      ...(result.trust_card ? { trust_card: result.trust_card } : {}),
     };
   }
 
@@ -4625,6 +4675,12 @@ async function executeUpload(
           }
         } catch { /* non-fatal */ }
       }
+      const gpuManifest = generateGpuManifest({
+        name: app.name || app.slug,
+        version: newVersion,
+        description: app.description,
+        exports: gpuExports,
+      });
 
       // Upload raw files to R2 (no bundling for GPU)
       const r2Service = createR2Service();
@@ -4681,17 +4737,41 @@ async function executeUpload(
           err instanceof Error ? err.message : "GPU build preflight failed",
         );
       }
-      const filesToUpload = validatedFiles.map((f) => ({
-        name: f.name,
-        content: new TextEncoder().encode(f.content),
-        contentType: f.name.endsWith(".py") ? "text/x-python" : "text/plain",
-      }));
+      const filesToUpload = [
+        ...validatedFiles
+          .filter((f) => (f.name.split("/").pop() || f.name) !== "manifest.json")
+          .map((f) => ({
+            name: f.name,
+            content: new TextEncoder().encode(f.content),
+            contentType: f.name.endsWith(".py") ? "text/x-python" : "text/plain",
+          })),
+        {
+          name: "manifest.json",
+          content: new TextEncoder().encode(JSON.stringify(gpuManifest, null, 2)),
+          contentType: "application/json",
+        },
+      ];
       await r2Service.uploadFiles(storageKey, filesToUpload);
 
       // Update app: add version, optionally update GPU config
       const appsService = createAppsService();
       const versions = [...(app.versions || []), newVersion];
-      const updatePayload: Record<string, unknown> = { versions };
+      const versionTrust = await buildVersionTrustMetadata({
+        appId: app.id,
+        version: newVersion,
+        runtime: "gpu",
+        manifest: gpuManifest,
+        files: filesToUpload,
+        storageKey,
+      });
+      const totalUploadBytes = filesToUpload.reduce((sum, file) => sum + file.content.byteLength, 0);
+      const updatePayload: Record<string, unknown> = {
+        versions,
+        version_metadata: appendVersionTrustMetadata(
+          app.version_metadata,
+          buildVersionMetadataEntry(newVersion, totalUploadBytes, versionTrust),
+        ),
+      };
       if (gpuConfig) {
         updatePayload.gpu_type = gpuConfig.gpu_type;
         updatePayload.gpu_config = gpuConfig;
@@ -4820,7 +4900,22 @@ async function executeUpload(
     const versions = [...(app.versions || []), newVersion];
     const gapId = args.gap_id as string | undefined;
     const autoLive = args._auto_live || (!args.app_id && args.name); // name-based lookup = auto-live
-    const updatePayload: Record<string, unknown> = { versions };
+    const versionTrust = await buildVersionTrustMetadata({
+      appId: app.id,
+      version: newVersion,
+      runtime: pipeline.runtime,
+      manifest: pipeline.manifest,
+      files: pipeline.filesToUpload,
+      storageKey,
+    });
+    const uploadedSizeBytes = pipeline.filesToUpload.reduce((sum, file) => sum + file.content.byteLength, 0);
+    const updatePayload: Record<string, unknown> = {
+      versions,
+      version_metadata: appendVersionTrustMetadata(
+        app.version_metadata,
+        buildVersionMetadataEntry(newVersion, uploadedSizeBytes, versionTrust),
+      ),
+    };
     if (autoLive) {
       updatePayload.current_version = newVersion;
       updatePayload.storage_key = storageKey; // Point code fetcher at new version's R2 path
@@ -5262,6 +5357,12 @@ async function executeUpload(
       const slug = generateSlug();
       const appName = (args.name as string) || slug;
       const appDescription = (args.description as string) || null;
+      const gpuManifest = generateGpuManifest({
+        name: appName,
+        version,
+        description: appDescription,
+        exports: gpuExports,
+      });
 
       // Check limits
       const { checkAppLimit } = await import("../services/tier-enforcement.ts");
@@ -5347,15 +5448,32 @@ async function executeUpload(
       // Upload raw files to R2 (no bundling)
       const r2Service = createR2Service();
       const storageKey = `apps/${appId}/${version}/`;
-      const filesToUpload = validatedFiles.map((f) => ({
-        name: f.name,
-        content: new TextEncoder().encode(f.content),
-        contentType: f.name.endsWith(".py") ? "text/x-python" : "text/plain",
-      }));
+      const filesToUpload = [
+        ...validatedFiles
+          .filter((f) => (f.name.split("/").pop() || f.name) !== "manifest.json")
+          .map((f) => ({
+            name: f.name,
+            content: new TextEncoder().encode(f.content),
+            contentType: f.name.endsWith(".py") ? "text/x-python" : "text/plain",
+          })),
+        {
+          name: "manifest.json",
+          content: new TextEncoder().encode(JSON.stringify(gpuManifest, null, 2)),
+          contentType: "application/json",
+        },
+      ];
       await r2Service.uploadFiles(storageKey, filesToUpload);
 
       // Create app record with GPU fields
       const appsService = createAppsService();
+      const versionTrust = await buildVersionTrustMetadata({
+        appId,
+        version,
+        runtime: "gpu",
+        manifest: gpuManifest,
+        files: filesToUpload,
+        storageKey,
+      });
       await appsService.create({
         id: appId,
         owner_id: userId,
@@ -5364,7 +5482,8 @@ async function executeUpload(
         description: appDescription,
         storage_key: storageKey,
         exports: gpuExports,
-        manifest: null,
+        manifest: JSON.stringify(gpuManifest),
+        env_schema: resolveManifestEnvSchema(gpuManifest),
         app_type: null,
         runtime: "gpu",
         gpu_type: gpuConfig.gpu_type,
@@ -5372,6 +5491,9 @@ async function executeUpload(
         gpu_config: gpuConfig as unknown as Record<string, unknown>,
         gpu_max_duration_ms: gpuConfig.max_duration_ms || null,
         gpu_concurrency_limit: 5,
+        version_metadata: [
+          buildVersionMetadataEntry(version, filesToUpload.reduce((sum, file) => sum + file.content.byteLength, 0), versionTrust),
+        ],
       });
 
       // Fire-and-forget: trigger GPU build
@@ -7034,6 +7156,15 @@ async function executeSetVersion(
   // Read exports from the version's source
   const r2Service = createR2Service();
   let exports = app.exports;
+  let manifestJson: string | null = null;
+  let envSchema: Record<string, EnvSchemaEntry> | null = null;
+  try {
+    manifestJson = await r2Service.fetchTextFile(`${newStorageKey}manifest.json`);
+    envSchema = resolveManifestEnvSchema(JSON.parse(manifestJson));
+  } catch {
+    manifestJson = null;
+    envSchema = null;
+  }
   try {
     const entryNames = [
       "_source_index.ts",
@@ -7063,6 +7194,7 @@ async function executeSetVersion(
     current_version: version,
     storage_key: newStorageKey,
     exports,
+    ...(manifestJson ? { manifest: manifestJson, env_schema: envSchema || {} } : {}),
   });
 
   // Load skills from this version's R2 artifacts
@@ -9792,9 +9924,13 @@ async function executeDiscoverInspect(
       gpuReliability = await getGpuReliability(app.id);
     } catch { /* GPU module not available */ }
   }
+  const trustCard = buildAppTrustCard(app, {
+    reliability: gpuReliability,
+  });
 
   return {
     metadata: metadata,
+    trust_card: trustCard,
     functions: functions,
     exported_functions: exportedFunctions,
     storage: {
@@ -10110,6 +10246,7 @@ async function executeDiscoverLibrary(
       mcp_endpoint: `/mcp/${r.id}`,
       runtime: r.runtime || "deno",
       gpu_type: r.runtime === "gpu" ? r.gpu_type : undefined,
+      trust_card: buildDiscoveryTrustCard(r),
     }));
   }
 
@@ -10193,6 +10330,7 @@ async function executeDiscoverLibrary(
                 mcp_endpoint: r.mcp_endpoint || `/mcp/${r.id}`,
                 ...(r.runtime ? { runtime: r.runtime } : {}),
                 ...(r.gpu_type ? { gpu_type: r.gpu_type } : {}),
+                ...(r.trust_card ? { trust_card: r.trust_card } : {}),
               };
             }
             return {
@@ -10272,7 +10410,7 @@ async function executeDiscoverAppstore(
     const overFetchLimit = limit + blockedAppIds.size + 5; // over-fetch to cover filtered-out blocks
     const topRes = await fetch(
       `${SUPABASE_URL}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&hosting_suspended=eq.false` +
-        `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,manifest,runs_30d,runtime,gpu_type,gpu_status` +
+        `&select=id,name,slug,description,owner_id,likes,dislikes,weighted_likes,weighted_dislikes,env_schema,manifest,current_version,version_metadata,download_access,runs_30d,runtime,gpu_type,gpu_status` +
         `&order=weighted_likes.desc,likes.desc,runs_30d.desc` +
         `&limit=${overFetchLimit}`,
       { headers },
@@ -10340,6 +10478,10 @@ async function executeDiscoverAppstore(
         dislikes: a.dislikes ?? 0,
         runtime: a.runtime || "deno",
         gpu_type: a.runtime === "gpu" ? a.gpu_type : undefined,
+        trust_card: buildDiscoveryTrustCard({
+          ...a,
+          visibility: "public",
+        }),
         required_secrets: requiredSecrets.length > 0
           ? requiredSecrets
           : undefined,
@@ -10450,17 +10592,19 @@ async function executeDiscoverAppstore(
     const appIds = filteredResults.map((r) => r.id);
 
     let envSchemas = new Map<string, Record<string, EnvSchemaEntry>>();
+    let trustRows = new Map<string, AppWithResolvedSchemaRow>();
     if (appIds.length > 0) {
       try {
         const schemaRes = await fetch(
           `${SUPABASE_URL}/rest/v1/apps?id=in.(${
             appIds.join(",")
-          })&select=id,env_schema,manifest`,
+          })&select=id,name,slug,env_schema,manifest,current_version,version_metadata,runtime,visibility,download_access`,
           { headers },
         );
         if (schemaRes.ok) {
           const rows = await readJsonArray<AppWithResolvedSchemaRow>(schemaRes);
           for (const row of rows) {
+            trustRows.set(row.id, row);
             const schema = resolveAppEnvSchema(row);
             if (Object.keys(schema).length > 0) envSchemas.set(row.id, schema);
           }
@@ -10547,6 +10691,14 @@ async function executeDiscoverAppstore(
         type: "app",
         runtime: rr.runtime || "deno",
         gpu_type: rr.runtime === "gpu" ? rr.gpu_type : undefined,
+        trust_card: buildDiscoveryTrustCard({
+          ...(trustRows.get(rr.id) || {}),
+          runtime: rr.runtime || trustRows.get(rr.id)?.runtime || "deno",
+          manifest: trustRows.get(rr.id)?.manifest ??
+            (rr as { manifest?: unknown }).manifest,
+          env_schema: trustRows.get(rr.id)?.env_schema ?? null,
+          visibility: "public",
+        }),
         requiredSecrets: requiredSecrets,
         connected: connectedKeys.length > 0,
         fullyConnected: requiredSecrets.length === 0 ||
@@ -10755,6 +10907,7 @@ async function executeDiscoverAppstore(
       dislikes: r.dislikes,
       ...(r.runtime ? { runtime: r.runtime } : {}),
       ...(r.gpu_type ? { gpu_type: r.gpu_type } : {}),
+      ...(r.trust_card ? { trust_card: r.trust_card } : {}),
       ...(r.requiredSecrets && r.requiredSecrets.length > 0
         ? { required_secrets: r.requiredSecrets }
         : {}),

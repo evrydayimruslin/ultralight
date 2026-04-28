@@ -23,6 +23,9 @@ OPENROUTER_API_KEY=
 # Encryption key for user BYOK provider API keys.
 BYOK_ENCRYPTION_KEY=
 
+# Platform trust signing key for app version manifests
+LIGHT_TRUST_SIGNING_SECRET=
+
 # RunPod GPU
 RUNPOD_API_KEY=
 RUNPOD_TEMPLATE_ID=

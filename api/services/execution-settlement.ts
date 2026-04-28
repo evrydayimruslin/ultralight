@@ -35,6 +35,7 @@ export interface SettleCallerAppChargeResult {
 }
 
 export interface LogExecutionResultParams {
+  receiptId?: string;
   userId: string;
   appId?: string;
   appName?: string;
@@ -63,6 +64,7 @@ export interface LogExecutionResultParams {
 }
 
 export interface SettleAndLogGpuExecutionParams {
+  receiptId?: string;
   userId: string;
   user: UserContext | null;
   app: App;
@@ -195,6 +197,7 @@ export function logExecutionResult(
   const logMcpCallFn = deps?.logMcpCallFn ?? logMcpCall;
 
   logMcpCallFn({
+    receiptId: params.receiptId,
     userId: params.userId,
     appId: params.appId,
     appName: params.appName,
@@ -231,6 +234,7 @@ export async function settleAndLogGpuExecution(
 ): Promise<{
   settlement: Awaited<ReturnType<typeof settleGpuExecution>> | null;
   chargedLight: number;
+  receiptId?: string;
 }> {
   const settleGpuExecutionFn = deps?.settleGpuExecutionFn ?? settleGpuExecution;
   let settlement: Awaited<ReturnType<typeof settleGpuExecution>> | null = null;
@@ -249,6 +253,7 @@ export async function settleAndLogGpuExecution(
 
   logExecutionResult({
     userId: params.userId,
+    receiptId: params.receiptId,
     appId: params.app.id,
     appName: params.app.name || params.app.slug,
     functionName: params.functionName,
@@ -274,7 +279,7 @@ export async function settleAndLogGpuExecution(
     gpuFailurePolicy: settlement?.failurePolicy,
   }, deps);
 
-  return { settlement, chargedLight };
+  return { settlement, chargedLight, receiptId: params.receiptId };
 }
 
 function parseIncrementCallerUsageCount(payload: unknown): number | null {

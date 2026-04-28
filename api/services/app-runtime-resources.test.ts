@@ -10,6 +10,7 @@ import {
   resolveAppRuntimeEnvVars,
   resolveAppSupabaseConfig,
   resolveManifestPermissions,
+  resolveStrictManifestPermissions,
   SupabaseConfigMigrationRequiredError,
 } from "./app-runtime-resources.ts";
 
@@ -395,6 +396,18 @@ Deno.test("app runtime resources: manifest permissions only admit allowlisted ru
   );
 
   assertEquals(permissions, ["memory:read", "net:fetch", "net:connect"]);
+});
+
+Deno.test("app runtime resources: strict manifest permissions only grant declared runtime capabilities", () => {
+  const resolution = resolveStrictManifestPermissions({
+    manifest: JSON.stringify({
+      permissions: ["ai:call", "storage:read", "net:connect", "unknown:scope"],
+    }),
+  });
+
+  assertEquals(resolution.manifestBacked, true);
+  assertEquals(resolution.permissions, ["ai:call", "storage:read", "net:connect"]);
+  assertEquals(resolution.ignoredPermissions, ["unknown:scope"]);
 });
 
 Deno.test("app runtime resources: D1 setup stays disabled when provisioning cannot resolve a database id", async () => {
