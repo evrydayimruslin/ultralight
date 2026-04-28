@@ -135,9 +135,9 @@ export const SENSITIVE_ROUTE_RATE_LIMITS: Record<SensitiveRoute, SensitiveRouteP
     endpoint: 'user:marketplace_buy',
     limit: 10,
     windowMinutes: 10,
-    resource: 'POST /api/marketplace/buy',
-    limitMessage: 'Too many instant buy attempts. Please wait and try again.',
-    unavailableMessage: 'Instant buy is temporarily unavailable while protection controls recover. Please try again shortly.',
+    resource: 'POST /api/marketplace/acquire',
+    limitMessage: 'Too many instant acquisition attempts. Please wait and try again.',
+    unavailableMessage: 'Instant acquisition is temporarily unavailable while protection controls recover. Please try again shortly.',
   },
   'user:marketplace_metrics_visibility': {
     endpoint: 'user:marketplace_metrics_visibility',

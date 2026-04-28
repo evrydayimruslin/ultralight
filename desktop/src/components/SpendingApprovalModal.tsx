@@ -1,4 +1,4 @@
-// Spending approval modal — asks user to approve a marketplace skill purchase.
+// Spending approval modal — asks user to approve a marketplace skill charge.
 // Follows the PermissionModal pattern: centered overlay, backdrop blur, action buttons.
 
 import type { SpendingRequest } from '../hooks/usePermissions';
@@ -40,7 +40,7 @@ export default function SpendingApprovalModal({
             {/* Light icon */}
             <span className="text-amber-500 text-lg font-bold">✦</span>
             <h2 className="text-body font-semibold text-ul-text">
-              Purchase Approval
+              Spending Approval
             </h2>
           </div>
 

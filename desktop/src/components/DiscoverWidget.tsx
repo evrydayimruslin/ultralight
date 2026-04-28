@@ -237,13 +237,13 @@ export default function DiscoverWidget({ mode, onInjectScope }: DiscoverWidgetPr
     let tone = 'bg-gray-100 text-gray-600';
 
     if (marketplace.status === 'sold') {
-      label = 'Sold';
+      label = 'Acquired';
     } else if (marketplace.status === 'ineligible') {
       label = 'Not tradable';
       tone = 'bg-red-50 text-red-700';
     } else if (hasAsk) {
       label = marketplace.instant_buy
-        ? `Buy now ${formatLightAmount(marketplace.ask_price_light!)}`
+        ? `Acquire ${formatLightAmount(marketplace.ask_price_light!)}`
         : `Listed ${formatLightAmount(marketplace.ask_price_light!)}`;
       tone = marketplace.instant_buy
         ? 'bg-emerald-100 text-emerald-700'

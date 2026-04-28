@@ -3485,7 +3485,7 @@ export async function handleUser(request: Request): Promise<Response> {
       const appId = path.replace("/api/marketplace/listing/", "");
       if (!appId) return error("Missing app ID", 400);
       const { getListing } = await import("../services/marketplace.ts");
-      const listing = await getListing(appId);
+      const listing = await getListing(appId, userId);
       return json(listing);
     } catch (err) {
       const status = (err as Error & { status?: number }).status || 500;
@@ -3625,8 +3625,9 @@ export async function handleUser(request: Request): Promise<Response> {
     );
   }
 
-  // POST /api/marketplace/buy — instant buy
-  if (path === "/api/marketplace/buy" && method === "POST") {
+  // POST /api/marketplace/acquire — instant acquisition
+  // /api/marketplace/buy remains as a compatibility alias for existing clients.
+  if ((path === "/api/marketplace/acquire" || path === "/api/marketplace/buy") && method === "POST") {
     return withSensitiveRouteRateLimit(
       userId,
       "user:marketplace_buy",
@@ -3639,7 +3640,7 @@ export async function handleUser(request: Request): Promise<Response> {
         } catch (err) {
           const status = (err as Error & { status?: number }).status || 500;
           return error(
-            err instanceof Error ? err.message : "Failed to buy app",
+            err instanceof Error ? err.message : "Failed to acquire app",
             status,
           );
         }
@@ -3804,6 +3805,24 @@ export async function handleUser(request: Request): Promise<Response> {
       return error(
         err instanceof Error ? err.message : "Failed to get metrics",
         500,
+      );
+    }
+  }
+
+  // GET /api/marketplace/receipt/:receiptId — lookup a sale or bid receipt for an involved user
+  if (path.startsWith("/api/marketplace/receipt/") && method === "GET") {
+    try {
+      const receiptId = path.replace("/api/marketplace/receipt/", "");
+      if (!receiptId) return error("Missing receipt ID", 400);
+
+      const { getMarketplaceReceipt } = await import("../services/marketplace.ts");
+      const receipt = await getMarketplaceReceipt(userId, receiptId);
+      return json(receipt);
+    } catch (err) {
+      const status = (err as Error & { status?: number }).status || 500;
+      return error(
+        err instanceof Error ? err.message : "Failed to get receipt",
+        status,
       );
     }
   }

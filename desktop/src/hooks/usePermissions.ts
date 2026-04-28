@@ -24,7 +24,7 @@ export interface PermissionRequest {
 }
 
 export interface SpendingRequest {
-  /** Human-readable description of the purchase */
+  /** Human-readable description of the charge */
   description: string;
   /** Cost in Light (✦) */
   priceLight: number;

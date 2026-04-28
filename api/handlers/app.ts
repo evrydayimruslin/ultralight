@@ -1770,11 +1770,11 @@ function getPublicAppPageHTML(
     marketplace.status !== 'unlisted' || marketplace.active_bid_count > 0
   );
   const marketStatusLabel = marketplace?.status === 'sold'
-    ? 'Sold'
+    ? 'Acquired'
     : marketplace?.status === 'ineligible'
     ? 'Not tradable'
     : hasMarketAsk
-    ? marketplace?.instant_buy ? 'Buy now' : 'Listed'
+    ? marketplace?.instant_buy ? 'Acquire now' : 'Listed'
     : hasMarketBid
     ? 'Active bids'
     : marketplace?.status === 'open_to_offers'
@@ -1793,7 +1793,7 @@ function getPublicAppPageHTML(
     : 'Set by bid';
   const marketFeeDisplay = typeof marketplace?.platform_fee_at_ask_light === 'number'
     ? `Platform fee ${formatLight(marketplace.platform_fee_at_ask_light)}`
-    : 'No platform fee until sale';
+    : 'No platform fee until acquisition';
   const marketplaceHtml = showMarketplace ? `
     <section class="section market-section">
       <div class="market-header">
@@ -1810,7 +1810,7 @@ function getPublicAppPageHTML(
       </div>
       <div class="market-foot">
         <span>${escapeHtml(marketFeeDisplay)}</span>
-        <a href="${escapeHtml(deepLink)}">${marketplace?.instant_buy ? 'Open to buy' : 'Open to bid'} &rarr;</a>
+        <a href="${escapeHtml(deepLink)}">${marketplace?.instant_buy ? 'Acquire' : 'Open to bid'} &rarr;</a>
       </div>
       ${marketplace?.listing_note ? `<p class="market-note">${escapeHtml(marketplace.listing_note)}</p>` : ''}
     </section>

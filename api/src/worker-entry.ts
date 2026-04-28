@@ -6,6 +6,7 @@ import { createApp } from '../handlers/app.ts';
 import { processHostingBilling } from '../services/hosting-billing.ts';
 import { runAutoHealing } from '../services/auto-healing.ts';
 import { processHeldPayouts } from '../services/payout-processor.ts';
+import { expireMarketplaceBids } from '../services/marketplace-maintenance.ts';
 import { processNullEmbeddings } from '../services/embedding-processor.ts';
 import { processGpuBuilds } from '../services/gpu/benchmark.ts';
 import { runD1BillingCycle } from '../services/d1-billing.ts';
@@ -217,11 +218,12 @@ async function runHourlyJobs(): Promise<void> {
   const results = await Promise.allSettled([
     processHostingBilling(),
     processHeldPayouts(),
+    expireMarketplaceBids(),
   ]);
 
   for (const [i, result] of results.entries()) {
     if (result.status === 'rejected') {
-      const names = ['hostingBilling', 'payoutProcessor'];
+      const names = ['hostingBilling', 'payoutProcessor', 'marketplaceBidExpiry'];
       cronLogger.error('Hourly cron job failed', {
         job: names[i],
         error: result.reason,

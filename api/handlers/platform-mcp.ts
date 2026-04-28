@@ -1962,10 +1962,11 @@ const PLATFORM_TOOLS: MCPTool[] = [
   {
     name: "ul.marketplace",
     description:
-      "Buy and sell Ultralight apps. Place bids, set ask prices, accept offers, view history. " +
+      "Acquire and sell Ultralight apps. Place bids, set ask prices, accept offers, view history. " +
       "All bids are escrowed from your hosting balance. Platform takes 10% on sale. " +
       'action="bid": place a bid. action="ask": set/update ask price. action="accept": accept a bid. ' +
-      'action="reject": reject a bid. action="cancel": cancel your own bid. action="buy_now": instant purchase. ' +
+      'action="reject": reject a bid. action="cancel": cancel your own bid. action="acquire": instant acquisition. ' +
+      'Legacy action="buy_now" remains supported. ' +
       'action="offers": view incoming/outgoing offers. action="history": sale history. action="listing": view listing details.',
     annotations: {
       readOnlyHint: false,
@@ -1984,6 +1985,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
             "accept",
             "reject",
             "cancel",
+            "acquire",
             "buy_now",
             "offers",
             "history",
@@ -1994,7 +1996,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
         app_id: {
           type: "string",
           description:
-            "App ID or slug. Required for: bid, ask, buy_now, listing. Optional for: offers, history.",
+            "App ID or slug. Required for: bid, ask, acquire, buy_now, listing. Optional for: offers, history.",
         },
         bid_id: {
           type: "string",
@@ -2015,7 +2017,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
         },
         instant_buy: {
           type: "boolean",
-          description: "Allow instant purchase at ask price. For: ask.",
+          description: "Allow instant acquisition at ask price. For: ask.",
         },
         message: {
           type: "string",
@@ -3829,6 +3831,7 @@ async function handleToolsCall(
             };
             break;
           }
+          case "acquire":
           case "buy_now": {
             const appIdOrSlug = toolArgs.app_id as string;
             if (!appIdOrSlug) {
@@ -3868,13 +3871,13 @@ async function handleToolsCall(
               );
             }
             const resolvedAppId = await resolveAppIdForMarketplace(appIdOrSlug);
-            result = await getListing(resolvedAppId);
+            result = await getListing(resolvedAppId, userId);
             break;
           }
           default:
             throw new ToolError(
               INVALID_PARAMS,
-              `Invalid action: ${mktAction}. Use bid|ask|accept|reject|cancel|buy_now|offers|history|listing`,
+              `Invalid action: ${mktAction}. Use bid|ask|accept|reject|cancel|acquire|buy_now|offers|history|listing`,
             );
         }
         break;

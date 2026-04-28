@@ -41,6 +41,25 @@ export interface MarketplaceListingSummary {
   seller_payout_at_ask_light: number | null;
 }
 
+export interface MarketplaceOwnerAdminCheck {
+  id: 'eligibility' | 'published' | 'terms' | 'instant_buy' | 'metrics' | 'payouts' | 'bids';
+  label: string;
+  status: 'ready' | 'action' | 'blocked' | 'optional';
+  detail: string;
+  action?: string;
+}
+
+export interface MarketplaceOwnerAdminSummary {
+  payout_connected: boolean;
+  payout_onboarded: boolean;
+  payouts_enabled: boolean;
+  balance_light: number;
+  total_earned_light: number;
+  checklist: MarketplaceOwnerAdminCheck[];
+  recommended_action_id: MarketplaceOwnerAdminCheck['id'] | 'share';
+  recommended_action: string;
+}
+
 export interface MarketplaceListingSummaryListing {
   ask_price_light: number | null;
   floor_price_light?: number | null;
@@ -94,6 +113,7 @@ export interface ListingDetails {
     had_external_db?: boolean | null;
     trust_card?: unknown;
   } | null;
+  owner_admin: MarketplaceOwnerAdminSummary | null;
   marketplace_summary: MarketplaceListingSummary;
 }
 
@@ -136,6 +156,44 @@ export interface SaleHistory {
   platform_fee_light: number;
   seller_payout_light: number;
   created_at: string;
+}
+
+export interface MarketplaceReceipt {
+  id: string;
+  type: 'sale' | 'bid';
+  role: 'seller' | 'buyer' | 'bidder' | 'owner';
+  app_id: string;
+  app_name?: string;
+  amount_light: number;
+  platform_fee_light?: number | null;
+  seller_payout_light?: number | null;
+  status: string;
+  escrow_status?: string | null;
+  created_at: string;
+  resolved_at?: string | null;
+}
+
+export interface PublicAcquisitionParty {
+  user_id: string;
+  display_name: string;
+  profile_slug: string | null;
+  profile_url: string;
+  avatar_url?: string | null;
+}
+
+export interface PublicAcquisitionReceipt {
+  receipt_id: string;
+  sale_id: string;
+  type: 'acquisition';
+  app_id: string;
+  app_name: string;
+  app_slug: string;
+  app_url: string;
+  sale_price_light: number | null;
+  created_at: string | null;
+  receipt_url: string;
+  buyer: PublicAcquisitionParty;
+  seller: PublicAcquisitionParty;
 }
 
 interface AppEligibilityRow {
@@ -187,6 +245,61 @@ interface OwnedAppRow {
 interface EmailRow {
   id: string;
   email: string;
+}
+
+interface SaleReceiptRow {
+  id: string;
+  app_id: string;
+  seller_id: string;
+  buyer_id: string;
+  sale_price_light: number;
+  platform_fee_light: number | null;
+  seller_payout_light: number | null;
+  created_at: string;
+}
+
+interface BidReceiptRow {
+  id: string;
+  app_id: string;
+  bidder_id: string;
+  amount_light: number;
+  status: string;
+  escrow_status: string | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+interface ReceiptAppRow {
+  id: string;
+  name: string;
+  owner_id: string;
+}
+
+export interface PublicAcquisitionProfileRow {
+  id: string;
+  display_name: string | null;
+  profile_slug: string | null;
+  avatar_url?: string | null;
+}
+
+export interface PublicAcquisitionFeedRow {
+  id: string;
+  app_id: string | null;
+  seller_id: string;
+  buyer_id: string;
+  sale_price_light: number | null;
+  created_at: string | null;
+  apps?: { name?: string | null; slug?: string | null } | null;
+  buyer?: PublicAcquisitionProfileRow | PublicAcquisitionProfileRow[] | null;
+  seller?: PublicAcquisitionProfileRow | PublicAcquisitionProfileRow[] | null;
+}
+
+export interface MarketplaceOwnerAdminUserRow {
+  balance_light: number | null;
+  total_earned_light: number | null;
+  stripe_connect_account_id: string | null;
+  stripe_connect_onboarded: boolean | null;
+  stripe_connect_payouts_enabled: boolean | null;
 }
 
 interface ListingAppRow {
@@ -252,6 +365,197 @@ export function buildMarketplaceListingSummary(
     highest_bid_light: highestBid,
     platform_fee_at_ask_light: platformFee,
     seller_payout_at_ask_light: sellerPayout,
+  };
+}
+
+function normalizeAcquisitionProfile(
+  profile: PublicAcquisitionProfileRow | PublicAcquisitionProfileRow[] | null | undefined,
+): PublicAcquisitionProfileRow | null {
+  if (Array.isArray(profile)) return profile[0] || null;
+  return profile || null;
+}
+
+function buildPublicAcquisitionParty(
+  profile: PublicAcquisitionProfileRow | PublicAcquisitionProfileRow[] | null | undefined,
+  fallbackId: string,
+): PublicAcquisitionParty {
+  const normalized = normalizeAcquisitionProfile(profile);
+  const userId = normalized?.id || fallbackId;
+  const profileSlug = normalized?.profile_slug || null;
+  const displayName = normalized?.display_name?.trim() || profileSlug || 'Private profile';
+  const profilePath = profileSlug || userId;
+
+  return {
+    user_id: userId,
+    display_name: displayName,
+    profile_slug: profileSlug,
+    profile_url: profilePath ? `/u/${encodeURIComponent(profilePath)}` : '',
+    avatar_url: normalized?.avatar_url ?? null,
+  };
+}
+
+export function buildPublicAcquisitionReceipt(row: PublicAcquisitionFeedRow): PublicAcquisitionReceipt {
+  const appId = row.app_id || '';
+  const appName = row.apps?.name || 'Unknown app';
+  const appSlug = row.apps?.slug || '';
+
+  return {
+    receipt_id: row.id,
+    sale_id: row.id,
+    type: 'acquisition',
+    app_id: appId,
+    app_name: appName,
+    app_slug: appSlug,
+    app_url: appId ? `/app/${encodeURIComponent(appId)}` : '',
+    sale_price_light: typeof row.sale_price_light === 'number' ? row.sale_price_light : null,
+    created_at: row.created_at || null,
+    receipt_url: `/api/discover/acquisitions/${encodeURIComponent(row.id)}`,
+    buyer: buildPublicAcquisitionParty(row.buyer, row.buyer_id),
+    seller: buildPublicAcquisitionParty(row.seller, row.seller_id),
+  };
+}
+
+export function buildMarketplaceOwnerAdminSummary(
+  summary: MarketplaceListingSummary,
+  listing: MarketplaceListingSummaryListing | null | undefined,
+  app: { visibility?: string | null; had_external_db?: boolean | null } | null | undefined,
+  owner: MarketplaceOwnerAdminUserRow | null | undefined,
+): MarketplaceOwnerAdminSummary {
+  const isPublished = app?.visibility === 'public' || app?.visibility === 'published';
+  const hasAsk = typeof listing?.ask_price_light === 'number';
+  const hasFloor = typeof listing?.floor_price_light === 'number';
+  const hasTerms = !!listing && (hasAsk || hasFloor || listing.instant_buy === false);
+  const payoutConnected = !!owner?.stripe_connect_account_id;
+  const payoutOnboarded = owner?.stripe_connect_onboarded === true;
+  const payoutsEnabled = owner?.stripe_connect_payouts_enabled === true;
+
+  const checklist: MarketplaceOwnerAdminCheck[] = [
+    summary.eligible
+      ? {
+        id: 'eligibility',
+        label: 'Trade eligibility',
+        status: 'ready',
+        detail: 'This app can receive bids and be acquired by another owner.',
+      }
+      : {
+        id: 'eligibility',
+        label: 'Trade eligibility',
+        status: 'blocked',
+        detail: summary.blockers.includes('external_db')
+          ? 'External database usage permanently blocks marketplace trading.'
+          : 'This app is not eligible for marketplace trading.',
+        action: 'Create a new self-contained app for resale.',
+      },
+    isPublished
+      ? {
+        id: 'published',
+        label: 'Public distribution',
+        status: 'ready',
+        detail: 'The app is visible on public app store and marketplace surfaces.',
+      }
+      : {
+        id: 'published',
+        label: 'Public distribution',
+        status: 'action',
+        detail: 'Publish the app before acquirers can discover it in the market.',
+        action: 'Set visibility to Published.',
+      },
+    hasTerms
+      ? {
+        id: 'terms',
+        label: 'Acquisition terms',
+        status: 'ready',
+        detail: hasAsk
+          ? `Ask price set at ${formatLight(listing!.ask_price_light!)}.`
+          : hasFloor
+          ? `Open to offers with a ${formatLight(listing!.floor_price_light!)} floor.`
+          : 'Open to offers without a fixed ask.',
+      }
+      : {
+        id: 'terms',
+        label: 'Acquisition terms',
+        status: 'action',
+        detail: 'Set an ask price, bid floor, or open-offers listing.',
+        action: 'Save listing terms.',
+      },
+    summary.instant_buy && hasAsk
+      ? {
+        id: 'instant_buy',
+        label: 'Instant acquisition',
+        status: 'ready',
+        detail: 'Acquirers can acquire this app immediately at the ask price.',
+      }
+      : {
+        id: 'instant_buy',
+        label: 'Instant acquisition',
+        status: 'optional',
+        detail: hasAsk
+          ? 'Instant acquisition is off, so acquirers must bid or contact you.'
+          : 'Set an ask price before enabling instant acquisition.',
+        action: hasAsk ? 'Enable instant acquisition to reduce friction.' : 'Set an ask first.',
+      },
+    summary.show_metrics
+      ? {
+        id: 'metrics',
+        label: 'Acquirer metrics',
+        status: 'ready',
+        detail: 'Usage and revenue metrics are visible to potential acquirers.',
+      }
+      : {
+        id: 'metrics',
+        label: 'Acquirer metrics',
+        status: 'optional',
+        detail: 'Metrics are hidden. Acquirers may have less confidence in the app.',
+        action: 'Show metrics when traction helps the acquisition.',
+      },
+    payoutsEnabled
+      ? {
+        id: 'payouts',
+        label: 'Payout setup',
+        status: 'ready',
+        detail: 'Stripe Connect payouts are enabled for withdrawals.',
+      }
+      : {
+        id: 'payouts',
+        label: 'Payout setup',
+        status: payoutConnected || payoutOnboarded ? 'action' : 'optional',
+        detail: payoutConnected
+          ? 'Stripe onboarding is not fully payout-enabled yet.'
+          : 'Acquisition proceeds credit your Light balance immediately; connect a bank before withdrawing.',
+        action: 'Complete payout setup in Wallet.',
+      },
+    summary.active_bid_count > 0
+      ? {
+        id: 'bids',
+        label: 'Bid review',
+        status: 'action',
+        detail: `${summary.active_bid_count} active ${summary.active_bid_count === 1 ? 'bid' : 'bids'} awaiting review.`,
+        action: 'Review incoming bids.',
+      }
+      : {
+        id: 'bids',
+        label: 'Bid review',
+        status: 'optional',
+        detail: 'No active bids yet.',
+      },
+  ];
+
+  const priority = checklist.find((check) => check.status === 'blocked')
+    || checklist.find((check) => check.id === 'published' && check.status === 'action')
+    || checklist.find((check) => check.id === 'terms' && check.status === 'action')
+    || checklist.find((check) => check.id === 'bids' && check.status === 'action')
+    || checklist.find((check) => check.id === 'payouts' && check.status === 'action')
+    || checklist.find((check) => check.id === 'metrics' && check.status === 'optional');
+
+  return {
+    payout_connected: payoutConnected,
+    payout_onboarded: payoutOnboarded,
+    payouts_enabled: payoutsEnabled,
+    balance_light: owner?.balance_light || 0,
+    total_earned_light: owner?.total_earned_light || 0,
+    checklist,
+    recommended_action_id: priority?.id || 'share',
+    recommended_action: priority?.action || 'Share the listing and monitor incoming bids.',
   };
 }
 
@@ -415,6 +719,7 @@ export async function setAskPrice(
     floor_price_light: floorLight ?? null,
     instant_buy: instantBuy ?? false,
     listing_note: note ?? null,
+    status: 'active',
     updated_at: new Date().toISOString(),
   };
 
@@ -541,7 +846,7 @@ export async function cancelBid(bidderId: string, bidId: string): Promise<void> 
 }
 
 /**
- * Buy now — atomically purchases a listing with instant_buy enabled.
+ * Acquire now — atomically transfers a listing with instant_buy enabled.
  */
 export async function buyNow(buyerId: string, appId: string): Promise<SaleResult> {
   const res = await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/rpc/buy_now`, {
@@ -557,19 +862,19 @@ export async function buyNow(buyerId: string, appId: string): Promise<SaleResult
     const errText = await res.text();
     console.error('[MARKETPLACE] buy_now RPC failed:', errText);
     if (errText.includes('No active listing')) throw createError('No listing found for this app', 404);
-    if (errText.includes('does not allow instant buy')) throw createError('This listing does not allow instant buy', 400);
+    if (errText.includes('does not allow instant buy')) throw createError('This listing does not allow instant acquisition', 400);
     if (errText.includes('No ask price')) throw createError('No ask price set', 400);
-    if (errText.includes('Cannot buy your own')) throw createError('Cannot buy your own app', 400);
+    if (errText.includes('Cannot buy your own')) throw createError('Cannot acquire your own app', 400);
     if (errText.includes('external database')) {
       throw createError('This app is permanently ineligible for trading because it has used an external database.', 400);
     }
     if (errText.includes('Insufficient balance')) throw createError('Insufficient balance', 402);
-    throw createError('Purchase failed', 500);
+    throw createError('Acquisition failed', 500);
   }
 
   const result = await res.json() as SaleRpcResult;
 
-  console.log(`[MARKETPLACE] Instant buy completed: ${result.sale_id} — ${result.seller_id} → ${result.buyer_id} for ${formatLight(result.sale_price_light)}`);
+  console.log(`[MARKETPLACE] Instant acquisition completed: ${result.sale_id} — ${result.seller_id} → ${result.buyer_id} for ${formatLight(result.sale_price_light)}`);
 
   import('./originality.ts').then(({ recordSaleFingerprint }) => {
     recordSaleFingerprint(result.sale_id, result.app_id, result.seller_id, result.buyer_id)
@@ -607,11 +912,21 @@ export async function getOffers(userId: string, appId?: string): Promise<OffersS
   let incoming: OffersSummary['incoming'] = [];
   if (incomingRes.ok) {
     const inData = await incomingRes.json() as JoinedBidRow[];
+    const bidderIds = [...new Set(inData.map((b) => b.bidder_id))];
+    let emailMap: Record<string, string> = {};
+    if (bidderIds.length > 0) {
+      const emailRes = await fetch(
+        `${getEnv('SUPABASE_URL')}/rest/v1/users?id=in.(${bidderIds.join(',')})&select=id,email`,
+        { headers: dbHeaders() }
+      );
+      const emails = emailRes.ok ? await emailRes.json() as EmailRow[] : [];
+      emailMap = Object.fromEntries(emails.map((u) => [u.id, u.email]));
+    }
     incoming = inData.map((b) => ({
       bid_id: b.id,
       app_id: b.app_id,
       app_name: extractJoinedName(b.apps) || 'Unknown',
-      bidder_email: '',
+      bidder_email: emailMap[b.bidder_id] || 'Unknown',
       amount_light: b.amount_light,
       message: b.message,
       created_at: b.created_at,
@@ -693,7 +1008,7 @@ export async function getHistory(appId?: string, userId?: string): Promise<SaleH
 /**
  * Get listing details + bids for an app.
  */
-export async function getListing(appId: string): Promise<ListingDetails> {
+export async function getListing(appId: string, viewerId?: string): Promise<ListingDetails> {
   const [listingRes, bidsRes, appRes] = await Promise.all([
     fetch(
       `${getEnv('SUPABASE_URL')}/rest/v1/app_listings?app_id=eq.${appId}&select=*`,
@@ -738,6 +1053,22 @@ export async function getListing(appId: string): Promise<ListingDetails> {
 
   const listing = listings[0] || null;
   const app = apps[0] || null;
+  const marketplaceSummary = buildMarketplaceListingSummary(listing, enrichedBids, app);
+
+  let ownerAdmin: MarketplaceOwnerAdminSummary | null = null;
+  if (viewerId && app?.owner_id === viewerId) {
+    const ownerRes = await fetch(
+      `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${viewerId}&select=balance_light,total_earned_light,stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled`,
+      { headers: dbHeaders() },
+    );
+    const ownerRows = ownerRes.ok ? await ownerRes.json() as MarketplaceOwnerAdminUserRow[] : [];
+    ownerAdmin = buildMarketplaceOwnerAdminSummary(
+      marketplaceSummary,
+      listing,
+      app,
+      ownerRows[0] || null,
+    );
+  }
 
   return {
     listing,
@@ -748,7 +1079,8 @@ export async function getListing(appId: string): Promise<ListingDetails> {
         trust_card: buildListingTrustCard(app),
       }
       : null,
-    marketplace_summary: buildMarketplaceListingSummary(listing, enrichedBids, app),
+    owner_admin: ownerAdmin,
+    marketplace_summary: marketplaceSummary,
   };
 }
 
@@ -801,6 +1133,73 @@ export async function getAppMetrics(appId: string): Promise<AppMetrics> {
     revenue_30d_light: Math.round(revenue30dLight * 100) / 100,
     success_rate_30d: successRate30d,
   };
+}
+
+export async function getMarketplaceReceipt(
+  userId: string,
+  receiptId: string,
+): Promise<MarketplaceReceipt> {
+  const saleRes = await fetch(
+    `${getEnv('SUPABASE_URL')}/rest/v1/app_sales?id=eq.${encodeURIComponent(receiptId)}&select=id,app_id,seller_id,buyer_id,sale_price_light,platform_fee_light,seller_payout_light,created_at&limit=1`,
+    { headers: dbHeaders() },
+  );
+  const saleRows = saleRes.ok ? await saleRes.json() as SaleReceiptRow[] : [];
+  const sale = saleRows[0];
+  if (sale) {
+    if (sale.seller_id !== userId && sale.buyer_id !== userId) {
+      throw createError('Receipt not found', 404);
+    }
+    const app = await fetchReceiptApp(sale.app_id);
+    return {
+      id: sale.id,
+      type: 'sale',
+      role: sale.seller_id === userId ? 'seller' : 'buyer',
+      app_id: sale.app_id,
+      app_name: app?.name,
+      amount_light: sale.sale_price_light,
+      platform_fee_light: sale.platform_fee_light,
+      seller_payout_light: sale.seller_payout_light,
+      status: 'completed',
+      created_at: sale.created_at,
+    };
+  }
+
+  const bidRes = await fetch(
+    `${getEnv('SUPABASE_URL')}/rest/v1/app_bids?id=eq.${encodeURIComponent(receiptId)}&select=id,app_id,bidder_id,amount_light,status,escrow_status,created_at,resolved_at&limit=1`,
+    { headers: dbHeaders() },
+  );
+  const bidRows = bidRes.ok ? await bidRes.json() as BidReceiptRow[] : [];
+  const bid = bidRows[0];
+  if (!bid) {
+    throw createError('Receipt not found', 404);
+  }
+
+  const app = await fetchReceiptApp(bid.app_id);
+  if (bid.bidder_id !== userId && app?.owner_id !== userId) {
+    throw createError('Receipt not found', 404);
+  }
+
+  return {
+    id: bid.id,
+    type: 'bid',
+    role: bid.bidder_id === userId ? 'bidder' : 'owner',
+    app_id: bid.app_id,
+    app_name: app?.name,
+    amount_light: bid.amount_light,
+    status: bid.status,
+    escrow_status: bid.escrow_status,
+    created_at: bid.created_at,
+    resolved_at: bid.resolved_at,
+  };
+}
+
+async function fetchReceiptApp(appId: string): Promise<ReceiptAppRow | null> {
+  const appRes = await fetch(
+    `${getEnv('SUPABASE_URL')}/rest/v1/apps?id=eq.${encodeURIComponent(appId)}&select=id,name,owner_id&limit=1`,
+    { headers: dbHeaders() },
+  );
+  const appRows = appRes.ok ? await appRes.json() as ReceiptAppRow[] : [];
+  return appRows[0] || null;
 }
 
 /**

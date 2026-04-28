@@ -88,7 +88,7 @@ Deno.test("marketplace request validation: ask requests keep instant buy and flo
   );
 });
 
-Deno.test("marketplace request validation: bid actions, buy, and metrics visibility require typed ids", async () => {
+Deno.test("marketplace request validation: bid actions, acquire, and metrics visibility require typed ids", async () => {
   const actionPayload = await validateMarketplaceBidActionRequest(
     new Request("https://example.com/api/marketplace/accept", {
       method: "POST",
@@ -98,14 +98,14 @@ Deno.test("marketplace request validation: bid actions, buy, and metrics visibil
   );
   assertEquals(actionPayload, { bidId: "33333333-3333-4333-8333-333333333333" });
 
-  const buyPayload = await validateMarketplaceBuyRequest(
-    new Request("https://example.com/api/marketplace/buy", {
+  const acquirePayload = await validateMarketplaceBuyRequest(
+    new Request("https://example.com/api/marketplace/acquire", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ app_id: "44444444-4444-4444-8444-444444444444" }),
     }),
   );
-  assertEquals(buyPayload, { appId: "44444444-4444-4444-8444-444444444444" });
+  assertEquals(acquirePayload, { appId: "44444444-4444-4444-8444-444444444444" });
 
   const metricsPayload = await validateMarketplaceMetricsVisibilityRequest(
     new Request("https://example.com/api/marketplace/metrics-visibility", {

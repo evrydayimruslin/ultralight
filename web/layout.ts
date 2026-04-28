@@ -2843,7 +2843,7 @@ export function getLayoutHTML(options: {
             <span class="hero-market-meta">agent-ready</span>
           </div>
           <div class="hero-market-row">
-            <span class="hero-market-title">Buy an app's revenue stream</span>
+            <span class="hero-market-title">Acquire an app's revenue stream</span>
             <span class="hero-market-meta">resale market</span>
           </div>
         </div>
@@ -2977,7 +2977,7 @@ export function getLayoutHTML(options: {
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
             </div>
             <div class="cap-card-title">Acquisition market</div>
-            <div class="cap-card-desc">Apps can be listed with asks, instant buy, open offers, escrowed bids, and public market signals.</div>
+            <div class="cap-card-desc">Apps can be listed with asks, instant acquisition, open offers, escrowed bids, and public market signals.</div>
           </div>
         </div>
       </section>
@@ -4736,11 +4736,18 @@ export function getLayoutHTML(options: {
         });
     }
 
+    function renderMarketProfileLink(profile, fallbackLabel) {
+      var label = profile && (profile.display_name || profile.profile_slug) || fallbackLabel || 'Private profile';
+      var href = profile && profile.profile_url ? profile.profile_url : '';
+      if (!href) return escapeHtml(label);
+      return '<a href="' + escapeHtml(href) + '" onclick="event.stopPropagation()" style="color:var(--text-primary);text-decoration:none;font-weight:500;">' + escapeHtml(label) + '</a>';
+    }
+
     // Load newly acquired apps
     function loadNewlyAcquired() {
       var el = document.getElementById('newlyAcquiredList');
       if (el) {
-        el.innerHTML = renderShellState('loading', 'Loading acquisitions', 'Checking the latest app sales and transfers.', { compact: true });
+        el.innerHTML = renderShellState('loading', 'Loading acquisitions', 'Checking the latest receipt-backed app acquisitions.', { compact: true });
       }
       fetch('/api/discover/newly-acquired?limit=5')
         .then(function(r) { return r.json(); })
@@ -4755,6 +4762,9 @@ export function getLayoutHTML(options: {
             var border = i > 0 ? 'border-top:1px solid var(--border);' : '';
             var price = formatLight(sale.sale_price_light || 0);
             var timeAgo = formatTimeAgo(sale.created_at);
+            var receiptId = sale.receipt_id || sale.sale_id || '';
+            var buyer = renderMarketProfileLink(sale.buyer, 'Private acquirer');
+            var seller = renderMarketProfileLink(sale.seller, 'Private seller');
             var color = sale.sale_price_light >= 375000 ? '#ef4444' : sale.sale_price_light >= 125000 ? '#3b82f6' : '#22c55e';
             return '<div class="market-list-link" style="cursor:pointer;' + border + '" onclick="navigateToApp(\\\'' + (sale.app_id || '') + '\\\')">'
               + '<div style="display:flex;align-items:center;gap:var(--space-2);">'
@@ -4762,7 +4772,7 @@ export function getLayoutHTML(options: {
               + '<span style="font-size:13px;font-weight:500;">' + escapeHtml(sale.app_name) + '</span>'
               + ' <span style="font-size:12px;font-weight:600;padding:1px 6px;background:' + color + '22;color:' + color + ';border-radius:3px;">' + price + '</span>'
               + '</div>'
-              + '<span style="font-size:12px;color:var(--text-muted);">' + timeAgo + '</span>'
+              + '<div style="font-size:11px;color:var(--text-muted);margin-top:4px;">' + seller + ' &rarr; ' + buyer + ' &middot; Receipt <code title="' + escapeHtml(receiptId) + '">' + escapeHtml(shortReceiptId(receiptId)) + '</code> &middot; ' + timeAgo + '</div>'
               + '</div>';
           }).join('') + '</div>';
         })
@@ -5133,14 +5143,14 @@ export function getLayoutHTML(options: {
       var chipClass = '';
 
       if (market.status === 'sold') {
-        label = 'Sold';
+        label = 'Acquired';
         chip = 'Closed';
       } else if (market.status === 'ineligible') {
         label = 'Not tradable';
         chip = 'Data-bound';
       } else if (hasAsk) {
         label = formatLight(market.ask_price_light);
-        chip = market.instant_buy ? 'Buy now' : 'Listed';
+        chip = market.instant_buy ? 'Acquire now' : 'Listed';
         chipClass = market.instant_buy ? ' buy' : '';
       } else if (hasBid) {
         label = 'Top bid ' + formatLight(market.highest_bid_light);
@@ -5397,7 +5407,7 @@ export function getLayoutHTML(options: {
               '</tr></thead><tbody>' +
               incoming.map(function(bid) {
                 return '<tr style="border-bottom:1px solid var(--border)">' +
-                  '<td style="padding:8px 12px"><a href="/a/' + bid.app_id + '/market" style="color:var(--accent)">' + escapeHtml(bid.app_name || 'Unknown') + '</a></td>' +
+                  '<td style="padding:8px 12px"><a href="/a/' + bid.app_id + '/offers" style="color:var(--accent)">' + escapeHtml(bid.app_name || 'Unknown') + '</a></td>' +
                   '<td style="padding:8px 12px">' + escapeHtml(bid.bidder_email || 'Unknown') + '</td>' +
                   '<td style="padding:8px 12px;font-weight:600;color:var(--success)">' + formatLight(bid.amount_light) + '</td>' +
                   '<td style="padding:8px 12px;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(bid.message || '-') + '</td>' +
@@ -5434,7 +5444,7 @@ export function getLayoutHTML(options: {
                   ? '<button class="btn btn-secondary btn-sm" onclick="cancelBidFromUI(\\\'' + bid.bid_id + '\\\',\\\'' + bid.app_id + '\\\')">Cancel</button>'
                   : '';
                 return '<tr style="border-bottom:1px solid var(--border)">' +
-                  '<td style="padding:8px 12px"><a href="/a/' + bid.app_id + '/market" style="color:var(--accent)">' + escapeHtml(bid.app_name || 'Unknown') + '</a></td>' +
+                  '<td style="padding:8px 12px"><a href="/a/' + bid.app_id + '/offers" style="color:var(--accent)">' + escapeHtml(bid.app_name || 'Unknown') + '</a></td>' +
                   '<td style="padding:8px 12px;font-weight:600">' + formatLight(bid.amount_light) + '</td>' +
                   '<td style="padding:8px 12px"><span style="color:' + statusColor + '">' + bid.status + '</span></td>' +
                   '<td style="padding:8px 12px;color:var(--text-muted)">' + bid.escrow_status + '</td>' +
@@ -5853,12 +5863,12 @@ export function getLayoutHTML(options: {
     }
 
     window.openWalletBalance = function() {
-      switchDashboardSection('billing');
+      switchDashSection('billing');
       selectWalletTab('balance');
     };
 
     window.openWalletTransactions = function() {
-      switchDashboardSection('billing');
+      switchDashSection('billing');
       selectWalletTab('transactions');
     };
 
@@ -6695,6 +6705,246 @@ export function getLayoutHTML(options: {
     window.moveStoreListingScreenshot = moveStoreListingScreenshot;
     window.saveStoreListing = saveStoreListing;
 
+    function marketplaceCheckTone(status) {
+      if (status === 'ready') return { color: 'var(--success)', bg: 'rgba(34,197,94,0.10)', label: 'Ready' };
+      if (status === 'blocked') return { color: 'var(--error)', bg: 'rgba(239,68,68,0.10)', label: 'Blocked' };
+      if (status === 'action') return { color: '#ca8a04', bg: 'rgba(234,179,8,0.12)', label: 'Action' };
+      return { color: 'var(--text-muted)', bg: 'var(--bg-secondary)', label: 'Optional' };
+    }
+
+    function renderMarketplaceAdminChecklist(admin) {
+      if (!admin || !Array.isArray(admin.checklist)) return '';
+      var checks = admin.checklist.map(function(check) {
+        var tone = marketplaceCheckTone(check.status);
+        return '<div style="padding:var(--space-3);border:1px solid var(--border);background:var(--bg-secondary);display:flex;gap:var(--space-3);align-items:flex-start;">' +
+          '<span style="min-width:64px;text-align:center;font-size:11px;font-weight:600;color:' + tone.color + ';background:' + tone.bg + ';padding:3px 6px;border-radius:2px;">' + escapeHtml(tone.label) + '</span>' +
+          '<div style="min-width:0;">' +
+            '<div style="font-size:13px;font-weight:600;color:var(--text-primary);">' + escapeHtml(check.label) + '</div>' +
+            '<div style="font-size:12px;color:var(--text-muted);margin-top:2px;line-height:1.4;">' + escapeHtml(check.detail || '') + '</div>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+      var payoutLabel = admin.payouts_enabled
+        ? 'Payouts ready'
+        : admin.payout_connected
+          ? 'Payout review pending'
+          : 'Bank not connected';
+      var payoutAction = admin.payouts_enabled
+        ? ''
+        : '<button class="btn btn-secondary btn-sm" onclick="openMarketplacePayoutSetup()">Set up payouts</button>';
+      return '<div class="section-card" style="margin-top:var(--space-4);">' +
+        '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-3);margin-bottom:var(--space-3);">' +
+          '<div>' +
+            '<h3 class="section-title" style="margin-bottom:4px;">Launch Checklist</h3>' +
+            '<p style="font-size:12px;color:var(--text-muted);margin:0;">Next: ' + escapeHtml(admin.recommended_action || 'Share the listing and monitor offers.') + '</p>' +
+          '</div>' +
+          '<div style="text-align:right;min-width:140px;">' +
+            '<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Payout Status</div>' +
+            '<div style="font-size:13px;font-weight:600;color:' + (admin.payouts_enabled ? 'var(--success)' : 'var(--text-primary)') + ';">' + escapeHtml(payoutLabel) + '</div>' +
+            (admin.total_earned_light ? '<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Earned ' + formatLight(admin.total_earned_light) + '</div>' : '') +
+          '</div>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:var(--space-2);">' + checks + '</div>' +
+        (payoutAction ? '<div style="margin-top:var(--space-3);">' + payoutAction + '</div>' : '') +
+      '</div>';
+    }
+
+    function marketplaceSaleMath(amount) {
+      var value = Number(amount);
+      if (!Number.isFinite(value) || value <= 0) return null;
+      var rounded = Math.round(value);
+      var fee = Math.round(rounded * 0.10 * 100) / 100;
+      return {
+        price: rounded,
+        fee: fee,
+        payout: Math.round((rounded - fee) * 100) / 100,
+      };
+    }
+
+    function renderMarketplaceSalePreview(summary, listing, appId) {
+      var publicUrl = window.location.origin + '/app/' + encodeURIComponent(appId);
+      var price = summary && typeof summary.ask_price_light === 'number' ? summary.ask_price_light : null;
+      var math = marketplaceSaleMath(price);
+      var listingMode = summary && summary.instant_buy ? 'Instant acquisition enabled' : 'Offer review';
+      var previewRows = math
+        ? '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-2);margin-top:var(--space-3);">' +
+            '<div style="padding:var(--space-3);background:var(--bg-secondary);border:1px solid var(--border);"><div style="font-size:11px;color:var(--text-muted);">Acquirer pays</div><div style="font-size:16px;font-weight:700;">' + formatLight(math.price) + '</div></div>' +
+            '<div style="padding:var(--space-3);background:var(--bg-secondary);border:1px solid var(--border);"><div style="font-size:11px;color:var(--text-muted);">Platform fee</div><div style="font-size:16px;font-weight:700;">' + formatLight(math.fee) + '</div></div>' +
+            '<div style="padding:var(--space-3);background:var(--bg-secondary);border:1px solid var(--border);"><div style="font-size:11px;color:var(--text-muted);">You receive</div><div style="font-size:16px;font-weight:700;color:var(--success);">' + formatLight(math.payout) + '</div></div>' +
+          '</div>'
+        : '<div style="font-size:13px;color:var(--text-muted);margin-top:var(--space-2);">Set an ask price to preview instant-acquisition economics. Offers use the same 10% platform fee when accepted.</div>';
+      return '<div class="section-card" style="margin-top:var(--space-4);">' +
+        '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-3);">' +
+          '<div>' +
+            '<h3 class="section-title" style="margin-bottom:4px;">Listing Preview</h3>' +
+            '<div style="font-size:12px;color:var(--text-muted);">' + escapeHtml(listingMode) + (listing && listing.show_metrics ? ' · metrics public' : ' · metrics hidden') + '</div>' +
+          '</div>' +
+          '<div style="display:flex;gap:var(--space-2);flex-wrap:wrap;justify-content:flex-end;">' +
+            '<button class="btn btn-ghost btn-sm" onclick="copyMarketplacePublicUrl(\\\'' + appId + '\\\')">Copy URL</button>' +
+            '<a class="btn btn-secondary btn-sm" href="' + escapeHtml(publicUrl) + '" target="_blank">Open page</a>' +
+          '</div>' +
+        '</div>' +
+        previewRows +
+        '<div id="mktOwnerMetricsPreview" style="margin-top:var(--space-3);"></div>' +
+      '</div>';
+    }
+
+    window.updateMarketplaceSalePreview = function() {
+      var preview = document.getElementById('mktSalePreviewLive');
+      if (!preview) return;
+      var ask = Math.round(parseFloat((document.getElementById('mktAskPrice') || {}).value) || 0);
+      var floor = Math.round(parseFloat((document.getElementById('mktFloorPrice') || {}).value) || 0);
+      var instantBuy = (document.getElementById('mktInstantBuy') || {}).checked || false;
+      var math = marketplaceSaleMath(ask);
+      var warnings = [];
+      if (instantBuy && !math) warnings.push('Instant acquisition requires an ask price.');
+      if (math && floor > math.price) warnings.push('Floor price cannot exceed ask price.');
+      var rows = math
+        ? '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-2);">' +
+            '<div><div style="font-size:11px;color:var(--text-muted);">Ask</div><div style="font-size:15px;font-weight:700;">' + formatLight(math.price) + '</div></div>' +
+            '<div><div style="font-size:11px;color:var(--text-muted);">Fee</div><div style="font-size:15px;font-weight:700;">' + formatLight(math.fee) + '</div></div>' +
+            '<div><div style="font-size:11px;color:var(--text-muted);">Payout</div><div style="font-size:15px;font-weight:700;color:var(--success);">' + formatLight(math.payout) + '</div></div>' +
+          '</div>'
+        : '<div style="font-size:12px;color:var(--text-muted);">No ask price set. Acquirers can still place offers if this listing is active.</div>';
+      preview.innerHTML = rows + (warnings.length
+        ? '<div style="font-size:12px;color:var(--error);margin-top:var(--space-2);">' + escapeHtml(warnings.join(' ')) + '</div>'
+        : '<div style="font-size:12px;color:var(--text-muted);margin-top:var(--space-2);">Accepting a bid uses the same 10% platform fee.</div>');
+    };
+
+    function loadOwnerMarketplaceMetrics(appId) {
+      var el = document.getElementById('mktOwnerMetricsPreview');
+      if (!el) return;
+      el.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">Loading owner metrics...</div>';
+      fetch('/api/marketplace/metrics/' + appId, {
+        headers: { 'Authorization': 'Bearer ' + authToken },
+      }).then(function(res) {
+        if (!res.ok) throw new Error('metrics unavailable');
+        return res.json();
+      }).then(function(m) {
+        el.innerHTML =
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:var(--space-2);">' +
+            '<div style="padding:var(--space-2);background:var(--bg-secondary);border:1px solid var(--border);"><div style="font-size:11px;color:var(--text-muted);">30d calls</div><div style="font-size:15px;font-weight:700;">' + (m.calls_30d || 0).toLocaleString() + '</div></div>' +
+            '<div style="padding:var(--space-2);background:var(--bg-secondary);border:1px solid var(--border);"><div style="font-size:11px;color:var(--text-muted);">30d callers</div><div style="font-size:15px;font-weight:700;">' + (m.unique_callers_30d || 0).toLocaleString() + '</div></div>' +
+            '<div style="padding:var(--space-2);background:var(--bg-secondary);border:1px solid var(--border);"><div style="font-size:11px;color:var(--text-muted);">30d revenue</div><div style="font-size:15px;font-weight:700;color:var(--success);">' + formatLight(m.revenue_30d_light || 0) + '</div></div>' +
+            '<div style="padding:var(--space-2);background:var(--bg-secondary);border:1px solid var(--border);"><div style="font-size:11px;color:var(--text-muted);">Success rate</div><div style="font-size:15px;font-weight:700;">' + Math.round((m.success_rate_30d || 0) * 100) + '%</div></div>' +
+          '</div>';
+      }).catch(function() {
+        el.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">Metrics unavailable right now.</div>';
+      });
+    }
+
+    window.copyMarketplacePublicUrl = function(appId) {
+      var url = window.location.origin + '/app/' + encodeURIComponent(appId);
+      navigator.clipboard.writeText(url).then(function() {
+        showToast('Marketplace URL copied');
+      }).catch(function() {
+        showToast('Could not copy URL', 'error');
+      });
+    };
+
+    window.openMarketplacePayoutSetup = function() {
+      showView('dashboard');
+      switchDashSection('billing');
+      selectWalletTab('earnings');
+      if (typeof window.startConnectOnboarding === 'function') window.startConnectOnboarding();
+    };
+
+    function readMarketplaceJson(res, fallback) {
+      if (res.ok) return res.json();
+      return res.json().catch(function() { return {}; }).then(function(errBody) {
+        var err = new Error(errBody.error || fallback || 'Marketplace action failed');
+        err.status = res.status;
+        throw err;
+      });
+    }
+
+    function showMarketplaceActionError(err, fallback) {
+      var msg = err && err.message ? err.message : (fallback || 'Marketplace action failed');
+      if ((err && err.status === 402) || /insufficient balance/i.test(msg)) {
+        showToast(msg + '. Add Light from Wallet > Balance.', 'error');
+        return;
+      }
+      showToast(msg, 'error');
+    }
+
+    function shortReceiptId(id) {
+      if (!id) return '';
+      var str = String(id);
+      return str.length > 12 ? str.slice(0, 8) + '...' + str.slice(-4) : str;
+    }
+
+    window.copyMarketplaceReceiptId = function(id) {
+      if (!id) return;
+      navigator.clipboard.writeText(String(id)).then(function() {
+        showToast('Receipt ID copied');
+      }).catch(function() {
+        showToast('Could not copy receipt ID', 'error');
+      });
+    };
+
+    window.closeMarketplaceReceipt = function() {
+      var overlay = document.getElementById('marketplaceReceiptOverlay');
+      if (overlay) overlay.remove();
+    };
+
+    function showMarketplaceReceipt(kind, data) {
+      data = data || {};
+      closeMarketplaceReceipt();
+      var receiptId = data.sale_id || data.bid_id || '';
+      var title = kind === 'bid'
+        ? 'Bid placed'
+        : kind === 'sale'
+          ? 'Acquisition closed'
+          : 'Acquisition complete';
+      var amount = data.sale_price_light || data.amount_light || 0;
+      var sellerPayout = data.seller_payout_light || null;
+      var appId = data.app_id || '';
+      var primaryAction = kind === 'acquisition' && appId
+        ? '<button class="btn btn-primary btn-sm" onclick="closeMarketplaceReceipt(); navigateToApp(\\\'' + appId + '\\\')">Open app</button>'
+        : kind === 'bid'
+          ? '<button class="btn btn-primary btn-sm" onclick="closeMarketplaceReceipt()">Done</button>'
+        : '<button class="btn btn-primary btn-sm" onclick="window.location.reload()">Refresh</button>';
+      var overlay = document.createElement('div');
+      overlay.id = 'marketplaceReceiptOverlay';
+      overlay.className = 'offers-overlay';
+      overlay.onclick = function(e) { if (e.target === overlay) closeMarketplaceReceipt(); };
+      var panel = document.createElement('div');
+      panel.className = 'offers-popup';
+      panel.onclick = function(e) { e.stopPropagation(); };
+      panel.innerHTML =
+        '<div class="offers-popup-header">' +
+          '<h3>' + escapeHtml(title) + '</h3>' +
+          '<button class="offers-popup-close" onclick="closeMarketplaceReceipt()">&times;</button>' +
+        '</div>' +
+        '<div class="offers-popup-body">' +
+          '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:var(--space-3);margin-bottom:var(--space-4);">' +
+            '<div style="padding:var(--space-3);background:var(--bg-secondary);border:1px solid var(--border);"><div style="font-size:11px;color:var(--text-muted);">Amount</div><div style="font-size:18px;font-weight:700;color:var(--success);">' + formatLight(amount) + '</div></div>' +
+            '<div style="padding:var(--space-3);background:var(--bg-secondary);border:1px solid var(--border);"><div style="font-size:11px;color:var(--text-muted);">Receipt</div><div style="font-size:13px;font-family:var(--font-mono);color:var(--text-primary);">' + escapeHtml(shortReceiptId(receiptId)) + '</div></div>' +
+          '</div>' +
+          (sellerPayout ? '<div style="font-size:13px;color:var(--text-secondary);margin-bottom:var(--space-3);">Seller payout: <strong>' + formatLight(sellerPayout) + '</strong>. Platform fee and acquisition transfer were recorded atomically.</div>' : '') +
+          '<div style="display:flex;gap:var(--space-2);flex-wrap:wrap;">' +
+            primaryAction +
+            (receiptId ? '<button class="btn btn-secondary btn-sm" onclick="copyMarketplaceReceiptId(\\\'' + receiptId + '\\\')">Copy receipt</button>' : '') +
+            '<button class="btn btn-ghost btn-sm" onclick="closeMarketplaceReceipt()">Close</button>' +
+          '</div>' +
+        '</div>';
+      overlay.appendChild(panel);
+      document.body.appendChild(overlay);
+    }
+
+    function loadMarketplaceBidBalance(targetId) {
+      var el = document.getElementById(targetId);
+      if (!el || !authToken) return;
+      fetch('/api/user/hosting', { headers: { 'Authorization': 'Bearer ' + authToken } })
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(d) {
+          if (!d || !el) return;
+          var avail = d.balance_light || 0;
+          el.dataset.balanceLight = String(avail);
+          el.innerHTML = 'Available balance: <span>' + formatLight(avail) + '</span>';
+        }).catch(function() {});
+    }
+
     // ===== Offers Tab =====
     function loadAppOffers(appId, app) {
       const contentEl = document.getElementById('appOffersContent');
@@ -6708,7 +6958,7 @@ export function getLayoutHTML(options: {
           '<div class="section-card">' +
             '<h3 class="section-title">Trading Unavailable</h3>' +
             '<p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-2)">This app is permanently ineligible for marketplace trading because it has used an external database.</p>' +
-            '<p style="font-size:13px;color:var(--text-muted)">Apps that connect to external Supabase are excluded from trading to protect buyers from acquiring apps with inaccessible data dependencies.</p>' +
+            '<p style="font-size:13px;color:var(--text-muted)">Apps that connect to external Supabase are excluded from trading to protect acquirers from taking over apps with inaccessible data dependencies.</p>' +
           '</div>';
         if (bidsEl) bidsEl.innerHTML = '';
         if (historyEl) historyEl.innerHTML = '';
@@ -6730,6 +6980,7 @@ export function getLayoutHTML(options: {
         const listing = data.listing;
         const bids = data.bids || [];
         const appData = data.app;
+        const summary = data.marketplace_summary || {};
 
         // ── Listing / Ask Price Section ──
         if (isOwner) {
@@ -6738,13 +6989,13 @@ export function getLayoutHTML(options: {
           var floorVal = listing && listing.floor_price_light ? String(listing.floor_price_light) : '';
           var instantBuy = listing ? listing.instant_buy : false;
           var noteVal = listing && listing.listing_note ? listing.listing_note : '';
-          var summary = data.marketplace_summary || {};
+          var ownerAdmin = data.owner_admin || null;
           var statusLabels = {
             ineligible: 'Ineligible',
             unlisted: 'Unlisted',
             open_to_offers: 'Open to offers',
             listed: 'Listed',
-            sold: 'Sold',
+            sold: 'Acquired',
           };
           var statusLabel = statusLabels[summary.status] || (listing ? 'Listed' : 'Unlisted');
           var statusColor = summary.status === 'listed' || summary.status === 'open_to_offers'
@@ -6768,6 +7019,8 @@ export function getLayoutHTML(options: {
           var readinessHtml = summary.eligible === false
             ? '<div style="margin-top:var(--space-3);padding:var(--space-3);border:1px solid var(--error);color:var(--error);font-size:13px">Trading blocked: ' + escapeHtml((summary.blockers || []).join(', ') || 'not eligible') + '</div>'
             : '';
+          var adminChecklistHtml = renderMarketplaceAdminChecklist(ownerAdmin);
+          var previewHtml = renderMarketplaceSalePreview(summary, listing, appId);
 
           contentEl.innerHTML =
             '<div class="section-card">' +
@@ -6776,7 +7029,7 @@ export function getLayoutHTML(options: {
                 '<div style="padding:var(--space-3);background:var(--bg-secondary);border:1px solid var(--border)">' +
                   '<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.04em">Status</div>' +
                   '<div style="font-size:15px;font-weight:700;color:' + statusColor + '">' + escapeHtml(statusLabel) + '</div>' +
-                  '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">' + (summary.instant_buy ? 'Instant buy enabled' : 'Bids enabled') + '</div>' +
+                  '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">' + (summary.instant_buy ? 'Instant acquisition enabled' : 'Bids enabled') + '</div>' +
                 '</div>' +
                 '<div style="padding:var(--space-3);background:var(--bg-secondary);border:1px solid var(--border)">' +
                   '<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.04em">Ask</div>' +
@@ -6796,26 +7049,29 @@ export function getLayoutHTML(options: {
               '</div>' +
               readinessHtml +
             '</div>' +
+            adminChecklistHtml +
+            previewHtml +
             '<div class="section-card">' +
-              '<h3 class="section-title">Sell This App</h3>' +
+              '<h3 class="section-title">Acquisition Terms</h3>' +
               '<div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3);margin-bottom:var(--space-3)">' +
                 '<div>' +
                   '<label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">Ask Price (\\u2726)</label>' +
-                  '<input id="mktAskPrice" type="number" step="1" min="0" placeholder="e.g. 50000" value="' + askVal + '" class="input-field" style="width:100%">' +
+                  '<input id="mktAskPrice" type="number" step="1" min="0" placeholder="e.g. 50000" value="' + askVal + '" class="input-field" style="width:100%" oninput="updateMarketplaceSalePreview()">' +
                 '</div>' +
                 '<div>' +
                   '<label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">Floor Price (\\u2726)</label>' +
-                  '<input id="mktFloorPrice" type="number" step="1" min="0" placeholder="Min bid" value="' + floorVal + '" class="input-field" style="width:100%">' +
+                  '<input id="mktFloorPrice" type="number" step="1" min="0" placeholder="Min bid" value="' + floorVal + '" class="input-field" style="width:100%" oninput="updateMarketplaceSalePreview()">' +
                 '</div>' +
               '</div>' +
+              '<div id="mktSalePreviewLive" style="padding:var(--space-3);background:var(--bg-secondary);border:1px solid var(--border);margin-bottom:var(--space-3);"></div>' +
               '<div style="margin-bottom:var(--space-3)">' +
                 '<label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">Listing Note</label>' +
-                '<input id="mktNote" type="text" placeholder="Optional pitch to buyers" value="' + escapeHtml(noteVal) + '" class="input-field" style="width:100%">' +
+                  '<input id="mktNote" type="text" placeholder="Optional pitch to acquirers" value="' + escapeHtml(noteVal) + '" class="input-field" style="width:100%">' +
               '</div>' +
               '<div style="display:flex;flex-direction:column;gap:var(--space-2);margin-bottom:var(--space-4)">' +
                 '<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">' +
-                  '<input id="mktInstantBuy" type="checkbox"' + (instantBuy ? ' checked' : '') + '>' +
-                  ' Allow instant buy at ask price' +
+                  '<input id="mktInstantBuy" type="checkbox"' + (instantBuy ? ' checked' : '') + ' onchange="updateMarketplaceSalePreview()">' +
+                  ' Allow instant acquisition at ask price' +
                 '</label>' +
                 '<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">' +
                   '<input id="mktShowMetrics" type="checkbox"' + (listing && listing.show_metrics ? ' checked' : '') + ' onchange="toggleMetricsVisibility(\\\'' + appId + '\\\', this.checked)">' +
@@ -6827,6 +7083,8 @@ export function getLayoutHTML(options: {
                 (askVal ? '<button class="btn btn-secondary btn-sm" onclick="removeAskPrice(\\\'' + appId + '\\\')">Remove Ask Price</button>' : '') +
               '</div>' +
             '</div>';
+          updateMarketplaceSalePreview();
+          loadOwnerMarketplaceMetrics(appId);
 
           // ── Incoming Bids Table ──
           if (bidsEl) {
@@ -6840,32 +7098,38 @@ export function getLayoutHTML(options: {
               bidsEl.innerHTML =
                 '<div class="section-card">' +
                   '<h3 class="section-title">Incoming Bids (' + bids.length + ')</h3>' +
-                  '<table style="width:100%;font-size:13px;border-collapse:collapse">' +
-                    '<thead><tr style="border-bottom:1px solid var(--border);text-align:left">' +
-                      '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Bidder</th>' +
-                      '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Amount</th>' +
-                      '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Message</th>' +
-                      '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Time</th>' +
-                      '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Actions</th>' +
-                    '</tr></thead><tbody>' +
+                  '<div style="display:flex;flex-direction:column;gap:var(--space-3);">' +
                     bids.map(function(bid) {
-                      return '<tr style="border-bottom:1px solid var(--border)">' +
-                        '<td style="padding:8px 12px">' + escapeHtml(bid.bidder_email || bid.bidder_id.slice(0, 8)) + '</td>' +
-                        '<td style="padding:8px 12px;font-weight:600;color:var(--success)">' + formatLight(bid.amount_light) + '</td>' +
-                        '<td style="padding:8px 12px;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(bid.message || '-') + '</td>' +
-                        '<td style="padding:8px 12px;color:var(--text-muted)">' + relTime(bid.created_at) + '</td>' +
-                        '<td style="padding:8px 12px">' +
-                          '<button class="btn btn-primary btn-sm" style="margin-right:4px" onclick="acceptBid(\\\'' + bid.id + '\\\',\\\'' + appId + '\\\')">Accept</button>' +
+                      var bidMath = marketplaceSaleMath(bid.amount_light);
+                      var bidder = bid.bidder_email || bid.bidder_id.slice(0, 8);
+                      var expires = bid.expires_at ? ' · expires ' + new Date(bid.expires_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+                      return '<div style="border:1px solid var(--border);background:var(--bg-secondary);padding:var(--space-3);">' +
+                        '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-3);">' +
+                          '<div style="min-width:0;">' +
+                            '<div style="font-size:13px;font-weight:600;color:var(--text-primary);">' + escapeHtml(bidder) + '</div>' +
+                            '<div style="font-size:12px;color:var(--text-muted);margin-top:2px;">' + relTime(bid.created_at) + expires + '</div>' +
+                            (bid.message ? '<div style="font-size:13px;color:var(--text-secondary);margin-top:var(--space-2);line-height:1.4;">' + escapeHtml(bid.message) + '</div>' : '') +
+                          '</div>' +
+                          '<div style="text-align:right;min-width:160px;">' +
+                            '<div style="font-size:20px;font-weight:700;color:var(--success);">' + formatLight(bid.amount_light) + '</div>' +
+                            '<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">You receive ' + formatLight(bidMath ? bidMath.payout : 0) + ' · fee ' + formatLight(bidMath ? bidMath.fee : 0) + '</div>' +
+                          '</div>' +
+                        '</div>' +
+                        '<div style="display:flex;gap:var(--space-2);margin-top:var(--space-3);">' +
+                          '<button class="btn btn-primary btn-sm" onclick="acceptBid(\\\'' + bid.id + '\\\',\\\'' + appId + '\\\')">Accept offer</button>' +
                           '<button class="btn btn-secondary btn-sm" onclick="rejectBid(\\\'' + bid.id + '\\\',\\\'' + appId + '\\\')">Reject</button>' +
-                        '</td>' +
-                      '</tr>';
+                        '</div>' +
+                      '</div>';
                     }).join('') +
-                  '</tbody></table>' +
+                  '</div>' +
                 '</div>';
             }
           }
         } else {
           // Non-owner: show ask price info + bid form
+          var soldNotice = summary.status === 'sold'
+            ? '<div style="padding:var(--space-3);background:var(--bg-secondary);border:1px solid var(--border);color:var(--text-secondary);font-size:13px;margin-top:var(--space-3);">This app was already acquired. New bids and instant acquisitions are closed until the current owner relists it.</div>'
+            : '';
           var askDisplay = listing && listing.ask_price_light
             ? '<span style="font-size:24px;font-weight:700;color:var(--success)">' + formatLight(listing.ask_price_light) + '</span>'
             : '<span style="font-size:14px;color:var(--text-muted)">Open to offers</span>';
@@ -6874,8 +7138,8 @@ export function getLayoutHTML(options: {
             ? '<span style="font-size:12px;color:var(--text-muted);margin-left:var(--space-2)">Floor: ' + formatLight(listing.floor_price_light) + '</span>'
             : '';
 
-          var instantBuyBtn = listing && listing.instant_buy && listing.ask_price_light
-            ? '<button class="btn btn-primary" style="margin-top:var(--space-3)" onclick="buyNow(\\\'' + appId + '\\\')">Buy Now — ' + formatLight(listing.ask_price_light) + '</button>'
+          var instantBuyBtn = summary.status !== 'sold' && listing && listing.instant_buy && listing.ask_price_light
+            ? '<button class="btn btn-primary" style="margin-top:var(--space-3)" onclick="acquireNow(\\\'' + appId + '\\\')">Acquire — ' + formatLight(listing.ask_price_light) + '</button>'
             : '';
 
           var noteDisplay = listing && listing.listing_note
@@ -6935,9 +7199,12 @@ export function getLayoutHTML(options: {
                 '</div>' +
                 noteDisplay +
                 instantBuyBtn +
+                soldNotice +
                 metricsHtml +
               '</div>' +
-              (myBid
+              (summary.status === 'sold'
+                ? ''
+                : myBid
                 ? '<div style="padding:var(--space-3);background:var(--bg-secondary);border-radius:var(--radius);margin-bottom:var(--space-3)">' +
                     '<p style="font-size:13px;font-weight:500">Your active bid: <span style="color:var(--success)">' + formatLight(myBid.amount_light) + '</span></p>' +
                     '<button class="btn btn-secondary btn-sm" style="margin-top:var(--space-2)" onclick="cancelBidFromUI(\\\'' + myBid.id + '\\\',\\\'' + appId + '\\\')">Cancel Bid</button>' +
@@ -6954,10 +7221,12 @@ export function getLayoutHTML(options: {
                         '<input id="mktBidMessage" type="text" placeholder="Message to owner" class="input-field" style="width:100%">' +
                       '</div>' +
                     '</div>' +
+                    '<div id="mktBidBalance" style="font-size:12px;color:var(--text-muted);margin-bottom:var(--space-3);"></div>' +
                     '<button class="btn btn-primary btn-sm" onclick="placeBidFromUI(\\\'' + appId + '\\\')">Place Bid</button>' +
                   '</div>'
               ) +
             '</div>';
+          loadMarketplaceBidBalance('mktBidBalance');
         }
 
         // ── Provenance / Sale History ──
@@ -6993,14 +7262,25 @@ export function getLayoutHTML(options: {
       var floor = parseFloat((document.getElementById('mktFloorPrice') || {}).value) || 0;
       var instantBuy = (document.getElementById('mktInstantBuy') || {}).checked || false;
       var note = (document.getElementById('mktNote') || {}).value || '';
+      var roundedPrice = price > 0 ? Math.round(price) : null;
+      var roundedFloor = floor > 0 ? Math.round(floor) : null;
+
+      if (instantBuy && !roundedPrice) {
+        showToast('Instant acquisition requires an ask price', 'error');
+        return;
+      }
+      if (roundedPrice && roundedFloor && roundedFloor > roundedPrice) {
+        showToast('Floor price cannot exceed ask price', 'error');
+        return;
+      }
 
       fetch('/api/marketplace/ask', {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           app_id: appId,
-          price_light: price > 0 ? Math.round(price) : null,
-          floor_light: floor > 0 ? Math.round(floor) : null,
+          price_light: roundedPrice,
+          floor_light: roundedFloor,
           instant_buy: instantBuy,
           note: note || null,
         }),
@@ -7035,6 +7315,7 @@ export function getLayoutHTML(options: {
       }).then(function(res) {
         if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
         showToast(showMetrics ? 'Metrics visible to bidders' : 'Metrics hidden from bidders');
+        loadAppOffers(appId, window._currentApp);
       }).catch(function(err) {
         showToast(err.message || 'Failed to update metrics visibility', 'error');
       });
@@ -7047,14 +7328,11 @@ export function getLayoutHTML(options: {
         headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
         body: JSON.stringify({ bid_id: bidId }),
       }).then(function(res) {
-        if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
-        return res.json();
+        return readMarketplaceJson(res, 'Failed to accept bid');
       }).then(function(data) {
-        showToast('App sold for ' + formatLight(data.sale_price_light) + '! You received ' + formatLight(data.seller_payout_light) + '.');
-        // Reload — ownership changed
-        setTimeout(function() { window.location.reload(); }, 1500);
+        showMarketplaceReceipt('sale', data);
       }).catch(function(err) {
-        showToast(err.message || 'Failed to accept bid', 'error');
+        showMarketplaceActionError(err, 'Failed to accept bid');
       });
     };
 
@@ -7077,6 +7355,12 @@ export function getLayoutHTML(options: {
       var amount = parseFloat((document.getElementById('mktBidAmount') || {}).value);
       var message = (document.getElementById('mktBidMessage') || {}).value || '';
       if (!amount || amount <= 0) { showToast('Enter a valid bid amount', 'error'); return; }
+      var balanceEl = document.getElementById('mktBidBalance');
+      var available = balanceEl && balanceEl.dataset.balanceLight ? parseFloat(balanceEl.dataset.balanceLight) : null;
+      if (available !== null && amount > available) {
+        showToast('Insufficient balance. Add Light from Wallet > Balance.', 'error');
+        return;
+      }
 
       fetch('/api/marketplace/bid', {
         method: 'POST',
@@ -7087,11 +7371,12 @@ export function getLayoutHTML(options: {
           message: message || null,
         }),
       }).then(function(res) {
-        if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
-        showToast('Bid placed! ' + formatLight(amount) + ' escrowed from your balance.');
+        return readMarketplaceJson(res, 'Failed to place bid');
+      }).then(function(data) {
+        showMarketplaceReceipt('bid', data);
         loadAppOffers(appId, window._currentApp);
       }).catch(function(err) {
-        showToast(err.message || 'Failed to place bid', 'error');
+        showMarketplaceActionError(err, 'Failed to place bid');
       });
     };
 
@@ -7110,22 +7395,21 @@ export function getLayoutHTML(options: {
       });
     };
 
-    window.buyNow = function(appId) {
-      if (!confirm('Buy this app now at the listed ask price? This will transfer ownership to you immediately.')) return;
-      fetch('/api/marketplace/buy', {
+    window.acquireNow = function(appId) {
+      if (!confirm('Acquire this app now at the listed ask price? Ownership transfers to you immediately.')) return;
+      fetch('/api/marketplace/acquire', {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
         body: JSON.stringify({ app_id: appId }),
       }).then(function(res) {
-        if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
-        return res.json();
+        return readMarketplaceJson(res, 'Failed to acquire app');
       }).then(function(data) {
-        showToast('Purchase complete! You now own this app.');
-        setTimeout(function() { window.location.reload(); }, 1500);
+        showMarketplaceReceipt('acquisition', data);
       }).catch(function(err) {
-        showToast(err.message || 'Failed to buy app', 'error');
+        showMarketplaceActionError(err, 'Failed to acquire app');
       });
     };
+    window.buyNow = window.acquireNow;
 
     // ===== Offers Popup =====
     window.openOffersPopup = function(appId) {
@@ -7180,6 +7464,7 @@ export function getLayoutHTML(options: {
       var listing = data.listing;
       var bids = data.bids || [];
       var appData = data.app;
+      var summary = data.marketplace_summary || {};
       var isOwner = appData && appData.owner_id === window._currentUserId;
       var highestBid = bids.length > 0 ? bids[0] : null;
       var html = '';
@@ -7210,12 +7495,15 @@ export function getLayoutHTML(options: {
       html += '</div>';
       html += '</div>';
 
-      // ── Note + Buy Now ──
+      // ── Note + instant acquisition ──
       if (listing && listing.listing_note) {
         html += '<div class="offers-ask-note">' + escapeHtml(listing.listing_note) + '</div>';
       }
-      if (!isOwner && listing && listing.instant_buy && listing.ask_price_light) {
-        html += '<button class="offers-buynow-btn" onclick="popupBuyNow(\\\'' + appId + '\\\')">Buy Now &mdash; ' + formatLight(listing.ask_price_light) + '</button>';
+      if (summary.status === 'sold' && !isOwner) {
+        html += '<div class="offers-ask-note">This app has already been acquired. Offers are closed until the current owner relists it.</div>';
+      }
+      if (summary.status !== 'sold' && !isOwner && listing && listing.instant_buy && listing.ask_price_light) {
+        html += '<button class="offers-buynow-btn" onclick="popupAcquireNow(\\\'' + appId + '\\\')">Acquire &mdash; ' + formatLight(listing.ask_price_light) + '</button>';
       }
 
       // ── Your Bid (if exists) ──
@@ -7227,7 +7515,7 @@ export function getLayoutHTML(options: {
       }
 
       // ── Place Bid Form (non-owners only, no existing bid) ──
-      if (!isOwner && !myBid) {
+      if (summary.status !== 'sold' && !isOwner && !myBid) {
         if (!authToken) {
           html += '<div class="offers-login-msg">Sign in to place a bid.</div>';
         } else {
@@ -7268,17 +7556,7 @@ export function getLayoutHTML(options: {
       body.innerHTML = html;
 
       // Load available balance into bid form
-      var balDiv = document.getElementById('popupBidBalance');
-      if (balDiv && authToken) {
-        fetch('/api/user/hosting', { headers: { 'Authorization': 'Bearer ' + authToken } })
-          .then(function(r) { return r.ok ? r.json() : null; })
-          .then(function(d) {
-            if (d && balDiv) {
-              var avail = d.balance_light || 0;
-              balDiv.innerHTML = 'Available balance: <span>' + formatLight(avail) + '</span>';
-            }
-          }).catch(function() {});
-      }
+      loadMarketplaceBidBalance('popupBidBalance');
     }
 
     window.closeOffersPopup = closeOffersPopup;
@@ -7294,6 +7572,12 @@ export function getLayoutHTML(options: {
       var amount = parseFloat(amountEl ? amountEl.value : '');
       var message = messageEl ? messageEl.value : '';
       if (!amount || amount <= 0) { showToast('Enter a valid bid amount', 'error'); return; }
+      var balanceEl = document.getElementById('popupBidBalance');
+      var available = balanceEl && balanceEl.dataset.balanceLight ? parseFloat(balanceEl.dataset.balanceLight) : null;
+      if (available !== null && amount > available) {
+        showToast('Insufficient balance. Add Light from Wallet > Balance.', 'error');
+        return;
+      }
       if (btn) { btn.disabled = true; btn.textContent = 'Placing...'; }
 
       fetch('/api/marketplace/bid', {
@@ -7301,16 +7585,17 @@ export function getLayoutHTML(options: {
         headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
         body: JSON.stringify({ app_id: appId, amount_light: Math.round(amount), message: message || null }),
       }).then(function(res) {
-        if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
-        showToast('Bid placed! ' + formatLight(amount) + ' escrowed from your balance.');
+        return readMarketplaceJson(res, 'Failed to place bid');
+      }).then(function(data) {
+        closeOffersPopup();
+        showMarketplaceReceipt('bid', data);
         // Refresh wallet balance display
         var balEl = document.getElementById('accountBalance');
         if (balEl && typeof loadHostingData === 'function') {
           loadHostingData();
         }
-        openOffersPopup(appId); // Refresh popup (also refreshes balance in bid form)
       }).catch(function(err) {
-        showToast(err.message || 'Failed to place bid', 'error');
+        showMarketplaceActionError(err, 'Failed to place bid');
         if (btn) { btn.disabled = false; btn.textContent = 'Place Bid'; }
       });
     };
@@ -7330,23 +7615,22 @@ export function getLayoutHTML(options: {
       });
     };
 
-    window.popupBuyNow = function(appId) {
-      if (!confirm('Buy this app now at the listed price? Ownership transfers immediately.')) return;
-      fetch('/api/marketplace/buy', {
+    window.popupAcquireNow = function(appId) {
+      if (!confirm('Acquire this app now at the listed price? Ownership transfers immediately.')) return;
+      fetch('/api/marketplace/acquire', {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
         body: JSON.stringify({ app_id: appId }),
       }).then(function(res) {
-        if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
-        return res.json();
-      }).then(function() {
+        return readMarketplaceJson(res, 'Failed to acquire app');
+      }).then(function(data) {
         closeOffersPopup();
-        showToast('Purchase complete! You now own this app.');
-        setTimeout(function() { window.location.reload(); }, 1500);
+        showMarketplaceReceipt('acquisition', data);
       }).catch(function(err) {
-        showToast(err.message || 'Failed to buy app', 'error');
+        showMarketplaceActionError(err, 'Failed to acquire app');
       });
     };
+    window.popupBuyNow = window.popupAcquireNow;
 
     window.popupAcceptBid = function(bidId, appId) {
       if (!confirm('Accept this bid? Ownership will transfer.')) return;
@@ -7355,14 +7639,12 @@ export function getLayoutHTML(options: {
         headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
         body: JSON.stringify({ bid_id: bidId }),
       }).then(function(res) {
-        if (!res.ok) return res.json().then(function(e) { throw new Error(e.error || 'Failed'); });
-        return res.json();
+        return readMarketplaceJson(res, 'Failed to accept bid');
       }).then(function(data) {
         closeOffersPopup();
-        showToast('App sold for ' + formatLight(data.sale_price_light) + '!');
-        setTimeout(function() { window.location.reload(); }, 1500);
+        showMarketplaceReceipt('sale', data);
       }).catch(function(err) {
-        showToast(err.message || 'Failed to accept bid', 'error');
+        showMarketplaceActionError(err, 'Failed to accept bid');
       });
     };
 

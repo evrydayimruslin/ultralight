@@ -161,7 +161,7 @@ async function checkExactFingerprint(
 /**
  * Check if the uploader has previously sold an app with this fingerprint.
  * This catches the seller-relist pattern: sell app, then re-upload same code.
- * Buyer exemption is implicit — only seller_id is checked.
+ * Acquirer exemption is implicit — only seller_id is checked.
  */
 async function checkSellerRelist(
   uploaderId: string,
@@ -352,7 +352,7 @@ export async function runOriginalityCheck(
       passed: false,
       score: 0.0,
       fingerprint,
-      reason: 'Seller-relist detected: this code matches an app you previously sold. Original buyers have exclusive rights to relist.',
+      reason: 'Seller-relist detected: this code matches an app you previously sold. Original acquirers have exclusive rights to relist.',
       matches: allMatches,
       seller_relist: true,
       status: 'blocked',

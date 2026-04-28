@@ -7,6 +7,8 @@
 //   POST /api/discover                          — Semantic search (body: { query, limit, threshold })
 //   GET  /api/discover/featured?limit=<n>       — Top apps by community signal
 //   GET  /api/discover/marketplace?q=&type=&limit= — Unified apps+skills browse/search
+//   GET  /api/discover/newly-acquired?limit=<n> — Recent public acquisitions
+//   GET  /api/discover/acquisitions/:receiptId  — Public acquisition receipt
 //   GET  /api/discover/status                   — Service health check
 //   GET  /api/discover/openapi.json             — OpenAPI 3.1 spec for self-describing API
 //   GET  /api/onboarding/instructions           — Dynamic onboarding copy template
@@ -23,9 +25,11 @@ import { checkRateLimit } from '../services/ratelimit.ts';
 import { resolveAppEnvSchema } from '../services/app-settings.ts';
 import { buildAppTrustCard } from '../services/trust.ts';
 import {
+  buildPublicAcquisitionReceipt,
   buildMarketplaceListingSummary,
   type MarketplaceListingSummary,
   type MarketplaceListingSummaryListing,
+  type PublicAcquisitionFeedRow,
 } from '../services/marketplace.ts';
 import type { EnvSchemaEntry } from '../../shared/types/index.ts';
 import { getEnv } from '../lib/env.ts';
@@ -182,6 +186,10 @@ interface ScoredApp {
 }
 
 const DISCOVER_VERSION = '1.1.0';
+const PUBLIC_ACQUISITION_SELECT =
+  'id,app_id,seller_id,buyer_id,sale_price_light,created_at,apps(name,slug),' +
+  'buyer:users!app_sales_buyer_id_fkey(id,display_name,profile_slug,avatar_url),' +
+  'seller:users!app_sales_seller_id_fkey(id,display_name,profile_slug,avatar_url)';
 
 function readJsonArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? value as T[] : [];
@@ -250,6 +258,11 @@ export async function handleDiscover(request: Request): Promise<Response> {
   // GET /api/discover/newly-acquired — Recent marketplace acquisitions
   if (path === '/api/discover/newly-acquired' && method === 'GET') {
     return handleNewlyAcquired(url);
+  }
+
+  const acquisitionReceiptMatch = path.match(/^\/api\/discover\/acquisitions\/([a-f0-9-]+)$/);
+  if (acquisitionReceiptMatch && method === 'GET') {
+    return handlePublicAcquisitionReceipt(acquisitionReceiptMatch[1]);
   }
 
   // GET /api/discover/leaderboard — Highest grossing profiles
@@ -1461,6 +1474,31 @@ function handleOpenApiSpec(): Response {
           responses: { '200': { description: 'Featured apps list' } },
         },
       },
+      '/api/discover/newly-acquired': {
+        get: {
+          operationId: 'getNewlyAcquiredApps',
+          summary: 'Get recent public app acquisitions',
+          description: 'Returns receipt-backed public acquisition rows with app, price, buyer profile, and seller profile links.',
+          parameters: [
+            { name: 'limit', in: 'query', required: false, schema: { type: 'integer', default: 8, maximum: 30 } },
+          ],
+          responses: { '200': { description: 'Recent public acquisitions' } },
+        },
+      },
+      '/api/discover/acquisitions/{receiptId}': {
+        get: {
+          operationId: 'getPublicAcquisitionReceipt',
+          summary: 'Get a public acquisition receipt',
+          description: 'Returns the public receipt view for a completed app acquisition.',
+          parameters: [
+            { name: 'receiptId', in: 'path', required: true, schema: { type: 'string' }, description: 'Sale receipt ID' },
+          ],
+          responses: {
+            '200': { description: 'Public acquisition receipt' },
+            '404': { description: 'Acquisition receipt not found' },
+          },
+        },
+      },
       '/mcp/platform': {
         post: {
           operationId: 'mcpPlatform',
@@ -1711,35 +1749,43 @@ async function handleNewlyAcquired(url: URL): Promise<Response> {
   };
 
   try {
-    // Join app_sales with apps to get names
     const res = await fetch(
-      `${supabaseUrl}/rest/v1/app_sales?select=id,app_id,sale_price_light,created_at,apps(name,slug)` +
+      `${supabaseUrl}/rest/v1/app_sales?select=${PUBLIC_ACQUISITION_SELECT}` +
       `&order=created_at.desc` +
       `&limit=${limit}`,
       { headers: dbHeaders }
     );
     if (!res.ok) return error('Failed to fetch', 500);
-    const rows = readJsonArray<Array<{
-      id: string;
-      app_id: string | null;
-      sale_price_light: number | null;
-      created_at: string | null;
-      apps: { name?: string; slug?: string } | null;
-    }>[number]>(await res.json());
-    const results = rows.map((r: Record<string, unknown>) => {
-      const app = r.apps as Record<string, unknown> | null;
-      return {
-        sale_id: r.id,
-        app_id: r.app_id || '',
-        app_name: app?.name || 'Unknown',
-        app_slug: app?.slug || '',
-        sale_price_light: r.sale_price_light,
-        created_at: r.created_at,
-      };
-    });
+    const rows = readJsonArray<PublicAcquisitionFeedRow>(await res.json());
+    const results = rows.map(buildPublicAcquisitionReceipt);
     return json(results);
   } catch {
     return error('Failed to fetch', 500);
+  }
+}
+
+async function handlePublicAcquisitionReceipt(receiptId: string): Promise<Response> {
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+  if (!supabaseUrl || !supabaseKey) return error('Service unavailable', 503);
+
+  const dbHeaders = {
+    'apikey': supabaseKey,
+    'Authorization': `Bearer ${supabaseKey}`,
+  };
+
+  try {
+    const res = await fetch(
+      `${supabaseUrl}/rest/v1/app_sales?id=eq.${encodeURIComponent(receiptId)}&select=${PUBLIC_ACQUISITION_SELECT}&limit=1`,
+      { headers: dbHeaders },
+    );
+    if (!res.ok) return error('Failed to fetch acquisition receipt', 500);
+    const rows = readJsonArray<PublicAcquisitionFeedRow>(await res.json());
+    const receipt = rows[0];
+    if (!receipt) return error('Acquisition receipt not found', 404);
+    return json(buildPublicAcquisitionReceipt(receipt));
+  } catch {
+    return error('Failed to fetch acquisition receipt', 500);
   }
 }
 
