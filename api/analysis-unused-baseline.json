@@ -61,9 +61,7 @@
     },
     {
       "exports": [
-        "AIService",
-        "getDefaultModel",
-        "getSupportedProviders"
+        "AIService"
       ],
       "file": "services/ai.ts",
       "types": [
@@ -176,7 +174,6 @@
     },
     {
       "exports": [
-        "calculateCostLight",
         "CHAT_MIN_BALANCE_LIGHT"
       ],
       "file": "services/chat-billing.ts"
@@ -476,6 +473,25 @@
       ]
     },
     {
+      "file": "services/inference-client.ts",
+      "types": [
+        "InferenceFetchOptions"
+      ]
+    },
+    {
+      "file": "services/inference-options.ts",
+      "types": [
+        "BuildInferenceOptionsParams"
+      ]
+    },
+    {
+      "file": "services/inference-route.ts",
+      "types": [
+        "InferenceRouteErrorCode",
+        "ResolveInferenceRouteParams"
+      ]
+    },
+    {
       "file": "services/integrity.ts",
       "types": [
         "IntegrityIssue",
@@ -546,6 +562,7 @@
       "types": [
         "ChatFileAttachment",
         "OrchestrateEvent",
+        "OrchestrateOptions",
         "OrchestrateRequest"
       ]
     },
@@ -682,6 +699,14 @@
       "file": "services/request-validation.ts"
     },
     {
+      "file": "services/runtime-ai.ts",
+      "types": [
+        "RuntimeAIContext",
+        "RuntimeAIService",
+        "RuntimeAIUser"
+      ]
+    },
+    {
       "exports": [
         "buildSensitiveRouteRateLimitHeaders",
         "SENSITIVE_ROUTE_RATE_LIMITS"
@@ -794,12 +819,6 @@
       "file": "services/user-supabase-configs.ts",
       "types": [
         "UserSupabaseConfigSummary"
-      ]
-    },
-    {
-      "file": "services/user.ts",
-      "types": [
-        "UserService"
       ]
     },
     {
