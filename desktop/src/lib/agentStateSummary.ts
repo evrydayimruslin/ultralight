@@ -39,6 +39,9 @@ export async function generateStateSummary(
       max_tokens: 150,
       temperature: 0,
       inference: getInferencePreference() ?? undefined,
+      trace: {
+        source: 'agent_state_summary',
+      },
     })) {
       if (event.type === 'delta' && event.content) {
         summary += event.content;

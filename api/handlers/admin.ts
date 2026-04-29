@@ -11,10 +11,20 @@
 //   POST  /api/admin/balance/:userId    — Top up a user's hosting balance
 //   POST  /api/admin/cleanup-provisionals — Delete expired provisional users
 //   GET   /api/admin/analytics?days=30  — Distribution pipeline analytics dashboard
+//   GET   /api/admin/capture/overview   — Capture health and aggregate inspection
+//   GET   /api/admin/capture/conversation/:id — Inspect one captured conversation
+//   GET   /api/admin/capture/export     — Export captured threads/messages/events/artifacts
 
 import { json, error } from './response.ts';
 import { unsuspendContent } from '../services/hosting-billing.ts';
 import { getEnv } from '../lib/env.ts';
+import {
+  buildCaptureExport,
+  captureExportToJsonl,
+  getCaptureOverview,
+  inspectCaptureConversation,
+  type CaptureInspectionFilters,
+} from '../services/capture-inspection.ts';
 import { getSensitiveRouteClientKey, withSensitiveRouteRateLimit } from '../services/sensitive-route-rate-limit.ts';
 import { RequestValidationError } from '../services/request-validation.ts';
 import {
@@ -188,7 +198,83 @@ export async function handleAdmin(request: Request): Promise<Response> {
     return getAnalytics(days);
   }
 
+  // GET /api/admin/capture/overview — capture health and aggregates
+  if (path === '/api/admin/capture/overview' && method === 'GET') {
+    return handleCaptureOverview(url);
+  }
+
+  // GET /api/admin/capture/export — JSON/JSONL export bundle
+  if (path === '/api/admin/capture/export' && method === 'GET') {
+    return handleCaptureExport(url);
+  }
+
+  // GET /api/admin/capture/conversation/:id — full conversation inspection
+  const captureConversationPrefix = '/api/admin/capture/conversation/';
+  if (path.startsWith(captureConversationPrefix) && method === 'GET') {
+    const conversationId = decodeURIComponent(path.slice(captureConversationPrefix.length));
+    if (!conversationId) return error('Missing conversation id', 400);
+    return handleCaptureConversation(conversationId);
+  }
+
   return error('Admin endpoint not found', 404);
+}
+
+function captureFiltersFromUrl(url: URL): CaptureInspectionFilters {
+  return {
+    conversationId: url.searchParams.get('conversationId') || undefined,
+    anonUserId: url.searchParams.get('anonUserId') || undefined,
+    source: url.searchParams.get('source') || undefined,
+    since: url.searchParams.get('since') || undefined,
+    until: url.searchParams.get('until') || undefined,
+    limit: Number(url.searchParams.get('limit') || undefined),
+  };
+}
+
+function sanitizeFilenamePart(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80) || 'capture';
+}
+
+async function handleCaptureOverview(url: URL): Promise<Response> {
+  try {
+    return json(await getCaptureOverview(captureFiltersFromUrl(url)));
+  } catch (err) {
+    console.error('[ADMIN] capture overview failed:', err);
+    return error('Capture overview failed', 500);
+  }
+}
+
+async function handleCaptureConversation(conversationId: string): Promise<Response> {
+  try {
+    return json({ success: true, capture: await inspectCaptureConversation(conversationId) });
+  } catch (err) {
+    console.error('[ADMIN] capture conversation inspection failed:', err);
+    return error('Capture conversation inspection failed', 500);
+  }
+}
+
+async function handleCaptureExport(url: URL): Promise<Response> {
+  try {
+    const filters = captureFiltersFromUrl(url);
+    const bundle = await buildCaptureExport(filters);
+    const format = url.searchParams.get('format') || 'json';
+
+    if (format === 'jsonl' || format === 'ndjson') {
+      const label = sanitizeFilenamePart(
+        filters.conversationId || filters.anonUserId || filters.source || 'capture-export',
+      );
+      return new Response(captureExportToJsonl(bundle), {
+        headers: {
+          'Content-Type': 'application/x-ndjson; charset=utf-8',
+          'Content-Disposition': `attachment; filename="${label}.jsonl"`,
+        },
+      });
+    }
+
+    return json({ success: true, capture: bundle });
+  } catch (err) {
+    console.error('[ADMIN] capture export failed:', err);
+    return error('Capture export failed', 500);
+  }
 }
 
 async function cleanupProvisionals(): Promise<Response> {

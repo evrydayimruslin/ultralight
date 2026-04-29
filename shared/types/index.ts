@@ -1806,7 +1806,7 @@ export function validateManifest(input: unknown): ManifestValidationResult {
 /**
  * Convert manifest functions to MCP tools format
  */
-export function manifestToMCPTools(manifest: AppManifest, appId: string, appSlug: string): MCPTool[] {
+export function manifestToMCPTools(manifest: AppManifest, _appId: string, appSlug: string): MCPTool[] {
   if (!manifest.functions) return [];
 
   const tools: MCPTool[] = [];
@@ -1879,6 +1879,14 @@ export interface ChatStreamRequest {
   temperature?: number;   // default 0.7
   max_tokens?: number;    // default 4096
   stream?: boolean;       // default true
+  trace?: ChatTraceContext;
+}
+
+export interface ChatTraceContext {
+  traceId?: string;
+  conversationId?: string;
+  messageId?: string;
+  source?: string;
 }
 
 /** OpenAI-compatible message format */

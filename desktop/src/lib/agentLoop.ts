@@ -95,6 +95,12 @@ export interface AgentLoopCallbacks {
   onWarning?: (msg: string) => void;
 }
 
+export interface AgentLoopTrace {
+  traceId?: string;
+  conversationId?: string;
+  source?: string;
+}
+
 export interface AgentLoopOptions {
   /** System prompt */
   systemPrompt?: string;
@@ -106,6 +112,8 @@ export interface AgentLoopOptions {
   maxToolRounds?: number;
   /** AbortSignal for cancellation */
   signal?: AbortSignal;
+  /** Capture trace metadata for analytics/storage */
+  trace?: AgentLoopTrace;
 }
 
 export interface AgentLoopResult {
@@ -153,6 +161,7 @@ export async function runAgentLoop(
     model,
     maxToolRounds = DEFAULT_MAX_ROUNDS,
     signal,
+    trace,
   } = options;
 
   const newMessages: LoopMessage[] = [];
@@ -186,7 +195,7 @@ export async function runAgentLoop(
     }
 
     // Stream the response
-    const streamResult = await streamWithRetry(apiMsgs, tools, model, callbacks, signal);
+    const streamResult = await streamWithRetry(apiMsgs, tools, model, callbacks, signal, trace);
 
     if (!streamResult || isAborted()) break;
 
@@ -311,6 +320,7 @@ async function streamWithRetry(
   model: string,
   callbacks: AgentLoopCallbacks,
   signal?: AbortSignal,
+  trace?: AgentLoopTrace,
 ): Promise<StreamResult | null> {
   const assistantId = crypto.randomUUID();
   let content = '';
@@ -333,12 +343,21 @@ async function streamWithRetry(
 
     try {
       let streamError = false;
+      const captureMessageId = attempt === 0
+        ? assistantId
+        : `${assistantId}:retry:${attempt}`;
 
       for await (const event of streamChat({
         model,
         messages: apiMessages,
         tools: tools && tools.length > 0 ? tools : undefined,
         inference: getInferencePreference() ?? undefined,
+        trace: {
+          ...trace,
+          traceId: attempt === 0 ? trace?.traceId : crypto.randomUUID(),
+          messageId: captureMessageId,
+          source: trace?.source || 'agent_loop',
+        },
       })) {
         if (signal?.aborted) return null;
 

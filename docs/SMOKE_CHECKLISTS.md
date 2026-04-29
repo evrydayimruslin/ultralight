@@ -75,6 +75,24 @@ ULTRALIGHT_TOKEN=... ./scripts/smoke-test.sh \
   --exercise-chat
 ```
 
+For chat capture rollout candidates, run the capture-specific smoke after the
+staging migration has been pushed and the staging Worker has
+`ANALYTICS_PEPPER_V1` plus `CHAT_CAPTURE_ENABLED=true` configured:
+
+```bash
+ULTRALIGHT_TOKEN=... \
+SUPABASE_SERVICE_ROLE_KEY=... \
+node scripts/smoke/chat-capture-smoke.mjs \
+  --target staging \
+  --exercise-orchestrate \
+  --write-json "$UL_LAUNCH_EVIDENCE_DIR/smoke/chat-capture.json"
+```
+
+This sends one real `/chat/orchestrate` request with project context and a small
+file attachment, then verifies `chat_threads`, `chat_messages`, `chat_events`,
+`capture_artifacts`, and `capture_artifact_links` rows appeared for the smoke
+conversation.
+
 Run a quick CORS sanity check from one allowed and one disallowed origin:
 
 ```bash
@@ -162,6 +180,19 @@ Run the broader API smoke with a production bearer token:
 ULTRALIGHT_TOKEN=... ./scripts/smoke-test.sh \
   --url https://api.ultralight.dev \
   --exercise-chat
+```
+
+For chat capture rollout candidates, run the capture-specific smoke after the
+production migration has been pushed and the production Worker has
+`ANALYTICS_PEPPER_V1` plus `CHAT_CAPTURE_ENABLED=true` configured:
+
+```bash
+ULTRALIGHT_TOKEN=... \
+SUPABASE_SERVICE_ROLE_KEY=... \
+node scripts/smoke/chat-capture-smoke.mjs \
+  --target production \
+  --exercise-orchestrate \
+  --write-json "$UL_LAUNCH_EVIDENCE_DIR/smoke/chat-capture.json"
 ```
 
 If the public production domain ever drifts away from the Worker deployment,

@@ -133,6 +133,34 @@ Rows reported as `legacy_unrecoverable` should be revoked or deleted before
 closing Wave 4 token cleanup, because they will no longer validate once the
 remaining plaintext-assisted migration branch is removed.
 
+## Chat Capture Rollout
+
+Before enabling chat capture on a candidate environment:
+
+1. Push the checked-in Supabase migrations to the target Supabase project.
+2. Configure target Worker secrets/vars:
+   - `ANALYTICS_PEPPER_V1`
+   - `ANALYTICS_PEPPER_VERSION=v1`
+   - `CHAT_CAPTURE_ENABLED=false`
+   - `CHAT_CAPTURE_ARTIFACTS_ENABLED=true`
+   - `CHAT_CAPTURE_MAX_INLINE_BYTES=64000`
+3. Deploy the target Worker.
+4. Flip `CHAT_CAPTURE_ENABLED=true`.
+5. Run the capture smoke:
+
+```bash
+ULTRALIGHT_TOKEN=... \
+SUPABASE_SERVICE_ROLE_KEY=... \
+node scripts/smoke/chat-capture-smoke.mjs \
+  --target production \
+  --exercise-orchestrate \
+  --write-json "$UL_LAUNCH_EVIDENCE_DIR/smoke/chat-capture.json"
+```
+
+The smoke verifies the capture schema is reachable by service role, sends one
+real `/chat/orchestrate` request with project context and a file, then confirms
+thread/message/event/artifact/link rows were written for that conversation.
+
 ## Secret Crypto Compatibility Audit
 
 Before rolling out the Wave 4 secret-crypto cleanup, generate a real report from

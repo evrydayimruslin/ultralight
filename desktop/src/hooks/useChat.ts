@@ -42,6 +42,10 @@ export interface UseChatOptions {
   onStreamEnd?: () => void;
   /** Max tool-use loop iterations (prevents infinite loops) */
   maxToolRounds?: number;
+  /** Active conversation id for capture trace grouping */
+  conversationId?: string | null;
+  /** Capture source label */
+  captureSource?: string;
 }
 
 export interface UseChatReturn {
@@ -72,6 +76,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     onStreamStart,
     onStreamEnd,
     maxToolRounds = 25,
+    conversationId,
+    captureSource = 'use_chat',
   } = options;
 
   // Use a ref so sendMessage always reads the latest system prompt
@@ -213,6 +219,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
           model,
           maxToolRounds,
           signal: abortController.signal,
+          trace: {
+            conversationId: conversationId ?? undefined,
+            source: captureSource,
+          },
         },
       );
 
@@ -228,7 +238,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       abortRef.current = null;
       onStreamEnd?.();
     }
-  }, [messages, isLoading, tools, onToolCall, onStreamStart, onStreamEnd, maxToolRounds]);
+  }, [messages, isLoading, tools, onToolCall, onStreamStart, onStreamEnd, maxToolRounds, conversationId, captureSource]);
 
   return {
     messages,

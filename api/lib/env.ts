@@ -40,6 +40,12 @@ export interface Env {
   ENVIRONMENT: string;
   CORS_ALLOWED_ORIGINS: string;
   PLATFORM_MCP_DISABLED_ALIASES: string;
+  CHAT_CAPTURE_ENABLED: string;
+  CHAT_CAPTURE_ARTIFACTS_ENABLED: string;
+  CHAT_CAPTURE_MAX_INLINE_BYTES: string;
+  ANALYTICS_PEPPER_V1: string;
+  ANALYTICS_PEPPER_VERSION: string;
+  CHAT_CAPTURE_PEPPER: string;
 
   // Index signature for dynamic access
   [key: string]: unknown;

@@ -130,6 +130,10 @@ class AgentRunner {
           tools,
           model,
           signal: abortController.signal,
+          trace: {
+            conversationId,
+            source: 'agent_runner',
+          },
         },
       );
 
@@ -288,6 +292,10 @@ class AgentRunner {
           tools: run.config.tools,
           model: run.config.model,
           signal: abortController.signal,
+          trace: {
+            conversationId: run.conversationId,
+            source: 'agent_runner_resume',
+          },
         },
       );
 

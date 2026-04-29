@@ -91,6 +91,9 @@ export async function summarizeMessages(
       max_tokens: 1024,
       temperature: 0.3,
       inference: getInferencePreference() ?? undefined,
+      trace: {
+        source: 'conversation_summary',
+      },
     })) {
       if (event.type === 'delta' && event.content) {
         summaryText += event.content;

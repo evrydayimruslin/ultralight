@@ -200,6 +200,12 @@ export async function* streamChat(opts: {
   temperature?: number;
   max_tokens?: number;
   inference?: InferenceRoutePreference;
+  trace?: {
+    traceId?: string;
+    conversationId?: string;
+    messageId?: string;
+    source?: string;
+  };
 }): AsyncGenerator<ChatStreamEvent> {
   let res: Response;
   try {
@@ -213,6 +219,7 @@ export async function* streamChat(opts: {
         temperature: opts.temperature ?? 0.7,
         max_tokens: opts.max_tokens ?? 4096,
         inference: opts.inference,
+        trace: opts.trace,
       }),
     });
   } catch (err) {
@@ -831,6 +838,9 @@ export async function* streamOrchestrate(opts: {
   projectContext?: string;
   /** Conversation ID for rolling summary persistence */
   conversationId?: string;
+  /** Stable local message IDs for server-side capture idempotency */
+  userMessageId?: string;
+  assistantMessageId?: string;
   /** Attached files (base64 data URLs) */
   files?: Array<{ name: string; size: number; mimeType: string; content: string }>;
 }): AsyncGenerator<OrchestrateEvent> {

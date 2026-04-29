@@ -58,6 +58,14 @@ export interface ChatStreamRequest {
   max_tokens?: number;
   stream?: boolean;
   inference?: InferenceRoutePreference;
+  trace?: ChatTraceContext;
+}
+
+export interface ChatTraceContext {
+  traceId?: string;
+  conversationId?: string;
+  messageId?: string;
+  source?: string;
 }
 
 export interface ChatMessage {

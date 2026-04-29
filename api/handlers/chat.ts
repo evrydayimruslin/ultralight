@@ -18,6 +18,11 @@ import type { SystemAgentContext } from '../services/flash-broker.ts';
 import { CHAT_MIN_BALANCE_LIGHT, type ChatStreamRequest, type ChatUsage, type InferenceRoutePreference } from '../../shared/contracts/ai.ts';
 import { createServerLogger } from '../services/logging.ts';
 import { isValidModelId } from '../services/model-validation.ts';
+import {
+  createChatStreamCaptureSession,
+  createOrchestrateCaptureSession,
+  scheduleCaptureTask,
+} from '../services/chat-capture.ts';
 
 const chatLogger = createServerLogger('CHAT');
 
@@ -202,6 +207,30 @@ export async function handleChatStream(request: Request): Promise<Response> {
     return guardResult;
   }
 
+  const captureTraceId = body.trace?.traceId || crypto.randomUUID();
+  const captureConversationId = body.trace?.conversationId || captureTraceId;
+  const captureAssistantMessageId = body.trace?.messageId || crypto.randomUUID();
+  const captureSource = body.trace?.source || 'chat_stream';
+  const captureSession = createChatStreamCaptureSession({
+    userId: user.id,
+    userEmail: user.email,
+    conversationId: captureConversationId,
+    assistantMessageId: captureAssistantMessageId,
+    traceId: captureTraceId,
+    source: captureSource,
+    messages: body.messages,
+    tools: body.tools,
+    requestedModel: body.model,
+    resolvedModel: route.model,
+    provider: route.provider,
+    billingMode: route.billingMode,
+    keySource: route.keySource,
+    inference: body.inference,
+    temperature: body.temperature ?? 0.7,
+    maxTokens: body.max_tokens ?? 4096,
+  });
+  captureSession?.start();
+
   // ── 5. Forward to the resolved OpenAI-compatible provider with streaming ──
   const providerBody = {
     model: route.model,
@@ -239,6 +268,14 @@ export async function handleChatStream(request: Request): Promise<Response> {
       model: route.model,
       error: err,
     });
+    captureSession?.observeError(err instanceof Error ? err.message : 'fetch failed', {
+      phase: 'provider_fetch',
+      provider: route.provider,
+      model: route.model,
+    });
+    if (captureSession) {
+      scheduleCaptureTask(captureSession.finish('provider_fetch_error'));
+    }
     return json({ error: 'Upstream service unavailable', detail: err instanceof Error ? err.message : 'fetch failed' }, 502);
   }
 
@@ -256,6 +293,15 @@ export async function handleChatStream(request: Request): Promise<Response> {
         upstream_message: errMsg,
       });
     } catch { /* use default */ }
+    captureSession?.observeError(errMsg, {
+      phase: 'provider_response',
+      provider: route.provider,
+      model: route.model,
+      status: providerRes.status,
+    });
+    if (captureSession) {
+      scheduleCaptureTask(captureSession.finish('provider_error'));
+    }
     return json(
       { error: errMsg, detail: `${route.provider} returned ${providerRes.status}` },
       providerRes.status >= 500 ? 502 : providerRes.status,
@@ -263,6 +309,14 @@ export async function handleChatStream(request: Request): Promise<Response> {
   }
 
   if (!providerRes.body) {
+    captureSession?.observeError('No response body from upstream', {
+      phase: 'provider_response',
+      provider: route.provider,
+      model: route.model,
+    });
+    if (captureSession) {
+      scheduleCaptureTask(captureSession.finish('provider_empty_body'));
+    }
     return error('No response body from upstream', 502);
   }
 
@@ -274,6 +328,43 @@ export async function handleChatStream(request: Request): Promise<Response> {
   const provider = route.provider;
   const shouldDebitLight = route.shouldDebitLight;
   const decoder = new TextDecoder();
+  let sseBuffer = '';
+
+  function processProviderSseLine(line: string): void {
+    if (!line.startsWith('data: ')) return;
+    const data = line.slice(6).trim();
+    if (!data || data === '[DONE]') return;
+    try {
+      const parsed = JSON.parse(data) as {
+        usage?: {
+          prompt_tokens?: number;
+          completion_tokens?: number;
+          total_tokens?: number;
+          total_cost?: number;
+        };
+      };
+      captureSession?.observeProviderChunk(parsed);
+      if (parsed.usage) {
+        capturedUsage = {
+          prompt_tokens: parsed.usage.prompt_tokens || 0,
+          completion_tokens: parsed.usage.completion_tokens || 0,
+          total_tokens: parsed.usage.total_tokens || 0,
+        };
+        if (parsed.usage.total_cost !== undefined) {
+          capturedTotalCost = parsed.usage.total_cost;
+        }
+      }
+    } catch {
+      // Not valid JSON yet — keep streaming bytes to the client regardless.
+    }
+  }
+
+  function processProviderSseText(text: string, final = false): void {
+    sseBuffer += text;
+    const lines = sseBuffer.split('\n');
+    sseBuffer = final ? '' : lines.pop() || '';
+    for (const line of lines) processProviderSseLine(line);
+  }
 
   const transformStream = new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk: Uint8Array, controller: TransformStreamDefaultController<Uint8Array>) {
@@ -282,43 +373,26 @@ export async function handleChatStream(request: Request): Promise<Response> {
 
       // Best-effort parse of SSE data lines to capture usage from final chunk
       try {
-        const text = decoder.decode(chunk, { stream: true });
-        const lines = text.split('\n');
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const data = line.slice(6).trim();
-          if (data === '[DONE]') continue;
-          try {
-            const parsed = JSON.parse(data) as {
-              usage?: {
-                prompt_tokens?: number;
-                completion_tokens?: number;
-                total_tokens?: number;
-                total_cost?: number;
-              };
-            };
-            if (parsed.usage) {
-              capturedUsage = {
-                prompt_tokens: parsed.usage.prompt_tokens || 0,
-                completion_tokens: parsed.usage.completion_tokens || 0,
-                total_tokens: parsed.usage.total_tokens || 0,
-              };
-              if (parsed.usage.total_cost !== undefined) {
-                capturedTotalCost = parsed.usage.total_cost;
-              }
-            }
-          } catch {
-            // Not valid JSON or partial chunk — skip, usage appears in the final event
-          }
-        }
+        processProviderSseText(decoder.decode(chunk, { stream: true }));
       } catch {
         // Decode error — data still passes through to client
       }
     },
 
     flush() {
+      try {
+        processProviderSseText(decoder.decode(), true);
+      } catch {
+        // Decode error at stream end — data already passed through to client
+      }
+
       if (capturedUsage && capturedUsage.total_tokens > 0 && shouldDebitLight) {
-        deductChatCost(userId, capturedUsage, model, capturedTotalCost)
+        deductChatCost(userId, capturedUsage, model, capturedTotalCost, {
+          traceId: captureTraceId,
+          conversationId: captureConversationId,
+          messageId: captureAssistantMessageId,
+          source: captureSource,
+        })
           .then(result => {
             chatLogger.info('Post-stream chat billing succeeded', {
               user_id: userId,
@@ -352,6 +426,9 @@ export async function handleChatStream(request: Request): Promise<Response> {
           model,
         });
       }
+      if (captureSession) {
+        scheduleCaptureTask(captureSession.finish('stream_flush'));
+      }
     },
   });
 
@@ -362,6 +439,14 @@ export async function handleChatStream(request: Request): Promise<Response> {
       model,
       error: err,
     });
+    captureSession?.observeError(err instanceof Error ? err.message : String(err), {
+      phase: 'stream_pipe',
+      provider,
+      model,
+    });
+    if (captureSession) {
+      scheduleCaptureTask(captureSession.finish('pipe_error'));
+    }
   });
 
   // ── 7. Return streaming response ──
@@ -612,6 +697,8 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
     systemAgentContext?: SystemAgentContext;
     projectContext?: string;
     conversationId?: string;
+    userMessageId?: string;
+    assistantMessageId?: string;
     files?: Array<{ name: string; size: number; mimeType: string; content: string }>;
   };
   try {
@@ -676,6 +763,25 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
 
   // ── 5. Stream orchestration events as SSE ──
   const { orchestrate } = await import('../services/orchestrator.ts');
+  const captureConversationId = body.conversationId || crypto.randomUUID();
+  const captureSession = createOrchestrateCaptureSession({
+    userId: user.id,
+    userEmail: user.email,
+    conversationId: captureConversationId,
+    userMessageId: body.userMessageId || crypto.randomUUID(),
+    assistantMessageId: body.assistantMessageId || crypto.randomUUID(),
+    traceId: crypto.randomUUID(),
+    message: body.message,
+    conversationHistory: body.conversationHistory,
+    interpreterModel: body.interpreterModel,
+    heavyModel: body.heavyModel || body.preferredModel,
+    inference: body.inference,
+    scope: body.scope,
+    systemAgentContext: body.systemAgentContext,
+    projectContext: body.projectContext,
+    files: body.files,
+  });
+  captureSession?.start();
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
@@ -690,29 +796,44 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
             scope: body.scope,
             systemAgentContext: body.systemAgentContext,
             projectContext: body.projectContext,
-            conversationId: body.conversationId,
+            conversationId: captureConversationId,
             files: body.files,
           },
           user.id,
           user.email,
           { inferenceRoute: route },
         )) {
+          captureSession?.observeEvent(event);
           const sseData = `data: ${JSON.stringify(event)}\n\n`;
           controller.enqueue(encoder.encode(sseData));
 
           // Close stream on done or error
           if (event.type === 'done') {
+            if (captureSession) {
+              scheduleCaptureTask(captureSession.finish('done'));
+            }
             controller.close();
             return;
           }
         }
         // Safety close if generator ends without 'done'
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done' })}\n\n`));
+        const doneEvent = { type: 'done' as const };
+        captureSession?.observeEvent(doneEvent);
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(doneEvent)}\n\n`));
+        if (captureSession) {
+          scheduleCaptureTask(captureSession.finish('generator_end'));
+        }
         controller.close();
       } catch (err) {
         const errEvent = { type: 'error', message: err instanceof Error ? err.message : String(err) };
+        captureSession?.observeEvent(errEvent);
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(errEvent)}\n\n`));
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done' })}\n\n`));
+        const doneEvent = { type: 'done' as const };
+        captureSession?.observeEvent(doneEvent);
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(doneEvent)}\n\n`));
+        if (captureSession) {
+          scheduleCaptureTask(captureSession.finish('handler_error'));
+        }
         controller.close();
       }
     },

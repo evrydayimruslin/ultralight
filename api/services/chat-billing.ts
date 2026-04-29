@@ -8,6 +8,14 @@ import type { ChatUsage, ChatBillingResult } from '../../shared/contracts/ai.ts'
 import { CHAT_MIN_BALANCE_LIGHT, CHAT_PLATFORM_MARKUP } from '../../shared/contracts/ai.ts';
 import { LIGHT_PER_DOLLAR_DESKTOP, formatLight } from '../../shared/types/index.ts';
 
+export interface ChatBillingMetadata {
+  traceId?: string;
+  conversationId?: string;
+  messageId?: string;
+  source?: string;
+  [key: string]: unknown;
+}
+
 function dbHeaders(): Record<string, string> {
   return {
     'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
@@ -106,6 +114,7 @@ export async function deductChatCost(
   usage: ChatUsage,
   model: string,
   openRouterTotalCostUsd?: number,
+  metadata: ChatBillingMetadata = {},
 ): Promise<ChatBillingResult> {
   const costLight = calculateCostLight(usage, model, openRouterTotalCostUsd);
 
@@ -148,7 +157,7 @@ export async function deductChatCost(
   const { new_balance, was_depleted } = debitResult[0];
 
   // Log transaction (fire-and-forget — never break billing for logging)
-  logChatTransaction(userId, costLight, new_balance, usage, model).catch(() => {});
+  logChatTransaction(userId, costLight, new_balance, usage, model, metadata).catch(() => {});
 
   return {
     cost_light: costLight,
@@ -168,6 +177,7 @@ async function logChatTransaction(
   balanceAfterLight: number,
   usage: ChatUsage,
   model: string,
+  metadata: ChatBillingMetadata = {},
 ): Promise<void> {
   await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/billing_transactions`, {
     method: 'POST',
@@ -186,6 +196,11 @@ async function logChatTransaction(
         total_tokens: usage.total_tokens,
         cost_light: costLight,
         markup: CHAT_PLATFORM_MARKUP,
+        trace_id: metadata.traceId || null,
+        conversation_id: metadata.conversationId || null,
+        message_id: metadata.messageId || null,
+        source: metadata.source || null,
+        ...metadata,
       },
     }),
   });

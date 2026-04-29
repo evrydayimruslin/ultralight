@@ -336,6 +336,8 @@ export default function ChatView({
     systemPrompt,
     tools: allTools,
     onToolCall: handleToolCall,
+    conversationId: activeId,
+    captureSource: 'chat_view',
   });
 
   const contextWindow = getContextWindow(getModel());
@@ -604,6 +606,8 @@ export default function ChatView({
       systemAgentContext: systemAgentContext || undefined,
       projectContext,
       conversationId: conversationIdOverride || activeId || undefined,
+      userMessageId: userMsg.id,
+      assistantMessageId: assistantId,
       files: chatFiles,
     })) {
       switch (event.type) {
@@ -1094,6 +1098,10 @@ export default function ChatView({
               temperature: 0.3,
               max_tokens: 30,
               inference: getInferencePreference() ?? undefined,
+              trace: {
+                conversationId: convId || agent.conversation_id,
+                source: 'title_generation',
+              },
             })) {
               if (ev.type === 'delta') title += ev.content || '';
             }
