@@ -2,7 +2,7 @@
 // Extracted from useChat so that both the foreground hook (useChat)
 // and background AgentRunner can share identical behavior.
 
-import { streamChat, type ChatMessage, type ChatTool } from './api';
+import { recordToolInvocationTelemetry, streamChat, type ChatMessage, type ChatTool } from './api';
 import { accumulateToolCalls, type AccumulatedToolCall } from './sse';
 import { countAllTokens, shouldSummarize } from './tokens';
 import { summarizeMessages } from './summarizer';
@@ -227,27 +227,79 @@ export async function runAgentLoop(
       for (const tc of streamResult.toolCalls) {
         if (isAborted()) break;
 
-        let toolResult: string;
+        const toolStartedAt = new Date().toISOString();
+        const toolStartMs = Date.now();
+        const schemaSnapshot = tools?.find((tool) => tool.function.name === tc.function.name) ?? null;
+        let toolResult = '';
+        let toolArgs: Record<string, unknown> | { _raw_arguments: string } = {
+          _raw_arguments: tc.function.arguments,
+        };
+        let toolStatus: 'success' | 'error' | 'aborted' | 'timeout' = 'success';
+        let toolErrorType: string | undefined;
+        let toolErrorMessage: string | undefined;
+        let stopAfterTelemetry = false;
+
         try {
-          const args = JSON.parse(tc.function.arguments);
+          const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+          toolArgs = args;
 
           // Enforce hard cap on codemode calls — BREAK the entire loop, don't just error
           const isCodemode = tc.function.name === 'ul_codemode' || tc.function.name === 'ul.codemode' || tc.function.name === 'ul_execute' || tc.function.name === 'ul.execute';
           if (isCodemode) {
             codemodeCallCount++;
             if (codemodeCallCount > MAX_CODEMODE_CALLS) {
+              toolStatus = 'aborted';
+              toolErrorType = 'codemode_call_limit';
+              toolErrorMessage = `Codemode call limit exceeded (${MAX_CODEMODE_CALLS})`;
+              toolResult = `Tool aborted (${toolErrorType}): ${toolErrorMessage}`;
               // Force-stop the agent loop — no more rounds
               toolRound = maxToolRounds + 1;  // exceed limit to break while loop
-              break;  // break inner for loop
+              stopAfterTelemetry = true;
+            } else {
+              toolResult = await callbacks.onToolCall(tc.function.name, args);
             }
+          } else {
+            toolResult = await callbacks.onToolCall(tc.function.name, args);
           }
-
-          toolResult = await callbacks.onToolCall(tc.function.name, args);
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
           const errName = err instanceof Error ? err.constructor.name : 'Error';
+          toolStatus = 'error';
+          toolErrorType = errName;
+          toolErrorMessage = errMsg;
           toolResult = `Tool error (${errName}): ${errMsg}\n\nYou can try a different approach or fix the arguments and retry.`;
           callbacks.onWarning?.(`Tool ${tc.function.name} failed: ${errMsg}`);
+        }
+
+        void recordToolInvocationTelemetry({
+          invocationId: crypto.randomUUID(),
+          traceId: streamResult.traceId,
+          conversationId: trace?.conversationId,
+          parentLlmInvocationId: streamResult.traceId,
+          source: trace?.source || 'agent_loop',
+          toolCallId: tc.id,
+          toolName: tc.function.name,
+          toolKind: 'function',
+          functionName: tc.function.name,
+          schemaSnapshot,
+          args: toolArgs,
+          result: toolResult,
+          startedAt: toolStartedAt,
+          completedAt: new Date().toISOString(),
+          durationMs: Date.now() - toolStartMs,
+          status: toolStatus,
+          errorType: toolErrorType,
+          errorMessage: toolErrorMessage,
+          metadata: {
+            assistant_message_id: streamResult.assistantId,
+            model,
+            tool_round: toolRound,
+            result_truncated_for_context: toolResult.length > MAX_RESULT_CHARS,
+          },
+        });
+
+        if (stopAfterTelemetry) {
+          break;
         }
 
         const toolMsg: LoopMessage = {
@@ -308,6 +360,7 @@ function buildApiMessages(messages: LoopMessage[], systemPrompt?: string): ChatM
 
 interface StreamResult {
   assistantId: string;
+  traceId: string;
   content: string;
   toolCalls: AccumulatedToolCall[];
   usage?: LoopMessage['usage'];
@@ -327,6 +380,7 @@ async function streamWithRetry(
   let toolCalls: AccumulatedToolCall[] = [];
   let usage: LoopMessage['usage'] = undefined;
   let finishReason: string | null = null;
+  let activeTraceId = trace?.traceId || crypto.randomUUID();
 
   for (let attempt = 0; attempt <= MAX_STREAM_RETRIES; attempt++) {
     if (signal?.aborted) return null;
@@ -343,6 +397,8 @@ async function streamWithRetry(
 
     try {
       let streamError = false;
+      const attemptTraceId = attempt === 0 ? activeTraceId : crypto.randomUUID();
+      activeTraceId = attemptTraceId;
       const captureMessageId = attempt === 0
         ? assistantId
         : `${assistantId}:retry:${attempt}`;
@@ -354,7 +410,7 @@ async function streamWithRetry(
         inference: getInferencePreference() ?? undefined,
         trace: {
           ...trace,
-          traceId: attempt === 0 ? trace?.traceId : crypto.randomUUID(),
+          traceId: attemptTraceId,
           messageId: captureMessageId,
           source: trace?.source || 'agent_loop',
         },
@@ -401,7 +457,7 @@ async function streamWithRetry(
       if (streamError) continue;
 
       // Success
-      return { assistantId, content, toolCalls, usage, finishReason };
+      return { assistantId, traceId: activeTraceId, content, toolCalls, usage, finishReason };
     } catch (err) {
       if (attempt < MAX_STREAM_RETRIES) {
         callbacks.onWarning?.(`Stream attempt ${attempt + 1} failed: ${err}`);

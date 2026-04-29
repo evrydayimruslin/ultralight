@@ -9,13 +9,13 @@
 import { authenticate } from './auth.ts';
 import { json, error } from './response.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
-import { checkChatBalance, deductChatCost } from '../services/chat-billing.ts';
+import { calculateCostLight, checkChatBalance, deductChatCost } from '../services/chat-billing.ts';
 import { getOrCreateOpenRouterKey } from '../services/openrouter-keys.ts';
 import { fetchInferenceChatCompletion } from '../services/inference-client.ts';
 import { InferenceRouteError, resolveInferenceRoute } from '../services/inference-route.ts';
 import { buildInferenceOptions } from '../services/inference-options.ts';
 import type { SystemAgentContext } from '../services/flash-broker.ts';
-import { CHAT_MIN_BALANCE_LIGHT, type ChatStreamRequest, type ChatUsage, type InferenceRoutePreference } from '../../shared/contracts/ai.ts';
+import { CHAT_MIN_BALANCE_LIGHT, type ChatStreamRequest, type ChatUsage, type InferenceRoutePreference, type ToolInvocationTelemetryRequest } from '../../shared/contracts/ai.ts';
 import { createServerLogger } from '../services/logging.ts';
 import { isValidModelId } from '../services/model-validation.ts';
 import {
@@ -23,8 +23,13 @@ import {
   createOrchestrateCaptureSession,
   scheduleCaptureTask,
 } from '../services/chat-capture.ts';
+import {
+  createLlmInvocationTelemetrySession,
+  recordToolInvocationTelemetry,
+} from '../services/invocation-telemetry.ts';
 
 const chatLogger = createServerLogger('CHAT');
+const TOOL_TELEMETRY_STATUSES = new Set(['success', 'error', 'aborted', 'timeout']);
 
 async function enforceChatGuards(
   userId: string,
@@ -242,6 +247,35 @@ export async function handleChatStream(request: Request): Promise<Response> {
     ...(body.tools && body.tools.length > 0 ? { tools: body.tools } : {}),
   };
 
+  const llmTelemetry = createLlmInvocationTelemetrySession({
+    userId: user.id,
+    userEmail: user.email,
+    invocationId: captureTraceId,
+    traceId: captureTraceId,
+    conversationId: captureConversationId,
+    source: captureSource,
+    phase: 'chat_stream',
+    provider: route.provider,
+    requestedModel: body.model,
+    resolvedModel: route.model,
+    billingMode: route.billingMode,
+    keySource: route.keySource,
+    requestParams: {
+      temperature: body.temperature ?? 0.7,
+      max_tokens: body.max_tokens ?? 4096,
+      stream: true,
+      stream_options: { include_usage: true },
+      inference: body.inference ?? null,
+    },
+    messages: body.messages,
+    tools: body.tools,
+    metadata: {
+      assistant_message_id: captureAssistantMessageId,
+      tool_schema_count: body.tools?.length || 0,
+    },
+  });
+  llmTelemetry?.start();
+
   chatLogger.info('Forwarding chat request to AI provider', {
     user_id: user.id,
     provider: route.provider,
@@ -276,6 +310,17 @@ export async function handleChatStream(request: Request): Promise<Response> {
     if (captureSession) {
       scheduleCaptureTask(captureSession.finish('provider_fetch_error'));
     }
+    if (llmTelemetry) {
+      scheduleCaptureTask(llmTelemetry.finish({
+        status: 'error',
+        errorType: 'provider_fetch',
+        errorMessage: err instanceof Error ? err.message : 'fetch failed',
+        metadata: {
+          provider: route.provider,
+          model: route.model,
+        },
+      }));
+    }
     return json({ error: 'Upstream service unavailable', detail: err instanceof Error ? err.message : 'fetch failed' }, 502);
   }
 
@@ -302,6 +347,18 @@ export async function handleChatStream(request: Request): Promise<Response> {
     if (captureSession) {
       scheduleCaptureTask(captureSession.finish('provider_error'));
     }
+    if (llmTelemetry) {
+      scheduleCaptureTask(llmTelemetry.finish({
+        status: 'error',
+        errorType: 'provider_response',
+        errorMessage: errMsg,
+        metadata: {
+          provider: route.provider,
+          model: route.model,
+          status: providerRes.status,
+        },
+      }));
+    }
     return json(
       { error: errMsg, detail: `${route.provider} returned ${providerRes.status}` },
       providerRes.status >= 500 ? 502 : providerRes.status,
@@ -317,12 +374,24 @@ export async function handleChatStream(request: Request): Promise<Response> {
     if (captureSession) {
       scheduleCaptureTask(captureSession.finish('provider_empty_body'));
     }
+    if (llmTelemetry) {
+      scheduleCaptureTask(llmTelemetry.finish({
+        status: 'error',
+        errorType: 'provider_empty_body',
+        errorMessage: 'No response body from upstream',
+        metadata: {
+          provider: route.provider,
+          model: route.model,
+        },
+      }));
+    }
     return error('No response body from upstream', 502);
   }
 
   // ── 6. Create pass-through transform that captures usage ──
   let capturedUsage: ChatUsage | null = null;
   let capturedTotalCost: number | undefined = undefined;
+  let capturedFinishReason: string | null = null;
   const userId = user.id;
   const model = route.model;
   const provider = route.provider;
@@ -353,6 +422,11 @@ export async function handleChatStream(request: Request): Promise<Response> {
         if (parsed.usage.total_cost !== undefined) {
           capturedTotalCost = parsed.usage.total_cost;
         }
+      }
+      const finishReason = (parsed as { choices?: Array<{ finish_reason?: string | null }> })
+        .choices?.[0]?.finish_reason;
+      if (finishReason) {
+        capturedFinishReason = finishReason;
       }
     } catch {
       // Not valid JSON yet — keep streaming bytes to the client regardless.
@@ -429,6 +503,27 @@ export async function handleChatStream(request: Request): Promise<Response> {
       if (captureSession) {
         scheduleCaptureTask(captureSession.finish('stream_flush'));
       }
+      if (llmTelemetry) {
+        scheduleCaptureTask(llmTelemetry.finish({
+          status: 'success',
+          finishReason: capturedFinishReason,
+          usage: capturedUsage
+            ? {
+              ...capturedUsage,
+              total_cost: capturedTotalCost ?? null,
+            }
+            : {},
+          costLight: capturedUsage
+            ? calculateCostLight(capturedUsage, model, capturedTotalCost)
+            : null,
+          metadata: {
+            provider,
+            model,
+            should_debit_light: shouldDebitLight,
+            assistant_message_id: captureAssistantMessageId,
+          },
+        }));
+      }
     },
   });
 
@@ -446,6 +541,24 @@ export async function handleChatStream(request: Request): Promise<Response> {
     });
     if (captureSession) {
       scheduleCaptureTask(captureSession.finish('pipe_error'));
+    }
+    if (llmTelemetry) {
+      scheduleCaptureTask(llmTelemetry.finish({
+        status: 'error',
+        errorType: 'stream_pipe',
+        errorMessage: err instanceof Error ? err.message : String(err),
+        usage: capturedUsage
+          ? {
+            ...capturedUsage,
+            total_cost: capturedTotalCost ?? null,
+          }
+          : {},
+        metadata: {
+          provider,
+          model,
+          assistant_message_id: captureAssistantMessageId,
+        },
+      }));
     }
   });
 
@@ -625,6 +738,74 @@ export async function handleChatContext(request: Request): Promise<Response> {
 }
 
 // ============================================
+// POST /chat/tool-invocation — Client-side tool telemetry
+// ============================================
+
+/**
+ * Records local desktop tool execution telemetry. Tool execution happens on
+ * the client, so this endpoint receives the full args/result after the call.
+ */
+export async function handleToolInvocationTelemetry(request: Request): Promise<Response> {
+  let user: { id: string; email: string; tier: string; provisional?: boolean };
+  try {
+    user = await authenticate(request);
+  } catch (err) {
+    return json({ error: 'Unauthorized', detail: err instanceof Error ? err.message : 'Auth failed' }, 401);
+  }
+
+  if (user.provisional) {
+    return json({ error: 'Telemetry requires a full account.' }, 403);
+  }
+
+  let body: ToolInvocationTelemetryRequest;
+  try {
+    body = await request.json() as ToolInvocationTelemetryRequest;
+  } catch {
+    return error('Invalid JSON body', 400);
+  }
+
+  if (!body.invocationId || typeof body.invocationId !== 'string') {
+    return error('invocationId is required', 400);
+  }
+  if (!body.source || typeof body.source !== 'string') {
+    return error('source is required', 400);
+  }
+  if (!body.toolName || typeof body.toolName !== 'string') {
+    return error('toolName is required', 400);
+  }
+  if (!TOOL_TELEMETRY_STATUSES.has(body.status)) {
+    return error('status must be success, error, aborted, or timeout', 400);
+  }
+
+  await recordToolInvocationTelemetry({
+    userId: user.id,
+    invocationId: body.invocationId,
+    traceId: body.traceId,
+    conversationId: body.conversationId,
+    parentLlmInvocationId: body.parentLlmInvocationId,
+    source: body.source,
+    toolCallId: body.toolCallId,
+    toolName: body.toolName,
+    toolKind: body.toolKind,
+    appId: body.appId,
+    mcpId: body.mcpId,
+    functionName: body.functionName,
+    schemaSnapshot: body.schemaSnapshot,
+    args: body.args,
+    result: body.result,
+    startedAt: body.startedAt,
+    completedAt: body.completedAt,
+    durationMs: body.durationMs,
+    status: body.status,
+    errorType: body.errorType,
+    errorMessage: body.errorMessage,
+    metadata: body.metadata,
+  });
+
+  return json({ success: true });
+}
+
+// ============================================
 // POST /chat/provision-key — Pre-provision OpenRouter key
 // ============================================
 
@@ -764,13 +945,14 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
   // ── 5. Stream orchestration events as SSE ──
   const { orchestrate } = await import('../services/orchestrator.ts');
   const captureConversationId = body.conversationId || crypto.randomUUID();
+  const captureTraceId = crypto.randomUUID();
   const captureSession = createOrchestrateCaptureSession({
     userId: user.id,
     userEmail: user.email,
     conversationId: captureConversationId,
     userMessageId: body.userMessageId || crypto.randomUUID(),
     assistantMessageId: body.assistantMessageId || crypto.randomUUID(),
-    traceId: crypto.randomUUID(),
+    traceId: captureTraceId,
     message: body.message,
     conversationHistory: body.conversationHistory,
     interpreterModel: body.interpreterModel,
@@ -801,7 +983,14 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
           },
           user.id,
           user.email,
-          { inferenceRoute: route },
+          {
+            inferenceRoute: route,
+            telemetry: {
+              traceId: captureTraceId,
+              conversationId: captureConversationId,
+              source: 'orchestrate',
+            },
+          },
         )) {
           captureSession?.observeEvent(event);
           const sseData = `data: ${JSON.stringify(event)}\n\n`;

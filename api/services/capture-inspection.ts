@@ -92,6 +92,128 @@ export interface CaptureArtifactLinkRow {
   created_at: string;
 }
 
+export interface LlmInvocationRow {
+  id: string;
+  invocation_id: string;
+  trace_id: string | null;
+  conversation_id: string | null;
+  anon_user_id: string | null;
+  source: string;
+  phase: string | null;
+  provider: string | null;
+  requested_model: string | null;
+  resolved_model: string | null;
+  billing_mode: string | null;
+  key_source: string | null;
+  request_params: JsonRecord;
+  context_snapshot_id: string | null;
+  context_sha256: string | null;
+  context_bytes: number;
+  context_message_count: number;
+  tool_schema_count: number;
+  started_at: string;
+  completed_at: string | null;
+  duration_ms: number | null;
+  status: string;
+  finish_reason: string | null;
+  usage: JsonRecord;
+  cost_light: number | null;
+  error_type: string | null;
+  error_message: string | null;
+  metadata: JsonRecord;
+}
+
+export interface LlmContextSnapshotRow {
+  id: string;
+  invocation_id: string;
+  trace_id: string | null;
+  conversation_id: string | null;
+  anon_user_id: string | null;
+  source: string;
+  snapshot_type: string;
+  message_count: number;
+  tool_schema_count: number;
+  artifact_id: string | null;
+  sha256: string | null;
+  size_bytes: number;
+  text_preview: string | null;
+  metadata: JsonRecord;
+  created_at: string;
+}
+
+export interface ToolInvocationRow {
+  id: string;
+  invocation_id: string;
+  trace_id: string | null;
+  conversation_id: string | null;
+  parent_llm_invocation_id: string | null;
+  anon_user_id: string | null;
+  source: string;
+  tool_call_id: string | null;
+  tool_name: string;
+  tool_kind: string;
+  app_id: string | null;
+  mcp_id: string | null;
+  function_name: string | null;
+  schema_snapshot: JsonRecord;
+  args_preview: JsonRecord;
+  args_artifact_id: string | null;
+  args_sha256: string | null;
+  args_bytes: number;
+  result_preview: JsonRecord;
+  result_artifact_id: string | null;
+  result_sha256: string | null;
+  result_bytes: number;
+  started_at: string;
+  completed_at: string | null;
+  duration_ms: number | null;
+  status: string;
+  error_type: string | null;
+  error_message: string | null;
+  metadata: JsonRecord;
+}
+
+export interface ExecutionFailureRow {
+  id: string;
+  failure_id: string;
+  trace_id: string | null;
+  conversation_id: string | null;
+  invocation_id: string | null;
+  anon_user_id: string | null;
+  source: string;
+  phase: string;
+  failure_type: string;
+  severity: string;
+  message: string | null;
+  retryable: boolean | null;
+  aborted_by: string | null;
+  metadata: JsonRecord;
+  created_at: string;
+}
+
+export interface TrainingAnnotationRow {
+  id: string;
+  target_type: string;
+  target_id: string;
+  conversation_id: string | null;
+  message_id: string | null;
+  llm_invocation_id: string | null;
+  tool_invocation_id: string | null;
+  artifact_id: string | null;
+  annotation_type: string;
+  label: string;
+  confidence: number | null;
+  payload: JsonRecord;
+  taxonomy_version: string;
+  classifier_model: string | null;
+  classifier_version: string | null;
+  status: string;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  metadata: JsonRecord;
+  created_at: string;
+}
+
 export interface CaptureExportBundle {
   export_meta: {
     generated_at: string;
@@ -101,12 +223,22 @@ export interface CaptureExportBundle {
     event_count: number;
     artifact_count: number;
     artifact_link_count: number;
+    llm_invocation_count: number;
+    llm_context_snapshot_count: number;
+    tool_invocation_count: number;
+    execution_failure_count: number;
+    training_annotation_count: number;
   };
   threads: CaptureThreadRow[];
   messages: CaptureMessageRow[];
   events: CaptureEventRow[];
   artifact_links: CaptureArtifactLinkRow[];
   artifacts: CaptureArtifactRow[];
+  llm_invocations: LlmInvocationRow[];
+  llm_context_snapshots: LlmContextSnapshotRow[];
+  tool_invocations: ToolInvocationRow[];
+  execution_failures: ExecutionFailureRow[];
+  training_annotations: TrainingAnnotationRow[];
   integrity: CaptureIntegrityReport;
 }
 
@@ -260,6 +392,12 @@ function topEntries(map: Record<string, number>, limit = 20): Array<{ key: strin
     .slice(0, limit);
 }
 
+const LLM_INVOCATION_SELECT = 'id,invocation_id,trace_id,conversation_id,anon_user_id,source,phase,provider,requested_model,resolved_model,billing_mode,key_source,request_params,context_snapshot_id,context_sha256,context_bytes,context_message_count,tool_schema_count,started_at,completed_at,duration_ms,status,finish_reason,usage,cost_light,error_type,error_message,metadata';
+const LLM_CONTEXT_SNAPSHOT_SELECT = 'id,invocation_id,trace_id,conversation_id,anon_user_id,source,snapshot_type,message_count,tool_schema_count,artifact_id,sha256,size_bytes,text_preview,metadata,created_at';
+const TOOL_INVOCATION_SELECT = 'id,invocation_id,trace_id,conversation_id,parent_llm_invocation_id,anon_user_id,source,tool_call_id,tool_name,tool_kind,app_id,mcp_id,function_name,schema_snapshot,args_preview,args_artifact_id,args_sha256,args_bytes,result_preview,result_artifact_id,result_sha256,result_bytes,started_at,completed_at,duration_ms,status,error_type,error_message,metadata';
+const EXECUTION_FAILURE_SELECT = 'id,failure_id,trace_id,conversation_id,invocation_id,anon_user_id,source,phase,failure_type,severity,message,retryable,aborted_by,metadata,created_at';
+const TRAINING_ANNOTATION_SELECT = 'id,target_type,target_id,conversation_id,message_id,llm_invocation_id,tool_invocation_id,artifact_id,annotation_type,label,confidence,payload,taxonomy_version,classifier_model,classifier_version,status,reviewed_by,reviewed_at,metadata,created_at';
+
 export async function getCaptureOverview(
   filters: CaptureInspectionFilters = {},
 ): Promise<JsonRecord> {
@@ -273,10 +411,16 @@ export async function getCaptureOverview(
     eventCount,
     artifactCount,
     linkCount,
+    llmInvocationCount,
+    toolInvocationCount,
+    executionFailureCount,
     recentThreads,
     recentMessages,
     recentEvents,
     recentArtifacts,
+    recentLlmInvocations,
+    recentToolInvocations,
+    recentExecutionFailures,
   ] = await Promise.all([
     getCount('chat_threads', {
       ...threadParams,
@@ -296,6 +440,18 @@ export async function getCaptureOverview(
     }),
     getCount('capture_artifact_links', {
       ...linkFilterParams(filters),
+      select: 'id',
+    }),
+    getCount('llm_invocations', {
+      ...tableFilterParams(filters, 'started_at'),
+      select: 'id',
+    }),
+    getCount('tool_invocations', {
+      ...tableFilterParams(filters, 'started_at'),
+      select: 'id',
+    }),
+    getCount('execution_failures', {
+      ...tableFilterParams(filters, 'created_at'),
       select: 'id',
     }),
     getRows<CaptureThreadRow>('chat_threads', {
@@ -322,6 +478,24 @@ export async function getCaptureOverview(
       order: 'created_at.desc',
       limit,
     }),
+    getRows<LlmInvocationRow>('llm_invocations', {
+      ...tableFilterParams(filters, 'started_at'),
+      select: LLM_INVOCATION_SELECT,
+      order: 'started_at.desc',
+      limit,
+    }),
+    getRows<ToolInvocationRow>('tool_invocations', {
+      ...tableFilterParams(filters, 'started_at'),
+      select: TOOL_INVOCATION_SELECT,
+      order: 'started_at.desc',
+      limit,
+    }),
+    getRows<ExecutionFailureRow>('execution_failures', {
+      ...tableFilterParams(filters, 'created_at'),
+      select: EXECUTION_FAILURE_SELECT,
+      order: 'created_at.desc',
+      limit,
+    }),
   ]);
 
   const sourceCounts: Record<string, number> = {};
@@ -329,9 +503,16 @@ export async function getCaptureOverview(
   const modelCounts: Record<string, number> = {};
   const eventCounts: Record<string, number> = {};
   const artifactSourceCounts: Record<string, number> = {};
+  const llmStatusCounts: Record<string, number> = {};
+  const llmProviderCounts: Record<string, number> = {};
+  const toolNameCounts: Record<string, number> = {};
+  const toolStatusCounts: Record<string, number> = {};
+  const failureTypeCounts: Record<string, number> = {};
   let totalTokens = 0;
   let totalCost = 0;
   let totalContentBytes = 0;
+  let totalLlmDuration = 0;
+  let totalToolDuration = 0;
 
   for (const thread of recentThreads) increment(sourceCounts, thread.source);
   for (const message of recentMessages) {
@@ -343,13 +524,24 @@ export async function getCaptureOverview(
   }
   for (const event of recentEvents) increment(eventCounts, event.event_type);
   for (const artifact of recentArtifacts) increment(artifactSourceCounts, artifact.source);
+  for (const invocation of recentLlmInvocations) {
+    increment(llmStatusCounts, invocation.status);
+    increment(llmProviderCounts, invocation.provider);
+    totalLlmDuration += invocation.duration_ms || 0;
+  }
+  for (const invocation of recentToolInvocations) {
+    increment(toolNameCounts, invocation.tool_name);
+    increment(toolStatusCounts, invocation.status);
+    totalToolDuration += invocation.duration_ms || 0;
+  }
+  for (const failure of recentExecutionFailures) increment(failureTypeCounts, failure.failure_type);
 
   const integrity = buildIntegrityReport(recentThreads, recentMessages, recentEvents);
 
   await recordCaptureAccess({
     action: 'overview',
     filters,
-    counts: { threadCount, messageCount, eventCount, artifactCount, linkCount },
+    counts: { threadCount, messageCount, eventCount, artifactCount, linkCount, llmInvocationCount, toolInvocationCount, executionFailureCount },
   });
 
   return {
@@ -363,19 +555,32 @@ export async function getCaptureOverview(
       events: eventCount,
       artifacts: artifactCount,
       artifact_links: linkCount,
+      llm_invocations: llmInvocationCount,
+      tool_invocations: toolInvocationCount,
+      execution_failures: executionFailureCount,
       sampled_threads: recentThreads.length,
       sampled_messages: recentMessages.length,
       sampled_events: recentEvents.length,
       sampled_artifacts: recentArtifacts.length,
+      sampled_llm_invocations: recentLlmInvocations.length,
+      sampled_tool_invocations: recentToolInvocations.length,
+      sampled_execution_failures: recentExecutionFailures.length,
       total_content_bytes_sampled: totalContentBytes,
       total_tokens_sampled: totalTokens,
       total_cost_sampled: totalCost,
+      total_llm_duration_ms_sampled: totalLlmDuration,
+      total_tool_duration_ms_sampled: totalToolDuration,
     },
     by_source: topEntries(sourceCounts),
     by_role: topEntries(roleCounts),
     by_model: topEntries(modelCounts),
     by_event_type: topEntries(eventCounts),
     by_artifact_source: topEntries(artifactSourceCounts),
+    by_llm_status: topEntries(llmStatusCounts),
+    by_llm_provider: topEntries(llmProviderCounts),
+    by_tool_name: topEntries(toolNameCounts),
+    by_tool_status: topEntries(toolStatusCounts),
+    by_failure_type: topEntries(failureTypeCounts),
     integrity,
     recent_threads: recentThreads.slice(0, 50).map((thread) => ({
       conversation_id: thread.conversation_id,
@@ -424,12 +629,22 @@ export async function buildCaptureExport(
         event_count: 0,
         artifact_count: 0,
         artifact_link_count: 0,
+        llm_invocation_count: 0,
+        llm_context_snapshot_count: 0,
+        tool_invocation_count: 0,
+        execution_failure_count: 0,
+        training_annotation_count: 0,
       },
       threads: [],
       messages: [],
       events: [],
       artifact_links: [],
       artifacts: [],
+      llm_invocations: [],
+      llm_context_snapshots: [],
+      tool_invocations: [],
+      execution_failures: [],
+      training_annotations: [],
       integrity: buildIntegrityReport([], [], []),
     };
     await recordCaptureAccess({
@@ -444,7 +659,16 @@ export async function buildCaptureExport(
     ? `eq.${filters.conversationId}`
     : inFilter(conversationIds);
 
-  const [messages, events, artifactLinks] = await Promise.all([
+  const [
+    messages,
+    events,
+    artifactLinks,
+    llmInvocations,
+    llmContextSnapshots,
+    toolInvocations,
+    executionFailures,
+    trainingAnnotations,
+  ] = await Promise.all([
     getRows<CaptureMessageRow>('chat_messages', {
       conversation_id: conversationFilter,
       select: 'message_id,conversation_id,anon_user_id,role,content,content_sha256,content_bytes,sort_order,model,usage,cost_light,source,metadata,created_at,captured_at',
@@ -463,9 +687,45 @@ export async function buildCaptureExport(
       order: 'created_at.asc',
       limit: filters.conversationId ? 10000 : Math.min(limit * 100, 10000),
     }),
+    getRows<LlmInvocationRow>('llm_invocations', {
+      conversation_id: conversationFilter,
+      select: LLM_INVOCATION_SELECT,
+      order: 'conversation_id.asc,started_at.asc',
+      limit: filters.conversationId ? 10000 : Math.min(limit * 100, 10000),
+    }),
+    getRows<LlmContextSnapshotRow>('llm_context_snapshots', {
+      conversation_id: conversationFilter,
+      select: LLM_CONTEXT_SNAPSHOT_SELECT,
+      order: 'conversation_id.asc,created_at.asc',
+      limit: filters.conversationId ? 10000 : Math.min(limit * 100, 10000),
+    }),
+    getRows<ToolInvocationRow>('tool_invocations', {
+      conversation_id: conversationFilter,
+      select: TOOL_INVOCATION_SELECT,
+      order: 'conversation_id.asc,started_at.asc',
+      limit: filters.conversationId ? 10000 : Math.min(limit * 100, 10000),
+    }),
+    getRows<ExecutionFailureRow>('execution_failures', {
+      conversation_id: conversationFilter,
+      select: EXECUTION_FAILURE_SELECT,
+      order: 'conversation_id.asc,created_at.asc',
+      limit: filters.conversationId ? 10000 : Math.min(limit * 100, 10000),
+    }),
+    getRows<TrainingAnnotationRow>('training_annotations', {
+      conversation_id: conversationFilter,
+      select: TRAINING_ANNOTATION_SELECT,
+      order: 'conversation_id.asc,created_at.asc',
+      limit: filters.conversationId ? 10000 : Math.min(limit * 100, 10000),
+    }),
   ]);
 
-  const artifactIds = [...new Set(artifactLinks.map((link) => link.artifact_id))];
+  const artifactIds = [...new Set([
+    ...artifactLinks.map((link) => link.artifact_id),
+    ...llmContextSnapshots.map((snapshot) => snapshot.artifact_id).filter((id): id is string => !!id),
+    ...toolInvocations.map((invocation) => invocation.args_artifact_id).filter((id): id is string => !!id),
+    ...toolInvocations.map((invocation) => invocation.result_artifact_id).filter((id): id is string => !!id),
+    ...trainingAnnotations.map((annotation) => annotation.artifact_id).filter((id): id is string => !!id),
+  ])];
   const artifacts = artifactIds.length > 0
     ? await getRows<CaptureArtifactRow>('capture_artifacts', {
       id: inFilter(artifactIds),
@@ -484,12 +744,22 @@ export async function buildCaptureExport(
       event_count: events.length,
       artifact_count: artifacts.length,
       artifact_link_count: artifactLinks.length,
+      llm_invocation_count: llmInvocations.length,
+      llm_context_snapshot_count: llmContextSnapshots.length,
+      tool_invocation_count: toolInvocations.length,
+      execution_failure_count: executionFailures.length,
+      training_annotation_count: trainingAnnotations.length,
     },
     threads,
     messages,
     events,
     artifact_links: artifactLinks,
     artifacts,
+    llm_invocations: llmInvocations,
+    llm_context_snapshots: llmContextSnapshots,
+    tool_invocations: toolInvocations,
+    execution_failures: executionFailures,
+    training_annotations: trainingAnnotations,
     integrity: buildIntegrityReport(threads, messages, events),
   };
 
@@ -512,6 +782,11 @@ export function captureExportToJsonl(bundle: CaptureExportBundle): string {
   for (const event of bundle.events) lines.push(JSON.stringify({ type: 'event', data: event }));
   for (const link of bundle.artifact_links) lines.push(JSON.stringify({ type: 'artifact_link', data: link }));
   for (const artifact of bundle.artifacts) lines.push(JSON.stringify({ type: 'artifact', data: artifact }));
+  for (const invocation of bundle.llm_invocations) lines.push(JSON.stringify({ type: 'llm_invocation', data: invocation }));
+  for (const snapshot of bundle.llm_context_snapshots) lines.push(JSON.stringify({ type: 'llm_context_snapshot', data: snapshot }));
+  for (const invocation of bundle.tool_invocations) lines.push(JSON.stringify({ type: 'tool_invocation', data: invocation }));
+  for (const failure of bundle.execution_failures) lines.push(JSON.stringify({ type: 'execution_failure', data: failure }));
+  for (const annotation of bundle.training_annotations) lines.push(JSON.stringify({ type: 'training_annotation', data: annotation }));
   return `${lines.join('\n')}\n`;
 }
 

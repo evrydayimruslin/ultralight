@@ -18,7 +18,7 @@ import { handleGpuCodeProxy, handleInternalD1Query } from './internal-proxy.ts';
 import { handleTierChange } from './tier.ts';
 import { handleAdmin } from './admin.ts';
 import { handleDeveloper } from './developer.ts';
-import { handleChatStream, handleChatModels, handleChatInferenceOptions, handleProvisionKey, handleFunctionIndex, handleChatContext, handleOrchestrate, handlePlanConfirm, handlePlanCancel } from './chat.ts';
+import { handleChatStream, handleChatModels, handleChatInferenceOptions, handleProvisionKey, handleFunctionIndex, handleChatContext, handleToolInvocationTelemetry, handleOrchestrate, handlePlanConfirm, handlePlanCancel } from './chat.ts';
 import { error, json, toResponseBody } from './response.ts';
 import { getLayoutHTML } from '../../web/layout.ts';
 import { createAppsService } from '../services/apps.ts';
@@ -471,6 +471,11 @@ export function createApp() {
       // Context resolver — per-request entity + function resolution
       if (path === '/chat/context' && method === 'POST') {
         return handleChatContext(request);
+      }
+
+      // Tool invocation telemetry — desktop local tool calls send full args/results here.
+      if (path === '/chat/tool-invocation' && method === 'POST') {
+        return handleToolInvocationTelemetry(request);
       }
 
       // Server-side orchestration — Flash broker + heavy model + recipe execution

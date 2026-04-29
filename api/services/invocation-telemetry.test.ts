@@ -1,0 +1,177 @@
+import { assert, assertEquals } from 'https://deno.land/std@0.210.0/assert/mod.ts';
+import {
+  createLlmInvocationTelemetrySession,
+  recordToolInvocationTelemetry,
+} from './invocation-telemetry.ts';
+
+Deno.test('invocation telemetry: disabled flag prevents session creation', () => {
+  const previousEnv = globalThis.__env;
+  globalThis.__env = {
+    CHAT_CAPTURE_ENABLED: 'false',
+    SUPABASE_URL: 'https://example.supabase.co',
+    SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+  } as unknown as typeof globalThis.__env;
+
+  try {
+    const session = createLlmInvocationTelemetrySession({
+      userId: 'user-123',
+      invocationId: 'invocation-123',
+      traceId: '00000000-0000-4000-8000-000000000001',
+      source: 'unit_test',
+      phase: 'chat_stream',
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+
+    assertEquals(session, null);
+  } finally {
+    globalThis.__env = previousEnv;
+  }
+});
+
+Deno.test('invocation telemetry: records LLM context snapshot and completion', async () => {
+  const previousEnv = globalThis.__env;
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ method: string; url: string; body: unknown; prefer: string | null }> = [];
+
+  globalThis.__env = {
+    CHAT_CAPTURE_ENABLED: 'true',
+    SUPABASE_URL: 'https://example.supabase.co',
+    SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+    ANALYTICS_PEPPER_V1: 'test-pepper',
+  } as unknown as typeof globalThis.__env;
+
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === 'string' || input instanceof URL ? String(input) : input.url;
+    const headers = init?.headers as Record<string, string> | undefined;
+    calls.push({
+      method: init?.method || 'GET',
+      url,
+      body: init?.body ? JSON.parse(String(init.body)) : null,
+      prefer: headers?.Prefer || null,
+    });
+
+    if (url.includes('/llm_context_snapshots')) {
+      return Promise.resolve(new Response(JSON.stringify([
+        { id: '00000000-0000-4000-8000-000000000010' },
+      ]), { status: 201, headers: { 'Content-Type': 'application/json' } }));
+    }
+
+    if (init?.method === 'PATCH') {
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }
+    return Promise.resolve(new Response('', { status: 201 }));
+  }) as typeof fetch;
+
+  try {
+    const session = createLlmInvocationTelemetrySession({
+      userId: '00000000-0000-4000-8000-000000000001',
+      userEmail: 'test@example.com',
+      invocationId: '00000000-0000-4000-8000-000000000002',
+      traceId: '00000000-0000-4000-8000-000000000002',
+      conversationId: 'conv-telemetry-test',
+      source: 'unit_test',
+      phase: 'chat_stream',
+      provider: 'openrouter',
+      requestedModel: 'openai/gpt-4o-mini',
+      resolvedModel: 'openai/gpt-4o-mini',
+      billingMode: 'light',
+      keySource: 'platform_openrouter',
+      requestParams: { stream: true },
+      messages: [{ role: 'user', content: 'hello' }],
+      tools: [{ type: 'function', function: { name: 'lookup', description: 'Lookup', parameters: {} } }],
+    });
+
+    assert(session);
+    session.start();
+    await session.finish({
+      status: 'success',
+      finishReason: 'stop',
+      usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+      costLight: 0.01,
+    });
+
+    const invocationInsert = calls.find((call) =>
+      call.method === 'POST' && call.url.includes('/llm_invocations')
+    );
+    assert(invocationInsert);
+    assertEquals((invocationInsert.body as { invocation_id: string }).invocation_id, '00000000-0000-4000-8000-000000000002');
+    assertEquals((invocationInsert.body as { context_message_count: number }).context_message_count, 1);
+    assertEquals((invocationInsert.body as { tool_schema_count: number }).tool_schema_count, 1);
+
+    const snapshotInsert = calls.find((call) =>
+      call.method === 'POST' && call.url.includes('/llm_context_snapshots')
+    );
+    assert(snapshotInsert);
+    assertEquals((snapshotInsert.body as { source: string }).source, 'unit_test');
+    assertEquals((snapshotInsert.body as { message_count: number }).message_count, 1);
+
+    const completionPatch = calls.find((call) =>
+      call.method === 'PATCH' &&
+      call.url.includes('/llm_invocations') &&
+      (call.body as { status?: string }).status === 'success'
+    );
+    assert(completionPatch);
+    assertEquals((completionPatch.body as { finish_reason: string }).finish_reason, 'stop');
+  } finally {
+    globalThis.fetch = previousFetch;
+    globalThis.__env = previousEnv;
+  }
+});
+
+Deno.test('invocation telemetry: records failed tool calls and failure rows', async () => {
+  const previousEnv = globalThis.__env;
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ method: string; url: string; body: unknown }> = [];
+
+  globalThis.__env = {
+    CHAT_CAPTURE_ENABLED: 'true',
+    SUPABASE_URL: 'https://example.supabase.co',
+    SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+    ANALYTICS_PEPPER_V1: 'test-pepper',
+  } as unknown as typeof globalThis.__env;
+
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    calls.push({
+      method: init?.method || 'GET',
+      url: typeof input === 'string' || input instanceof URL ? String(input) : input.url,
+      body: init?.body ? JSON.parse(String(init.body)) : null,
+    });
+    return Promise.resolve(new Response('', { status: 201 }));
+  }) as typeof fetch;
+
+  try {
+    await recordToolInvocationTelemetry({
+      userId: '00000000-0000-4000-8000-000000000001',
+      invocationId: 'tool-invocation-1',
+      traceId: '00000000-0000-4000-8000-000000000002',
+      conversationId: 'conv-tool-test',
+      parentLlmInvocationId: '00000000-0000-4000-8000-000000000002',
+      source: 'unit_test',
+      toolCallId: 'call_123',
+      toolName: 'lookup',
+      args: { query: 'ultralight' },
+      result: { error: 'boom' },
+      status: 'error',
+      errorType: 'ToolError',
+      errorMessage: 'boom',
+    });
+
+    const toolInsert = calls.find((call) =>
+      call.method === 'POST' && call.url.includes('/tool_invocations')
+    );
+    assert(toolInsert);
+    assertEquals((toolInsert.body as { tool_name: string }).tool_name, 'lookup');
+    assertEquals((toolInsert.body as { status: string }).status, 'error');
+    assertEquals((toolInsert.body as { args_preview: { query: string } }).args_preview.query, 'ultralight');
+
+    const failureInsert = calls.find((call) =>
+      call.method === 'POST' && call.url.includes('/execution_failures')
+    );
+    assert(failureInsert);
+    assertEquals((failureInsert.body as { failure_type: string }).failure_type, 'ToolError');
+    assertEquals((failureInsert.body as { phase: string }).phase, 'tool_invocation');
+  } finally {
+    globalThis.fetch = previousFetch;
+    globalThis.__env = previousEnv;
+  }
+});

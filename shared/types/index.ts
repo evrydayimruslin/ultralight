@@ -1979,6 +1979,31 @@ export interface ChatBillingResult {
   was_depleted: boolean;
 }
 
+/** Request body for POST /chat/tool-invocation */
+export interface ToolInvocationTelemetryRequest {
+  invocationId: string;
+  traceId?: string;
+  conversationId?: string;
+  parentLlmInvocationId?: string;
+  source: string;
+  toolCallId?: string;
+  toolName: string;
+  toolKind?: string;
+  appId?: string;
+  mcpId?: string;
+  functionName?: string;
+  schemaSnapshot?: unknown;
+  args?: unknown;
+  result?: unknown;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  status: 'success' | 'error' | 'aborted' | 'timeout';
+  errorType?: string;
+  errorMessage?: string;
+  metadata?: Record<string, unknown>;
+}
+
 /** Minimum balance in Light required to start a chat stream */
 export const CHAT_MIN_BALANCE_LIGHT = 50; // ✦50
 

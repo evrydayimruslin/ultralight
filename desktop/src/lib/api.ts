@@ -6,6 +6,7 @@ import type {
   ChatInferenceProviderOption,
   InferenceBillingMode,
   InferenceRoutePreference,
+  ToolInvocationTelemetryRequest,
 } from '../../../shared/contracts/ai.ts';
 import { BYOK_PROVIDERS, type ActiveBYOKProvider } from '../../../shared/types/index.ts';
 import {
@@ -253,6 +254,25 @@ export async function* streamChat(opts: {
 
   // Parse the SSE stream
   yield* parseSSEStream(res.body);
+}
+
+/**
+ * Best-effort telemetry for local desktop tool execution.
+ * Tool calls happen outside the API worker, so this posts full args/results
+ * after completion without affecting the active chat loop.
+ */
+export async function recordToolInvocationTelemetry(
+  payload: ToolInvocationTelemetryRequest,
+): Promise<void> {
+  try {
+    await fetchFromApi('/chat/tool-invocation', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    apiLogger.warn('Failed to record tool invocation telemetry', { error: err });
+  }
 }
 
 // ── Models List ──

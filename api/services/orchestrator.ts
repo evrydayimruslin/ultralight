@@ -13,7 +13,7 @@
 // loading conventions, choosing a model, then the heavy model writing.
 
 import { getEnv } from '../lib/env.ts';
-import { runFlashBroker, type FlashBrokerResult, type FlashEvent, type SystemAgentState, type SystemAgentContext } from './flash-broker.ts';
+import { runFlashBroker, type FlashBrokerResult, type SystemAgentState, type SystemAgentContext } from './flash-broker.ts';
 import { executeDynamicCodeMode } from '../runtime/dynamic-executor.ts';
 import { getD1DatabaseId } from './d1-provisioning.ts';
 import { createAppsService } from './apps.ts';
@@ -21,6 +21,12 @@ import { registerExecutionPlanGate } from './plan-gate.ts';
 import { fetchInferenceChatCompletion, selectInferenceModel } from './inference-client.ts';
 import { resolveInferenceRoute, type ResolvedInferenceRoute } from './inference-route.ts';
 import { getCallPriceLight, type AppPricingConfig } from '../../shared/types/index.ts';
+import { calculateCostLight } from './chat-billing.ts';
+import { scheduleCaptureTask } from './chat-capture.ts';
+import {
+  createLlmInvocationTelemetrySession,
+  recordToolInvocationTelemetry,
+} from './invocation-telemetry.ts';
 
 // ── Types ──
 
@@ -107,6 +113,11 @@ export interface OrchestrateRequest {
 
 export interface OrchestrateOptions {
   inferenceRoute?: ResolvedInferenceRoute;
+  telemetry?: {
+    traceId: string;
+    conversationId?: string;
+    source?: string;
+  };
 }
 
 // ── Main Orchestration Loop ──
@@ -153,10 +164,7 @@ export async function* orchestrate(
     );
 
     // Forward Flash events to client as they happen
-    let lastEvent: FlashEvent | undefined;
     for await (const event of flashGen) {
-      lastEvent = event;
-
       switch (event.type) {
         case 'analyzing':
           yield { type: 'flash_status', text: event.text || 'Analyzing your request...' };
@@ -320,7 +328,15 @@ export async function* orchestrate(
 
   try {
     // ── Call 1: Heavy model writes recipe (or responds directly) ──
-    const call1Result = await callHeavyModel(inferenceRoute, modelId, heavyMessages, [codemodeToolDef]);
+    const call1Result = await callHeavyModel(inferenceRoute, modelId, heavyMessages, [codemodeToolDef], {
+      userId,
+      userEmail,
+      traceId: options.telemetry?.traceId || crypto.randomUUID(),
+      conversationId,
+      source: options.telemetry?.source || 'orchestrate',
+      requestedModel: brokerResult.model,
+      phase: 'orchestrate_heavy',
+    });
 
     // Stream text deltas from call 1
     for (const delta of call1Result.textDeltas) {
@@ -354,6 +370,9 @@ export async function* orchestrate(
 
       let execResultData: unknown = null;
       let execError: string | undefined;
+      const execStartedAt = new Date().toISOString();
+      const execStartMs = Date.now();
+      const execInvocationId = `${options.telemetry?.traceId || crypto.randomUUID()}:exec:${planId}`;
 
       try {
         const execResult = await executeRecipe(recipeCode, brokerResult, userId, userEmail, files);
@@ -362,8 +381,74 @@ export async function* orchestrate(
         } else {
           execResultData = execResult.result;
         }
+
+        scheduleCaptureTask(recordToolInvocationTelemetry({
+          userId,
+          invocationId: execInvocationId,
+          traceId: options.telemetry?.traceId,
+          conversationId,
+          parentLlmInvocationId: call1Result.invocationId,
+          source: options.telemetry?.source || 'orchestrate',
+          toolCallId: call1Result.toolCall?.id,
+          toolName: 'ul_codemode',
+          toolKind: 'server_recipe',
+          functionName: 'ul_codemode',
+          schemaSnapshot: codemodeToolDef,
+          args: {
+            plan_id: planId,
+            recipe: recipeCode,
+            tools_used: plan.tools_used,
+            attached_files: files?.map((file) => ({
+              name: file.name,
+              size: file.size,
+              mimeType: file.mimeType,
+            })) || [],
+          },
+          result: execResult,
+          startedAt: execStartedAt,
+          completedAt: new Date().toISOString(),
+          durationMs: Date.now() - execStartMs,
+          status: execResult.error ? 'error' : 'success',
+          errorType: execResult.error ? 'recipe_execution_error' : undefined,
+          errorMessage: execResult.error,
+          metadata: {
+            plan_id: planId,
+            total_cost_light: plan.total_cost_light,
+          },
+        }));
       } catch (err) {
         execError = err instanceof Error ? err.message : String(err);
+        scheduleCaptureTask(recordToolInvocationTelemetry({
+          userId,
+          invocationId: execInvocationId,
+          traceId: options.telemetry?.traceId,
+          conversationId,
+          parentLlmInvocationId: call1Result.invocationId,
+          source: options.telemetry?.source || 'orchestrate',
+          toolCallId: call1Result.toolCall?.id,
+          toolName: 'ul_codemode',
+          toolKind: 'server_recipe',
+          functionName: 'ul_codemode',
+          schemaSnapshot: codemodeToolDef,
+          args: {
+            plan_id: planId,
+            recipe: recipeCode,
+            tools_used: plan.tools_used,
+          },
+          result: {
+            error: execError,
+          },
+          startedAt: execStartedAt,
+          completedAt: new Date().toISOString(),
+          durationMs: Date.now() - execStartMs,
+          status: 'error',
+          errorType: err instanceof Error ? err.constructor.name : 'Error',
+          errorMessage: execError,
+          metadata: {
+            plan_id: planId,
+            total_cost_light: plan.total_cost_light,
+          },
+        }));
       }
 
       if (execError) {
@@ -415,10 +500,12 @@ export async function* orchestrate(
 // ── Heavy Model SSE Stream Parser ──
 
 interface StreamResult {
+  invocationId?: string;
   textDeltas: string[];
   fullText: string;
   toolCall: { name: string; code: string; id: string } | null;
   usage: object | null;
+  finishReason: string | null;
 }
 
 interface PlannedToolUse {
@@ -431,6 +518,11 @@ interface PlannedToolUse {
   cost_light: number;
 }
 
+interface DynamicWorkerExports {
+  DatabaseBinding(input: { props: Record<string, unknown> }): unknown;
+  AppDataBinding(input: { props: Record<string, unknown> }): unknown;
+}
+
 /**
  * Call the heavy model and parse its streaming response.
  */
@@ -439,18 +531,60 @@ async function callHeavyModel(
   modelId: string,
   messages: Array<{ role: string; content: unknown; tool_call_id?: string; tool_calls?: unknown[] }>,
   tools: object[],
+  telemetry?: {
+    userId: string;
+    userEmail: string;
+    traceId: string;
+    conversationId?: string;
+    source: string;
+    requestedModel?: string;
+    phase: string;
+  },
 ): Promise<StreamResult> {
-  const response = await fetchInferenceChatCompletion(
-    route,
-    {
-      model: modelId,
+  const requestBody = {
+    model: modelId,
+    messages,
+    tools,
+    temperature: 0.3,
+    max_tokens: 4096,
+    stream: true,
+    stream_options: { include_usage: true },
+  };
+  const telemetryInvocationId = telemetry
+    ? `${telemetry.traceId}:${telemetry.phase}:${crypto.randomUUID()}`
+    : undefined;
+  const llmTelemetry = telemetry && telemetryInvocationId
+    ? createLlmInvocationTelemetrySession({
+      userId: telemetry.userId,
+      userEmail: telemetry.userEmail,
+      invocationId: telemetryInvocationId,
+      traceId: telemetry.traceId,
+      conversationId: telemetry.conversationId,
+      source: telemetry.source,
+      phase: telemetry.phase,
+      provider: route.provider,
+      requestedModel: telemetry.requestedModel || modelId,
+      resolvedModel: modelId,
+      billingMode: route.billingMode,
+      keySource: route.keySource,
+      requestParams: {
+        temperature: requestBody.temperature,
+        max_tokens: requestBody.max_tokens,
+        stream: true,
+        stream_options: requestBody.stream_options,
+      },
       messages,
       tools,
-      temperature: 0.3,
-      max_tokens: 4096,
-      stream: true,
-      stream_options: { include_usage: true },
-    },
+      metadata: {
+        orchestrator_call: 'heavy_model',
+      },
+    })
+    : null;
+  llmTelemetry?.start();
+
+  const response = await fetchInferenceChatCompletion(
+    route,
+    requestBody,
     {
       title: 'Ultralight Chat',
       referer: 'https://ultralight.dev',
@@ -459,14 +593,68 @@ async function callHeavyModel(
 
   if (!response.ok) {
     const errText = await response.text().catch(() => 'unknown');
+    if (llmTelemetry) {
+      scheduleCaptureTask(llmTelemetry.finish({
+        status: 'error',
+        errorType: 'provider_response',
+        errorMessage: `Heavy model error (${response.status}): ${errText}`,
+        metadata: {
+          provider: route.provider,
+          model: modelId,
+          status: response.status,
+        },
+      }));
+    }
     throw new Error(`Heavy model error (${response.status}): ${errText}`);
   }
 
   if (!response.body) {
+    if (llmTelemetry) {
+      scheduleCaptureTask(llmTelemetry.finish({
+        status: 'error',
+        errorType: 'provider_empty_body',
+        errorMessage: 'No response body from heavy model',
+        metadata: {
+          provider: route.provider,
+          model: modelId,
+        },
+      }));
+    }
     throw new Error('No response body from heavy model');
   }
 
-  return await streamHeavyModel(response.body);
+  try {
+    const result = await streamHeavyModel(response.body);
+    if (llmTelemetry) {
+      const chatUsage = usageAsChatUsage(result.usage);
+      scheduleCaptureTask(llmTelemetry.finish({
+        status: 'success',
+        finishReason: result.finishReason,
+        usage: result.usage || {},
+        costLight: chatUsage ? calculateCostLight(chatUsage, modelId, usageTotalCost(result.usage)) : null,
+        metadata: {
+          provider: route.provider,
+          model: modelId,
+          tool_call_id: result.toolCall?.id || null,
+          tool_call_name: result.toolCall?.name || null,
+        },
+      }));
+    }
+    return { ...result, invocationId: telemetryInvocationId };
+  } catch (err) {
+    if (llmTelemetry) {
+      scheduleCaptureTask(llmTelemetry.finish({
+        status: 'error',
+        errorType: err instanceof Error ? err.constructor.name : 'stream_parse_error',
+        errorMessage: err instanceof Error ? err.message : String(err),
+        metadata: {
+          provider: route.provider,
+          model: modelId,
+        },
+      }));
+    }
+    throw err;
+  }
 }
 
 /**
@@ -485,6 +673,7 @@ async function streamHeavyModel(
   // Track per-index tool calls (handles parallel tool_calls)
   const toolCalls = new Map<number, { name: string; args: string; id: string }>();
   let usage: object | null = null;
+  let finishReason: string | null = null;
   let buffer = '';
 
   try {
@@ -519,6 +708,9 @@ async function streamHeavyModel(
           };
 
           const delta = parsed.choices?.[0]?.delta;
+          if (parsed.choices?.[0]?.finish_reason) {
+            finishReason = parsed.choices[0].finish_reason;
+          }
 
           if (delta?.content) {
             textDeltas.push(delta.content);
@@ -578,7 +770,30 @@ async function streamHeavyModel(
     }
   }
 
-  return { textDeltas, fullText, toolCall, usage };
+  return { textDeltas, fullText, toolCall, usage, finishReason };
+}
+
+function usageAsChatUsage(usage: object | null): { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null {
+  const candidate = usage as {
+    prompt_tokens?: unknown;
+    completion_tokens?: unknown;
+    total_tokens?: unknown;
+  } | null;
+  if (!candidate) return null;
+  const promptTokens = typeof candidate.prompt_tokens === 'number' ? candidate.prompt_tokens : 0;
+  const completionTokens = typeof candidate.completion_tokens === 'number' ? candidate.completion_tokens : 0;
+  const totalTokens = typeof candidate.total_tokens === 'number' ? candidate.total_tokens : promptTokens + completionTokens;
+  if (totalTokens <= 0) return null;
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: totalTokens,
+  };
+}
+
+function usageTotalCost(usage: object | null): number | undefined {
+  const candidate = usage as { total_cost?: unknown } | null;
+  return typeof candidate?.total_cost === 'number' ? candidate.total_cost : undefined;
 }
 
 async function buildExecutionPlan(
@@ -827,16 +1042,15 @@ async function executeRecipe(
     }),
   );
 
+  const dynamicExports = getDynamicWorkerExports();
   for (const [appId, dbId] of dbIdEntries) {
     const safeId = appId.replace(/-/g, '_');
     if (dbId) {
-      // @ts-ignore -- ctx.exports available at runtime via WorkerEntrypoint exports
-      bindings[`DB_${safeId}`] = (globalThis.__ctx as any).exports.DatabaseBinding({
+      bindings[`DB_${safeId}`] = dynamicExports.DatabaseBinding({
         props: { databaseId: dbId, appId, userId },
       });
     }
-    // @ts-ignore
-    bindings[`DATA_${safeId}`] = (globalThis.__ctx as any).exports.AppDataBinding({
+    bindings[`DATA_${safeId}`] = dynamicExports.AppDataBinding({
       props: { appId, userId },
     });
   }
@@ -852,6 +1066,14 @@ async function executeRecipe(
     timeoutMs: 60_000,
     files,
   });
+}
+
+function getDynamicWorkerExports(): DynamicWorkerExports {
+  const ctx = globalThis.__ctx as unknown as { exports?: DynamicWorkerExports };
+  if (!ctx.exports) {
+    throw new Error('Dynamic worker exports are unavailable');
+  }
+  return ctx.exports;
 }
 
 // ── Tool Definition Builder ──
