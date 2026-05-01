@@ -1,12 +1,12 @@
 // GPU Compute Runtime — Billing Service
 // Computes GPU call costs in Light (✦), applies failure chargeability rules,
 // and settles balances via two mechanisms:
-//   1. transfer_balance — developer fee from caller to app owner (10% platform fee)
-//   2. debit_balance — compute cost burned from caller (platform revenue)
+//   1. transfer_light — developer fee from caller to app owner (10% platform fee)
+//   2. debit_light — compute cost burned from caller (platform revenue)
 // Same pattern as chat-billing.ts for the burn, and mcp.ts for the transfer.
 
-import type { GpuType, GpuPricingConfig, GpuPricingMode } from './types.ts';
-import { computeGpuCostLight, classifyFailure } from './types.ts';
+import type { GpuPricingConfig, GpuPricingMode, GpuType } from './types.ts';
+import { classifyFailure, computeGpuCostLight } from './types.ts';
 import type { GpuExecuteResult } from './executor.ts';
 import type { App } from '../../../shared/types/index.ts';
 import { formatLight } from '../../../shared/types/index.ts';
@@ -135,8 +135,8 @@ export function estimateMaxGpuCost(
  * Settle billing for a completed GPU execution.
  *
  * Uses two settlement mechanisms:
- *   - transfer_balance: developer fee from caller → owner (10% platform fee deducted)
- *   - debit_balance: compute cost burned from caller (platform revenue)
+ *   - transfer_light: developer fee from caller → owner (10% platform fee deducted)
+ *   - debit_light: compute cost burned from caller (platform revenue)
  *
  * Failure policy:
  * - success       → full charge (transfer dev fee + debit compute)
@@ -231,10 +231,10 @@ export async function settleGpuExecution(
     let actualComputeCharged = 0;
 
     // ── Step 1: Transfer developer fee to owner (if any) ──
-    // transfer_balance now includes 10% platform fee (owner receives 90%).
+    // transfer_light includes 10% platform fee (owner receives 90%).
     if (devFeeToTransfer > 0) {
       const transferRes = await fetch(
-        `${supabaseUrl}/rest/v1/rpc/transfer_balance`,
+        `${supabaseUrl}/rest/v1/rpc/transfer_light`,
         {
           method: 'POST',
           headers: rpcHeaders,
@@ -242,6 +242,15 @@ export async function settleGpuExecution(
             p_from_user: userId,
             p_to_user: app.owner_id,
             p_amount_light: devFeeToTransfer,
+            p_reason: 'gpu_call',
+            p_app_id: app.id,
+            p_function_name: functionName,
+            p_metadata: {
+              gpu_type: gpuResult.gpuType,
+              duration_ms: gpuResult.durationMs,
+              exit_code: gpuResult.exitCode,
+              failure_policy: failurePolicy,
+            },
           }),
         },
       );
@@ -261,27 +270,14 @@ export async function settleGpuExecution(
             failurePolicy,
             insufficientBalance: true,
             insufficientBalanceMessage:
-              `Insufficient balance. This GPU function costs ~${formatLight(totalCharge)} per call. ` +
-              `Add funds to your wallet at https://ultralight-api.rgn4jz429m.workers.dev/settings/billing ` +
-              `or enable auto top-up to avoid interruptions.`,
+              `Insufficient balance. This GPU function costs ~${
+                formatLight(totalCharge)
+              } per call. ` +
+              `Add Light from the wallet at https://ultralight-api.rgn4jz429m.workers.dev/wallet.`,
           };
         }
 
         actualDevFeeCharged = devFeeToTransfer;
-
-        // Log the developer fee transfer (fire-and-forget)
-        fetch(`${supabaseUrl}/rest/v1/transfers`, {
-          method: 'POST',
-          headers: { ...rpcHeaders, 'Prefer': 'return=minimal' },
-          body: JSON.stringify({
-            from_user_id: userId,
-            to_user_id: app.owner_id,
-            amount_light: devFeeToTransfer,
-            reason: 'gpu_call',
-            app_id: app.id,
-            function_name: functionName,
-          }),
-        }).catch(() => {});
       } else {
         console.error(
           `[GPU-BILLING] Transfer failed for ${userId} → ${app.owner_id}:`,
@@ -293,14 +289,25 @@ export async function settleGpuExecution(
     // ── Step 2: Debit compute cost from caller (platform revenue) ──
     if (computeToDebit > 0) {
       const debitRes = await fetch(
-        `${supabaseUrl}/rest/v1/rpc/debit_balance`,
+        `${supabaseUrl}/rest/v1/rpc/debit_light`,
         {
           method: 'POST',
           headers: rpcHeaders,
           body: JSON.stringify({
             p_user_id: userId,
-            p_amount: computeToDebit,
+            p_amount_light: computeToDebit,
+            p_reason: 'gpu_compute',
             p_update_billed_at: false,
+            p_allow_partial: true,
+            p_app_id: app.id,
+            p_function_name: functionName,
+            p_metadata: {
+              gpu_type: gpuResult.gpuType,
+              duration_ms: gpuResult.durationMs,
+              exit_code: gpuResult.exitCode,
+              compute_cost_light: computeToDebit,
+              failure_policy: failurePolicy,
+            },
           }),
         },
       );
@@ -310,10 +317,13 @@ export async function settleGpuExecution(
           old_balance: number;
           new_balance: number;
           was_depleted: boolean;
+          amount_debited?: number;
         }>;
 
         if (debitResult && debitResult.length > 0) {
-          actualComputeCharged = computeToDebit;
+          actualComputeCharged = typeof debitResult[0].amount_debited === 'number'
+            ? debitResult[0].amount_debited
+            : computeToDebit;
 
           // Log compute deduction to billing_transactions (fire-and-forget)
           fetch(`${supabaseUrl}/rest/v1/billing_transactions`, {
@@ -323,8 +333,10 @@ export async function settleGpuExecution(
               user_id: userId,
               type: 'charge',
               category: 'gpu_compute',
-              description: `GPU: ${app.gpu_type || 'unknown'} ${gpuResult.durationMs}ms — ${app.name || app.slug}.${functionName}`,
-              amount_light: -computeToDebit,
+              description: `GPU: ${app.gpu_type || 'unknown'} ${gpuResult.durationMs}ms — ${
+                app.name || app.slug
+              }.${functionName}`,
+              amount_light: -actualComputeCharged,
               balance_after_light: debitResult[0].new_balance,
               metadata: {
                 app_id: app.id,

@@ -1,4 +1,4 @@
-import { MIN_WITHDRAWAL_LIGHT, formatLight } from "../../shared/types/index.ts";
+import { formatLight, MIN_WITHDRAWAL_LIGHT } from "../../shared/types/index.ts";
 import { getEnv } from "../lib/env.ts";
 import {
   normalizeOptionalString,
@@ -16,7 +16,8 @@ const MAX_UPLOAD_DESCRIPTION_LENGTH = 5_000;
 const MAX_UPLOAD_SLUG_LENGTH = 80;
 const MAX_FUNCTIONS_ENTRY_LENGTH = 120;
 
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SUPABASE_PROJECT_REF_REGEX = /^[a-z0-9-]{6,64}$/;
 const COUNTRY_CODE_REGEX = /^[A-Z]{2}$/;
 const APP_SLUG_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$/;
@@ -36,12 +37,25 @@ export interface ValidatedHostingCheckoutPayload {
   source: "web" | "desktop";
 }
 
+export interface ValidatedWalletFundingPayload {
+  amountCents: number;
+  source: "web" | "desktop";
+  termsAccepted: true;
+}
+
+export interface ValidatedWireFundingPayload {
+  amountCents: number;
+  source: "web" | "desktop";
+  termsAccepted: true;
+}
+
 export interface ValidatedConnectOnboardPayload {
   country: string;
 }
 
 export interface ValidatedWithdrawalPayload {
   amountLight: number;
+  termsAccepted: true;
 }
 
 export interface ValidatedUploadFormMetadata {
@@ -82,7 +96,10 @@ function normalizeRequiredUuid(value: unknown, field: string): string {
   return normalized;
 }
 
-function normalizeOptionalUuid(value: unknown, field: string): string | undefined {
+function normalizeOptionalUuid(
+  value: unknown,
+  field: string,
+): string | undefined {
   const normalized = normalizeOptionalString(value, field, { maxLength: 128 });
   if (!normalized) {
     return undefined;
@@ -94,13 +111,20 @@ function normalizeOptionalUuid(value: unknown, field: string): string | undefine
 }
 
 function normalizeRequiredInteger(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) {
+  if (
+    typeof value !== "number" || !Number.isFinite(value) ||
+    !Number.isInteger(value)
+  ) {
     throw new RequestValidationError(`${field} must be an integer`);
   }
   return value;
 }
 
-function normalizeOptionalUploadText(value: unknown, field: string, maxLength: number): string | undefined {
+function normalizeOptionalUploadText(
+  value: unknown,
+  field: string,
+  maxLength: number,
+): string | undefined {
   return normalizeOptionalString(value, field, { maxLength });
 }
 
@@ -112,23 +136,29 @@ function normalizeFunctionsEntry(value: unknown): string | undefined {
     return undefined;
   }
   if (normalized.includes("/") || normalized.includes("\\")) {
-    throw new RequestValidationError("functions_entry must be a filename, not a path");
+    throw new RequestValidationError(
+      "functions_entry must be a filename, not a path",
+    );
   }
   if (!FUNCTIONS_ENTRY_REGEX.test(normalized)) {
     throw new RequestValidationError(
-      'functions_entry must be a .ts, .tsx, .js, or .jsx filename',
+      "functions_entry must be a .ts, .tsx, .js, or .jsx filename",
     );
   }
   return normalized;
 }
 
-function normalizeUploadVisibility(value: unknown): "private" | "unlisted" | "public" | undefined {
+function normalizeUploadVisibility(
+  value: unknown,
+): "private" | "unlisted" | "public" | undefined {
   const normalized = normalizeOptionalString(value, "visibility");
   if (!normalized) {
     return undefined;
   }
   if (!ALLOWED_UPLOAD_VISIBILITIES.has(normalized)) {
-    throw new RequestValidationError('visibility must be "private", "unlisted", or "public"');
+    throw new RequestValidationError(
+      'visibility must be "private", "unlisted", or "public"',
+    );
   }
   return normalized as "private" | "unlisted" | "public";
 }
@@ -156,7 +186,9 @@ function normalizeSupabaseProjectRef(value: unknown): string {
     throw new RequestValidationError("project_ref is required");
   }
   if (!SUPABASE_PROJECT_REF_REGEX.test(normalized)) {
-    throw new RequestValidationError("project_ref must be a lowercase project reference");
+    throw new RequestValidationError(
+      "project_ref must be a lowercase project reference",
+    );
   }
   return normalized;
 }
@@ -190,7 +222,10 @@ export async function validateAppSupabaseConfigRequest(
   };
 }
 
-export async function assertOwnedSupabaseConfig(userId: string, configId: string): Promise<void> {
+export async function assertOwnedSupabaseConfig(
+  userId: string,
+  configId: string,
+): Promise<void> {
   const supabaseUrl = getEnv("SUPABASE_URL");
   const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
 
@@ -205,7 +240,10 @@ export async function assertOwnedSupabaseConfig(userId: string, configId: string
   );
 
   if (!response.ok) {
-    throw new Error(`Failed to verify Supabase configuration ownership: ${await response.text()}`);
+    throw new Error(
+      `Failed to verify Supabase configuration ownership: ${await response
+        .text()}`,
+    );
   }
 
   const rows = await response.json() as Array<{ id: string }>;
@@ -214,20 +252,34 @@ export async function assertOwnedSupabaseConfig(userId: string, configId: string
   }
 }
 
-export async function validateHostingCheckoutRequest(
+async function validateFundingAmountRequest(
   request: Request,
-): Promise<ValidatedHostingCheckoutPayload> {
+  options: { requireTerms?: boolean } = {},
+): Promise<{
+  amountCents: number;
+  source: "web" | "desktop";
+  termsAccepted?: true;
+}> {
   const body = await readJsonObject(request, {
-    allowedKeys: ["amount_cents", "source"],
+    allowedKeys: options.requireTerms
+      ? ["amount_cents", "source", "terms_accepted"]
+      : ["amount_cents", "source"],
   });
 
-  const amountCents = normalizeRequiredInteger(body.amount_cents, "amount_cents");
+  const amountCents = normalizeRequiredInteger(
+    body.amount_cents,
+    "amount_cents",
+  );
   if (amountCents < 500) {
-    throw new RequestValidationError("amount_cents must be at least 500 ($5.00 minimum deposit)");
+    throw new RequestValidationError(
+      "amount_cents must be at least 500 ($5.00 minimum deposit)",
+    );
   }
   if (amountCents > MAX_HOSTING_CHECKOUT_CENTS) {
     throw new RequestValidationError(
-      `amount_cents must be ${MAX_HOSTING_CHECKOUT_CENTS} or less ($${(MAX_HOSTING_CHECKOUT_CENTS / 100).toFixed(2)} max deposit)`,
+      `amount_cents must be ${MAX_HOSTING_CHECKOUT_CENTS} or less ($${
+        (MAX_HOSTING_CHECKOUT_CENTS / 100).toFixed(2)
+      } max deposit)`,
     );
   }
 
@@ -236,10 +288,39 @@ export async function validateHostingCheckoutRequest(
     throw new RequestValidationError('source must be "web" or "desktop"');
   }
 
+  if (options.requireTerms && body.terms_accepted !== true) {
+    throw new RequestValidationError(
+      "terms_accepted must be true to add Light",
+    );
+  }
+
   return {
     amountCents,
     source: source as "web" | "desktop",
+    ...(options.requireTerms ? { termsAccepted: true as const } : {}),
   };
+}
+
+export async function validateHostingCheckoutRequest(
+  request: Request,
+): Promise<ValidatedHostingCheckoutPayload> {
+  return await validateFundingAmountRequest(request);
+}
+
+export async function validateWalletFundingRequest(
+  request: Request,
+): Promise<ValidatedWalletFundingPayload> {
+  return await validateFundingAmountRequest(request, {
+    requireTerms: true,
+  }) as ValidatedWalletFundingPayload;
+}
+
+export async function validateWireFundingRequest(
+  request: Request,
+): Promise<ValidatedWireFundingPayload> {
+  return await validateFundingAmountRequest(request, {
+    requireTerms: true,
+  }) as ValidatedWireFundingPayload;
 }
 
 export async function validateConnectOnboardRequest(
@@ -259,7 +340,9 @@ export async function validateConnectOnboardRequest(
 
   const normalizedCountry = country.toUpperCase();
   if (!COUNTRY_CODE_REGEX.test(normalizedCountry)) {
-    throw new RequestValidationError("country must be a two-letter ISO country code");
+    throw new RequestValidationError(
+      "country must be a two-letter ISO country code",
+    );
   }
 
   return { country: normalizedCountry };
@@ -269,17 +352,27 @@ export async function validateWithdrawalRequest(
   request: Request,
 ): Promise<ValidatedWithdrawalPayload> {
   const body = await readJsonObject(request, {
-    allowedKeys: ["amount_light"],
+    allowedKeys: ["amount_light", "terms_accepted"],
   });
 
-  const amountLight = normalizeRequiredInteger(body.amount_light, "amount_light");
+  const amountLight = normalizeRequiredInteger(
+    body.amount_light,
+    "amount_light",
+  );
   if (amountLight < MIN_WITHDRAWAL_LIGHT) {
     throw new RequestValidationError(
-      `amount_light must be at least ${MIN_WITHDRAWAL_LIGHT} (${formatLight(MIN_WITHDRAWAL_LIGHT)} minimum withdrawal)`,
+      `amount_light must be at least ${MIN_WITHDRAWAL_LIGHT} (${
+        formatLight(MIN_WITHDRAWAL_LIGHT)
+      } minimum withdrawal)`,
+    );
+  }
+  if (body.terms_accepted !== true) {
+    throw new RequestValidationError(
+      "terms_accepted must be true to request a payout",
     );
   }
 
-  return { amountLight };
+  return { amountLight, termsAccepted: true };
 }
 
 export function validateUploadFormMetadata(input: {
@@ -288,9 +381,14 @@ export function validateUploadFormMetadata(input: {
   app_type?: unknown;
   functions_entry?: unknown;
 }): ValidatedUploadFormMetadata {
-  const name = normalizeOptionalUploadText(input.name, "name", MAX_UPLOAD_NAME_LENGTH) ?? null;
-  const description =
-    normalizeOptionalUploadText(input.description, "description", MAX_UPLOAD_DESCRIPTION_LENGTH) ?? null;
+  const name =
+    normalizeOptionalUploadText(input.name, "name", MAX_UPLOAD_NAME_LENGTH) ??
+      null;
+  const description = normalizeOptionalUploadText(
+    input.description,
+    "description",
+    MAX_UPLOAD_DESCRIPTION_LENGTH,
+  ) ?? null;
 
   const appTypeValue = normalizeOptionalString(input.app_type, "app_type");
   if (appTypeValue && !ALLOWED_UPLOAD_APP_TYPES.has(appTypeValue)) {
@@ -305,8 +403,14 @@ export function validateUploadFormMetadata(input: {
   };
 }
 
-export function validateProgrammaticUploadOptions(options: UploadOptionInput): ValidatedUploadOptions {
-  const name = normalizeOptionalUploadText(options.name, "name", MAX_UPLOAD_NAME_LENGTH);
+export function validateProgrammaticUploadOptions(
+  options: UploadOptionInput,
+): ValidatedUploadOptions {
+  const name = normalizeOptionalUploadText(
+    options.name,
+    "name",
+    MAX_UPLOAD_NAME_LENGTH,
+  );
   const description = normalizeOptionalUploadText(
     options.description,
     "description",
@@ -318,7 +422,9 @@ export function validateProgrammaticUploadOptions(options: UploadOptionInput): V
   const appTypeValue = normalizeOptionalString(options.app_type, "app_type");
 
   if (appTypeValue && !ALLOWED_PROGRAMMATIC_APP_TYPES.has(appTypeValue)) {
-    throw new RequestValidationError('app_type must be "mcp" for programmatic uploads');
+    throw new RequestValidationError(
+      'app_type must be "mcp" for programmatic uploads',
+    );
   }
 
   return {

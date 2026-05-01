@@ -95,15 +95,18 @@ const inferencePayload: ChatInferenceOptionsResponse = {
 };
 
 function sseResponse(lines: string[] = ['data: [DONE]\n\n']): Response {
-  return new Response(new ReadableStream({
-    start(controller) {
-      const encoder = new TextEncoder();
-      for (const line of lines) {
-        controller.enqueue(encoder.encode(line));
-      }
-      controller.close();
-    },
-  }), { status: 200 });
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        const encoder = new TextEncoder();
+        for (const line of lines) {
+          controller.enqueue(encoder.encode(line));
+        }
+        controller.close();
+      },
+    }),
+    { status: 200 },
+  );
 }
 
 describe('inference API helpers', () => {
@@ -114,10 +117,12 @@ describe('inference API helpers', () => {
   });
 
   it('fetches provider-aware inference settings with auth headers', async () => {
-    storageMock.fetchFromApi.mockResolvedValueOnce(new Response(JSON.stringify(inferencePayload), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    }));
+    storageMock.fetchFromApi.mockResolvedValueOnce(
+      new Response(JSON.stringify(inferencePayload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
 
     const { fetchInferenceSettings } = await import('./api');
     const settings = await fetchInferenceSettings();
@@ -172,45 +177,57 @@ describe('inference API helpers', () => {
       provider: 'deepseek',
       model: 'deepseek-v4-pro',
     });
-    expect(getInferenceProviderChoices(inferencePayload).map((choice) => ({
-      key: choice.key,
-      usable: choice.usable,
-      configured: choice.configured,
-    }))).toEqual([
+    expect(
+      getInferenceProviderChoices(inferencePayload).map((choice) => ({
+        key: choice.key,
+        usable: choice.usable,
+        configured: choice.configured,
+      })),
+    ).toEqual([
       { key: 'light:openrouter', usable: false, configured: true },
       { key: 'byok:openrouter', usable: false, configured: false },
       { key: 'byok:deepseek', usable: true, configured: true },
       { key: 'byok:openai', usable: false, configured: false },
     ]);
-    expect(getUsableInferenceProviderChoices(inferencePayload).map((choice) => choice.key)).toEqual([
-      'byok:deepseek',
-    ]);
-    expect(getInferenceModelOptions(inferencePayload).map((model) => ({
-      id: model.id,
-      billingMode: model.billingMode,
-      providerName: model.providerName,
-    }))).toEqual([
+    expect(getUsableInferenceProviderChoices(inferencePayload).map((choice) => choice.key)).toEqual(
+      [
+        'byok:deepseek',
+      ],
+    );
+    expect(
+      getInferenceModelOptions(inferencePayload).map((model) => ({
+        id: model.id,
+        billingMode: model.billingMode,
+        providerName: model.providerName,
+      })),
+    ).toEqual([
       { id: 'deepseek-v4-flash', billingMode: 'byok', providerName: 'DeepSeek' },
       { id: 'deepseek-v4-pro', billingMode: 'byok', providerName: 'DeepSeek' },
     ]);
     expect(getInferenceSetupState(inferencePayload)).toBe('ready');
-    expect(getInferenceSetupState(inferencePayload, { billingMode: 'light' })).toBe('needs_light_balance');
-    expect(getInferenceSetupState(inferencePayload, { billingMode: 'byok', provider: 'openai' })).toBe('needs_byok_key');
+    expect(getInferenceSetupState(inferencePayload, { billingMode: 'light' })).toBe(
+      'needs_light_balance',
+    );
+    expect(getInferenceSetupState(inferencePayload, { billingMode: 'byok', provider: 'openai' }))
+      .toBe('needs_byok_key');
     expect(buildInferenceSetupPrompt(inferencePayload)).toBeNull();
     expect(buildInferenceSetupPrompt(inferencePayload, { billingMode: 'light' })).toMatchObject({
       state: 'needs_light_balance',
       primaryAction: { action: 'open_wallet' },
     });
-    expect(buildInferenceSetupPrompt(inferencePayload, { billingMode: 'byok', provider: 'openai' })).toMatchObject({
-      state: 'needs_byok_key',
-      primaryAction: { action: 'open_settings' },
-    });
+    expect(buildInferenceSetupPrompt(inferencePayload, { billingMode: 'byok', provider: 'openai' }))
+      .toMatchObject({
+        state: 'needs_byok_key',
+        primaryAction: { action: 'open_settings' },
+      });
 
     const lightUsablePayload = {
       ...inferencePayload,
       light: { ...inferencePayload.light, usable: true, balanceLight: 500 },
     };
-    expect(buildInferenceSetupPrompt(lightUsablePayload, { billingMode: 'byok', provider: 'openai' })).toMatchObject({
+    expect(
+      buildInferenceSetupPrompt(lightUsablePayload, { billingMode: 'byok', provider: 'openai' }),
+    ).toMatchObject({
       state: 'needs_byok_key',
       secondaryAction: { action: 'use_light' },
     });
@@ -229,11 +246,13 @@ describe('inference API helpers', () => {
     storageMock.fetchFromApi.mockResolvedValueOnce(sseResponse());
 
     const { streamChat } = await import('./api');
-    for await (const _event of streamChat({
-      model: 'deepseek/deepseek-v4-flash',
-      messages: [{ role: 'user', content: 'hello' }],
-      inference: { billingMode: 'byok', provider: 'deepseek', model: 'deepseek-v4-pro' },
-    })) {
+    for await (
+      const _event of streamChat({
+        model: 'deepseek/deepseek-v4-flash',
+        messages: [{ role: 'user', content: 'hello' }],
+        inference: { billingMode: 'byok', provider: 'deepseek', model: 'deepseek-v4-pro' },
+      })
+    ) {
       // drain stream
     }
 
@@ -252,10 +271,12 @@ describe('inference API helpers', () => {
     storageMock.fetchFromApi.mockResolvedValueOnce(sseResponse());
 
     const { streamOrchestrate } = await import('./api');
-    for await (const _event of streamOrchestrate({
-      message: 'build a thing',
-      inference: { billingMode: 'light', model: 'deepseek/deepseek-v4-flash' },
-    })) {
+    for await (
+      const _event of streamOrchestrate({
+        message: 'build a thing',
+        inference: { billingMode: 'light', model: 'deepseek/deepseek-v4-flash' },
+      })
+    ) {
       // drain stream
     }
 
@@ -270,32 +291,39 @@ describe('inference API helpers', () => {
   });
 
   it('formats structured orchestrate setup errors', async () => {
-    storageMock.fetchFromApi.mockResolvedValueOnce(new Response(JSON.stringify({
-      error: 'Insufficient balance',
-      balance_light: 12,
-      minimum_light: 50,
-      topup_url: '/settings/billing',
-    }), {
-      status: 402,
-      headers: { 'Content-Type': 'application/json' },
-    }));
+    storageMock.fetchFromApi.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          error: 'Insufficient balance',
+          balance_light: 12,
+          minimum_light: 50,
+          topup_url: '/wallet',
+        }),
+        {
+          status: 402,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
 
     const { streamOrchestrate } = await import('./api');
     const events = [];
-    for await (const event of streamOrchestrate({
-      message: 'hello',
-      inference: { billingMode: 'light' },
-    })) {
+    for await (
+      const event of streamOrchestrate({
+        message: 'hello',
+        inference: { billingMode: 'light' },
+      })
+    ) {
       events.push(event);
     }
 
     expect(events).toEqual([expect.objectContaining({
       type: 'error',
       status: 402,
-      message: 'Insufficient balance (✦12 remaining). Top up at Settings > Billing.',
+      message: 'Insufficient balance (✦12 remaining). Add Light from Wallet.',
       balance_light: 12,
       minimum_light: 50,
-      topup_url: '/settings/billing',
+      topup_url: '/wallet',
     })]);
   });
 });

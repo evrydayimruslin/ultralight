@@ -7,7 +7,7 @@
 // streams tokens and captures usage for post-stream cost deduction.
 
 import { authenticate } from './auth.ts';
-import { json, error } from './response.ts';
+import { error, json } from './response.ts';
 import { checkRateLimit } from '../services/ratelimit.ts';
 import { calculateCostLight, checkChatBalance, deductChatCost } from '../services/chat-billing.ts';
 import { getOrCreateOpenRouterKey } from '../services/openrouter-keys.ts';
@@ -15,7 +15,13 @@ import { fetchInferenceChatCompletion } from '../services/inference-client.ts';
 import { InferenceRouteError, resolveInferenceRoute } from '../services/inference-route.ts';
 import { buildInferenceOptions } from '../services/inference-options.ts';
 import type { SystemAgentContext } from '../services/flash-broker.ts';
-import { CHAT_MIN_BALANCE_LIGHT, type ChatStreamRequest, type ChatUsage, type InferenceRoutePreference, type ToolInvocationTelemetryRequest } from '../../shared/contracts/ai.ts';
+import {
+  CHAT_MIN_BALANCE_LIGHT,
+  type ChatStreamRequest,
+  type ChatUsage,
+  type InferenceRoutePreference,
+  type ToolInvocationTelemetryRequest,
+} from '../../shared/contracts/ai.ts';
 import { createServerLogger } from '../services/logging.ts';
 import { isValidModelId } from '../services/model-validation.ts';
 import {
@@ -43,7 +49,8 @@ async function enforceChatGuards(
   if (!rateResult.allowed) {
     if (rateResult.reason === 'service_unavailable') {
       return json({
-        error: 'Chat is temporarily unavailable while usage controls recover. Please try again shortly.',
+        error:
+          'Chat is temporarily unavailable while usage controls recover. Please try again shortly.',
       }, 503);
     }
 
@@ -75,7 +82,7 @@ async function enforceChatGuards(
         error: 'Insufficient balance',
         balance_light: balance,
         minimum_light: CHAT_MIN_BALANCE_LIGHT,
-        topup_url: '/settings/billing',
+        topup_url: '/wallet',
       }, 402);
     }
 
@@ -115,7 +122,10 @@ export async function handleChatStream(request: Request): Promise<Response> {
     chatLogger.warn('Chat auth failed', {
       error: err,
     });
-    return json({ error: 'Unauthorized', detail: err instanceof Error ? err.message : 'Auth failed' }, 401);
+    return json({
+      error: 'Unauthorized',
+      detail: err instanceof Error ? err.message : 'Auth failed',
+    }, 401);
   }
 
   // Block provisional users (no balance, no billing)
@@ -154,7 +164,8 @@ export async function handleChatStream(request: Request): Promise<Response> {
   }
   if (body.inference?.model && !isValidModelId(body.inference.model)) {
     return json({
-      error: `Invalid model ID format: ${body.inference.model}. Expected a provider-native model ID`,
+      error:
+        `Invalid model ID format: ${body.inference.model}. Expected a provider-native model ID`,
     }, 400);
   }
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
@@ -321,7 +332,10 @@ export async function handleChatStream(request: Request): Promise<Response> {
         },
       }));
     }
-    return json({ error: 'Upstream service unavailable', detail: err instanceof Error ? err.message : 'fetch failed' }, 502);
+    return json({
+      error: 'Upstream service unavailable',
+      detail: err instanceof Error ? err.message : 'fetch failed',
+    }, 502);
   }
 
   // Handle non-streaming error from provider
@@ -467,7 +481,7 @@ export async function handleChatStream(request: Request): Promise<Response> {
           messageId: captureAssistantMessageId,
           source: captureSource,
         })
-          .then(result => {
+          .then((result) => {
             chatLogger.info('Post-stream chat billing succeeded', {
               user_id: userId,
               model,
@@ -478,7 +492,7 @@ export async function handleChatStream(request: Request): Promise<Response> {
               balance_depleted: result.was_depleted,
             });
           })
-          .catch(err => {
+          .catch((err) => {
             chatLogger.error('Post-stream chat billing failed', {
               user_id: userId,
               model,
@@ -528,7 +542,7 @@ export async function handleChatStream(request: Request): Promise<Response> {
   });
 
   // Pipe provider response through the transform (runs in background)
-  providerRes.body.pipeTo(transformStream.writable).catch(err => {
+  providerRes.body.pipeTo(transformStream.writable).catch((err) => {
     chatLogger.error('Chat stream pipe failed', {
       user_id: userId,
       model,
@@ -605,7 +619,7 @@ export async function handleChatModels(request: Request): Promise<Response> {
     'meta-llama/llama-3.1-405b-instruct',
     'qwen/qwen3-235b-a22b',
   ];
-  const models = suggested.map(id => {
+  const models = suggested.map((id) => {
     const [provider, name] = id.split('/');
     return { id, name, provider };
   });
@@ -622,7 +636,10 @@ export async function handleChatInferenceOptions(request: Request): Promise<Resp
   try {
     user = await authenticate(request);
   } catch (err) {
-    return json({ error: 'Unauthorized', detail: err instanceof Error ? err.message : 'Auth failed' }, 401);
+    return json({
+      error: 'Unauthorized',
+      detail: err instanceof Error ? err.message : 'Auth failed',
+    }, 401);
   }
 
   if (user.provisional) {
@@ -703,7 +720,10 @@ export async function handleChatContext(request: Request): Promise<Response> {
   try {
     user = await authenticate(request);
   } catch (err) {
-    return json({ error: 'Unauthorized', detail: err instanceof Error ? err.message : 'Auth failed' }, 401);
+    return json({
+      error: 'Unauthorized',
+      detail: err instanceof Error ? err.message : 'Auth failed',
+    }, 401);
   }
 
   // Parse body
@@ -750,7 +770,10 @@ export async function handleToolInvocationTelemetry(request: Request): Promise<R
   try {
     user = await authenticate(request);
   } catch (err) {
-    return json({ error: 'Unauthorized', detail: err instanceof Error ? err.message : 'Auth failed' }, 401);
+    return json({
+      error: 'Unauthorized',
+      detail: err instanceof Error ? err.message : 'Auth failed',
+    }, 401);
   }
 
   if (user.provisional) {
@@ -820,7 +843,10 @@ export async function handleProvisionKey(request: Request): Promise<Response> {
   try {
     user = await authenticate(request);
   } catch (err) {
-    return json({ error: 'Unauthorized', detail: err instanceof Error ? err.message : 'Auth failed' }, 401);
+    return json({
+      error: 'Unauthorized',
+      detail: err instanceof Error ? err.message : 'Auth failed',
+    }, 401);
   }
 
   if (user.provisional) {
@@ -859,7 +885,10 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
   try {
     user = await authenticate(request);
   } catch (err) {
-    return json({ error: 'Unauthorized', detail: err instanceof Error ? err.message : 'Auth failed' }, 401);
+    return json({
+      error: 'Unauthorized',
+      detail: err instanceof Error ? err.message : 'Auth failed',
+    }, 401);
   }
 
   if (user.provisional) {
@@ -893,7 +922,8 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
   }
   if (body.inference?.model && !isValidModelId(body.inference.model)) {
     return json({
-      error: `Invalid model ID format: ${body.inference.model}. Expected a provider-native model ID`,
+      error:
+        `Invalid model ID format: ${body.inference.model}. Expected a provider-native model ID`,
     }, 400);
   }
 
@@ -969,29 +999,31 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        for await (const event of orchestrate(
-          {
-            message: body.message,
-            conversationHistory: body.conversationHistory,
-            interpreterModel: body.interpreterModel,
-            heavyModel: body.heavyModel || body.preferredModel,
-            scope: body.scope,
-            systemAgentContext: body.systemAgentContext,
-            projectContext: body.projectContext,
-            conversationId: captureConversationId,
-            files: body.files,
-          },
-          user.id,
-          user.email,
-          {
-            inferenceRoute: route,
-            telemetry: {
-              traceId: captureTraceId,
+        for await (
+          const event of orchestrate(
+            {
+              message: body.message,
+              conversationHistory: body.conversationHistory,
+              interpreterModel: body.interpreterModel,
+              heavyModel: body.heavyModel || body.preferredModel,
+              scope: body.scope,
+              systemAgentContext: body.systemAgentContext,
+              projectContext: body.projectContext,
               conversationId: captureConversationId,
-              source: 'orchestrate',
+              files: body.files,
             },
-          },
-        )) {
+            user.id,
+            user.email,
+            {
+              inferenceRoute: route,
+              telemetry: {
+                traceId: captureTraceId,
+                conversationId: captureConversationId,
+                source: 'orchestrate',
+              },
+            },
+          )
+        ) {
           captureSession?.observeEvent(event);
           const sseData = `data: ${JSON.stringify(event)}\n\n`;
           controller.enqueue(encoder.encode(sseData));
@@ -1014,7 +1046,10 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
         }
         controller.close();
       } catch (err) {
-        const errEvent = { type: 'error', message: err instanceof Error ? err.message : String(err) };
+        const errEvent = {
+          type: 'error',
+          message: err instanceof Error ? err.message : String(err),
+        };
         captureSession?.observeEvent(errEvent);
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(errEvent)}\n\n`));
         const doneEvent = { type: 'done' as const };
@@ -1048,7 +1083,10 @@ export async function handlePlanConfirm(request: Request, planId: string): Promi
   try {
     user = await authenticate(request);
   } catch (err) {
-    return json({ error: 'Unauthorized', detail: err instanceof Error ? err.message : 'Auth failed' }, 401);
+    return json({
+      error: 'Unauthorized',
+      detail: err instanceof Error ? err.message : 'Auth failed',
+    }, 401);
   }
 
   const { confirmExecutionPlanGate } = await import('../services/plan-gate.ts');
@@ -1069,7 +1107,10 @@ export async function handlePlanCancel(request: Request, planId: string): Promis
   try {
     user = await authenticate(request);
   } catch (err) {
-    return json({ error: 'Unauthorized', detail: err instanceof Error ? err.message : 'Auth failed' }, 401);
+    return json({
+      error: 'Unauthorized',
+      detail: err instanceof Error ? err.message : 'Auth failed',
+    }, 401);
   }
 
   const { cancelExecutionPlanGate } = await import('../services/plan-gate.ts');

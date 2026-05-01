@@ -22,12 +22,16 @@ export type ActiveBYOKProvider = typeof ACTIVE_BYOK_PROVIDER_IDS[number];
 export type LegacyBYOKProvider = typeof LEGACY_BYOK_PROVIDER_IDS[number];
 export type BYOKProvider = ActiveBYOKProvider | LegacyBYOKProvider;
 
-export function isActiveBYOKProvider(value: unknown): value is ActiveBYOKProvider {
+export function isActiveBYOKProvider(
+  value: unknown,
+): value is ActiveBYOKProvider {
   return typeof value === 'string' &&
     (ACTIVE_BYOK_PROVIDER_IDS as readonly string[]).includes(value);
 }
 
-export function isLegacyBYOKProvider(value: unknown): value is LegacyBYOKProvider {
+export function isLegacyBYOKProvider(
+  value: unknown,
+): value is LegacyBYOKProvider {
   return typeof value === 'string' &&
     (LEGACY_BYOK_PROVIDER_IDS as readonly string[]).includes(value);
 }
@@ -49,9 +53,15 @@ export interface User {
   tier_expires_at: string | null;
   ai_credit_balance: number; // Light
   ai_credit_resets_at: string | null;
-  balance_light: number; // Light balance (FLOAT), drains based on published content storage
+  balance_light: number; // Total spendable Light (deposit + earned)
+  deposit_balance_light: number; // Purchased/top-up Light, spend-only
+  earned_balance_light: number; // Creator earnings, spendable or payout-eligible
+  escrow_light: number; // Total Light held in marketplace escrow
+  escrow_deposit_light: number; // Escrowed purchased Light
+  escrow_earned_light: number; // Escrowed earned Light
+  total_earned_light: number; // Lifetime creator earnings before payout/spend debits
   hosting_last_billed_at: string | null;
-  // Stripe & auto top-up
+  // Stripe identity plus legacy auto top-up columns. Auto top-up is disabled.
   stripe_customer_id: string | null;
   auto_topup_enabled: boolean;
   auto_topup_threshold_light: number;
@@ -170,18 +180,18 @@ export interface App {
   supabase_enabled: boolean;
   supabase_config_id: string | null;
   // Manifest-based configuration (v2 architecture)
-  manifest: string | null;  // JSON stringified AppManifest
-  app_type: 'mcp' | 'skill' | null;  // null means legacy auto-detect; 'skill' = .md context file
+  manifest: string | null; // JSON stringified AppManifest
+  app_type: 'mcp' | 'skill' | null; // null means legacy auto-detect; 'skill' = .md context file
   // GPU compute runtime
-  runtime: 'deno' | 'gpu' | null;           // null = legacy deno
-  gpu_type: string | null;                   // GpuType identifier (e.g. 'A100-80GB-SXM')
+  runtime: 'deno' | 'gpu' | null; // null = legacy deno
+  gpu_type: string | null; // GpuType identifier (e.g. 'A100-80GB-SXM')
   gpu_status: AppGpuStatus | null;
-  gpu_endpoint_id: string | null;            // RunPod (or other provider) endpoint ID
-  gpu_config: Record<string, unknown> | null;           // Parsed ultralight.gpu.yaml
-  gpu_benchmark: Record<string, unknown> | null;        // BenchmarkStats from benchmark runs
-  gpu_pricing_config: Record<string, unknown> | null;   // GpuPricingConfig
-  gpu_max_duration_ms: number | null;        // Max execution time ceiling
-  gpu_concurrency_limit: number | null;      // Per-function concurrency cap
+  gpu_endpoint_id: string | null; // RunPod (or other provider) endpoint ID
+  gpu_config: Record<string, unknown> | null; // Parsed ultralight.gpu.yaml
+  gpu_benchmark: Record<string, unknown> | null; // BenchmarkStats from benchmark runs
+  gpu_pricing_config: Record<string, unknown> | null; // GpuPricingConfig
+  gpu_max_duration_ms: number | null; // Max execution time ceiling
+  gpu_concurrency_limit: number | null; // Per-function concurrency cap
   // Per-app rate limit config (Pro, owner-configurable)
   rate_limit_config: AppRateLimitConfig | null;
   // Per-function pricing config (owner-configurable)
@@ -189,11 +199,11 @@ export interface App {
   // Hosting billing
   hosting_suspended: boolean;
   // Health monitoring
-  health_status: string;         // 'healthy' | 'unhealthy'
+  health_status: string; // 'healthy' | 'unhealthy'
   last_healed_at: string | null; // kept for migration compat
-  auto_heal_enabled: boolean;    // opt-out of health monitoring
+  auto_heal_enabled: boolean; // opt-out of health monitoring
   // D1 relational database (per-app, lazy-provisioned)
-  d1_database_id: string | null;          // Cloudflare D1 database UUID
+  d1_database_id: string | null; // Cloudflare D1 database UUID
   d1_status: 'pending' | 'provisioning' | 'ready' | 'error' | null;
   d1_provisioned_at: string | null;
   d1_last_migration_version: number;
@@ -260,25 +270,36 @@ export const ENV_VAR_LIMITS: EnvVarLimits = {
 /**
  * Validate an environment variable key
  */
-export function validateEnvVarKey(key: string): { valid: boolean; error?: string } {
+export function validateEnvVarKey(
+  key: string,
+): { valid: boolean; error?: string } {
   if (!key || typeof key !== 'string') {
     return { valid: false, error: 'Key is required' };
   }
 
   if (key.length > ENV_VAR_LIMITS.max_key_length) {
-    return { valid: false, error: `Key must be ${ENV_VAR_LIMITS.max_key_length} characters or less` };
+    return {
+      valid: false,
+      error: `Key must be ${ENV_VAR_LIMITS.max_key_length} characters or less`,
+    };
   }
 
   // Check reserved prefixes
   for (const prefix of ENV_VAR_LIMITS.reserved_prefixes) {
     if (key.toUpperCase().startsWith(prefix)) {
-      return { valid: false, error: `Keys starting with "${prefix}" are reserved` };
+      return {
+        valid: false,
+        error: `Keys starting with "${prefix}" are reserved`,
+      };
     }
   }
 
   // Must be valid env var format (uppercase, underscores, numbers)
   if (!/^[A-Z][A-Z0-9_]*$/.test(key)) {
-    return { valid: false, error: 'Key must be uppercase letters, numbers, and underscores, starting with a letter' };
+    return {
+      valid: false,
+      error: 'Key must be uppercase letters, numbers, and underscores, starting with a letter',
+    };
   }
 
   return { valid: true };
@@ -287,13 +308,18 @@ export function validateEnvVarKey(key: string): { valid: boolean; error?: string
 /**
  * Validate an environment variable value
  */
-export function validateEnvVarValue(value: string): { valid: boolean; error?: string } {
+export function validateEnvVarValue(
+  value: string,
+): { valid: boolean; error?: string } {
   if (typeof value !== 'string') {
     return { valid: false, error: 'Value must be a string' };
   }
 
   if (value.length > ENV_VAR_LIMITS.max_value_length) {
-    return { valid: false, error: `Value must be ${ENV_VAR_LIMITS.max_value_length} characters or less` };
+    return {
+      valid: false,
+      error: `Value must be ${ENV_VAR_LIMITS.max_value_length} characters or less`,
+    };
   }
 
   return { valid: true };
@@ -373,8 +399,8 @@ export interface AITextPart {
 
 export interface AIFilePart {
   type: 'file';
-  data: string;       // base64 data URL or raw text
-  filename?: string;   // e.g. "notes.pdf" — used to detect type
+  data: string; // base64 data URL or raw text
+  filename?: string; // e.g. "notes.pdf" — used to detect type
 }
 
 export interface AIRequest {
@@ -432,14 +458,14 @@ export interface WidgetData {
 
 export interface WidgetMeta {
   title: string;
-  icon?: string;         // emoji or URL
+  icon?: string; // emoji or URL
   badge_count: number;
 }
 
 export interface WidgetAppResponse {
   meta: WidgetMeta;
-  app_html: string;      // complete HTML document
-  version?: string;      // cache-busting key
+  app_html: string; // complete HTML document
+  version?: string; // cache-busting key
 }
 
 export interface AIResponse {
@@ -633,7 +659,7 @@ export interface AppProduct {
  */
 export function getCallPriceLight(
   pricingConfig: AppPricingConfig | null | undefined,
-  functionName: string
+  functionName: string,
 ): number {
   if (!pricingConfig) return 0;
   // Check per-function override first, then default
@@ -652,7 +678,7 @@ export function getCallPriceLight(
  */
 export function getFreeCalls(
   pricingConfig: AppPricingConfig | null | undefined,
-  functionName: string
+  functionName: string,
 ): number {
   if (!pricingConfig) return 0;
   // Check per-function override first (only in FunctionPricing format)
@@ -672,7 +698,7 @@ export function getFreeCalls(
  * 'function' = separate counter per function (default).
  */
 export function getFreeCallsScope(
-  pricingConfig: AppPricingConfig | null | undefined
+  pricingConfig: AppPricingConfig | null | undefined,
 ): 'app' | 'function' {
   return pricingConfig?.free_calls_scope || 'function';
 }
@@ -782,8 +808,9 @@ export interface MemoryShare {
 // but all values map to the same PLATFORM_LIMITS.
 //
 // Light (✦) is the platform's virtual currency.
-//   - Web purchase: 95 Light per $1 USD
-//   - Desktop purchase: 100 Light per $1 USD  (1 Light ≈ 1¢)
+//   - Canonical reference: 100 Light per $1 USD  (1 Light ≈ 1¢)
+//   - Apple Pay / Google Pay funding: 95 Light per $1 USD
+//   - Wire transfer funding: 99 Light per $1 USD
 //   - Publisher payout: $1 USD per 100 Light
 //   - 10% platform fee on every transfer (compounding)
 //   - Light is divisible to 8 decimal places
@@ -795,16 +822,25 @@ export type Tier = 'free' | 'fun' | 'pro' | 'scale' | 'enterprise';
 /** Light symbol character for display. */
 export const LIGHT_SYMBOL = '✦';
 
-/** Exchange rate: Light credited per $1 USD when purchasing on web. */
-export const LIGHT_PER_DOLLAR_WEB = 95;
+/** Canonical Light/$ reference for internal USD-denominated costs and copy. */
+export const LIGHT_PER_DOLLAR_CANONICAL = 100;
 
-/** Exchange rate: Light credited per $1 USD when purchasing on desktop app. */
-export const LIGHT_PER_DOLLAR_DESKTOP = 100;
+/** Exchange rate: Light credited per $1 USD through Apple Pay / Google Pay. */
+export const LIGHT_PER_DOLLAR_WALLET = 95;
+
+/** Exchange rate: Light credited per $1 USD through Stripe wire/bank transfer. */
+export const LIGHT_PER_DOLLAR_WIRE = 99;
+
+/** Legacy alias retained while old web checkout surfaces are migrated. */
+export const LIGHT_PER_DOLLAR_WEB = LIGHT_PER_DOLLAR_WALLET;
+
+/** Legacy alias retained for internal cost conversion at the canonical rate. */
+export const LIGHT_PER_DOLLAR_DESKTOP = LIGHT_PER_DOLLAR_CANONICAL;
 
 /** Exchange rate: $1 USD per this many Light when publishers withdraw. */
-export const LIGHT_PER_DOLLAR_PAYOUT = 100;
+export const LIGHT_PER_DOLLAR_PAYOUT = LIGHT_PER_DOLLAR_CANONICAL;
 
-/** Platform fee rate applied on every transfer_balance (10%). */
+/** Platform fee rate applied on internal earning transfers (10%). */
 export const PLATFORM_FEE_RATE = 0.10;
 
 // ── Billing Constants (in Light) ──
@@ -823,13 +859,13 @@ export const DATA_RATE_LIGHT_PER_MB_PER_HOUR = 0.045;
 /** Combined free tier storage limit (source code + user data). 100MB. */
 export const COMBINED_FREE_TIER_BYTES = 104_857_600;
 
-/** Default auto top-up threshold (Light). When balance drops below this, auto-charge triggers. */
+/** Legacy auto top-up threshold (Light). Auto top-up is currently disabled. */
 export const AUTO_TOPUP_DEFAULT_THRESHOLD_LIGHT = 100; // ✦100
 
-/** Default auto top-up charge amount (Light). */
+/** Legacy auto top-up charge amount (Light). Auto top-up is currently disabled. */
 export const AUTO_TOPUP_DEFAULT_AMOUNT_LIGHT = 1_000; // ✦1,000
 
-/** Minimum auto top-up amount (Light). */
+/** Legacy minimum auto top-up amount (Light). Auto top-up is currently disabled. */
 export const AUTO_TOPUP_MIN_AMOUNT_LIGHT = 500; // ✦500
 
 /** Minimum withdrawal amount (Light). */
@@ -839,12 +875,14 @@ export const MIN_WITHDRAWAL_LIGHT = 5_000; // ✦5,000
  * Stripe processing fee pass-through (still in USD cents — Stripe boundary only).
  * Standard Stripe rate: 2.9% + 30¢ per successful charge.
  */
-export const STRIPE_FEE_PERCENT = 0.029;  // 2.9%
+export const STRIPE_FEE_PERCENT = 0.029; // 2.9%
 export const STRIPE_FEE_FIXED_CENTS = 30; // 30¢
 
 /** Calculate the gross USD cents charge that nets the desired deposit after Stripe fees. */
 export function calcGrossWithStripeFee(desiredCents: number): number {
-  return Math.ceil((desiredCents + STRIPE_FEE_FIXED_CENTS) / (1 - STRIPE_FEE_PERCENT));
+  return Math.ceil(
+    (desiredCents + STRIPE_FEE_FIXED_CENTS) / (1 - STRIPE_FEE_PERCENT),
+  );
 }
 
 /**
@@ -858,9 +896,11 @@ export function formatLight(amount: number): string {
   const abs = Math.abs(amount);
   const sign = amount < 0 ? '-' : '';
   let formatted: string;
-  if (abs >= 1_000_000_000_000) formatted = (abs / 1_000_000_000_000).toFixed(2) + 'T';
-  else if (abs >= 1_000_000_000) formatted = (abs / 1_000_000_000).toFixed(2) + 'B';
-  else if (abs >= 1_000_000) formatted = (abs / 1_000_000).toFixed(2) + 'M';
+  if (abs >= 1_000_000_000_000) {
+    formatted = (abs / 1_000_000_000_000).toFixed(2) + 'T';
+  } else if (abs >= 1_000_000_000) {
+    formatted = (abs / 1_000_000_000).toFixed(2) + 'B';
+  } else if (abs >= 1_000_000) formatted = (abs / 1_000_000).toFixed(2) + 'M';
   else if (abs >= 5_000) formatted = (abs / 1_000).toFixed(1) + 'K';
   else if (abs % 1 === 0) formatted = String(abs);
   else formatted = abs.toFixed(2);
@@ -871,14 +911,14 @@ const PLATFORM_LIMITS = {
   max_apps: Infinity,
   weekly_call_limit: 50_000,
   overage_cost_per_100k_light: 0,
-  can_publish: true,                     // gated by deposit, not tier
+  can_publish: true, // gated by deposit, not tier
   price_light_monthly: 0,
-  daily_ai_credit_light: 1_600,          // ✦1,600 (was $2.00 × 800)
-  monthly_ai_credit_light: 48_000,       // ✦48,000 (was $60.00 × 800)
+  daily_ai_credit_light: 1_600, // ✦1,600 (was $2.00 × 800)
+  monthly_ai_credit_light: 48_000, // ✦48,000 (was $60.00 × 800)
   max_file_size_mb: 10,
   max_files_per_app: 50,
-  max_storage_bytes: 104_857_600,        // 100 MB (combined: source code + user data)
-  execution_timeout_ms: 120_000,         // 2min
+  max_storage_bytes: 104_857_600, // 100 MB (combined: source code + user data)
+  execution_timeout_ms: 120_000, // 2min
   log_retention_days: 90,
   allowed_visibility: ['private', 'unlisted', 'public'] as const,
 } as const;
@@ -902,22 +942,55 @@ export function isProTier(_tier: Tier | string): boolean {
 // ============================================
 
 export const ALLOWED_EXTENSIONS = [
-  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
-  '.json', '.jsonc',
-  '.css', '.scss', '.less',
-  '.html', '.htm', '.xml', '.svg',
-  '.md', '.mdx', '.txt', '.csv',
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+  '.json',
+  '.jsonc',
+  '.css',
+  '.scss',
+  '.less',
+  '.html',
+  '.htm',
+  '.xml',
+  '.svg',
+  '.md',
+  '.mdx',
+  '.txt',
+  '.csv',
   '.sql',
-  '.yaml', '.yml', '.toml', '.ini', '.conf',
-  '.env', '.env.example', '.env.local',
-  '.sh', '.bash',
-  '.py', '.rb', '.go', '.rs', '.java', '.kt',
-  '.c', '.cpp', '.h', '.hpp',
+  '.yaml',
+  '.yml',
+  '.toml',
+  '.ini',
+  '.conf',
+  '.env',
+  '.env.example',
+  '.env.local',
+  '.sh',
+  '.bash',
+  '.py',
+  '.rb',
+  '.go',
+  '.rs',
+  '.java',
+  '.kt',
+  '.c',
+  '.cpp',
+  '.h',
+  '.hpp',
   '.wasm',
-  '.graphql', '.gql',
+  '.graphql',
+  '.gql',
   '.prisma',
-  '.lock', '.gitignore', '.dockerignore',
-  '.dockerfile', '.editorconfig',
+  '.lock',
+  '.gitignore',
+  '.dockerignore',
+  '.dockerfile',
+  '.editorconfig',
 ] as const;
 export const MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
 export const MAX_FILES_PER_UPLOAD = 50;
@@ -979,7 +1052,6 @@ export interface UltralightSDK {
 
   // AI
   ai(request: AIRequest): Promise<AIResponse>;
-
 }
 
 // ============================================
@@ -1225,12 +1297,44 @@ export const BYOK_PROVIDERS: Record<ActiveBYOKProvider, BYOKProviderInfo> = {
     baseUrl: 'https://openrouter.ai/api/v1',
     defaultModel: 'deepseek/deepseek-v4-flash',
     models: [
-      { id: 'deepseek/deepseek-v4-flash', name: 'DeepSeek V4 Flash', contextWindow: 1048576, inputPrice: 0.14, outputPrice: 0.28 },
-      { id: 'deepseek/deepseek-v4-pro', name: 'DeepSeek V4 Pro', contextWindow: 1048576, inputPrice: 1.74, outputPrice: 3.48 },
-      { id: 'openai/gpt-4o', name: 'GPT-4o', contextWindow: 128000, inputPrice: 5, outputPrice: 15 },
-      { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', contextWindow: 128000, inputPrice: 0.15, outputPrice: 0.6 },
-      { id: 'google/gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', contextWindow: 1000000 },
-      { id: 'x-ai/grok-4.20-reasoning', name: 'Grok 4.20 Reasoning', contextWindow: 256000 },
+      {
+        id: 'deepseek/deepseek-v4-flash',
+        name: 'DeepSeek V4 Flash',
+        contextWindow: 1048576,
+        inputPrice: 0.14,
+        outputPrice: 0.28,
+      },
+      {
+        id: 'deepseek/deepseek-v4-pro',
+        name: 'DeepSeek V4 Pro',
+        contextWindow: 1048576,
+        inputPrice: 1.74,
+        outputPrice: 3.48,
+      },
+      {
+        id: 'openai/gpt-4o',
+        name: 'GPT-4o',
+        contextWindow: 128000,
+        inputPrice: 5,
+        outputPrice: 15,
+      },
+      {
+        id: 'openai/gpt-4o-mini',
+        name: 'GPT-4o Mini',
+        contextWindow: 128000,
+        inputPrice: 0.15,
+        outputPrice: 0.6,
+      },
+      {
+        id: 'google/gemini-3-flash-preview',
+        name: 'Gemini 3 Flash Preview',
+        contextWindow: 1000000,
+      },
+      {
+        id: 'x-ai/grok-4.20-reasoning',
+        name: 'Grok 4.20 Reasoning',
+        contextWindow: 256000,
+      },
     ],
     capabilities: { ...OPENAI_COMPAT_TEXT_CAPABILITIES, multimodal: true },
     apiKeyPrefix: 'sk-or-',
@@ -1245,8 +1349,20 @@ export const BYOK_PROVIDERS: Record<ActiveBYOKProvider, BYOKProviderInfo> = {
     baseUrl: 'https://api.openai.com/v1',
     defaultModel: 'gpt-4o-mini',
     models: [
-      { id: 'gpt-4o-mini', name: 'GPT-4o Mini', contextWindow: 128000, inputPrice: 0.15, outputPrice: 0.6 },
-      { id: 'gpt-4o', name: 'GPT-4o', contextWindow: 128000, inputPrice: 5, outputPrice: 15 },
+      {
+        id: 'gpt-4o-mini',
+        name: 'GPT-4o Mini',
+        contextWindow: 128000,
+        inputPrice: 0.15,
+        outputPrice: 0.6,
+      },
+      {
+        id: 'gpt-4o',
+        name: 'GPT-4o',
+        contextWindow: 128000,
+        inputPrice: 5,
+        outputPrice: 15,
+      },
     ],
     capabilities: { ...OPENAI_COMPAT_TEXT_CAPABILITIES, multimodal: true },
     apiKeyPrefix: 'sk-',
@@ -1261,8 +1377,20 @@ export const BYOK_PROVIDERS: Record<ActiveBYOKProvider, BYOKProviderInfo> = {
     baseUrl: 'https://api.deepseek.com',
     defaultModel: 'deepseek-v4-flash',
     models: [
-      { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', contextWindow: 1048576, inputPrice: 0.14, outputPrice: 0.28 },
-      { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', contextWindow: 1048576, inputPrice: 1.74, outputPrice: 3.48 },
+      {
+        id: 'deepseek-v4-flash',
+        name: 'DeepSeek V4 Flash',
+        contextWindow: 1048576,
+        inputPrice: 0.14,
+        outputPrice: 0.28,
+      },
+      {
+        id: 'deepseek-v4-pro',
+        name: 'DeepSeek V4 Pro',
+        contextWindow: 1048576,
+        inputPrice: 1.74,
+        outputPrice: 3.48,
+      },
     ],
     capabilities: OPENAI_COMPAT_TEXT_CAPABILITIES,
     apiKeyPrefix: 'sk-',
@@ -1277,9 +1405,25 @@ export const BYOK_PROVIDERS: Record<ActiveBYOKProvider, BYOKProviderInfo> = {
     baseUrl: 'https://integrate.api.nvidia.com/v1',
     defaultModel: 'deepseek-ai/deepseek-v4-flash',
     models: [
-      { id: 'deepseek-ai/deepseek-v4-flash', name: 'DeepSeek V4 Flash', contextWindow: 1048576, inputPrice: 0.14, outputPrice: 0.28 },
-      { id: 'deepseek-ai/deepseek-v4-pro', name: 'DeepSeek V4 Pro', contextWindow: 1048576, inputPrice: 1.74, outputPrice: 3.48 },
-      { id: 'minimaxai/minimax-m2.7', name: 'MiniMax M2.7', contextWindow: 204800 },
+      {
+        id: 'deepseek-ai/deepseek-v4-flash',
+        name: 'DeepSeek V4 Flash',
+        contextWindow: 1048576,
+        inputPrice: 0.14,
+        outputPrice: 0.28,
+      },
+      {
+        id: 'deepseek-ai/deepseek-v4-pro',
+        name: 'DeepSeek V4 Pro',
+        contextWindow: 1048576,
+        inputPrice: 1.74,
+        outputPrice: 3.48,
+      },
+      {
+        id: 'minimaxai/minimax-m2.7',
+        name: 'MiniMax M2.7',
+        contextWindow: 204800,
+      },
     ],
     capabilities: OPENAI_COMPAT_TEXT_CAPABILITIES,
     docsUrl: 'https://docs.api.nvidia.com/nim/reference/llm-apis',
@@ -1293,7 +1437,11 @@ export const BYOK_PROVIDERS: Record<ActiveBYOKProvider, BYOKProviderInfo> = {
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     defaultModel: 'gemini-3-flash-preview',
     models: [
-      { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', contextWindow: 1000000 },
+      {
+        id: 'gemini-3-flash-preview',
+        name: 'Gemini 3 Flash Preview',
+        contextWindow: 1000000,
+      },
       { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', contextWindow: 1000000 },
     ],
     capabilities: { ...OPENAI_COMPAT_TEXT_CAPABILITIES, multimodal: true },
@@ -1308,7 +1456,11 @@ export const BYOK_PROVIDERS: Record<ActiveBYOKProvider, BYOKProviderInfo> = {
     baseUrl: 'https://api.x.ai/v1',
     defaultModel: 'grok-4.20-reasoning',
     models: [
-      { id: 'grok-4.20-reasoning', name: 'Grok 4.20 Reasoning', contextWindow: 256000 },
+      {
+        id: 'grok-4.20-reasoning',
+        name: 'Grok 4.20 Reasoning',
+        contextWindow: 256000,
+      },
       { id: 'grok-4.20-fast', name: 'Grok 4.20 Fast', contextWindow: 256000 },
     ],
     capabilities: { ...OPENAI_COMPAT_TEXT_CAPABILITIES, multimodal: true },
@@ -1419,7 +1571,7 @@ export function humanizeEnvVarKey(key: string): string {
     .toLowerCase()
     .split('_')
     .filter(Boolean)
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
 }
 
@@ -1434,7 +1586,10 @@ function inferEnvInputType(
   const upperKey = key.toUpperCase();
   const combined = `${upperKey} ${description || ''}`.toUpperCase();
 
-  if (/(PASS|PASSWORD|SECRET|TOKEN|API_KEY|PRIVATE_KEY|SERVICE_KEY|ACCESS_KEY)/.test(combined)) {
+  if (
+    /(PASS|PASSWORD|SECRET|TOKEN|API_KEY|PRIVATE_KEY|SERVICE_KEY|ACCESS_KEY)/
+      .test(combined)
+  ) {
     return 'password';
   }
 
@@ -1505,7 +1660,9 @@ export function normalizeManifestEnvVars(
   if (typeof envVars !== 'object' || Array.isArray(envVars)) return undefined;
 
   const normalized: Record<string, ManifestEnvVar> = {};
-  for (const [key, value] of Object.entries(envVars as Record<string, unknown>)) {
+  for (
+    const [key, value] of Object.entries(envVars as Record<string, unknown>)
+  ) {
     const entry = normalizeManifestEnvVarEntry(key, value);
     if (entry) {
       normalized[key] = entry;
@@ -1552,7 +1709,9 @@ export function resolveManifestEnvSchema(
   return manifestEnvVarsToEnvSchema(getManifestEnvVars(manifest));
 }
 
-export function normalizeEnvSchema(input: unknown): Record<string, EnvSchemaEntry> {
+export function normalizeEnvSchema(
+  input: unknown,
+): Record<string, EnvSchemaEntry> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
 
   const normalized: Record<string, EnvSchemaEntry> = {};
@@ -1632,18 +1791,28 @@ export function validateManifest(input: unknown): ManifestValidationResult {
   const warnings: string[] = [];
 
   if (!input || typeof input !== 'object') {
-    return { valid: false, errors: [{ path: '', message: 'Manifest must be an object' }], warnings };
+    return {
+      valid: false,
+      errors: [{ path: '', message: 'Manifest must be an object' }],
+      warnings,
+    };
   }
 
   const manifest = input as Record<string, unknown>;
 
   // Required fields
   if (!manifest.name || typeof manifest.name !== 'string') {
-    errors.push({ path: 'name', message: 'name is required and must be a string' });
+    errors.push({
+      path: 'name',
+      message: 'name is required and must be a string',
+    });
   }
 
   if (!manifest.version || typeof manifest.version !== 'string') {
-    errors.push({ path: 'version', message: 'version is required and must be a string' });
+    errors.push({
+      path: 'version',
+      message: 'version is required and must be a string',
+    });
   }
 
   // Type validation - MCP only
@@ -1653,35 +1822,53 @@ export function validateManifest(input: unknown): ManifestValidationResult {
 
   // Entry validation
   if (!manifest.entry || typeof manifest.entry !== 'object') {
-    errors.push({ path: 'entry', message: 'entry is required and must be an object' });
+    errors.push({
+      path: 'entry',
+      message: 'entry is required and must be an object',
+    });
   } else {
     const entry = manifest.entry as Record<string, unknown>;
     if (!entry.functions) {
-      errors.push({ path: 'entry.functions', message: 'entry.functions is required for MCP apps' });
+      errors.push({
+        path: 'entry.functions',
+        message: 'entry.functions is required for MCP apps',
+      });
     }
   }
 
   // Functions validation (optional but must be valid if present)
   if (manifest.functions !== undefined) {
     if (typeof manifest.functions !== 'object' || manifest.functions === null) {
-      errors.push({ path: 'functions', message: 'functions must be an object' });
+      errors.push({
+        path: 'functions',
+        message: 'functions must be an object',
+      });
     } else {
       const functions = manifest.functions as Record<string, unknown>;
       for (const [fnName, fnDef] of Object.entries(functions)) {
         if (!fnDef || typeof fnDef !== 'object') {
-          errors.push({ path: `functions.${fnName}`, message: 'function definition must be an object' });
+          errors.push({
+            path: `functions.${fnName}`,
+            message: 'function definition must be an object',
+          });
           continue;
         }
 
         const fn = fnDef as Record<string, unknown>;
         if (!fn.description || typeof fn.description !== 'string') {
-          errors.push({ path: `functions.${fnName}.description`, message: 'description is required' });
+          errors.push({
+            path: `functions.${fnName}.description`,
+            message: 'description is required',
+          });
         }
 
         // Normalize parameters: convert array format → object-keyed format in-place
         if (fn.parameters !== undefined) {
           if (typeof fn.parameters !== 'object') {
-            errors.push({ path: `functions.${fnName}.parameters`, message: 'parameters must be an object or array' });
+            errors.push({
+              path: `functions.${fnName}.parameters`,
+              message: 'parameters must be an object or array',
+            });
           } else {
             fn.parameters = normalizeManifestParameters(fn.parameters);
           }
@@ -1691,7 +1878,11 @@ export function validateManifest(input: unknown): ManifestValidationResult {
   }
 
   // Environment variable / settings validation
-  if (manifest.env !== undefined && (typeof manifest.env !== 'object' || manifest.env === null || Array.isArray(manifest.env))) {
+  if (
+    manifest.env !== undefined &&
+    (typeof manifest.env !== 'object' || manifest.env === null ||
+      Array.isArray(manifest.env))
+  ) {
     errors.push({ path: 'env', message: 'env must be an object' });
   }
 
@@ -1705,25 +1896,35 @@ export function validateManifest(input: unknown): ManifestValidationResult {
   }
 
   const rawEnvVars = {
-    ...((manifest.env && typeof manifest.env === 'object' && !Array.isArray(manifest.env))
+    ...((manifest.env && typeof manifest.env === 'object' &&
+        !Array.isArray(manifest.env))
       ? manifest.env as Record<string, unknown>
       : {}),
     ...((((manifest as Record<string, unknown>).env_vars) &&
-      typeof (manifest as Record<string, unknown>).env_vars === 'object' &&
-      !Array.isArray((manifest as Record<string, unknown>).env_vars))
-      ? (manifest as Record<string, unknown>).env_vars as Record<string, unknown>
+        typeof (manifest as Record<string, unknown>).env_vars === 'object' &&
+        !Array.isArray((manifest as Record<string, unknown>).env_vars))
+      ? (manifest as Record<string, unknown>).env_vars as Record<
+        string,
+        unknown
+      >
       : {}),
   };
 
   for (const [key, value] of Object.entries(rawEnvVars)) {
     const keyValidation = validateEnvVarKey(key);
     if (!keyValidation.valid) {
-      errors.push({ path: `env_vars.${key}`, message: keyValidation.error || 'Invalid env var key' });
+      errors.push({
+        path: `env_vars.${key}`,
+        message: keyValidation.error || 'Invalid env var key',
+      });
       continue;
     }
 
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      errors.push({ path: `env_vars.${key}`, message: 'env var entry must be an object' });
+      errors.push({
+        path: `env_vars.${key}`,
+        message: 'env var entry must be an object',
+      });
       continue;
     }
 
@@ -1734,7 +1935,10 @@ export function validateManifest(input: unknown): ManifestValidationResult {
       envVar.scope !== 'universal' &&
       envVar.scope !== 'per_user'
     ) {
-      errors.push({ path: `env_vars.${key}.scope`, message: 'scope must be "universal" or "per_user"' });
+      errors.push({
+        path: `env_vars.${key}.scope`,
+        message: 'scope must be "universal" or "per_user"',
+      });
     }
 
     if (
@@ -1742,7 +1946,10 @@ export function validateManifest(input: unknown): ManifestValidationResult {
       envVar.type !== 'universal' &&
       envVar.type !== 'per_user'
     ) {
-      errors.push({ path: `env_vars.${key}.type`, message: 'type must be "universal" or "per_user"' });
+      errors.push({
+        path: `env_vars.${key}.type`,
+        message: 'type must be "universal" or "per_user"',
+      });
     }
 
     if (
@@ -1760,28 +1967,50 @@ export function validateManifest(input: unknown): ManifestValidationResult {
       });
     }
 
-    if (envVar.description !== undefined && typeof envVar.description !== 'string') {
-      errors.push({ path: `env_vars.${key}.description`, message: 'description must be a string' });
+    if (
+      envVar.description !== undefined && typeof envVar.description !== 'string'
+    ) {
+      errors.push({
+        path: `env_vars.${key}.description`,
+        message: 'description must be a string',
+      });
     }
 
     if (envVar.required !== undefined && typeof envVar.required !== 'boolean') {
-      errors.push({ path: `env_vars.${key}.required`, message: 'required must be a boolean' });
+      errors.push({
+        path: `env_vars.${key}.required`,
+        message: 'required must be a boolean',
+      });
     }
 
     if (envVar.default !== undefined && typeof envVar.default !== 'string') {
-      errors.push({ path: `env_vars.${key}.default`, message: 'default must be a string' });
+      errors.push({
+        path: `env_vars.${key}.default`,
+        message: 'default must be a string',
+      });
     }
 
     if (envVar.label !== undefined && typeof envVar.label !== 'string') {
-      errors.push({ path: `env_vars.${key}.label`, message: 'label must be a string' });
+      errors.push({
+        path: `env_vars.${key}.label`,
+        message: 'label must be a string',
+      });
     }
 
-    if (envVar.placeholder !== undefined && typeof envVar.placeholder !== 'string') {
-      errors.push({ path: `env_vars.${key}.placeholder`, message: 'placeholder must be a string' });
+    if (
+      envVar.placeholder !== undefined && typeof envVar.placeholder !== 'string'
+    ) {
+      errors.push({
+        path: `env_vars.${key}.placeholder`,
+        message: 'placeholder must be a string',
+      });
     }
 
     if (envVar.help !== undefined && typeof envVar.help !== 'string') {
-      errors.push({ path: `env_vars.${key}.help`, message: 'help must be a string' });
+      errors.push({
+        path: `env_vars.${key}.help`,
+        message: 'help must be a string',
+      });
     }
   }
 
@@ -1806,7 +2035,11 @@ export function validateManifest(input: unknown): ManifestValidationResult {
 /**
  * Convert manifest functions to MCP tools format
  */
-export function manifestToMCPTools(manifest: AppManifest, _appId: string, appSlug: string): MCPTool[] {
+export function manifestToMCPTools(
+  manifest: AppManifest,
+  _appId: string,
+  appSlug: string,
+): MCPTool[] {
   if (!manifest.functions) return [];
 
   const tools: MCPTool[] = [];
@@ -1876,9 +2109,9 @@ export interface ChatStreamRequest {
   model: string;
   messages: ChatMessage[];
   tools?: ChatTool[];
-  temperature?: number;   // default 0.7
-  max_tokens?: number;    // default 4096
-  stream?: boolean;       // default true
+  temperature?: number; // default 0.7
+  max_tokens?: number; // default 4096
+  stream?: boolean; // default true
   trace?: ChatTraceContext;
 }
 
@@ -1958,7 +2191,10 @@ export const D1_FREE_TIER = {
 } as const;
 
 /** D1 rate limits by tier (per minute) */
-export const D1_RATE_LIMITS: Record<string, { reads: number; writes: number; concurrent: number }> = {
+export const D1_RATE_LIMITS: Record<
+  string,
+  { reads: number; writes: number; concurrent: number }
+> = {
   free: { reads: 100, writes: 20, concurrent: 3 },
   pro: { reads: 500, writes: 100, concurrent: 10 },
   scale: { reads: 2000, writes: 500, concurrent: 25 },
@@ -1967,9 +2203,9 @@ export const D1_RATE_LIMITS: Record<string, { reads: number; writes: number; con
 
 /** D1 overage billing rates (in Light ✦) */
 export const D1_BILLING_RATES = {
-  RATE_PER_1K_READS: 0.01,      // 0.01 Light per 1,000 reads
-  RATE_PER_1K_WRITES: 0.05,     // 0.05 Light per 1,000 writes
-  RATE_PER_MB_PER_HOUR: 0.36,   // 0.36 Light per MB per hour (matches R2 data overage)
+  RATE_PER_1K_READS: 0.01, // 0.01 Light per 1,000 reads
+  RATE_PER_1K_WRITES: 0.05, // 0.05 Light per 1,000 writes
+  RATE_PER_MB_PER_HOUR: 0.36, // 0.36 Light per MB per hour (matches R2 data overage)
 } as const;
 
 /** Result of a chat billing deduction */

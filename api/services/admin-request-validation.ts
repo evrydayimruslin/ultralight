@@ -4,8 +4,18 @@ import {
   RequestValidationError,
 } from './request-validation.ts';
 
-const GAP_SEVERITIES = new Set<CreateGapPayload['severity']>(['low', 'medium', 'high', 'critical']);
-const GAP_STATUSES = new Set<NonNullable<UpdateGapPayload['status']>>(['open', 'claimed', 'fulfilled', 'closed']);
+const GAP_SEVERITIES = new Set<CreateGapPayload['severity']>([
+  'low',
+  'medium',
+  'high',
+  'critical',
+]);
+const GAP_STATUSES = new Set<NonNullable<UpdateGapPayload['status']>>([
+  'open',
+  'claimed',
+  'fulfilled',
+  'closed',
+]);
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const MAX_GAP_TITLE_LENGTH = 200;
@@ -13,6 +23,7 @@ const MAX_GAP_DESCRIPTION_LENGTH = 8000;
 const MAX_AGENT_NOTES_LENGTH = 8000;
 const MAX_REVIEWED_BY_LENGTH = 120;
 const MAX_APP_CATEGORY_LENGTH = 64;
+const MAX_PAYOUT_POLICY_COPY_LENGTH = 1200;
 const MAX_POINTS_VALUE = 1_000_000;
 const MAX_TOP_UP_LIGHT = 100_000_000;
 
@@ -62,7 +73,21 @@ export interface SetAppFeaturedPayload {
   featured: boolean;
 }
 
-function normalizeRequiredString(value: unknown, field: string, maxLength: number): string {
+export interface UpdateBillingConfigPayload {
+  canonical_light_per_usd?: number;
+  wallet_light_per_usd?: number;
+  wire_light_per_usd?: number;
+  payout_light_per_usd?: number;
+  platform_fee_rate?: number;
+  min_withdrawal_light?: number;
+  payout_policy_copy?: string;
+}
+
+function normalizeRequiredString(
+  value: unknown,
+  field: string,
+  maxLength: number,
+): string {
   const normalized = normalizeOptionalString(value, field, { maxLength });
   if (!normalized) {
     throw new RequestValidationError(`Missing ${field}`);
@@ -70,7 +95,11 @@ function normalizeRequiredString(value: unknown, field: string, maxLength: numbe
   return normalized;
 }
 
-function normalizeEnum<T extends string>(value: unknown, field: string, allowed: Set<T>): T {
+function normalizeEnum<T extends string>(
+  value: unknown,
+  field: string,
+  allowed: Set<T>,
+): T {
   const normalized = normalizeRequiredString(value, field, 64);
   if (!allowed.has(normalized as T)) {
     throw new RequestValidationError(
@@ -80,7 +109,11 @@ function normalizeEnum<T extends string>(value: unknown, field: string, allowed:
   return normalized as T;
 }
 
-function normalizeOptionalEnum<T extends string>(value: unknown, field: string, allowed: Set<T>): T | undefined {
+function normalizeOptionalEnum<T extends string>(
+  value: unknown,
+  field: string,
+  allowed: Set<T>,
+): T | undefined {
   const normalized = normalizeOptionalString(value, field, { maxLength: 64 });
   if (!normalized) {
     return undefined;
@@ -94,7 +127,10 @@ function normalizeOptionalEnum<T extends string>(value: unknown, field: string, 
 }
 
 function normalizeInteger(value: unknown, field: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value)) {
+  if (
+    typeof value !== 'number' || !Number.isFinite(value) ||
+    !Number.isInteger(value)
+  ) {
     throw new RequestValidationError(`${field} must be an integer`);
   }
   return value;
@@ -135,7 +171,59 @@ function normalizeOptionalPositiveInteger(
   return normalizePositiveInteger(value, field, options);
 }
 
-function normalizeOptionalUuid(value: unknown, field: string): string | undefined {
+function normalizePositiveNumber(
+  value: unknown,
+  field: string,
+  {
+    minExclusive = 0,
+    max = MAX_POINTS_VALUE,
+  }: {
+    minExclusive?: number;
+    max?: number;
+  } = {},
+): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new RequestValidationError(`${field} must be a number`);
+  }
+  if (value <= minExclusive) {
+    throw new RequestValidationError(
+      `${field} must be greater than ${minExclusive}`,
+    );
+  }
+  if (value > max) {
+    throw new RequestValidationError(`${field} must be ${max} or less`);
+  }
+  return value;
+}
+
+function normalizeRequiredRate(value: unknown, field: string): number {
+  const normalized = normalizePositiveNumber(value, field, {
+    max: 10_000,
+  });
+  if (!Number.isInteger(normalized)) {
+    throw new RequestValidationError(
+      `${field} must be an integer Light-per-USD rate`,
+    );
+  }
+  return normalized;
+}
+
+function normalizeRequiredFeeRate(value: unknown, field: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new RequestValidationError(`${field} must be a number`);
+  }
+  if (value < 0 || value >= 1) {
+    throw new RequestValidationError(
+      `${field} must be at least 0 and less than 1`,
+    );
+  }
+  return value;
+}
+
+function normalizeOptionalUuid(
+  value: unknown,
+  field: string,
+): string | undefined {
   const normalized = normalizeOptionalString(value, field, { maxLength: 128 });
   if (!normalized) {
     return undefined;
@@ -146,7 +234,10 @@ function normalizeOptionalUuid(value: unknown, field: string): string | undefine
   return normalized;
 }
 
-function normalizeNullableUuid(value: unknown, field: string): string | null | undefined {
+function normalizeNullableUuid(
+  value: unknown,
+  field: string,
+): string | null | undefined {
   if (value === null) {
     return null;
   }
@@ -164,21 +255,28 @@ function normalizeUuidArray(value: unknown, field: string): string[] {
   const deduped = new Set<string>();
   for (const entry of value) {
     if (typeof entry !== 'string' || !UUID_REGEX.test(entry)) {
-      throw new RequestValidationError(`${field} must contain only valid UUIDs`);
+      throw new RequestValidationError(
+        `${field} must contain only valid UUIDs`,
+      );
     }
     deduped.add(entry);
   }
   return Array.from(deduped);
 }
 
-function normalizeOptionalUuidArray(value: unknown, field: string): string[] | undefined {
+function normalizeOptionalUuidArray(
+  value: unknown,
+  field: string,
+): string[] | undefined {
   if (value === undefined) {
     return undefined;
   }
   return normalizeUuidArray(value, field);
 }
 
-export async function validateCreateGapRequest(request: Request): Promise<CreateGapPayload> {
+export async function validateCreateGapRequest(
+  request: Request,
+): Promise<CreateGapPayload> {
   const body = await readJsonObject(request, {
     allowedKeys: [
       'title',
@@ -193,16 +291,32 @@ export async function validateCreateGapRequest(request: Request): Promise<Create
 
   return {
     title: normalizeRequiredString(body.title, 'title', MAX_GAP_TITLE_LENGTH),
-    description: normalizeRequiredString(body.description, 'description', MAX_GAP_DESCRIPTION_LENGTH),
-    severity: normalizeOptionalEnum(body.severity, 'severity', GAP_SEVERITIES) || 'medium',
-    pointsValue: normalizeOptionalPositiveInteger(body.points_value, 'points_value') ?? 100,
-    season: normalizeOptionalPositiveInteger(body.season, 'season', { max: 10_000 }) ?? 1,
-    sourceShortcomingIds: normalizeUuidArray(body.source_shortcoming_ids, 'source_shortcoming_ids'),
-    sourceQueryIds: normalizeUuidArray(body.source_query_ids, 'source_query_ids'),
+    description: normalizeRequiredString(
+      body.description,
+      'description',
+      MAX_GAP_DESCRIPTION_LENGTH,
+    ),
+    severity: normalizeOptionalEnum(body.severity, 'severity', GAP_SEVERITIES) ||
+      'medium',
+    pointsValue: normalizeOptionalPositiveInteger(body.points_value, 'points_value') ??
+      100,
+    season: normalizeOptionalPositiveInteger(body.season, 'season', {
+      max: 10_000,
+    }) ?? 1,
+    sourceShortcomingIds: normalizeUuidArray(
+      body.source_shortcoming_ids,
+      'source_shortcoming_ids',
+    ),
+    sourceQueryIds: normalizeUuidArray(
+      body.source_query_ids,
+      'source_query_ids',
+    ),
   };
 }
 
-export async function validateUpdateGapRequest(request: Request): Promise<UpdateGapPayload> {
+export async function validateUpdateGapRequest(
+  request: Request,
+): Promise<UpdateGapPayload> {
   const body = await readJsonObject(request, {
     allowedKeys: [
       'title',
@@ -221,19 +335,32 @@ export async function validateUpdateGapRequest(request: Request): Promise<Update
   const payload: UpdateGapPayload = {};
 
   if (body.title !== undefined) {
-    payload.title = normalizeRequiredString(body.title, 'title', MAX_GAP_TITLE_LENGTH);
+    payload.title = normalizeRequiredString(
+      body.title,
+      'title',
+      MAX_GAP_TITLE_LENGTH,
+    );
   }
   if (body.description !== undefined) {
-    payload.description = normalizeRequiredString(body.description, 'description', MAX_GAP_DESCRIPTION_LENGTH);
+    payload.description = normalizeRequiredString(
+      body.description,
+      'description',
+      MAX_GAP_DESCRIPTION_LENGTH,
+    );
   }
   if (body.severity !== undefined) {
     payload.severity = normalizeEnum(body.severity, 'severity', GAP_SEVERITIES);
   }
   if (body.points_value !== undefined) {
-    payload.pointsValue = normalizePositiveInteger(body.points_value, 'points_value');
+    payload.pointsValue = normalizePositiveInteger(
+      body.points_value,
+      'points_value',
+    );
   }
   if (body.season !== undefined) {
-    payload.season = normalizePositiveInteger(body.season, 'season', { max: 10_000 });
+    payload.season = normalizePositiveInteger(body.season, 'season', {
+      max: 10_000,
+    });
   }
   if (body.status !== undefined) {
     payload.status = normalizeEnum(body.status, 'status', GAP_STATUSES);
@@ -251,10 +378,16 @@ export async function validateUpdateGapRequest(request: Request): Promise<Update
     );
   }
   if (body.fulfilled_by_app_id !== undefined) {
-    payload.fulfilledByAppId = normalizeNullableUuid(body.fulfilled_by_app_id, 'fulfilled_by_app_id');
+    payload.fulfilledByAppId = normalizeNullableUuid(
+      body.fulfilled_by_app_id,
+      'fulfilled_by_app_id',
+    );
   }
   if (body.fulfilled_by_user_id !== undefined) {
-    payload.fulfilledByUserId = normalizeNullableUuid(body.fulfilled_by_user_id, 'fulfilled_by_user_id');
+    payload.fulfilledByUserId = normalizeNullableUuid(
+      body.fulfilled_by_user_id,
+      'fulfilled_by_user_id',
+    );
   }
 
   if (Object.keys(payload).length === 0) {
@@ -264,44 +397,66 @@ export async function validateUpdateGapRequest(request: Request): Promise<Update
   return payload;
 }
 
-export async function validateRecordAssessmentRequest(request: Request): Promise<RecordAssessmentPayload> {
+export async function validateRecordAssessmentRequest(
+  request: Request,
+): Promise<RecordAssessmentPayload> {
   const body = await readJsonObject(request, {
     allowedKeys: ['agent_score', 'agent_notes', 'proposed_points'],
   });
 
   const payload: RecordAssessmentPayload = {};
   if (body.agent_score !== undefined) {
-    payload.agentScore = normalizePositiveInteger(body.agent_score, 'agent_score', { min: 0, max: 100 });
+    payload.agentScore = normalizePositiveInteger(
+      body.agent_score,
+      'agent_score',
+      { min: 0, max: 100 },
+    );
   }
   if (body.agent_notes !== undefined) {
-    payload.agentNotes = normalizeRequiredString(body.agent_notes, 'agent_notes', MAX_AGENT_NOTES_LENGTH);
+    payload.agentNotes = normalizeRequiredString(
+      body.agent_notes,
+      'agent_notes',
+      MAX_AGENT_NOTES_LENGTH,
+    );
   }
   if (body.proposed_points !== undefined) {
-    payload.proposedPoints = normalizePositiveInteger(body.proposed_points, 'proposed_points');
+    payload.proposedPoints = normalizePositiveInteger(
+      body.proposed_points,
+      'proposed_points',
+    );
   }
 
   if (Object.keys(payload).length === 0) {
-    throw new RequestValidationError('At least one of agent_score, agent_notes, proposed_points required');
+    throw new RequestValidationError(
+      'At least one of agent_score, agent_notes, proposed_points required',
+    );
   }
 
   return payload;
 }
 
-export async function validateApproveAssessmentRequest(request: Request): Promise<ApproveAssessmentPayload> {
+export async function validateApproveAssessmentRequest(
+  request: Request,
+): Promise<ApproveAssessmentPayload> {
   const body = await readJsonObject(request, {
     allowEmptyBody: true,
     allowedKeys: ['awarded_points', 'reviewed_by'],
   });
 
   return {
-    awardedPoints: normalizeOptionalPositiveInteger(body.awarded_points, 'awarded_points'),
+    awardedPoints: normalizeOptionalPositiveInteger(
+      body.awarded_points,
+      'awarded_points',
+    ),
     reviewedBy: normalizeOptionalString(body.reviewed_by, 'reviewed_by', {
       maxLength: MAX_REVIEWED_BY_LENGTH,
     }),
   };
 }
 
-export async function validateTopUpBalanceRequest(request: Request): Promise<TopUpBalancePayload> {
+export async function validateTopUpBalanceRequest(
+  request: Request,
+): Promise<TopUpBalancePayload> {
   const body = await readJsonObject(request, {
     allowedKeys: ['amount_light'],
   });
@@ -313,7 +468,9 @@ export async function validateTopUpBalanceRequest(request: Request): Promise<Top
   };
 }
 
-export async function validateSetAppCategoryRequest(request: Request): Promise<SetAppCategoryPayload> {
+export async function validateSetAppCategoryRequest(
+  request: Request,
+): Promise<SetAppCategoryPayload> {
   const body = await readJsonObject(request, {
     allowedKeys: ['category'],
   });
@@ -323,11 +480,17 @@ export async function validateSetAppCategoryRequest(request: Request): Promise<S
   }
 
   return {
-    category: normalizeRequiredString(body.category, 'category', MAX_APP_CATEGORY_LENGTH),
+    category: normalizeRequiredString(
+      body.category,
+      'category',
+      MAX_APP_CATEGORY_LENGTH,
+    ),
   };
 }
 
-export async function validateSetAppFeaturedRequest(request: Request): Promise<SetAppFeaturedPayload> {
+export async function validateSetAppFeaturedRequest(
+  request: Request,
+): Promise<SetAppFeaturedPayload> {
   const body = await readJsonObject(request, {
     allowedKeys: ['featured'],
   });
@@ -339,4 +502,74 @@ export async function validateSetAppFeaturedRequest(request: Request): Promise<S
   return {
     featured: body.featured,
   };
+}
+
+export async function validateUpdateBillingConfigRequest(
+  request: Request,
+): Promise<UpdateBillingConfigPayload> {
+  const body = await readJsonObject(request, {
+    allowedKeys: [
+      'canonical_light_per_usd',
+      'wallet_light_per_usd',
+      'wire_light_per_usd',
+      'payout_light_per_usd',
+      'platform_fee_rate',
+      'min_withdrawal_light',
+      'payout_policy_copy',
+    ],
+  });
+
+  const payload: UpdateBillingConfigPayload = {};
+  if (body.canonical_light_per_usd !== undefined) {
+    payload.canonical_light_per_usd = normalizeRequiredRate(
+      body.canonical_light_per_usd,
+      'canonical_light_per_usd',
+    );
+  }
+  if (body.wallet_light_per_usd !== undefined) {
+    payload.wallet_light_per_usd = normalizeRequiredRate(
+      body.wallet_light_per_usd,
+      'wallet_light_per_usd',
+    );
+  }
+  if (body.wire_light_per_usd !== undefined) {
+    payload.wire_light_per_usd = normalizeRequiredRate(
+      body.wire_light_per_usd,
+      'wire_light_per_usd',
+    );
+  }
+  if (body.payout_light_per_usd !== undefined) {
+    payload.payout_light_per_usd = normalizeRequiredRate(
+      body.payout_light_per_usd,
+      'payout_light_per_usd',
+    );
+  }
+  if (body.platform_fee_rate !== undefined) {
+    payload.platform_fee_rate = normalizeRequiredFeeRate(
+      body.platform_fee_rate,
+      'platform_fee_rate',
+    );
+  }
+  if (body.min_withdrawal_light !== undefined) {
+    payload.min_withdrawal_light = normalizePositiveNumber(
+      body.min_withdrawal_light,
+      'min_withdrawal_light',
+      { max: MAX_TOP_UP_LIGHT },
+    );
+  }
+  if (body.payout_policy_copy !== undefined) {
+    payload.payout_policy_copy = normalizeRequiredString(
+      body.payout_policy_copy,
+      'payout_policy_copy',
+      MAX_PAYOUT_POLICY_COPY_LENGTH,
+    );
+  }
+
+  if (Object.keys(payload).length === 0) {
+    throw new RequestValidationError(
+      'At least one billing config field is required',
+    );
+  }
+
+  return payload;
 }

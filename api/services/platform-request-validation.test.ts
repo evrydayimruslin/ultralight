@@ -9,6 +9,8 @@ import {
   validateProgrammaticUploadOptions,
   validateSupabaseOauthConnectRequest,
   validateUploadFormMetadata,
+  validateWalletFundingRequest,
+  validateWireFundingRequest,
   validateWithdrawalRequest,
 } from "./platform-request-validation.ts";
 import { RequestValidationError } from "./request-validation.ts";
@@ -132,6 +134,113 @@ Deno.test("platform request validation: hosting checkout enforces source and max
   );
 });
 
+Deno.test("platform request validation: wallet funding reuses deposit bounds", async () => {
+  const payload = await validateWalletFundingRequest(
+    new Request("https://example.com/api/user/wallet/express-checkout-intent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        amount_cents: 2500,
+        source: "web",
+        terms_accepted: true,
+      }),
+    }),
+  );
+
+  assertEquals(payload, {
+    amountCents: 2500,
+    source: "web",
+    termsAccepted: true,
+  });
+
+  await assertRejects(
+    () =>
+      validateWalletFundingRequest(
+        new Request(
+          "https://example.com/api/user/wallet/express-checkout-intent",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ amount_cents: 499, terms_accepted: true }),
+          },
+        ),
+      ),
+    RequestValidationError,
+    "minimum deposit",
+  );
+
+  await assertRejects(
+    () =>
+      validateWalletFundingRequest(
+        new Request(
+          "https://example.com/api/user/wallet/express-checkout-intent",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ amount_cents: 2500 }),
+          },
+        ),
+      ),
+    RequestValidationError,
+    "terms_accepted must be true",
+  );
+});
+
+Deno.test("platform request validation: wire funding reuses deposit bounds", async () => {
+  const payload = await validateWireFundingRequest(
+    new Request("https://example.com/api/user/wallet/wire-transfer-intent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        amount_cents: 50000,
+        source: "desktop",
+        terms_accepted: true,
+      }),
+    }),
+  );
+
+  assertEquals(payload, {
+    amountCents: 50000,
+    source: "desktop",
+    termsAccepted: true,
+  });
+
+  await assertRejects(
+    () =>
+      validateWireFundingRequest(
+        new Request(
+          "https://example.com/api/user/wallet/wire-transfer-intent",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              amount_cents: 500001,
+              terms_accepted: true,
+            }),
+          },
+        ),
+      ),
+    RequestValidationError,
+    "max deposit",
+  );
+
+  await assertRejects(
+    () =>
+      validateWireFundingRequest(
+        new Request(
+          "https://example.com/api/user/wallet/wire-transfer-intent",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ amount_cents: 50000 }),
+          },
+        ),
+      ),
+    RequestValidationError,
+    "terms_accepted must be true",
+  );
+});
+
 Deno.test("platform request validation: connect onboard defaults to US and normalizes country codes", async () => {
   const defaultPayload = await validateConnectOnboardRequest(
     new Request("https://example.com/api/user/connect/onboard", {
@@ -157,10 +266,10 @@ Deno.test("platform request validation: withdrawal request enforces integer mini
     new Request("https://example.com/api/user/connect/withdraw", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ amount_light: 5000 }),
+      body: JSON.stringify({ amount_light: 5000, terms_accepted: true }),
     }),
   );
-  assertEquals(payload, { amountLight: 5000 });
+  assertEquals(payload, { amountLight: 5000, termsAccepted: true });
 
   await assertRejects(
     () =>
@@ -168,11 +277,24 @@ Deno.test("platform request validation: withdrawal request enforces integer mini
         new Request("https://example.com/api/user/connect/withdraw", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ amount_light: 4999 }),
+          body: JSON.stringify({ amount_light: 4999, terms_accepted: true }),
         }),
       ),
     RequestValidationError,
     "minimum withdrawal",
+  );
+
+  await assertRejects(
+    () =>
+      validateWithdrawalRequest(
+        new Request("https://example.com/api/user/connect/withdraw", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ amount_light: 5000 }),
+        }),
+      ),
+    RequestValidationError,
+    "terms_accepted must be true",
   );
 });
 

@@ -10,22 +10,29 @@
 //   POST  /api/admin/reject/:id         — Reject an assessment
 //   POST  /api/admin/balance/:userId    — Top up a user's hosting balance
 //   POST  /api/admin/cleanup-provisionals — Delete expired provisional users
+//   GET   /api/admin/billing-config — Read Light economics config
+//   PATCH /api/admin/billing-config — Update Light economics config
+//   GET   /api/admin/payouts/reconciliation — Payout liability/retry summary
+//   POST  /api/admin/payouts/process — Process or retry due payout operations
 //   GET   /api/admin/analytics?days=30  — Distribution pipeline analytics dashboard
 //   GET   /api/admin/capture/overview   — Capture health and aggregate inspection
 //   GET   /api/admin/capture/conversation/:id — Inspect one captured conversation
 //   GET   /api/admin/capture/export     — Export captured threads/messages/events/artifacts
 
-import { json, error } from './response.ts';
+import { error, json } from './response.ts';
 import { unsuspendContent } from '../services/hosting-billing.ts';
 import { getEnv } from '../lib/env.ts';
 import {
   buildCaptureExport,
   captureExportToJsonl,
+  type CaptureInspectionFilters,
   getCaptureOverview,
   inspectCaptureConversation,
-  type CaptureInspectionFilters,
 } from '../services/capture-inspection.ts';
-import { getSensitiveRouteClientKey, withSensitiveRouteRateLimit } from '../services/sensitive-route-rate-limit.ts';
+import {
+  getSensitiveRouteClientKey,
+  withSensitiveRouteRateLimit,
+} from '../services/sensitive-route-rate-limit.ts';
 import { RequestValidationError } from '../services/request-validation.ts';
 import {
   validateApproveAssessmentRequest,
@@ -34,8 +41,16 @@ import {
   validateSetAppCategoryRequest,
   validateSetAppFeaturedRequest,
   validateTopUpBalanceRequest,
+  validateUpdateBillingConfigRequest,
   validateUpdateGapRequest,
 } from '../services/admin-request-validation.ts';
+import {
+  getBillingConfig,
+  normalizeBillingConfigRow,
+  toPublicBillingConfig,
+} from '../services/billing-config.ts';
+import { getPlatformBalance } from '../services/stripe-connect.ts';
+import { processHeldPayouts } from '../services/payout-processor.ts';
 
 interface UserIdRow {
   id: string;
@@ -86,6 +101,43 @@ interface UpdatedAppRow {
   featured_at?: string | null;
 }
 
+interface AdminPayoutRow {
+  id: string;
+  user_id: string;
+  amount_light: number | null;
+  platform_fee_light: number | null;
+  stripe_fee_cents: number | null;
+  net_cents: number | null;
+  status: string;
+  release_at: string | null;
+  created_at: string;
+  completed_at: string | null;
+  payout_run_id: string | null;
+  scheduled_payout_date: string | null;
+  payout_cutoff_at: string | null;
+  payout_policy_version: number | null;
+  stripe_transfer_id: string | null;
+  stripe_payout_id: string | null;
+  stripe_transfer_status: string | null;
+  stripe_payout_status: string | null;
+  stripe_transfer_attempts: number | null;
+  stripe_payout_attempts: number | null;
+  processor_claimed_at: string | null;
+  failure_reason: string | null;
+  stripe_transfer_error?: unknown;
+  stripe_payout_error?: unknown;
+}
+
+interface AdminPayoutRunRow {
+  id: string;
+  scheduled_for: string;
+  cutoff_at: string;
+  policy_version: number;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
 function getSupabaseEnv() {
   const SUPABASE_URL = getEnv('SUPABASE_URL');
   const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
@@ -123,12 +175,18 @@ function withAdminSensitiveRouteRateLimit(
     | 'admin:approve'
     | 'admin:reject'
     | 'admin:balance_topup'
+    | 'admin:billing_config_update'
     | 'admin:cleanup_provisionals'
     | 'admin:app_category'
-    | 'admin:app_featured',
+    | 'admin:app_featured'
+    | 'admin:payout_process',
   handler: () => Promise<Response> | Response,
 ): Promise<Response> {
-  return withSensitiveRouteRateLimit(`admin:${getSensitiveRouteClientKey(request)}`, route, handler);
+  return withSensitiveRouteRateLimit(
+    `admin:${getSensitiveRouteClientKey(request)}`,
+    route,
+    handler,
+  );
 }
 
 export async function handleAdmin(request: Request): Promise<Response> {
@@ -142,54 +200,120 @@ export async function handleAdmin(request: Request): Promise<Response> {
 
   // POST /api/admin/gaps — Create a gap
   if (path === '/api/admin/gaps' && method === 'POST') {
-    return withAdminSensitiveRouteRateLimit(request, 'admin:gaps_create', () => createGap(request));
+    return withAdminSensitiveRouteRateLimit(
+      request,
+      'admin:gaps_create',
+      () => createGap(request),
+    );
   }
 
   // PATCH /api/admin/gaps/:id — Update a gap
   const gapMatch = path.match(/^\/api\/admin\/gaps\/([0-9a-f-]+)$/);
   if (gapMatch && method === 'PATCH') {
-    return withAdminSensitiveRouteRateLimit(request, 'admin:gaps_update', () => updateGap(request, gapMatch[1]));
+    return withAdminSensitiveRouteRateLimit(
+      request,
+      'admin:gaps_update',
+      () => updateGap(request, gapMatch[1]),
+    );
   }
 
   // POST /api/admin/assess/:id — Record assessment for a gap_assessment
   const assessMatch = path.match(/^\/api\/admin\/assess\/([0-9a-f-]+)$/);
   if (assessMatch && method === 'POST') {
-    return withAdminSensitiveRouteRateLimit(request, 'admin:assess', () => recordAssessment(request, assessMatch[1]));
+    return withAdminSensitiveRouteRateLimit(
+      request,
+      'admin:assess',
+      () => recordAssessment(request, assessMatch[1]),
+    );
   }
 
   // POST /api/admin/approve/:id — Approve assessment, grant points
   const approveMatch = path.match(/^\/api\/admin\/approve\/([0-9a-f-]+)$/);
   if (approveMatch && method === 'POST') {
-    return withAdminSensitiveRouteRateLimit(request, 'admin:approve', () => approveAssessment(request, approveMatch[1]));
+    return withAdminSensitiveRouteRateLimit(
+      request,
+      'admin:approve',
+      () => approveAssessment(request, approveMatch[1]),
+    );
   }
 
   // POST /api/admin/reject/:id — Reject assessment
   const rejectMatch = path.match(/^\/api\/admin\/reject\/([0-9a-f-]+)$/);
   if (rejectMatch && method === 'POST') {
-    return withAdminSensitiveRouteRateLimit(request, 'admin:reject', () => rejectAssessment(rejectMatch[1]));
+    return withAdminSensitiveRouteRateLimit(
+      request,
+      'admin:reject',
+      () => rejectAssessment(rejectMatch[1]),
+    );
   }
 
   // POST /api/admin/balance/:userId — Top up hosting balance
   const balanceMatch = path.match(/^\/api\/admin\/balance\/([0-9a-f-]+)$/);
   if (balanceMatch && method === 'POST') {
-    return withAdminSensitiveRouteRateLimit(request, 'admin:balance_topup', () => topUpBalance(request, balanceMatch[1]));
+    return withAdminSensitiveRouteRateLimit(
+      request,
+      'admin:balance_topup',
+      () => topUpBalance(request, balanceMatch[1]),
+    );
   }
 
   // POST /api/admin/cleanup-provisionals — Delete expired provisional users
   if (path === '/api/admin/cleanup-provisionals' && method === 'POST') {
-    return withAdminSensitiveRouteRateLimit(request, 'admin:cleanup_provisionals', () => cleanupProvisionals());
+    return withAdminSensitiveRouteRateLimit(
+      request,
+      'admin:cleanup_provisionals',
+      () => cleanupProvisionals(),
+    );
+  }
+
+  // GET/PATCH /api/admin/billing-config — Read or update Light economics
+  if (path === '/api/admin/billing-config' && method === 'GET') {
+    return getAdminBillingConfig();
+  }
+  if (path === '/api/admin/billing-config' && method === 'PATCH') {
+    return withAdminSensitiveRouteRateLimit(
+      request,
+      'admin:billing_config_update',
+      () => updateBillingConfig(request),
+    );
+  }
+
+  // GET /api/admin/payouts/reconciliation — payout liabilities and retry state
+  if (path === '/api/admin/payouts/reconciliation' && method === 'GET') {
+    return getPayoutReconciliation(url);
+  }
+
+  // POST /api/admin/payouts/process — process or retry due payout work
+  if (path === '/api/admin/payouts/process' && method === 'POST') {
+    return withAdminSensitiveRouteRateLimit(
+      request,
+      'admin:payout_process',
+      () => processPayoutsAdmin(request),
+    );
   }
 
   // PATCH /api/admin/apps/:appId/category — Set app category
-  const categoryMatch = path.match(/^\/api\/admin\/apps\/([0-9a-f-]+)\/category$/);
+  const categoryMatch = path.match(
+    /^\/api\/admin\/apps\/([0-9a-f-]+)\/category$/,
+  );
   if (categoryMatch && method === 'PATCH') {
-    return withAdminSensitiveRouteRateLimit(request, 'admin:app_category', () => setAppCategory(request, categoryMatch[1]));
+    return withAdminSensitiveRouteRateLimit(
+      request,
+      'admin:app_category',
+      () => setAppCategory(request, categoryMatch[1]),
+    );
   }
 
   // PATCH /api/admin/apps/:appId/featured — Toggle featured status
-  const featuredMatch = path.match(/^\/api\/admin\/apps\/([0-9a-f-]+)\/featured$/);
+  const featuredMatch = path.match(
+    /^\/api\/admin\/apps\/([0-9a-f-]+)\/featured$/,
+  );
   if (featuredMatch && method === 'PATCH') {
-    return withAdminSensitiveRouteRateLimit(request, 'admin:app_featured', () => setAppFeatured(request, featuredMatch[1]));
+    return withAdminSensitiveRouteRateLimit(
+      request,
+      'admin:app_featured',
+      () => setAppFeatured(request, featuredMatch[1]),
+    );
   }
 
   // GET /api/admin/analytics — Distribution pipeline analytics dashboard
@@ -211,7 +335,9 @@ export async function handleAdmin(request: Request): Promise<Response> {
   // GET /api/admin/capture/conversation/:id — full conversation inspection
   const captureConversationPrefix = '/api/admin/capture/conversation/';
   if (path.startsWith(captureConversationPrefix) && method === 'GET') {
-    const conversationId = decodeURIComponent(path.slice(captureConversationPrefix.length));
+    const conversationId = decodeURIComponent(
+      path.slice(captureConversationPrefix.length),
+    );
     if (!conversationId) return error('Missing conversation id', 400);
     return handleCaptureConversation(conversationId);
   }
@@ -243,9 +369,14 @@ async function handleCaptureOverview(url: URL): Promise<Response> {
   }
 }
 
-async function handleCaptureConversation(conversationId: string): Promise<Response> {
+async function handleCaptureConversation(
+  conversationId: string,
+): Promise<Response> {
   try {
-    return json({ success: true, capture: await inspectCaptureConversation(conversationId) });
+    return json({
+      success: true,
+      capture: await inspectCaptureConversation(conversationId),
+    });
   } catch (err) {
     console.error('[ADMIN] capture conversation inspection failed:', err);
     return error('Capture conversation inspection failed', 500);
@@ -260,7 +391,8 @@ async function handleCaptureExport(url: URL): Promise<Response> {
 
     if (format === 'jsonl' || format === 'ndjson') {
       const label = sanitizeFilenamePart(
-        filters.conversationId || filters.anonUserId || filters.source || 'capture-export',
+        filters.conversationId || filters.anonUserId || filters.source ||
+          'capture-export',
       );
       return new Response(captureExportToJsonl(bundle), {
         headers: {
@@ -283,18 +415,23 @@ async function cleanupProvisionals(): Promise<Response> {
   try {
     // Get IDs of provisionals about to be deleted (for auth.users cleanup)
     const listRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?provisional=eq.true&last_active_at=lt.${new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()}&select=id`,
-      { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
+      `${SUPABASE_URL}/rest/v1/users?provisional=eq.true&last_active_at=lt.${
+        new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+      }&select=id`,
+      { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) },
     );
 
     const toDelete = listRes.ok ? await listRes.json() as UserIdRow[] : [];
 
     // Run the cleanup RPC (deletes from public.users, cascades to tokens)
-    const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/cleanup_expired_provisionals`, {
-      method: 'POST',
-      headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
-      body: '{}',
-    });
+    const rpcRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/rpc/cleanup_expired_provisionals`,
+      {
+        method: 'POST',
+        headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
+        body: '{}',
+      },
+    );
 
     const deletedCount = rpcRes.ok ? await rpcRes.json() as number : 0;
 
@@ -349,7 +486,7 @@ async function createGap(request: Request): Promise<Response> {
         method: 'POST',
         headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
         body: JSON.stringify(payload),
-      }
+      },
     );
 
     if (!res.ok) {
@@ -357,7 +494,9 @@ async function createGap(request: Request): Promise<Response> {
       return error(`Failed to create gap: ${err}`, 500);
     }
 
-    const rows = await res.json() as Record<string, unknown>[] | Record<string, unknown>;
+    const rows = await res.json() as
+      | Record<string, unknown>[]
+      | Record<string, unknown>;
     const created = Array.isArray(rows) ? rows[0] : rows;
     return json({ success: true, gap: created }, 201);
   } catch (err) {
@@ -377,7 +516,9 @@ async function updateGap(request: Request, gapId: string): Promise<Response> {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   try {
     const body = await validateUpdateGapRequest(request);
-    const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    const update: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
 
     if (body.title !== undefined) update.title = body.title;
     if (body.description !== undefined) update.description = body.description;
@@ -385,10 +526,18 @@ async function updateGap(request: Request, gapId: string): Promise<Response> {
     if (body.pointsValue !== undefined) update.points_value = body.pointsValue;
     if (body.season !== undefined) update.season = body.season;
     if (body.status !== undefined) update.status = body.status;
-    if (body.sourceShortcomingIds !== undefined) update.source_shortcoming_ids = body.sourceShortcomingIds;
-    if (body.sourceQueryIds !== undefined) update.source_query_ids = body.sourceQueryIds;
-    if (body.fulfilledByAppId !== undefined) update.fulfilled_by_app_id = body.fulfilledByAppId;
-    if (body.fulfilledByUserId !== undefined) update.fulfilled_by_user_id = body.fulfilledByUserId;
+    if (body.sourceShortcomingIds !== undefined) {
+      update.source_shortcoming_ids = body.sourceShortcomingIds;
+    }
+    if (body.sourceQueryIds !== undefined) {
+      update.source_query_ids = body.sourceQueryIds;
+    }
+    if (body.fulfilledByAppId !== undefined) {
+      update.fulfilled_by_app_id = body.fulfilledByAppId;
+    }
+    if (body.fulfilledByUserId !== undefined) {
+      update.fulfilled_by_user_id = body.fulfilledByUserId;
+    }
 
     const res = await fetch(
       `${SUPABASE_URL}/rest/v1/gaps?id=eq.${gapId}`,
@@ -396,7 +545,7 @@ async function updateGap(request: Request, gapId: string): Promise<Response> {
         method: 'PATCH',
         headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
         body: JSON.stringify(update),
-      }
+      },
     );
 
     if (!res.ok) {
@@ -404,7 +553,9 @@ async function updateGap(request: Request, gapId: string): Promise<Response> {
       return error(`Failed to update gap: ${err}`, 500);
     }
 
-    const rows = await res.json() as Record<string, unknown>[] | Record<string, unknown>;
+    const rows = await res.json() as
+      | Record<string, unknown>[]
+      | Record<string, unknown>;
     return json({ success: true, gap: Array.isArray(rows) ? rows[0] : rows });
   } catch (err) {
     if (err instanceof RequestValidationError) {
@@ -419,14 +570,19 @@ async function updateGap(request: Request, gapId: string): Promise<Response> {
 // RECORD ASSESSMENT
 // ============================================
 
-async function recordAssessment(request: Request, assessmentId: string): Promise<Response> {
+async function recordAssessment(
+  request: Request,
+  assessmentId: string,
+): Promise<Response> {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   try {
     const body = await validateRecordAssessmentRequest(request);
     const update: Record<string, unknown> = {};
     if (body.agentScore !== undefined) update.agent_score = body.agentScore;
     if (body.agentNotes !== undefined) update.agent_notes = body.agentNotes;
-    if (body.proposedPoints !== undefined) update.proposed_points = body.proposedPoints;
+    if (body.proposedPoints !== undefined) {
+      update.proposed_points = body.proposedPoints;
+    }
 
     const res = await fetch(
       `${SUPABASE_URL}/rest/v1/gap_assessments?id=eq.${assessmentId}`,
@@ -434,7 +590,7 @@ async function recordAssessment(request: Request, assessmentId: string): Promise
         method: 'PATCH',
         headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
         body: JSON.stringify(update),
-      }
+      },
     );
 
     if (!res.ok) {
@@ -442,8 +598,13 @@ async function recordAssessment(request: Request, assessmentId: string): Promise
       return error(`Failed to update assessment: ${err}`, 500);
     }
 
-    const rows = await res.json() as Record<string, unknown>[] | Record<string, unknown>;
-    return json({ success: true, assessment: Array.isArray(rows) ? rows[0] : rows });
+    const rows = await res.json() as
+      | Record<string, unknown>[]
+      | Record<string, unknown>;
+    return json({
+      success: true,
+      assessment: Array.isArray(rows) ? rows[0] : rows,
+    });
   } catch (err) {
     if (err instanceof RequestValidationError) {
       return error(err.message, err.status);
@@ -457,7 +618,10 @@ async function recordAssessment(request: Request, assessmentId: string): Promise
 // APPROVE ASSESSMENT
 // ============================================
 
-async function approveAssessment(request: Request, assessmentId: string): Promise<Response> {
+async function approveAssessment(
+  request: Request,
+  assessmentId: string,
+): Promise<Response> {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   const headers = writeHeaders(SUPABASE_SERVICE_ROLE_KEY);
 
@@ -467,12 +631,16 @@ async function approveAssessment(request: Request, assessmentId: string): Promis
     // 1. Fetch the assessment
     const assessRes = await fetch(
       `${SUPABASE_URL}/rest/v1/gap_assessments?id=eq.${assessmentId}&select=*&limit=1`,
-      { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
+      { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) },
     );
     if (!assessRes.ok) return error('Failed to fetch assessment', 500);
     const assessments = await assessRes.json() as Array<{
-      id: string; gap_id: string; app_id: string; user_id: string;
-      proposed_points: number | null; status: string;
+      id: string;
+      gap_id: string;
+      app_id: string;
+      user_id: string;
+      proposed_points: number | null;
+      status: string;
     }>;
     if (assessments.length === 0) return error('Assessment not found', 404);
     const assessment = assessments[0];
@@ -481,7 +649,8 @@ async function approveAssessment(request: Request, assessmentId: string): Promis
       return error('Assessment already approved', 409);
     }
 
-    const awardedPoints = body.awardedPoints ?? assessment.proposed_points ?? 100;
+    const awardedPoints = body.awardedPoints ?? assessment.proposed_points ??
+      100;
     const reviewedBy = body.reviewedBy || 'admin';
 
     // 2. Update assessment to approved
@@ -496,7 +665,7 @@ async function approveAssessment(request: Request, assessmentId: string): Promis
           reviewed_by: reviewedBy,
           reviewed_at: new Date().toISOString(),
         }),
-      }
+      },
     );
     if (!updateRes.ok) return error('Failed to approve assessment', 500);
 
@@ -513,10 +682,13 @@ async function approveAssessment(request: Request, assessmentId: string): Promis
           gap_assessment_id: assessmentId,
           season: 1, // TODO: read from active season
         }),
-      }
+      },
     );
     if (!pointsRes.ok) {
-      console.error('[ADMIN] Failed to write points ledger:', await pointsRes.text());
+      console.error(
+        '[ADMIN] Failed to write points ledger:',
+        await pointsRes.text(),
+      );
     }
 
     // 4. Update gap status to fulfilled
@@ -531,7 +703,7 @@ async function approveAssessment(request: Request, assessmentId: string): Promis
           fulfilled_by_user_id: assessment.user_id,
           updated_at: new Date().toISOString(),
         }),
-      }
+      },
     ).catch(() => {});
 
     return json({
@@ -565,7 +737,7 @@ async function rejectAssessment(assessmentId: string): Promise<Response> {
         status: 'rejected',
         reviewed_at: new Date().toISOString(),
       }),
-    }
+    },
   );
 
   if (!res.ok) {
@@ -573,14 +745,21 @@ async function rejectAssessment(assessmentId: string): Promise<Response> {
     return error(`Failed to reject assessment: ${err}`, 500);
   }
 
-  return json({ success: true, assessment_id: assessmentId, status: 'rejected' });
+  return json({
+    success: true,
+    assessment_id: assessmentId,
+    status: 'rejected',
+  });
 }
 
 // ============================================
 // TOP UP HOSTING BALANCE (ADMIN)
 // ============================================
 
-async function topUpBalance(request: Request, userId: string): Promise<Response> {
+async function topUpBalance(
+  request: Request,
+  userId: string,
+): Promise<Response> {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   try {
     const body = await validateTopUpBalanceRequest(request);
@@ -631,6 +810,287 @@ async function topUpBalance(request: Request, userId: string): Promise<Response>
 }
 
 // ============================================
+// BILLING CONFIG
+// ============================================
+
+async function getAdminBillingConfig(): Promise<Response> {
+  const config = await getBillingConfig();
+  return json({
+    config,
+    public_config: toPublicBillingConfig(config),
+  });
+}
+
+async function updateBillingConfig(request: Request): Promise<Response> {
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+  try {
+    const payload = await validateUpdateBillingConfigRequest(request);
+    const headers = writeHeaders(SUPABASE_SERVICE_ROLE_KEY);
+
+    const patchRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/platform_billing_config?id=eq.singleton&select=*`,
+      {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify(payload),
+      },
+    );
+
+    if (!patchRes.ok) {
+      const err = await patchRes.text();
+      return error(`Failed to update billing config: ${err}`, 500);
+    }
+
+    let rows = await patchRes.json() as unknown[];
+    if (rows.length === 0) {
+      const insertRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/platform_billing_config?on_conflict=id&select=*`,
+        {
+          method: 'POST',
+          headers: {
+            ...headers,
+            'Prefer': 'resolution=merge-duplicates,return=representation',
+          },
+          body: JSON.stringify({ id: 'singleton', ...payload }),
+        },
+      );
+      if (!insertRes.ok) {
+        const err = await insertRes.text();
+        return error(`Failed to create billing config: ${err}`, 500);
+      }
+      rows = await insertRes.json() as unknown[];
+    }
+
+    const config = normalizeBillingConfigRow(
+      rows[0] as Parameters<typeof normalizeBillingConfigRow>[0],
+    );
+    return json({
+      success: true,
+      config,
+      public_config: toPublicBillingConfig(config),
+    });
+  } catch (err) {
+    if (err instanceof RequestValidationError) {
+      return error(err.message, err.status);
+    }
+    console.error('[ADMIN] updateBillingConfig failed:', err);
+    return error('Failed to update billing config', 500);
+  }
+}
+
+// ============================================
+// PAYOUT RECONCILIATION
+// ============================================
+
+async function readRows<T>(res: Response, label: string): Promise<T[]> {
+  if (!res.ok) {
+    throw new Error(`Failed to query ${label}: ${await res.text()}`);
+  }
+  const rows = await res.json();
+  return Array.isArray(rows) ? rows as T[] : [];
+}
+
+function lightAmount(value: number | null | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function isRetryablePayout(payout: AdminPayoutRow): boolean {
+  const claimIsStale = payout.processor_claimed_at
+    ? Date.parse(payout.processor_claimed_at) < Date.now() - 30 * 60 * 1000
+    : false;
+  return (
+    payout.status === 'pending' &&
+    (payout.stripe_transfer_status === 'not_started' ||
+      payout.stripe_transfer_status === 'failed' ||
+      (payout.stripe_transfer_status === 'pending' &&
+        !payout.stripe_transfer_id &&
+        claimIsStale))
+  ) || (
+    payout.status === 'processing' &&
+    payout.stripe_transfer_status === 'succeeded' &&
+    (payout.stripe_payout_status === 'not_started' ||
+      payout.stripe_payout_status === 'failed' ||
+      (payout.stripe_payout_status === 'pending' &&
+        !payout.stripe_payout_id &&
+        claimIsStale))
+  );
+}
+
+async function getPayoutReconciliation(url: URL): Promise<Response> {
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+  const headers = dbHeaders(SUPABASE_SERVICE_ROLE_KEY);
+  const limit = Math.max(
+    1,
+    Math.min(parseInt(url.searchParams.get('limit') || '100', 10) || 100, 500),
+  );
+
+  const payoutSelect = [
+    'id',
+    'user_id',
+    'amount_light',
+    'platform_fee_light',
+    'stripe_fee_cents',
+    'net_cents',
+    'status',
+    'release_at',
+    'created_at',
+    'completed_at',
+    'payout_run_id',
+    'scheduled_payout_date',
+    'payout_cutoff_at',
+    'payout_policy_version',
+    'stripe_transfer_id',
+    'stripe_payout_id',
+    'stripe_transfer_status',
+    'stripe_payout_status',
+    'stripe_transfer_attempts',
+    'stripe_payout_attempts',
+    'processor_claimed_at',
+    'failure_reason',
+    'stripe_transfer_error',
+    'stripe_payout_error',
+  ].join(',');
+
+  try {
+    const [earningsRes, payoutsRes, runsRes, stripeBalance] = await Promise.all([
+      fetch(
+        `${SUPABASE_URL}/rest/v1/users?or=(total_earned_light.gt.0,earned_balance_light.gt.0)&select=total_earned_light,earned_balance_light`,
+        { headers },
+      ),
+      fetch(
+        `${SUPABASE_URL}/rest/v1/payouts?select=${payoutSelect}&order=created_at.desc&limit=10000`,
+        { headers },
+      ),
+      fetch(
+        `${SUPABASE_URL}/rest/v1/payout_runs?select=*&order=scheduled_for.desc&limit=${limit}`,
+        { headers },
+      ),
+      getPlatformBalance()
+        .then((balance) => ({ available: true, ...balance }))
+        .catch((err) => ({
+          available: false,
+          error: err instanceof Error ? err.message : String(err),
+        })),
+    ]);
+
+    const earnings = await readRows<{
+      total_earned_light: number | null;
+      earned_balance_light: number | null;
+    }>(earningsRes, 'earnings liability');
+    const payouts = await readRows<AdminPayoutRow>(payoutsRes, 'payouts');
+    const runs = await readRows<AdminPayoutRunRow>(runsRes, 'payout runs');
+
+    const totalEarnedLight = earnings.reduce(
+      (sum, row) => sum + lightAmount(row.total_earned_light),
+      0,
+    );
+    const earnedBalanceLight = earnings.reduce(
+      (sum, row) => sum + lightAmount(row.earned_balance_light),
+      0,
+    );
+
+    const byStatus = payouts.reduce<Record<string, number>>((acc, payout) => {
+      acc[payout.status] = (acc[payout.status] || 0) +
+        lightAmount(payout.amount_light);
+      return acc;
+    }, {});
+    const transferStates = payouts.reduce<Record<string, number>>(
+      (acc, payout) => {
+        const state = payout.stripe_transfer_status || 'not_started';
+        acc[state] = (acc[state] || 0) + 1;
+        return acc;
+      },
+      {},
+    );
+    const payoutStates = payouts.reduce<Record<string, number>>((acc, payout) => {
+      const state = payout.stripe_payout_status || 'not_started';
+      acc[state] = (acc[state] || 0) + 1;
+      return acc;
+    }, {});
+
+    const retryablePayouts = payouts.filter(isRetryablePayout);
+    const heldLight = byStatus.held || 0;
+    const pendingLight = byStatus.pending || 0;
+    const processingLight = byStatus.processing || 0;
+    const liabilityLight = earnedBalanceLight + heldLight + pendingLight +
+      processingLight;
+
+    return json({
+      success: true,
+      generated_at: new Date().toISOString(),
+      liabilities: {
+        total_earned_light: totalEarnedLight,
+        earned_balance_light: earnedBalanceLight,
+        held_payouts_light: heldLight,
+        pending_payouts_light: pendingLight,
+        processing_payouts_light: processingLight,
+        total_liability_light: liabilityLight,
+      },
+      payout_counts: {
+        total: payouts.length,
+        retryable: retryablePayouts.length,
+        by_status: Object.fromEntries(
+          Object.entries(byStatus).map(([status, amountLight]) => [
+            status,
+            {
+              amount_light: amountLight,
+              count: payouts.filter((p) => p.status === status).length,
+            },
+          ]),
+        ),
+        transfer_states: transferStates,
+        payout_states: payoutStates,
+      },
+      stripe_balance: stripeBalance,
+      payout_runs: runs,
+      retryable_payouts: retryablePayouts.slice(0, limit),
+    });
+  } catch (err) {
+    console.error('[ADMIN] payout reconciliation failed:', err);
+    return error('Payout reconciliation failed', 500);
+  }
+}
+
+async function processPayoutsAdmin(request: Request): Promise<Response> {
+  try {
+    const body = await request.json().catch(() => ({})) as {
+      payout_run_id?: unknown;
+      scheduled_payout_date?: unknown;
+      limit?: unknown;
+    };
+    const payoutRunId = typeof body.payout_run_id === 'string'
+      ? body.payout_run_id
+      : undefined;
+    const scheduledPayoutDate = typeof body.scheduled_payout_date === 'string'
+      ? body.scheduled_payout_date
+      : undefined;
+    const limit = typeof body.limit === 'number'
+      ? Math.max(1, Math.min(Math.floor(body.limit), 200))
+      : undefined;
+
+    if (payoutRunId && !/^[0-9a-f-]{36}$/i.test(payoutRunId)) {
+      return error('Invalid payout_run_id', 400);
+    }
+    if (
+      scheduledPayoutDate &&
+      !/^\d{4}-\d{2}-\d{2}$/.test(scheduledPayoutDate)
+    ) {
+      return error('Invalid scheduled_payout_date', 400);
+    }
+
+    const result = await processHeldPayouts({
+      payoutRunId,
+      scheduledPayoutDate,
+      limit,
+    });
+    return json({ success: true, result });
+  } catch (err) {
+    console.error('[ADMIN] payout process failed:', err);
+    return error('Payout process failed', 500);
+  }
+}
+
+// ============================================
 // ANALYTICS DASHBOARD
 // ============================================
 
@@ -639,15 +1099,19 @@ async function getAnalytics(days: number): Promise<Response> {
 
   // Clamp days to reasonable range
   const periodDays = Math.max(1, Math.min(days, 365));
-  const since = new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000).toISOString();
+  const since = new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000)
+    .toISOString();
 
   try {
     // Try the RPC first (requires migration-analytics.sql to be run)
-    const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_analytics_summary`, {
-      method: 'POST',
-      headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
-      body: JSON.stringify({ p_days: periodDays }),
-    });
+    const rpcRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/rpc/get_analytics_summary`,
+      {
+        method: 'POST',
+        headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
+        body: JSON.stringify({ p_days: periodDays }),
+      },
+    );
 
     if (rpcRes.ok) {
       const rpcData = await rpcRes.json();
@@ -655,7 +1119,9 @@ async function getAnalytics(days: number): Promise<Response> {
     }
 
     // RPC not available (migration not run yet) — fall back to direct queries
-    console.warn('[ADMIN] Analytics RPC not available, falling back to direct queries');
+    console.warn(
+      '[ADMIN] Analytics RPC not available, falling back to direct queries',
+    );
 
     // Run all analytics queries in parallel
     const [
@@ -671,61 +1137,82 @@ async function getAnalytics(days: number): Promise<Response> {
       // Active provisional users
       fetch(
         `${SUPABASE_URL}/rest/v1/users?provisional=eq.true&select=id,provisional_created_at,last_active_at&provisional_created_at=gte.${since}`,
-        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
+        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) },
       ),
       // Conversion events
       fetch(
         `${SUPABASE_URL}/rest/v1/conversion_events?created_at=gte.${since}&select=*&order=created_at.desc&limit=100`,
-        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
+        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) },
       ),
       // Template fetches
       fetch(
         `${SUPABASE_URL}/rest/v1/onboarding_requests?created_at=gte.${since}&select=id,provisional_created,created_at&order=created_at.desc&limit=1000`,
-        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
+        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) },
       ),
       // Top apps by usage
       fetch(
         `${SUPABASE_URL}/rest/v1/mcp_call_logs?created_at=gte.${since}&app_id=not.is.null&select=app_id,app_name,success&order=created_at.desc&limit=10000`,
-        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
+        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) },
       ),
       // Top search queries
       fetch(
         `${SUPABASE_URL}/rest/v1/appstore_queries?created_at=gte.${since}&select=query,top_similarity,result_count&order=created_at.desc&limit=500`,
-        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
+        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) },
       ),
       // Unmet demand (low similarity searches)
       fetch(
         `${SUPABASE_URL}/rest/v1/appstore_queries?created_at=gte.${since}&or=(top_similarity.lt.0.5,result_count.eq.0)&select=query,top_similarity,result_count&order=created_at.desc&limit=200`,
-        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
+        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) },
       ),
       // Total call volume
       fetch(
         `${SUPABASE_URL}/rest/v1/mcp_call_logs?created_at=gte.${since}&select=user_id,success,source&order=created_at.desc&limit=50000`,
-        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
+        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) },
       ),
       // Onboarding template attributed calls
       fetch(
         `${SUPABASE_URL}/rest/v1/mcp_call_logs?created_at=gte.${since}&source=eq.onboarding_template&select=app_id,app_name,user_id,success&order=created_at.desc&limit=5000`,
-        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) }
+        { headers: dbHeaders(SUPABASE_SERVICE_ROLE_KEY) },
       ),
     ]);
 
     // Parse all responses
-    const provisionals = provisionalsRes.ok ? await provisionalsRes.json() as ProvisionalAnalyticsRow[] : [];
-    const conversions = conversionsRes.ok ? await conversionsRes.json() as ConversionEventRow[] : [];
-    const templateFetches = templateFetchesRes.ok ? await templateFetchesRes.json() as TemplateFetchRow[] : [];
+    const provisionals = provisionalsRes.ok
+      ? await provisionalsRes.json() as ProvisionalAnalyticsRow[]
+      : [];
+    const conversions = conversionsRes.ok
+      ? await conversionsRes.json() as ConversionEventRow[]
+      : [];
+    const templateFetches = templateFetchesRes.ok
+      ? await templateFetchesRes.json() as TemplateFetchRow[]
+      : [];
     const appCalls = topAppsRes.ok ? await topAppsRes.json() as TopAppCallRow[] : [];
     const searches = topSearchesRes.ok ? await topSearchesRes.json() as SearchQueryRow[] : [];
     const unmetSearches = unmetDemandRes.ok ? await unmetDemandRes.json() as SearchQueryRow[] : [];
     const allCalls = totalCallsRes.ok ? await totalCallsRes.json() as CallSummaryRow[] : [];
-    const onboardingCalls = onboardingCallsRes.ok ? await onboardingCallsRes.json() as TopAppCallRow[] : [];
+    const onboardingCalls = onboardingCallsRes.ok
+      ? await onboardingCallsRes.json() as TopAppCallRow[]
+      : [];
 
     // Aggregate top apps
-    const appUsage: Record<string, { app_name: string; calls: number; unique_users: Set<string>; successful: number }> = {};
+    const appUsage: Record<
+      string,
+      {
+        app_name: string;
+        calls: number;
+        unique_users: Set<string>;
+        successful: number;
+      }
+    > = {};
     for (const call of appCalls) {
       if (!call.app_id) continue;
       if (!appUsage[call.app_id]) {
-        appUsage[call.app_id] = { app_name: call.app_name || 'unknown', calls: 0, unique_users: new Set(), successful: 0 };
+        appUsage[call.app_id] = {
+          app_name: call.app_name || 'unknown',
+          calls: 0,
+          unique_users: new Set(),
+          successful: 0,
+        };
       }
       appUsage[call.app_id].calls++;
       appUsage[call.app_id].unique_users.add(call.user_id);
@@ -745,9 +1232,14 @@ async function getAnalytics(days: number): Promise<Response> {
       .slice(0, 20);
 
     // Aggregate top searches
-    const searchCounts: Record<string, { count: number; totalSim: number; totalResults: number }> = {};
+    const searchCounts: Record<
+      string,
+      { count: number; totalSim: number; totalResults: number }
+    > = {};
     for (const s of searches) {
-      if (!searchCounts[s.query]) searchCounts[s.query] = { count: 0, totalSim: 0, totalResults: 0 };
+      if (!searchCounts[s.query]) {
+        searchCounts[s.query] = { count: 0, totalSim: 0, totalResults: 0 };
+      }
       searchCounts[s.query].count++;
       searchCounts[s.query].totalSim += s.top_similarity || 0;
       searchCounts[s.query].totalResults += s.result_count || 0;
@@ -796,12 +1288,21 @@ async function getAnalytics(days: number): Promise<Response> {
     const firstAppCounts: Record<string, { name: string; count: number }> = {};
     for (const c of conversions) {
       if (c.first_app_id) {
-        if (!firstAppCounts[c.first_app_id]) firstAppCounts[c.first_app_id] = { name: c.first_app_name || 'unknown', count: 0 };
+        if (!firstAppCounts[c.first_app_id]) {
+          firstAppCounts[c.first_app_id] = {
+            name: c.first_app_name || 'unknown',
+            count: 0,
+          };
+        }
         firstAppCounts[c.first_app_id].count++;
       }
     }
     const firstAppDistribution = Object.entries(firstAppCounts)
-      .map(([app_id, data]) => ({ app_id, app_name: data.name, count: data.count }))
+      .map(([app_id, data]) => ({
+        app_id,
+        app_name: data.name,
+        count: data.count,
+      }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
 
@@ -810,11 +1311,18 @@ async function getAnalytics(days: number): Promise<Response> {
     const templateToProvisional = templateFetches.filter((f) => f.provisional_created).length;
 
     // Onboarding template attribution
-    const onboardingAppUsage: Record<string, { app_name: string; calls: number; unique_users: Set<string> }> = {};
+    const onboardingAppUsage: Record<
+      string,
+      { app_name: string; calls: number; unique_users: Set<string> }
+    > = {};
     for (const call of onboardingCalls) {
       if (!call.app_id) continue;
       if (!onboardingAppUsage[call.app_id]) {
-        onboardingAppUsage[call.app_id] = { app_name: call.app_name || 'unknown', calls: 0, unique_users: new Set() };
+        onboardingAppUsage[call.app_id] = {
+          app_name: call.app_name || 'unknown',
+          calls: 0,
+          unique_users: new Set(),
+        };
       }
       onboardingAppUsage[call.app_id].calls++;
       onboardingAppUsage[call.app_id].unique_users.add(call.user_id);
@@ -839,21 +1347,32 @@ async function getAnalytics(days: number): Promise<Response> {
 
       // Onboarding funnel
       template_fetches: templateTotal,
-      template_to_provisional_rate: templateTotal > 0 ? Math.round((templateToProvisional / templateTotal) * 1000) / 10 : 0,
+      template_to_provisional_rate: templateTotal > 0
+        ? Math.round((templateToProvisional / templateTotal) * 1000) / 10
+        : 0,
 
       // Provisionals
       provisionals_created: provisionals.length,
       provisionals_active: provisionals.filter((p) =>
-        p.last_active_at && (Date.now() - new Date(p.last_active_at).getTime()) < 24 * 60 * 60 * 1000
+        p.last_active_at &&
+        (Date.now() - new Date(p.last_active_at).getTime()) <
+          24 * 60 * 60 * 1000
       ).length,
 
       // Conversions
       conversions_total: conversions.length,
       conversions_by_method: conversionsByMethod,
-      avg_time_to_convert_minutes: timeToConvertCount > 0 ? Math.round(totalTimeToConvert / timeToConvertCount) : 0,
-      avg_calls_before_convert: conversions.length > 0 ? Math.round(totalCallsBeforeConvert / conversions.length) : 0,
+      avg_time_to_convert_minutes: timeToConvertCount > 0
+        ? Math.round(totalTimeToConvert / timeToConvertCount)
+        : 0,
+      avg_calls_before_convert: conversions.length > 0
+        ? Math.round(totalCallsBeforeConvert / conversions.length)
+        : 0,
       conversion_rate: provisionals.length > 0
-        ? Math.round((conversions.length / (provisionals.length + conversions.length)) * 1000) / 10
+        ? Math.round(
+          (conversions.length / (provisionals.length + conversions.length)) *
+            1000,
+        ) / 10
         : 0,
 
       // First app attribution
@@ -872,7 +1391,9 @@ async function getAnalytics(days: number): Promise<Response> {
       // Overall platform
       total_calls: totalCallCount,
       unique_users: uniqueUsers,
-      error_rate_percent: totalCallCount > 0 ? Math.round((failedCalls / totalCallCount) * 1000) / 10 : 0,
+      error_rate_percent: totalCallCount > 0
+        ? Math.round((failedCalls / totalCallCount) * 1000) / 10
+        : 0,
     };
 
     return json({ success: true, analytics });
@@ -886,7 +1407,10 @@ async function getAnalytics(days: number): Promise<Response> {
 // APP CURATION
 // ============================================
 
-async function setAppCategory(request: Request, appId: string): Promise<Response> {
+async function setAppCategory(
+  request: Request,
+  appId: string,
+): Promise<Response> {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   try {
     const body = await validateSetAppCategoryRequest(request);
@@ -898,14 +1422,19 @@ async function setAppCategory(request: Request, appId: string): Promise<Response
         method: 'PATCH',
         headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
         body: JSON.stringify({ category }),
-      }
+      },
     );
     if (!res.ok) {
       const text = await res.text();
       return error(`Failed to update category: ${text}`, 500);
     }
     const updated = await res.json() as UpdatedAppRow[];
-    return json({ success: true, app_id: appId, category, app: updated[0] || null });
+    return json({
+      success: true,
+      app_id: appId,
+      category,
+      app: updated[0] || null,
+    });
   } catch (err) {
     if (err instanceof RequestValidationError) {
       return error(err.message, err.status);
@@ -915,7 +1444,10 @@ async function setAppCategory(request: Request, appId: string): Promise<Response
   }
 }
 
-async function setAppFeatured(request: Request, appId: string): Promise<Response> {
+async function setAppFeatured(
+  request: Request,
+  appId: string,
+): Promise<Response> {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   try {
     const body = await validateSetAppFeaturedRequest(request);
@@ -927,14 +1459,20 @@ async function setAppFeatured(request: Request, appId: string): Promise<Response
         method: 'PATCH',
         headers: writeHeaders(SUPABASE_SERVICE_ROLE_KEY),
         body: JSON.stringify({ featured_at }),
-      }
+      },
     );
     if (!res.ok) {
       const text = await res.text();
       return error(`Failed to update featured status: ${text}`, 500);
     }
     const updated = await res.json() as UpdatedAppRow[];
-    return json({ success: true, app_id: appId, featured: !!featured_at, featured_at, app: updated[0] || null });
+    return json({
+      success: true,
+      app_id: appId,
+      featured: !!featured_at,
+      featured_at,
+      app: updated[0] || null,
+    });
   } catch (err) {
     if (err instanceof RequestValidationError) {
       return error(err.message, err.status);

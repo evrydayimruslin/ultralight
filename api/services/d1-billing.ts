@@ -1,6 +1,6 @@
 // D1 Billing Service
 // Background cron job that syncs per-user D1 usage from app D1 databases to Supabase,
-// then charges overage fees from user balance_light.
+// then charges overage fees from the user's bucketed Light balance.
 // Runs every 5 minutes via startD1BillingJob().
 
 import { getEnv } from '../lib/env.ts';
@@ -169,9 +169,9 @@ async function syncUsageToSupabase(
 
 /**
  * Charge overage fees for users who have exceeded D1 free tier.
- * Deducts from balance_light based on accumulated usage above thresholds.
+ * Deducts from bucketed Light balance based on accumulated usage above thresholds.
  */
-async function chargeD1Overage(
+export async function chargeD1Overage(
   supabaseUrl: string,
   supabaseKey: string,
 ): Promise<void> {
@@ -211,21 +211,28 @@ async function chargeD1Overage(
 
       if (totalCost < 0.01) continue; // Skip negligible charges
 
-      const charge = Math.min(totalCost, user.balance_light); // Don't go negative
-
-      // Deduct from balance
       await fetch(
-        `${supabaseUrl}/rest/v1/users?id=eq.${user.id}`,
+        `${supabaseUrl}/rest/v1/rpc/debit_light`,
         {
-          method: 'PATCH',
+          method: 'POST',
           headers: {
             'apikey': supabaseKey,
             'Authorization': `Bearer ${supabaseKey}`,
             'Content-Type': 'application/json',
-            'Prefer': 'return=minimal',
           },
           body: JSON.stringify({
-            balance_light: user.balance_light - charge,
+            p_user_id: user.id,
+            p_amount_light: totalCost,
+            p_reason: 'd1_overage',
+            p_update_billed_at: false,
+            p_allow_partial: true,
+            p_metadata: {
+              overage_reads: overageReads,
+              overage_writes: overageWrites,
+              read_cost_light: readCost,
+              write_cost_light: writeCost,
+              storage_bytes: user.d1_storage_bytes,
+            },
           }),
         }
       );

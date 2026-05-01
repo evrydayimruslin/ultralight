@@ -33,9 +33,11 @@ Deno.test('chat billing: trace metadata is written to billing transaction', asyn
     const body = init?.body && typeof init.body === 'string' ? JSON.parse(init.body) : null;
     calls.push({ url, body });
 
-    if (url.includes('/rpc/debit_balance')) {
+    if (url.includes('/rpc/debit_light')) {
+      assertEquals((body as { p_reason?: string }).p_reason, 'ai_chat');
+      assertEquals((body as { p_metadata?: { trace_id?: string } }).p_metadata?.trace_id, 'trace-123');
       return Promise.resolve(
-        new Response(JSON.stringify([{ new_balance: 42, was_depleted: false }]), {
+        new Response(JSON.stringify([{ new_balance: 42, was_depleted: false, amount_debited: 1 }]), {
           status: 200,
         }),
       );

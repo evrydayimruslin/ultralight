@@ -151,10 +151,18 @@ export async function settleCallerAppCharge(
   }
 
   try {
-    const transferRes = await supabase.rpc('transfer_balance', {
+    const transferReason = app.hosting_suspended === true ? 'tool_call_suspended' : 'tool_call';
+    const transferRes = await supabase.rpc('transfer_light', {
       p_from_user: userId,
       p_to_user: app.owner_id,
       p_amount_light: chargedLight,
+      p_reason: transferReason,
+      p_app_id: app.id,
+      p_function_name: functionName,
+      p_metadata: {
+        app_slug: app.slug,
+        pricing_source: 'app_call',
+      },
     });
 
     if (!transferRes.ok) {
@@ -166,16 +174,6 @@ export async function settleCallerAppCharge(
     if (!rows || rows.length === 0) {
       return { chargedLight: 0, insufficientBalance: true };
     }
-
-    const transferReason = app.hosting_suspended === true ? 'tool_call_suspended' : 'tool_call';
-    supabase.insert('/rest/v1/transfers', {
-        from_user_id: userId,
-        to_user_id: app.owner_id,
-        amount_light: chargedLight,
-        reason: transferReason,
-        app_id: app.id,
-        function_name: functionName,
-      }).catch(() => {});
 
     if (app.hosting_suspended === true && rows[0].to_new_balance > 0) {
       supabase.patch(`/rest/v1/users?id=eq.${app.owner_id}`, { hosting_suspended: false }).catch(() => {});

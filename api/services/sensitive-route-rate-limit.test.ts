@@ -42,37 +42,69 @@ Deno.test("sensitive route rate limit: can decorate successful responses", () =>
   assertEquals(response.headers.get("X-RateLimit-Remaining"), "29");
 });
 
-Deno.test("sensitive route rate limit: new upload and admin routes expose their configured limits", () => {
+Deno.test("sensitive route rate limit: new upload, payment, and admin routes expose their configured limits", () => {
   const uploadResponse = buildSensitiveRouteRateLimitResponse("upload:create", {
     allowed: false,
     remaining: 0,
     resetAt: new Date(Date.now() + 30_000),
     reason: "limit_exceeded",
   });
+  const wireResponse = buildSensitiveRouteRateLimitResponse(
+    "user:wallet_wire_transfer",
+    {
+      allowed: false,
+      remaining: 0,
+      resetAt: new Date(Date.now() + 30_000),
+      reason: "limit_exceeded",
+    },
+  );
   const adminResponse = new Response(JSON.stringify({ ok: true }), {
     headers: { "Content-Type": "application/json" },
   });
 
-  applySensitiveRouteRateLimitHeaders(adminResponse, "admin:cleanup_provisionals", {
-    allowed: true,
-    remaining: 9,
-    resetAt: new Date(Date.now() + 60_000),
-  });
+  applySensitiveRouteRateLimitHeaders(
+    adminResponse,
+    "admin:cleanup_provisionals",
+    {
+      allowed: true,
+      remaining: 9,
+      resetAt: new Date(Date.now() + 60_000),
+    },
+  );
+  const payoutResponse = buildSensitiveRouteRateLimitResponse(
+    "admin:payout_process",
+    {
+      allowed: false,
+      remaining: 0,
+      resetAt: new Date(Date.now() + 30_000),
+      reason: "limit_exceeded",
+    },
+  );
 
   assertEquals(uploadResponse.headers.get("X-RateLimit-Limit"), "20");
+  assertEquals(wireResponse.headers.get("X-RateLimit-Limit"), "10");
   assertEquals(adminResponse.headers.get("X-RateLimit-Limit"), "10");
   assertEquals(adminResponse.headers.get("X-RateLimit-Remaining"), "9");
+  assertEquals(payoutResponse.headers.get("X-RateLimit-Limit"), "10");
 });
 
 Deno.test("sensitive route rate limit: enforce blocks after configured limit", async () => {
-  const first = await enforceSensitiveRouteRateLimit("test-user-key", "apps:env_set", {
-    limit: 1,
-    windowMinutes: 1,
-  });
-  const second = await enforceSensitiveRouteRateLimit("test-user-key", "apps:env_set", {
-    limit: 1,
-    windowMinutes: 1,
-  });
+  const first = await enforceSensitiveRouteRateLimit(
+    "test-user-key",
+    "apps:env_set",
+    {
+      limit: 1,
+      windowMinutes: 1,
+    },
+  );
+  const second = await enforceSensitiveRouteRateLimit(
+    "test-user-key",
+    "apps:env_set",
+    {
+      limit: 1,
+      windowMinutes: 1,
+    },
+  );
 
   assertEquals(first.response, null);
   assertEquals(second.response?.status, 429);

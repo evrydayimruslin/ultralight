@@ -7,7 +7,6 @@ import { getEnv } from '../lib/env.ts';
 import { formatLight } from '../../shared/types/index.ts';
 import { buildAppTrustCard } from './trust.ts';
 
-
 // ============================================
 // TYPES
 // ============================================
@@ -89,7 +88,16 @@ export interface ListingDetails {
     status: string;
     listing_note: string | null;
     show_metrics: boolean;
-    provenance: Array<{ owner_id: string; email: string; acquired_at: string; price_light: number; method: string; d1_database_id?: string }>;
+    provenance: Array<
+      {
+        owner_id: string;
+        email: string;
+        acquired_at: string;
+        price_light: number;
+        method: string;
+        d1_database_id?: string;
+      }
+    >;
     created_at: string;
   } | null;
   bids: Array<{
@@ -143,7 +151,7 @@ export interface AppMetrics {
   calls_30d: number;
   unique_callers_30d: number;
   revenue_30d_light: number;
-  success_rate_30d: number;  // 0.0 to 1.0
+  success_rate_30d: number; // 0.0 to 1.0
 }
 
 export interface SaleHistory {
@@ -394,7 +402,9 @@ function buildPublicAcquisitionParty(
   };
 }
 
-export function buildPublicAcquisitionReceipt(row: PublicAcquisitionFeedRow): PublicAcquisitionReceipt {
+export function buildPublicAcquisitionReceipt(
+  row: PublicAcquisitionFeedRow,
+): PublicAcquisitionReceipt {
   const appId = row.app_id || '';
   const appName = row.apps?.name || 'Unknown app';
   const appSlug = row.apps?.slug || '';
@@ -513,7 +523,7 @@ export function buildMarketplaceOwnerAdminSummary(
         id: 'payouts',
         label: 'Payout setup',
         status: 'ready',
-        detail: 'Stripe Connect payouts are enabled for withdrawals.',
+        detail: 'Stripe Connect payouts are enabled.',
       }
       : {
         id: 'payouts',
@@ -521,7 +531,7 @@ export function buildMarketplaceOwnerAdminSummary(
         status: payoutConnected || payoutOnboarded ? 'action' : 'optional',
         detail: payoutConnected
           ? 'Stripe onboarding is not fully payout-enabled yet.'
-          : 'Acquisition proceeds credit your Light balance immediately; connect a bank before withdrawing.',
+          : 'Acquisition proceeds credit your Light balance immediately; connect a bank before requesting payouts.',
         action: 'Complete payout setup in Wallet.',
       },
     summary.active_bid_count > 0
@@ -529,7 +539,9 @@ export function buildMarketplaceOwnerAdminSummary(
         id: 'bids',
         label: 'Bid review',
         status: 'action',
-        detail: `${summary.active_bid_count} active ${summary.active_bid_count === 1 ? 'bid' : 'bids'} awaiting review.`,
+        detail: `${summary.active_bid_count} active ${
+          summary.active_bid_count === 1 ? 'bid' : 'bids'
+        } awaiting review.`,
         action: 'Review incoming bids.',
       }
       : {
@@ -540,12 +552,12 @@ export function buildMarketplaceOwnerAdminSummary(
       },
   ];
 
-  const priority = checklist.find((check) => check.status === 'blocked')
-    || checklist.find((check) => check.id === 'published' && check.status === 'action')
-    || checklist.find((check) => check.id === 'terms' && check.status === 'action')
-    || checklist.find((check) => check.id === 'bids' && check.status === 'action')
-    || checklist.find((check) => check.id === 'payouts' && check.status === 'action')
-    || checklist.find((check) => check.id === 'metrics' && check.status === 'optional');
+  const priority = checklist.find((check) => check.status === 'blocked') ||
+    checklist.find((check) => check.id === 'published' && check.status === 'action') ||
+    checklist.find((check) => check.id === 'terms' && check.status === 'action') ||
+    checklist.find((check) => check.id === 'bids' && check.status === 'action') ||
+    checklist.find((check) => check.id === 'payouts' && check.status === 'action') ||
+    checklist.find((check) => check.id === 'metrics' && check.status === 'optional');
 
   return {
     payout_connected: payoutConnected,
@@ -565,10 +577,10 @@ function buildListingTrustCard(app: ListingAppRow): unknown {
     runtime: app.runtime || 'deno',
     manifest: typeof app.manifest === 'string'
       ? app.manifest
-      : app.manifest ? JSON.stringify(app.manifest) : null,
-    version_metadata: Array.isArray(app.version_metadata)
-      ? app.version_metadata as never
-      : [],
+      : app.manifest
+      ? JSON.stringify(app.manifest)
+      : null,
+    version_metadata: Array.isArray(app.version_metadata) ? app.version_metadata as never : [],
     visibility: app.visibility || 'public',
     download_access: app.download_access || 'owner',
     env_schema: app.env_schema || {},
@@ -630,18 +642,21 @@ export async function placeBid(
   appId: string,
   amountLight: number,
   message?: string,
-  expiresInHours?: number
+  expiresInHours?: number,
 ): Promise<BidResult> {
   if (amountLight <= 0) throw createError('Bid amount must be positive', 400);
 
   // Apps that have ever used an external database are permanently ineligible
   const appCheck = await fetch(
     `${getEnv('SUPABASE_URL')}/rest/v1/apps?id=eq.${appId}&select=had_external_db`,
-    { headers: dbHeaders() }
+    { headers: dbHeaders() },
   );
   const appRows = appCheck.ok ? await appCheck.json() as AppEligibilityRow[] : [];
   if (appRows[0]?.had_external_db) {
-    throw createError('This app is permanently ineligible for trading because it has used an external database.', 400);
+    throw createError(
+      'This app is permanently ineligible for trading because it has used an external database.',
+      400,
+    );
   }
 
   const expiresAt = expiresInHours
@@ -664,11 +679,16 @@ export async function placeBid(
     const errText = await res.text();
     console.error('[MARKETPLACE] escrow_bid RPC failed:', errText);
     if (errText.includes('Insufficient balance')) throw createError('Insufficient balance', 402);
-    if (errText.includes('Cannot bid on your own')) throw createError('Cannot bid on your own app', 400);
+    if (errText.includes('Cannot bid on your own')) {
+      throw createError('Cannot bid on your own app', 400);
+    }
     if (errText.includes('App not found')) throw createError('App not found', 404);
     if (errText.includes('below floor price')) throw createError('Bid below floor price', 400);
     // Unique constraint violation = already has active bid
-    if (errText.includes('idx_bids_one_active') || errText.includes('duplicate') || errText.includes('23505')) {
+    if (
+      errText.includes('idx_bids_one_active') || errText.includes('duplicate') ||
+      errText.includes('23505')
+    ) {
       throw createError('You already have an active bid on this app. Cancel it first.', 409);
     }
     throw createError('Failed to place bid', 500);
@@ -676,13 +696,17 @@ export async function placeBid(
 
   const bidId = await res.json() as string;
 
-  console.log(`[MARKETPLACE] Bid placed: ${bidId} by ${bidderId} on ${appId} for ${formatLight(amountLight)}`);
+  console.log(
+    `[MARKETPLACE] Bid placed: ${bidId} by ${bidderId} on ${appId} for ${formatLight(amountLight)}`,
+  );
 
   return {
     bid_id: bidId,
     app_id: appId,
     amount_light: amountLight,
-    message: `Bid of ${formatLight(amountLight)} placed successfully. Funds are escrowed until accepted, rejected, or cancelled.`,
+    message: `Bid of ${
+      formatLight(amountLight)
+    } placed successfully. Funds are escrowed until accepted, rejected, or cancelled.`,
   };
 }
 
@@ -696,19 +720,22 @@ export async function setAskPrice(
   priceLight: number | null,
   floorLight?: number | null,
   instantBuy?: boolean,
-  note?: string
+  note?: string,
 ): Promise<ListingResult> {
   // Verify ownership + storage eligibility
   const appRes = await fetch(
     `${getEnv('SUPABASE_URL')}/rest/v1/apps?id=eq.${appId}&select=owner_id,had_external_db`,
-    { headers: dbHeaders() }
+    { headers: dbHeaders() },
   );
   const apps = appRes.ok ? await appRes.json() as AppEligibilityRow[] : [];
   if (!apps[0] || apps[0].owner_id !== ownerId) {
     throw createError('Only the app owner can set ask price', 403);
   }
   if (apps[0].had_external_db) {
-    throw createError('This app is permanently ineligible for trading because it has used an external database.', 400);
+    throw createError(
+      'This app is permanently ineligible for trading because it has used an external database.',
+      400,
+    );
   }
 
   // Upsert listing
@@ -732,7 +759,7 @@ export async function setAskPrice(
         'Prefer': 'return=representation,resolution=merge-duplicates',
       },
       body: JSON.stringify(listingData),
-    }
+    },
   );
 
   if (!upsertRes.ok) {
@@ -744,7 +771,11 @@ export async function setAskPrice(
   const rows = await upsertRes.json() as ListingRow[] | ListingRow;
   const listing = Array.isArray(rows) ? rows[0] : rows;
 
-  console.log(`[MARKETPLACE] Ask price set: ${appId} = ${priceLight !== null ? formatLight(priceLight) : 'open'} (instant_buy: ${instantBuy})`);
+  console.log(
+    `[MARKETPLACE] Ask price set: ${appId} = ${
+      priceLight !== null ? formatLight(priceLight) : 'open'
+    } (instant_buy: ${instantBuy})`,
+  );
 
   return {
     listing_id: listing.id,
@@ -772,19 +803,25 @@ export async function acceptBid(ownerId: string, bidId: string): Promise<SaleRes
     const errText = await res.text();
     console.error('[MARKETPLACE] accept_bid RPC failed:', errText);
     if (errText.includes('not active')) throw createError('Bid not found or already resolved', 404);
-    if (errText.includes('Only the app owner')) throw createError('Only the app owner can accept bids', 403);
+    if (errText.includes('Only the app owner')) {
+      throw createError('Only the app owner can accept bids', 403);
+    }
     throw createError('Failed to accept bid', 500);
   }
 
   const result = await res.json() as SaleRpcResult;
 
-  console.log(`[MARKETPLACE] Sale completed: ${result.sale_id} — ${result.seller_id} → ${result.buyer_id} for ${formatLight(result.sale_price_light)}`);
+  console.log(
+    `[MARKETPLACE] Sale completed: ${result.sale_id} — ${result.seller_id} → ${result.buyer_id} for ${
+      formatLight(result.sale_price_light)
+    }`,
+  );
 
   // Record source fingerprint for seller-relist detection (fire-and-forget)
   import('./originality.ts').then(({ recordSaleFingerprint }) => {
     recordSaleFingerprint(result.sale_id, result.app_id, result.seller_id, result.buyer_id)
-      .catch(err => console.error('[MARKETPLACE] Failed to record sale fingerprint:', err));
-  }).catch(err => console.error('[MARKETPLACE] Failed to import originality service:', err));
+      .catch((err) => console.error('[MARKETPLACE] Failed to record sale fingerprint:', err));
+  }).catch((err) => console.error('[MARKETPLACE] Failed to import originality service:', err));
 
   return {
     sale_id: result.sale_id,
@@ -814,7 +851,9 @@ export async function rejectBid(ownerId: string, bidId: string): Promise<void> {
     const errText = await res.text();
     console.error('[MARKETPLACE] reject_bid RPC failed:', errText);
     if (errText.includes('not active')) throw createError('Bid not found or already resolved', 404);
-    if (errText.includes('Only the app owner')) throw createError('Only the app owner can reject bids', 403);
+    if (errText.includes('Only the app owner')) {
+      throw createError('Only the app owner can reject bids', 403);
+    }
     throw createError('Failed to reject bid', 500);
   }
 
@@ -838,7 +877,9 @@ export async function cancelBid(bidderId: string, bidId: string): Promise<void> 
     const errText = await res.text();
     console.error('[MARKETPLACE] cancel_bid RPC failed:', errText);
     if (errText.includes('not active')) throw createError('Bid not found or already resolved', 404);
-    if (errText.includes('Only the bidder')) throw createError('Only the bidder can cancel their bid', 403);
+    if (errText.includes('Only the bidder')) {
+      throw createError('Only the bidder can cancel their bid', 403);
+    }
     throw createError('Failed to cancel bid', 500);
   }
 
@@ -861,12 +902,21 @@ export async function buyNow(buyerId: string, appId: string): Promise<SaleResult
   if (!res.ok) {
     const errText = await res.text();
     console.error('[MARKETPLACE] buy_now RPC failed:', errText);
-    if (errText.includes('No active listing')) throw createError('No listing found for this app', 404);
-    if (errText.includes('does not allow instant buy')) throw createError('This listing does not allow instant acquisition', 400);
+    if (errText.includes('No active listing')) {
+      throw createError('No listing found for this app', 404);
+    }
+    if (errText.includes('does not allow instant buy')) {
+      throw createError('This listing does not allow instant acquisition', 400);
+    }
     if (errText.includes('No ask price')) throw createError('No ask price set', 400);
-    if (errText.includes('Cannot buy your own')) throw createError('Cannot acquire your own app', 400);
+    if (errText.includes('Cannot buy your own')) {
+      throw createError('Cannot acquire your own app', 400);
+    }
     if (errText.includes('external database')) {
-      throw createError('This app is permanently ineligible for trading because it has used an external database.', 400);
+      throw createError(
+        'This app is permanently ineligible for trading because it has used an external database.',
+        400,
+      );
     }
     if (errText.includes('Insufficient balance')) throw createError('Insufficient balance', 402);
     throw createError('Acquisition failed', 500);
@@ -874,12 +924,16 @@ export async function buyNow(buyerId: string, appId: string): Promise<SaleResult
 
   const result = await res.json() as SaleRpcResult;
 
-  console.log(`[MARKETPLACE] Instant acquisition completed: ${result.sale_id} — ${result.seller_id} → ${result.buyer_id} for ${formatLight(result.sale_price_light)}`);
+  console.log(
+    `[MARKETPLACE] Instant acquisition completed: ${result.sale_id} — ${result.seller_id} → ${result.buyer_id} for ${
+      formatLight(result.sale_price_light)
+    }`,
+  );
 
   import('./originality.ts').then(({ recordSaleFingerprint }) => {
     recordSaleFingerprint(result.sale_id, result.app_id, result.seller_id, result.buyer_id)
-      .catch(err => console.error('[MARKETPLACE] Failed to record sale fingerprint:', err));
-  }).catch(err => console.error('[MARKETPLACE] Failed to import originality service:', err));
+      .catch((err) => console.error('[MARKETPLACE] Failed to record sale fingerprint:', err));
+  }).catch((err) => console.error('[MARKETPLACE] Failed to import originality service:', err));
 
   return {
     sale_id: result.sale_id,
@@ -897,11 +951,15 @@ export async function buyNow(buyerId: string, appId: string): Promise<SaleResult
  */
 export async function getOffers(userId: string, appId?: string): Promise<OffersSummary> {
   // Incoming: bids on user's apps
-  let incomingUrl = `${getEnv('SUPABASE_URL')}/rest/v1/app_bids?status=eq.active&select=id,app_id,bidder_id,amount_light,message,created_at,apps!inner(name,owner_id)&apps.owner_id=eq.${userId}&order=amount_light.desc`;
+  let incomingUrl = `${
+    getEnv('SUPABASE_URL')
+  }/rest/v1/app_bids?status=eq.active&select=id,app_id,bidder_id,amount_light,message,created_at,apps!inner(name,owner_id)&apps.owner_id=eq.${userId}&order=amount_light.desc`;
   if (appId) incomingUrl += `&app_id=eq.${appId}`;
 
   // Outgoing: user's own bids
-  let outgoingUrl = `${getEnv('SUPABASE_URL')}/rest/v1/app_bids?bidder_id=eq.${userId}&select=id,app_id,amount_light,status,escrow_status,created_at,apps(name)&order=created_at.desc&limit=50`;
+  let outgoingUrl = `${
+    getEnv('SUPABASE_URL')
+  }/rest/v1/app_bids?bidder_id=eq.${userId}&select=id,app_id,amount_light,status,escrow_status,created_at,apps(name)&order=created_at.desc&limit=50`;
 
   const [incomingRes, outgoingRes] = await Promise.all([
     fetch(incomingUrl, { headers: dbHeaders() }),
@@ -917,7 +975,7 @@ export async function getOffers(userId: string, appId?: string): Promise<OffersS
     if (bidderIds.length > 0) {
       const emailRes = await fetch(
         `${getEnv('SUPABASE_URL')}/rest/v1/users?id=in.(${bidderIds.join(',')})&select=id,email`,
-        { headers: dbHeaders() }
+        { headers: dbHeaders() },
       );
       const emails = emailRes.ok ? await emailRes.json() as EmailRow[] : [];
       emailMap = Object.fromEntries(emails.map((u) => [u.id, u.email]));
@@ -935,17 +993,21 @@ export async function getOffers(userId: string, appId?: string): Promise<OffersS
     // Fallback: get user's apps, then get bids on those apps
     const myAppsRes = await fetch(
       `${getEnv('SUPABASE_URL')}/rest/v1/apps?owner_id=eq.${userId}&select=id,name`,
-      { headers: dbHeaders() }
+      { headers: dbHeaders() },
     );
     const myApps = myAppsRes.ok ? await myAppsRes.json() as OwnedAppRow[] : [];
     if (myApps.length > 0) {
       const appIds = myApps.map((a) => a.id);
       const appNameMap: Record<string, string> = {};
-      myApps.forEach((a) => { appNameMap[a.id] = a.name; });
+      myApps.forEach((a) => {
+        appNameMap[a.id] = a.name;
+      });
 
       const bidsRes = await fetch(
-        `${getEnv('SUPABASE_URL')}/rest/v1/app_bids?status=eq.active&app_id=in.(${appIds.join(',')})&select=id,app_id,bidder_id,amount_light,message,created_at&order=amount_light.desc`,
-        { headers: dbHeaders() }
+        `${getEnv('SUPABASE_URL')}/rest/v1/app_bids?status=eq.active&app_id=in.(${
+          appIds.join(',')
+        })&select=id,app_id,bidder_id,amount_light,message,created_at&order=amount_light.desc`,
+        { headers: dbHeaders() },
       );
       const bidsData = bidsRes.ok ? await bidsRes.json() as JoinedBidRow[] : [];
 
@@ -955,10 +1017,12 @@ export async function getOffers(userId: string, appId?: string): Promise<OffersS
       if (bidderIds.length > 0) {
         const emailRes = await fetch(
           `${getEnv('SUPABASE_URL')}/rest/v1/users?id=in.(${bidderIds.join(',')})&select=id,email`,
-          { headers: dbHeaders() }
+          { headers: dbHeaders() },
         );
         const emails = emailRes.ok ? await emailRes.json() as EmailRow[] : [];
-        emails.forEach((u) => { emailMap[u.id] = u.email; });
+        emails.forEach((u) => {
+          emailMap[u.id] = u.email;
+        });
       }
 
       incoming = bidsData.map((b) => ({
@@ -1012,15 +1076,19 @@ export async function getListing(appId: string, viewerId?: string): Promise<List
   const [listingRes, bidsRes, appRes] = await Promise.all([
     fetch(
       `${getEnv('SUPABASE_URL')}/rest/v1/app_listings?app_id=eq.${appId}&select=*`,
-      { headers: dbHeaders() }
+      { headers: dbHeaders() },
     ),
     fetch(
-      `${getEnv('SUPABASE_URL')}/rest/v1/app_bids?app_id=eq.${appId}&status=eq.active&select=id,bidder_id,amount_light,message,status,created_at,expires_at&order=amount_light.desc`,
-      { headers: dbHeaders() }
+      `${
+        getEnv('SUPABASE_URL')
+      }/rest/v1/app_bids?app_id=eq.${appId}&status=eq.active&select=id,bidder_id,amount_light,message,status,created_at,expires_at&order=amount_light.desc`,
+      { headers: dbHeaders() },
     ),
     fetch(
-      `${getEnv('SUPABASE_URL')}/rest/v1/apps?id=eq.${appId}&select=id,name,slug,owner_id,total_runs,runs_30d,description,visibility,current_version,version_metadata,download_access,runtime,manifest,env_schema,had_external_db`,
-      { headers: dbHeaders() }
+      `${
+        getEnv('SUPABASE_URL')
+      }/rest/v1/apps?id=eq.${appId}&select=id,name,slug,owner_id,total_runs,runs_30d,description,visibility,current_version,version_metadata,download_access,runtime,manifest,env_schema,had_external_db`,
+      { headers: dbHeaders() },
     ),
   ]);
 
@@ -1033,11 +1101,15 @@ export async function getListing(appId: string, viewerId?: string): Promise<List
   let emailMap: Record<string, string> = {};
   if (bidderIds.length > 0) {
     const emailRes = await fetch(
-      `${getEnv('SUPABASE_URL')}/rest/v1/users?id=in.(${(bidderIds as string[]).join(',')})&select=id,email`,
-      { headers: dbHeaders() }
+      `${getEnv('SUPABASE_URL')}/rest/v1/users?id=in.(${
+        (bidderIds as string[]).join(',')
+      })&select=id,email`,
+      { headers: dbHeaders() },
     );
     const emails = emailRes.ok ? await emailRes.json() as EmailRow[] : [];
-    emails.forEach((u) => { emailMap[u.id] = u.email; });
+    emails.forEach((u) => {
+      emailMap[u.id] = u.email;
+    });
   }
 
   const enrichedBids: ListingDetails['bids'] = bids.map((b) => ({
@@ -1058,7 +1130,9 @@ export async function getListing(appId: string, viewerId?: string): Promise<List
   let ownerAdmin: MarketplaceOwnerAdminSummary | null = null;
   if (viewerId && app?.owner_id === viewerId) {
     const ownerRes = await fetch(
-      `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${viewerId}&select=balance_light,total_earned_light,stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled`,
+      `${
+        getEnv('SUPABASE_URL')
+      }/rest/v1/users?id=eq.${viewerId}&select=balance_light,total_earned_light,stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled`,
       { headers: dbHeaders() },
     );
     const ownerRows = ownerRes.ok ? await ownerRes.json() as MarketplaceOwnerAdminUserRow[] : [];
@@ -1096,17 +1170,23 @@ export async function getAppMetrics(appId: string): Promise<AppMetrics> {
     // Total lifetime calls
     fetch(
       `${getEnv('SUPABASE_URL')}/rest/v1/mcp_call_logs?app_id=eq.${appId}&select=id`,
-      { headers: { ...dbHeaders(), 'Prefer': 'count=exact', 'Range-Unit': 'items', 'Range': '0-0' } }
+      {
+        headers: { ...dbHeaders(), 'Prefer': 'count=exact', 'Range-Unit': 'items', 'Range': '0-0' },
+      },
     ),
     // 30d calls + sum revenue + success flag
     fetch(
-      `${getEnv('SUPABASE_URL')}/rest/v1/mcp_call_logs?app_id=eq.${appId}&created_at=gte.${thirtyDaysAgo}&select=call_charge_light,success`,
-      { headers: dbHeaders() }
+      `${
+        getEnv('SUPABASE_URL')
+      }/rest/v1/mcp_call_logs?app_id=eq.${appId}&created_at=gte.${thirtyDaysAgo}&select=call_charge_light,success`,
+      { headers: dbHeaders() },
     ),
     // 30d unique callers
     fetch(
-      `${getEnv('SUPABASE_URL')}/rest/v1/mcp_call_logs?app_id=eq.${appId}&created_at=gte.${thirtyDaysAgo}&select=user_id`,
-      { headers: dbHeaders() }
+      `${
+        getEnv('SUPABASE_URL')
+      }/rest/v1/mcp_call_logs?app_id=eq.${appId}&created_at=gte.${thirtyDaysAgo}&select=user_id`,
+      { headers: dbHeaders() },
     ),
   ]);
 
@@ -1116,15 +1196,17 @@ export async function getAppMetrics(appId: string): Promise<AppMetrics> {
   const totalCalls = totalMatch ? parseInt(totalMatch[1], 10) : 0;
 
   // Parse 30d calls + revenue + success rate
-  const recentRows = recentRes.ok ? await recentRes.json() as Array<{ call_charge_light: number | null; success: boolean | null }> : [];
+  const recentRows = recentRes.ok
+    ? await recentRes.json() as Array<{ call_charge_light: number | null; success: boolean | null }>
+    : [];
   const calls30d = recentRows.length;
   const revenue30dLight = recentRows.reduce((sum, r) => sum + (r.call_charge_light || 0), 0);
-  const successCount = recentRows.filter(r => r.success !== false).length;
+  const successCount = recentRows.filter((r) => r.success !== false).length;
   const successRate30d = calls30d > 0 ? Math.round((successCount / calls30d) * 10000) / 10000 : 1.0;
 
   // Parse unique callers
   const callerRows = callersRes.ok ? await callersRes.json() as Array<{ user_id: string }> : [];
-  const uniqueCallers30d = new Set(callerRows.map(r => r.user_id)).size;
+  const uniqueCallers30d = new Set(callerRows.map((r) => r.user_id)).size;
 
   return {
     total_calls: totalCalls,
@@ -1140,7 +1222,9 @@ export async function getMarketplaceReceipt(
   receiptId: string,
 ): Promise<MarketplaceReceipt> {
   const saleRes = await fetch(
-    `${getEnv('SUPABASE_URL')}/rest/v1/app_sales?id=eq.${encodeURIComponent(receiptId)}&select=id,app_id,seller_id,buyer_id,sale_price_light,platform_fee_light,seller_payout_light,created_at&limit=1`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/app_sales?id=eq.${
+      encodeURIComponent(receiptId)
+    }&select=id,app_id,seller_id,buyer_id,sale_price_light,platform_fee_light,seller_payout_light,created_at&limit=1`,
     { headers: dbHeaders() },
   );
   const saleRows = saleRes.ok ? await saleRes.json() as SaleReceiptRow[] : [];
@@ -1165,7 +1249,9 @@ export async function getMarketplaceReceipt(
   }
 
   const bidRes = await fetch(
-    `${getEnv('SUPABASE_URL')}/rest/v1/app_bids?id=eq.${encodeURIComponent(receiptId)}&select=id,app_id,bidder_id,amount_light,status,escrow_status,created_at,resolved_at&limit=1`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/app_bids?id=eq.${
+      encodeURIComponent(receiptId)
+    }&select=id,app_id,bidder_id,amount_light,status,escrow_status,created_at,resolved_at&limit=1`,
     { headers: dbHeaders() },
   );
   const bidRows = bidRes.ok ? await bidRes.json() as BidReceiptRow[] : [];
@@ -1195,7 +1281,9 @@ export async function getMarketplaceReceipt(
 
 async function fetchReceiptApp(appId: string): Promise<ReceiptAppRow | null> {
   const appRes = await fetch(
-    `${getEnv('SUPABASE_URL')}/rest/v1/apps?id=eq.${encodeURIComponent(appId)}&select=id,name,owner_id&limit=1`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/apps?id=eq.${
+      encodeURIComponent(appId)
+    }&select=id,name,owner_id&limit=1`,
     { headers: dbHeaders() },
   );
   const appRows = appRes.ok ? await appRes.json() as ReceiptAppRow[] : [];
@@ -1215,7 +1303,7 @@ export async function flagExternalDb(appId: string): Promise<void> {
       method: 'PATCH',
       headers: writeHeaders(),
       body: JSON.stringify({ had_external_db: true }),
-    }
+    },
   );
   if (!flagRes.ok) {
     console.error('[MARKETPLACE] Failed to set had_external_db:', await flagRes.text());
@@ -1223,8 +1311,10 @@ export async function flagExternalDb(appId: string): Promise<void> {
 
   // 2. Cancel all active bids on this app (refunds escrow via RPC)
   const bidsRes = await fetch(
-    `${getEnv('SUPABASE_URL')}/rest/v1/app_bids?app_id=eq.${appId}&status=eq.active&select=id,bidder_id`,
-    { headers: dbHeaders() }
+    `${
+      getEnv('SUPABASE_URL')
+    }/rest/v1/app_bids?app_id=eq.${appId}&status=eq.active&select=id,bidder_id`,
+    { headers: dbHeaders() },
   );
   if (bidsRes.ok) {
     const bids = await bidsRes.json() as Array<{ id: string; bidder_id: string }>;
@@ -1235,7 +1325,9 @@ export async function flagExternalDb(appId: string): Promise<void> {
           headers: rpcHeaders(),
           body: JSON.stringify({ p_bidder_id: bid.bidder_id, p_bid_id: bid.id }),
         });
-        console.log(`[MARKETPLACE] Auto-cancelled bid ${bid.id} due to external DB flag on app ${appId}`);
+        console.log(
+          `[MARKETPLACE] Auto-cancelled bid ${bid.id} due to external DB flag on app ${appId}`,
+        );
       } catch (err) {
         console.error(`[MARKETPLACE] Failed to cancel bid ${bid.id}:`, err);
       }
@@ -1248,10 +1340,12 @@ export async function flagExternalDb(appId: string): Promise<void> {
     {
       method: 'DELETE',
       headers: dbHeaders(),
-    }
+    },
   );
 
-  console.log(`[MARKETPLACE] App ${appId} permanently flagged had_external_db — bids cancelled, listing removed`);
+  console.log(
+    `[MARKETPLACE] App ${appId} permanently flagged had_external_db — bids cancelled, listing removed`,
+  );
 }
 
 // ============================================

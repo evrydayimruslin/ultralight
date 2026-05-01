@@ -1719,8 +1719,9 @@ export async function executeInSandbox(
           throw new Error('Payment system unavailable');
         }
 
-        // Atomic transfer: caller → owner
-        const transferRes = await openFetch(`${SUPABASE_URL}/rest/v1/rpc/transfer_balance`, {
+        // Atomic transfer: caller → owner. The app-provided reason is stored as
+        // metadata so the platform transfer rail keeps a controlled reason set.
+        const transferRes = await openFetch(`${SUPABASE_URL}/rest/v1/rpc/transfer_light`, {
           method: 'POST',
           headers: {
             'apikey': SUPABASE_KEY,
@@ -1731,6 +1732,11 @@ export async function executeInSandbox(
             p_from_user: config.userId,
             p_to_user: config.ownerId,
             p_amount_light: Math.round(amountLight),
+            p_reason: 'in_app_purchase',
+            p_app_id: config.appId,
+            p_metadata: {
+              developer_reason: reason || null,
+            },
           }),
         });
 
@@ -1742,24 +1748,6 @@ export async function executeInSandbox(
         if (!rows || rows.length === 0) {
           throw new Error(`Insufficient balance. This purchase costs ${formatLight(amountLight)}. Top up your balance to continue.`);
         }
-
-        // Log to transfers table (fire-and-forget)
-        openFetch(`${SUPABASE_URL}/rest/v1/transfers`, {
-          method: 'POST',
-          headers: {
-            'apikey': SUPABASE_KEY,
-            'Authorization': `Bearer ${SUPABASE_KEY}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=minimal',
-          },
-          body: JSON.stringify({
-            from_user_id: config.userId,
-            to_user_id: config.ownerId,
-            amount_light: Math.round(amountLight),
-            reason: reason || 'in_app_purchase',
-            app_id: config.appId,
-          }),
-        }).catch(() => {});
 
         return {
           success: true,

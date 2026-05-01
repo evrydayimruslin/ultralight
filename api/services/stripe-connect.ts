@@ -5,7 +5,8 @@
 // Internal ledger is in Light (✦); Stripe boundary uses USD cents.
 
 import { getEnv } from '../lib/env.ts';
-import { MIN_WITHDRAWAL_LIGHT, LIGHT_PER_DOLLAR_PAYOUT, formatLight } from '../../shared/types/index.ts';
+import { LIGHT_PER_DOLLAR_PAYOUT } from '../../shared/types/index.ts';
+import { lightToUsdCents as convertLightToUsdCents } from './billing-config.ts';
 
 // ============================================
 // TYPES
@@ -22,20 +23,44 @@ export interface ConnectAccountStatus {
 }
 
 export interface PayoutEstimate {
-  gross_light: number;        // Light deducted from balance
-  gross_usd_cents: number;    // USD cents equivalent (light / 100 * 100)
-  stripe_fee_cents: number;   // estimated Stripe payout fee (in USD cents)
-  net_cents: number;          // estimated bank deposit (in USD cents)
+  gross_light: number; // Light deducted from balance
+  gross_usd_cents: number; // USD cents equivalent (light / 100 * 100)
+  stripe_fee_cents: number; // estimated Stripe payout fee (in USD cents)
+  net_cents: number; // estimated bank deposit (in USD cents)
 }
 
 export interface TransferResult {
   transfer_id: string;
   amount_cents: number;
+  response: unknown;
 }
 
 export interface PayoutResult {
   payout_id: string;
   amount_cents: number;
+  response: unknown;
+}
+
+export interface StripeRequestOptions {
+  idempotencyKey?: string;
+  metadata?: Record<string, string>;
+}
+
+export interface StripeBalanceSummary {
+  available_cents: number;
+  pending_cents: number;
+}
+
+export class StripeConnectRequestError extends Error {
+  status: number;
+  responseText: string;
+
+  constructor(message: string, status: number, responseText: string) {
+    super(message);
+    this.name = 'StripeConnectRequestError';
+    this.status = status;
+    this.responseText = responseText;
+  }
 }
 
 // ============================================
@@ -49,9 +74,6 @@ export const PAYOUT_FEE_FIXED_CENTS = 25;
 // Cross-border FX fee: 2% on transfers to non-USD connected accounts
 export const CROSS_BORDER_FX_PERCENT = 0.02;
 
-// Payout hold period: 14 days before Stripe transfer is executed
-export const PAYOUT_HOLD_DAYS = 14;
-
 // ============================================
 // HELPERS
 // ============================================
@@ -64,16 +86,21 @@ function ensureStripeKey(): string {
   const key = getStripeKey();
   if (!key) {
     throw Object.assign(
-      new Error('Stripe is not configured. Withdrawals will be available soon.'),
-      { status: 503 }
+      new Error(
+        'Stripe is not configured. Payouts will be available soon.',
+      ),
+      { status: 503 },
     );
   }
   return key;
 }
 
 /** Convert a Light amount to USD cents at the payout rate (100 Light/$1). */
-function lightToUsdCents(amountLight: number): number {
-  return Math.round((amountLight / LIGHT_PER_DOLLAR_PAYOUT) * 100);
+export function lightToUsdCents(
+  amountLight: number,
+  lightPerUsd = LIGHT_PER_DOLLAR_PAYOUT,
+): number {
+  return convertLightToUsdCents(amountLight, lightPerUsd);
 }
 
 /**
@@ -81,9 +108,15 @@ function lightToUsdCents(amountLight: number): number {
  * Converts Light to USD at payout rate, then calculates Stripe fees in USD cents.
  * Cross-border payouts (non-US connected accounts) incur an additional 2% FX fee.
  */
-export function estimatePayoutFee(amountLight: number, isCrossBorder = false): PayoutEstimate {
-  const grossCents = lightToUsdCents(amountLight);
-  let feeCents = Math.ceil(grossCents * PAYOUT_FEE_PERCENT + PAYOUT_FEE_FIXED_CENTS);
+export function estimatePayoutFee(
+  amountLight: number,
+  isCrossBorder = false,
+  lightPerUsd = LIGHT_PER_DOLLAR_PAYOUT,
+): PayoutEstimate {
+  const grossCents = lightToUsdCents(amountLight, lightPerUsd);
+  let feeCents = Math.ceil(
+    grossCents * PAYOUT_FEE_PERCENT + PAYOUT_FEE_FIXED_CENTS,
+  );
   if (isCrossBorder) {
     feeCents += Math.ceil(grossCents * CROSS_BORDER_FX_PERCENT);
   }
@@ -103,7 +136,7 @@ export function estimatePayoutFee(amountLight: number, isCrossBorder = false): P
 export async function createConnectedAccount(
   email: string,
   userId: string,
-  country: string = 'US'
+  country: string = 'US',
 ): Promise<{ account_id: string }> {
   const STRIPE_KEY = ensureStripeKey();
 
@@ -143,7 +176,7 @@ export async function createConnectedAccount(
 export async function createOnboardingLink(
   accountId: string,
   returnUrl: string,
-  refreshUrl: string
+  refreshUrl: string,
 ): Promise<{ url: string; expires_at: number }> {
   const STRIPE_KEY = ensureStripeKey();
 
@@ -177,13 +210,16 @@ export async function createOnboardingLink(
 // ============================================
 
 export async function getAccountStatus(
-  accountId: string
+  accountId: string,
 ): Promise<ConnectAccountStatus> {
   const STRIPE_KEY = ensureStripeKey();
 
-  const res = await fetch(`https://api.stripe.com/v1/accounts/${encodeURIComponent(accountId)}`, {
-    headers: { 'Authorization': `Bearer ${STRIPE_KEY}` },
-  });
+  const res = await fetch(
+    `https://api.stripe.com/v1/accounts/${encodeURIComponent(accountId)}`,
+    {
+      headers: { 'Authorization': `Bearer ${STRIPE_KEY}` },
+    },
+  );
 
   if (!res.ok) {
     const err = await res.text();
@@ -220,7 +256,8 @@ export async function getAccountStatus(
 export async function createTransfer(
   amountCents: number,
   accountId: string,
-  metadata: Record<string, string> = {}
+  metadata: Record<string, string> = {},
+  options: StripeRequestOptions = {},
 ): Promise<TransferResult> {
   const STRIPE_KEY = ensureStripeKey();
 
@@ -237,23 +274,36 @@ export async function createTransfer(
     params.set(`metadata[${k}]`, v);
   }
 
+  const headers: Record<string, string> = {
+    'Authorization': `Bearer ${STRIPE_KEY}`,
+    'Content-Type': 'application/x-www-form-urlencoded',
+  };
+  if (options.idempotencyKey) {
+    headers['Idempotency-Key'] = options.idempotencyKey;
+  }
+
   const res = await fetch('https://api.stripe.com/v1/transfers', {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${STRIPE_KEY}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
+    headers,
     body: params.toString(),
   });
 
   if (!res.ok) {
     const err = await res.text();
     console.error('[CONNECT] Transfer creation failed:', err);
-    throw new Error('Failed to create transfer to connected account');
+    throw new StripeConnectRequestError(
+      'Failed to create transfer to connected account',
+      res.status,
+      err,
+    );
   }
 
   const transfer = await res.json() as { id: string; amount: number };
-  return { transfer_id: transfer.id, amount_cents: transfer.amount };
+  return {
+    transfer_id: transfer.id,
+    amount_cents: transfer.amount,
+    response: transfer,
+  };
 }
 
 // ============================================
@@ -265,33 +315,51 @@ export async function createTransfer(
 
 export async function createPayout(
   amountCents: number,
-  accountId: string
+  accountId: string,
+  options: StripeRequestOptions = {},
 ): Promise<PayoutResult> {
   const STRIPE_KEY = ensureStripeKey();
 
   const payoutAmount = Math.round(amountCents);
+  const params = new URLSearchParams({
+    'amount': String(payoutAmount),
+    'currency': 'usd',
+  });
+  for (const [k, v] of Object.entries(options.metadata || {})) {
+    params.set(`metadata[${k}]`, v);
+  }
+
+  const headers: Record<string, string> = {
+    'Authorization': `Bearer ${STRIPE_KEY}`,
+    'Content-Type': 'application/x-www-form-urlencoded',
+    'Stripe-Account': accountId,
+  };
+  if (options.idempotencyKey) {
+    headers['Idempotency-Key'] = options.idempotencyKey;
+  }
 
   const res = await fetch('https://api.stripe.com/v1/payouts', {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${STRIPE_KEY}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Stripe-Account': accountId,
-    },
-    body: new URLSearchParams({
-      'amount': String(payoutAmount),
-      'currency': 'usd',
-    }).toString(),
+    headers,
+    body: params.toString(),
   });
 
   if (!res.ok) {
     const err = await res.text();
     console.error('[CONNECT] Payout creation failed:', err);
-    throw new Error('Failed to create payout to bank account');
+    throw new StripeConnectRequestError(
+      'Failed to create payout to bank account',
+      res.status,
+      err,
+    );
   }
 
   const payout = await res.json() as { id: string; amount: number };
-  return { payout_id: payout.id, amount_cents: payout.amount };
+  return {
+    payout_id: payout.id,
+    amount_cents: payout.amount,
+    response: payout,
+  };
 }
 
 // ============================================
@@ -300,8 +368,8 @@ export async function createPayout(
 // ============================================
 
 export async function getConnectedBalance(
-  accountId: string
-): Promise<{ available_cents: number; pending_cents: number }> {
+  accountId: string,
+): Promise<StripeBalanceSummary> {
   const STRIPE_KEY = ensureStripeKey();
 
   const res = await fetch('https://api.stripe.com/v1/balance', {
@@ -322,8 +390,47 @@ export async function getConnectedBalance(
     pending: Array<{ amount: number; currency: string }>;
   };
 
-  const usdAvailable = balance.available.find(b => b.currency === 'usd');
-  const usdPending = balance.pending.find(b => b.currency === 'usd');
+  const usdAvailable = balance.available.find((b) => b.currency === 'usd');
+  const usdPending = balance.pending.find((b) => b.currency === 'usd');
+
+  return {
+    available_cents: usdAvailable?.amount || 0,
+    pending_cents: usdPending?.amount || 0,
+  };
+}
+
+// ============================================
+// 7. GET PLATFORM BALANCE
+// Used by admin reconciliation to compare payout liabilities against
+// platform-side Stripe funds available for transfers.
+// ============================================
+
+export async function getPlatformBalance(): Promise<StripeBalanceSummary> {
+  const STRIPE_KEY = ensureStripeKey();
+
+  const res = await fetch('https://api.stripe.com/v1/balance', {
+    headers: {
+      'Authorization': `Bearer ${STRIPE_KEY}`,
+    },
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    console.error('[CONNECT] Platform balance check failed:', err);
+    throw new StripeConnectRequestError(
+      'Failed to check platform Stripe balance',
+      res.status,
+      err,
+    );
+  }
+
+  const balance = await res.json() as {
+    available: Array<{ amount: number; currency: string }>;
+    pending: Array<{ amount: number; currency: string }>;
+  };
+
+  const usdAvailable = balance.available.find((b) => b.currency === 'usd');
+  const usdPending = balance.pending.find((b) => b.currency === 'usd');
 
   return {
     available_cents: usdAvailable?.amount || 0,

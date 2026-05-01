@@ -8,7 +8,7 @@ import type {
   InferenceRoutePreference,
   ToolInvocationTelemetryRequest,
 } from '../../../shared/contracts/ai.ts';
-import { BYOK_PROVIDERS, type ActiveBYOKProvider } from '../../../shared/types/index.ts';
+import { type ActiveBYOKProvider, BYOK_PROVIDERS } from '../../../shared/types/index.ts';
 import {
   DEFAULT_CHAT_MODEL,
   DEFAULT_HEAVY_MODEL,
@@ -16,7 +16,7 @@ import {
   fetchFromApi,
   getToken,
 } from './storage';
-import { parseSSEStream, type ChatStreamEvent } from './sse';
+import { type ChatStreamEvent, parseSSEStream } from './sse';
 import type { ToolUsed } from '../types/executionPlan';
 import type { AmbientSuggestion } from '../types/ambientSuggestion';
 import { createDesktopLogger } from './logging';
@@ -226,7 +226,9 @@ export async function* streamChat(opts: {
   } catch (err) {
     yield {
       type: 'error',
-      error: `Network error: ${err instanceof Error ? err.message : 'Connection failed'}. Check your internet connection.`,
+      error: `Network error: ${
+        err instanceof Error ? err.message : 'Connection failed'
+      }. Check your internet connection.`,
     };
     return;
   }
@@ -328,7 +330,9 @@ export async function fetchInferenceSettings(): Promise<InferenceSettings> {
   }
 }
 
-export function getInferenceProviderChoices(settings: InferenceSettings): InferenceProviderChoice[] {
+export function getInferenceProviderChoices(
+  settings: InferenceSettings,
+): InferenceProviderChoice[] {
   const lightReason = settings.light.unavailableReason ||
     (settings.light.balanceLight !== null
       ? `Light balance below ${settings.light.minimumBalanceLight}`
@@ -358,7 +362,9 @@ export function getInferenceProviderChoices(settings: InferenceSettings): Infere
   ];
 }
 
-export function getUsableInferenceProviderChoices(settings: InferenceSettings): InferenceProviderChoice[] {
+export function getUsableInferenceProviderChoices(
+  settings: InferenceSettings,
+): InferenceProviderChoice[] {
   return getInferenceProviderChoices(settings).filter((choice) => choice.usable);
 }
 
@@ -378,19 +384,22 @@ export function getEffectiveInferencePreference(
 
   const requestedProvider = preference.provider;
   const selectedProvider = requestedProvider || settings.selected.provider;
-  const selectedProviderOption = settings.providers.find((option) => option.id === selectedProvider);
+  const selectedProviderOption = settings.providers.find((option) =>
+    option.id === selectedProvider
+  );
   const provider = requestedProvider
     ? selectedProviderOption
     : selectedProviderOption && selectedProviderOption.configured
-      ? selectedProviderOption
-      : settings.providers.find((option) => option.primary) ||
-        settings.providers.find((option) => option.configured) ||
-        selectedProviderOption;
+    ? selectedProviderOption
+    : settings.providers.find((option) => option.primary) ||
+      settings.providers.find((option) => option.configured) ||
+      selectedProviderOption;
 
   return {
     billingMode: 'byok',
     provider: provider?.id || selectedProvider,
-    model: preference.model || provider?.configuredModel || provider?.defaultModel || settings.selected.model,
+    model: preference.model || provider?.configuredModel || provider?.defaultModel ||
+      settings.selected.model,
   };
 }
 
@@ -445,7 +454,10 @@ export function formatInferenceModelContext(contextWindow?: number): string | nu
   return `${compactNumber(contextWindow)} ctx`;
 }
 
-export function formatInferenceModelPrice(inputPrice?: number, outputPrice?: number): string | null {
+export function formatInferenceModelPrice(
+  inputPrice?: number,
+  outputPrice?: number,
+): string | null {
   if (inputPrice === undefined && outputPrice === undefined) return null;
   if (inputPrice !== undefined && outputPrice !== undefined) {
     return `${formatUsd(inputPrice)} in / ${formatUsd(outputPrice)} out per 1M`;
@@ -473,7 +485,9 @@ export function getInferenceSetupState(
 
   if (effective.billingMode === 'light') {
     if (settings.light.usable) return 'ready';
-    return settings.configuredProviderIds.length > 0 ? 'needs_light_balance' : 'needs_inference_setup';
+    return settings.configuredProviderIds.length > 0
+      ? 'needs_light_balance'
+      : 'needs_inference_setup';
   }
 
   const provider = settings.providers.find((option) => option.id === effective.provider);
@@ -488,18 +502,22 @@ export function buildInferenceSetupPrompt(
   if (state === 'ready') return null;
 
   const effective = getEffectiveInferencePreference(settings, preference);
-  const selectedProvider = settings.providers.find((provider) => provider.id === effective.provider);
+  const selectedProvider = settings.providers.find((provider) =>
+    provider.id === effective.provider
+  );
   const configuredProviders = settings.providers.filter((provider) => provider.configured);
 
   if (state === 'needs_light_balance') {
     const balanceText = settings.light.balanceLight === null
       ? 'Your Light balance could not be verified.'
-      : `Your Light balance is ${formatLight(settings.light.balanceLight)}; chat needs at least ${formatLight(settings.light.minimumBalanceLight)}.`;
+      : `Your Light balance is ${formatLight(settings.light.balanceLight)}; chat needs at least ${
+        formatLight(settings.light.minimumBalanceLight)
+      }.`;
     return {
       state,
       title: 'Light balance needed',
       message: `${balanceText} Add Light or switch to a configured BYOK provider before sending.`,
-      primaryAction: { label: 'Top up Light', action: 'open_wallet' },
+      primaryAction: { label: 'Add Light', action: 'open_wallet' },
       secondaryAction: configuredProviders.length > 0
         ? { label: 'Manage providers', action: 'open_settings' }
         : undefined,
@@ -510,7 +528,9 @@ export function buildInferenceSetupPrompt(
     return {
       state,
       title: 'Provider key needed',
-      message: `${selectedProvider?.name || effective.provider} is selected for BYOK inference, but no API key is configured for it.`,
+      message: `${
+        selectedProvider?.name || effective.provider
+      } is selected for BYOK inference, but no API key is configured for it.`,
       primaryAction: { label: 'Add provider key', action: 'open_settings' },
       secondaryAction: settings.light.usable
         ? { label: 'Use Light balance', action: 'use_light' }
@@ -521,9 +541,9 @@ export function buildInferenceSetupPrompt(
   return {
     state,
     title: 'Inference setup needed',
-    message: 'Add a provider API key or top up Light balance before starting a chat.',
+    message: 'Add a provider API key or add Light before starting a chat.',
     primaryAction: { label: 'Add provider key', action: 'open_settings' },
-    secondaryAction: { label: 'Top up Light', action: 'open_wallet' },
+    secondaryAction: { label: 'Add Light', action: 'open_wallet' },
   };
 }
 
@@ -607,7 +627,7 @@ export interface TaskContext {
   }>;
   conventions: Array<{ appName: string; key: string; value: string }>;
   promptBlock: string;
-  modelSuggestion?: string;  // flash broker's recommendation: "flash" or "sonnet"
+  modelSuggestion?: string; // flash broker's recommendation: "flash" or "sonnet"
 }
 
 /**
@@ -788,17 +808,33 @@ export async function fetchBalance(): Promise<number | null> {
 export interface OrchestrateEvent {
   type:
     // Flash phase
-    | 'flash_status' | 'ambient_suggestions' | 'flash_search' | 'flash_found' | 'flash_context' | 'flash_prompt' | 'flash_direct'
+    | 'flash_status'
+    | 'ambient_suggestions'
+    | 'flash_search'
+    | 'flash_found'
+    | 'flash_context'
+    | 'flash_prompt'
+    | 'flash_direct'
     // Heavy phase
-    | 'heavy_status' | 'heavy_text' | 'heavy_recipe'
+    | 'heavy_status'
+    | 'heavy_text'
+    | 'heavy_recipe'
     // Execution phase
-    | 'plan_ready' | 'plan_cancelled' | 'exec_start' | 'exec_result'
+    | 'plan_ready'
+    | 'plan_cancelled'
+    | 'exec_start'
+    | 'exec_result'
     // System agent delegation
     | 'system_agent_spawn'
     // Meta
-    | 'usage' | 'done' | 'error'
+    | 'usage'
+    | 'done'
+    | 'error'
     // Legacy compat
-    | 'status' | 'text' | 'tool_start' | 'result';
+    | 'status'
+    | 'text'
+    | 'tool_start'
+    | 'result';
   text?: string;
   content?: string;
   name?: string;
@@ -849,10 +885,19 @@ export async function* streamOrchestrate(opts: {
   interpreterModel?: string;
   heavyModel?: string;
   inference?: InferenceRoutePreference;
-  scope?: Record<string, { access: 'all' | 'functions' | 'data'; functions?: string[]; conventions?: Record<string, string> }>;
+  scope?: Record<
+    string,
+    {
+      access: 'all' | 'functions' | 'data';
+      functions?: string[];
+      conventions?: Record<string, string>;
+    }
+  >;
   /** Behavioral instructions from the agent's admin notes */
   adminNotes?: string;
-  systemAgentStates?: Array<{ type: string; name: string; tools: string[]; stateSummary: string | null; status: string }>;
+  systemAgentStates?: Array<
+    { type: string; name: string; tools: string[]; stateSummary: string | null; status: string }
+  >;
   systemAgentContext?: { type: string; persona: string; skillsPath: string };
   /** Local project file context gathered client-side for Tool Maker */
   projectContext?: string;
@@ -872,7 +917,10 @@ export async function* streamOrchestrate(opts: {
       body: JSON.stringify(opts),
     });
   } catch (err) {
-    yield { type: 'error', message: `Network error: ${err instanceof Error ? err.message : 'Connection failed'}` };
+    yield {
+      type: 'error',
+      message: `Network error: ${err instanceof Error ? err.message : 'Connection failed'}`,
+    };
     return;
   }
 
@@ -979,7 +1027,9 @@ export async function embedConversation(opts: {
 
 /** Sync system agent states to server KV for Flash's Context Index */
 export async function syncSystemAgentStates(
-  states: Array<{ type: string; name: string; tools: string[]; stateSummary: string | null; status: string }>,
+  states: Array<
+    { type: string; name: string; tools: string[]; stateSummary: string | null; status: string }
+  >,
 ): Promise<void> {
   try {
     await fetchFromApi('/api/user/system-agent-states', {
@@ -1009,11 +1059,15 @@ function formatApiError(err: ApiError, status: number): string {
     case 401:
       return `Authentication failed${detail}`;
     case 402:
-      return `Insufficient balance (${formatLight(err.balance_light || 0)} remaining). Top up at Settings > Billing.`;
+      return `Insufficient balance (${
+        formatLight(err.balance_light || 0)
+      } remaining). Add Light from Wallet.`;
     case 403:
       return err.error || 'Access denied. A full account is required for chat.';
     case 429:
-      return `Rate limit exceeded.${err.resetAt ? ` Try again at ${new Date(err.resetAt).toLocaleTimeString()}.` : ''}`;
+      return `Rate limit exceeded.${
+        err.resetAt ? ` Try again at ${new Date(err.resetAt).toLocaleTimeString()}.` : ''
+      }`;
     case 503:
       return 'Chat service is temporarily unavailable. Please try again shortly.';
     default:

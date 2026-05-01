@@ -47,7 +47,7 @@ Deno.test("settleCallerAppCharge skips transfer when the call is still within th
       inputArgs: { query: "hello" },
       successful: true,
     }, {
-      fetchFn: async (input) => {
+      fetchFn: async (input, init) => {
         const url = String(input);
         calls.push(url);
         if (url.includes("/rpc/increment_caller_usage")) {
@@ -62,7 +62,7 @@ Deno.test("settleCallerAppCharge skips transfer when the call is still within th
 
     assertEquals(result.chargedLight, 0);
     assertEquals(result.insufficientBalance, false);
-    assertEquals(calls.some(url => url.includes("/rpc/transfer_balance")), false);
+    assertEquals(calls.some(url => url.includes("/rpc/transfer_light")), false);
   });
 });
 
@@ -75,9 +75,13 @@ Deno.test("settleCallerAppCharge reports insufficient balance when transfer RPC 
       inputArgs: { query: "world" },
       successful: true,
     }, {
-      fetchFn: async (input) => {
+      fetchFn: async (input, init) => {
         const url = String(input);
-        if (url.includes("/rpc/transfer_balance")) {
+        if (url.includes("/rpc/transfer_light")) {
+          const body = JSON.parse(String(init?.body));
+          assertEquals(body.p_reason, "tool_call");
+          assertEquals(body.p_app_id, "app_123");
+          assertEquals(body.p_function_name, "search");
           return new Response(JSON.stringify([]), {
             status: 200,
             headers: { "Content-Type": "application/json" },

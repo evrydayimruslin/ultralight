@@ -5,7 +5,7 @@
 
 import { getEnv } from '../lib/env.ts';
 import { D1_FREE_TIER, D1_RATE_LIMITS } from '../../shared/types/index.ts';
-import { resolveEnforcementOptions, type EnforcementOptions } from './enforcement.ts';
+import { type EnforcementOptions, resolveEnforcementOptions } from './enforcement.ts';
 
 // ============================================
 // TYPES
@@ -57,12 +57,18 @@ export function checkD1RateLimit(
 
   if (isWrite) {
     if (bucket.writes >= limits.writes) {
-      return { allowed: false, reason: `Rate limit exceeded: ${limits.writes} writes/min for ${tier} tier` };
+      return {
+        allowed: false,
+        reason: `Rate limit exceeded: ${limits.writes} writes/min for ${tier} tier`,
+      };
     }
     bucket.writes++;
   } else {
     if (bucket.reads >= limits.reads) {
-      return { allowed: false, reason: `Rate limit exceeded: ${limits.reads} reads/min for ${tier} tier` };
+      return {
+        allowed: false,
+        reason: `Rate limit exceeded: ${limits.reads} reads/min for ${tier} tier`,
+      };
     }
     bucket.reads++;
   }
@@ -89,7 +95,10 @@ export function acquireD1ConcurrencySlot(
   }
 
   if (bucket.concurrent >= limits.concurrent) {
-    return { allowed: false, reason: `Concurrent limit exceeded: ${limits.concurrent} for ${tier} tier` };
+    return {
+      allowed: false,
+      reason: `Concurrent limit exceeded: ${limits.concurrent} for ${tier} tier`,
+    };
   }
 
   bucket.concurrent++;
@@ -176,7 +185,9 @@ export async function checkD1FreeTierWithOptions(
  * Check if a user has sufficient balance for D1 operations.
  * Returns false (with 402-style reason) if user has exhausted free tier and has zero balance.
  */
-export async function checkD1Balance(userId: string): Promise<{ allowed: boolean; reason?: string }> {
+export async function checkD1Balance(
+  userId: string,
+): Promise<{ allowed: boolean; reason?: string }> {
   return await checkD1BalanceWithOptions(userId);
 }
 
@@ -202,7 +213,7 @@ export async function checkD1BalanceWithOptions(
           'apikey': supabaseKey,
           'Authorization': `Bearer ${supabaseKey}`,
         },
-      }
+      },
     );
 
     if (!res.ok) return unavailableResult();
@@ -217,8 +228,10 @@ export async function checkD1BalanceWithOptions(
     if (!user) return unavailableResult();
 
     // Within free tier — always allowed
-    if (user.d1_rows_read_total < D1_FREE_TIER.ROWS_READ &&
-        user.d1_rows_written_total < D1_FREE_TIER.ROWS_WRITTEN) {
+    if (
+      user.d1_rows_read_total < D1_FREE_TIER.ROWS_READ &&
+      user.d1_rows_written_total < D1_FREE_TIER.ROWS_WRITTEN
+    ) {
       return { allowed: true };
     }
 
@@ -226,7 +239,7 @@ export async function checkD1BalanceWithOptions(
     if (user.balance_light <= 0) {
       return {
         allowed: false,
-        reason: 'Insufficient balance. D1 free tier exceeded. Top up at ultralight.cloud/settings',
+        reason: 'Insufficient balance. D1 free tier exceeded. Add Light from Wallet.',
       };
     }
 

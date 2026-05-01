@@ -24,7 +24,7 @@ Deno.test("runtime AI: BYOK route uses resolved provider model and skips Light d
   try {
     globalThis.fetch = (async (input, init) => {
       const url = String(input);
-      if (url.includes("/rpc/debit_balance")) {
+      if (url.includes("/rpc/debit_light")) {
         debitCalled = true;
       }
       capturedBody = JSON.parse(String(init?.body));
@@ -74,12 +74,13 @@ Deno.test("runtime AI: Light route debits usage after provider response", async 
         }), { status: 200, headers: { "Content-Type": "application/json" } });
       }
 
-      if (url.includes("/rpc/debit_balance")) {
+      if (url.includes("/rpc/debit_light")) {
         debitBody = JSON.parse(String(init?.body));
         return new Response(JSON.stringify([{
           old_balance: 100,
           new_balance: 99.9865,
           was_depleted: false,
+          amount_debited: 0.0135,
         }]), { status: 200, headers: { "Content-Type": "application/json" } });
       }
 
@@ -110,7 +111,8 @@ Deno.test("runtime AI: Light route debits usage after provider response", async 
     assertEquals(response.content, "metered");
     assertEquals(response.usage.cost_light, 0.0135);
     assertEquals(debitBody?.p_user_id, "user-1");
-    assertEquals(debitBody?.p_amount, 0.0135);
+    assertEquals(debitBody?.p_amount_light, 0.0135);
+    assertEquals(debitBody?.p_reason, "ai_chat");
   } finally {
     globalThis.fetch = previousFetch;
     globalWithEnv.__env = previousEnv;

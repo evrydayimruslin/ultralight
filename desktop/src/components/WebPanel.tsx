@@ -1,11 +1,14 @@
 // WebPanel — iframe wrapper for embedding web app pages (Library, Marketplace, Wallet, Settings).
 // Uses a short-lived bridge token for desktop embed auth and shows loading/error states.
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { buildDesktopEmbedUrl, requestDesktopEmbedBridgeToken } from '../lib/auth';
-import { ensureApiBaseAvailable, getToken } from '../lib/storage';
-import DesktopAsyncState from './DesktopAsyncState';
-import { createDesktopLogger } from '../lib/logging';
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  buildDesktopEmbedUrl,
+  requestDesktopEmbedBridgeToken,
+} from "../lib/auth";
+import { ensureApiBaseAvailable, getToken } from "../lib/storage";
+import DesktopAsyncState from "./DesktopAsyncState";
+import { createDesktopLogger } from "../lib/logging";
 
 interface WebPanelProps {
   /** Path appended to API base, e.g. '/dash', '/marketplace' */
@@ -16,12 +19,12 @@ interface WebPanelProps {
   headerExtra?: React.ReactNode;
 }
 
-const webPanelLogger = createDesktopLogger('WebPanel');
+const webPanelLogger = createDesktopLogger("WebPanel");
 
 export default function WebPanel({ path, title, headerExtra }: WebPanelProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [src, setSrc] = useState('');
+  const [src, setSrc] = useState("");
   const [retryKey, setRetryKey] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
@@ -31,7 +34,7 @@ export default function WebPanel({ path, title, headerExtra }: WebPanelProps) {
     async function loadEmbed() {
       setLoading(true);
       setError(null);
-      setSrc('');
+      setSrc("");
 
       try {
         const base = await ensureApiBaseAvailable();
@@ -45,9 +48,12 @@ export default function WebPanel({ path, title, headerExtra }: WebPanelProps) {
           setSrc(nextSrc);
         }
       } catch (err) {
-        webPanelLogger.error('Failed to establish secure embed session', { error: err, path });
+        webPanelLogger.error("Failed to establish secure embed session", {
+          error: err,
+          path,
+        });
         if (!cancelled) {
-          setError('Could not establish a secure session for this panel.');
+          setError("Could not establish a secure session for this panel.");
           setLoading(false);
         }
       }
@@ -62,7 +68,7 @@ export default function WebPanel({ path, title, headerExtra }: WebPanelProps) {
   const handleRetry = useCallback(() => {
     setError(null);
     setLoading(true);
-    setRetryKey(k => k + 1);
+    setRetryKey((k) => k + 1);
   }, []);
 
   return (
@@ -72,7 +78,9 @@ export default function WebPanel({ path, title, headerExtra }: WebPanelProps) {
         <div className="flex items-center gap-3">
           <h1 className="text-h3 text-ul-text tracking-tight">{title}</h1>
         </div>
-        {headerExtra && <div className="flex items-center gap-3">{headerExtra}</div>}
+        {headerExtra && (
+          <div className="flex items-center gap-3">{headerExtra}</div>
+        )}
       </div>
 
       {/* Content */}
@@ -106,7 +114,10 @@ export default function WebPanel({ path, title, headerExtra }: WebPanelProps) {
             setLoading(false);
             setError(`Could not load ${title}.`);
           }}
-          className={`w-full h-full border-0 ${loading || error ? 'invisible' : ''}`}
+          allow="payment *"
+          className={`w-full h-full border-0 ${
+            loading || error ? "invisible" : ""
+          }`}
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
           title={title}
         />

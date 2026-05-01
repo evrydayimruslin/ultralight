@@ -1,13 +1,20 @@
 // Root component — auth gate + view routing + sidebar + top toolbar.
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { DEFAULT_HEAVY_MODEL, fetchFromApi, getToken, isOnboardingComplete, setOnboardingComplete, resetOnboarding } from './lib/storage';
+import {
+  DEFAULT_HEAVY_MODEL,
+  fetchFromApi,
+  getToken,
+  isOnboardingComplete,
+  resetOnboarding,
+  setOnboardingComplete,
+} from './lib/storage';
 import { useAppState } from './hooks/useAppState';
 import { useDeepLink } from './hooks/useDeepLink';
 import { useDesktopUpdater } from './hooks/useDesktopUpdater';
-import { useAgentFleet, type Agent } from './hooks/useAgentFleet';
-import { SYSTEM_AGENTS, deriveSystemAgentId, isSystemAgentType } from './lib/systemAgents';
+import { type Agent, useAgentFleet } from './hooks/useAgentFleet';
+import { deriveSystemAgentId, isSystemAgentType, SYSTEM_AGENTS } from './lib/systemAgents';
 import { openViewWindow } from './lib/multiWindow';
 import AuthGate from './components/AuthGate';
 import DesktopUpdateToast from './components/DesktopUpdateToast';
@@ -35,15 +42,15 @@ function provisionKeyInBackground(token: string) {
       'Content-Type': 'application/json',
     },
   })
-    .then(res => res.json())
-    .then(data => {
+    .then((res) => res.json())
+    .then((data) => {
       if (data.ok) {
         appLogger.debug('OpenRouter key provisioned');
       } else {
         appLogger.warn('OpenRouter key provisioning failed', { error: data.error });
       }
     })
-    .catch(err => appLogger.warn('OpenRouter key provisioning errored', { error: err }));
+    .catch((err) => appLogger.warn('OpenRouter key provisioning errored', { error: err }));
 }
 
 export default function App() {
@@ -207,7 +214,7 @@ export default function App() {
   const [newChatKey, setNewChatKey] = useState(0);
   const handleNewAgent = useCallback(() => {
     setActiveAgent(null);
-    setNewChatKey(k => k + 1);
+    setNewChatKey((k) => k + 1);
     navigateToNewChat();
   }, [setActiveAgent, navigateToNewChat]);
 
@@ -229,10 +236,20 @@ export default function App() {
 
   const handleRenameAgent = useCallback(async (id: string, newName: string) => {
     await invoke('db_update_agent', {
-      id, name: newName, status: null, adminNotes: null,
-      endGoal: null, context: null, permissionLevel: null, model: null,
-      projectDir: null, connectedAppIds: null, connectedApps: null,
-      initialTask: null, stateSummary: null, systemAgentType: null,
+      id,
+      name: newName,
+      status: null,
+      adminNotes: null,
+      endGoal: null,
+      context: null,
+      permissionLevel: null,
+      model: null,
+      projectDir: null,
+      connectedAppIds: null,
+      connectedApps: null,
+      initialTask: null,
+      stateSummary: null,
+      systemAgentType: null,
     });
     await refreshAgents();
   }, [refreshAgents]);
@@ -242,15 +259,15 @@ export default function App() {
     try {
       const id = crypto.randomUUID();
       const conversationId = crypto.randomUUID();
-      const config = SYSTEM_AGENTS.find(c => c.type === agentType);
+      const config = SYSTEM_AGENTS.find((c) => c.type === agentType);
       if (!config) return;
 
       // Copy model from the canonical agent if it exists
-      const canonical = agents.find(a => a.is_system === 1 && a.system_agent_type === agentType);
+      const canonical = agents.find((a) => a.is_system === 1 && a.system_agent_type === agentType);
       const model = canonical?.model || DEFAULT_HEAVY_MODEL;
 
       // Auto-increment instance number
-      const instanceCount = agents.filter(a => a.system_agent_type === agentType).length;
+      const instanceCount = agents.filter((a) => a.system_agent_type === agentType).length;
       const instanceName = `${agentName} (${instanceCount})`;
 
       await invoke('db_create_agent', {
@@ -293,7 +310,7 @@ export default function App() {
   // Update mounted sets when view changes
   useEffect(() => {
     if (view.kind === 'agent') {
-      setMountedAgents(prev => {
+      setMountedAgents((prev) => {
         if (prev.has(view.agentId)) return prev;
         return new Set(prev).add(view.agentId);
       });
@@ -302,7 +319,7 @@ export default function App() {
     // switching between different apps always loads a fresh iframe. Visits
     // are short-lived (info pages) so there's no perf cost.
     if (view.kind === 'app-store') return;
-    setMountedViews(prev => {
+    setMountedViews((prev) => {
       if (prev.has(view.kind)) return prev;
       return new Set(prev).add(view.kind);
     });
@@ -310,18 +327,18 @@ export default function App() {
 
   // Collect the set of agent IDs we should keep cached
   // (prune agents that were deleted from the fleet)
-  const agentIds = useMemo(() => new Set(agents.map(a => a.id)), [agents]);
+  const agentIds = useMemo(() => new Set(agents.map((a) => a.id)), [agents]);
   const cachedAgentIds = useMemo(
-    () => [...mountedAgents].filter(id => agentIds.has(id)),
-    [mountedAgents, agentIds]
+    () => [...mountedAgents].filter((id) => agentIds.has(id)),
+    [mountedAgents, agentIds],
   );
 
   // Loading state
   if (checking) {
     return (
       <>
-        <div className="flex items-center justify-center h-full bg-white">
-          <p className="text-body text-ul-text-muted">Loading...</p>
+        <div className='flex items-center justify-center h-full bg-white'>
+          <p className='text-body text-ul-text-muted'>Loading...</p>
         </div>
         <DesktopUpdateToast updater={desktopUpdater} />
       </>
@@ -349,115 +366,142 @@ export default function App() {
 
   return (
     <>
-      <div className="flex flex-col h-full">
-      <TopToolbar />
-      <div className="flex flex-1 min-h-0">
-        <NavSidebar
-          agents={agents}
-          activeView={view}
-          isOpen={sidebarOpen}
-          onboardingHighlight={onboardingHighlight}
-          onShowTutorial={handleShowTutorial}
-          onNavigateHome={() => { dismissTutorial(); navigateHome(); }}
-          onNavigateToCapabilities={() => { dismissTutorial(); navigateToCapabilities(); }}
-          onNavigateToProfile={() => { dismissTutorial(); navigateToProfile(); }}
-          onNavigateToWallet={() => { dismissTutorial(); navigateToWallet(); }}
-          onNavigateToSettings={() => { dismissTutorial(); navigateToSettings(); }}
-          onSelectAgent={(id) => { dismissTutorial(); handleSelectAgent(id); }}
-          onNewAgent={() => { dismissTutorial(); handleNewAgent(); }}
-          onDeleteAgent={handleDeleteAgent}
-          onStopAgent={handleStopAgent}
-          onNewSession={handleNewSession}
-          onRenameAgent={handleRenameAgent}
-          isAgentRunning={isAgentRunning}
-          onOpenInNewWindow={openViewWindow}
-          onNewSystemAgentSession={handleNewSystemAgentSession}
-        />
+      <div className='flex flex-col h-full'>
+        <TopToolbar />
+        <div className='flex flex-1 min-h-0'>
+          <NavSidebar
+            agents={agents}
+            activeView={view}
+            isOpen={sidebarOpen}
+            onboardingHighlight={onboardingHighlight}
+            onShowTutorial={handleShowTutorial}
+            onNavigateHome={() => {
+              dismissTutorial();
+              navigateHome();
+            }}
+            onNavigateToCapabilities={() => {
+              dismissTutorial();
+              navigateToCapabilities();
+            }}
+            onNavigateToProfile={() => {
+              dismissTutorial();
+              navigateToProfile();
+            }}
+            onNavigateToWallet={() => {
+              dismissTutorial();
+              navigateToWallet();
+            }}
+            onNavigateToSettings={() => {
+              dismissTutorial();
+              navigateToSettings();
+            }}
+            onSelectAgent={(id) => {
+              dismissTutorial();
+              handleSelectAgent(id);
+            }}
+            onNewAgent={() => {
+              dismissTutorial();
+              handleNewAgent();
+            }}
+            onDeleteAgent={handleDeleteAgent}
+            onStopAgent={handleStopAgent}
+            onNewSession={handleNewSession}
+            onRenameAgent={handleRenameAgent}
+            isAgentRunning={isAgentRunning}
+            onOpenInNewWindow={openViewWindow}
+            onNewSystemAgentSession={handleNewSystemAgentSession}
+          />
 
-        {/* Content area — relative container so onboarding overlay stays within */}
-        <div className="relative flex-1 flex flex-col min-w-0 min-h-0">
+          {/* Content area — relative container so onboarding overlay stays within */}
+          <div className='relative flex-1 flex flex-col min-w-0 min-h-0'>
+            {/* Cached singleton views — mounted once, then shown/hidden */}
+            {mountedViews.has('home') && (
+              <div style={paneStyle(view.kind === 'home')}>
+                <HomeView
+                  onNavigateToAgent={navigateToAgent}
+                />
+              </div>
+            )}
 
-        {/* Cached singleton views — mounted once, then shown/hidden */}
-        {mountedViews.has('home') && (
-          <div style={paneStyle(view.kind === 'home')}>
-            <HomeView
-              onNavigateToAgent={navigateToAgent}
-            />
-          </div>
-        )}
+            {mountedViews.has('capabilities') && (
+              <div style={paneStyle(view.kind === 'capabilities')}>
+                <WebPanel path='/capabilities' title='Tools' />
+              </div>
+            )}
 
-        {mountedViews.has('capabilities') && (
-          <div style={paneStyle(view.kind === 'capabilities')}>
-            <WebPanel path="/capabilities" title="Tools" />
-          </div>
-        )}
-
-        {/*
+            {
+              /*
           App store detail view — NOT cached in mountedViews. Only rendered
           while the current view is 'app-store', so it unmounts on navigation
           away. Key on appId so switching between apps forces a fresh iframe.
-        */}
-        {view.kind === 'app-store' && (
-          <div style={paneStyle(true)}>
-            <WebPanel
-              key={view.appId}
-              path={`/app/${view.appId}`}
-              title={view.appName ?? 'App'}
-            />
-          </div>
-        )}
+        */
+            }
+            {view.kind === 'app-store' && (
+              <div style={paneStyle(true)}>
+                <WebPanel
+                  key={view.appId}
+                  path={`/app/${view.appId}`}
+                  title={view.appName ?? 'App'}
+                />
+              </div>
+            )}
 
-        {mountedViews.has('profile') && (
-          <div style={paneStyle(view.kind === 'profile')}>
-            <WebPanel path="/my-profile" title="Profile" />
-          </div>
-        )}
+            {mountedViews.has('profile') && (
+              <div style={paneStyle(view.kind === 'profile')}>
+                <WebPanel path='/my-profile' title='Profile' />
+              </div>
+            )}
 
-        {mountedViews.has('wallet') && (
-          <div style={paneStyle(view.kind === 'wallet')}>
-            <WebPanel path="/settings/billing" title="Wallet" />
-          </div>
-        )}
+            {mountedViews.has('wallet') && (
+              <div style={paneStyle(view.kind === 'wallet')}>
+                <WebPanel path='/wallet' title='Wallet' />
+              </div>
+            )}
 
-        {mountedViews.has('settings') && (
-          <div style={paneStyle(view.kind === 'settings')}>
-            <WebPanel path="/settings" title="Settings" headerExtra={<SpendingSettings />} />
-          </div>
-        )}
+            {mountedViews.has('settings') && (
+              <div style={paneStyle(view.kind === 'settings')}>
+                <WebPanel path='/settings' title='Settings' headerExtra={<SpendingSettings />} />
+              </div>
+            )}
 
-        {/* New-chat view — uses key to force fresh instance */}
-        {view.kind === 'new-chat' && (
-          <div style={paneStyle(true)}>
-            <ChatView
-              key={`new-chat-${newChatKey}`}
-              onNavigateHome={navigateHome}
-              onNavigateToAgent={navigateToAgent}
-            />
-          </div>
-        )}
+            {/* New-chat view — uses key to force fresh instance */}
+            {view.kind === 'new-chat' && (
+              <div style={paneStyle(true)}>
+                <ChatView
+                  key={`new-chat-${newChatKey}`}
+                  onNavigateHome={navigateHome}
+                  onNavigateToAgent={navigateToAgent}
+                />
+              </div>
+            )}
 
-        {/* Cached agent ChatViews — one per visited agent */}
-        {cachedAgentIds.map(agentId => (
-          <div key={agentId} style={paneStyle(view.kind === 'agent' && view.agentId === agentId)}>
-            <ChatView
-              agentId={agentId}
-              initialMessage={view.kind === 'agent' && view.agentId === agentId ? view.initialMessage : undefined}
-              onNavigateHome={navigateHome}
-              onNavigateToAgent={navigateToAgent}
-              onShowTutorial={handleShowTutorial}
-            />
-          </div>
-        ))}
+            {/* Cached agent ChatViews — one per visited agent */}
+            {cachedAgentIds.map((agentId) => (
+              <div
+                key={agentId}
+                style={paneStyle(view.kind === 'agent' && view.agentId === agentId)}
+              >
+                <ChatView
+                  agentId={agentId}
+                  initialMessage={view.kind === 'agent' && view.agentId === agentId
+                    ? view.initialMessage
+                    : undefined}
+                  onNavigateHome={navigateHome}
+                  onNavigateToAgent={navigateToAgent}
+                  onShowTutorial={handleShowTutorial}
+                />
+              </div>
+            ))}
 
-        {/* Onboarding wizard overlay — inside content area, beside sidebar */}
-        {showOnboarding && (
-          <OnboardingWizard
-            onComplete={handleOnboardingComplete}
-            onHighlight={setOnboardingHighlight}
-          />
-        )}
+            {/* Onboarding wizard overlay — inside content area, beside sidebar */}
+            {showOnboarding && (
+              <OnboardingWizard
+                onComplete={handleOnboardingComplete}
+                onHighlight={setOnboardingHighlight}
+              />
+            )}
+          </div>
         </div>
-      </div>
       </div>
       <DesktopUpdateToast updater={desktopUpdater} />
     </>

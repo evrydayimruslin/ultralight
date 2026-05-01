@@ -27,6 +27,7 @@ export interface Env {
   CF_ACCOUNT_ID: string;
   CF_API_TOKEN: string;
   STRIPE_SECRET_KEY: string;
+  STRIPE_PUBLISHABLE_KEY: string;
   STRIPE_WEBHOOK_SECRET: string;
   OPENROUTER_API_KEY: string;
   BYOK_ENCRYPTION_KEY: string;
@@ -94,6 +95,6 @@ export function getEnv(key?: string): Env | string {
     return globalThis.__env;
   }
   const val = globalThis.__env?.[key];
-  if (typeof val === 'string') return val;
-  return '';
+  if (typeof val === "string") return val;
+  return "";
 }

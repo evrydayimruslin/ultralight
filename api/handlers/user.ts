@@ -6,16 +6,13 @@ import { authenticate } from "./auth.ts";
 import { createUserService, type UserProfile } from "../services/user.ts";
 import { validateAPIKey } from "../services/ai.ts";
 import {
-  BYOK_PROVIDERS,
-  isActiveBYOKProvider,
   type ActiveBYOKProvider,
+  BYOK_PROVIDERS,
   type BYOKProviderInfo,
   DATA_RATE_LIGHT_PER_MB_PER_HOUR,
   formatLight,
   HOSTING_RATE_LIGHT_PER_MB_PER_HOUR,
-  LIGHT_PER_DOLLAR_DESKTOP,
-  LIGHT_PER_DOLLAR_PAYOUT,
-  LIGHT_PER_DOLLAR_WEB,
+  isActiveBYOKProvider,
   type Tier,
 } from "../../shared/types/index.ts";
 import {
@@ -54,6 +51,8 @@ import {
   validateConnectOnboardRequest,
   validateHostingCheckoutRequest,
   validateSupabaseOauthConnectRequest,
+  validateWalletFundingRequest,
+  validateWireFundingRequest,
   validateWithdrawalRequest,
 } from "../services/platform-request-validation.ts";
 import {
@@ -65,21 +64,34 @@ import {
 } from "../services/marketplace-request-validation.ts";
 import { createServerLogger } from "../services/logging.ts";
 import { isValidModelId } from "../services/model-validation.ts";
+import {
+  getBillingConfig,
+  usdCentsToLight,
+} from "../services/billing-config.ts";
+import {
+  buildStripeDepositFailure,
+  buildStripeDepositFinalization,
+  buildStripeDepositPending,
+  buildStripeDepositReversal,
+  claimStripeEvent,
+  finalizeLightDeposit,
+  finishStripeEvent,
+  markLightDepositFailed,
+  recordLightDepositReversal,
+  recordPendingLightDeposit,
+  type StripeWebhookEvent,
+} from "../services/stripe-deposits.ts";
+import {
+  createWalletExpressPaymentIntent,
+  WalletFundingError,
+} from "../services/stripe-wallet-funding.ts";
+import {
+  createWireTransferPaymentIntent,
+  WireFundingError,
+} from "../services/stripe-wire-funding.ts";
 
 const stripeLogger = createServerLogger("STRIPE");
 const userLogger = createServerLogger("USER");
-
-// Stripe webhook idempotency: track processed event IDs in memory (1hr TTL).
-// Prevents double-crediting from Stripe's automatic webhook retries.
-const processedStripeEvents = new Map<string, number>();
-
-// Cleanup old entries lazily (CF Workers don't allow setInterval at module scope)
-function cleanupProcessedEvents() {
-  const cutoff = Date.now() - 60 * 60 * 1000;
-  for (const [id, timestamp] of processedStripeEvents) {
-    if (timestamp < cutoff) processedStripeEvents.delete(id);
-  }
-}
 
 type JsonRecord = Record<string, unknown>;
 type UserProfileUpdates = Partial<
@@ -184,6 +196,10 @@ type GrantedUserSummary = JsonRecord & {
 interface HostingBalanceRow {
   balance_light: number | null;
   escrow_light: number | null;
+  deposit_balance_light: number | null;
+  earned_balance_light: number | null;
+  escrow_deposit_light: number | null;
+  escrow_earned_light: number | null;
   hosting_last_billed_at: string | null;
   auto_topup_enabled: boolean | null;
   auto_topup_threshold_light: number | null;
@@ -202,6 +218,7 @@ interface StripeConnectStatusRow {
   stripe_connect_onboarded: boolean;
   stripe_connect_payouts_enabled: boolean;
   total_earned_light: number;
+  earned_balance_light: number | null;
 }
 
 interface StripeConnectWithdrawRow extends StripeConnectStatusRow {
@@ -225,6 +242,73 @@ async function readJsonRows<T>(response: Response): Promise<T[]> {
 async function readFirstJsonRow<T>(response: Response): Promise<T | null> {
   const [row] = await readJsonRows<T>(response);
   return row ?? null;
+}
+
+async function getOrCreateStripeCustomerForUser(
+  userId: string,
+  stripeSecretKey: string,
+): Promise<{ stripeCustomerId: string; email: string | null }> {
+  const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
+    getSupabaseEnv();
+  const userDataRes = await fetch(
+    `${sbUrl}/rest/v1/users?id=eq.${userId}&select=stripe_customer_id,email`,
+    {
+      headers: {
+        "apikey": sbKey,
+        "Authorization": `Bearer ${sbKey}`,
+      },
+    },
+  );
+  if (!userDataRes.ok) throw new Error("Failed to read user");
+  const userData = await readFirstJsonRow<StripeCustomerRow>(
+    userDataRes,
+  );
+  let stripeCustomerId = userData?.stripe_customer_id || null;
+  const email = userData?.email || null;
+
+  if (stripeCustomerId) {
+    return { stripeCustomerId, email };
+  }
+
+  const custRes = await fetch("https://api.stripe.com/v1/customers", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${stripeSecretKey}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      "email": email || "",
+      "metadata[user_id]": userId,
+      "metadata[platform]": "ultralight",
+    }).toString(),
+  });
+
+  if (!custRes.ok) {
+    console.error(
+      "[STRIPE] Customer creation failed:",
+      await custRes.text(),
+    );
+    throw new Error("Failed to create payment profile");
+  }
+
+  const customer = await custRes.json() as { id: string };
+  stripeCustomerId = customer.id;
+
+  await fetch(
+    `${sbUrl}/rest/v1/users?id=eq.${userId}`,
+    {
+      method: "PATCH",
+      headers: {
+        "apikey": sbKey,
+        "Authorization": `Bearer ${sbKey}`,
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal",
+      },
+      body: JSON.stringify({ stripe_customer_id: stripeCustomerId }),
+    },
+  );
+
+  return { stripeCustomerId, email };
 }
 
 function isTier(value: unknown): value is Tier {
@@ -281,7 +365,7 @@ export async function handleUser(request: Request): Promise<Response> {
 
   // POST /api/webhooks/stripe — handle Stripe webhook events
   // Verified by webhook signature, no auth token needed.
-  // Idempotent: deduplicates by Stripe event ID (in-memory cache, 1hr TTL).
+  // Idempotent: deduplicates by Stripe event ID in the durable Stripe event ledger.
   if (path === "/api/webhooks/stripe" && method === "POST") {
     try {
       const STRIPE_WEBHOOK_SECRET = getEnv("STRIPE_WEBHOOK_SECRET");
@@ -303,129 +387,130 @@ export async function handleUser(request: Request): Promise<Response> {
         return error("Invalid webhook signature", 400);
       }
 
-      const event = JSON.parse(rawBody) as {
-        id: string;
-        type: string;
-        data: {
-          object: {
-            metadata?: {
-              user_id?: string;
-              amount_cents?: string;
-              light_amount?: string;
-              type?: string;
-            };
-            payment_status?: string;
-          };
-        };
-      };
-
-      // Idempotency: skip if we've already processed this event
-      if (processedStripeEvents.has(event.id)) {
-        stripeLogger.info("Skipping duplicate webhook event", {
+      const event = JSON.parse(rawBody) as StripeWebhookEvent;
+      const claim = await claimStripeEvent(event);
+      if (!claim.claimed) {
+        stripeLogger.info("Skipping already claimed Stripe webhook event", {
           event_id: event.id,
           event_type: event.type,
+          status: claim.status,
+          process_attempts: claim.processAttempts,
         });
-        return json({ received: true, duplicate: true });
+        return json({
+          received: true,
+          duplicate: true,
+          status: claim.status,
+        });
       }
-      processedStripeEvents.set(event.id, Date.now());
 
-      // Handle checkout.session.completed (manual deposits)
-      if (event.type === "checkout.session.completed") {
-        const session = event.data.object;
-        const eventUserId = session.metadata?.user_id;
-        const lightAmount = parseInt(session.metadata?.light_amount || "0", 10);
-        const depositType = session.metadata?.type;
-
-        if (
-          eventUserId && lightAmount > 0 && depositType === "hosting_deposit" &&
-          session.payment_status === "paid"
-        ) {
-          stripeLogger.info("Crediting manual hosting deposit", {
+      let handled = false;
+      try {
+        const pendingDeposit = buildStripeDepositPending(event);
+        if (pendingDeposit) {
+          await recordPendingLightDeposit(pendingDeposit);
+          handled = true;
+          stripeLogger.info("Recorded pending Light deposit", {
             event_id: event.id,
             event_type: event.type,
-            user_id: eventUserId,
-            amount_light: lightAmount,
+            user_id: pendingDeposit.userId,
+            amount_cents: pendingDeposit.requestedAmountCents,
+            funding_method: pendingDeposit.fundingMethod,
           });
-          const creditResult = await creditBalance(eventUserId, lightAmount);
-          // Log billing transaction
-          try {
-            const { SUPABASE_URL: sUrl, SUPABASE_SERVICE_ROLE_KEY: sKey } =
-              getSupabaseEnv();
-            await fetch(`${sUrl}/rest/v1/billing_transactions`, {
-              method: "POST",
-              headers: {
-                "apikey": sKey,
-                "Authorization": `Bearer ${sKey}`,
-                "Content-Type": "application/json",
-                "Prefer": "return=minimal",
-              },
-              body: JSON.stringify({
-                user_id: eventUserId,
-                type: "credit",
-                category: "deposit",
-                description: `Deposit: ${formatLight(lightAmount)}`,
-                amount_light: lightAmount,
-                balance_after_light: creditResult.new_balance_light,
-                metadata: { stripe_event_id: event.id },
-              }),
-            });
-          } catch { /* don't break webhook for logging */ }
         }
-      }
 
-      // Handle payment_intent.succeeded (auto top-up charges)
-      if (event.type === "payment_intent.succeeded") {
-        const intent = event.data.object;
-        const eventUserId = intent.metadata?.user_id;
-        const lightAmount = parseInt(intent.metadata?.light_amount || "0", 10);
-        const intentType = intent.metadata?.type;
-
-        if (eventUserId && lightAmount > 0 && intentType === "auto_topup") {
-          stripeLogger.info("Crediting auto top-up charge", {
+        const finalDeposit = buildStripeDepositFinalization(event);
+        if (finalDeposit) {
+          const result = await finalizeLightDeposit(finalDeposit);
+          handled = true;
+          if (
+            (result.creditedLight || 0) > 0 &&
+            (result.previousBalanceLight || 0) <= 0
+          ) {
+            await unsuspendContent(finalDeposit.userId);
+          }
+          stripeLogger.info("Finalized Light deposit", {
             event_id: event.id,
             event_type: event.type,
-            user_id: eventUserId,
-            amount_light: lightAmount,
+            user_id: finalDeposit.userId,
+            amount_cents: finalDeposit.amountCents,
+            amount_light: result.creditedLight || 0,
+            funding_method: finalDeposit.fundingMethod,
+            status: result.status,
+            already_finalized: result.alreadyFinalized || false,
           });
-          const topupResult = await creditBalance(eventUserId, lightAmount);
-          // Log billing transaction
-          try {
-            const { SUPABASE_URL: sUrl, SUPABASE_SERVICE_ROLE_KEY: sKey } =
-              getSupabaseEnv();
-            await fetch(`${sUrl}/rest/v1/billing_transactions`, {
-              method: "POST",
-              headers: {
-                "apikey": sKey,
-                "Authorization": `Bearer ${sKey}`,
-                "Content-Type": "application/json",
-                "Prefer": "return=minimal",
-              },
-              body: JSON.stringify({
-                user_id: eventUserId,
-                type: "credit",
-                category: "auto_topup",
-                description: `Auto top-up: ${formatLight(lightAmount)}`,
-                amount_light: lightAmount,
-                balance_after_light: topupResult.new_balance_light,
-                metadata: { stripe_event_id: event.id },
-              }),
-            });
-          } catch { /* don't break webhook for logging */ }
         }
-      }
 
-      // Handle account.updated (Connect onboarding status changes)
-      if (event.type === "account.updated") {
-        const account = event.data.object as {
-          id: string;
-          details_submitted?: boolean;
-          payouts_enabled?: boolean;
-        };
+        const failedDeposit = buildStripeDepositFailure(event);
+        if (failedDeposit) {
+          await markLightDepositFailed(failedDeposit);
+          handled = true;
+          stripeLogger.warn("Marked Light deposit failed", {
+            event_id: event.id,
+            event_type: event.type,
+            user_id: failedDeposit.userId || null,
+            funding_method: failedDeposit.fundingMethod,
+            failure_code: failedDeposit.failureCode || null,
+          });
+        }
 
-        if (account.id) {
+        const reversal = buildStripeDepositReversal(event);
+        if (reversal) {
+          const result = await recordLightDepositReversal(reversal);
+          handled = true;
+          stripeLogger.warn("Recorded Light deposit reversal", {
+            event_id: event.id,
+            event_type: event.type,
+            reason: reversal.reason,
+            amount_cents: reversal.amountCents,
+            recovered_light: result?.recoveredLight || 0,
+            unrecovered_light: result?.unrecoveredLight || 0,
+          });
+        }
+
+        // Handle account.updated (Connect onboarding status changes)
+        if (event.type === "account.updated") {
+          const account = event.data.object as {
+            id: string;
+            details_submitted?: boolean;
+            payouts_enabled?: boolean;
+          };
+
+          if (account.id) {
+            const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } =
+              getSupabaseEnv();
+            await fetch(
+              `${SUPABASE_URL}/rest/v1/users?stripe_connect_account_id=eq.${account.id}`,
+              {
+                method: "PATCH",
+                headers: {
+                  "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                  "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                  "Content-Type": "application/json",
+                  "Prefer": "return=minimal",
+                },
+                body: JSON.stringify({
+                  stripe_connect_onboarded: account.details_submitted || false,
+                  stripe_connect_payouts_enabled: account.payouts_enabled ||
+                    false,
+                }),
+              },
+            );
+            handled = true;
+            stripeLogger.info("Updated Stripe Connect account state", {
+              event_id: event.id,
+              account_id: account.id,
+              payouts_enabled: account.payouts_enabled || false,
+              details_submitted: account.details_submitted || false,
+            });
+          }
+        }
+
+        // Handle payout.paid (money arrived in developer's bank)
+        if (event.type === "payout.paid") {
+          const payout = event.data.object as { id: string };
           const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
           await fetch(
-            `${SUPABASE_URL}/rest/v1/users?stripe_connect_account_id=eq.${account.id}`,
+            `${SUPABASE_URL}/rest/v1/payouts?stripe_payout_id=eq.${payout.id}`,
             {
               method: "PATCH",
               headers: {
@@ -435,115 +520,107 @@ export async function handleUser(request: Request): Promise<Response> {
                 "Prefer": "return=minimal",
               },
               body: JSON.stringify({
-                stripe_connect_onboarded: account.details_submitted || false,
-                stripe_connect_payouts_enabled: account.payouts_enabled ||
-                  false,
+                status: "paid",
+                completed_at: new Date().toISOString(),
+                stripe_payout_status: "succeeded",
+                stripe_payout_completed_at: new Date().toISOString(),
+                processor_claimed_at: null,
               }),
             },
           );
-          stripeLogger.info("Updated Stripe Connect account state", {
+          handled = true;
+          stripeLogger.info("Marked payout as paid", {
             event_id: event.id,
-            account_id: account.id,
-            payouts_enabled: account.payouts_enabled || false,
-            details_submitted: account.details_submitted || false,
+            payout_id: payout.id,
           });
         }
-      }
 
-      // Handle payout.paid (money arrived in developer's bank)
-      if (event.type === "payout.paid") {
-        const payout = event.data.object as { id: string };
-        const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
-        await fetch(
-          `${SUPABASE_URL}/rest/v1/payouts?stripe_payout_id=eq.${payout.id}`,
-          {
-            method: "PATCH",
-            headers: {
-              "apikey": SUPABASE_SERVICE_ROLE_KEY,
-              "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-              "Content-Type": "application/json",
-              "Prefer": "return=minimal",
-            },
-            body: JSON.stringify({
-              status: "paid",
-              completed_at: new Date().toISOString(),
-            }),
-          },
-        );
-        stripeLogger.info("Marked payout as paid", {
-          event_id: event.id,
-          payout_id: payout.id,
-        });
-      }
+        // Handle payout.failed (payout to bank failed — refund balance)
+        if (event.type === "payout.failed") {
+          const payout = event.data.object as {
+            id: string;
+            failure_message?: string;
+          };
+          const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+          const sbHeaders = {
+            "apikey": SUPABASE_SERVICE_ROLE_KEY,
+            "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          };
 
-      // Handle payout.failed (payout to bank failed — refund balance)
-      if (event.type === "payout.failed") {
-        const payout = event.data.object as {
-          id: string;
-          failure_message?: string;
-        };
-        const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
-        const sbHeaders = {
-          "apikey": SUPABASE_SERVICE_ROLE_KEY,
-          "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        };
-
-        // Find the payout record by stripe_payout_id
-        const payoutRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/payouts?stripe_payout_id=eq.${payout.id}&status=eq.processing&select=id`,
-          { headers: sbHeaders },
-        );
-        if (payoutRes.ok) {
-          const payoutRows = await payoutRes.json() as Array<{ id: string }>;
-          for (const p of payoutRows) {
-            await fetch(`${SUPABASE_URL}/rest/v1/rpc/fail_payout_refund`, {
-              method: "POST",
-              headers: { ...sbHeaders, "Content-Type": "application/json" },
-              body: JSON.stringify({
-                p_payout_id: p.id,
-                p_failure_reason: payout.failure_message || "payout_failed",
-              }),
-            });
+          // Find the payout record by stripe_payout_id
+          const payoutRes = await fetch(
+            `${SUPABASE_URL}/rest/v1/payouts?stripe_payout_id=eq.${payout.id}&status=eq.processing&select=id`,
+            { headers: sbHeaders },
+          );
+          if (payoutRes.ok) {
+            const payoutRows = await payoutRes.json() as Array<{ id: string }>;
+            for (const p of payoutRows) {
+              await fetch(`${SUPABASE_URL}/rest/v1/rpc/fail_payout_refund`, {
+                method: "POST",
+                headers: { ...sbHeaders, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  p_payout_id: p.id,
+                  p_failure_reason: payout.failure_message || "payout_failed",
+                }),
+              });
+            }
           }
+          handled = true;
+          stripeLogger.warn("Processed failed payout refund path", {
+            event_id: event.id,
+            payout_id: payout.id,
+            failure_message: payout.failure_message || "unknown reason",
+          });
         }
-        stripeLogger.warn("Processed failed payout refund path", {
-          event_id: event.id,
-          payout_id: payout.id,
-          failure_message: payout.failure_message || "unknown reason",
-        });
-      }
 
-      // Handle transfer.reversed (transfer from platform to connected account reversed)
-      if (event.type === "transfer.reversed") {
-        const transfer = event.data.object as { id: string };
-        const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
-        const sbHeaders = {
-          "apikey": SUPABASE_SERVICE_ROLE_KEY,
-          "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        };
+        // Handle transfer.reversed (transfer from platform to connected account reversed)
+        if (event.type === "transfer.reversed") {
+          const transfer = event.data.object as { id: string };
+          const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+          const sbHeaders = {
+            "apikey": SUPABASE_SERVICE_ROLE_KEY,
+            "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          };
 
-        // Find payout record by transfer ID and refund
-        const payoutRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/payouts?stripe_transfer_id=eq.${transfer.id}&status=in.(pending,processing)&select=id`,
-          { headers: sbHeaders },
-        );
-        if (payoutRes.ok) {
-          const payoutRows = await payoutRes.json() as Array<{ id: string }>;
-          for (const p of payoutRows) {
-            await fetch(`${SUPABASE_URL}/rest/v1/rpc/fail_payout_refund`, {
-              method: "POST",
-              headers: { ...sbHeaders, "Content-Type": "application/json" },
-              body: JSON.stringify({
-                p_payout_id: p.id,
-                p_failure_reason: "transfer_reversed",
-              }),
-            });
+          // Find payout record by transfer ID and refund
+          const payoutRes = await fetch(
+            `${SUPABASE_URL}/rest/v1/payouts?stripe_transfer_id=eq.${transfer.id}&status=in.(pending,processing)&select=id`,
+            { headers: sbHeaders },
+          );
+          if (payoutRes.ok) {
+            const payoutRows = await payoutRes.json() as Array<{ id: string }>;
+            for (const p of payoutRows) {
+              await fetch(`${SUPABASE_URL}/rest/v1/rpc/fail_payout_refund`, {
+                method: "POST",
+                headers: { ...sbHeaders, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  p_payout_id: p.id,
+                  p_failure_reason: "transfer_reversed",
+                }),
+              });
+            }
           }
+          handled = true;
+          stripeLogger.warn("Processed transfer reversal", {
+            event_id: event.id,
+            transfer_id: transfer.id,
+          });
         }
-        stripeLogger.warn("Processed transfer reversal", {
-          event_id: event.id,
-          transfer_id: transfer.id,
+
+        await finishStripeEvent(event.id, handled ? "processed" : "ignored", {
+          event_type: event.type,
+          handled,
         });
+      } catch (processingErr) {
+        await finishStripeEvent(
+          event.id,
+          "failed",
+          { event_type: event.type },
+          processingErr instanceof Error
+            ? processingErr.message
+            : "Unknown Stripe webhook processing error",
+        );
+        throw processingErr;
       }
 
       return json({ received: true });
@@ -842,7 +919,9 @@ export async function handleUser(request: Request): Promise<Response> {
 
       // Generate embedding
       const { createEmbeddingService, storeConversationEmbedding } =
-        await import("../services/embedding.ts");
+        await import(
+          "../services/embedding.ts"
+        );
       const embeddingService = createEmbeddingService();
       if (!embeddingService) {
         return error("Embedding service unavailable", 503);
@@ -2425,7 +2504,8 @@ export async function handleUser(request: Request): Promise<Response> {
       if (pagesRes.ok) {
         const pages = await pagesRes.json() as Array<{ size: number | null }>;
         hostingMb += pages.reduce((s: number, p: { size: number | null }) =>
-          s + (p.size || 0), 0) / (1024 * 1024);
+          s + (p.size || 0), 0) /
+          (1024 * 1024);
       }
 
       let dataOverageMb = 0;
@@ -2486,7 +2566,7 @@ export async function handleUser(request: Request): Promise<Response> {
       const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
         getSupabaseEnv();
       const userRes = await fetch(
-        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=balance_light,escrow_light,hosting_last_billed_at,auto_topup_enabled,auto_topup_threshold_light,auto_topup_amount_light,auto_topup_last_failed_at,stripe_customer_id`,
+        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=balance_light,escrow_light,deposit_balance_light,earned_balance_light,escrow_deposit_light,escrow_earned_light,hosting_last_billed_at,auto_topup_enabled,auto_topup_threshold_light,auto_topup_amount_light,auto_topup_last_failed_at,stripe_customer_id`,
         {
           headers: {
             "apikey": sbKey,
@@ -2502,9 +2582,14 @@ export async function handleUser(request: Request): Promise<Response> {
       return json({
         balance_light: ud.balance_light ?? 0,
         escrow_light: ud.escrow_light ?? 0,
+        deposit_balance_light: ud.deposit_balance_light ?? 0,
+        earned_balance_light: ud.earned_balance_light ?? 0,
+        escrow_deposit_light: ud.escrow_deposit_light ?? 0,
+        escrow_earned_light: ud.escrow_earned_light ?? 0,
+        withdrawable_earnings_light: ud.earned_balance_light ?? 0,
         hosting_last_billed_at: ud.hosting_last_billed_at ?? null,
         auto_topup: {
-          enabled: ud.auto_topup_enabled ?? false,
+          enabled: false,
           threshold_light: ud.auto_topup_threshold_light ?? 100,
           amount_light: ud.auto_topup_amount_light ?? 1000,
           last_failed_at: ud.auto_topup_last_failed_at ?? null,
@@ -2516,8 +2601,7 @@ export async function handleUser(request: Request): Promise<Response> {
     }
   }
 
-  // PATCH /api/user/hosting/auto-topup — configure auto top-up settings
-  // Body: { enabled?: boolean, threshold_light?: number, amount_light?: number }
+  // PATCH /api/user/hosting/auto-topup — legacy saved-payment auto top-up is disabled.
   if (path === "/api/user/hosting/auto-topup" && method === "PATCH") {
     return withSensitiveRouteRateLimit(
       userId,
@@ -2527,74 +2611,22 @@ export async function handleUser(request: Request): Promise<Response> {
           const user = await authenticate(request);
           const body = await request.json() as {
             enabled?: boolean;
-            threshold_light?: number;
-            amount_light?: number;
           };
 
           const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
             getSupabaseEnv();
 
-          // If enabling, verify user has a saved payment method (stripe_customer_id)
-          if (body.enabled === true) {
-            const custRes = await fetch(
-              `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_customer_id`,
-              {
-                headers: {
-                  "apikey": sbKey,
-                  "Authorization": `Bearer ${sbKey}`,
-                },
-              },
-            );
-            const custRows = await readJsonRows<
-              { stripe_customer_id: string | null }
-            >(custRes);
-            if (!custRows[0]?.stripe_customer_id) {
-              return error(
-                "No saved payment method. Make a deposit first to save your card, then enable auto top-up.",
-                400,
-              );
-            }
-          }
-
-          // Validate thresholds
-          if (body.threshold_light !== undefined) {
-            if (
-              typeof body.threshold_light !== "number" ||
-              body.threshold_light < 0 || body.threshold_light > 90_000
-            ) {
-              return error("threshold_light must be between 0 and 90000", 400);
-            }
-          }
-          if (body.amount_light !== undefined) {
-            if (
-              typeof body.amount_light !== "number" ||
-              body.amount_light < 500 || body.amount_light > 90_000
-            ) {
-              return error("amount_light must be between 500 and 90000", 400);
-            }
-          }
-
-          // Build update payload
-          const update: Record<string, unknown> = {};
-          if (body.enabled !== undefined) {
-            update.auto_topup_enabled = body.enabled;
-          }
-          if (body.threshold_light !== undefined) {
-            update
-              .auto_topup_threshold_light = body.threshold_light;
-          }
-          if (body.amount_light !== undefined) {
-            update.auto_topup_amount_light = body.amount_light;
-          }
-          // If re-enabling, clear the last failure timestamp
-          if (body.enabled === true) update.auto_topup_last_failed_at = null;
-
-          if (Object.keys(update).length === 0) {
+          if (body.enabled !== false) {
             return error(
-              "No fields to update. Provide enabled, threshold_light, or amount_light.",
-              400,
+              "Automatic top-up is disabled. Add Light with Apple Pay / Google Pay or wire transfer.",
+              410,
             );
           }
+
+          const update = {
+            auto_topup_enabled: false,
+            auto_topup_last_failed_at: null,
+          };
 
           const updateRes = await fetch(
             `${sbUrl}/rest/v1/users?id=eq.${user.id}`,
@@ -2628,167 +2660,143 @@ export async function handleUser(request: Request): Promise<Response> {
     );
   }
 
-  // POST /api/user/hosting/checkout — create a Stripe Checkout session for hosting deposit
-  // Body: { amount_cents: number, source?: 'web' | 'desktop' } (minimum 500 = $5.00)
-  // Returns: { checkout_url: string, light_amount: number } or error if Stripe not configured
+  // POST /api/user/wallet/express-checkout-intent — Apple Pay / Google Pay Light funding
+  // Body: { amount_cents: number, source?: 'web' | 'desktop', terms_accepted: true }
+  // Returns a Stripe PaymentIntent client secret for the Express Checkout Element.
+  if (
+    path === "/api/user/wallet/express-checkout-intent" && method === "POST"
+  ) {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:wallet_express_checkout",
+      async () => {
+        try {
+          const user = await authenticate(request);
+          const { amountCents, source, termsAccepted } =
+            await validateWalletFundingRequest(request);
+
+          const STRIPE_SECRET_KEY = getEnv("STRIPE_SECRET_KEY");
+          if (!STRIPE_SECRET_KEY) {
+            return error(
+              "Stripe wallet funding is not configured yet.",
+              503,
+            );
+          }
+
+          const { stripeCustomerId, email } =
+            await getOrCreateStripeCustomerForUser(
+              user.id,
+              STRIPE_SECRET_KEY,
+            );
+          const intent = await createWalletExpressPaymentIntent({
+            userId: user.id,
+            stripeCustomerId,
+            email,
+            amountCents,
+            source,
+            termsAccepted,
+          });
+
+          return json({
+            publishable_key: intent.publishableKey,
+            client_secret: intent.clientSecret,
+            payment_intent_id: intent.paymentIntentId,
+            stripe_customer_id: intent.stripeCustomerId,
+            amount_cents: intent.amountCents,
+            light_amount: intent.lightAmount,
+            wallet_light_per_usd: intent.lightPerUsd,
+            billing_config_version: intent.billingConfigVersion,
+          });
+        } catch (err) {
+          if (err instanceof RequestValidationError) {
+            return error(err.message, err.status);
+          }
+          if (err instanceof WalletFundingError) {
+            return error(err.message, err.status);
+          }
+          return error(
+            err instanceof Error ? err.message : "Wallet funding failed",
+            500,
+          );
+        }
+      },
+    );
+  }
+
+  // POST /api/user/wallet/wire-transfer-intent — Stripe customer-balance wire funding
+  // Body: { amount_cents: number, source?: 'web' | 'desktop', terms_accepted: true }
+  // Returns bank-transfer instructions for the confirmed PaymentIntent.
+  if (path === "/api/user/wallet/wire-transfer-intent" && method === "POST") {
+    return withSensitiveRouteRateLimit(
+      userId,
+      "user:wallet_wire_transfer",
+      async () => {
+        try {
+          const user = await authenticate(request);
+          const { amountCents, source, termsAccepted } =
+            await validateWireFundingRequest(request);
+
+          const STRIPE_SECRET_KEY = getEnv("STRIPE_SECRET_KEY");
+          if (!STRIPE_SECRET_KEY) {
+            return error(
+              "Stripe wire funding is not configured yet.",
+              503,
+            );
+          }
+
+          const { stripeCustomerId, email } =
+            await getOrCreateStripeCustomerForUser(
+              user.id,
+              STRIPE_SECRET_KEY,
+            );
+          const intent = await createWireTransferPaymentIntent({
+            userId: user.id,
+            stripeCustomerId,
+            email,
+            amountCents,
+            source,
+            termsAccepted,
+          });
+
+          return json({
+            payment_intent_id: intent.paymentIntentId,
+            stripe_customer_id: intent.stripeCustomerId,
+            amount_cents: intent.amountCents,
+            light_amount: intent.lightAmount,
+            wire_light_per_usd: intent.lightPerUsd,
+            billing_config_version: intent.billingConfigVersion,
+            status: intent.status,
+            instructions: intent.instructions,
+          });
+        } catch (err) {
+          if (err instanceof RequestValidationError) {
+            return error(err.message, err.status);
+          }
+          if (err instanceof WireFundingError) {
+            return error(err.message, err.status);
+          }
+          return error(
+            err instanceof Error ? err.message : "Wire funding failed",
+            500,
+          );
+        }
+      },
+    );
+  }
+
+  // POST /api/user/hosting/checkout — disabled legacy funding bridge.
   if (path === "/api/user/hosting/checkout" && method === "POST") {
     return withSensitiveRouteRateLimit(
       userId,
       "user:hosting_checkout",
       async () => {
         try {
-          const user = await authenticate(request);
-          const { amountCents, source } = await validateHostingCheckoutRequest(
-            request,
+          await authenticate(request);
+          await validateHostingCheckoutRequest(request);
+          return error(
+            "Legacy Checkout funding is disabled. Use Wallet Apple Pay / Google Pay funding.",
+            410,
           );
-
-          const STRIPE_SECRET_KEY = getEnv("STRIPE_SECRET_KEY");
-          const BASE_URL = getEnv("BASE_URL");
-
-          if (!STRIPE_SECRET_KEY) {
-            return error(
-              "Stripe is not yet configured. Hosting deposits will be available soon. " +
-                "In the meantime, contact support to add funds manually.",
-              503,
-            );
-          }
-
-          // Ensure user has a Stripe Customer (create if needed) so payment method is saved
-          const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
-            getSupabaseEnv();
-          const userDataRes = await fetch(
-            `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_customer_id,email`,
-            {
-              headers: {
-                "apikey": sbKey,
-                "Authorization": `Bearer ${sbKey}`,
-              },
-            },
-          );
-          if (!userDataRes.ok) throw new Error("Failed to read user");
-          const userData = await readFirstJsonRow<StripeCustomerRow>(
-            userDataRes,
-          );
-          let stripeCustomerId = userData?.stripe_customer_id;
-
-          if (!stripeCustomerId) {
-            // Create Stripe Customer
-            const custRes = await fetch("https://api.stripe.com/v1/customers", {
-              method: "POST",
-              headers: {
-                "Authorization": `Bearer ${STRIPE_SECRET_KEY}`,
-                "Content-Type": "application/x-www-form-urlencoded",
-              },
-              body: new URLSearchParams({
-                "email": userData?.email || "",
-                "metadata[user_id]": user.id,
-                "metadata[platform]": "ultralight",
-              }).toString(),
-            });
-
-            if (!custRes.ok) {
-              console.error(
-                "[STRIPE] Customer creation failed:",
-                await custRes.text(),
-              );
-              return error("Failed to create payment profile", 500);
-            }
-
-            const customer = await custRes.json() as { id: string };
-            stripeCustomerId = customer.id;
-
-            // Save Stripe Customer ID to DB
-            await fetch(
-              `${sbUrl}/rest/v1/users?id=eq.${user.id}`,
-              {
-                method: "PATCH",
-                headers: {
-                  "apikey": sbKey,
-                  "Authorization": `Bearer ${sbKey}`,
-                  "Content-Type": "application/json",
-                  "Prefer": "return=minimal",
-                },
-                body: JSON.stringify({ stripe_customer_id: stripeCustomerId }),
-              },
-            );
-          }
-
-          // Charge exactly what the user deposits — platform absorbs Stripe fees.
-          // $10 deposit = $10 balance. No fee pass-through.
-          // Platform recovers via 10% fee on every transfer_balance() call.
-          const chargeCents = amountCents;
-
-          // Calculate Light to credit based on source
-          const lightPerDollar = source === "desktop"
-            ? LIGHT_PER_DOLLAR_DESKTOP
-            : LIGHT_PER_DOLLAR_WEB;
-          const lightAmount = Math.round(amountCents / 100 * lightPerDollar);
-
-          // Create Stripe Checkout Session with card + ACH + Link
-          // - Cards: setup_future_usage saves for off-session auto top-ups
-          // - ACH (us_bank_account): lower fees (0.8% capped $5), Plaid bank-linking handled by Stripe
-          // - Link: one-click checkout, remembers payment methods across Stripe merchants
-          // - No tax at deposit — tax applies at service consumption (hosting/calls)
-          // - metadata.light_amount is the Light credited to the user's balance
-          const checkoutParams: Record<string, string> = {
-            "mode": "payment",
-            "customer": stripeCustomerId,
-            "payment_method_types[0]": "card",
-            "payment_method_types[1]": "us_bank_account",
-            "payment_method_types[2]": "link",
-            // Save card for future off-session charges (auto top-up)
-            "payment_method_options[card][setup_future_usage]": "off_session",
-            // ACH: verification handled by Stripe/Plaid, mandate auto-created
-            "payment_method_options[us_bank_account][financial_connections][permissions][0]":
-              "payment_method",
-            "line_items[0][price_data][currency]": "usd",
-            "line_items[0][price_data][product_data][name]":
-              "Ultralight Balance",
-            "line_items[0][price_data][product_data][description]": `$${
-              (amountCents / 100).toFixed(2)
-            } platform credit (${formatLight(lightAmount)})`,
-            "line_items[0][price_data][unit_amount]": String(chargeCents),
-            "line_items[0][quantity]": "1",
-            "metadata[user_id]": user.id,
-            "metadata[light_amount]": String(lightAmount),
-            "metadata[type]": "hosting_deposit",
-            "success_url":
-              `${BASE_URL}/dash?topup=success&amount=${amountCents}`,
-            "cancel_url": `${BASE_URL}/dash?topup=cancelled`,
-          };
-
-          const checkoutRes = await fetch(
-            "https://api.stripe.com/v1/checkout/sessions",
-            {
-              method: "POST",
-              headers: {
-                "Authorization": `Bearer ${STRIPE_SECRET_KEY}`,
-                "Content-Type": "application/x-www-form-urlencoded",
-              },
-              body: new URLSearchParams(checkoutParams).toString(),
-            },
-          );
-
-          if (!checkoutRes.ok) {
-            const stripeErr = await checkoutRes.text();
-            console.error(
-              "[STRIPE] Checkout session creation failed:",
-              stripeErr,
-            );
-            return error("Failed to create checkout session", 500);
-          }
-
-          const session = await checkoutRes.json() as {
-            url: string;
-            id: string;
-          };
-
-          return json({
-            checkout_url: session.url,
-            session_id: session.id,
-            deposit_cents: amountCents,
-            light_amount: lightAmount,
-          });
         } catch (err) {
           if (err instanceof RequestValidationError) {
             return error(err.message, err.status);
@@ -2824,33 +2832,38 @@ export async function handleUser(request: Request): Promise<Response> {
       const cutoff = new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000)
         .toISOString();
 
-      const [periodRes, lifetimeRes, recentRes, payoutsRes] = await Promise.all(
-        [
-          fetch(
-            `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&created_at=gte.${cutoff}&select=amount_light,app_id,function_name,reason,created_at&order=created_at.asc&limit=10000`,
-            { headers },
-          ),
-          fetch(
-            `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&select=amount_light`,
-            { headers: { ...headers, "Prefer": "count=exact" } },
-          ),
-          fetch(
-            `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&select=amount_light,app_id,function_name,reason,created_at&order=created_at.desc&limit=10`,
-            { headers },
-          ),
-          // Total withdrawals including held (for withdrawable calculation)
-          fetch(
-            `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(held,pending,processing,paid)&select=amount_light`,
-            { headers },
-          ),
-        ],
-      );
+      const [periodRes, lifetimeRes, recentRes, payoutsRes, userBalanceRes] =
+        await Promise.all(
+          [
+            fetch(
+              `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&created_at=gte.${cutoff}&select=amount_light,app_id,function_name,reason,created_at&order=created_at.asc&limit=10000`,
+              { headers },
+            ),
+            fetch(
+              `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&select=amount_light`,
+              { headers: { ...headers, "Prefer": "count=exact" } },
+            ),
+            fetch(
+              `${sbUrl}/rest/v1/transfers?to_user_id=eq.${user.id}&select=amount_light,app_id,function_name,reason,created_at&order=created_at.desc&limit=10`,
+              { headers },
+            ),
+            // Total withdrawals including held (for withdrawable calculation)
+            fetch(
+              `${sbUrl}/rest/v1/payouts?user_id=eq.${user.id}&status=in.(held,pending,processing,paid)&select=amount_light`,
+              { headers },
+            ),
+            fetch(
+              `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=total_earned_light,earned_balance_light`,
+              { headers },
+            ),
+          ],
+        );
 
       if (!periodRes.ok || !lifetimeRes.ok || !recentRes.ok) {
         throw new Error("Failed to query transfers");
       }
 
-      const periodTransfers = await periodRes.json() as Array<{
+      const periodTransfersRaw = await periodRes.json() as Array<{
         amount_light: number;
         app_id: string | null;
         function_name: string | null;
@@ -2860,18 +2873,34 @@ export async function handleUser(request: Request): Promise<Response> {
       const lifetimeTransfers = await lifetimeRes.json() as Array<
         { amount_light: number }
       >;
-      const recentTransfers = await recentRes.json() as Array<{
+      const recentTransfersRaw = await recentRes.json() as Array<{
         amount_light: number;
         app_id: string | null;
         function_name: string | null;
         reason: string;
         created_at: string;
       }>;
+      const userBalance = userBalanceRes.ok
+        ? await readFirstJsonRow<
+          {
+            total_earned_light: number | null;
+            earned_balance_light: number | null;
+          }
+        >(
+          userBalanceRes,
+        )
+        : null;
+      const isEarningTransfer = (t: { reason?: string }) =>
+        t.reason !== "withdrawal" && t.reason !== "withdrawal_refund";
+      const periodTransfers = periodTransfersRaw.filter(isEarningTransfer);
+      const recentTransfers = recentTransfersRaw.filter(isEarningTransfer);
 
-      const totalEarnedLight = lifetimeTransfers.reduce(
+      const transferTotalEarnedLight = lifetimeTransfers.reduce(
         (sum, t) => sum + t.amount_light,
         0,
       );
+      const totalEarnedLight = userBalance?.total_earned_light ??
+        transferTotalEarnedLight;
       const periodEarnedLight = periodTransfers.reduce(
         (sum, t) => sum + t.amount_light,
         0,
@@ -2888,9 +2917,13 @@ export async function handleUser(request: Request): Promise<Response> {
           0,
         );
       }
-      const withdrawableLight = Math.max(
+      const earnedBalanceLight = userBalance?.earned_balance_light ?? Math.max(
         0,
         totalEarnedLight - totalWithdrawnLight,
+      );
+      const withdrawableLight = Math.min(
+        earnedBalanceLight,
+        Math.max(0, totalEarnedLight - totalWithdrawnLight),
       );
 
       // By-app breakdown
@@ -2911,6 +2944,7 @@ export async function handleUser(request: Request): Promise<Response> {
 
       return json({
         total_earned_light: totalEarnedLight,
+        earned_balance_light: earnedBalanceLight,
         total_withdrawn_light: totalWithdrawnLight,
         withdrawable_light: withdrawableLight,
         period,
@@ -2992,8 +3026,8 @@ export async function handleUser(request: Request): Promise<Response> {
 
           const link = await createOnboardingLink(
             accountId,
-            `${BASE_URL}/settings/billing?connect=complete`,
-            `${BASE_URL}/settings/billing?connect=refresh`,
+            `${BASE_URL}/wallet?connect=complete`,
+            `${BASE_URL}/wallet?connect=refresh`,
           );
 
           return json({
@@ -3024,7 +3058,7 @@ export async function handleUser(request: Request): Promise<Response> {
       const sbHeaders = { "apikey": sbKey, "Authorization": `Bearer ${sbKey}` };
 
       const userRes = await fetch(
-        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled,total_earned_light`,
+        `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled,total_earned_light,earned_balance_light`,
         { headers: sbHeaders },
       );
       if (!userRes.ok) throw new Error("Failed to read user");
@@ -3054,9 +3088,13 @@ export async function handleUser(request: Request): Promise<Response> {
         >;
         totalWithdrawn = payouts.reduce((sum, p) => sum + p.amount_light, 0);
       }
-      const withdrawableEarnings = Math.max(
+      const lifetimeRemaining = Math.max(
         0,
         (userData.total_earned_light || 0) - totalWithdrawn,
+      );
+      const withdrawableEarnings = Math.min(
+        userData.earned_balance_light ?? lifetimeRemaining,
+        lifetimeRemaining,
       );
 
       // If already fully set up, return cached values + earnings
@@ -3155,8 +3193,8 @@ export async function handleUser(request: Request): Promise<Response> {
   // POST /api/user/connect/withdraw — request a withdrawal to connected bank
   // Body: { amount_light: number } (minimum MIN_WITHDRAWAL_LIGHT)
   // Only earned funds (tool_call, page_view, marketplace_sale) can be withdrawn — deposits cannot.
-  // Withdrawals are held for 14 days before Stripe transfer is executed.
-  // Platform fee is already taken on every transfer_balance() call, not on withdrawal.
+  // Withdrawals are scheduled into the next eligible monthly payout run.
+  // Platform fee is already taken on internal earning transfers, not on withdrawal.
   if (path === "/api/user/connect/withdraw" && method === "POST") {
     return withSensitiveRouteRateLimit(
       userId,
@@ -3169,8 +3207,11 @@ export async function handleUser(request: Request): Promise<Response> {
           const {
             estimatePayoutFee,
             getAccountStatus,
-            PAYOUT_HOLD_DAYS,
           } = await import("../services/stripe-connect.ts");
+          const {
+            buildPayoutPolicyMessage,
+            calculateNextPayoutSchedule,
+          } = await import("../services/payout-policy.ts");
 
           const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
             getSupabaseEnv();
@@ -3181,7 +3222,7 @@ export async function handleUser(request: Request): Promise<Response> {
 
           // Verify user has a connected, onboarded account with payouts enabled
           const userRes = await fetch(
-            `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled,balance_light,escrow_light,total_earned_light`,
+            `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled,balance_light,escrow_light,total_earned_light,earned_balance_light`,
             { headers: sbHeaders },
           );
           if (!userRes.ok) throw new Error("Failed to read user");
@@ -3195,17 +3236,6 @@ export async function handleUser(request: Request): Promise<Response> {
           ) {
             return error(
               "Connect your bank account first. Use the Wallet page to complete Stripe onboarding.",
-              400,
-            );
-          }
-
-          // balance_light is already spendable; escrow_light is a separate hold bucket.
-          const available = userData.balance_light || 0;
-          if (available < amountLight) {
-            return error(
-              `Insufficient available balance. You have ${
-                formatLight(available)
-              } available.`,
               400,
             );
           }
@@ -3225,20 +3255,26 @@ export async function handleUser(request: Request): Promise<Response> {
               0,
             );
           }
-          const withdrawableEarnings = Math.max(
+          const lifetimeRemaining = Math.max(
             0,
             (userData.total_earned_light || 0) - totalWithdrawn,
+          );
+          const withdrawableEarnings = Math.min(
+            userData.earned_balance_light ?? lifetimeRemaining,
+            lifetimeRemaining,
           );
 
           if (withdrawableEarnings < amountLight) {
             return error(
-              `Only earned funds can be withdrawn (deposits cannot be cashed out). ` +
+              `Only creator earnings can be paid out (purchased Light cannot be cashed out). ` +
                 `You have ${
                   formatLight(withdrawableEarnings)
-                } in withdrawable earnings.`,
+                } in payout-eligible earnings.`,
               400,
             );
           }
+
+          const billingConfig = await getBillingConfig();
 
           // Detect cross-border for Stripe fee estimation
           let isCrossBorder = false;
@@ -3251,10 +3287,17 @@ export async function handleUser(request: Request): Promise<Response> {
           } catch { /* Stripe unavailable — assume domestic */ }
 
           // Calculate Stripe fee estimate (Stripe fees are in USD cents)
-          const estimate = estimatePayoutFee(amountLight, isCrossBorder);
+          const estimate = estimatePayoutFee(
+            amountLight,
+            isCrossBorder,
+            billingConfig.payoutLightPerUsd,
+          );
 
-          // Atomic debit + held payout record creation + earnings validation
-          // Balance is debited immediately; Stripe transfer happens after 14-day hold
+          const payoutSchedule = calculateNextPayoutSchedule(new Date());
+
+          // Atomic debit + held payout record creation + earnings validation.
+          // Balance is debited immediately; Stripe transfer happens in the
+          // scheduled monthly payout run.
           const rpcRes = await fetch(
             `${sbUrl}/rest/v1/rpc/create_payout_record`,
             {
@@ -3268,6 +3311,13 @@ export async function handleUser(request: Request): Promise<Response> {
                 p_amount_light: amountLight,
                 p_stripe_fee_cents: estimate.stripe_fee_cents,
                 p_net_cents: estimate.net_cents,
+                p_light_per_usd_snapshot: billingConfig.payoutLightPerUsd,
+                p_billing_config_version: billingConfig.version,
+                p_release_at: payoutSchedule.releaseAt.toISOString(),
+                p_scheduled_payout_date: payoutSchedule.scheduledPayoutDate,
+                p_payout_cutoff_at: payoutSchedule.payoutCutoffAt
+                  .toISOString(),
+                p_payout_policy_version: payoutSchedule.payoutPolicyVersion,
               }),
             },
           );
@@ -3276,11 +3326,11 @@ export async function handleUser(request: Request): Promise<Response> {
             const rpcErr = await rpcRes.text();
             console.error("[CONNECT] create_payout_record RPC failed:", rpcErr);
             if (rpcErr.includes("Insufficient")) {
-              return error("Insufficient balance for withdrawal", 400);
+              return error("Insufficient balance for payout request", 400);
             }
             if (rpcErr.includes("exceeds earnings")) {
               return error(
-                "Withdrawal exceeds earned funds. Only earnings can be withdrawn — deposits cannot be cashed out.",
+                "Payout request exceeds earned funds. Only creator earnings can be paid out; purchased Light cannot be cashed out.",
                 400,
               );
             }
@@ -3288,16 +3338,6 @@ export async function handleUser(request: Request): Promise<Response> {
           }
 
           const payoutId = await rpcRes.json();
-
-          // Calculate release date for user messaging
-          const releaseDate = new Date(
-            Date.now() + PAYOUT_HOLD_DAYS * 24 * 60 * 60 * 1000,
-          );
-          const releaseDateStr = releaseDate.toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          });
 
           const feeBreakdown = isCrossBorder
             ? `Stripe fee: $${
@@ -3311,16 +3351,22 @@ export async function handleUser(request: Request): Promise<Response> {
             amount_light: amountLight,
             estimated_stripe_fee_cents: estimate.stripe_fee_cents,
             estimated_net_cents: estimate.net_cents,
+            light_per_usd_snapshot: billingConfig.payoutLightPerUsd,
+            billing_config_version: billingConfig.version,
             is_cross_border: isCrossBorder,
             status: "held",
-            release_at: releaseDate.toISOString(),
-            hold_days: PAYOUT_HOLD_DAYS,
-            message: `Withdrawal of ${formatLight(amountLight)} submitted. ` +
+            release_at: payoutSchedule.releaseAt.toISOString(),
+            scheduled_payout_date: payoutSchedule.scheduledPayoutDate,
+            payout_cutoff_at: payoutSchedule.payoutCutoffAt.toISOString(),
+            payout_policy_version: payoutSchedule.payoutPolicyVersion,
+            request_cutoff_days: payoutSchedule.requestCutoffDays,
+            message:
+              `Payout request for ${formatLight(amountLight)} submitted. ` +
               `${feeBreakdown}. ` +
               `Estimated bank deposit: ~$${
                 (estimate.net_cents / 100).toFixed(2)
               }. ` +
-              `Payout will be released on ${releaseDateStr}.`,
+              buildPayoutPolicyMessage(payoutSchedule),
           });
         } catch (err) {
           if (err instanceof RequestValidationError) {
@@ -3328,7 +3374,7 @@ export async function handleUser(request: Request): Promise<Response> {
           }
           const status = (err as Error & { status?: number }).status || 500;
           return error(
-            err instanceof Error ? err.message : "Withdrawal failed",
+            err instanceof Error ? err.message : "Payout request failed",
             status,
           );
         }
@@ -3336,116 +3382,13 @@ export async function handleUser(request: Request): Promise<Response> {
     );
   }
 
-  // GET /api/user/connect/liability — platform liability summary (admin use)
-  // Returns: total unpaid earnings, held payouts, processing payouts, sweepable amount
+  // GET /api/user/connect/liability — retired global liability view.
+  // Use /api/admin/payouts/reconciliation with the service-role admin token.
   if (path === "/api/user/connect/liability" && method === "GET") {
-    try {
-      const user = await authenticate(request);
-      const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
-        getSupabaseEnv();
-      const sbHeaders = { "apikey": sbKey, "Authorization": `Bearer ${sbKey}` };
-
-      // Parallel queries for liability calculation
-      const [earningsRes, paidRes, heldRes, processingRes, pendingRes] =
-        await Promise.all([
-          // Total earned across ALL users
-          fetch(
-            `${sbUrl}/rest/v1/users?total_earned_light=gt.0&select=total_earned_light`,
-            { headers: sbHeaders },
-          ),
-          // Total successfully paid out
-          fetch(
-            `${sbUrl}/rest/v1/payouts?status=eq.paid&select=amount_light`,
-            { headers: sbHeaders },
-          ),
-          // Currently held (14-day wait)
-          fetch(
-            `${sbUrl}/rest/v1/payouts?status=eq.held&select=amount_light,platform_fee_light,release_at`,
-            { headers: sbHeaders },
-          ),
-          // Currently processing (Stripe transfer in flight)
-          fetch(
-            `${sbUrl}/rest/v1/payouts?status=eq.processing&select=amount_light,platform_fee_light`,
-            { headers: sbHeaders },
-          ),
-          // Pending (marked for release, not yet transferred)
-          fetch(
-            `${sbUrl}/rest/v1/payouts?status=eq.pending&select=amount_light,platform_fee_light`,
-            { headers: sbHeaders },
-          ),
-        ]);
-
-      const totalEarned = earningsRes.ok
-        ? (await earningsRes.json() as Array<{ total_earned_light: number }>)
-          .reduce((sum, u) => sum + (u.total_earned_light || 0), 0)
-        : 0;
-
-      const totalPaid = paidRes.ok
-        ? (await paidRes.json() as Array<{ amount_light: number }>)
-          .reduce((sum, p) => sum + p.amount_light, 0)
-        : 0;
-
-      const heldPayouts = heldRes.ok
-        ? (await heldRes.json() as Array<
-          {
-            amount_light: number;
-            platform_fee_light: number;
-            release_at: string;
-          }
-        >)
-        : [];
-      const heldTotal = heldPayouts.reduce((sum, p) => sum + p.amount_light, 0);
-      const heldPlatformFees = heldPayouts.reduce(
-        (sum, p) => sum + (p.platform_fee_light || 0),
-        0,
-      );
-
-      // Next payout release date
-      const nextRelease = heldPayouts.length > 0
-        ? heldPayouts.reduce(
-          (earliest, p) => p.release_at < earliest ? p.release_at : earliest,
-          heldPayouts[0].release_at,
-        )
-        : null;
-
-      const processingTotal = processingRes.ok
-        ? (await processingRes.json() as Array<{ amount_light: number }>)
-          .reduce((sum, p) => sum + p.amount_light, 0)
-        : 0;
-
-      const pendingTotal = pendingRes.ok
-        ? (await pendingRes.json() as Array<{ amount_light: number }>)
-          .reduce((sum, p) => sum + p.amount_light, 0)
-        : 0;
-
-      // Liability = total earned - total paid out = unpaid developer earnings
-      const totalLiability = totalEarned - totalPaid;
-      // Sweepable = everything NOT currently in-flight to Stripe
-      // (held payouts are still in our accounts, not yet transferred)
-      const inFlight = processingTotal + pendingTotal;
-      const sweepable = totalLiability - inFlight;
-
-      return json({
-        total_earned_light: totalEarned,
-        total_paid_light: totalPaid,
-        total_liability_light: totalLiability,
-        held_payouts_light: heldTotal,
-        held_payouts_count: heldPayouts.length,
-        held_platform_fees_light: heldPlatformFees,
-        next_release_at: nextRelease,
-        processing_light: processingTotal,
-        pending_light: pendingTotal,
-        in_flight_light: inFlight,
-        sweepable_light: sweepable,
-        liability_display: formatLight(totalLiability),
-        sweepable_display: formatLight(sweepable),
-      });
-    } catch (err) {
-      return error(
-        err instanceof Error ? err.message : "Failed to calculate liability",
-        500,
-      );
-    }
+    return error(
+      "Global payout liability is available only through admin reconciliation.",
+      403,
+    );
   }
 
   // GET /api/user/connect/payouts — payout history
@@ -3627,7 +3570,10 @@ export async function handleUser(request: Request): Promise<Response> {
 
   // POST /api/marketplace/acquire — instant acquisition
   // /api/marketplace/buy remains as a compatibility alias for existing clients.
-  if ((path === "/api/marketplace/acquire" || path === "/api/marketplace/buy") && method === "POST") {
+  if (
+    (path === "/api/marketplace/acquire" || path === "/api/marketplace/buy") &&
+    method === "POST"
+  ) {
     return withSensitiveRouteRateLimit(
       userId,
       "user:marketplace_buy",
@@ -3815,7 +3761,9 @@ export async function handleUser(request: Request): Promise<Response> {
       const receiptId = path.replace("/api/marketplace/receipt/", "");
       if (!receiptId) return error("Missing receipt ID", 400);
 
-      const { getMarketplaceReceipt } = await import("../services/marketplace.ts");
+      const { getMarketplaceReceipt } = await import(
+        "../services/marketplace.ts"
+      );
       const receipt = await getMarketplaceReceipt(userId, receiptId);
       return json(receipt);
     } catch (err) {
@@ -3828,79 +3776,6 @@ export async function handleUser(request: Request): Promise<Response> {
   }
 
   return error("User endpoint not found", 404);
-}
-
-// ============================================
-// Hosting balance helper
-// ============================================
-
-/**
- * Credit a user's balance (in Light) and unsuspend content if needed.
- * Uses atomic Postgres RPC to prevent race conditions between
- * concurrent webhook calls and the billing loop.
- */
-async function creditBalance(
-  userId: string,
-  amountLight: number,
-): Promise<{
-  previous_balance_light: number;
-  added_light: number;
-  new_balance_light: number;
-  unsuspended_apps: number;
-  unsuspended_pages: number;
-}> {
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
-
-  // Atomic balance credit via Postgres function (no read-modify-write race)
-  const rpcRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/rpc/credit_balance`,
-    {
-      method: "POST",
-      headers: {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        p_user_id: userId,
-        p_amount_light: amountLight,
-      }),
-    },
-  );
-
-  if (!rpcRes.ok) {
-    const err = await rpcRes.text();
-    throw new Error(`Failed to credit balance: ${err}`);
-  }
-
-  const rows = await rpcRes.json() as Array<
-    { old_balance: number; new_balance: number }
-  >;
-  if (!rows || rows.length === 0) throw new Error("User not found");
-
-  const { old_balance, new_balance } = rows[0];
-
-  // If user had suspended content (balance was zero or negative), unsuspend it
-  let unsuspended = { apps: 0, pages: 0 };
-  if (old_balance <= 0) {
-    unsuspended = await unsuspendContent(userId);
-  }
-
-  console.log(
-    `[HOSTING] Credited ${formatLight(amountLight)} to user ${userId}: ` +
-      `${formatLight(old_balance)} → ${formatLight(new_balance)}` +
-      (unsuspended.apps + unsuspended.pages > 0
-        ? `, unsuspended ${unsuspended.apps} app(s) + ${unsuspended.pages} page(s)`
-        : ""),
-  );
-
-  return {
-    previous_balance_light: old_balance,
-    added_light: amountLight,
-    new_balance_light: new_balance,
-    unsuspended_apps: unsuspended.apps,
-    unsuspended_pages: unsuspended.pages,
-  };
 }
 
 // ============================================

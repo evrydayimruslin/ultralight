@@ -1,6 +1,6 @@
 BEGIN;
 
-SELECT plan(37);
+SELECT plan(56);
 
 CREATE TEMP TABLE marketplace_wave1_state (
   first_bid_id uuid,
@@ -140,6 +140,24 @@ SELECT is(
 );
 
 SELECT is(
+  (SELECT deposit_balance_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000102'),
+  6000::numeric,
+  'bidding debits purchased Light bucket first'
+);
+
+SELECT is(
+  (SELECT escrow_deposit_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000102'),
+  4000::numeric,
+  'bidding preserves purchased Light in escrow bucket'
+);
+
+SELECT is(
+  (SELECT earned_balance_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000102'),
+  0::numeric,
+  'bidding does not create withdrawable earnings for the bidder'
+);
+
+SELECT is(
   (SELECT amount_light::numeric FROM public.app_bids WHERE id = (SELECT first_bid_id FROM marketplace_wave1_state)),
   4000::numeric,
   'bid stores authoritative amount_light'
@@ -166,6 +184,18 @@ SELECT is(
   (SELECT escrow_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000102'),
   0::numeric,
   'cancel_bid clears escrow'
+);
+
+SELECT is(
+  (SELECT deposit_balance_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000102'),
+  10000::numeric,
+  'cancel_bid returns escrow to purchased Light bucket'
+);
+
+SELECT is(
+  (SELECT escrow_deposit_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000102'),
+  0::numeric,
+  'cancel_bid clears purchased escrow bucket'
 );
 
 SELECT is(
@@ -242,9 +272,21 @@ SELECT is(
 );
 
 SELECT is(
+  (SELECT earned_balance_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000101'),
+  3600::numeric,
+  'accepted sale credits seller withdrawable earned bucket'
+);
+
+SELECT is(
   (SELECT balance_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000102'),
   6000::numeric,
   'accepted sale leaves buyer spendable balance debited'
+);
+
+SELECT is(
+  (SELECT deposit_balance_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000102'),
+  6000::numeric,
+  'accepted sale leaves buyer purchased bucket debited'
 );
 
 SELECT is(
@@ -263,6 +305,12 @@ SELECT is(
   (SELECT escrow_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000103'),
   0::numeric,
   'accepted sale clears competing bidder escrow'
+);
+
+SELECT is(
+  (SELECT deposit_balance_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000103'),
+  10000::numeric,
+  'accepted sale returns competing bid to purchased bucket'
 );
 
 SELECT is(
@@ -318,6 +366,18 @@ SELECT is(
   'accepted sale logs seller payout transfer'
 );
 
+SELECT ok(
+  (
+    SELECT COUNT(*) > 0
+    FROM public.light_ledger_entries
+    WHERE user_id = '00000000-0000-0000-0000-000000000101'
+      AND kind = 'marketplace_sale_earning'
+      AND bucket = 'earned'
+      AND amount_light = 3600
+  ),
+  'accepted sale logs immutable earned Light ledger entry'
+);
+
 SELECT is(
   (SELECT status FROM public.app_listings WHERE app_id = '00000000-0000-0000-0000-000000000201'),
   'sold',
@@ -354,6 +414,12 @@ SELECT is(
 );
 
 SELECT is(
+  (SELECT deposit_balance_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000102'),
+  3000::numeric,
+  'buy_now debits buyer purchased bucket'
+);
+
+SELECT is(
   (SELECT escrow_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000102'),
   0::numeric,
   'buy_now leaves buyer escrow unchanged'
@@ -363,6 +429,12 @@ SELECT is(
   (SELECT balance_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000101'),
   6300::numeric,
   'buy_now credits seller payout'
+);
+
+SELECT is(
+  (SELECT earned_balance_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000101'),
+  6300::numeric,
+  'buy_now credits seller earned bucket'
 );
 
 SELECT is(
@@ -420,15 +492,71 @@ SELECT is(
 );
 
 SELECT is(
+  (SELECT earned_balance_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000101'),
+  300::numeric,
+  'withdrawal debits earned bucket only'
+);
+
+SELECT is(
+  (SELECT deposit_balance_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000101'),
+  0::numeric,
+  'withdrawal leaves purchased bucket unchanged'
+);
+
+SELECT is(
   (SELECT escrow_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000101'),
   500::numeric,
   'withdrawal leaves escrow bucket untouched'
 );
 
 SELECT is(
+  (SELECT escrow_deposit_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000101'),
+  500::numeric,
+  'withdrawal leaves purchased escrow bucket untouched'
+);
+
+SELECT is(
   (SELECT amount_light::numeric FROM public.payouts WHERE id = (SELECT payout_id FROM marketplace_wave1_state)),
   6000::numeric,
   'payout record stores Light amount'
+);
+
+SELECT ok(
+  (
+    SELECT scheduled_payout_date IS NOT NULL AND payout_run_id IS NOT NULL
+    FROM public.payouts
+    WHERE id = (SELECT payout_id FROM marketplace_wave1_state)
+  ),
+  'payout record stores monthly run metadata'
+);
+
+SELECT ok(
+  (
+    SELECT release_at::date = scheduled_payout_date
+    FROM public.payouts
+    WHERE id = (SELECT payout_id FROM marketplace_wave1_state)
+  ),
+  'payout release timestamp matches the scheduled monthly run date'
+);
+
+SELECT is(
+  (
+    SELECT payout_cutoff_at
+    FROM public.payouts
+    WHERE id = (SELECT payout_id FROM marketplace_wave1_state)
+  ),
+  (
+    SELECT release_at - interval '21 days'
+    FROM public.payouts
+    WHERE id = (SELECT payout_id FROM marketplace_wave1_state)
+  ),
+  'payout cutoff is 21 days before the scheduled run'
+);
+
+SELECT is(
+  (SELECT payout_policy_version FROM public.payouts WHERE id = (SELECT payout_id FROM marketplace_wave1_state)),
+  1,
+  'payout record snapshots the monthly payout policy version'
 );
 
 SELECT is(
@@ -442,6 +570,26 @@ SELECT is(
   ),
   6000::numeric,
   'withdrawal logs Light transfer'
+);
+
+DELETE FROM marketplace_wave1_errors;
+
+DO $$
+BEGIN
+  PERFORM public.create_payout_record(
+    '00000000-0000-0000-0000-000000000103',
+    1000,
+    25,
+    975
+  );
+EXCEPTION WHEN OTHERS THEN
+  INSERT INTO marketplace_wave1_errors (message) VALUES (SQLERRM);
+END;
+$$;
+
+SELECT ok(
+  (SELECT message LIKE '%Only earned funds%' FROM marketplace_wave1_errors LIMIT 1),
+  'purchased Light cannot be withdrawn'
 );
 
 SELECT * FROM finish();

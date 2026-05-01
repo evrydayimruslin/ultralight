@@ -1,7 +1,7 @@
 // Chat Billing Service
 // Handles balance checks and post-stream cost deduction for /chat/stream.
 // Reuses balance_light wallet and billing_transactions audit trail.
-// Uses debit_balance RPC with p_update_billed_at=false (chat doesn't affect hosting clock).
+// Uses debit_light RPC with p_update_billed_at=false (chat doesn't affect hosting clock).
 
 import { getEnv } from '../lib/env.ts';
 import type { ChatUsage, ChatBillingResult } from '../../shared/contracts/ai.ts';
@@ -106,7 +106,7 @@ export function calculateCostLight(
 
 /**
  * Deduct chat cost from user balance after stream completes.
- * Uses atomic debit_balance RPC (clamps at 0, never goes negative).
+   * Uses atomic debit_light RPC (clamps at 0, never goes negative).
  * Logs transaction to billing_transactions (fire-and-forget).
  */
 export async function deductChatCost(
@@ -125,14 +125,26 @@ export async function deductChatCost(
 
   // Atomic debit — p_update_billed_at=false to not touch hosting billing clock
   const debitRes = await fetch(
-    `${getEnv('SUPABASE_URL')}/rest/v1/rpc/debit_balance`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/rpc/debit_light`,
     {
       method: 'POST',
       headers: { ...dbHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({
         p_user_id: userId,
-        p_amount: costLight,
+        p_amount_light: costLight,
+        p_reason: 'ai_chat',
         p_update_billed_at: false,
+        p_allow_partial: true,
+        p_metadata: {
+          trace_id: metadata.traceId,
+          conversation_id: metadata.conversationId,
+          message_id: metadata.messageId,
+          source: metadata.source,
+          model,
+          prompt_tokens: usage.prompt_tokens,
+          completion_tokens: usage.completion_tokens,
+          total_tokens: usage.total_tokens,
+        },
       }),
     }
   );
@@ -147,6 +159,7 @@ export async function deductChatCost(
     old_balance: number;
     new_balance: number;
     was_depleted: boolean;
+    amount_debited?: number;
   }>;
 
   if (!debitResult || debitResult.length === 0) {
@@ -154,13 +167,14 @@ export async function deductChatCost(
     throw new Error('Debit RPC returned empty');
   }
 
-  const { new_balance, was_depleted } = debitResult[0];
+  const { new_balance, was_depleted, amount_debited } = debitResult[0];
+  const actualCostLight = typeof amount_debited === 'number' ? amount_debited : costLight;
 
   // Log transaction (fire-and-forget — never break billing for logging)
-  logChatTransaction(userId, costLight, new_balance, usage, model, metadata).catch(() => {});
+  logChatTransaction(userId, actualCostLight, new_balance, usage, model, metadata).catch(() => {});
 
   return {
-    cost_light: costLight,
+    cost_light: actualCostLight,
     balance_after: new_balance,
     was_depleted,
   };

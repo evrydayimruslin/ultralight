@@ -2,7 +2,12 @@
 // Shared utility for checking tier-based restrictions.
 // Enforces: visibility checks, storage quotas, publish deposit gate.
 
-import { type Tier, TIER_LIMITS, MIN_PUBLISH_DEPOSIT_LIGHT, formatLight } from '../../shared/types/index.ts';
+import {
+  formatLight,
+  MIN_PUBLISH_DEPOSIT_LIGHT,
+  type Tier,
+  TIER_LIMITS,
+} from '../../shared/types/index.ts';
 import { getEnv } from '../lib/env.ts';
 
 type Visibility = 'private' | 'unlisted' | 'public';
@@ -14,7 +19,7 @@ type Visibility = 'private' | 'unlisted' | 'public';
  */
 export function checkVisibilityAllowed(
   _tier: Tier,
-  _visibility: Visibility
+  _visibility: Visibility,
 ): string | null {
   return null;
 }
@@ -25,7 +30,7 @@ export function checkVisibilityAllowed(
  * Returns null if allowed, or an error message string if blocked.
  */
 export async function checkPublishDeposit(
-  userId: string
+  userId: string,
 ): Promise<string | null> {
   const supabaseUrl = getEnv('SUPABASE_URL');
   const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
@@ -44,7 +49,7 @@ export async function checkPublishDeposit(
           'apikey': supabaseKey,
           'Authorization': `Bearer ${supabaseKey}`,
         },
-      }
+      },
     );
 
     if (!response.ok) {
@@ -60,7 +65,7 @@ export async function checkPublishDeposit(
       return (
         `Publishing requires a minimum ${formatLight(MIN_PUBLISH_DEPOSIT_LIGHT)} deposit. ` +
         `Your current balance is ${formatLight(balance)}. ` +
-        `Top up your hosting balance to go live.`
+        `Add Light from Wallet to go live.`
       );
     }
 
@@ -77,7 +82,7 @@ export async function checkPublishDeposit(
  * Uses a lightweight HEAD-style count query (select=count).
  */
 export async function checkAppLimit(
-  userId: string
+  userId: string,
 ): Promise<string | null> {
   const supabaseUrl = getEnv('SUPABASE_URL');
   const supabaseKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
@@ -96,9 +101,9 @@ export async function checkAppLimit(
           'Authorization': `Bearer ${supabaseKey}`,
           'Prefer': 'count=exact',
           'Range-Unit': 'items',
-          'Range': '0-0',   // don't fetch rows, just count
+          'Range': '0-0', // don't fetch rows, just count
         },
-      }
+      },
     );
 
     // Extract count from content-range header: "0-0/42"
@@ -136,7 +141,7 @@ export async function getUserTier(userId: string): Promise<Tier> {
           'apikey': supabaseKey,
           'Authorization': `Bearer ${supabaseKey}`,
         },
-      }
+      },
     );
 
     if (!response.ok) {

@@ -681,6 +681,7 @@ class Wave3Harness {
         return Response.json([{ ok: true }]);
       }
       case "/rest/v1/rpc/transfer_balance":
+      case "/rest/v1/rpc/transfer_light":
         return Response.json([{ from_new_balance: 1000, to_new_balance: 1000 }]);
       case "/rest/v1/rpc/increment_caller_usage": {
         const key = `${body.p_app_id}:${body.p_user_id}:${body.p_counter_key}`;

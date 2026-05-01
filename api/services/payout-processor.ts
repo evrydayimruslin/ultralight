@@ -1,23 +1,24 @@
 // Payout Processor Service
-// Hourly job that releases held payouts whose 14-day hold period has elapsed.
+// Hourly job that releases held payouts whose scheduled monthly run is due.
 // Same pattern as hosting-billing.ts: startup delay + setInterval.
 //
 // Flow per payout:
-//   1. Query get_releasable_payouts() RPC for mature held payouts
-//   2. For each: mark_payout_releasing() to atomically transition held → pending
-//   3. Execute Stripe Transfer (platform → connected account) — amount in USD = Light / 100
-//   4. Execute Stripe Payout (connected account → bank)
-//   5. Update payout record with Stripe IDs and status
-//   6. On failure: call fail_payout_refund() to restore developer balance
+//   1. Query get_releasable_payouts() RPC for due monthly payout runs
+//   2. For each: mark_payout_releasing() to atomically claim retryable work
+//   3. Execute missing Stripe Transfer using the payout's Light/USD rate snapshot
+//   4. Execute missing Stripe Payout (connected account → bank)
+//   5. Update separate transfer/payout operation state for reconciliation
 //
-// No platform fee on withdrawal — the 10% fee is already taken on every transfer_balance() call.
+// No platform fee on withdrawal — the 10% fee is already taken on internal earning transfers.
 
 import { getEnv } from '../lib/env.ts';
 import {
-  createTransfer,
   createPayout,
+  createTransfer,
+  StripeConnectRequestError,
 } from './stripe-connect.ts';
-import { LIGHT_PER_DOLLAR_PAYOUT, formatLight } from '../../shared/types/index.ts';
+import { formatLight } from '../../shared/types/index.ts';
+import { lightToUsdCents } from './billing-config.ts';
 
 interface ReleasablePayout {
   id: string;
@@ -25,6 +26,19 @@ interface ReleasablePayout {
   amount_light: number;
   created_at: string;
   release_at: string;
+  light_per_usd_snapshot?: number;
+  payout_run_id?: string | null;
+  scheduled_payout_date?: string | null;
+  payout_cutoff_at?: string | null;
+  payout_policy_version?: number | null;
+  stripe_transfer_id?: string | null;
+  stripe_payout_id?: string | null;
+  stripe_transfer_status?: string | null;
+  stripe_payout_status?: string | null;
+  stripe_transfer_attempts?: number | null;
+  stripe_payout_attempts?: number | null;
+  stripe_transfer_idempotency_key?: string | null;
+  stripe_payout_idempotency_key?: string | null;
 }
 
 export interface PayoutProcessorResult {
@@ -32,18 +46,22 @@ export interface PayoutProcessorResult {
   succeeded: number;
   failed: number;
   errors: string[];
+  payout_runs: string[];
 }
 
-/** Convert a Light amount to USD cents at the payout rate (100 Light/$1). */
-function lightToUsdCents(amountLight: number): number {
-  return Math.round((amountLight / LIGHT_PER_DOLLAR_PAYOUT) * 100);
+export interface PayoutProcessorOptions {
+  payoutRunId?: string;
+  scheduledPayoutDate?: string;
+  limit?: number;
 }
 
 /**
- * Process all held payouts whose 14-day hold period has elapsed.
- * Called hourly by the background job.
+ * Process all held payouts whose scheduled monthly payout run is due.
+ * Called hourly by the background job and by the admin retry action.
  */
-export async function processHeldPayouts(): Promise<PayoutProcessorResult> {
+export async function processHeldPayouts(
+  options: PayoutProcessorOptions = {},
+): Promise<PayoutProcessorResult> {
   const SUPABASE_URL = getEnv('SUPABASE_URL');
   const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
@@ -52,6 +70,7 @@ export async function processHeldPayouts(): Promise<PayoutProcessorResult> {
     succeeded: 0,
     failed: 0,
     errors: [],
+    payout_runs: [],
   };
 
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -70,12 +89,18 @@ export async function processHeldPayouts(): Promise<PayoutProcessorResult> {
   };
 
   try {
-    // 1. Get all releasable payouts (held + release_at <= now)
-    const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_releasable_payouts`, {
-      method: 'POST',
-      headers: { ...sbHeaders, 'Content-Type': 'application/json' },
-      body: '{}',
-    });
+    const rpcRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/rpc/get_releasable_payouts`,
+      {
+        method: 'POST',
+        headers: { ...sbHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          p_payout_run_id: options.payoutRunId || null,
+          p_scheduled_payout_date: options.scheduledPayoutDate || null,
+          p_limit: options.limit || 50,
+        }),
+      },
+    );
 
     if (!rpcRes.ok) {
       const err = await rpcRes.text();
@@ -85,24 +110,39 @@ export async function processHeldPayouts(): Promise<PayoutProcessorResult> {
     }
 
     const payouts = await rpcRes.json() as ReleasablePayout[];
-
     if (payouts.length === 0) {
-      return result; // Nothing to process
+      return result;
     }
 
-    console.log(`[PAYOUT-PROC] Found ${payouts.length} payout(s) ready for release`);
+    result.payout_runs = Array.from(
+      new Set(
+        payouts.map((p) => p.payout_run_id).filter((id): id is string => !!id),
+      ),
+    );
+    await Promise.all(
+      result.payout_runs.map((runId) =>
+        patchPayoutRun(SUPABASE_URL, sbWriteHeaders, runId, {
+          status: 'processing',
+        })
+      ),
+    );
 
-    // 2. Process each payout
+    console.log(
+      `[PAYOUT-PROC] Found ${payouts.length} payout(s) ready for release`,
+    );
+
     for (const payout of payouts) {
       result.processed++;
 
       try {
-        // 2a. Atomically transition held → pending (prevents double-processing)
-        const markRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/mark_payout_releasing`, {
-          method: 'POST',
-          headers: { ...sbHeaders, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ p_payout_id: payout.id }),
-        });
+        const markRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/rpc/mark_payout_releasing`,
+          {
+            method: 'POST',
+            headers: { ...sbHeaders, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ p_payout_id: payout.id }),
+          },
+        );
 
         if (!markRes.ok) {
           result.errors.push(`Failed to mark payout ${payout.id} as releasing`);
@@ -112,20 +152,26 @@ export async function processHeldPayouts(): Promise<PayoutProcessorResult> {
 
         const wasMarked = await markRes.json();
         if (!wasMarked) {
-          // Another instance already picked this up
-          console.log(`[PAYOUT-PROC] Payout ${payout.id} already claimed by another worker`);
+          console.log(
+            `[PAYOUT-PROC] Payout ${payout.id} already claimed by another worker`,
+          );
           result.processed--;
           continue;
         }
 
-        // 2b. Look up the user's connected account
         const userRes = await fetch(
           `${SUPABASE_URL}/rest/v1/users?id=eq.${payout.user_id}&select=stripe_connect_account_id,stripe_connect_payouts_enabled`,
-          { headers: sbHeaders }
+          { headers: sbHeaders },
         );
 
         if (!userRes.ok) {
-          await failPayout(SUPABASE_URL, sbWriteHeaders, payout.id, 'user_lookup_failed');
+          await markRetryableTransferFailure(
+            SUPABASE_URL,
+            sbWriteHeaders,
+            payout.id,
+            'user_lookup_failed',
+            await safeResponseText(userRes),
+          );
           result.errors.push(`User lookup failed for payout ${payout.id}`);
           result.failed++;
           continue;
@@ -136,78 +182,158 @@ export async function processHeldPayouts(): Promise<PayoutProcessorResult> {
           stripe_connect_payouts_enabled: boolean;
         }>)[0];
 
-        if (!userData?.stripe_connect_account_id || !userData.stripe_connect_payouts_enabled) {
-          await failPayout(SUPABASE_URL, sbWriteHeaders, payout.id, 'connect_account_not_ready');
-          result.errors.push(`Connect account not ready for payout ${payout.id} (user ${payout.user_id})`);
+        if (
+          !userData?.stripe_connect_account_id ||
+          !userData.stripe_connect_payouts_enabled
+        ) {
+          await markRetryableTransferFailure(
+            SUPABASE_URL,
+            sbWriteHeaders,
+            payout.id,
+            'connect_account_not_ready',
+            'Connected account is missing or payouts are disabled',
+          );
+          result.errors.push(
+            `Connect account not ready for payout ${payout.id} (user ${payout.user_id})`,
+          );
           result.failed++;
           continue;
         }
 
-        // 2c. Convert Light to USD cents — no platform fee on withdrawal
-        const transferAmountCents = lightToUsdCents(payout.amount_light);
-
+        const transferAmountCents = lightToUsdCents(
+          payout.amount_light,
+          payout.light_per_usd_snapshot || 100,
+        );
         if (transferAmountCents <= 0) {
-          await failPayout(SUPABASE_URL, sbWriteHeaders, payout.id, 'transfer_amount_zero');
+          await failPayout(
+            SUPABASE_URL,
+            sbWriteHeaders,
+            payout.id,
+            'transfer_amount_zero',
+          );
           result.errors.push(`Transfer amount zero for payout ${payout.id}`);
           result.failed++;
           continue;
         }
 
-        // 2d. Execute Stripe Transfer (platform → connected account)
-        let transferResult;
-        try {
-          transferResult = await createTransfer(
-            transferAmountCents,
-            userData.stripe_connect_account_id,
-            {
-              payout_id: payout.id,
-              user_id: payout.user_id,
-              amount_light: String(payout.amount_light),
-            }
-          );
-        } catch (transferErr) {
-          console.error(`[PAYOUT-PROC] Transfer failed for payout ${payout.id}:`, transferErr);
-          await failPayout(SUPABASE_URL, sbWriteHeaders, payout.id, 'stripe_transfer_failed');
-          result.errors.push(`Stripe transfer failed for payout ${payout.id}`);
-          result.failed++;
-          continue;
+        const transferKey = payout.stripe_transfer_idempotency_key ||
+          `ul:payout:${payout.id}:transfer:v1`;
+        const payoutKey = payout.stripe_payout_idempotency_key ||
+          `ul:payout:${payout.id}:payout:v1`;
+        const metadata = {
+          payout_id: payout.id,
+          user_id: payout.user_id,
+          amount_light: String(payout.amount_light),
+          ...(payout.payout_run_id
+            ? { payout_run_id: payout.payout_run_id }
+            : {}),
+          ...(payout.scheduled_payout_date
+            ? { scheduled_payout_date: payout.scheduled_payout_date }
+            : {}),
+        };
+
+        let transferId = payout.stripe_transfer_id || null;
+        const transferAlreadySucceeded =
+          payout.stripe_transfer_status === 'succeeded' && transferId;
+
+        if (!transferAlreadySucceeded) {
+          await patchPayout(SUPABASE_URL, sbWriteHeaders, payout.id, {
+            stripe_transfer_status: 'pending',
+            stripe_transfer_requested_at: new Date().toISOString(),
+            stripe_transfer_idempotency_key: transferKey,
+            stripe_transfer_error: null,
+            failure_reason: null,
+          });
+
+          try {
+            const transferResult = await createTransfer(
+              transferAmountCents,
+              userData.stripe_connect_account_id,
+              metadata,
+              { idempotencyKey: transferKey },
+            );
+            transferId = transferResult.transfer_id;
+            await patchPayout(SUPABASE_URL, sbWriteHeaders, payout.id, {
+              stripe_transfer_id: transferResult.transfer_id,
+              stripe_transfer_status: 'succeeded',
+              stripe_transfer_completed_at: new Date().toISOString(),
+              stripe_transfer_response: transferResult.response,
+              stripe_transfer_error: null,
+              status: 'processing',
+            });
+          } catch (transferErr) {
+            console.error(
+              `[PAYOUT-PROC] Transfer failed for payout ${payout.id}:`,
+              transferErr,
+            );
+            await markRetryableTransferFailure(
+              SUPABASE_URL,
+              sbWriteHeaders,
+              payout.id,
+              'stripe_transfer_failed',
+              serializeStripeError(transferErr),
+            );
+            result.errors.push(`Stripe transfer failed for payout ${payout.id}`);
+            result.failed++;
+            continue;
+          }
         }
 
-        // 2e. Update payout record with transfer ID, mark as processing
-        await fetch(`${SUPABASE_URL}/rest/v1/payouts?id=eq.${payout.id}`, {
-          method: 'PATCH',
-          headers: sbWriteHeaders,
-          body: JSON.stringify({
-            stripe_transfer_id: transferResult.transfer_id,
-            status: 'processing',
-          }),
+        await patchPayout(SUPABASE_URL, sbWriteHeaders, payout.id, {
+          stripe_payout_status: 'pending',
+          stripe_payout_requested_at: new Date().toISOString(),
+          stripe_payout_idempotency_key: payoutKey,
+          stripe_payout_error: null,
+          status: 'processing',
         });
 
-        // 2f. Execute Stripe Payout (connected account → bank)
-        // Fire-and-forget style — Stripe webhook confirms final status
         try {
           const payoutResult = await createPayout(
             transferAmountCents,
-            userData.stripe_connect_account_id
+            userData.stripe_connect_account_id,
+            {
+              idempotencyKey: payoutKey,
+              metadata: {
+                ...metadata,
+                ...(transferId ? { stripe_transfer_id: transferId } : {}),
+              },
+            },
           );
 
-          await fetch(`${SUPABASE_URL}/rest/v1/payouts?id=eq.${payout.id}`, {
-            method: 'PATCH',
-            headers: sbWriteHeaders,
-            body: JSON.stringify({
-              stripe_payout_id: payoutResult.payout_id,
-            }),
+          await patchPayout(SUPABASE_URL, sbWriteHeaders, payout.id, {
+            stripe_payout_id: payoutResult.payout_id,
+            stripe_payout_status: 'pending',
+            stripe_payout_response: payoutResult.response,
+            stripe_payout_error: null,
+            processor_claimed_at: null,
+            status: 'processing',
           });
         } catch (payoutErr) {
-          // Transfer succeeded but payout creation failed.
-          // Money is in the connected account — developer can trigger from Stripe Express Dashboard.
-          console.error(`[PAYOUT-PROC] Payout trigger failed (transfer succeeded) for ${payout.id}:`, payoutErr);
+          console.error(
+            `[PAYOUT-PROC] Payout trigger failed (transfer succeeded) for ${payout.id}:`,
+            payoutErr,
+          );
+          await patchPayout(SUPABASE_URL, sbWriteHeaders, payout.id, {
+            stripe_payout_status: 'failed',
+            stripe_payout_error: serializeStripeError(payoutErr),
+            failure_reason: 'stripe_payout_failed',
+            processor_claimed_at: null,
+            status: 'processing',
+          });
+          result.errors.push(`Stripe payout failed for payout ${payout.id}`);
+          result.failed++;
+          continue;
         }
 
         result.succeeded++;
         console.log(
           `[PAYOUT-PROC] Released payout ${payout.id}: ` +
-          `${formatLight(payout.amount_light)} → $${(transferAmountCents / 100).toFixed(2)} transferred`
+            `${formatLight(payout.amount_light)} → $${
+              (transferAmountCents / 100).toFixed(2)
+            } transferred` +
+            (payout.scheduled_payout_date
+              ? ` for ${payout.scheduled_payout_date} run`
+              : ''),
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -220,7 +346,7 @@ export async function processHeldPayouts(): Promise<PayoutProcessorResult> {
     if (result.processed > 0) {
       console.log(
         `[PAYOUT-PROC] Complete: ${result.processed} processed, ` +
-        `${result.succeeded} succeeded, ${result.failed} failed`
+          `${result.succeeded} succeeded, ${result.failed} failed`,
       );
     }
   } catch (err) {
@@ -232,6 +358,84 @@ export async function processHeldPayouts(): Promise<PayoutProcessorResult> {
   return result;
 }
 
+async function safeResponseText(response: Response): Promise<string> {
+  try {
+    return await response.text();
+  } catch {
+    return `HTTP ${response.status}`;
+  }
+}
+
+function serializeStripeError(err: unknown): Record<string, unknown> {
+  if (err instanceof StripeConnectRequestError) {
+    return {
+      message: err.message,
+      status: err.status,
+      response: err.responseText,
+    };
+  }
+  if (err instanceof Error) {
+    return {
+      message: err.message,
+      name: err.name,
+    };
+  }
+  if (typeof err === 'object' && err !== null) {
+    return { value: err };
+  }
+  return { message: String(err) };
+}
+
+async function patchPayout(
+  supabaseUrl: string,
+  headers: Record<string, string>,
+  payoutId: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const res = await fetch(`${supabaseUrl}/rest/v1/payouts?id=eq.${payoutId}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to patch payout ${payoutId}: ${await res.text()}`);
+  }
+}
+
+async function patchPayoutRun(
+  supabaseUrl: string,
+  headers: Record<string, string>,
+  runId: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const res = await fetch(`${supabaseUrl}/rest/v1/payout_runs?id=eq.${runId}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }),
+  });
+  if (!res.ok) {
+    console.warn(`[PAYOUT-PROC] Failed to patch payout run ${runId}`);
+  }
+}
+
+async function markRetryableTransferFailure(
+  supabaseUrl: string,
+  headers: Record<string, string>,
+  payoutId: string,
+  reason: string,
+  details: unknown,
+): Promise<void> {
+  await patchPayout(supabaseUrl, headers, payoutId, {
+    status: 'pending',
+    stripe_transfer_status: 'failed',
+    stripe_transfer_error: typeof details === 'string'
+      ? { message: details }
+      : details,
+    failure_reason: reason,
+    processor_claimed_at: null,
+  });
+}
+
 /**
  * Helper: fail a payout and refund via the atomic RPC.
  */
@@ -239,7 +443,7 @@ async function failPayout(
   supabaseUrl: string,
   headers: Record<string, string>,
   payoutId: string,
-  reason: string
+  reason: string,
 ): Promise<void> {
   try {
     await fetch(`${supabaseUrl}/rest/v1/rpc/fail_payout_refund`, {

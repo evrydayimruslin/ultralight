@@ -5,7 +5,7 @@ import { handleUpload } from './upload.ts';
 import { handleRun } from './run.ts';
 import { handleAuth } from './auth.ts';
 import { authenticate } from './auth.ts';
-import { appStoreUrl, downloadUrl, deepLinkAppUrl } from '../lib/urls.ts';
+import { appStoreUrl, deepLinkAppUrl, downloadUrl } from '../lib/urls.ts';
 import { handleApps } from './apps.ts';
 import { handleUser } from './user.ts';
 import { handleMcp, handleMcpDiscovery } from './mcp.ts';
@@ -18,17 +18,28 @@ import { handleGpuCodeProxy, handleInternalD1Query } from './internal-proxy.ts';
 import { handleTierChange } from './tier.ts';
 import { handleAdmin } from './admin.ts';
 import { handleDeveloper } from './developer.ts';
-import { handleChatStream, handleChatModels, handleChatInferenceOptions, handleProvisionKey, handleFunctionIndex, handleChatContext, handleToolInvocationTelemetry, handleOrchestrate, handlePlanConfirm, handlePlanCancel } from './chat.ts';
+import {
+  handleChatContext,
+  handleChatInferenceOptions,
+  handleChatModels,
+  handleChatStream,
+  handleFunctionIndex,
+  handleOrchestrate,
+  handlePlanCancel,
+  handlePlanConfirm,
+  handleProvisionKey,
+  handleToolInvocationTelemetry,
+} from './chat.ts';
 import { error, json, toResponseBody } from './response.ts';
 import { getLayoutHTML } from '../../web/layout.ts';
 import { createAppsService } from '../services/apps.ts';
 import { createR2Service } from '../services/storage.ts';
 import { getCodeCache } from '../services/codecache.ts';
 import {
+  type AppContractResolution,
+  type AppFunctionContract,
   logAppContractResolution,
   resolveAppFunctionContracts,
-  type AppFunctionContract,
-  type AppContractResolution,
 } from '../services/app-contracts.ts';
 import { hasValidPageShareSession } from '../services/page-share-session.ts';
 import { fetchAppEntryCode } from '../services/app-runtime-resources.ts';
@@ -38,6 +49,7 @@ import {
   type MarketplaceListingSummary,
   type MarketplaceListingSummaryListing,
 } from '../services/marketplace.ts';
+import { getBillingConfig, toPublicBillingConfig } from '../services/billing-config.ts';
 import { getEnv } from '../lib/env.ts';
 import { formatLight } from '../../shared/types/index.ts';
 import type { AppManifest } from '../../shared/contracts/manifest.ts';
@@ -50,7 +62,9 @@ import type { AppManifest } from '../../shared/contracts/manifest.ts';
  * Generate a strong ETag from app version and update timestamp.
  * This changes whenever the app is published or updated.
  */
-function generateAppETag(app: { current_version?: string; updated_at?: string; storage_key: string }): string {
+function generateAppETag(
+  app: { current_version?: string; updated_at?: string; storage_key: string },
+): string {
   const version = app.current_version || '0';
   const updated = app.updated_at || '0';
   // Use a short hash of version + timestamp for the ETag
@@ -68,7 +82,10 @@ function generateAppETag(app: { current_version?: string; updated_at?: string; s
  * Check If-None-Match and return 304 if ETag matches.
  * Returns null if no match (caller should serve full response).
  */
-function checkConditionalRequest(request: Request, etag: string): Response | null {
+function checkConditionalRequest(
+  request: Request,
+  etag: string,
+): Response | null {
   const ifNoneMatch = request.headers.get('If-None-Match');
   if (ifNoneMatch && (ifNoneMatch === etag || ifNoneMatch === `W/${etag}`)) {
     return new Response(null, {
@@ -87,7 +104,11 @@ function checkConditionalRequest(request: Request, etag: string): Response | nul
  * - HTML pages: 1 hour cache with ETag for revalidation
  * - Versioned assets: 1 year immutable cache
  */
-function addCacheHeaders(headers: Record<string, string>, etag: string, immutable = false): Record<string, string> {
+function addCacheHeaders(
+  headers: Record<string, string>,
+  etag: string,
+  immutable = false,
+): Record<string, string> {
   if (immutable) {
     return {
       ...headers,
@@ -129,9 +150,15 @@ export function createApp() {
 
       // Public homepage
       if (path === '/' && method === 'GET') {
-        return new Response(getLayoutHTML({ initialView: 'home', embed: isEmbed }), {
-          headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' },
-        });
+        return new Response(
+          getLayoutHTML({ initialView: 'home', embed: isEmbed }),
+          {
+            headers: {
+              'Content-Type': 'text/html',
+              'Cache-Control': 'no-store',
+            },
+          },
+        );
       }
 
       // Desktop app download page
@@ -145,7 +172,9 @@ export function createApp() {
       if (path === '/download/macos' && method === 'GET') {
         try {
           const r2 = createR2Service();
-          const dmgData = await r2.fetchFile('desktop/Ultralight_0.1.0_x64.dmg');
+          const dmgData = await r2.fetchFile(
+            'desktop/Ultralight_0.1.0_x64.dmg',
+          );
           return new Response(toResponseBody(dmgData), {
             headers: {
               'Content-Type': 'application/x-apple-diskimage',
@@ -154,7 +183,10 @@ export function createApp() {
             },
           });
         } catch {
-          return new Response('Download unavailable. Build may not be uploaded yet.', { status: 404 });
+          return new Response(
+            'Download unavailable. Build may not be uploaded yet.',
+            { status: 404 },
+          );
         }
       }
 
@@ -172,7 +204,9 @@ export function createApp() {
 
           const body = new Uint8Array(await request.arrayBuffer());
           if (body.length === 0) return error('Empty body');
-          if (body.length > 50 * 1024 * 1024) return error('File too large (max 50MB)');
+          if (body.length > 50 * 1024 * 1024) {
+            return error('File too large (max 50MB)');
+          }
 
           const r2 = createR2Service();
           await r2.uploadFile('desktop/Ultralight_0.1.0_x64.dmg', {
@@ -180,7 +214,11 @@ export function createApp() {
             content: body,
             contentType: 'application/x-apple-diskimage',
           });
-          return json({ success: true, size: body.length, key: 'desktop/Ultralight_0.1.0_x64.dmg' });
+          return json({
+            success: true,
+            size: body.length,
+            key: 'desktop/Ultralight_0.1.0_x64.dmg',
+          });
         } catch (e) {
           return error(e instanceof Error ? e.message : 'Upload failed', 500);
         }
@@ -188,49 +226,125 @@ export function createApp() {
 
       // Capabilities (unified Library + Marketplace)
       if (path === '/capabilities' && method === 'GET') {
-        return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed, dashSection: 'capabilities' }), {
-          headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' },
-        });
+        return new Response(
+          getLayoutHTML({
+            initialView: 'dashboard',
+            embed: isEmbed,
+            dashSection: 'capabilities',
+          }),
+          {
+            headers: {
+              'Content-Type': 'text/html',
+              'Cache-Control': 'no-store',
+            },
+          },
+        );
       }
 
       // Dashboard — backward compat, maps to capabilities
       if (path === '/dash' && method === 'GET') {
-        return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed, dashSection: 'capabilities' }), {
-          headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' },
-        });
+        return new Response(
+          getLayoutHTML({
+            initialView: 'dashboard',
+            embed: isEmbed,
+            dashSection: 'capabilities',
+          }),
+          {
+            headers: {
+              'Content-Type': 'text/html',
+              'Cache-Control': 'no-store',
+            },
+          },
+        );
+      }
+
+      // Wallet — canonical payment portal shared by web and desktop embeds.
+      if (path === '/wallet' && method === 'GET') {
+        return new Response(
+          getLayoutHTML({
+            initialView: 'dashboard',
+            embed: isEmbed,
+            dashSection: 'billing',
+          }),
+          {
+            headers: {
+              'Content-Type': 'text/html',
+              'Cache-Control': 'no-store',
+            },
+          },
+        );
       }
 
       // Settings page (account settings) — supports /settings, /settings/tokens, /settings/billing, /settings/supabase
-      if ((path === '/settings' || path.startsWith('/settings/')) && method === 'GET') {
+      if (
+        (path === '/settings' || path.startsWith('/settings/')) &&
+        method === 'GET'
+      ) {
         const settingsSub = path.split('/settings/')[1] || 'keys';
-        const section = settingsSub === 'billing' ? 'billing' : settingsSub === 'tokens' ? 'keys' : settingsSub;
-        return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed, dashSection: section }), {
-          headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' },
-        });
+        const section = settingsSub === 'billing'
+          ? 'billing'
+          : settingsSub === 'tokens'
+          ? 'keys'
+          : settingsSub;
+        return new Response(
+          getLayoutHTML({
+            initialView: 'dashboard',
+            embed: isEmbed,
+            dashSection: section,
+          }),
+          {
+            headers: {
+              'Content-Type': 'text/html',
+              'Cache-Control': 'no-store',
+            },
+          },
+        );
       }
 
       // Marketplace — backward compat, maps to capabilities
       if (path === '/marketplace' && method === 'GET') {
-        return new Response(getLayoutHTML({ initialView: 'dashboard', embed: isEmbed, dashSection: 'capabilities' }), {
-          headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' },
-        });
+        return new Response(
+          getLayoutHTML({
+            initialView: 'dashboard',
+            embed: isEmbed,
+            dashSection: 'capabilities',
+          }),
+          {
+            headers: {
+              'Content-Type': 'text/html',
+              'Cache-Control': 'no-store',
+            },
+          },
+        );
       }
 
       // Public user profile
       if (path.startsWith('/u/') && method === 'GET') {
         const slug = path.slice(3);
         if (slug) {
-          return new Response(getLayoutHTML({ initialView: 'profile', profileSlug: slug }), {
-            headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' },
-          });
+          return new Response(
+            getLayoutHTML({ initialView: 'profile', profileSlug: slug }),
+            {
+              headers: {
+                'Content-Type': 'text/html',
+                'Cache-Control': 'no-store',
+              },
+            },
+          );
         }
       }
 
       // My profile (authenticated)
       if (path === '/my-profile' && method === 'GET') {
-        return new Response(getLayoutHTML({ initialView: 'profile', embed: isEmbed }), {
-          headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' },
-        });
+        return new Response(
+          getLayoutHTML({ initialView: 'profile', embed: isEmbed }),
+          {
+            headers: {
+              'Content-Type': 'text/html',
+              'Cache-Control': 'no-store',
+            },
+          },
+        );
       }
 
       // Gaps board & Leaderboard → redirect to capabilities
@@ -262,9 +376,11 @@ export function createApp() {
 
       // OAuth 2.1 routes for MCP spec compliance
       // Protected Resource Metadata + Authorization Server Metadata + OAuth endpoints
-      if (path === '/.well-known/oauth-protected-resource' ||
-          path === '/.well-known/oauth-authorization-server' ||
-          path.startsWith('/oauth/')) {
+      if (
+        path === '/.well-known/oauth-protected-resource' ||
+        path === '/.well-known/oauth-authorization-server' ||
+        path.startsWith('/oauth/')
+      ) {
         return handleOAuth(request);
       }
 
@@ -297,50 +413,91 @@ export function createApp() {
           async function rl(): Promise<string> {
             while (true) {
               const idx = buf.indexOf('\r\n');
-              if (idx >= 0) { const l = buf.substring(0, idx); buf = buf.substring(idx + 2); return l; }
+              if (idx >= 0) {
+                const l = buf.substring(0, idx);
+                buf = buf.substring(idx + 2);
+                return l;
+              }
               const { value, done } = await reader.read();
               if (done) return buf;
               buf += d.decode(value, { stream: true });
             }
           }
           async function rb(n: number): Promise<string> {
-            while (buf.length < n) { const { value, done } = await reader.read(); if (done) break; buf += d.decode(value, { stream: true }); }
-            const data = buf.substring(0, n); buf = buf.substring(n); return data;
+            while (buf.length < n) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              buf += d.decode(value, { stream: true });
+            }
+            const data = buf.substring(0, n);
+            buf = buf.substring(n);
+            return data;
           }
           let tagN = 0;
-          async function cmd(c: string): Promise<{ lines: string[]; ok: boolean }> {
-            tagN++; const tag = 'A' + String(tagN).padStart(4, '0');
+          async function cmd(
+            c: string,
+          ): Promise<{ lines: string[]; ok: boolean }> {
+            tagN++;
+            const tag = 'A' + String(tagN).padStart(4, '0');
             await writer.write(e.encode(tag + ' ' + c + '\r\n'));
             const lines: string[] = [];
             while (true) {
               const line = await rl();
-              if (line.startsWith(tag + ' ')) return { lines, ok: line.includes(tag + ' OK') };
+              if (line.startsWith(tag + ' ')) {
+                return { lines, ok: line.includes(tag + ' OK') };
+              }
               lines.push(line);
             }
           }
           const greeting = await rl();
-          const login = await cmd('LOGIN "' + (body.user as string) + '" "' + (body.pass as string) + '"');
+          const login = await cmd(
+            'LOGIN "' + (body.user as string) + '" "' + (body.pass as string) +
+              '"',
+          );
           const sel = await cmd('SELECT INBOX');
           const search = await cmd('UID SEARCH UNSEEN');
-          const uidLine = search.lines.find(l => l.startsWith('* SEARCH'));
-          const uids = uidLine ? uidLine.replace('* SEARCH','').trim().split(/\s+/).map(Number).filter(n => n > 0) : [];
+          const uidLine = search.lines.find((l) => l.startsWith('* SEARCH'));
+          const uids = uidLine
+            ? uidLine.replace('* SEARCH', '').trim().split(/\s+/).map(Number)
+              .filter((n) => n > 0)
+            : [];
           let fetchResult: any = null;
           if (uids.length > 0) {
-            fetchResult = await cmd('UID FETCH ' + uids[0] + ' (BODY.PEEK[] FLAGS)');
+            fetchResult = await cmd(
+              'UID FETCH ' + uids[0] + ' (BODY.PEEK[] FLAGS)',
+            );
           }
           await cmd('LOGOUT');
-          reader.releaseLock(); try { writer.releaseLock(); } catch {} try { socket.close(); } catch {}
-          return new Response(JSON.stringify({
-            greeting: greeting.substring(0, 80),
-            login: login.ok,
-            unseen: uids.length,
-            firstUid: uids[0],
-            fetchLines: fetchResult ? fetchResult.lines.length : 0,
-            fetchOk: fetchResult?.ok,
-            fetchFirstLine: fetchResult?.lines?.[0]?.substring(0, 100),
-          }, null, 2), { headers: { 'Content-Type': 'application/json' } });
+          reader.releaseLock();
+          try {
+            writer.releaseLock();
+          } catch {}
+          try {
+            socket.close();
+          } catch {}
+          return new Response(
+            JSON.stringify(
+              {
+                greeting: greeting.substring(0, 80),
+                login: login.ok,
+                unseen: uids.length,
+                firstUid: uids[0],
+                fetchLines: fetchResult ? fetchResult.lines.length : 0,
+                fetchOk: fetchResult?.ok,
+                fetchFirstLine: fetchResult?.lines?.[0]?.substring(0, 100),
+              },
+              null,
+              2,
+            ),
+            { headers: { 'Content-Type': 'application/json' } },
+          );
         } catch (e2: unknown) {
-          return new Response(JSON.stringify({ error: e2 instanceof Error ? e2.message : String(e2) }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+          return new Response(
+            JSON.stringify({
+              error: e2 instanceof Error ? e2.message : String(e2),
+            }),
+            { status: 500, headers: { 'Content-Type': 'application/json' } },
+          );
         }
       }
 
@@ -349,38 +506,72 @@ export function createApp() {
       if (path === '/api/net/imap-fetch' && method === 'POST') {
         const secret = request.headers.get('X-Worker-Secret');
         if (!secret || secret !== getEnv('WORKER_SECRET')) {
-          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 403,
+            headers: { 'Content-Type': 'application/json' },
+          });
         }
         try {
-          const { imapFetchUnseen } = await import('../services/tcp-protocols.ts');
+          const { imapFetchUnseen } = await import(
+            '../services/tcp-protocols.ts'
+          );
           const body = await request.json() as Record<string, unknown>;
           const result = await imapFetchUnseen(
-            body.host as string, body.port as number, body.user as string, body.pass as string,
-            (body.lastUid as number) || 0, (body.businessEmail as string) || '',
-            (body.processedFlag as string) || '$ULProcessed', (body.limit as number) || 20,
+            body.host as string,
+            body.port as number,
+            body.user as string,
+            body.pass as string,
+            (body.lastUid as number) || 0,
+            (body.businessEmail as string) || '',
+            (body.processedFlag as string) || '$ULProcessed',
+            (body.limit as number) || 20,
           );
-          return new Response(JSON.stringify(result), { headers: { 'Content-Type': 'application/json' } });
+          return new Response(JSON.stringify(result), {
+            headers: { 'Content-Type': 'application/json' },
+          });
         } catch (e: unknown) {
-          return new Response(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+          return new Response(
+            JSON.stringify({
+              error: e instanceof Error ? e.message : String(e),
+            }),
+            { status: 500, headers: { 'Content-Type': 'application/json' } },
+          );
         }
       }
 
       if (path === '/api/net/smtp-send' && method === 'POST') {
         const secret = request.headers.get('X-Worker-Secret');
         if (!secret || secret !== getEnv('WORKER_SECRET')) {
-          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 403,
+            headers: { 'Content-Type': 'application/json' },
+          });
         }
         try {
           const { smtpSend } = await import('../services/tcp-protocols.ts');
           const body = await request.json() as Record<string, unknown>;
           const result = await smtpSend(
-            body.host as string, body.port as number, body.user as string, body.pass as string,
-            body.from as string, (body.fromName as string) || '', body.to as string,
-            body.subject as string, body.body as string, body.inReplyTo as string | undefined,
+            body.host as string,
+            body.port as number,
+            body.user as string,
+            body.pass as string,
+            body.from as string,
+            (body.fromName as string) || '',
+            body.to as string,
+            body.subject as string,
+            body.body as string,
+            body.inReplyTo as string | undefined,
           );
-          return new Response(JSON.stringify(result), { headers: { 'Content-Type': 'application/json' } });
+          return new Response(JSON.stringify(result), {
+            headers: { 'Content-Type': 'application/json' },
+          });
         } catch (e: unknown) {
-          return new Response(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+          return new Response(
+            JSON.stringify({
+              error: e instanceof Error ? e.message : String(e),
+            }),
+            { status: 500, headers: { 'Content-Type': 'application/json' } },
+          );
         }
       }
 
@@ -393,6 +584,11 @@ export function createApp() {
       // Homepage data API — public, returns gaps + leaderboard + top apps
       if (path === '/api/homepage' && method === 'GET') {
         return handleHomepageApi(request);
+      }
+
+      // Public billing economics used by wallet/payment UI copy.
+      if (path === '/api/billing/config' && method === 'GET') {
+        return json(toPublicBillingConfig(await getBillingConfig()));
       }
 
       // Stripe webhook route — unauthenticated, verified by signature
@@ -450,7 +646,10 @@ export function createApp() {
 
       // Chat stream endpoint — routed inference with SSE streaming.
       // Also serves /v1/chat/completions for OpenAI-compatible clients
-      if ((path === '/chat/stream' || path === '/v1/chat/completions') && method === 'POST') {
+      if (
+        (path === '/chat/stream' || path === '/v1/chat/completions') &&
+        method === 'POST'
+      ) {
         return handleChatStream(request);
       }
 
@@ -483,7 +682,9 @@ export function createApp() {
         return handleOrchestrate(request);
       }
 
-      const planRouteMatch = path.match(/^\/chat\/plan\/([a-f0-9-]{36})\/(confirm|cancel)$/);
+      const planRouteMatch = path.match(
+        /^\/chat\/plan\/([a-f0-9-]{36})\/(confirm|cancel)$/,
+      );
       if (planRouteMatch && method === 'POST') {
         const [, planId, action] = planRouteMatch;
         if (action === 'confirm') {
@@ -503,26 +704,56 @@ export function createApp() {
         const steps: { step: string; result: string; ok: boolean }[] = [];
 
         if (!authHeader?.startsWith('Bearer ')) {
-          return json({ ok: false, error: 'Missing or invalid authorization header', steps: [{ step: 'header', result: `Authorization header: ${authHeader ? 'present but wrong format' : 'missing'}`, ok: false }] }, 401);
+          return json({
+            ok: false,
+            error: 'Missing or invalid authorization header',
+            steps: [{
+              step: 'header',
+              result: `Authorization header: ${
+                authHeader ? 'present but wrong format' : 'missing'
+              }`,
+              ok: false,
+            }],
+          }, 401);
         }
 
         const token = authHeader.slice(7);
-        steps.push({ step: 'header', result: `Bearer token extracted (${token.length} chars)`, ok: true });
+        steps.push({
+          step: 'header',
+          result: `Bearer token extracted (${token.length} chars)`,
+          ok: true,
+        });
 
         // Check format
         const hasPrefix = token.startsWith('ul_');
-        steps.push({ step: 'prefix', result: `Starts with "ul_": ${hasPrefix} (got "${token.substring(0, 4)}")`, ok: hasPrefix });
+        steps.push({
+          step: 'prefix',
+          result: `Starts with "ul_": ${hasPrefix} (got "${token.substring(0, 4)}")`,
+          ok: hasPrefix,
+        });
         if (!hasPrefix) {
           return json({ ok: false, error: 'Not a ul_ token', steps }, 401);
         }
 
-        steps.push({ step: 'length', result: `Token length: ${token.length} (expected 35)`, ok: token.length === 35 });
+        steps.push({
+          step: 'length',
+          result: `Token length: ${token.length} (expected 35)`,
+          ok: token.length === 35,
+        });
         if (token.length !== 35) {
-          return json({ ok: false, error: `Wrong token length: ${token.length}, expected 35`, steps }, 401);
+          return json({
+            ok: false,
+            error: `Wrong token length: ${token.length}, expected 35`,
+            steps,
+          }, 401);
         }
 
         const tokenPrefix = token.substring(0, 8);
-        steps.push({ step: 'prefix_extract', result: `Token prefix for DB lookup: "${tokenPrefix}"`, ok: true });
+        steps.push({
+          step: 'prefix_extract',
+          result: `Token prefix for DB lookup: "${tokenPrefix}"`,
+          ok: true,
+        });
 
         // Direct DB lookup to show what's happening
         const { createClient } = await import('@supabase/supabase-js');
@@ -538,16 +769,39 @@ export function createApp() {
           .single();
 
         if (dbErr || !tokenRow) {
-          steps.push({ step: 'db_lookup', result: `No token found with prefix "${tokenPrefix}" — ${dbErr?.message || 'no rows returned'} (code: ${dbErr?.code || 'n/a'})`, ok: false });
+          steps.push({
+            step: 'db_lookup',
+            result: `No token found with prefix "${tokenPrefix}" — ${
+              dbErr?.message || 'no rows returned'
+            } (code: ${dbErr?.code || 'n/a'})`,
+            ok: false,
+          });
 
           // Also check how many tokens exist total (sanity check)
-          const { count } = await supabase.from('user_api_tokens').select('id', { count: 'exact', head: true });
-          steps.push({ step: 'db_count', result: `Total tokens in DB: ${count ?? 'unknown'}`, ok: true });
+          const { count } = await supabase.from('user_api_tokens').select(
+            'id',
+            { count: 'exact', head: true },
+          );
+          steps.push({
+            step: 'db_count',
+            result: `Total tokens in DB: ${count ?? 'unknown'}`,
+            ok: true,
+          });
 
-          return json({ ok: false, error: 'Token not found in database', steps }, 401);
+          return json({
+            ok: false,
+            error: 'Token not found in database',
+            steps,
+          }, 401);
         }
 
-        steps.push({ step: 'db_lookup', result: `Token found — id: ${tokenRow.id}, user_id: ${tokenRow.user_id}, created: ${tokenRow.created_at}, has_salt: ${!!tokenRow.token_salt}`, ok: true });
+        steps.push({
+          step: 'db_lookup',
+          result:
+            `Token found — id: ${tokenRow.id}, user_id: ${tokenRow.user_id}, created: ${tokenRow.created_at}, has_salt: ${!!tokenRow
+              .token_salt}`,
+          ok: true,
+        });
 
         // Check user exists
         const { data: userRow, error: userErr } = await supabase
@@ -557,21 +811,53 @@ export function createApp() {
           .single();
 
         if (userErr || !userRow) {
-          steps.push({ step: 'user_lookup', result: `User not found for user_id: ${tokenRow.user_id} — ${userErr?.message || 'no user'}`, ok: false });
+          steps.push({
+            step: 'user_lookup',
+            result: `User not found for user_id: ${tokenRow.user_id} — ${
+              userErr?.message || 'no user'
+            }`,
+            ok: false,
+          });
           return json({ ok: false, error: 'User not found', steps }, 401);
         }
 
-        steps.push({ step: 'user_lookup', result: `User found — email: ${userRow.email}, tier: ${userRow.tier}, provisional: ${userRow.provisional}`, ok: true });
+        steps.push({
+          step: 'user_lookup',
+          result:
+            `User found — email: ${userRow.email}, tier: ${userRow.tier}, provisional: ${userRow.provisional}`,
+          ok: true,
+        });
 
         // Now try full auth
         const { authenticate } = await import('./auth.ts');
         try {
           const user = await authenticate(request);
-          steps.push({ step: 'full_auth', result: `Auth SUCCESS — ${user.email}, tier: ${user.tier}`, ok: true });
-          return json({ ok: true, user: { id: user.id, email: user.email, tier: user.tier, provisional: user.provisional }, steps });
+          steps.push({
+            step: 'full_auth',
+            result: `Auth SUCCESS — ${user.email}, tier: ${user.tier}`,
+            ok: true,
+          });
+          return json({
+            ok: true,
+            user: {
+              id: user.id,
+              email: user.email,
+              tier: user.tier,
+              provisional: user.provisional,
+            },
+            steps,
+          });
         } catch (err) {
-          steps.push({ step: 'full_auth', result: `Auth FAILED — ${err instanceof Error ? err.message : 'unknown'}`, ok: false });
-          return json({ ok: false, error: err instanceof Error ? err.message : 'Unknown error', steps }, 401);
+          steps.push({
+            step: 'full_auth',
+            result: `Auth FAILED — ${err instanceof Error ? err.message : 'unknown'}`,
+            ok: false,
+          });
+          return json({
+            ok: false,
+            error: err instanceof Error ? err.message : 'Unknown error',
+            steps,
+          }, 401);
         }
       }
 
@@ -581,22 +867,32 @@ export function createApp() {
         try {
           const user = await authenticate(request);
           const { createClient } = await import('@supabase/supabase-js');
-          const supabase = createClient(getEnv('SUPABASE_URL'), getEnv('SUPABASE_SERVICE_ROLE_KEY'));
-          // Add ✦4,000 Light (= $5.00)
-          const { error: dbErr } = await supabase.rpc('debit_balance', {
+          const supabase = createClient(
+            getEnv('SUPABASE_URL'),
+            getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+          );
+          // Add ✦4,000 Light as spend-only developer credit.
+          const { error: dbErr } = await supabase.rpc('credit_balance', {
             p_user_id: user.id,
-            p_amount: -4000, // Negative = credit
-            p_update_billed_at: false,
+            p_amount_light: 4000,
           });
           if (dbErr) {
-            // Fallback: direct update
-            await supabase.from('users').update({ balance_light: 4000 }).eq('id', user.id);
+            throw dbErr;
           }
           // Check new balance
-          const { data: userData } = await supabase.from('users').select('balance_light').eq('id', user.id).single();
-          return json({ ok: true, message: 'Added ✦4,000 dev credits', balance_light: userData?.balance_light ?? 'unknown' });
+          const { data: userData } = await supabase.from('users').select(
+            'balance_light',
+          ).eq('id', user.id).single();
+          return json({
+            ok: true,
+            message: 'Added ✦4,000 dev credits',
+            balance_light: userData?.balance_light ?? 'unknown',
+          });
         } catch (err) {
-          return json({ ok: false, error: err instanceof Error ? err.message : 'failed' }, 401);
+          return json({
+            ok: false,
+            error: err instanceof Error ? err.message : 'failed',
+          }, 401);
         }
       }
 
@@ -610,39 +906,77 @@ export function createApp() {
         try {
           const user = await authenticate(request);
           userId = user.id;
-          checks.push({ check: 'auth', result: `${user.email}, tier: ${user.tier}`, ok: true });
+          checks.push({
+            check: 'auth',
+            result: `${user.email}, tier: ${user.tier}`,
+            ok: true,
+          });
 
           if (user.provisional) {
-            checks.push({ check: 'provisional', result: 'Provisional users cannot use chat', ok: false });
+            checks.push({
+              check: 'provisional',
+              result: 'Provisional users cannot use chat',
+              ok: false,
+            });
             return json({ ok: false, checks });
           }
-          checks.push({ check: 'provisional', result: 'Not provisional', ok: true });
+          checks.push({
+            check: 'provisional',
+            result: 'Not provisional',
+            ok: true,
+          });
         } catch (err) {
-          checks.push({ check: 'auth', result: err instanceof Error ? err.message : 'failed', ok: false });
+          checks.push({
+            check: 'auth',
+            result: err instanceof Error ? err.message : 'failed',
+            ok: false,
+          });
           return json({ ok: false, checks }, 401);
         }
 
         // 2. Balance
-        const { checkChatBalance } = await import('../services/chat-billing.ts');
-        const { CHAT_MIN_BALANCE_LIGHT: minBalance } = await import('../../shared/types/index.ts');
+        const { checkChatBalance } = await import(
+          '../services/chat-billing.ts'
+        );
+        const { CHAT_MIN_BALANCE_LIGHT: minBalance } = await import(
+          '../../shared/types/index.ts'
+        );
         try {
           const balance = await checkChatBalance(userId!);
           const ok = balance >= minBalance;
-          checks.push({ check: 'balance', result: `✦${balance} (min: ✦${minBalance})`, ok });
+          checks.push({
+            check: 'balance',
+            result: `✦${balance} (min: ✦${minBalance})`,
+            ok,
+          });
         } catch (err) {
-          checks.push({ check: 'balance', result: `Failed: ${err instanceof Error ? err.message : 'unknown'}`, ok: false });
+          checks.push({
+            check: 'balance',
+            result: `Failed: ${err instanceof Error ? err.message : 'unknown'}`,
+            ok: false,
+          });
         }
 
         // 3. OpenRouter management key (for provisioning per-user keys)
         const mgmtKey = getEnv('OPENROUTER_API_KEY');
-        checks.push({ check: 'openrouter_mgmt_key', result: mgmtKey ? 'Configured' : 'NOT SET', ok: !!mgmtKey });
+        checks.push({
+          check: 'openrouter_mgmt_key',
+          result: mgmtKey ? 'Configured' : 'NOT SET',
+          ok: !!mgmtKey,
+        });
 
         // 4. Per-user OpenRouter key (created on first chat via management API)
-        const { getStoredOpenRouterKey } = await import('../services/openrouter-keys.ts');
+        const { getStoredOpenRouterKey } = await import(
+          '../services/openrouter-keys.ts'
+        );
         const userOrKey = await getStoredOpenRouterKey(userId!);
-        checks.push({ check: 'user_openrouter_key', result: userOrKey ? 'Provisioned' : 'Not yet created (will be provisioned on first chat)', ok: true });
+        checks.push({
+          check: 'user_openrouter_key',
+          result: userOrKey ? 'Provisioned' : 'Not yet created (will be provisioned on first chat)',
+          ok: true,
+        });
 
-        const allOk = checks.every(c => c.ok);
+        const allOk = checks.every((c) => c.ok);
         return json({ ok: allOk, checks });
       }
 
@@ -736,24 +1070,44 @@ export function createApp() {
         }
 
         // SPA routes for app detail sidebar sections
-        if (['/permissions', '/environment', '/payments', '/logs'].includes(subPath) && method === 'GET') {
-          const { app } = await resolvePublicFacingApp(request, appId, { allowPrivateOwner: true });
+        if (
+          ['/permissions', '/environment', '/payments', '/logs'].includes(
+            subPath,
+          ) && method === 'GET'
+        ) {
+          const { app } = await resolvePublicFacingApp(request, appId, {
+            allowPrivateOwner: true,
+          });
           if (!app) {
             return json({ error: 'App not found' }, 404);
           }
-          return new Response(getLayoutHTML({ initialView: 'app', activeAppId: appId }), {
-            headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' },
-          });
+          return new Response(
+            getLayoutHTML({ initialView: 'app', activeAppId: appId }),
+            {
+              headers: {
+                'Content-Type': 'text/html',
+                'Cache-Control': 'no-store',
+              },
+            },
+          );
         }
 
         try {
-          const { app } = await resolvePublicFacingApp(request, appId, { allowPrivateOwner: true });
+          const { app } = await resolvePublicFacingApp(request, appId, {
+            allowPrivateOwner: true,
+          });
           if (!app) {
             return json({ error: 'App not found' }, 404);
           }
 
           // Generate ETag and check for conditional request (304)
-          const etag = generateAppETag(app as { current_version?: string; updated_at?: string; storage_key: string });
+          const etag = generateAppETag(
+            app as {
+              current_version?: string;
+              updated_at?: string;
+              storage_key: string;
+            },
+          );
           const conditionalResponse = checkConditionalRequest(request, etag);
           if (conditionalResponse) {
             console.log(`App runner: 304 Not Modified for app ${appId}`);
@@ -768,12 +1122,15 @@ export function createApp() {
             {
               codeCache,
               onCacheHit: () => console.log(`App runner: code cache HIT for app ${appId}`),
-              onFileLoaded: (entryFile) => console.log(`App runner: loaded ${entryFile} for app ${appId}`),
+              onFileLoaded: (entryFile) =>
+                console.log(`App runner: loaded ${entryFile} for app ${appId}`),
             },
           );
 
           if (!code) {
-            console.error(`App runner: no entry file found for app ${appId}, storageKey: ${storageKey}`);
+            console.error(
+              `App runner: no entry file found for app ${appId}, storageKey: ${storageKey}`,
+            );
             return json({ error: 'App code not found' }, 404);
           }
 
@@ -782,7 +1139,9 @@ export function createApp() {
           let isHttpServerApp = false;
 
           const hasHandlerFunction =
-            /export\s+(default\s+)?(async\s+)?function\s+handler\s*\(/.test(code) ||
+            /export\s+(default\s+)?(async\s+)?function\s+handler\s*\(/.test(
+              code,
+            ) ||
             /export\s+default\s+handler/.test(code) ||
             /export\s+\{\s*handler\s*\}/.test(code) ||
             /^(async\s+)?function\s+handler\s*\(/m.test(code) ||
@@ -792,23 +1151,31 @@ export function createApp() {
           isHttpServerApp = hasHandlerFunction;
 
           // Cache headers for all app HTML responses
-          const cacheHeaders = addCacheHeaders({ 'Content-Type': 'text/html' }, etag);
+          const cacheHeaders = addCacheHeaders(
+            { 'Content-Type': 'text/html' },
+            etag,
+          );
 
           if (isHttpServerApp) {
             // HTTP Server app - execute handler function
             const isEmbed = url.searchParams.get('embed') === '1';
 
-            if (isEmbed || method !== 'GET' || (subPath !== '/' && subPath !== '')) {
+            if (
+              isEmbed || method !== 'GET' || (subPath !== '/' && subPath !== '')
+            ) {
               return await executeServerApp(code, request, appId, subPath);
             } else {
-              return new Response(getLayoutHTML({
-                title: app.name || app.slug,
-                activeAppId: appId,
-                initialView: 'app',
-                appName: app.name || app.slug,
-              }), {
-                headers: cacheHeaders,
-              });
+              return new Response(
+                getLayoutHTML({
+                  title: app.name || app.slug,
+                  activeAppId: appId,
+                  initialView: 'app',
+                  appName: app.name || app.slug,
+                }),
+                {
+                  headers: cacheHeaders,
+                },
+              );
             }
           } else {
             // MCP-only app - show info page with available tools
@@ -833,22 +1200,33 @@ export function createApp() {
                 migrationRequired: contractResolution.migrationRequired,
               });
               // Return an info page for the iframe showing MCP tools
-              return new Response(getMcpAppInfoHTML(appId, escapeHtml(app.name || app.slug), contractResolution), {
-                headers: {
-                  ...cacheHeaders,
-                  'Content-Security-Policy': "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'none'",
+              return new Response(
+                getMcpAppInfoHTML(
+                  appId,
+                  escapeHtml(app.name || app.slug),
+                  contractResolution,
+                ),
+                {
+                  headers: {
+                    ...cacheHeaders,
+                    'Content-Security-Policy':
+                      "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'none'",
+                  },
                 },
-              });
+              );
             } else {
               // Normal view with sidebar
-              return new Response(getLayoutHTML({
-                title: app.name || app.slug,
-                activeAppId: appId,
-                initialView: 'app',
-                appName: app.name || app.slug,
-              }), {
-                headers: cacheHeaders,
-              });
+              return new Response(
+                getLayoutHTML({
+                  title: app.name || app.slug,
+                  activeAppId: appId,
+                  initialView: 'app',
+                  appName: app.name || app.slug,
+                }),
+                {
+                  headers: cacheHeaders,
+                },
+              );
             }
           }
         } catch (err) {
@@ -874,7 +1252,7 @@ async function executeServerApp(
   code: string,
   originalRequest: Request,
   appId: string,
-  subPath: string
+  subPath: string,
 ): Promise<Response> {
   try {
     // Create a modified request with the subPath as the URL path
@@ -903,7 +1281,7 @@ async function executeServerApp(
     if (typeof handlerFn !== 'function') {
       return json({
         error: 'No handler function found',
-        message: 'Server apps must export a function named "handler" or use export default'
+        message: 'Server apps must export a function named "handler" or use export default',
       }, 500);
     }
 
@@ -916,7 +1294,6 @@ async function executeServerApp(
     }
 
     return response;
-
   } catch (err) {
     console.error('Server app execution error:', err);
     return json({
@@ -943,7 +1320,11 @@ function buildLegacyContractNotice(resolution: AppContractResolution): string {
   `;
 }
 
-function getMcpAppInfoHTML(appId: string, appName: string, resolution: AppContractResolution): string {
+function getMcpAppInfoHTML(
+  appId: string,
+  appName: string,
+  resolution: AppContractResolution,
+): string {
   const tools = resolution.functions;
   const toolsList = tools.length > 0
     ? tools.map((s) => `
@@ -1060,7 +1441,9 @@ function getMcpAppInfoHTML(appId: string, appName: string, resolution: AppContra
 
     <div class="section">
       <div class="section-title">MCP Endpoint</div>
-      <div class="mcp-url">${typeof location !== 'undefined' ? location.origin : ''}/mcp/${appId}</div>
+      <div class="mcp-url">${
+    typeof location !== 'undefined' ? location.origin : ''
+  }/mcp/${appId}</div>
       <a href="/http/${appId}/_ui" style="display:inline-flex;align-items:center;gap:0.5rem;margin-top:0.75rem;background:rgba(99,102,241,.15);color:#a78bfa;padding:0.5rem 1rem;border-radius:8px;text-decoration:none;font-weight:500;font-size:0.8125rem;transition:background 0.15s;">&#9881; Open Dashboard</a>
       <p class="info-text" style="margin-top: 0.75rem;">
         Connect via MCP client, or open the dashboard to view and manage data from your browser.
@@ -1114,7 +1497,10 @@ async function resolvePublicFacingApp(
   }
 
   const ownerApp = await appsService.findById(appId);
-  if (!ownerApp || ownerApp.owner_id !== userId || ownerApp.visibility !== 'private') {
+  if (
+    !ownerApp || ownerApp.owner_id !== userId ||
+    ownerApp.visibility !== 'private'
+  ) {
     return { app: null, isOwner: false };
   }
 
@@ -1129,9 +1515,14 @@ async function resolvePublicFacingApp(
  * Reads skills_parsed/manifest to discover tools and renders an interactive UI.
  * Accessible at: GET /http/{appId}/_ui
  */
-async function handleGenericDashboard(request: Request, appId: string): Promise<Response> {
+async function handleGenericDashboard(
+  request: Request,
+  appId: string,
+): Promise<Response> {
   try {
-    const { app } = await resolvePublicFacingApp(request, appId, { allowPrivateOwner: true });
+    const { app } = await resolvePublicFacingApp(request, appId, {
+      allowPrivateOwner: true,
+    });
     if (!app) {
       return json({ error: 'App not found' }, 404);
     }
@@ -1156,12 +1547,17 @@ async function handleGenericDashboard(request: Request, appId: string): Promise<
     });
 
     const html = contractResolution.manifestBacked
-      ? generateGenericDashboardHTML(appId, appName, contractResolution.functions)
+      ? generateGenericDashboardHTML(
+        appId,
+        appName,
+        contractResolution.functions,
+      )
       : generateLegacyContractDashboardHTML(appId, appName, contractResolution);
     return new Response(html, {
       headers: {
         'Content-Type': 'text/html',
-        'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+        'Content-Security-Policy':
+          "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
       },
     });
   } catch (err) {
@@ -1180,7 +1576,7 @@ function generateGenericDashboardHTML(
   functions: AppFunctionContract[],
 ): string {
   // Build tool definitions as JSON for the client-side JS
-  const toolDefs = JSON.stringify(functions.map(fn => ({
+  const toolDefs = JSON.stringify(functions.map((fn) => ({
     name: fn.name,
     description: fn.description || '',
     parameters: fn.parameters || {},
@@ -1503,7 +1899,13 @@ function generateLegacyContractDashboardHTML(
   resolution: AppContractResolution,
 ): string {
   const functionList = resolution.functions.length > 0
-    ? `<ul style="margin-top:12px;padding-left:20px;color:#a1a1aa;">${resolution.functions.map((fn) => `<li><code>${escapeHtml(fn.name)}</code>${fn.description ? ` - ${escapeHtml(fn.description)}` : ''}</li>`).join('')}</ul>`
+    ? `<ul style="margin-top:12px;padding-left:20px;color:#a1a1aa;">${
+      resolution.functions.map((fn) =>
+        `<li><code>${escapeHtml(fn.name)}</code>${
+          fn.description ? ` - ${escapeHtml(fn.description)}` : ''
+        }</li>`
+      ).join('')
+    }</ul>`
     : '<p style="margin-top:12px;color:#a1a1aa;">No function metadata was detected outside <code>manifest.json</code>.</p>';
 
   return `<!DOCTYPE html>
@@ -1529,7 +1931,12 @@ code{font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;col
     <div class="card">
       <div class="badge">Manifest Migration Required</div>
       <h1>${appName}</h1>
-      <p>${escapeHtml(resolution.message || 'This app needs a manifest-backed contract before the generic dashboard can execute tools safely.')}</p>
+      <p>${
+    escapeHtml(
+      resolution.message ||
+        'This app needs a manifest-backed contract before the generic dashboard can execute tools safely.',
+    )
+  }</p>
       <div class="section">
         <p>The dashboard is read-only until this app is republished with a valid <code>manifest.json</code>. Detected function metadata outside <code>manifest.json</code>:</p>
         ${functionList}
@@ -1552,7 +1959,8 @@ code{font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;col
 // preview fetchers (Slack/Discord/Facebook/Twitter/LinkedIn/WhatsApp), and
 // generic "bot" UAs. Intentionally broad — false positives just mean an
 // occasional missed impression, which is fine.
-const BOT_UA_PATTERN = /bot|crawler|spider|facebookexternalhit|slackbot|whatsapp|twitterbot|linkedinbot|discordbot|preview|headless|pinterest|telegram|vkshare|embedly|bitlybot|quora|outbrain|pocket|redditbot|applebot/i;
+const BOT_UA_PATTERN =
+  /bot|crawler|spider|facebookexternalhit|slackbot|whatsapp|twitterbot|linkedinbot|discordbot|preview|headless|pinterest|telegram|vkshare|embedly|bitlybot|quora|outbrain|pocket|redditbot|applebot/i;
 
 interface PublicMarketplaceListingRow extends MarketplaceListingSummaryListing {
   listing_note?: string | null;
@@ -1596,9 +2004,7 @@ async function fetchPublicMarketplaceSummary(
     return null;
   }
 
-  const listings = listingRes.ok
-    ? await listingRes.json() as PublicMarketplaceListingRow[]
-    : [];
+  const listings = listingRes.ok ? await listingRes.json() as PublicMarketplaceListingRow[] : [];
   const bids = bidsRes.ok
     ? (await bidsRes.json() as PublicMarketplaceBidRow[])
       .filter((bid): bid is { amount_light: number } => typeof bid.amount_light === 'number')
@@ -1623,7 +2029,10 @@ async function fetchPublicMarketplaceSummary(
   };
 }
 
-async function handlePublicAppPage(request: Request, appId: string): Promise<Response> {
+async function handlePublicAppPage(
+  request: Request,
+  appId: string,
+): Promise<Response> {
   try {
     const appsService = createAppsService();
     const app = await appsService.findPublicServingById(appId);
@@ -1645,7 +2054,7 @@ async function handlePublicAppPage(request: Request, appId: string): Promise<Res
     // Must never block rendering or surface errors to the viewer.
     const ua = request.headers.get('user-agent') || '';
     if (!BOT_UA_PATTERN.test(ua)) {
-      void appsService.incrementImpression(app.id).catch(err =>
+      void appsService.incrementImpression(app.id).catch((err) =>
         console.warn('[impression] failed:', err)
       );
     }
@@ -1662,10 +2071,12 @@ async function handlePublicAppPage(request: Request, appId: string): Promise<Res
     try {
       const userRes = await fetch(
         `${SUPABASE_URL}/rest/v1/users?id=eq.${app.owner_id}&select=display_name,email&limit=1`,
-        { headers: dbHeaders }
+        { headers: dbHeaders },
       );
       if (userRes.ok) {
-        const users = await userRes.json() as Array<{ display_name: string | null; email: string }>;
+        const users = await userRes.json() as Array<
+          { display_name: string | null; email: string }
+        >;
         if (users.length > 0) {
           ownerName = users[0].display_name || users[0].email.split('@')[0];
         }
@@ -1674,7 +2085,11 @@ async function handlePublicAppPage(request: Request, appId: string): Promise<Res
 
     let marketplaceSummary: PublicMarketplaceSummary | null = null;
     try {
-      marketplaceSummary = await fetchPublicMarketplaceSummary(app.id, SUPABASE_URL, dbHeaders);
+      marketplaceSummary = await fetchPublicMarketplaceSummary(
+        app.id,
+        SUPABASE_URL,
+        dbHeaders,
+      );
     } catch (err) {
       console.warn('[PublicAppPage] Failed to fetch marketplace summary:', err);
     }
@@ -1723,7 +2138,7 @@ function getPublicAppPageHTML(
     isEmbed: boolean;
     trustCard?: TrustCard;
     marketplaceSummary?: PublicMarketplaceSummary | null;
-  }
+  },
 ): string {
   const { isEmbed } = opts;
   const appName = escapeHtml(app.name || app.slug);
@@ -1739,7 +2154,9 @@ function getPublicAppPageHTML(
   const category = app.category ? escapeHtml(app.category) : '';
   const isUnlisted = app.visibility === 'unlisted';
   const ownerProfileUrl = `/u/${escapeHtml(app.owner_id)}`;
-  const tags = Array.isArray(app.tags) ? app.tags.filter(t => typeof t === 'string').slice(0, 5) : [];
+  const tags = Array.isArray(app.tags)
+    ? app.tags.filter((t) => typeof t === 'string').slice(0, 5)
+    : [];
 
   const screenshots: string[] = Array.isArray(app.screenshots)
     ? app.screenshots.filter((s): s is string => typeof s === 'string')
@@ -1764,10 +2181,12 @@ function getPublicAppPageHTML(
       ...trustCard.per_user_secrets.map((key) => `${key} (per user)`),
     ].slice(0, 8)
     : [];
-  const trustShortHash = (value: string | null | undefined) => value ? value.slice(0, 12) : 'Not available';
-  const trustChipHtml = (labels: string[], empty: string) => labels.length > 0
-    ? labels.map((label) => `<span class="trust-chip">${escapeHtml(label)}</span>`).join('')
-    : `<span class="trust-chip">${escapeHtml(empty)}</span>`;
+  const trustShortHash = (value: string | null | undefined) =>
+    value ? value.slice(0, 12) : 'Not available';
+  const trustChipHtml = (labels: string[], empty: string) =>
+    labels.length > 0
+      ? labels.map((label) => `<span class="trust-chip">${escapeHtml(label)}</span>`).join('')
+      : `<span class="trust-chip">${escapeHtml(empty)}</span>`;
   const marketplace = opts.marketplaceSummary;
   const hasMarketAsk = typeof marketplace?.ask_price_light === 'number';
   const hasMarketBid = typeof marketplace?.highest_bid_light === 'number';
@@ -1799,14 +2218,19 @@ function getPublicAppPageHTML(
   const marketFeeDisplay = typeof marketplace?.platform_fee_at_ask_light === 'number'
     ? `Platform fee ${formatLight(marketplace.platform_fee_at_ask_light)}`
     : 'No platform fee until acquisition';
-  const marketplaceHtml = showMarketplace ? `
+  const marketplaceHtml = showMarketplace
+    ? `
     <section class="section market-section">
       <div class="market-header">
         <div>
           <div class="section-title">Marketplace</div>
           <div class="market-title">${escapeHtml(marketStatusLabel)}</div>
         </div>
-        <span class="market-status ${marketplace?.instant_buy ? 'buy' : ''}">${escapeHtml(marketplace?.instant_buy ? 'Instant acquisition' : marketStatusLabel)}</span>
+        <span class="market-status ${marketplace?.instant_buy ? 'buy' : ''}">${
+      escapeHtml(
+        marketplace?.instant_buy ? 'Instant acquisition' : marketStatusLabel,
+      )
+    }</span>
       </div>
       <div class="market-grid">
         <div><span>Ask</span><strong>${escapeHtml(marketAskDisplay)}</strong></div>
@@ -1815,28 +2239,43 @@ function getPublicAppPageHTML(
       </div>
       <div class="market-foot">
         <span>${escapeHtml(marketFeeDisplay)}</span>
-        <a href="${escapeHtml(deepLink)}">${marketplace?.instant_buy ? 'Acquire' : 'Open to bid'} &rarr;</a>
+        <a href="${escapeHtml(deepLink)}">${
+      marketplace?.instant_buy ? 'Acquire' : 'Open to bid'
+    } &rarr;</a>
       </div>
-      ${marketplace?.listing_note ? `<p class="market-note">${escapeHtml(marketplace.listing_note)}</p>` : ''}
+      ${
+      marketplace?.listing_note
+        ? `<p class="market-note">${escapeHtml(marketplace.listing_note)}</p>`
+        : ''
+    }
     </section>
-  ` : '';
-  const trustCardHtml = trustCard ? `
+  `
+    : '';
+  const trustCardHtml = trustCard
+    ? `
     <section class="section trust-section">
       <div class="trust-header">
         <div class="section-title">Trust & Runtime</div>
-        <span class="trust-status ${trustCard.signed_manifest ? 'ok' : 'warn'}">${trustCard.signed_manifest ? 'Signed Manifest' : 'Unsigned Legacy'}</span>
+        <span class="trust-status ${trustCard.signed_manifest ? 'ok' : 'warn'}">${
+      trustCard.signed_manifest ? 'Signed Manifest' : 'Unsigned Legacy'
+    }</span>
       </div>
       <div class="trust-grid">
         <div><span>Runtime</span><strong>${escapeHtml(trustCard.runtime || 'deno')}</strong></div>
         <div><span>Version</span><strong>${escapeHtml(trustCard.version || version)}</strong></div>
-        <div><span>Manifest Hash</span><code title="${escapeHtml(trustCard.manifest_hash || '')}">${escapeHtml(trustShortHash(trustCard.manifest_hash))}</code></div>
-        <div><span>Receipt Field</span><strong>${trustCard.execution_receipts.enabled ? 'receipt_id' : 'Disabled'}</strong></div>
+        <div><span>Manifest Hash</span><code title="${escapeHtml(trustCard.manifest_hash || '')}">${
+      escapeHtml(trustShortHash(trustCard.manifest_hash))
+    }</code></div>
+        <div><span>Receipt Field</span><strong>${
+      trustCard.execution_receipts.enabled ? 'receipt_id' : 'Disabled'
+    }</strong></div>
       </div>
       <div class="trust-chip-row">${trustChipHtml(trustCapabilities, 'No broad access')}</div>
       <div class="trust-chip-row">${trustChipHtml(trustPermissions, 'No permission scopes')}</div>
       <div class="trust-chip-row">${trustChipHtml(trustSecretLabels, 'No required secrets')}</div>
     </section>
-  ` : '';
+  `
+    : '';
 
   // OpenGraph prefers the first screenshot over the icon — richer previews
   // in Slack/iMessage/Twitter when apps have visual content.
@@ -1851,10 +2290,14 @@ function getPublicAppPageHTML(
   } else if (app.skills_parsed) {
     const skills = Array.isArray(app.skills_parsed)
       ? app.skills_parsed as Array<{ name: string; description?: string }>
-      : ((app.skills_parsed as { functions?: Array<{ name: string; description?: string }> }).functions || []);
+      : ((app.skills_parsed as {
+        functions?: Array<{ name: string; description?: string }>;
+      }).functions || []);
     if (skills.length > 0) {
-      skillsHtml = skills.map(s =>
-        `<div class="fn-item"><span class="fn-name">${escapeHtml(s.name)}</span>${s.description ? `<span class="fn-desc">${escapeHtml(s.description)}</span>` : ''}</div>`
+      skillsHtml = skills.map((s) =>
+        `<div class="fn-item"><span class="fn-name">${escapeHtml(s.name)}</span>${
+          s.description ? `<span class="fn-desc">${escapeHtml(s.description)}</span>` : ''
+        }</div>`
       ).join('');
     } else {
       skillsHtml = '<p class="no-docs">No documentation yet.</p>';
@@ -1867,7 +2310,9 @@ function getPublicAppPageHTML(
   const metaDesc = rawDescription.length > 160
     ? rawDescription.slice(0, 157) + '...'
     : rawDescription;
-  const metaDescEscaped = escapeHtml(metaDesc || `${app.name || app.slug} on Ultralight — MCP app store`);
+  const metaDescEscaped = escapeHtml(
+    metaDesc || `${app.name || app.slug} on Ultralight — MCP app store`,
+  );
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -2677,7 +3122,9 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
   <!-- Hero -->
   <div class="hero">
     <div class="hero-icon">
-      <img src="/api/apps/${escapeHtml(app.id)}/icon" alt="" onerror="this.replaceWith(document.createTextNode('\\u26A1'));">
+      <img src="/api/apps/${
+    escapeHtml(app.id)
+  }/icon" alt="" onerror="this.replaceWith(document.createTextNode('\\u26A1'));">
     </div>
     <div class="hero-info">
       <h1>${appName}</h1>
@@ -2693,7 +3140,13 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
         <span class="sep">·</span>
         <span>${runs.toLocaleString()} ${runs === 1 ? 'run' : 'runs'}</span>
       </div>
-      ${tags.length > 0 ? `<div class="tag-row">${tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
+      ${
+    tags.length > 0
+      ? `<div class="tag-row">${
+        tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join('')
+      }</div>`
+      : ''
+  }
     </div>
   </div>
 
@@ -2721,22 +3174,36 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
     ${trustCardHtml}
 
     <!-- Screenshots carousel -->
-    ${hasScreenshots ? `
+    ${
+    hasScreenshots
+      ? `
     <section class="app-screenshots">
       <div class="screenshots-scroller">
-        ${screenshots.map((_, idx) => `
-          <a class="screenshot-item" href="/api/apps/${escapeHtml(app.id)}/screenshots/${idx}" target="_blank" rel="noopener">
-            <img src="/api/apps/${escapeHtml(app.id)}/screenshots/${idx}" alt="Screenshot ${idx + 1}" loading="lazy">
+        ${
+        screenshots.map((_, idx) => `
+          <a class="screenshot-item" href="/api/apps/${
+          escapeHtml(app.id)
+        }/screenshots/${idx}" target="_blank" rel="noopener">
+            <img src="/api/apps/${escapeHtml(app.id)}/screenshots/${idx}" alt="Screenshot ${
+          idx + 1
+        }" loading="lazy">
           </a>
-        `).join('')}
+        `).join('')
+      }
       </div>
-    </section>` : ''}
+    </section>`
+      : ''
+  }
 
     <!-- Long description -->
-    ${longDescriptionHtml ? `
+    ${
+    longDescriptionHtml
+      ? `
     <section class="section app-long-desc">
       <div class="docs-content">${longDescriptionHtml}</div>
-    </section>` : ''}
+    </section>`
+      : ''
+  }
 
     <!-- Functions -->
     <section class="section">
@@ -3581,7 +4048,10 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
 // PUBLIC USER PROFILE
 // ============================================
 
-async function handlePublicUserProfile(request: Request, profileUserId: string): Promise<Response> {
+async function handlePublicUserProfile(
+  request: Request,
+  profileUserId: string,
+): Promise<Response> {
   try {
     const SUPABASE_URL = getEnv('SUPABASE_URL');
     const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
@@ -3592,11 +4062,16 @@ async function handlePublicUserProfile(request: Request, profileUserId: string):
     const baseUrl = getBaseUrl(request);
 
     // Fetch user info
-    let user: { id: string; display_name: string | null; email: string; created_at: string } | null = null;
+    let user: {
+      id: string;
+      display_name: string | null;
+      email: string;
+      created_at: string;
+    } | null = null;
     try {
       const userRes = await fetch(
         `${SUPABASE_URL}/rest/v1/users?id=eq.${profileUserId}&select=id,display_name,email,created_at&limit=1`,
-        { headers: dbHeaders }
+        { headers: dbHeaders },
       );
       if (userRes.ok) {
         const users = await userRes.json() as Array<typeof user>;
@@ -3609,11 +4084,20 @@ async function handlePublicUserProfile(request: Request, profileUserId: string):
     }
 
     // Fetch public apps
-    let apps: Array<{ id: string; name: string; slug: string; description: string | null; current_version: string | null; updated_at: string }> = [];
+    let apps: Array<
+      {
+        id: string;
+        name: string;
+        slug: string;
+        description: string | null;
+        current_version: string | null;
+        updated_at: string;
+      }
+    > = [];
     try {
       const appsRes = await fetch(
         `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${profileUserId}&visibility=in.(public,unlisted)&deleted_at=is.null&order=updated_at.desc&select=id,name,slug,description,current_version,updated_at&limit=50`,
-        { headers: dbHeaders }
+        { headers: dbHeaders },
       );
       if (appsRes.ok) {
         apps = await appsRes.json();
@@ -3621,11 +4105,18 @@ async function handlePublicUserProfile(request: Request, profileUserId: string):
     } catch { /* */ }
 
     // Fetch published pages
-    let pages: Array<{ slug: string; title: string | null; updated_at: string; tags: string[] | null }> = [];
+    let pages: Array<
+      {
+        slug: string;
+        title: string | null;
+        updated_at: string;
+        tags: string[] | null;
+      }
+    > = [];
     try {
       const pagesRes = await fetch(
         `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${profileUserId}&type=eq.page&visibility=eq.public&order=updated_at.desc&select=slug,title,updated_at,tags&limit=50`,
-        { headers: dbHeaders }
+        { headers: dbHeaders },
       );
       if (pagesRes.ok) {
         pages = await pagesRes.json();
@@ -3637,7 +4128,7 @@ async function handlePublicUserProfile(request: Request, profileUserId: string):
     try {
       const pointsRes = await fetch(
         `${SUPABASE_URL}/rest/v1/points_ledger?user_id=eq.${profileUserId}&select=amount`,
-        { headers: dbHeaders }
+        { headers: dbHeaders },
       );
       if (pointsRes.ok) {
         const points = await pointsRes.json() as Array<{ amount: number }>;
@@ -3646,27 +4137,35 @@ async function handlePublicUserProfile(request: Request, profileUserId: string):
     } catch { /* */ }
 
     // Fetch fulfilled gaps
-    let fulfilledGaps: Array<{ gap_title: string; awarded_points: number; reviewed_at: string }> = [];
+    let fulfilledGaps: Array<
+      { gap_title: string; awarded_points: number; reviewed_at: string }
+    > = [];
     try {
       const assessRes = await fetch(
         `${SUPABASE_URL}/rest/v1/gap_assessments?user_id=eq.${profileUserId}&status=eq.approved&select=awarded_points,reviewed_at,gap_id&order=reviewed_at.desc&limit=10`,
-        { headers: dbHeaders }
+        { headers: dbHeaders },
       );
       if (assessRes.ok) {
-        const assessments = await assessRes.json() as Array<{ awarded_points: number; reviewed_at: string; gap_id: string }>;
+        const assessments = await assessRes.json() as Array<
+          { awarded_points: number; reviewed_at: string; gap_id: string }
+        >;
         if (assessments.length > 0) {
-          const gapIds = [...new Set(assessments.map(a => a.gap_id))];
+          const gapIds = [...new Set(assessments.map((a) => a.gap_id))];
           const gapsRes = await fetch(
             `${SUPABASE_URL}/rest/v1/gaps?id=in.(${gapIds.join(',')})&select=id,title`,
-            { headers: dbHeaders }
+            { headers: dbHeaders },
           );
           const gapsMap = new Map<string, string>();
           if (gapsRes.ok) {
-            for (const g of await gapsRes.json() as Array<{ id: string; title: string }>) {
+            for (
+              const g of await gapsRes.json() as Array<
+                { id: string; title: string }
+              >
+            ) {
               gapsMap.set(g.id, g.title);
             }
           }
-          fulfilledGaps = assessments.map(a => ({
+          fulfilledGaps = assessments.map((a) => ({
             gap_title: gapsMap.get(a.gap_id) || 'Unknown gap',
             awarded_points: a.awarded_points,
             reviewed_at: a.reviewed_at,
@@ -3675,7 +4174,15 @@ async function handlePublicUserProfile(request: Request, profileUserId: string):
       }
     } catch { /* */ }
 
-    const html = getPublicUserProfileHTML(user, apps, pages, baseUrl, profileUserId, totalPoints, fulfilledGaps);
+    const html = getPublicUserProfileHTML(
+      user,
+      apps,
+      pages,
+      baseUrl,
+      profileUserId,
+      totalPoints,
+      fulfilledGaps,
+    );
     return new Response(html, {
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
@@ -3690,26 +4197,57 @@ async function handlePublicUserProfile(request: Request, profileUserId: string):
 
 function getPublicUserProfileHTML(
   user: { display_name: string | null; email: string; created_at: string },
-  apps: Array<{ id: string; name: string; slug: string; description: string | null; current_version: string | null; updated_at: string }>,
-  pages: Array<{ slug: string; title: string | null; updated_at: string; tags: string[] | null }>,
+  apps: Array<
+    {
+      id: string;
+      name: string;
+      slug: string;
+      description: string | null;
+      current_version: string | null;
+      updated_at: string;
+    }
+  >,
+  pages: Array<
+    {
+      slug: string;
+      title: string | null;
+      updated_at: string;
+      tags: string[] | null;
+    }
+  >,
   baseUrl: string,
   userId: string,
   totalPoints = 0,
-  fulfilledGaps: Array<{ gap_title: string; awarded_points: number; reviewed_at: string }> = []
+  fulfilledGaps: Array<
+    { gap_title: string; awarded_points: number; reviewed_at: string }
+  > = [],
 ): string {
   const displayName = escapeHtml(user.display_name || user.email.split('@')[0]);
-  const memberSince = new Date(user.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
+  const memberSince = new Date(user.created_at).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+  });
 
   const appCards = apps.length > 0
-    ? apps.map(a => `
+    ? apps.map((a) => `
       <a href="/app/${escapeHtml(a.id)}" class="card">
         <div class="card-icon">&#9889;</div>
         <div class="card-body">
           <div class="card-title">${escapeHtml(a.name || a.slug)}</div>
           ${a.description ? `<div class="card-desc">${escapeHtml(a.description)}</div>` : ''}
           <div class="card-meta">
-            ${a.current_version ? `<span class="version-badge">v${escapeHtml(a.current_version)}</span>` : ''}
-            <span class="card-date">${new Date(a.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+            ${
+      a.current_version
+        ? `<span class="version-badge">v${escapeHtml(a.current_version)}</span>`
+        : ''
+    }
+            <span class="card-date">${
+      new Date(a.updated_at).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      })
+    }</span>
           </div>
         </div>
       </a>
@@ -3717,14 +4255,28 @@ function getPublicUserProfileHTML(
     : '<p class="empty-text">No public MCP servers yet.</p>';
 
   const pageCards = pages.length > 0
-    ? pages.map(p => `
+    ? pages.map((p) => `
       <a href="/p/${escapeHtml(userId)}/${escapeHtml(p.slug)}" class="card">
         <div class="card-icon">&#128196;</div>
         <div class="card-body">
           <div class="card-title">${escapeHtml(p.title || p.slug)}</div>
-          ${p.tags && p.tags.length > 0 ? `<div class="card-tags">${p.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
+          ${
+      p.tags && p.tags.length > 0
+        ? `<div class="card-tags">${
+          p.tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join(
+            '',
+          )
+        }</div>`
+        : ''
+    }
           <div class="card-meta">
-            <span class="card-date">${new Date(p.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+            <span class="card-date">${
+      new Date(p.updated_at).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      })
+    }</span>
           </div>
         </div>
       </a>
@@ -3878,7 +4430,11 @@ function getPublicUserProfileHTML(
     <div class="profile-info">
       <h1>${displayName}</h1>
       <div class="profile-meta">Member since ${escapeHtml(memberSince)}</div>
-      ${totalPoints > 0 ? `<div class="points-badge">&#127942; ${totalPoints.toLocaleString()} points</div>` : ''}
+      ${
+    totalPoints > 0
+      ? `<div class="points-badge">&#127942; ${totalPoints.toLocaleString()} points</div>`
+      : ''
+  }
     </div>
   </div>
 
@@ -3892,19 +4448,31 @@ function getPublicUserProfileHTML(
     ${pageCards}
   </div>
 
-  ${fulfilledGaps.length > 0 ? `
+  ${
+    fulfilledGaps.length > 0
+      ? `
   <div class="section">
     <div class="section-title">Fulfilled Gaps (${fulfilledGaps.length})</div>
-    ${fulfilledGaps.map(g => `
+    ${
+        fulfilledGaps.map((g) => `
       <div class="gap-row">
         <span class="gap-name">${escapeHtml(g.gap_title)}</span>
         <span>
           <span class="gap-pts">${g.awarded_points} pts</span>
-          <span class="gap-date">${new Date(g.reviewed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+          <span class="gap-date">${
+          new Date(g.reviewed_at).toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+          })
+        }</span>
         </span>
       </div>
-    `).join('')}
-  </div>` : ''}
+    `).join('')
+      }
+  </div>`
+      : ''
+  }
 
   <div class="footer-bar">
     Powered by <a href="/">Ultralight</a>
@@ -3929,12 +4497,16 @@ async function handleHomepageApi(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const type = url.searchParams.get('type') || 'apps';
   const status = url.searchParams.get('status') || 'open';
-  const limitParam = Math.min(parseInt(url.searchParams.get('limit') || '10'), 50);
+  const limitParam = Math.min(
+    parseInt(url.searchParams.get('limit') || '10'),
+    50,
+  );
 
   try {
     // Return different data based on type parameter
     if (type === 'gaps') {
-      let query = `${SUPABASE_URL}/rest/v1/gaps?select=id,title,description,severity,points_value,season,status,created_at`;
+      let query =
+        `${SUPABASE_URL}/rest/v1/gaps?select=id,title,description,severity,points_value,season,status,created_at`;
       if (status !== 'all') query += `&status=eq.${status}`;
       query += `&order=points_value.desc,created_at.desc&limit=${limitParam}`;
       const res = await fetch(query, { headers });
@@ -3957,9 +4529,14 @@ async function handleHomepageApi(request: Request): Promise<Response> {
       // Get active season
       let season: { id: number; name: string } | null = null;
       try {
-        const sRes = await fetch(`${SUPABASE_URL}/rest/v1/seasons?active=eq.true&select=id,name&limit=1`, { headers });
+        const sRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/seasons?active=eq.true&select=id,name&limit=1`,
+          { headers },
+        );
         if (sRes.ok) {
-          const seasons = await sRes.json() as Array<{ id: number; name: string }>;
+          const seasons = await sRes.json() as Array<
+            { id: number; name: string }
+          >;
           season = seasons[0] || null;
         }
       } catch {}
@@ -3969,22 +4546,42 @@ async function handleHomepageApi(request: Request): Promise<Response> {
       if (season) pointsQuery += `&season=eq.${season.id}`;
       pointsQuery += `&order=created_at.desc&limit=1000`;
       const pRes = await fetch(pointsQuery, { headers });
-      const points = pRes.ok ? (await pRes.json() as Array<{ user_id: string; amount: number }>) : [];
+      const points = pRes.ok
+        ? (await pRes.json() as Array<{ user_id: string; amount: number }>)
+        : [];
       const totals = new Map<string, number>();
-      for (const p of points) totals.set(p.user_id, (totals.get(p.user_id) || 0) + p.amount);
-      const sorted = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, limitParam);
+      for (const p of points) {
+        totals.set(p.user_id, (totals.get(p.user_id) || 0) + p.amount);
+      }
+      const sorted = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(
+        0,
+        limitParam,
+      );
 
-      let entries: Array<{ user_id: string; display_name: string; total_points: number }> = [];
+      let entries: Array<
+        { user_id: string; display_name: string; total_points: number }
+      > = [];
       if (sorted.length > 0) {
-        const uids = sorted.map(s => s[0]);
-        const uRes = await fetch(`${SUPABASE_URL}/rest/v1/users?id=in.(${uids.join(',')})&select=id,display_name,email`, { headers });
+        const uids = sorted.map((s) => s[0]);
+        const uRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/users?id=in.(${uids.join(',')})&select=id,display_name,email`,
+          { headers },
+        );
         const uMap = new Map<string, string>();
         if (uRes.ok) {
-          for (const u of await uRes.json() as Array<{ id: string; display_name: string | null; email: string }>) {
+          for (
+            const u of await uRes.json() as Array<
+              { id: string; display_name: string | null; email: string }
+            >
+          ) {
             uMap.set(u.id, u.display_name || u.email.split('@')[0]);
           }
         }
-        entries = sorted.map(([uid, pts]) => ({ user_id: uid, display_name: uMap.get(uid) || 'Anonymous', total_points: pts }));
+        entries = sorted.map(([uid, pts]) => ({
+          user_id: uid,
+          display_name: uMap.get(uid) || 'Anonymous',
+          total_points: pts,
+        }));
       }
       return json({ results: entries, season, total: entries.length });
     }
@@ -3992,9 +4589,9 @@ async function handleHomepageApi(request: Request): Promise<Response> {
     // Default: top apps
     const appsRes = await fetch(
       `${SUPABASE_URL}/rest/v1/apps?visibility=eq.public&deleted_at=is.null&hosting_suspended=eq.false` +
-      `&select=id,name,slug,description,weighted_likes,runs_30d` +
-      `&order=weighted_likes.desc,runs_30d.desc&limit=${limitParam}`,
-      { headers }
+        `&select=id,name,slug,description,weighted_likes,runs_30d` +
+        `&order=weighted_likes.desc,runs_30d.desc&limit=${limitParam}`,
+      { headers },
     );
     const apps = appsRes.ok
       ? await appsRes.json() as Array<{
@@ -4035,7 +4632,8 @@ function handleSharedPageEntry(path: string): Response {
     signInPath: `/auth/login?return_to=${encodeURIComponent(pagePath)}`,
   }).replace(/</g, '\\u003c');
 
-  return new Response(`<!DOCTYPE html>
+  return new Response(
+    `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -4119,16 +4717,21 @@ function handleSharedPageEntry(path: string): Response {
     }
   </script>
 </body>
-</html>`, {
-    status: 200,
-    headers: {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'no-store',
+</html>`,
+    {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+      },
     },
-  });
+  );
 }
 
-async function handlePublishedPage(request: Request, path: string): Promise<Response> {
+async function handlePublishedPage(
+  request: Request,
+  path: string,
+): Promise<Response> {
   // Parse /p/{userId}/{slug} or /p/{userId}/{slug}.md
   const parts = path.slice(3).split('/'); // Remove '/p/'
   if (parts.length < 2) {
@@ -4161,8 +4764,10 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
   let contentRow: PublishedContentRow | null = null;
   try {
     const contentRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${userId}&type=eq.page&slug=eq.${encodeURIComponent(slug)}&select=id,visibility,access_token,title,tags,updated_at,hosting_suspended,price_light&limit=1`,
-      { headers: dbHeaders }
+      `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${userId}&type=eq.page&slug=eq.${
+        encodeURIComponent(slug)
+      }&select=id,visibility,access_token,title,tags,updated_at,hosting_suspended,price_light&limit=1`,
+      { headers: dbHeaders },
     );
     if (contentRes.ok) {
       const rows = await contentRes.json() as PublishedContentRow[];
@@ -4176,7 +4781,7 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
     if (contentRow.hosting_suspended) {
       return new Response(
         `<!DOCTYPE html><html><head><title>Page Suspended</title><style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}div{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#666;line-height:1.6}</style></head><body><div><div class="icon">&#9888;</div><h1>Page Suspended</h1><p>This page has been taken offline because the owner's hosting balance has been depleted. The owner can restore it by topping up their hosting balance.</p></div></body></html>`,
-        { status: 402, headers: { 'Content-Type': 'text/html' } }
+        { status: 402, headers: { 'Content-Type': 'text/html' } },
       );
     }
     // Check paid page access: if price_light > 0, charge the viewer
@@ -4190,7 +4795,7 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
         // Not authenticated — show a paywall message
         return new Response(
           `<!DOCTYPE html><html><head><title>Paid Content</title><style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}div{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#666;line-height:1.6}.price{font-size:1.25rem;font-weight:600;color:#333;margin:1rem 0}</style></head><body><div><div class="icon">&#128176;</div><h1>Paid Page</h1><p class="price">✦${contentRow.price_light} per view</p><p>Sign in and have a hosting balance to view this page. The fee is transferred directly to the page owner.</p></div></body></html>`,
-          { status: 402, headers: { 'Content-Type': 'text/html' } }
+          { status: 402, headers: { 'Content-Type': 'text/html' } },
         );
       }
 
@@ -4198,7 +4803,7 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
       if (viewerUserId !== userId) {
         try {
           const transferRes = await fetch(
-            `${SUPABASE_URL}/rest/v1/rpc/transfer_balance`,
+            `${SUPABASE_URL}/rest/v1/rpc/transfer_light`,
             {
               method: 'POST',
               headers: { ...dbHeaders, 'Content-Type': 'application/json' },
@@ -4206,31 +4811,27 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
                 p_from_user: viewerUserId,
                 p_to_user: userId,
                 p_amount_light: contentRow.price_light,
+                p_reason: 'page_view',
+                p_content_id: contentRow.id,
+                p_metadata: {
+                  content_slug: slug,
+                  content_type: 'page',
+                },
               }),
-            }
+            },
           );
 
           if (transferRes.ok) {
-            const rows = await transferRes.json() as Array<{ from_new_balance: number }>;
+            const rows = await transferRes.json() as Array<
+              { from_new_balance: number }
+            >;
             if (!rows || rows.length === 0) {
               // Insufficient balance
               return new Response(
-                `<!DOCTYPE html><html><head><title>Insufficient Balance</title><style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}div{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#666;line-height:1.6}.price{font-size:1.25rem;font-weight:600;color:#333;margin:1rem 0}</style></head><body><div><div class="icon">&#9888;</div><h1>Insufficient Balance</h1><p class="price">This page costs ✦${contentRow.price_light}</p><p>Top up your hosting balance to view this page.</p></div></body></html>`,
-                { status: 402, headers: { 'Content-Type': 'text/html' } }
+                `<!DOCTYPE html><html><head><title>Insufficient Balance</title><style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}div{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#666;line-height:1.6}.price{font-size:1.25rem;font-weight:600;color:#333;margin:1rem 0}</style></head><body><div><div class="icon">&#9888;</div><h1>Insufficient Balance</h1><p class="price">This page costs ✦${contentRow.price_light}</p><p>Add Light from Wallet to view this page.</p></div></body></html>`,
+                { status: 402, headers: { 'Content-Type': 'text/html' } },
               );
             }
-            // Log the transfer (fire-and-forget)
-            fetch(`${SUPABASE_URL}/rest/v1/transfers`, {
-              method: 'POST',
-              headers: { ...dbHeaders, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-              body: JSON.stringify({
-                from_user_id: viewerUserId,
-                to_user_id: userId,
-                amount_light: contentRow.price_light,
-                reason: 'page_view',
-                content_id: contentRow.id,
-              }),
-            }).catch(() => {});
           }
           // If transfer RPC fails, serve the page anyway (fail-open for reads)
         } catch {
@@ -4270,8 +4871,10 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
           } else {
             // Check content_shares for this user
             const sharesRes = await fetch(
-              `${SUPABASE_URL}/rest/v1/content_shares?content_id=eq.${contentRow.id}&or=(shared_with_user_id.eq.${user.id},shared_with_email.eq.${encodeURIComponent(user.email)})&select=id&limit=1`,
-              { headers: dbHeaders }
+              `${SUPABASE_URL}/rest/v1/content_shares?content_id=eq.${contentRow.id}&or=(shared_with_user_id.eq.${user.id},shared_with_email.eq.${
+                encodeURIComponent(user.email)
+              })&select=id&limit=1`,
+              { headers: dbHeaders },
             );
             if (sharesRes.ok) {
               const shares = await sharesRes.json() as Array<{ id: string }>;
@@ -4324,10 +4927,12 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
   try {
     const userRes = await fetch(
       `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=display_name,email&limit=1`,
-      { headers: dbHeaders }
+      { headers: dbHeaders },
     );
     if (userRes.ok) {
-      const users = await userRes.json() as Array<{ display_name: string | null; email: string }>;
+      const users = await userRes.json() as Array<
+        { display_name: string | null; email: string }
+      >;
       if (users.length > 0) {
         authorName = users[0].display_name || users[0].email.split('@')[0];
       }
@@ -4355,9 +4960,10 @@ async function handlePublishedPage(request: Request, path: string): Promise<Resp
  */
 function getBaseUrl(request: Request): string {
   const url = new URL(request.url);
-  const host = request.headers.get('x-forwarded-host') || request.headers.get('host') || url.host;
-  const proto = request.headers.get('x-forwarded-proto')
-    || (host.includes('localhost') ? 'http' : 'https');
+  const host = request.headers.get('x-forwarded-host') ||
+    request.headers.get('host') || url.host;
+  const proto = request.headers.get('x-forwarded-proto') ||
+    (host.includes('localhost') ? 'http' : 'https');
   return `${proto}://${host}`;
 }
 
@@ -4369,8 +4975,9 @@ function markdownToHtml(markdown: string): string {
   let html = escapeHtml(markdown);
 
   // Code blocks (``` ... ```) — must be before inline code
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, lang, code) =>
-    `<pre><code class="language-${lang}">${code.trim()}</code></pre>`
+  html = html.replace(
+    /```(\w*)\n([\s\S]*?)```/g,
+    (_m, lang, code) => `<pre><code class="language-${lang}">${code.trim()}</code></pre>`,
   );
   // Inline code
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -4386,7 +4993,10 @@ function markdownToHtml(markdown: string): string {
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
   // Links
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  html = html.replace(
+    /\[([^\]]+)\]\(([^)]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener">$1</a>',
+  );
   // Horizontal rules
   html = html.replace(/^---+$/gm, '<hr>');
   // Unordered lists
@@ -4401,7 +5011,10 @@ function markdownToHtml(markdown: string): string {
   html = `<p>${html}</p>`;
   // Clean up empty paragraphs around block elements
   html = html.replace(/<p>\s*(<h[1-6]|<pre|<ul|<ol|<hr|<blockquote)/g, '$1');
-  html = html.replace(/(<\/h[1-6]>|<\/pre>|<\/ul>|<\/ol>|<hr>|<\/blockquote>)\s*<\/p>/g, '$1');
+  html = html.replace(
+    /(<\/h[1-6]>|<\/pre>|<\/ul>|<\/ol>|<hr>|<\/blockquote>)\s*<\/p>/g,
+    '$1',
+  );
 
   return html;
 }
@@ -4410,16 +5023,51 @@ function markdownToHtml(markdown: string): string {
  * Render markdown content as a clean, readable HTML page.
  * Uses simple regex-based markdown→HTML (no external deps).
  */
-function renderMarkdownPage(title: string, markdown: string, meta?: { authorName?: string; authorId?: string; updatedAt?: string; tags?: string[]; rawUrl?: string }): string {
+function renderMarkdownPage(
+  title: string,
+  markdown: string,
+  meta?: {
+    authorName?: string;
+    authorId?: string;
+    updatedAt?: string;
+    tags?: string[];
+    rawUrl?: string;
+  },
+): string {
   const html = markdownToHtml(markdown);
 
-  const metaHeader = meta ? `
+  const metaHeader = meta
+    ? `
     <div class="page-meta">
-      ${meta.authorName ? `<span class="meta-author">by <a href="/u/${escapeHtml(meta.authorId || '')}">${escapeHtml(meta.authorName)}</a></span>` : ''}
-      ${meta.updatedAt ? `<span class="meta-date">${new Date(meta.updatedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</span>` : ''}
-      ${meta.tags && meta.tags.length > 0 ? `<span class="meta-tags">${meta.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</span>` : ''}
+      ${
+      meta.authorName
+        ? `<span class="meta-author">by <a href="/u/${escapeHtml(meta.authorId || '')}">${
+          escapeHtml(meta.authorName)
+        }</a></span>`
+        : ''
+    }
+      ${
+      meta.updatedAt
+        ? `<span class="meta-date">${
+          new Date(meta.updatedAt).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+          })
+        }</span>`
+        : ''
+    }
+      ${
+      meta.tags && meta.tags.length > 0
+        ? `<span class="meta-tags">${
+          meta.tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`)
+            .join('')
+        }</span>`
+        : ''
+    }
       ${meta.rawUrl ? `<a href="${escapeHtml(meta.rawUrl)}" class="meta-raw">View Raw</a>` : ''}
-    </div>` : '';
+    </div>`
+    : '';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -4546,7 +5194,8 @@ function escapeHtml(str: string): string {
 // ============================================
 
 const DESKTOP_VERSION = '0.1.0';
-const DESKTOP_DMG_URL = 'https://github.com/evrydayimruslin/ultralight/releases/download/v0.1.0/Ultralight_0.1.0_x64.dmg';
+const DESKTOP_DMG_URL =
+  'https://github.com/evrydayimruslin/ultralight/releases/download/v0.1.0/Ultralight_0.1.0_x64.dmg';
 
 function getDownloadPageHTML(): string {
   return `<!DOCTYPE html>

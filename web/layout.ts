@@ -4,7 +4,7 @@
 export function getLayoutHTML(options: {
   title?: string;
   activeAppId?: string;
-  initialView: 'home' | 'dashboard' | 'app' | 'leaderboard' | 'profile';
+  initialView: "home" | "dashboard" | "app" | "leaderboard" | "profile";
   appCode?: string;
   appName?: string;
   embed?: boolean;
@@ -13,14 +13,27 @@ export function getLayoutHTML(options: {
   /** Profile slug for /u/:slug pages */
   profileSlug?: string;
 }): string {
-  const { title = 'Ultralight', activeAppId, initialView, appCode, appName, embed = false, profileSlug } = options;
+  const {
+    title = "Ultralight",
+    activeAppId,
+    initialView,
+    appCode,
+    appName,
+    embed = false,
+    profileSlug,
+  } = options;
   // Map legacy dashboard sections to new unified capabilities section
-  let dashSection = options.dashSection || 'capabilities';
-  if (dashSection === 'library' || dashSection === 'marketplace') dashSection = 'capabilities';
+  let dashSection = options.dashSection || "capabilities";
+  if (dashSection === "library" || dashSection === "marketplace") {
+    dashSection = "capabilities";
+  }
 
   const escapedCode = appCode
-    ? appCode.replace(/\\\\/g, '\\\\\\\\').replace(/\`/g, '\\\\\`').replace(/\\$/g, '\\\\\\$')
-    : '';
+    ? appCode.replace(/\\\\/g, "\\\\\\\\").replace(/\`/g, "\\\\\`").replace(
+      /\\$/g,
+      "\\\\\\$",
+    )
+    : "";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -2765,7 +2778,7 @@ export function getLayoutHTML(options: {
   <!-- ============================================
        TOP NAVIGATION BAR
        ============================================ -->
-  <nav class="top-nav"${embed ? ' style="display:none"' : ''}>
+  <nav class="top-nav"${embed ? ' style="display:none"' : ""}>
     <div class="nav-left">
       <a href="/" id="navLogoLink" class="nav-logo" style="text-decoration:none;font-size:20px;">
         Ultralight
@@ -2813,7 +2826,7 @@ export function getLayoutHTML(options: {
     <!-- ==========================================
          HOME / LANDING VIEW
          ========================================== -->
-    <div id="homeView"${initialView !== 'home' ? ' style="display:none;"' : ''}>
+    <div id="homeView"${initialView !== "home" ? ' style="display:none;"' : ""}>
       <section class="hero">
         <div class="hero-eyebrow">Ultralight</div>
         <h1>The agent app economy</h1>
@@ -2959,7 +2972,7 @@ export function getLayoutHTML(options: {
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
             </div>
             <div class="cap-card-title">Usage revenue</div>
-            <div class="cap-card-desc">Per-function pricing, Light balances, creator earnings, and withdrawal paths are wired into the same flow.</div>
+            <div class="cap-card-desc">Per-function pricing, Light balances, creator earnings, and payout paths are wired into the same flow.</div>
           </div>
 
           <!-- One auth for everything -->
@@ -3007,19 +3020,29 @@ export function getLayoutHTML(options: {
     <!-- ==========================================
          DASHBOARD VIEW
          ========================================== -->
-    <div id="dashboardView" style="display:${initialView === 'dashboard' || initialView === 'leaderboard' ? 'block' : 'none'};">
+    <div id="dashboardView" style="display:${
+    initialView === "dashboard" || initialView === "leaderboard"
+      ? "block"
+      : "none"
+  };">
       <div class="settings-layout">
         <!-- Sidebar -->
         <nav class="settings-sidebar">
-          <div class="settings-sidebar-item${dashSection === 'capabilities' ? ' active' : ''}" data-dash-section="capabilities">
+          <div class="settings-sidebar-item${
+    dashSection === "capabilities" ? " active" : ""
+  }" data-dash-section="capabilities">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
             Tools
           </div>
-          <div class="settings-sidebar-item${dashSection === 'billing' ? ' active' : ''}" data-dash-section="billing">
+          <div class="settings-sidebar-item${
+    dashSection === "billing" ? " active" : ""
+  }" data-dash-section="billing">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
             Wallet
           </div>
-          <div class="settings-sidebar-item${dashSection === 'keys' ? ' active' : ''}" data-dash-section="keys">
+          <div class="settings-sidebar-item${
+    dashSection === "keys" ? " active" : ""
+  }" data-dash-section="keys">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
             API Key
           </div>
@@ -3028,7 +3051,9 @@ export function getLayoutHTML(options: {
         <!-- Content Panels -->
         <div class="settings-content">
           <!-- Capabilities Panel (unified Market + Library + Shared) -->
-          <section id="dashCapabilitiesPanel" class="settings-panel"${dashSection !== 'capabilities' ? ' style="display:none;"' : ''}>
+          <section id="dashCapabilitiesPanel" class="settings-panel"${
+    dashSection !== "capabilities" ? ' style="display:none;"' : ""
+  }>
             <!-- Sub-tab bar -->
             <div class="marketplace-filters" style="margin-bottom:var(--space-4);">
               <button class="marketplace-filter active" data-cap-tab="library">Library</button>
@@ -3132,7 +3157,9 @@ export function getLayoutHTML(options: {
           </section>
 
           <!-- Wallet Panel -->
-          <section id="dashBillingPanel" class="settings-panel" style="display:${dashSection === 'billing' ? 'block' : 'none'};">
+          <section id="dashBillingPanel" class="settings-panel" style="display:${
+    dashSection === "billing" ? "block" : "none"
+  };">
             <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">Wallet</h2>
             <div class="marketplace-filters">
               <button class="marketplace-filter active" data-wallet-tab="balance">Balance</button>
@@ -3146,35 +3173,32 @@ export function getLayoutHTML(options: {
               <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);margin-bottom:var(--space-4);">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-4);">
                   <div>
-                    <div style="font-size:12px;color:var(--text-muted);margin-bottom:var(--space-1);">Available Balance</div>
+                    <div style="font-size:12px;color:var(--text-muted);margin-bottom:var(--space-1);">Total Light Balance</div>
                     <div id="accountBalance" style="font-size:28px;font-weight:700;color:var(--text-primary);">\\u27260</div>
                   </div>
-                  <div style="display:flex;gap:var(--space-2);">
-                    <button id="addFundsBtn" class="btn btn-primary btn-sm" style="border-radius:0;">Add Funds</button>
-                    <button id="withdrawBtn" class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);display:none;" onclick="showWithdrawModal()">Withdraw</button>
-                  </div>
+                  <button class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);" onclick="loadHostingData()">Refresh</button>
                 </div>
+                <div id="walletBalanceBreakdown" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:var(--space-3);"></div>
               </div>
 
               <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);margin-bottom:var(--space-4);">
-                <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:var(--space-3);">Auto Top-up</div>
-                <label style="display:flex;align-items:center;gap:var(--space-2);font-size:13px;color:var(--text-secondary);cursor:pointer;margin-bottom:var(--space-3);">
-                  <input type="checkbox" id="autoTopupEnabled" style="accent-color:var(--accent);">
-                  Enable automatic top-up when balance is low
-                </label>
-                <div id="autoTopupFields" style="display:none;">
-                  <div style="display:flex;gap:var(--space-3);margin-bottom:var(--space-3);">
-                    <div style="flex:1;">
-                      <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Threshold (Light)</label>
-                      <input type="number" id="autoTopupThreshold" value="800" style="width:100%;padding:6px 8px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">
-                    </div>
-                    <div style="flex:1;">
-                      <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Amount (Light)</label>
-                      <input type="number" id="autoTopupAmount" value="8000" style="width:100%;padding:6px 8px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">
-                    </div>
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-4);margin-bottom:var(--space-4);">
+                  <div>
+                    <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:4px;">Add Light</div>
+                    <div style="font-size:12px;color:var(--text-muted);line-height:1.5;">External funding enters through wallet payments or bank transfer. Purchased Light is spend-only platform credit.</div>
                   </div>
-                  <button class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);" onclick="saveAutoTopup()">Save</button>
+                  <div id="walletCanonicalRateLabel" style="font-size:12px;color:var(--text-muted);white-space:nowrap;">100 Light = $1 platform reference</div>
                 </div>
+                <div id="walletFundingMethods" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:var(--space-3);"></div>
+                <div id="walletFundingPolicy" style="font-size:12px;color:var(--text-muted);line-height:1.5;margin-top:var(--space-3);">Apple Pay and Google Pay fund at 95 Light / $1. Wire transfer funds at 99 Light / $1. 100 Light = $1 is the platform reference.</div>
+                <label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--text-muted);line-height:1.45;margin-top:var(--space-3);">
+                  <input id="walletTermsAccepted" type="checkbox" style="margin-top:2px;">
+                  <span id="walletTermsCopy">I agree that purchased Light is spend-only platform credit and is governed by the <a href="/terms" style="color:var(--text-secondary);text-decoration:underline;">Terms</a>.</span>
+                </label>
+              </div>
+
+              <div style="background:var(--bg-subtle);border:1px solid var(--border);padding:var(--space-4);font-size:12px;color:var(--text-muted);line-height:1.5;">
+                Light cannot be transferred directly between arbitrary accounts. Creator earnings come from platform-mediated app activity and marketplace sales, and only earned Light is eligible for payout.
               </div>
 
             </div>
@@ -3197,10 +3221,33 @@ export function getLayoutHTML(options: {
                   <div style="font-size:13px;font-weight:600;color:var(--text-primary);">Bank Payouts</div>
                   <span id="connectStatusBadge" style="font-size:11px;padding:2px 8px;border-radius:2px;background:rgba(239,68,68,0.15);color:var(--error);">Not Connected</span>
                 </div>
-                <div id="connectSection">
-                  <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-3);">Connect your bank account to withdraw earnings.</p>
-                  <button id="connectBankBtn" class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);" onclick="startConnectOnboarding()">Connect Bank Account</button>
+	                <div id="connectSection">
+	                  <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-3);">Set up Stripe Connect to request payouts from creator earnings.</p>
+                    <div style="display:flex;gap:var(--space-2);align-items:end;flex-wrap:wrap;">
+                      <div style="min-width:120px;">
+                        <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Country</label>
+                        <input id="connectCountryInput" value="US" maxlength="2" style="width:100%;padding:6px 8px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;text-transform:uppercase;">
+                      </div>
+	                    <button id="connectBankBtn" class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);" onclick="startConnectOnboarding()">Set Up Payouts</button>
+                    </div>
+	                </div>
+	                <div id="payoutPolicyCopy" style="font-size:12px;color:var(--text-muted);line-height:1.5;margin-top:var(--space-3);">Payouts are processed on the first business day of each month. Requests must be submitted at least 21 days before that payout date to be included. Purchased Light cannot be cashed out; only creator earnings are eligible for payout.</div>
+	              </div>
+
+              <div id="payoutRequestCard" style="display:none;background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);margin-bottom:var(--space-4);">
+                <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:var(--space-3);">Request Payout</div>
+                <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--space-3);align-items:end;">
+                  <div>
+                    <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Amount in Light</label>
+                    <input type="number" id="withdrawAmountLight" min="5000" step="1" placeholder="5000" oninput="updateWithdrawPreview()" style="width:100%;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">
+                  </div>
+                  <button id="withdrawBtn" class="btn btn-primary btn-sm" style="border-radius:0;" onclick="showWithdrawModal()">Request</button>
                 </div>
+                <label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--text-muted);line-height:1.45;margin-top:var(--space-3);">
+                  <input id="payoutTermsAccepted" type="checkbox" style="margin-top:2px;">
+                  <span id="payoutTermsCopy">I agree that only creator earnings are eligible for payout and that payout timing is governed by the <a href="/terms" style="color:var(--text-secondary);text-decoration:underline;">Terms</a>.</span>
+                </label>
+                <div id="withdrawPreview" style="font-size:12px;color:var(--text-muted);line-height:1.5;margin-top:var(--space-3);">Enter an amount to preview USD conversion and Stripe payout fees.</div>
               </div>
 
               <div style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-5);">
@@ -3217,7 +3264,9 @@ export function getLayoutHTML(options: {
           </section>
 
           <!-- API Key Panel -->
-          <section id="dashKeysPanel" class="settings-panel" style="display:${dashSection === 'keys' ? 'block' : 'none'};">
+          <section id="dashKeysPanel" class="settings-panel" style="display:${
+    dashSection === "keys" ? "block" : "none"
+  };">
             <h2 style="font-size:16px;font-weight:600;margin-bottom:var(--space-4);color:var(--text-primary);">API Key</h2>
             <p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-4);">Use this key to connect agents and CLI tools to your account.</p>
             <div id="apiKeyDisplay" style="background:var(--bg-raised);border:1px solid var(--border);padding:var(--space-4);margin-bottom:var(--space-3);">
@@ -3275,7 +3324,9 @@ export function getLayoutHTML(options: {
     <!-- ==========================================
          APP DETAIL VIEW
          ========================================== -->
-    <div id="appView" style="display:${initialView === 'app' ? 'block' : 'none'};">
+    <div id="appView" style="display:${
+    initialView === "app" ? "block" : "none"
+  };">
       <div class="settings-layout">
         <!-- App Sidebar -->
         <nav class="settings-sidebar">
@@ -3459,7 +3510,9 @@ export function getLayoutHTML(options: {
     <!-- ==========================================
          PROFILE VIEW
          ========================================== -->
-    <div id="profileView" style="display:${initialView === 'profile' ? 'block' : 'none'};">
+    <div id="profileView" style="display:${
+    initialView === "profile" ? "block" : "none"
+  };">
       <div style="max-width:var(--content-max);margin:0 auto;padding:var(--space-3) var(--space-6);">
         <div id="profileContent">
           <div style="font-size:13px;color:var(--text-muted);padding:var(--space-8) 0;text-align:center;">Loading profile details...</div>
@@ -4193,7 +4246,11 @@ export function getLayoutHTML(options: {
       } else if (currentView === 'dashboard') {
         // Check if URL is actually a settings sub-route
         var pathname = window.location.pathname;
-        if (pathname === '/settings' || pathname.startsWith('/settings/')) {
+        if (pathname === '/wallet') {
+          showView('dashboard');
+          switchDashSection('billing');
+          loadAccountData();
+        } else if (pathname === '/settings' || pathname.startsWith('/settings/')) {
           var settingsSection = pathname.split('/settings/')[1] || 'keys';
           if (settingsSection === 'tokens') settingsSection = 'keys';
           var autoWalletTab = null;
@@ -4206,13 +4263,15 @@ export function getLayoutHTML(options: {
               btn.classList.toggle('active', btn.dataset.walletTab === 'offers');
             });
             var _bt = document.getElementById('walletBalanceTab');
+            var _tt = document.getElementById('walletTransactionsTab');
             var _et = document.getElementById('walletEarningsTab');
             var _ot = document.getElementById('walletOffersTab');
             if (_bt) _bt.style.display = 'none';
+            if (_tt) _tt.style.display = 'none';
             if (_et) _et.style.display = 'none';
             if (_ot) _ot.style.display = 'block';
             loadMyOffers();
-            history.replaceState({}, '', '/settings/billing');
+            history.replaceState({}, '', '/wallet');
           }
           loadAccountData();
         } else if (pathname === '/marketplace' || pathname === '/capabilities') {
@@ -4347,6 +4406,10 @@ export function getLayoutHTML(options: {
         switchDashSection('library');
         renderAppList();
         loadDashboardData();
+      } else if (path === '/wallet') {
+        showView('dashboard');
+        switchDashSection('billing');
+        loadAccountData();
       } else if (path === '/marketplace') {
         showView('dashboard');
         switchDashSection('marketplace');
@@ -4366,13 +4429,15 @@ export function getLayoutHTML(options: {
             btn.classList.toggle('active', btn.dataset.walletTab === 'offers');
           });
           var _pbt = document.getElementById('walletBalanceTab');
+          var _ptt = document.getElementById('walletTransactionsTab');
           var _pet = document.getElementById('walletEarningsTab');
           var _pot = document.getElementById('walletOffersTab');
           if (_pbt) _pbt.style.display = 'none';
+          if (_ptt) _ptt.style.display = 'none';
           if (_pet) _pet.style.display = 'none';
           if (_pot) _pot.style.display = 'block';
           loadMyOffers();
-          history.replaceState({}, '', '/settings/billing');
+          history.replaceState({}, '', '/wallet');
         }
         loadAccountData();
       } else if (path.startsWith('/a/')) {
@@ -4455,15 +4520,17 @@ export function getLayoutHTML(options: {
         history.replaceState({}, '', '/keys');
         loadApiKey();
       } else if (section === 'billing') {
-        history.replaceState({}, '', '/settings/billing');
+        history.replaceState({}, '', '/wallet');
         activeWalletTab = 'balance';
         document.querySelectorAll('[data-wallet-tab]').forEach(function(btn) {
           btn.classList.toggle('active', btn.dataset.walletTab === 'balance');
         });
         var balTab = document.getElementById('walletBalanceTab');
+        var txTab = document.getElementById('walletTransactionsTab');
         var earnTab = document.getElementById('walletEarningsTab');
         var offTab = document.getElementById('walletOffersTab');
         if (balTab) balTab.style.display = 'block';
+        if (txTab) txTab.style.display = 'none';
         if (earnTab) earnTab.style.display = 'none';
         if (offTab) offTab.style.display = 'none';
         loadHostingData();
@@ -4879,7 +4946,7 @@ export function getLayoutHTML(options: {
     }
 
     // ===== Profile View =====
-    var _profileSlug = '${profileSlug || ''}';
+    var _profileSlug = '${profileSlug || ""}';
 
     function loadProfilePage(slug) {
       var el = document.getElementById('profileContent');
@@ -5844,6 +5911,501 @@ export function getLayoutHTML(options: {
 
     // Wallet sub-tab state
     var activeWalletTab = 'balance';
+    var billingConfig = {
+      canonical_light_per_usd: 100,
+      wallet_light_per_usd: 95,
+      wire_light_per_usd: 99,
+      payout_light_per_usd: 100,
+      min_withdrawal_light: 5000,
+      payout_policy_copy: 'Payouts are processed on the first business day of each month. Requests must be submitted at least 21 days before that payout date to be included. Purchased Light cannot be cashed out; only creator earnings are eligible for payout.',
+      policy_copy: {
+        purchasedLight: 'Purchased Light is spend-only platform credit. It cannot be cashed out, redeemed for money, or transferred directly between arbitrary accounts.',
+        creatorEarnings: 'Creator earnings come from platform-mediated app activity and marketplace sales. Earned Light can be spent in Ultralight or requested for payout through Stripe Connect.',
+        fundingTerms: 'By adding Light, you agree that purchased Light is spend-only platform credit and that authenticated funding transactions are governed by the Terms.',
+        payoutTerms: 'By requesting a payout, you confirm that the amount is creator earnings and that payout timing, fees, and eligibility are governed by the Terms.',
+        termsUrl: '/terms'
+      }
+    };
+
+    function getWalletLightPerUsd() {
+      return billingConfig.wallet_light_per_usd || 95;
+    }
+
+    function getWireLightPerUsd() {
+      return billingConfig.wire_light_per_usd || 99;
+    }
+
+    function getCanonicalLightPerUsd() {
+      return billingConfig.canonical_light_per_usd || 100;
+    }
+
+    function getPayoutLightPerUsd() {
+      return billingConfig.payout_light_per_usd || 100;
+    }
+
+    function getMinWithdrawalLight() {
+      return billingConfig.min_withdrawal_light || 5000;
+    }
+
+    function getPolicyCopy() {
+      return billingConfig.policy_copy || {};
+    }
+
+    function getTermsUrl() {
+      return getPolicyCopy().termsUrl || '/terms';
+    }
+
+    function renderTermsCopy(copy) {
+      var termsUrl = getTermsUrl();
+      var link = '<a href="' + escapeHtml(termsUrl) + '" style="color:var(--text-secondary);text-decoration:underline;">Terms</a>';
+      var text = escapeHtml(copy || '');
+      return text.indexOf('Terms') >= 0 ? text.replace(/Terms/g, link) : text + ' ' + link;
+    }
+
+    function walletTermsAccepted() {
+      var checkbox = document.getElementById('walletTermsAccepted');
+      return !!(checkbox && checkbox.checked);
+    }
+
+    function payoutTermsAccepted() {
+      var checkbox = document.getElementById('payoutTermsAccepted');
+      return !!(checkbox && checkbox.checked);
+    }
+
+    var walletExpressState = {
+      stripe: null,
+      elements: null,
+      element: null,
+      clientSecret: null,
+      amountCents: 0,
+    };
+    var walletStripeJsPromise = null;
+    var wireTransferState = {
+      paymentIntentId: null,
+      amountCents: 0,
+    };
+
+    function setWalletExpressStatus(message, tone) {
+      var statusEl = document.getElementById('walletExpressStatus');
+      if (!statusEl) return;
+      statusEl.textContent = message || '';
+      statusEl.style.color = tone === 'error' ? 'var(--error)' : tone === 'success' ? 'var(--success)' : 'var(--text-muted)';
+    }
+
+    function setWireTransferStatus(message, tone) {
+      var statusEl = document.getElementById('wireTransferStatus');
+      if (!statusEl) return;
+      statusEl.textContent = message || '';
+      statusEl.style.color = tone === 'error' ? 'var(--error)' : tone === 'success' ? 'var(--success)' : 'var(--text-muted)';
+    }
+
+    function getWalletFundingAmountCents() {
+      var input = document.getElementById('walletExpressAmountUsd');
+      var value = input && input.value ? Number(input.value) : 25;
+      if (!Number.isFinite(value)) value = 25;
+      return Math.round(value * 100);
+    }
+
+    function getWireFundingAmountCents() {
+      var input = document.getElementById('wireTransferAmountUsd');
+      var value = input && input.value ? Number(input.value) : 500;
+      if (!Number.isFinite(value)) value = 500;
+      return Math.round(value * 100);
+    }
+
+    function formatUsdCents(cents) {
+      return '$' + (Math.max(0, cents || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function clearWalletExpressElement() {
+      if (walletExpressState.element) {
+        try { walletExpressState.element.unmount(); } catch {}
+      }
+      walletExpressState = {
+        stripe: null,
+        elements: null,
+        element: null,
+        clientSecret: null,
+        amountCents: 0,
+      };
+      var mount = document.getElementById('walletExpressCheckoutMount');
+      if (mount) mount.innerHTML = '';
+    }
+
+    function clearWireTransferInstructions() {
+      wireTransferState = { paymentIntentId: null, amountCents: 0 };
+      var panel = document.getElementById('wireTransferInstructions');
+      if (panel) panel.innerHTML = '';
+    }
+
+    window.updateWalletFundingPreview = function() {
+      var preview = document.getElementById('walletExpressPreview');
+      if (!preview) return;
+      var cents = getWalletFundingAmountCents();
+      var minCents = 500;
+      var maxCents = 500000;
+      var dollars = (cents / 100).toFixed(2);
+      var light = Math.round((cents / 100) * getWalletLightPerUsd());
+      if (cents < minCents) {
+        preview.textContent = 'Minimum wallet funding amount is $5.00.';
+      } else if (cents > maxCents) {
+        preview.textContent = 'Maximum wallet funding amount is $5,000.00.';
+      } else {
+        preview.textContent = '$' + dollars + ' funds ' + formatLight(light) + ' at ' + getWalletLightPerUsd().toLocaleString() + ' Light / $1.';
+      }
+      if (walletExpressState.amountCents && walletExpressState.amountCents !== cents) {
+        clearWalletExpressElement();
+        setWalletExpressStatus('Amount changed. Show wallet buttons again to continue.', 'muted');
+      }
+    };
+
+    window.updateWireFundingPreview = function() {
+      var preview = document.getElementById('wireTransferPreview');
+      if (!preview) return;
+      var cents = getWireFundingAmountCents();
+      var minCents = 500;
+      var maxCents = 500000;
+      var light = Math.round((cents / 100) * getWireLightPerUsd());
+      if (cents < minCents) {
+        preview.textContent = 'Minimum wire funding amount is $5.00.';
+      } else if (cents > maxCents) {
+        preview.textContent = 'Maximum wire funding amount is $5,000.00.';
+      } else {
+        preview.textContent = formatUsdCents(cents) + ' funds ' + formatLight(light) + ' at ' + getWireLightPerUsd().toLocaleString() + ' Light / $1 after settlement.';
+      }
+      if (wireTransferState.amountCents && wireTransferState.amountCents !== cents) {
+        clearWireTransferInstructions();
+        setWireTransferStatus('Amount changed. Generate new wire instructions before sending funds.', 'muted');
+      }
+    };
+
+    function loadStripeJs() {
+      if (window.Stripe) return Promise.resolve(window.Stripe);
+      if (walletStripeJsPromise) return walletStripeJsPromise;
+      walletStripeJsPromise = new Promise(function(resolve, reject) {
+        var script = document.createElement('script');
+        script.src = 'https://js.stripe.com/v3/';
+        script.async = true;
+        script.onload = function() {
+          if (window.Stripe) resolve(window.Stripe);
+          else reject(new Error('Stripe.js did not load'));
+        };
+        script.onerror = function() { reject(new Error('Failed to load Stripe.js')); };
+        document.head.appendChild(script);
+      });
+      return walletStripeJsPromise;
+    }
+
+    function renderWalletFundingMethods() {
+      var el = document.getElementById('walletFundingMethods');
+      if (!el) return;
+      el.innerHTML =
+        '<div style="border:1px solid var(--border);background:var(--bg-primary);padding:var(--space-4);min-width:0;">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);margin-bottom:var(--space-2);">' +
+            '<div style="font-size:13px;font-weight:600;color:var(--text-primary);">Apple Pay / Google Pay</div>' +
+            '<span style="font-size:11px;color:var(--success);border:1px solid rgba(34,197,94,0.35);padding:2px 6px;">' + getWalletLightPerUsd().toLocaleString() + ' Light / $1</span>' +
+          '</div>' +
+          '<div style="font-size:12px;color:var(--text-muted);line-height:1.45;margin-bottom:var(--space-3);">The only card-like Light funding surface. Device wallet availability and SCA are handled by Stripe.</div>' +
+          '<div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--space-2);align-items:end;margin-bottom:var(--space-2);">' +
+            '<div>' +
+              '<label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Amount (USD)</label>' +
+              '<input id="walletExpressAmountUsd" type="number" min="5" max="5000" step="1" value="25" oninput="updateWalletFundingPreview()" style="width:100%;padding:7px 9px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">' +
+            '</div>' +
+            '<button id="walletExpressStartBtn" class="btn btn-primary btn-sm" style="border-radius:0;" onclick="startWalletExpressCheckout()">Show Wallet Buttons</button>' +
+          '</div>' +
+          '<div id="walletExpressPreview" style="font-size:12px;color:var(--text-muted);line-height:1.45;margin-bottom:var(--space-3);"></div>' +
+          '<div id="walletExpressCheckoutMount" style="min-height:44px;"></div>' +
+          '<div id="walletExpressStatus" style="font-size:12px;color:var(--text-muted);line-height:1.45;margin-top:var(--space-2);"></div>' +
+        '</div>' +
+        '<div style="border:1px solid var(--border);background:var(--bg-primary);padding:var(--space-4);min-width:0;">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);margin-bottom:var(--space-2);">' +
+            '<div style="font-size:13px;font-weight:600;color:var(--text-primary);">Wire Transfer</div>' +
+            '<span style="font-size:11px;color:var(--success);border:1px solid rgba(34,197,94,0.35);padding:2px 6px;">' + getWireLightPerUsd().toLocaleString() + ' Light / $1</span>' +
+          '</div>' +
+          '<div style="font-size:12px;color:var(--text-muted);line-height:1.45;margin-bottom:var(--space-3);">Bank-transfer Light credits stay pending until Stripe confirms settlement.</div>' +
+          '<div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--space-2);align-items:end;margin-bottom:var(--space-2);">' +
+            '<div>' +
+              '<label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Amount (USD)</label>' +
+              '<input id="wireTransferAmountUsd" type="number" min="5" max="5000" step="1" value="500" oninput="updateWireFundingPreview()" style="width:100%;padding:7px 9px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">' +
+            '</div>' +
+            '<button id="wireTransferStartBtn" class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);" onclick="startWireTransferFunding()">Get Instructions</button>' +
+          '</div>' +
+          '<div id="wireTransferPreview" style="font-size:12px;color:var(--text-muted);line-height:1.45;margin-bottom:var(--space-3);"></div>' +
+          '<div id="wireTransferInstructions"></div>' +
+          '<div id="wireTransferStatus" style="font-size:12px;color:var(--text-muted);line-height:1.45;margin-top:var(--space-2);"></div>' +
+        '</div>';
+      window.updateWalletFundingPreview();
+      window.updateWireFundingPreview();
+    }
+
+    window.openWalletFundingMethod = function(method) {
+      if (method === 'wallet') {
+        window.startWalletExpressCheckout();
+      } else {
+        window.startWireTransferFunding();
+      }
+    };
+
+    function renderWireFinancialAddress(address) {
+      if (!address) return '';
+      var rows = [];
+      var networks = Array.isArray(address.supported_networks) ? address.supported_networks.join(', ') : '';
+      if (address.type === 'aba' && address.aba) {
+        rows.push('Bank: ' + (address.aba.bank_name || ''));
+        rows.push('Routing number: ' + (address.aba.routing_number || ''));
+        rows.push('Account number: ' + (address.aba.account_number || ''));
+      } else if (address.type === 'swift' && address.swift) {
+        rows.push('Bank: ' + (address.swift.bank_name || ''));
+        rows.push('SWIFT: ' + (address.swift.swift_code || ''));
+        rows.push('Account number: ' + (address.swift.account_number || ''));
+      }
+      if (networks) rows.push('Networks: ' + networks);
+      return rows.filter(Boolean).join('\\n');
+    }
+
+    function renderWireTransferInstructions(data) {
+      var panel = document.getElementById('wireTransferInstructions');
+      if (!panel) return;
+      var instructions = data.instructions || {};
+      var addresses = Array.isArray(instructions.financialAddresses) ? instructions.financialAddresses : [];
+      var lines = [
+        'Amount: ' + formatUsdCents(instructions.amountRemainingCents || data.amount_cents || 0),
+        'Currency: ' + (instructions.currency || 'USD'),
+      ];
+      if (instructions.reference) lines.push('Reference: ' + instructions.reference);
+      addresses.forEach(function(address, index) {
+        var rendered = renderWireFinancialAddress(address);
+        if (rendered) lines.push('\\nBank details ' + (index + 1) + '\\n' + rendered);
+      });
+      if (instructions.hostedInstructionsUrl) {
+        lines.push('\\nStripe hosted instructions: ' + instructions.hostedInstructionsUrl);
+      }
+      var text = lines.join('\\n');
+      panel.innerHTML =
+        '<div style="border:1px solid var(--border);background:var(--bg-secondary);padding:var(--space-3);margin-top:var(--space-2);">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-2);margin-bottom:var(--space-2);">' +
+            '<div style="font-size:12px;font-weight:600;color:var(--text-primary);">Transfer exact amount</div>' +
+            '<button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:11px;" onclick="copyWireInstructions()">Copy</button>' +
+          '</div>' +
+          '<pre id="wireTransferInstructionsText" style="white-space:pre-wrap;margin:0;font-size:11px;line-height:1.45;color:var(--text-secondary);font-family:var(--font-mono);overflow-wrap:anywhere;">' + escapeHtml(text) + '</pre>' +
+          (instructions.hostedInstructionsUrl ? '<a href="' + escapeHtml(instructions.hostedInstructionsUrl) + '" target="_blank" rel="noreferrer" style="display:inline-block;margin-top:var(--space-2);font-size:12px;color:var(--text-primary);">Open Stripe hosted instructions</a>' : '') +
+        '</div>';
+    }
+
+    window.copyWireInstructions = async function() {
+      var textEl = document.getElementById('wireTransferInstructionsText');
+      if (!textEl) return;
+      try {
+        await navigator.clipboard.writeText(textEl.innerText || textEl.textContent || '');
+        showToast('Wire instructions copied.');
+      } catch {
+        prompt('Copy wire instructions:', textEl.innerText || textEl.textContent || '');
+      }
+    };
+
+    window.startWireTransferFunding = async function() {
+      if (!authToken) {
+        showAuthOverlay();
+        return;
+      }
+      var cents = getWireFundingAmountCents();
+      if (cents < 500) {
+        setWireTransferStatus('Minimum wire funding amount is $5.00.', 'error');
+        return;
+      }
+      if (cents > 500000) {
+        setWireTransferStatus('Maximum wire funding amount is $5,000.00.', 'error');
+        return;
+      }
+      if (!walletTermsAccepted()) {
+        setWireTransferStatus('Review and accept the Light funding terms before generating wire instructions.', 'error');
+        return;
+      }
+
+      var btn = document.getElementById('wireTransferStartBtn');
+      if (btn) btn.disabled = true;
+      clearWireTransferInstructions();
+      setWireTransferStatus('Generating Stripe wire instructions...', 'muted');
+
+      try {
+        var res = await fetch('/api/user/wallet/wire-transfer-intent', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ amount_cents: cents, source: _isEmbed ? 'desktop' : 'web', terms_accepted: true }),
+        });
+        var data = await res.json();
+        if (!res.ok) {
+          setWireTransferStatus(data.error || 'Wire funding is unavailable right now.', 'error');
+          return;
+        }
+
+        wireTransferState = {
+          paymentIntentId: data.payment_intent_id,
+          amountCents: cents,
+        };
+        renderWireTransferInstructions(data);
+        if (data.status === 'succeeded') {
+          setWireTransferStatus('Stripe has already marked this payment succeeded. Balance will update after the webhook finalizes it.', 'success');
+        } else {
+          setWireTransferStatus('Send the exact amount using these instructions. Light credits only after Stripe confirms settlement.', 'success');
+        }
+      } catch (err) {
+        setWireTransferStatus(err && err.message ? err.message : 'Wire funding failed.', 'error');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    };
+
+    window.startWalletExpressCheckout = async function() {
+      if (!authToken) {
+        showAuthOverlay();
+        return;
+      }
+      var cents = getWalletFundingAmountCents();
+      if (cents < 500) {
+        setWalletExpressStatus('Minimum wallet funding amount is $5.00.', 'error');
+        return;
+      }
+      if (cents > 500000) {
+        setWalletExpressStatus('Maximum wallet funding amount is $5,000.00.', 'error');
+        return;
+      }
+      if (!walletTermsAccepted()) {
+        setWalletExpressStatus('Review and accept the Light funding terms before showing wallet buttons.', 'error');
+        return;
+      }
+
+      var btn = document.getElementById('walletExpressStartBtn');
+      if (btn) btn.disabled = true;
+      clearWalletExpressElement();
+      setWalletExpressStatus('Preparing Apple Pay / Google Pay...', 'muted');
+
+      try {
+        var res = await fetch('/api/user/wallet/express-checkout-intent', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ amount_cents: cents, source: _isEmbed ? 'desktop' : 'web', terms_accepted: true }),
+        });
+        var data = await res.json();
+        if (!res.ok) {
+          setWalletExpressStatus(data.error || 'Wallet funding is unavailable right now.', 'error');
+          return;
+        }
+
+        var StripeCtor = await loadStripeJs();
+        var stripe = StripeCtor(data.publishable_key);
+        var elements = stripe.elements({
+          clientSecret: data.client_secret,
+          appearance: {
+            variables: {
+              borderRadius: '2px',
+              colorPrimary: '#111827',
+            },
+          },
+        });
+        var expressElement = elements.create('expressCheckout', {
+          paymentMethods: {
+            applePay: 'auto',
+            googlePay: 'auto',
+            link: 'never',
+            paypal: 'never',
+            amazonPay: 'never',
+            klarna: 'never',
+          },
+          layout: {
+            maxColumns: 2,
+            maxRows: 1,
+            overflow: 'never',
+          },
+          buttonType: {
+            applePay: 'check-out',
+            googlePay: 'checkout',
+          },
+          buttonHeight: 44,
+        });
+
+        expressElement.on('ready', function(event) {
+          var methods = event && event.availablePaymentMethods;
+          if (!methods || (!methods.applePay && !methods.googlePay)) {
+            setWalletExpressStatus('Apple Pay / Google Pay is unavailable in this browser. Try a supported wallet browser.', 'error');
+          } else {
+            setWalletExpressStatus('Choose Apple Pay or Google Pay to add ' + formatLight(data.light_amount) + '.', 'success');
+          }
+        });
+
+        expressElement.on('confirm', async function() {
+          setWalletExpressStatus('Confirming wallet payment...', 'muted');
+          var submitResult = await elements.submit();
+          if (submitResult.error) {
+            setWalletExpressStatus(submitResult.error.message || 'Wallet payment could not be submitted.', 'error');
+            return;
+          }
+          var result = await stripe.confirmPayment({
+            elements: elements,
+            clientSecret: data.client_secret,
+            confirmParams: { return_url: window.location.origin + '/wallet?wallet_payment=return' },
+            redirect: 'if_required',
+          });
+          if (result.error) {
+            setWalletExpressStatus(result.error.message || 'Wallet payment failed.', 'error');
+            return;
+          }
+          setWalletExpressStatus('Payment confirmed. Light will appear after Stripe confirms settlement.', 'success');
+          showToast('Wallet payment confirmed. Balance will update shortly.');
+          setTimeout(function() { loadHostingData(); loadTransactions(true); }, 2000);
+          setTimeout(function() { loadHostingData(); loadTransactions(true); }, 6000);
+        });
+
+        walletExpressState = {
+          stripe: stripe,
+          elements: elements,
+          element: expressElement,
+          clientSecret: data.client_secret,
+          amountCents: cents,
+        };
+        expressElement.mount('#walletExpressCheckoutMount');
+      } catch (err) {
+        setWalletExpressStatus(err && err.message ? err.message : 'Wallet funding failed.', 'error');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    };
+
+    function updateBillingPolicyCopy() {
+      renderWalletFundingMethods();
+      var canonicalEl = document.getElementById('walletCanonicalRateLabel');
+      if (canonicalEl) {
+        canonicalEl.textContent = getCanonicalLightPerUsd().toLocaleString() + ' Light = $1 platform reference';
+      }
+      var fundingEl = document.getElementById('walletFundingPolicy');
+      if (fundingEl) {
+        fundingEl.textContent = 'Apple Pay and Google Pay fund at ' + getWalletLightPerUsd().toLocaleString() + ' Light / $1. Wire transfer funds at ' + getWireLightPerUsd().toLocaleString() + ' Light / $1. ' + getCanonicalLightPerUsd().toLocaleString() + ' Light = $1 is the platform reference.';
+      }
+      var payoutEl = document.getElementById('payoutPolicyCopy');
+      if (payoutEl) payoutEl.textContent = billingConfig.payout_policy_copy;
+      var walletTermsEl = document.getElementById('walletTermsCopy');
+      if (walletTermsEl) walletTermsEl.innerHTML = renderTermsCopy(getPolicyCopy().fundingTerms);
+      var payoutTermsEl = document.getElementById('payoutTermsCopy');
+      if (payoutTermsEl) payoutTermsEl.innerHTML = renderTermsCopy(getPolicyCopy().payoutTerms);
+      var withdrawInput = document.getElementById('withdrawAmountLight');
+      if (withdrawInput) {
+        withdrawInput.min = String(getMinWithdrawalLight());
+        withdrawInput.placeholder = String(getMinWithdrawalLight());
+      }
+      updateWithdrawPreview();
+    }
+
+    async function loadBillingConfig() {
+      try {
+        var res = await fetch('/api/billing/config');
+        if (!res.ok) return;
+        var data = await res.json();
+        billingConfig = Object.assign({}, billingConfig, data || {});
+        updateBillingPolicyCopy();
+      } catch {}
+    }
+    renderWalletFundingMethods();
+    loadBillingConfig();
 
     function selectWalletTab(tab) {
       activeWalletTab = tab;
@@ -5858,7 +6420,7 @@ export function getLayoutHTML(options: {
       var activeEl = document.getElementById(tabMap[activeWalletTab]);
       if (activeEl) activeEl.style.display = 'block';
       if (activeWalletTab === 'transactions') { loadTransactions(true); }
-      else if (activeWalletTab === 'earnings') { loadEarnings(); loadPayouts(); }
+      else if (activeWalletTab === 'earnings') { loadEarnings(); loadConnectStatus(); loadPayouts(); }
       else if (activeWalletTab === 'offers') { loadMyOffers(); }
     }
 
@@ -6861,7 +7423,7 @@ export function getLayoutHTML(options: {
     function showMarketplaceActionError(err, fallback) {
       var msg = err && err.message ? err.message : (fallback || 'Marketplace action failed');
       if ((err && err.status === 402) || /insufficient balance/i.test(msg)) {
-        showToast(msg + '. Add Light from Wallet > Balance.', 'error');
+        showToast(msg + '. Add Light from Wallet.', 'error');
         return;
       }
       showToast(msg, 'error');
@@ -7358,7 +7920,7 @@ export function getLayoutHTML(options: {
       var balanceEl = document.getElementById('mktBidBalance');
       var available = balanceEl && balanceEl.dataset.balanceLight ? parseFloat(balanceEl.dataset.balanceLight) : null;
       if (available !== null && amount > available) {
-        showToast('Insufficient balance. Add Light from Wallet > Balance.', 'error');
+        showToast('Insufficient balance. Add Light from Wallet.', 'error');
         return;
       }
 
@@ -7575,7 +8137,7 @@ export function getLayoutHTML(options: {
       var balanceEl = document.getElementById('popupBidBalance');
       var available = balanceEl && balanceEl.dataset.balanceLight ? parseFloat(balanceEl.dataset.balanceLight) : null;
       if (available !== null && amount > available) {
-        showToast('Insufficient balance. Add Light from Wallet > Balance.', 'error');
+        showToast('Insufficient balance. Add Light from Wallet.', 'error');
         return;
       }
       if (btn) { btn.disabled = true; btn.textContent = 'Placing...'; }
@@ -9120,59 +9682,29 @@ export function getLayoutHTML(options: {
         balanceEl.textContent = formatLight(light);
         balanceEl.style.color = light <= 0 ? 'var(--error)' : 'var(--text-primary)';
 
+        var breakdownEl = document.getElementById('walletBalanceBreakdown');
+        if (breakdownEl) {
+          var depositLight = data.deposit_balance_light || 0;
+          var earnedLight = data.earned_balance_light || 0;
+          var escrowLight = data.escrow_light || 0;
+          var withdrawableLight = data.withdrawable_earnings_light || earnedLight;
+          breakdownEl.innerHTML =
+            '<div style="border:1px solid var(--border);background:var(--bg-primary);padding:var(--space-3);min-width:0;"><div style="font-size:11px;color:var(--text-muted);margin-bottom:3px;">Purchased</div><div style="font-size:16px;font-weight:600;color:var(--text-primary);">' + formatLight(depositLight) + '</div><div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Spend-only</div></div>' +
+            '<div style="border:1px solid var(--border);background:var(--bg-primary);padding:var(--space-3);min-width:0;"><div style="font-size:11px;color:var(--text-muted);margin-bottom:3px;">Creator Earnings</div><div style="font-size:16px;font-weight:600;color:var(--success);">' + formatLight(earnedLight) + '</div><div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Spend or payout</div></div>' +
+            '<div style="border:1px solid var(--border);background:var(--bg-primary);padding:var(--space-3);min-width:0;"><div style="font-size:11px;color:var(--text-muted);margin-bottom:3px;">Payout Eligible</div><div style="font-size:16px;font-weight:600;color:var(--success);">' + formatLight(withdrawableLight) + '</div><div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Earnings only</div></div>' +
+            '<div style="border:1px solid var(--border);background:var(--bg-primary);padding:var(--space-3);min-width:0;"><div style="font-size:11px;color:var(--text-muted);margin-bottom:3px;">Escrowed</div><div style="font-size:16px;font-weight:600;color:var(--text-primary);">' + formatLight(escrowLight) + '</div><div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Open bids</div></div>';
+        }
+
         if (statusEl) {
           statusEl.textContent = light > 0 ? 'Active' : 'No Balance';
           statusEl.style.background = light > 0 ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)';
           statusEl.style.color = light > 0 ? 'var(--success)' : 'var(--error)';
         }
-
-        // Auto top-up
-        const autoTopup = data.auto_topup || {};
-        const enabledEl = document.getElementById('autoTopupEnabled');
-        const fieldsEl = document.getElementById('autoTopupFields');
-        if (enabledEl) enabledEl.checked = autoTopup.enabled || false;
-        if (fieldsEl) fieldsEl.style.display = autoTopup.enabled ? 'block' : 'none';
-        if (enabledEl) enabledEl.onchange = function() { if (fieldsEl) fieldsEl.style.display = enabledEl.checked ? 'block' : 'none'; };
-
-        const thresholdEl = document.getElementById('autoTopupThreshold');
-        const amountEl = document.getElementById('autoTopupAmount');
-        if (thresholdEl) thresholdEl.value = String(autoTopup.threshold_light || 100);
-        if (amountEl) amountEl.value = String(autoTopup.amount_light || 1000);
       } catch {}
     }
 
-    window.startDeposit = async function() {
-      const amountCents = parseInt(document.getElementById('depositAmount')?.value || '2500', 10);
-      var lightReceived = Math.round(amountCents / 100 * 95);
-      if (!confirm('Deposit $' + (amountCents / 100).toFixed(2) + ' \\u2192 \\u2726' + lightReceived.toLocaleString() + ' (95 Light per $1)\\n\\nProceed?')) return;
-      try {
-        const res = await fetch('/api/user/hosting/checkout', {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ amount_cents: amountCents }),
-        });
-        const data = await res.json();
-        if (!res.ok) { showToast(data.error || 'Failed to start checkout', 'error'); return; }
-        if (data.checkout_url) {
-          window.open(data.checkout_url, '_blank');
-          showToast('Checkout opened. You will receive \\u2726' + lightReceived.toLocaleString() + ' after payment.');
-        }
-      } catch { showToast('Failed to start deposit', 'error'); }
-    };
-
-    window.saveAutoTopup = async function() {
-      const enabled = document.getElementById('autoTopupEnabled')?.checked || false;
-      const thresholdLight = parseInt(document.getElementById('autoTopupThreshold')?.value || '800', 10);
-      const amountLight = parseInt(document.getElementById('autoTopupAmount')?.value || '8000', 10);
-      try {
-        const res = await fetch('/api/user/hosting/auto-topup', {
-          method: 'PATCH',
-          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled: enabled, threshold_light: thresholdLight, amount_light: amountLight }),
-        });
-        if (res.ok) { showToast('Auto top-up saved'); loadHostingData(); }
-        else showToast('Failed to save', 'error');
-      } catch { showToast('Failed to save', 'error'); }
+    window.startDeposit = function() {
+      showToast('Use Apple Pay / Google Pay or wire transfer in Wallet.');
     };
 
     // --- Earnings ---
@@ -9196,22 +9728,65 @@ export function getLayoutHTML(options: {
           '<div style="display:flex;gap:var(--space-6);margin-bottom:var(--space-2);flex-wrap:wrap;">' +
             '<div><div style="font-size:11px;color:var(--text-muted);">Lifetime Earned</div><div style="font-size:18px;font-weight:600;">' + total + '</div></div>' +
             '<div><div style="font-size:11px;color:var(--text-muted);">Last 30 days</div><div style="font-size:18px;font-weight:600;">' + period + '</div></div>' +
-            '<div><div style="font-size:11px;color:var(--text-muted);">Withdrawn</div><div style="font-size:18px;font-weight:600;">' + withdrawn + '</div></div>' +
-            '<div><div style="font-size:11px;color:var(--success);">Withdrawable</div><div style="font-size:18px;font-weight:600;color:var(--success);">' + withdrawable + '</div></div>' +
+            '<div><div style="font-size:11px;color:var(--text-muted);">Paid Out</div><div style="font-size:18px;font-weight:600;">' + withdrawn + '</div></div>' +
+            '<div><div style="font-size:11px;color:var(--success);">Payout Eligible</div><div style="font-size:18px;font-weight:600;color:var(--success);">' + withdrawable + '</div></div>' +
           '</div>' +
-          '<div style="font-size:11px;color:var(--text-muted);margin-top:var(--space-2);">Only earned funds can be withdrawn. Deposits are for hosting costs only.</div>';
+          '<div style="font-size:11px;color:var(--text-muted);margin-top:var(--space-2);">Only creator earnings can be paid out. Purchased Light is spend-only platform credit.</div>';
       } catch {
         el.innerHTML = renderShellState('error', 'Earnings unavailable', 'We could not load your earnings summary right now.', { compact: true });
       }
     }
 
     // --- Connect Status ---
-    // Stores connect status data for use by withdraw modal
+    // Stores connect status data for payout requests.
     var _connectData = null;
+    function renderConnectSetup(message) {
+      return '<p style="font-size:13px;color:var(--text-muted);margin-bottom:var(--space-3);">' + escapeHtml(message || 'Set up Stripe Connect to request payouts from creator earnings.') + '</p>' +
+        '<div style="display:flex;gap:var(--space-2);align-items:end;flex-wrap:wrap;">' +
+          '<div style="min-width:120px;">' +
+            '<label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Country</label>' +
+            '<input id="connectCountryInput" value="US" maxlength="2" style="width:100%;padding:6px 8px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;text-transform:uppercase;">' +
+          '</div>' +
+          '<button id="connectBankBtn" class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);" onclick="startConnectOnboarding()">Set Up Payouts</button>' +
+        '</div>';
+    }
+
+    function updateWithdrawPreview() {
+      var preview = document.getElementById('withdrawPreview');
+      var inputEl = document.getElementById('withdrawAmountLight');
+      if (!preview || !inputEl) return;
+      var lightAmount = parseInt(inputEl.value || '0', 10);
+      var payoutRate = getPayoutLightPerUsd();
+      var minLight = getMinWithdrawalLight();
+      var withdrawable = _connectData && _connectData.withdrawable_earnings_light ? _connectData.withdrawable_earnings_light : 0;
+      if (!lightAmount || isNaN(lightAmount)) {
+        preview.textContent = 'Enter an amount to preview USD conversion and Stripe payout fees.';
+        return;
+      }
+      var usdAmount = lightAmount / payoutRate;
+      var stripeFee = Math.ceil(usdAmount * 100 * 0.0025 + 25) / 100;
+      if (_connectData && _connectData.is_cross_border) stripeFee += Math.ceil(usdAmount * 100 * 0.02) / 100;
+      var netUsd = Math.max(0, usdAmount - stripeFee);
+      var warnings = [];
+      if (lightAmount < minLight) warnings.push('minimum ' + formatLight(minLight));
+      if (lightAmount > withdrawable) warnings.push('above payout-eligible earnings');
+      preview.textContent = formatLight(lightAmount) + ' converts at ' + payoutRate.toLocaleString() + ' Light = $1 to $' + usdAmount.toFixed(2) + '. Estimated Stripe fees: $' + stripeFee.toFixed(2) + '. Estimated bank deposit: $' + netUsd.toFixed(2) + '. Monthly payout cutoff applies' + (warnings.length ? ' (' + warnings.join(', ') + ').' : '.');
+    }
+    window.updateWithdrawPreview = updateWithdrawPreview;
+
+    function formatPayoutScheduleDate(value) {
+      if (!value) return '';
+      var normalized = /^\d{4}-\d{2}-\d{2}$/.test(value) ? value + 'T00:00:00Z' : value;
+      var date = new Date(normalized);
+      if (isNaN(date.getTime())) return value;
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+    }
+
     async function loadConnectStatus() {
       var badge = document.getElementById('connectStatusBadge');
       var section = document.getElementById('connectSection');
       var withdrawBtn = document.getElementById('withdrawBtn');
+      var payoutCard = document.getElementById('payoutRequestCard');
       try {
         var res = await fetch('/api/user/connect/status', {
           headers: { 'Authorization': 'Bearer ' + authToken },
@@ -9223,29 +9798,35 @@ export function getLayoutHTML(options: {
           var countryInfo = '';
           if (data.country && data.country !== 'US') {
             var currency = (data.default_currency || '').toUpperCase();
-            countryInfo = '<div style="font-size:11px;color:var(--text-muted);margin-top:var(--space-2);">Payout country: ' + data.country + (currency ? ' (' + currency + ')' : '') + '. Withdrawals convert Light to USD at 800:1, then to local currency at Stripe\\'s exchange rate (+ 2% FX fee).</div>';
+            countryInfo = '<div style="font-size:11px;color:var(--text-muted);margin-top:var(--space-2);">Payout country: ' + escapeHtml(data.country) + (currency ? ' (' + escapeHtml(currency) + ')' : '') + '. Payouts convert Light to USD at ' + getPayoutLightPerUsd().toLocaleString() + ' Light = $1, then to local currency at Stripe\\'s exchange rate (+ 2% FX fee).</div>';
           }
           if (badge) { badge.textContent = 'Connected'; badge.style.background = 'rgba(34,197,94,0.15)'; badge.style.color = 'var(--success)'; }
-          if (section) section.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Your bank account is connected and ready for withdrawals.</p>' + countryInfo;
+          if (section) section.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Your payout account is connected. You can request payouts from creator earnings below.</p>' + countryInfo;
           if (withdrawBtn) withdrawBtn.style.display = '';
+          if (payoutCard) payoutCard.style.display = 'block';
+          updateWithdrawPreview();
         } else if (data.connected && data.onboarded) {
           if (badge) { badge.textContent = 'Pending'; badge.style.background = 'rgba(234,179,8,0.15)'; badge.style.color = '#ca8a04'; }
-          if (section) section.innerHTML = '<p style="font-size:13px;color:var(--text-muted);">Onboarding complete. Stripe is reviewing your account.</p>';
+          if (section) section.innerHTML = '<p style="font-size:13px;color:var(--text-muted);">Onboarding is complete. Stripe is reviewing your payout account.</p>';
           if (withdrawBtn) withdrawBtn.style.display = 'none';
+          if (payoutCard) payoutCard.style.display = 'none';
         } else if (data.connected) {
           if (badge) { badge.textContent = 'Incomplete'; badge.style.background = 'rgba(234,179,8,0.15)'; badge.style.color = '#ca8a04'; }
+          if (section) section.innerHTML = renderConnectSetup('Finish Stripe Connect onboarding to request payouts from creator earnings.');
           if (withdrawBtn) withdrawBtn.style.display = 'none';
+          if (payoutCard) payoutCard.style.display = 'none';
         } else {
+          if (section) section.innerHTML = renderConnectSetup();
           if (withdrawBtn) withdrawBtn.style.display = 'none';
+          if (payoutCard) payoutCard.style.display = 'none';
         }
       } catch {}
     }
 
     // --- Connect Onboarding ---
     window.startConnectOnboarding = async function() {
-      // Ask for country (supports international developers)
-      var country = prompt('Enter your 2-letter country code (e.g., US, GB, DE, CA, AU):');
-      if (!country) return;
+      var countryInput = document.getElementById('connectCountryInput');
+      var country = countryInput && countryInput.value ? countryInput.value : 'US';
       country = country.trim().toUpperCase();
       if (!/^[A-Z]{2}$/.test(country)) { showToast('Please enter a valid 2-letter country code', 'error'); return; }
 
@@ -9259,69 +9840,45 @@ export function getLayoutHTML(options: {
         if (!res.ok) { showToast(data.error || 'Failed to start onboarding', 'error'); return; }
         if (data.onboarding_url) {
           window.open(data.onboarding_url, '_blank');
-          showToast('Stripe onboarding opened. Complete the setup to enable withdrawals.');
+          showToast('Stripe onboarding opened. Complete the setup to enable payouts.');
         }
       } catch { showToast('Failed to start onboarding', 'error'); }
     };
 
     // --- Withdraw ---
     window.showWithdrawModal = async function() {
-      // Show withdrawable earnings context
+      var inputEl = document.getElementById('withdrawAmountLight');
+      var lightAmount = parseInt(inputEl && inputEl.value ? inputEl.value : '0', 10);
+      var minLight = getMinWithdrawalLight();
       var withdrawable = _connectData && _connectData.withdrawable_earnings_light ? _connectData.withdrawable_earnings_light : 0;
-      var isCrossBorder = _connectData && _connectData.is_cross_border;
-
-      var promptMsg = 'Enter withdrawal amount in Light (minimum \\u27265,000):' +
-        '\\n\\nWithdrawable earnings: ' + formatLight(withdrawable) +
-        '\\n\\nConversion rate: 100 Light = $1 USD' +
-        '\\nFees: Stripe payout fee (0.25% + $0.25)';
-      if (isCrossBorder) promptMsg += ' + 2% FX conversion';
-      promptMsg += '\\nHold period: 14 days before payout is released to your bank.' +
-        '\\n\\nOnly earned funds can be withdrawn (deposits cannot be cashed out).';
-
-      var input = prompt(promptMsg);
-      if (!input) return;
-      var lightAmount = parseInt(input, 10);
-      if (isNaN(lightAmount) || lightAmount < 5000) { showToast('Minimum withdrawal is \\u27265,000', 'error'); return; }
+      if (isNaN(lightAmount) || lightAmount < minLight) { showToast('Minimum payout request is ' + formatLight(minLight), 'error'); return; }
 
       if (lightAmount > withdrawable) {
-        showToast('Amount exceeds withdrawable earnings (' + formatLight(withdrawable) + '). Only earned funds can be withdrawn.', 'error');
+        showToast('Amount exceeds payout-eligible earnings (' + formatLight(withdrawable) + '). Only creator earnings can be paid out.', 'error');
         return;
       }
-
-      // Convert Light to USD at 100:1
-      var usdAmount = lightAmount / 100;
-      // Calculate Stripe fee
-      var stripeFee = Math.ceil(usdAmount * 100 * 0.0025 + 25) / 100;
-      if (isCrossBorder) stripeFee += Math.ceil(usdAmount * 100 * 0.02) / 100;
-      var netUsd = usdAmount - stripeFee;
-
-      var releaseDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
-      var releaseDateStr = releaseDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-
-      var confirmMsg = 'Withdraw ' + formatLight(lightAmount) + '?' +
-        '\\n\\nUSD conversion (800:1): $' + usdAmount.toFixed(2) +
-        '\\nStripe fee: $' + stripeFee.toFixed(2);
-      if (isCrossBorder) confirmMsg += ' (incl. 2% FX)';
-      confirmMsg += '\\nEstimated bank deposit: ~$' + netUsd.toFixed(2) +
-        '\\n\\nPayout releases on ' + releaseDateStr + ' (14-day hold).' +
-        '\\n\\nProceed?';
-
-      if (!confirm(confirmMsg)) return;
+      if (!payoutTermsAccepted()) {
+        showToast('Review and accept the payout terms before requesting payout.', 'error');
+        return;
+      }
 
       try {
         var res = await fetch('/api/user/connect/withdraw', {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ amount_light: lightAmount }),
+          body: JSON.stringify({ amount_light: lightAmount, terms_accepted: true }),
         });
         var data = await res.json();
-        if (!res.ok) { showToast(data.error || 'Withdrawal failed', 'error'); return; }
-        showToast(data.message || 'Withdrawal submitted! Payout releases on ' + releaseDateStr + '.');
+        if (!res.ok) { showToast(data.error || 'Payout request failed', 'error'); return; }
+        var scheduledText = data.scheduled_payout_date ? ' Scheduled for ' + formatPayoutScheduleDate(data.scheduled_payout_date) + '.' : ' The policy above determines the next eligible processing window.';
+        showToast('Payout request submitted.' + scheduledText);
+        if (inputEl) inputEl.value = '';
+        updateWithdrawPreview();
         loadHostingData();
         loadEarnings();
         loadConnectStatus();
         loadPayouts();
-      } catch { showToast('Withdrawal failed', 'error'); }
+      } catch { showToast('Payout request failed', 'error'); }
     };
 
     // --- Payout History ---
@@ -9338,22 +9895,22 @@ export function getLayoutHTML(options: {
         }
         var data = await res.json();
         if (!data.payouts || data.payouts.length === 0) {
-          el.innerHTML = renderShellState('empty', 'No payouts yet', 'Completed withdrawals will appear here after you cash out earnings.', { compact: true });
+          el.innerHTML = renderShellState('empty', 'No payouts yet', 'Completed payouts will appear here after creator earnings are processed.', { compact: true });
           return;
         }
         el.innerHTML = data.payouts.map(function(p) {
           var statusColor = p.status === 'paid' ? 'var(--success)' : p.status === 'failed' ? 'var(--error)' : p.status === 'held' ? '#ca8a04' : 'var(--text-muted)';
           var statusText = p.status;
-          if (p.status === 'held' && p.release_at) {
-            var releaseDate = new Date(p.release_at);
-            var daysLeft = Math.max(0, Math.ceil((releaseDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
-            statusText = 'held (' + daysLeft + 'd)';
+          var scheduleDate = p.scheduled_payout_date || p.release_at;
+          if (p.status === 'held' && scheduleDate) {
+            statusText = 'scheduled';
           }
           var platformFee = p.platform_fee_light ? ' (fee: ' + formatLight(p.platform_fee_light) + ')' : '';
-          return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;">' +
-            '<span style="font-weight:500;">' + formatLight(p.amount_light) + '<span style="font-weight:400;color:var(--text-muted);">' + platformFee + '</span></span>' +
+          var dateText = p.status === 'held' && scheduleDate ? 'run ' + formatPayoutScheduleDate(scheduleDate) : new Date(p.created_at).toLocaleDateString();
+          return '<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(76px,auto) minmax(110px,auto);gap:var(--space-2);align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;">' +
+            '<span style="font-weight:500;min-width:0;">' + formatLight(p.amount_light) + '<span style="font-weight:400;color:var(--text-muted);">' + platformFee + '</span></span>' +
             '<span style="color:' + statusColor + ';font-weight:500;">' + statusText + '</span>' +
-            '<span style="color:var(--text-muted);">' + new Date(p.created_at).toLocaleDateString() + '</span>' +
+            '<span style="color:var(--text-muted);text-align:right;">' + dateText + '</span>' +
           '</div>';
         }).join('');
       } catch {
@@ -9435,7 +9992,9 @@ export function getLayoutHTML(options: {
     await updateAuthUI();
 
     // Handle initial view
-    ${initialView === 'app' && activeAppId ? `
+    ${
+    initialView === "app" && activeAppId
+      ? `
     (async function() {
       var pathParts = window.location.pathname.slice(3).split('/');
       var section = pathParts[1] || 'overview';
@@ -9443,7 +10002,9 @@ export function getLayoutHTML(options: {
       showView('app');
       await loadAppPage('${activeAppId}', section);
     })();
-    ` : ''}
+    `
+      : ""
+  }
 
     // Handle ?setup=1 redirect (from OAuth popup fallback)
     (function() {
@@ -9465,10 +10026,18 @@ export function getLayoutHTML(options: {
     // Handle Stripe checkout redirect
     (function() {
       var params = new URLSearchParams(window.location.search);
+      if (params.get('wallet_payment') === 'return') {
+        params.delete('wallet_payment');
+        var cleanWalletUrl = params.toString() ? window.location.pathname + '?' + params.toString() : window.location.pathname;
+        history.replaceState({}, '', cleanWalletUrl);
+        showToast('Wallet payment is being confirmed. Balance will update shortly.');
+        setTimeout(function() { loadHostingData(); loadTransactions(true); }, 2000);
+        setTimeout(function() { loadHostingData(); loadTransactions(true); }, 6000);
+      }
       var topup = params.get('topup');
       if (topup === 'success') {
         var amountCents = parseInt(params.get('amount') || '0', 10);
-        var lightReceived = Math.round(amountCents / 100 * 95);
+        var lightReceived = Math.round(amountCents / 100 * getWalletLightPerUsd());
         var lightStr = amountCents > 0 ? ' (\\u2726' + lightReceived.toLocaleString() + ')' : '';
         showToast('Deposit successful' + lightStr + '! Balance will update shortly.');
         history.replaceState({}, '', window.location.pathname);
@@ -9485,13 +10054,13 @@ export function getLayoutHTML(options: {
       var params = new URLSearchParams(window.location.search);
       var connect = params.get('connect');
       if (connect === 'complete') {
-        showToast('Bank account setup complete! Checking status...');
-        history.replaceState({}, '', '/settings/billing');
+        showToast('Payout setup complete. Checking status...');
+        history.replaceState({}, '', '/wallet');
         switchDashSection('billing');
         setTimeout(function() { loadConnectStatus(); }, 1500);
       } else if (connect === 'refresh') {
-        showToast('Onboarding session expired. Click "Connect Bank Account" to continue.', 'error');
-        history.replaceState({}, '', '/settings/billing');
+        showToast('Onboarding session expired. Use Set Up Payouts to continue.', 'error');
+        history.replaceState({}, '', '/wallet');
         switchDashSection('billing');
       }
     })();

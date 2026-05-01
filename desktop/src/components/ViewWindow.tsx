@@ -15,13 +15,13 @@ export default function ViewWindow() {
 
   switch (viewKind) {
     case 'capabilities':
-      return <WebPanel path="/capabilities" title="Tools" />;
+      return <WebPanel path='/capabilities' title='Tools' />;
     case 'profile':
-      return <WebPanel path="/my-profile" title="Profile" />;
+      return <WebPanel path='/my-profile' title='Profile' />;
     case 'wallet':
-      return <WebPanel path="/settings/billing" title="Wallet" />;
+      return <WebPanel path='/wallet' title='Wallet' />;
     case 'settings':
-      return <WebPanel path="/settings" title="Settings" />;
+      return <WebPanel path='/settings' title='Settings' />;
     case 'home':
       return (
         <HomeView
@@ -33,8 +33,8 @@ export default function ViewWindow() {
       );
     default:
       return (
-        <div className="flex items-center justify-center h-full bg-white">
-          <p className="text-body text-ul-text-muted">Unknown view: {viewKind}</p>
+        <div className='flex items-center justify-center h-full bg-white'>
+          <p className='text-body text-ul-text-muted'>Unknown view: {viewKind}</p>
         </div>
       );
   }
