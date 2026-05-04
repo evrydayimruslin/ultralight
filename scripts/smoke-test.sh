@@ -16,7 +16,7 @@ NC='\033[0m'
 API_URL="${ULTRALIGHT_API_URL:-https://api.ultralight.dev}"
 FALLBACK_URL="${ULTRALIGHT_FALLBACK_URL:-}"
 TOKEN="${ULTRALIGHT_TOKEN:-}"
-CHAT_MODEL="${ULTRALIGHT_CHAT_MODEL:-google/gemini-3.1-flash-lite-preview:nitro}"
+CHAT_MODEL="${ULTRALIGHT_CHAT_MODEL:-ultralight/deepseek-v4-flash}"
 EXERCISE_CHAT=0
 
 while [[ $# -gt 0 ]]; do
@@ -110,6 +110,13 @@ elif value is None:
     print('')
 else:
     print(value)
+PY
+}
+
+url_encode() {
+  python3 - "$1" <<'PY'
+import sys, urllib.parse
+print(urllib.parse.quote(sys.argv[1], safe=''))
 PY
 }
 
@@ -212,9 +219,15 @@ else
 
   echo -n "6. /debug/chat-preflight... "
   PREFLIGHT_JSON="$TMP_DIR/chat-preflight.json"
-  PREFLIGHT_STATUS=$(fetch_json "chat preflight" "$API_URL/debug/chat-preflight" "$PREFLIGHT_JSON" "${AUTH_HEADER[@]}")
+  ENCODED_CHAT_MODEL="$(url_encode "$CHAT_MODEL")"
+  PREFLIGHT_STATUS=$(fetch_json "chat preflight" "$API_URL/debug/chat-preflight?model=$ENCODED_CHAT_MODEL" "$PREFLIGHT_JSON" "${AUTH_HEADER[@]}")
   if [[ "$PREFLIGHT_STATUS" == "200" ]] && [[ "$(json_get "$PREFLIGHT_JSON" "ok")" == "true" ]]; then
-    pass "chat preflight checks all passed"
+    ROUTE_UPSTREAM="$(json_get "$PREFLIGHT_JSON" "route.upstream_provider")"
+    if [[ "$CHAT_MODEL" == ultralight/deepseek-v4-* ]] && [[ "$ROUTE_UPSTREAM" != "deepseek" ]]; then
+      fail "chat preflight resolved $CHAT_MODEL to unexpected upstream: ${ROUTE_UPSTREAM:-unknown}"
+    else
+      pass "chat preflight checks all passed (upstream: ${ROUTE_UPSTREAM:-unknown})"
+    fi
   else
     fail "/debug/chat-preflight failed (status $PREFLIGHT_STATUS)"
   fi

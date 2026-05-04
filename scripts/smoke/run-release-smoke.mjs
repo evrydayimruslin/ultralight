@@ -50,7 +50,7 @@ const supabaseUrl = String(args.get('--supabase-url') || process.env.ULTRALIGHT_
 const fallbackUrl = String(args.get('--fallback-url') || process.env.ULTRALIGHT_FALLBACK_URL || '').trim();
 const token = String(args.get('--token') || process.env.ULTRALIGHT_TOKEN || '').trim();
 const chatModel = String(
-  args.get('--model') || process.env.ULTRALIGHT_CHAT_MODEL || 'google/gemini-3.1-flash-lite-preview:nitro',
+  args.get('--model') || process.env.ULTRALIGHT_CHAT_MODEL || 'ultralight/deepseek-v4-flash',
 );
 const allowedOrigin = String(args.get('--allowed-origin') || 'https://ultralight.dev').trim();
 const disallowedOrigin = String(args.get('--disallowed-origin') || 'https://evil.example').trim();

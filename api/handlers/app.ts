@@ -896,16 +896,23 @@ export function createApp() {
         }
       }
 
-      // Debug: chat preflight — checks auth + balance + OpenRouter key without making a request
+      // Debug: chat preflight — checks auth, balance, platform inference keys, and route resolution without making a request
       if (path === '/debug/chat-preflight' && method === 'GET') {
-        const checks: { check: string; result: string; ok: boolean }[] = [];
+        const checks: { check: string; result: string; ok: boolean; severity?: string }[] = [];
+        const { ULTRALIGHT_DEEPSEEK_V4_FLASH_MODEL } = await import(
+          '../services/platform-inference-models.ts'
+        );
+        const requestedModel = new URL(request.url).searchParams.get('model')?.trim() ||
+          ULTRALIGHT_DEEPSEEK_V4_FLASH_MODEL;
 
         // 1. Auth
         const { authenticate } = await import('./auth.ts');
+        let userEmail = '';
         let userId: string | null = null;
         try {
           const user = await authenticate(request);
           userId = user.id;
+          userEmail = user.email;
           checks.push({
             check: 'auth',
             result: `${user.email}, tier: ${user.tier}`,
@@ -939,7 +946,7 @@ export function createApp() {
           '../services/chat-billing.ts'
         );
         const { CHAT_MIN_BALANCE_LIGHT: minBalance } = await import(
-          '../../shared/types/index.ts'
+          '../../shared/contracts/ai.ts'
         );
         try {
           const balance = await checkChatBalance(userId!);
@@ -957,27 +964,84 @@ export function createApp() {
           });
         }
 
-        // 3. OpenRouter management key (for provisioning per-user keys)
-        const mgmtKey = getEnv('OPENROUTER_API_KEY');
-        checks.push({
-          check: 'openrouter_mgmt_key',
-          result: mgmtKey ? 'Configured' : 'NOT SET',
-          ok: !!mgmtKey,
-        });
-
-        // 4. Per-user OpenRouter key (created on first chat via management API)
-        const { getStoredOpenRouterKey } = await import(
-          '../services/openrouter-keys.ts'
+        // 3. Platform inference secrets
+        const { buildPlatformInferenceReadiness } = await import(
+          '../services/platform-inference-diagnostics.ts'
         );
-        const userOrKey = await getStoredOpenRouterKey(userId!);
-        checks.push({
-          check: 'user_openrouter_key',
-          result: userOrKey ? 'Provisioned' : 'Not yet created (will be provisioned on first chat)',
-          ok: true,
-        });
+        const readiness = buildPlatformInferenceReadiness();
+        checks.push(...readiness.checks);
+
+        // 4. Model ID validation + route resolution
+        const { isValidModelId } = await import('../services/model-validation.ts');
+        let routeSummary: Record<string, unknown> | null = null;
+        if (!isValidModelId(requestedModel)) {
+          checks.push({
+            check: 'requested_model',
+            result: `Invalid model id: ${requestedModel}`,
+            ok: false,
+            severity: 'required',
+          });
+        } else {
+          checks.push({
+            check: 'requested_model',
+            result: requestedModel,
+            ok: true,
+          });
+          const { InferenceRouteError, resolveInferenceRoute } = await import(
+            '../services/inference-route.ts'
+          );
+          try {
+            const route = await resolveInferenceRoute({
+              userId: userId!,
+              userEmail,
+              requestedModel,
+              selection: { billingMode: 'light', model: requestedModel },
+            });
+            routeSummary = {
+              provider: route.provider,
+              upstream_provider: route.upstreamProvider,
+              model: route.model,
+              canonical_model_id: route.canonicalModelId ?? null,
+              key_source: route.keySource,
+              billing_source: route.billingSource,
+              should_debit_light: route.shouldDebitLight,
+            };
+            checks.push({
+              check: 'inference_route',
+              result:
+                `${route.provider} → ${route.upstreamProvider}/${route.model} (${route.keySource})`,
+              ok: true,
+            });
+
+            if (route.upstreamProvider === 'openrouter') {
+              const { getStoredOpenRouterKey } = await import(
+                '../services/openrouter-keys.ts'
+              );
+              const userOrKey = await getStoredOpenRouterKey(userId!);
+              checks.push({
+                check: 'user_openrouter_key',
+                result: userOrKey
+                  ? 'Provisioned'
+                  : 'Not yet created (will be provisioned on first OpenRouter Light chat)',
+                ok: true,
+              });
+            }
+          } catch (err) {
+            checks.push({
+              check: 'inference_route',
+              result: err instanceof InferenceRouteError
+                ? `${err.code}: ${err.message}`
+                : err instanceof Error
+                ? err.message
+                : 'Route resolution failed',
+              ok: false,
+              severity: 'required',
+            });
+          }
+        }
 
         const allOk = checks.every((c) => c.ok);
-        return json({ ok: allOk, checks });
+        return json({ ok: allOk, model: requestedModel, route: routeSummary, checks });
       }
 
       // Onboarding instructions template (must be before /api/discover catch-all)

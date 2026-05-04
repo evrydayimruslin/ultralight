@@ -752,6 +752,14 @@
       ]
     },
     {
+      "file": "services/platform-inference-diagnostics.ts",
+      "types": [
+        "PlatformInferenceDiagnosticCheck",
+        "PlatformInferenceDiagnosticSeverity",
+        "PlatformInferenceReadiness"
+      ]
+    },
+    {
       "file": "services/platform-inference-models.ts",
       "types": [
         "DeepSeekDirectPricingSnapshot",
