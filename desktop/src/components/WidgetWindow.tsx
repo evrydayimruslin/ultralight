@@ -12,6 +12,8 @@ import {
   loadWidgetHtml,
   parseWidgetContextFromSearch,
   parseWidgetSourceFromSearch,
+  readWidgetPullSettings,
+  updateWidgetPullStats,
 } from '../lib/widgetRuntime';
 import { createDesktopLogger } from '../lib/logging';
 import DesktopAsyncState from './DesktopAsyncState';
@@ -34,11 +36,22 @@ export default function WidgetWindow() {
     setIframeError(false);
 
     try {
-      const result = await loadWidgetHtml(source, { bustCache });
+      const widgetSettings = readWidgetPullSettings(source);
+      const result = await loadWidgetHtml(source, {
+        bustCache,
+        widgetPull: {
+          widgetName: source.widgetName,
+          intervalMs: widgetSettings.intervalMs,
+          reason: bustCache ? 'manual_refresh' : 'open',
+        },
+      });
       if (!result) {
         setError('Failed to load widget');
       } else if (result.html) {
         setHtml(result.html);
+        if (!result.fromCache) {
+          updateWidgetPullStats(source);
+        }
       } else {
         setError('Widget returned no HTML');
       }
@@ -70,6 +83,11 @@ export default function WidgetWindow() {
       apiBase,
       token,
       context: widgetContext,
+      widgetPull: {
+        widgetName: source.widgetName,
+        intervalMs: readWidgetPullSettings(source).intervalMs,
+        reason: 'widget_action',
+      },
     });
   })();
 

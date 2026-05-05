@@ -9,7 +9,7 @@
 //   4. Execute missing Stripe Payout (connected account → bank)
 //   5. Update separate transfer/payout operation state for reconciliation
 //
-// No platform fee on withdrawal — the 10% fee is already taken on internal earning transfers.
+// No platform fee on withdrawal — the configured fee is already taken on internal earning transfers.
 
 import { getEnv } from '../lib/env.ts';
 import {
@@ -24,6 +24,10 @@ interface ReleasablePayout {
   id: string;
   user_id: string;
   amount_light: number;
+  gross_cents?: number | null;
+  fee_estimate_cents?: number | null;
+  stripe_fee_cents?: number | null;
+  net_cents?: number | null;
   created_at: string;
   release_at: string;
   light_per_usd_snapshot?: number;
@@ -39,6 +43,8 @@ interface ReleasablePayout {
   stripe_payout_attempts?: number | null;
   stripe_transfer_idempotency_key?: string | null;
   stripe_payout_idempotency_key?: string | null;
+  stripe_transfer_amount_cents?: number | null;
+  stripe_payout_amount_cents?: number | null;
 }
 
 export interface PayoutProcessorResult {
@@ -200,18 +206,23 @@ export async function processHeldPayouts(
           continue;
         }
 
-        const transferAmountCents = lightToUsdCents(
-          payout.amount_light,
-          payout.light_per_usd_snapshot || 100,
+        const grossAmountCents = getPayoutGrossCents(payout);
+        const feeEstimateCents = getPayoutFeeEstimateCents(payout);
+        const transferAmountCents = getPayoutNetCents(
+          payout,
+          grossAmountCents,
+          feeEstimateCents,
         );
         if (transferAmountCents <= 0) {
           await failPayout(
             SUPABASE_URL,
             sbWriteHeaders,
             payout.id,
-            'transfer_amount_zero',
+            'net_transfer_amount_zero',
           );
-          result.errors.push(`Transfer amount zero for payout ${payout.id}`);
+          result.errors.push(
+            `Net transfer amount zero for payout ${payout.id}`,
+          );
           result.failed++;
           continue;
         }
@@ -224,6 +235,9 @@ export async function processHeldPayouts(
           payout_id: payout.id,
           user_id: payout.user_id,
           amount_light: String(payout.amount_light),
+          gross_cents: String(grossAmountCents),
+          fee_estimate_cents: String(feeEstimateCents),
+          net_cents: String(transferAmountCents),
           ...(payout.payout_run_id
             ? { payout_run_id: payout.payout_run_id }
             : {}),
@@ -243,6 +257,9 @@ export async function processHeldPayouts(
             stripe_transfer_idempotency_key: transferKey,
             stripe_transfer_error: null,
             failure_reason: null,
+            gross_cents: grossAmountCents,
+            fee_estimate_cents: feeEstimateCents,
+            net_cents: transferAmountCents,
           });
 
           try {
@@ -256,6 +273,7 @@ export async function processHeldPayouts(
             await patchPayout(SUPABASE_URL, sbWriteHeaders, payout.id, {
               stripe_transfer_id: transferResult.transfer_id,
               stripe_transfer_status: 'succeeded',
+              stripe_transfer_amount_cents: transferResult.amount_cents,
               stripe_transfer_completed_at: new Date().toISOString(),
               stripe_transfer_response: transferResult.response,
               stripe_transfer_error: null,
@@ -284,6 +302,9 @@ export async function processHeldPayouts(
           stripe_payout_requested_at: new Date().toISOString(),
           stripe_payout_idempotency_key: payoutKey,
           stripe_payout_error: null,
+          gross_cents: grossAmountCents,
+          fee_estimate_cents: feeEstimateCents,
+          net_cents: transferAmountCents,
           status: 'processing',
         });
 
@@ -303,6 +324,7 @@ export async function processHeldPayouts(
           await patchPayout(SUPABASE_URL, sbWriteHeaders, payout.id, {
             stripe_payout_id: payoutResult.payout_id,
             stripe_payout_status: 'pending',
+            stripe_payout_amount_cents: payoutResult.amount_cents,
             stripe_payout_response: payoutResult.response,
             stripe_payout_error: null,
             processor_claimed_at: null,
@@ -328,9 +350,9 @@ export async function processHeldPayouts(
         result.succeeded++;
         console.log(
           `[PAYOUT-PROC] Released payout ${payout.id}: ` +
-            `${formatLight(payout.amount_light)} → $${
+            `${formatLight(payout.amount_light)} gross → $${
               (transferAmountCents / 100).toFixed(2)
-            } transferred` +
+            } net transferred` +
             (payout.scheduled_payout_date
               ? ` for ${payout.scheduled_payout_date} run`
               : ''),
@@ -356,6 +378,35 @@ export async function processHeldPayouts(
   }
 
   return result;
+}
+
+function validCents(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.round(value)
+    : null;
+}
+
+function getPayoutGrossCents(payout: ReleasablePayout): number {
+  return validCents(payout.gross_cents) ??
+    lightToUsdCents(payout.amount_light, payout.light_per_usd_snapshot || 100);
+}
+
+function getPayoutFeeEstimateCents(payout: ReleasablePayout): number {
+  return validCents(payout.fee_estimate_cents) ??
+    validCents(payout.stripe_fee_cents) ??
+    0;
+}
+
+function getPayoutNetCents(
+  payout: ReleasablePayout,
+  grossCents: number,
+  feeEstimateCents: number,
+): number {
+  const storedNet = validCents(payout.net_cents);
+  if (storedNet !== null) {
+    return Math.min(storedNet, grossCents);
+  }
+  return Math.max(0, grossCents - feeEstimateCents);
 }
 
 async function safeResponseText(response: Response): Promise<string> {

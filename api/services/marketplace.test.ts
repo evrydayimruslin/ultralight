@@ -29,8 +29,8 @@ Deno.test("marketplace summary: listed instant-buy apps expose price, bids, and 
     show_metrics: true,
     active_bid_count: 2,
     highest_bid_light: 6500,
-    platform_fee_at_ask_light: 1000,
-    seller_payout_at_ask_light: 9000,
+    platform_fee_at_ask_light: 1500,
+    seller_payout_at_ask_light: 8500,
   });
 });
 

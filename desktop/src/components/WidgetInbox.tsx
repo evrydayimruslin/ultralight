@@ -7,7 +7,16 @@ import { openWidgetWindow } from '../lib/multiWindow';
 import DesktopAsyncState from './DesktopAsyncState';
 
 export default function WidgetInbox() {
-  const { sources, metas, loading, refresh } = useWidgetInbox();
+  const {
+    sources,
+    metas,
+    settings,
+    loading,
+    refresh,
+    refreshWidget,
+    setWidgetPullEnabled,
+    setWidgetPullInterval,
+  } = useWidgetInbox();
 
   if (loading && sources.length === 0) {
     return (
@@ -20,15 +29,12 @@ export default function WidgetInbox() {
     );
   }
 
-  const hasVisibleWidgets = sources.some((source) => metas[`${source.appUuid}:${source.widgetName}`]);
-  if (!hasVisibleWidgets) {
+  if (sources.length === 0) {
     return (
       <DesktopAsyncState
         kind="empty"
         title="No widgets yet"
-        message={sources.length > 0
-          ? 'Your widget apps are connected, but none are showing live activity right now.'
-          : 'Connect or open an app with widget surfaces to see live inbox tiles here.'}
+        message="Connect or open an app with widget surfaces to see inbox tiles here."
         actionLabel="Refresh"
         onAction={() => {
           void refresh();
@@ -43,9 +49,15 @@ export default function WidgetInbox() {
       <WidgetHomescreen
         sources={sources}
         metas={metas}
+        settings={settings}
         loading={loading}
         onOpenWidget={(source) => {
           void openWidgetWindow(source);
+        }}
+        onSetWidgetPullEnabled={setWidgetPullEnabled}
+        onSetWidgetPullInterval={setWidgetPullInterval}
+        onRefreshWidget={(source) => {
+          void refreshWidget(source);
         }}
       />
 

@@ -5,14 +5,20 @@ import {
   buildWidgetWindowSearchParams,
   coerceWidgetMeta,
   coerceWidgetMetaFromPayload,
+  estimateWidgetPullCost,
   fetchWidgetDataPayload,
+  getWidgetPullSettingsStorageKey,
   getWidgetCacheKey,
   loadWidgetHtml,
   parseWidgetContextFromSearch,
   parseWidgetSourceFromSearch,
   pruneStaleWidgetCaches,
   readWidgetHtmlCache,
+  readWidgetPullSettings,
+  updateWidgetPullStats,
+  WIDGET_PULL_LIGHT_PER_PULL,
   writeWidgetHtmlCache,
+  writeWidgetPullSettings,
   type WidgetAppSource,
 } from './widgetRuntime';
 
@@ -142,6 +148,59 @@ describe('widget runtime helpers', () => {
     expect(executor).toHaveBeenCalledWith('app-123', 'email-ops_widget_email_inbox_data', {});
   });
 
+  it('attaches widget pull metadata to explicit data pulls', async () => {
+    const executor = vi.fn().mockResolvedValue({
+      content: [{
+        type: 'text',
+        text: JSON.stringify({ counts: { active: 2 } }),
+      }],
+    });
+
+    const payload = await fetchWidgetDataPayload(baseSource, executor, {
+      widgetName: 'email_inbox',
+      intervalMs: 300_000,
+      reason: 'scheduled',
+    });
+
+    expect(payload?.raw).toEqual({ counts: { active: 2 } });
+    expect(executor).toHaveBeenCalledWith(
+      'app-123',
+      'email-ops_widget_email_inbox_data',
+      {},
+      {
+        widgetPull: {
+          widgetName: 'email_inbox',
+          intervalMs: 300_000,
+          reason: 'scheduled',
+        },
+      },
+    );
+  });
+
+  it('persists widget pull settings and projects fractional Light cost', () => {
+    expect(readWidgetPullSettings(baseSource)).toEqual({
+      enabled: false,
+      intervalMs: 300_000,
+      lastPulledAt: null,
+      pullCount: 0,
+    });
+
+    const enabled = writeWidgetPullSettings(baseSource, {
+      enabled: true,
+      intervalMs: 60_000,
+    });
+    expect(enabled.enabled).toBe(true);
+    expect(localStorage.getItem(getWidgetPullSettingsStorageKey(baseSource))).toContain('"enabled":true');
+
+    const estimate = estimateWidgetPullCost(enabled);
+    expect(estimate.monthlyPulls).toBe(43_200);
+    expect(estimate.monthlyLight).toBe(estimate.monthlyPulls * WIDGET_PULL_LIGHT_PER_PULL);
+
+    const pulled = updateWidgetPullStats(baseSource, 123_456);
+    expect(pulled.pullCount).toBe(1);
+    expect(pulled.lastPulledAt).toBe(123_456);
+  });
+
   it('builds widget navigation targets and shared query params consistently', () => {
     const target = buildWidgetNavigationTarget(baseSource, 'approval_queue');
     const params = buildWidgetWindowSearchParams(target, { thread: 'abc' });
@@ -178,6 +237,8 @@ describe('widget runtime helpers', () => {
     expect(fullscreen).toContain('window.ulAction');
     expect(fullscreen).toContain('window.ulOpenWidget');
     expect(fullscreen).toContain('"https://api.example.com"');
+    expect(fullscreen).toContain('_widget_pull');
+    expect(fullscreen).toContain('_widget_name');
     expect(inline).toContain('ul-widget-resize');
     expect(inline).toContain('window.ulWidgetContext');
   });

@@ -12,6 +12,7 @@
 //   POST  /api/admin/cleanup-provisionals — Delete expired provisional users
 //   GET   /api/admin/billing-config — Read Light economics config
 //   PATCH /api/admin/billing-config — Update Light economics config
+//   GET   /api/admin/cloud-economics — Cloud usage, call receipt, and fee summary
 //   GET   /api/admin/payouts/reconciliation — Payout liability/retry summary
 //   POST  /api/admin/payouts/process — Process or retry due payout operations
 //   GET   /api/admin/analytics?days=30  — Distribution pipeline analytics dashboard
@@ -105,7 +106,9 @@ interface AdminPayoutRow {
   id: string;
   user_id: string;
   amount_light: number | null;
+  gross_cents: number | null;
   platform_fee_light: number | null;
+  fee_estimate_cents: number | null;
   stripe_fee_cents: number | null;
   net_cents: number | null;
   status: string;
@@ -122,6 +125,8 @@ interface AdminPayoutRow {
   stripe_payout_status: string | null;
   stripe_transfer_attempts: number | null;
   stripe_payout_attempts: number | null;
+  stripe_transfer_amount_cents: number | null;
+  stripe_payout_amount_cents: number | null;
   processor_claimed_at: string | null;
   failure_reason: string | null;
   stripe_transfer_error?: unknown;
@@ -136,6 +141,45 @@ interface AdminPayoutRunRow {
   status: string;
   created_at: string;
   updated_at: string;
+}
+
+interface AdminCloudUsageEventRow {
+  id: string;
+  created_at: string;
+  payer_user_id: string | null;
+  sponsor_user_id: string | null;
+  caller_user_id: string | null;
+  owner_user_id: string | null;
+  app_id: string | null;
+  function_name: string | null;
+  receipt_id: string | null;
+  source: string;
+  resource: string;
+  units: number | null;
+  cloud_units: number | null;
+  amount_light: number | null;
+  billing_config_version: number | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+interface AdminCallReceiptRow {
+  id: string;
+  created_at: string;
+  app_id: string | null;
+  app_name: string | null;
+  method: string | null;
+  source: string | null;
+  success: boolean | null;
+  call_charge_light: number | null;
+  app_price_light: number | null;
+  app_charge_light: number | null;
+  infra_charge_light: number | null;
+  platform_fee_light: number | null;
+  developer_net_light: number | null;
+  cloud_units: number | null;
+  cloud_charge_light: number | null;
+  cloud_owner_sponsored: boolean | null;
+  free_call: boolean | null;
 }
 
 function getSupabaseEnv() {
@@ -276,6 +320,11 @@ export async function handleAdmin(request: Request): Promise<Response> {
       'admin:billing_config_update',
       () => updateBillingConfig(request),
     );
+  }
+
+  // GET /api/admin/cloud-economics — cloud usage and receipt economics
+  if (path === '/api/admin/cloud-economics' && method === 'GET') {
+    return getCloudEconomics(url);
   }
 
   // GET /api/admin/payouts/reconciliation — payout liabilities and retry state
@@ -879,6 +928,255 @@ async function updateBillingConfig(request: Request): Promise<Response> {
 }
 
 // ============================================
+// CLOUD ECONOMICS
+// ============================================
+
+function addToCloudEconomicsBucket(
+  bucket: Record<
+    string,
+    { event_count: number; units: number; cloud_units: number; amount_light: number }
+  >,
+  key: string | null | undefined,
+  event: Pick<AdminCloudUsageEventRow, 'units' | 'cloud_units' | 'amount_light'>,
+) {
+  const name = key || 'unknown';
+  if (!bucket[name]) {
+    bucket[name] = {
+      event_count: 0,
+      units: 0,
+      cloud_units: 0,
+      amount_light: 0,
+    };
+  }
+  bucket[name].event_count += 1;
+  bucket[name].units += lightAmount(event.units);
+  bucket[name].cloud_units += lightAmount(event.cloud_units);
+  bucket[name].amount_light += lightAmount(event.amount_light);
+}
+
+async function getCloudEconomics(url: URL): Promise<Response> {
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
+  const headers = dbHeaders(SUPABASE_SERVICE_ROLE_KEY);
+  const periodDays = Math.max(
+    1,
+    Math.min(parseInt(url.searchParams.get('days') || '30', 10) || 30, 365),
+  );
+  const limit = Math.max(
+    1,
+    Math.min(parseInt(url.searchParams.get('limit') || '100', 10) || 100, 500),
+  );
+  const since = new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000)
+    .toISOString();
+
+  const eventSelect = [
+    'id',
+    'created_at',
+    'payer_user_id',
+    'sponsor_user_id',
+    'caller_user_id',
+    'owner_user_id',
+    'app_id',
+    'function_name',
+    'receipt_id',
+    'source',
+    'resource',
+    'units',
+    'cloud_units',
+    'amount_light',
+    'billing_config_version',
+    'metadata',
+  ].join(',');
+  const receiptSelect = [
+    'id',
+    'created_at',
+    'app_id',
+    'app_name',
+    'method',
+    'source',
+    'success',
+    'call_charge_light',
+    'app_price_light',
+    'app_charge_light',
+    'infra_charge_light',
+    'platform_fee_light',
+    'developer_net_light',
+    'cloud_units',
+    'cloud_charge_light',
+    'cloud_owner_sponsored',
+    'free_call',
+  ].join(',');
+
+  try {
+    const billingConfig = await getBillingConfig();
+    const publicConfig = toPublicBillingConfig(billingConfig);
+    const [eventsRes, receiptsRes] = await Promise.all([
+      fetch(
+        `${SUPABASE_URL}/rest/v1/cloud_usage_events?created_at=gte.${since}&select=${eventSelect}&order=created_at.desc&limit=50000`,
+        { headers },
+      ),
+      fetch(
+        `${SUPABASE_URL}/rest/v1/mcp_call_logs?created_at=gte.${since}&select=${receiptSelect}&order=created_at.desc&limit=50000`,
+        { headers },
+      ),
+    ]);
+
+    const events = await readRows<AdminCloudUsageEventRow>(
+      eventsRes,
+      'cloud usage events',
+    );
+    const receipts = await readRows<AdminCallReceiptRow>(
+      receiptsRes,
+      'call receipts',
+    );
+
+    const byResource: Record<
+      string,
+      { event_count: number; units: number; cloud_units: number; amount_light: number }
+    > = {};
+    const bySource: Record<
+      string,
+      { event_count: number; units: number; cloud_units: number; amount_light: number }
+    > = {};
+    for (const event of events) {
+      addToCloudEconomicsBucket(byResource, event.resource, event);
+      addToCloudEconomicsBucket(bySource, event.source, event);
+    }
+    const infraByReceipt = events.reduce<
+      Map<string, { amount_light: number; cloud_units: number }>
+    >((acc, event) => {
+      if (!event.receipt_id) return acc;
+      const existing = acc.get(event.receipt_id) || {
+        amount_light: 0,
+        cloud_units: 0,
+      };
+      existing.amount_light += lightAmount(event.amount_light);
+      existing.cloud_units += lightAmount(event.cloud_units);
+      acc.set(event.receipt_id, existing);
+      return acc;
+    }, new Map());
+
+    const receiptTotals = receipts.reduce(
+      (acc, receipt) => {
+        const infraFromEvents = infraByReceipt.get(receipt.id);
+        const infraLight = infraFromEvents?.amount_light ||
+          lightAmount(receipt.infra_charge_light) ||
+          lightAmount(receipt.cloud_charge_light);
+        const appChargeLight = lightAmount(receipt.app_charge_light) ||
+          lightAmount(receipt.call_charge_light);
+        acc.app_price_light += lightAmount(receipt.app_price_light);
+        acc.app_charge_light += appChargeLight;
+        acc.infra_light += infraLight;
+        acc.total_light += appChargeLight + infraLight;
+        acc.platform_fee_light += lightAmount(receipt.platform_fee_light);
+        acc.developer_net_light += lightAmount(receipt.developer_net_light);
+        acc.cloud_units += infraFromEvents?.cloud_units ||
+          lightAmount(receipt.cloud_units);
+        if (receipt.success) acc.successful += 1;
+        if (receipt.success === false) acc.failed += 1;
+        if (receipt.free_call) acc.free_calls += 1;
+        if (receipt.cloud_owner_sponsored) acc.owner_sponsored_infra += 1;
+        return acc;
+      },
+      {
+        app_price_light: 0,
+        app_charge_light: 0,
+        infra_light: 0,
+        total_light: 0,
+        platform_fee_light: 0,
+        developer_net_light: 0,
+        cloud_units: 0,
+        successful: 0,
+        failed: 0,
+        free_calls: 0,
+        owner_sponsored_infra: 0,
+      },
+    );
+
+    const appTotals = receipts.reduce<Record<string, {
+      app_id: string | null;
+      app_name: string | null;
+      calls: number;
+      app_charge_light: number;
+      infra_light: number;
+      platform_fee_light: number;
+      developer_net_light: number;
+    }>>((acc, receipt) => {
+      const key = receipt.app_id || 'unknown';
+      const infraFromEvents = infraByReceipt.get(receipt.id);
+      if (!acc[key]) {
+        acc[key] = {
+          app_id: receipt.app_id,
+          app_name: receipt.app_name,
+          calls: 0,
+          app_charge_light: 0,
+          infra_light: 0,
+          platform_fee_light: 0,
+          developer_net_light: 0,
+        };
+      }
+      acc[key].calls += 1;
+      acc[key].app_charge_light += lightAmount(receipt.app_charge_light) ||
+        lightAmount(receipt.call_charge_light);
+      acc[key].infra_light += infraFromEvents?.amount_light ||
+        lightAmount(receipt.infra_charge_light) ||
+        lightAmount(receipt.cloud_charge_light);
+      acc[key].platform_fee_light += lightAmount(receipt.platform_fee_light);
+      acc[key].developer_net_light += lightAmount(receipt.developer_net_light);
+      return acc;
+    }, {});
+
+    return json({
+      success: true,
+      generated_at: new Date().toISOString(),
+      period_days: periodDays,
+      since,
+      billing_config: publicConfig,
+      cloud_usage: {
+        total_events: events.length,
+        total_units: events.reduce(
+          (sum, event) => sum + lightAmount(event.units),
+          0,
+        ),
+        total_cloud_units: events.reduce(
+          (sum, event) => sum + lightAmount(event.cloud_units),
+          0,
+        ),
+        total_light: events.reduce(
+          (sum, event) => sum + lightAmount(event.amount_light),
+          0,
+        ),
+        by_resource: byResource,
+        by_source: bySource,
+      },
+      call_receipts: {
+        total: receipts.length,
+        ...receiptTotals,
+        top_apps: Object.values(appTotals)
+          .sort((a, b) =>
+            (b.app_charge_light + b.infra_light) -
+            (a.app_charge_light + a.infra_light)
+          )
+          .slice(0, 20),
+        recent: receipts.slice(0, limit),
+      },
+      policy: {
+        cloud_unit_rate: publicConfig.labels.cloud_unit_rate,
+        worker_unit: publicConfig.labels.worker_unit,
+        d1_read_unit: publicConfig.labels.d1_read_unit,
+        d1_write_unit: publicConfig.labels.d1_write_unit,
+        r2_operation_unit: publicConfig.labels.r2_operation_unit,
+        kv_operation_unit: publicConfig.labels.kv_operation_unit,
+        widget_pull_unit: publicConfig.labels.widget_pull_unit,
+        storage_at_rest: publicConfig.labels.storage_at_rest,
+      },
+    });
+  } catch (err) {
+    console.error('[ADMIN] cloud economics failed:', err);
+    return error('Cloud economics summary failed', 500);
+  }
+}
+
+// ============================================
 // PAYOUT RECONCILIATION
 // ============================================
 
@@ -891,6 +1189,10 @@ async function readRows<T>(res: Response, label: string): Promise<T[]> {
 }
 
 function lightAmount(value: number | null | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function centsAmount(value: number | null | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
@@ -928,7 +1230,9 @@ async function getPayoutReconciliation(url: URL): Promise<Response> {
     'id',
     'user_id',
     'amount_light',
+    'gross_cents',
     'platform_fee_light',
+    'fee_estimate_cents',
     'stripe_fee_cents',
     'net_cents',
     'status',
@@ -945,6 +1249,8 @@ async function getPayoutReconciliation(url: URL): Promise<Response> {
     'stripe_payout_status',
     'stripe_transfer_attempts',
     'stripe_payout_attempts',
+    'stripe_transfer_amount_cents',
+    'stripe_payout_amount_cents',
     'processor_claimed_at',
     'failure_reason',
     'stripe_transfer_error',
@@ -1014,6 +1320,29 @@ async function getPayoutReconciliation(url: URL): Promise<Response> {
     const processingLight = byStatus.processing || 0;
     const liabilityLight = earnedBalanceLight + heldLight + pendingLight +
       processingLight;
+    const payoutEconomics = payouts.reduce(
+      (acc, payout) => {
+        acc.gross_cents += centsAmount(payout.gross_cents);
+        acc.fee_estimate_cents += centsAmount(
+          payout.fee_estimate_cents ?? payout.stripe_fee_cents,
+        );
+        acc.net_cents += centsAmount(payout.net_cents);
+        acc.actual_transfer_cents += centsAmount(
+          payout.stripe_transfer_amount_cents,
+        );
+        acc.actual_payout_cents += centsAmount(
+          payout.stripe_payout_amount_cents,
+        );
+        return acc;
+      },
+      {
+        gross_cents: 0,
+        fee_estimate_cents: 0,
+        net_cents: 0,
+        actual_transfer_cents: 0,
+        actual_payout_cents: 0,
+      },
+    );
 
     return json({
       success: true,
@@ -1042,6 +1371,7 @@ async function getPayoutReconciliation(url: URL): Promise<Response> {
         payout_states: payoutStates,
       },
       stripe_balance: stripeBalance,
+      payout_economics: payoutEconomics,
       payout_runs: runs,
       retryable_payouts: retryablePayouts.slice(0, limit),
     });

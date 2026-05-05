@@ -26,6 +26,7 @@ export interface PayoutEstimate {
   gross_light: number; // Light deducted from balance
   gross_usd_cents: number; // USD cents equivalent (light / 100 * 100)
   stripe_fee_cents: number; // estimated Stripe payout fee (in USD cents)
+  fee_estimate_cents: number; // alias persisted on payout records
   net_cents: number; // estimated bank deposit (in USD cents)
 }
 
@@ -124,7 +125,8 @@ export function estimatePayoutFee(
     gross_light: amountLight,
     gross_usd_cents: grossCents,
     stripe_fee_cents: feeCents,
-    net_cents: grossCents - feeCents,
+    fee_estimate_cents: feeCents,
+    net_cents: Math.max(0, grossCents - feeCents),
   };
 }
 

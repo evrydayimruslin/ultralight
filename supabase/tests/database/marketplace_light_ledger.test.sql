@@ -261,19 +261,19 @@ SELECT ok(
 
 SELECT is(
   (SELECT balance_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000101'),
-  3600::numeric,
-  'accepted sale credits seller with 90 percent payout'
+  3400::numeric,
+  'accepted sale credits seller with configured 85 percent payout'
 );
 
 SELECT is(
   (SELECT total_earned_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000101'),
-  3600::numeric,
+  3400::numeric,
   'accepted sale tracks seller earned Light'
 );
 
 SELECT is(
   (SELECT earned_balance_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000101'),
-  3600::numeric,
+  3400::numeric,
   'accepted sale credits seller withdrawable earned bucket'
 );
 
@@ -362,7 +362,7 @@ SELECT is(
     WHERE app_id = '00000000-0000-0000-0000-000000000201'
       AND reason = 'marketplace_sale'
   ),
-  3600::numeric,
+  3400::numeric,
   'accepted sale logs seller payout transfer'
 );
 
@@ -373,7 +373,7 @@ SELECT ok(
     WHERE user_id = '00000000-0000-0000-0000-000000000101'
       AND kind = 'marketplace_sale_earning'
       AND bucket = 'earned'
-      AND amount_light = 3600
+      AND amount_light = 3400
   ),
   'accepted sale logs immutable earned Light ledger entry'
 );
@@ -427,13 +427,13 @@ SELECT is(
 
 SELECT is(
   (SELECT balance_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000101'),
-  6300::numeric,
+  5950::numeric,
   'buy_now credits seller payout'
 );
 
 SELECT is(
   (SELECT earned_balance_light::numeric FROM public.users WHERE id = '00000000-0000-0000-0000-000000000101'),
-  6300::numeric,
+  5950::numeric,
   'buy_now credits seller earned bucket'
 );
 
@@ -475,9 +475,9 @@ WHERE id = '00000000-0000-0000-0000-000000000101';
 UPDATE marketplace_wave1_state
 SET payout_id = public.create_payout_record(
   '00000000-0000-0000-0000-000000000101',
-  6000,
+  5650,
   25,
-  5975
+  5625
 );
 
 SELECT ok(
@@ -517,7 +517,7 @@ SELECT is(
 
 SELECT is(
   (SELECT amount_light::numeric FROM public.payouts WHERE id = (SELECT payout_id FROM marketplace_wave1_state)),
-  6000::numeric,
+  5650::numeric,
   'payout record stores Light amount'
 );
 
@@ -568,7 +568,7 @@ SELECT is(
     ORDER BY created_at DESC
     LIMIT 1
   ),
-  6000::numeric,
+  5650::numeric,
   'withdrawal logs Light transfer'
 );
 

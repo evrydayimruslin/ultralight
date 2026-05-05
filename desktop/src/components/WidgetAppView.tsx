@@ -8,6 +8,7 @@ import { openWidgetWindow } from '../lib/multiWindow';
 import {
   buildWidgetNavigationTarget,
   buildWidgetSrcDoc,
+  readWidgetPullSettings,
   type WidgetAppSource,
 } from '../lib/widgetRuntime';
 import { createDesktopLogger } from '../lib/logging';
@@ -28,6 +29,7 @@ export default function WidgetAppView({ source, appHtml, onBack }: WidgetAppView
 
   const apiBase = getApiBase();
   const token = getToken();
+  const widgetSettings = readWidgetPullSettings(source);
 
   const preparedHtml = buildWidgetSrcDoc({
     appHtml,
@@ -36,6 +38,11 @@ export default function WidgetAppView({ source, appHtml, onBack }: WidgetAppView
     widgetName: source.widgetName,
     apiBase,
     token,
+    widgetPull: {
+      widgetName: source.widgetName,
+      intervalMs: widgetSettings.intervalMs,
+      reason: 'widget_action',
+    },
   });
 
   // Listen for widget-to-widget navigation requests

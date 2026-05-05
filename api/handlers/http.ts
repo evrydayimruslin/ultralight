@@ -4,7 +4,10 @@
 import { error, json } from "./response.ts";
 import { createAppsService } from "../services/apps.ts";
 import { createAppDataService } from "../services/appdata.ts";
-import { createRuntimeAIContext, createUnavailableAIService } from "../services/runtime-ai.ts";
+import {
+  createRuntimeAIContext,
+  createUnavailableAIService,
+} from "../services/runtime-ai.ts";
 import { checkAndIncrementWeeklyCalls } from "../services/weekly-calls.ts";
 import { executeGpuFunction } from "../services/gpu/executor.ts";
 import { acquireGpuSlot } from "../services/gpu/concurrency.ts";
@@ -15,8 +18,11 @@ import {
   buildCorsPreflightResponse,
 } from "../services/cors.ts";
 import {
-  logExecutionResult,
+  createRuntimeOperationMeteringContext,
+  preflightRuntimeCloudHold,
+  settleAndLogAppExecution,
   settleAndLogGpuExecution,
+  settleRuntimeCloudPreflight,
 } from "../services/execution-settlement.ts";
 import { createExecutionReceiptId } from "../services/call-logger.ts";
 import {
@@ -34,6 +40,7 @@ import {
   callerHasAppAccess,
   callerHasFunctionAccess,
   callerHasRequiredScope,
+  type RequestCallerContext,
   resolveRequestCallerContext,
 } from "../services/request-caller-context.ts";
 
@@ -158,6 +165,21 @@ export async function handleHttpEndpoint(
       );
     }
 
+    let caller: RequestCallerContext;
+    try {
+      caller = await resolveRequestCallerContext(request, {
+        authSourcePolicy: "bearer_or_cookie",
+        allowAnonymous: false,
+      });
+    } catch (err) {
+      return json({
+        error: err instanceof Error ? err.message : "Authentication required",
+        type: "AUTH_REQUIRED",
+      }, 401);
+    }
+    const { user } = caller;
+    const requestUrl = new URL(request.url);
+
     // Weekly call limit check (counts against app owner)
     const ownerTier = await getUserTier(app.owner_id);
     const weeklyResult = await checkAndIncrementWeeklyCalls(
@@ -199,29 +221,15 @@ export async function handleHttpEndpoint(
       }, 404);
     }
 
-    // Create app data service
-    // For HTTP endpoints, use a special "http" user ID since there's no authenticated user
-    const appDataService = createAppDataService(appId);
-
-    const callerPromise = resolveRequestCallerContext(request, {
-      authSourcePolicy: "bearer_only",
-      allowAnonymous: true,
-      invalidAuthPolicy: "ignore",
-    });
-
     let envResolution;
     let supabaseConfig;
     let d1DataService;
-    let caller;
     try {
-      [envResolution, supabaseConfig, { d1DataService }, caller] = await Promise
+      [envResolution, supabaseConfig, { d1DataService }] = await Promise
         .all([
-          callerPromise.then((resolvedCaller) =>
-            resolveAppRuntimeEnvVars(app, resolvedCaller.userId)
-          ),
+          resolveAppRuntimeEnvVars(app, caller.userId),
           resolveAppSupabaseConfig(app),
           createAppD1Resources(app),
-          callerPromise,
         ]);
     } catch (err) {
       if (err instanceof SupabaseConfigMigrationRequiredError) {
@@ -230,13 +238,14 @@ export async function handleHttpEndpoint(
       throw err;
     }
     const { envVars, missingRequiredSecrets } = envResolution;
-    const { user } = caller;
-    const requestUrl = new URL(request.url);
 
     if (missingRequiredSecrets.length > 0) {
       return json({
         error: buildMissingAppSecretsMessage(missingRequiredSecrets),
-        details: buildMissingAppSecretsErrorDetails(app.id, missingRequiredSecrets),
+        details: buildMissingAppSecretsErrorDetails(
+          app.id,
+          missingRequiredSecrets,
+        ),
       }, 400);
     }
 
@@ -356,19 +365,22 @@ export async function handleHttpEndpoint(
         );
 
         if (!gpuResult.success) {
-          return new Response(JSON.stringify({
-            error: gpuResult.error?.message || "GPU execution failed",
-            type: gpuResult.error?.type,
-            logs: gpuResult.logs,
-            receipt_id: receiptId,
-          }), {
-            status: 500,
-            headers: {
-              "Content-Type": "application/json",
-              "X-Light-Receipt-Id": receiptId,
-              ...buildCorsHeaders(request),
+          return new Response(
+            JSON.stringify({
+              error: gpuResult.error?.message || "GPU execution failed",
+              type: gpuResult.error?.type,
+              logs: gpuResult.logs,
+              receipt_id: receiptId,
+            }),
+            {
+              status: 500,
+              headers: {
+                "Content-Type": "application/json",
+                "X-Light-Receipt-Id": receiptId,
+                ...buildCorsHeaders(request),
+              },
             },
-          });
+          );
         }
 
         // Handle the response (same formatting as Deno path below)
@@ -397,21 +409,27 @@ export async function handleHttpEndpoint(
           }
         }
 
-        return new Response(JSON.stringify(attachHttpReceipt(gpuFnResult, receiptId)), {
-          status: 200,
-          headers: {
-            "Content-Type": "application/json",
-            "X-Light-Receipt-Id": receiptId,
-            ...buildCorsHeaders(request),
+        return new Response(
+          JSON.stringify(attachHttpReceipt(gpuFnResult, receiptId)),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json",
+              "X-Light-Receipt-Id": receiptId,
+              ...buildCorsHeaders(request),
+            },
           },
-        });
+        );
       } finally {
         gpuSlot.release();
       }
     }
 
     if (!app.manifest) {
-      return json({ error: "App manifest required for runtime execution" }, 422);
+      return json(
+        { error: "App manifest required for runtime execution" },
+        422,
+      );
     }
 
     // Execute the function in sandbox — AI-capable apps get 120s timeout
@@ -422,13 +440,61 @@ export async function handleHttpEndpoint(
         route: null,
         resolvedRoute: null,
         userApiKey: null,
-        aiService: createUnavailableAIService("ai:call permission not granted."),
+        aiService: createUnavailableAIService(
+          "ai:call permission not granted.",
+        ),
       };
     // Dynamic Worker sandbox — avoids `new Function()` restriction on CF Workers
     const { executeInDynamicSandbox } = await import(
       "../runtime/dynamic-sandbox.ts"
     );
     const receiptId = createExecutionReceiptId();
+    const timeoutMs = httpPermissions.includes("ai:call") ? 120_000 : 30_000;
+    const inputArgs = { request: ultralightRequest };
+    const cloudPreflight = await preflightRuntimeCloudHold({
+      app,
+      userId: user?.id || app.owner_id,
+      functionName,
+      inputArgs,
+      receiptId,
+      method: "http",
+      timeoutMs,
+      callerAuthState: caller.authState,
+    });
+    if (cloudPreflight.insufficientBalance) {
+      return new Response(
+        JSON.stringify({
+          error: cloudPreflight.insufficientBalanceMessage ||
+            "Light balance required to call this app.",
+          type: cloudPreflight.insufficientBalanceCode || "LIGHT_REQUIRED",
+          receipt_id: receiptId,
+          details: cloudPreflight.metadata,
+        }),
+        {
+          status: 402,
+          headers: {
+            "Content-Type": "application/json",
+            "X-Light-Receipt-Id": receiptId,
+            ...buildCorsHeaders(request),
+          },
+        },
+      );
+    }
+    const executionUserId = user?.id || app.owner_id;
+    const cloudOperationMetering = createRuntimeOperationMeteringContext({
+      preflight: cloudPreflight,
+      app,
+      userId: executionUserId,
+      functionName,
+      receiptId,
+      method: "http",
+      metadata: { surface: "http" },
+    });
+    // Create app data service for the authenticated caller.
+    const appDataService = createAppDataService(appId, undefined, {
+      operationMetering: cloudOperationMetering,
+      billingConfig: cloudPreflight.billingConfig,
+    });
     const result = await executeInDynamicSandbox(
       {
         appId: app.id,
@@ -451,19 +517,29 @@ export async function handleHttpEndpoint(
         },
         envVars,
         supabase: supabaseConfig,
-        timeoutMs: httpPermissions.includes("ai:call") ? 120_000 : 30_000,
+        timeoutMs,
+        cloudOperationMetering,
+        cloudOperationBillingConfig: cloudPreflight.billingConfig,
       },
       functionName,
       [ultralightRequest],
     );
 
     const durationMs = Date.now() - startTime;
+    const cloudSettlement = await settleRuntimeCloudPreflight(
+      cloudPreflight,
+      result.durationMs,
+      {
+        success: result.success,
+        error_message: result.success ? null : result.error?.message,
+      },
+    );
 
-    logExecutionResult({
+    const { settlement } = await settleAndLogAppExecution({
       receiptId,
       userId: user?.id || app.owner_id,
-      appId: app.id,
-      appName: app.name || app.slug,
+      user,
+      app,
       functionName,
       method: "http",
       success: result.success,
@@ -472,10 +548,32 @@ export async function handleHttpEndpoint(
         ? undefined
         : (result.error?.message || "Execution failed"),
       outputResult: result.success ? result.result : result.error,
-      userTier: user?.tier,
-      appVersion: app.current_version || undefined,
       aiCostLight: result.aiCostLight || 0,
+      inputArgs,
+      callerAuthState: caller.authState,
+      runtimePricingPreflight: cloudPreflight.pricing,
+      runtimeCloudSettlement: cloudSettlement,
     });
+
+    if (result.success && settlement.insufficientBalance) {
+      return new Response(
+        JSON.stringify({
+          error: settlement.insufficientBalanceMessage ||
+            "Light balance required to call this app.",
+          type: settlement.insufficientBalanceCode || "LIGHT_REQUIRED",
+          receipt_id: receiptId,
+          details: settlement.metadata,
+        }),
+        {
+          status: 402,
+          headers: {
+            "Content-Type": "application/json",
+            "X-Light-Receipt-Id": receiptId,
+            ...buildCorsHeaders(request),
+          },
+        },
+      );
+    }
 
     console.log(
       `[HTTP] ${request.method} /http/${appId}/${functionName} - ${
@@ -526,15 +624,18 @@ export async function handleHttpEndpoint(
     }
 
     // Default: wrap result as JSON response with CORS headers
-    return new Response(JSON.stringify(attachHttpReceipt(fnResult, receiptId)), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json",
-        "X-Execution-Time": `${durationMs}ms`,
-        "X-Light-Receipt-Id": receiptId,
-        ...buildCorsHeaders(request),
+    return new Response(
+      JSON.stringify(attachHttpReceipt(fnResult, receiptId)),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "X-Execution-Time": `${durationMs}ms`,
+          "X-Light-Receipt-Id": receiptId,
+          ...buildCorsHeaders(request),
+        },
       },
-    });
+    );
   } catch (err) {
     console.error("[HTTP] Error:", err);
     return json({

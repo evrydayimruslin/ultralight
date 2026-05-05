@@ -4,7 +4,8 @@
 // All amounts are in Light (✦).
 
 import { getEnv } from '../lib/env.ts';
-import { formatLight } from '../../shared/types/index.ts';
+import { formatLight, PLATFORM_FEE_RATE } from '../../shared/types/index.ts';
+import { getBillingConfig } from './billing-config.ts';
 import { buildAppTrustCard } from './trust.ts';
 
 // ============================================
@@ -332,6 +333,7 @@ export function buildMarketplaceListingSummary(
   listing: MarketplaceListingSummaryListing | null | undefined,
   bids: Array<{ amount_light: number }>,
   app: { had_external_db?: boolean | null } | null | undefined,
+  platformFeeRate = PLATFORM_FEE_RATE,
 ): MarketplaceListingSummary {
   const askPrice = listing?.ask_price_light ?? null;
   const floorPrice = listing?.floor_price_light ?? null;
@@ -340,8 +342,12 @@ export function buildMarketplaceListingSummary(
   const highestBid = bids.length > 0
     ? bids.reduce((highest, bid) => Math.max(highest, bid.amount_light || 0), 0)
     : null;
-  const platformFee = askPrice !== null ? Math.round(askPrice * 0.10 * 100) / 100 : null;
-  const sellerPayout = askPrice !== null ? Math.round(askPrice * 0.90 * 100) / 100 : null;
+  const normalizedFeeRate = typeof platformFeeRate === 'number' &&
+      Number.isFinite(platformFeeRate) && platformFeeRate >= 0
+    ? platformFeeRate
+    : PLATFORM_FEE_RATE;
+  const platformFee = askPrice !== null ? Math.round(askPrice * normalizedFeeRate * 100) / 100 : null;
+  const sellerPayout = askPrice !== null ? Math.round((askPrice - (platformFee || 0)) * 100) / 100 : null;
   const blockers: string[] = [];
 
   if (app?.had_external_db) {
@@ -1125,7 +1131,13 @@ export async function getListing(appId: string, viewerId?: string): Promise<List
 
   const listing = listings[0] || null;
   const app = apps[0] || null;
-  const marketplaceSummary = buildMarketplaceListingSummary(listing, enrichedBids, app);
+  const billingConfig = await getBillingConfig();
+  const marketplaceSummary = buildMarketplaceListingSummary(
+    listing,
+    enrichedBids,
+    app,
+    billingConfig.platformFeeRate,
+  );
 
   let ownerAdmin: MarketplaceOwnerAdminSummary | null = null;
   if (viewerId && app?.owner_id === viewerId) {

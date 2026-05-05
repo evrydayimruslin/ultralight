@@ -1716,7 +1716,7 @@ async function handleUpdateApp(request: Request, appId: string): Promise<Respons
         return error('No valid fields to update', 400);
       }
 
-      // Gate visibility changes by tier and deposit
+      // Gate visibility changes by tier and any configured legacy publish balance rule.
       if ('visibility' in filteredUpdates) {
         const userTier = await getUserTier(user.id);
         const visibilityErr = checkVisibilityAllowed(
@@ -1726,7 +1726,6 @@ async function handleUpdateApp(request: Request, appId: string): Promise<Respons
         if (visibilityErr) {
           return error(visibilityErr, 403);
         }
-        // Require minimum deposit to publish
         if (filteredUpdates.visibility !== 'private') {
           const depositErr = await checkPublishDeposit(user.id);
           if (depositErr) {
@@ -2670,7 +2669,7 @@ async function handlePublishDraft(request: Request, appId: string): Promise<Resp
       return error('No draft to publish', 400);
     }
 
-    // Gate: check tier visibility and deposit for non-private apps
+    // Gate: check tier visibility and any configured legacy publish balance rule.
     if (app.visibility !== 'private') {
       const userTier = await getUserTier(user.id);
       const visibilityErr = checkVisibilityAllowed(userTier, app.visibility as 'private' | 'unlisted' | 'public');

@@ -9,9 +9,8 @@ import {
   type ActiveBYOKProvider,
   BYOK_PROVIDERS,
   type BYOKProviderInfo,
-  DATA_RATE_LIGHT_PER_MB_PER_HOUR,
+  COMBINED_FREE_TIER_BYTES,
   formatLight,
-  HOSTING_RATE_LIGHT_PER_MB_PER_HOUR,
   isActiveBYOKProvider,
   type Tier,
 } from "../../shared/types/index.ts";
@@ -2463,18 +2462,14 @@ export async function handleUser(request: Request): Promise<Response> {
 
       const [txRes, countRes] = await Promise.all([
         fetch(query, { headers: { ...sbHeaders, "Prefer": "count=exact" } }),
-        // Calculate current charge rate from published apps + pages
+        // Calculate current storage-at-rest rate from account counters + content.
         Promise.all([
           fetch(
-            `${sbUrl}/rest/v1/apps?owner_id=eq.${user.id}&deleted_at=is.null&hosting_suspended=eq.false&visibility=in.(public,unlisted)&select=storage_bytes`,
+            `${sbUrl}/rest/v1/content?owner_id=eq.${user.id}&type=in.(page,memory_md,library_md)&select=type,size`,
             { headers: sbHeaders },
           ),
           fetch(
-            `${sbUrl}/rest/v1/content?owner_id=eq.${user.id}&type=eq.page&hosting_suspended=eq.false&visibility=eq.public&select=size`,
-            { headers: sbHeaders },
-          ),
-          fetch(
-            `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=storage_used_bytes,data_storage_used_bytes,storage_limit_bytes`,
+            `${sbUrl}/rest/v1/users?id=eq.${user.id}&select=storage_used_bytes,data_storage_used_bytes,d1_storage_bytes,storage_limit_bytes`,
             { headers: sbHeaders },
           ),
         ]),
@@ -2488,66 +2483,96 @@ export async function handleUser(request: Request): Promise<Response> {
         ? parseInt(totalHeader.split("/")[1] || "0", 10)
         : typedTransactions.length;
 
-      // Calculate current hourly rate
-      const [appsRes, pagesRes, userDataRes] = countRes;
-      let hostingMb = 0;
-      let appCount = 0;
-      if (appsRes.ok) {
-        const apps = await appsRes.json() as Array<
-          { storage_bytes: number | null }
-        >;
-        appCount = apps.length;
-        hostingMb =
-          apps.reduce((s: number, a: { storage_bytes: number | null }) =>
-            s + (a.storage_bytes || 0), 0) / (1024 * 1024);
-      }
-      if (pagesRes.ok) {
-        const pages = await pagesRes.json() as Array<{ size: number | null }>;
-        hostingMb += pages.reduce((s: number, p: { size: number | null }) =>
-          s + (p.size || 0), 0) /
-          (1024 * 1024);
+      const [contentRes, userDataRes] = countRes;
+      let contentBytes = 0;
+      let contentCount = 0;
+      if (contentRes.ok) {
+        const contentRows = await contentRes.json() as Array<{
+          type: string | null;
+          size: number | null;
+        }>;
+        contentCount = contentRows.length;
+        contentBytes = contentRows.reduce(
+          (sum: number, row: { size: number | null }) => sum + (row.size || 0),
+          0,
+        );
       }
 
-      let dataOverageMb = 0;
+      let sourceBytes = 0;
+      let dataBytes = 0;
+      let d1Bytes = 0;
+      let combinedBytes = contentBytes;
+      let overageBytes = 0;
+      const billingConfig = await getBillingConfig();
+      let freeBytes = billingConfig.storageFreeBytes;
       if (userDataRes.ok) {
         const [ud] = await userDataRes.json() as Array<
           {
             storage_used_bytes: number;
             data_storage_used_bytes: number;
+            d1_storage_bytes?: number;
             storage_limit_bytes: number;
           }
         >;
         if (ud) {
-          const combined = (ud.storage_used_bytes || 0) +
-            (ud.data_storage_used_bytes || 0);
-          const freeBytes = ud.storage_limit_bytes || 104857600;
-          dataOverageMb = Math.max(0, combined - freeBytes) / (1024 * 1024);
+          sourceBytes = ud.storage_used_bytes || 0;
+          dataBytes = ud.data_storage_used_bytes || 0;
+          d1Bytes = ud.d1_storage_bytes || 0;
+          combinedBytes = sourceBytes + dataBytes + d1Bytes + contentBytes;
+          freeBytes = billingConfig.storageFreeBytes ||
+            ud.storage_limit_bytes || COMBINED_FREE_TIER_BYTES;
+          overageBytes = Math.max(0, combinedBytes - freeBytes);
         }
       }
 
-      const hostingLightPerHour = hostingMb *
-        HOSTING_RATE_LIGHT_PER_MB_PER_HOUR;
-      const dataOverageLightPerHour = dataOverageMb *
-        DATA_RATE_LIGHT_PER_MB_PER_HOUR;
+      const bytesPerMb = 1024 * 1024;
+      const bytesPerGb = 1024 * bytesPerMb;
+      const storageOverageGb = overageBytes / bytesPerGb;
+      const storageLightPerMonth = storageOverageGb *
+        billingConfig.storageLightPerGbMonth;
+      const storageLightPerHour = storageLightPerMonth / (30 * 24);
+      const storageLightPerDay = storageLightPerMonth / 30;
+      const storageOverageMb = overageBytes / bytesPerMb;
 
       return json({
         transactions: typedTransactions,
         total,
         current_rate: {
-          hosting_mb: Math.round(hostingMb * 100) / 100,
-          hosting_apps: appCount,
-          hosting_rate_light_per_mb_hour: HOSTING_RATE_LIGHT_PER_MB_PER_HOUR,
-          hosting_light_per_hour: Math.round(hostingLightPerHour * 10000) /
+          storage_combined_mb: Math.round((combinedBytes / bytesPerMb) * 100) /
+            100,
+          storage_content_mb: Math.round((contentBytes / bytesPerMb) * 100) /
+            100,
+          storage_source_mb: Math.round((sourceBytes / bytesPerMb) * 100) /
+            100,
+          storage_user_data_mb: Math.round((dataBytes / bytesPerMb) * 100) /
+            100,
+          storage_d1_mb: Math.round((d1Bytes / bytesPerMb) * 100) / 100,
+          storage_content_items: contentCount,
+          storage_free_mb: Math.round((freeBytes / bytesPerMb) * 100) / 100,
+          storage_overage_mb: Math.round(storageOverageMb * 100) / 100,
+          storage_overage_gb: Math.round(storageOverageGb * 10000) / 10000,
+          storage_rate_light_per_gb_month: billingConfig.storageLightPerGbMonth,
+          cloud_unit_light_per_1k: billingConfig.cloudUnitLightPer1k,
+          storage_light_per_hour: Math.round(storageLightPerHour * 10000) /
             10000,
-          data_overage_mb: Math.round(dataOverageMb * 100) / 100,
-          data_rate_light_per_mb_hour: DATA_RATE_LIGHT_PER_MB_PER_HOUR,
-          data_overage_light_per_hour:
-            Math.round(dataOverageLightPerHour * 10000) / 10000,
+          storage_light_per_day: Math.round(storageLightPerDay * 10000) /
+            10000,
+          storage_light_per_month: Math.round(storageLightPerMonth * 10000) /
+            10000,
+          hosting_mb: 0,
+          hosting_apps: 0,
+          hosting_rate_light_per_mb_hour: 0,
+          hosting_light_per_hour: Math.round(storageLightPerHour * 10000) /
+            10000,
+          data_overage_mb: Math.round(storageOverageMb * 100) / 100,
+          data_rate_light_per_mb_hour: 0,
+          data_overage_light_per_hour: Math.round(storageLightPerHour * 10000) /
+            10000,
           estimated_daily_light: Math.round(
-            (hostingLightPerHour + dataOverageLightPerHour) * 24 * 100,
+            storageLightPerDay * 100,
           ) / 100,
           estimated_monthly_light: Math.round(
-            (hostingLightPerHour + dataOverageLightPerHour) * 24 * 30 * 100,
+            storageLightPerMonth * 100,
           ) / 100,
         },
       });
@@ -3311,7 +3336,9 @@ export async function handleUser(request: Request): Promise<Response> {
               body: JSON.stringify({
                 p_user_id: user.id,
                 p_amount_light: amountLight,
+                p_gross_cents: estimate.gross_usd_cents,
                 p_stripe_fee_cents: estimate.stripe_fee_cents,
+                p_fee_estimate_cents: estimate.fee_estimate_cents,
                 p_net_cents: estimate.net_cents,
                 p_light_per_usd_snapshot: billingConfig.payoutLightPerUsd,
                 p_billing_config_version: billingConfig.version,
@@ -3351,7 +3378,9 @@ export async function handleUser(request: Request): Promise<Response> {
             success: true,
             payout_id: payoutId,
             amount_light: amountLight,
+            gross_usd_cents: estimate.gross_usd_cents,
             estimated_stripe_fee_cents: estimate.stripe_fee_cents,
+            fee_pass_through_cents: estimate.fee_estimate_cents,
             estimated_net_cents: estimate.net_cents,
             light_per_usd_snapshot: billingConfig.payoutLightPerUsd,
             billing_config_version: billingConfig.version,
@@ -3368,6 +3397,7 @@ export async function handleUser(request: Request): Promise<Response> {
               `Estimated bank deposit: ~$${
                 (estimate.net_cents / 100).toFixed(2)
               }. ` +
+              `Stripe fees are deducted from payout proceeds. ` +
               buildPayoutPolicyMessage(payoutSchedule),
           });
         } catch (err) {

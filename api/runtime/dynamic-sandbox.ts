@@ -11,21 +11,49 @@
 // wrapper.js imports setup.js (runs first) then app.js (runs second).
 // By the time app.js captures globalThis.ultralight, the SDK is ready.
 
-import type { RuntimeConfig, ExecutionResult } from './sandbox.ts';
+import type { ExecutionResult, RuntimeConfig } from "./sandbox.ts";
+import { debitCloudOperation } from "../services/cloud-usage.ts";
 
 interface DynamicWorkerEntrypointExports {
-  DatabaseBinding(input: { props: { databaseId: string; appId: string; userId: string } }): unknown;
+  DatabaseBinding(
+    input: {
+      props: {
+        databaseId: string;
+        appId: string;
+        userId: string;
+        operationMetering?: RuntimeConfig["cloudOperationMetering"];
+        operationBillingConfig?: RuntimeConfig["cloudOperationBillingConfig"];
+      };
+    },
+  ): unknown;
   FixtureDatabaseBinding(
     input: {
       props: {
         appId: string;
         userId: string;
-        fixtures: NonNullable<RuntimeConfig['d1Fixtures']>;
+        fixtures: NonNullable<RuntimeConfig["d1Fixtures"]>;
       };
     },
   ): unknown;
-  AppDataBinding(input: { props: { appId: string; userId: string } }): unknown;
-  MemoryBinding(input: { props: { userId: string } }): unknown;
+  AppDataBinding(
+    input: {
+      props: {
+        appId: string;
+        userId: string;
+        operationMetering?: RuntimeConfig["cloudOperationMetering"];
+        operationBillingConfig?: RuntimeConfig["cloudOperationBillingConfig"];
+      };
+    },
+  ): unknown;
+  MemoryBinding(
+    input: {
+      props: {
+        userId: string;
+        operationMetering?: RuntimeConfig["cloudOperationMetering"];
+        operationBillingConfig?: RuntimeConfig["cloudOperationBillingConfig"];
+      };
+    },
+  ): unknown;
   AIBinding(input: {
     props: {
       userId: string;
@@ -57,30 +85,59 @@ export async function executeInDynamicSandbox(
 
   if (!loader) {
     return {
-      success: false, result: null, logs: [],
-      durationMs: Date.now() - startTime, aiCostLight: 0,
-      error: { type: 'RuntimeError', message: 'Dynamic Worker LOADER binding not available' },
+      success: false,
+      result: null,
+      logs: [],
+      durationMs: Date.now() - startTime,
+      aiCostLight: 0,
+      error: {
+        type: "RuntimeError",
+        message: "Dynamic Worker LOADER binding not available",
+      },
     };
   }
 
   try {
     // 1. Get ESM bundle from KV
-    let esmCode = await globalThis.__env?.CODE_CACHE?.get(`esm:${config.appId}:latest`);
+    const codeCacheKey = `esm:${config.appId}:latest`;
+    if (config.cloudOperationMetering) {
+      await debitCloudOperation({
+        ...config.cloudOperationMetering,
+        resource: "kv_operation",
+        operation: "code_cache.get",
+        units: 1,
+        billingConfig: config.cloudOperationBillingConfig ?? undefined,
+        metadata: {
+          ...(config.cloudOperationMetering.metadata ?? {}),
+          key: codeCacheKey,
+        },
+      });
+    }
+    let esmCode = await globalThis.__env?.CODE_CACHE?.get(codeCacheKey);
     if (!esmCode) {
       // No ESM bundle — app hasn't been rebuilt. Can't execute without it.
       return {
-        success: false, result: null, logs: [],
-        durationMs: Date.now() - startTime, aiCostLight: 0,
-        error: { type: 'RuntimeError', message: `No ESM bundle found for app ${config.appId}. Run rebuild first.` },
+        success: false,
+        result: null,
+        logs: [],
+        durationMs: Date.now() - startTime,
+        aiCostLight: 0,
+        error: {
+          type: "RuntimeError",
+          message:
+            `No ESM bundle found for app ${config.appId}. Run rebuild first.`,
+        },
       };
     }
 
     // 2. Build setup module — sets globalThis.ultralight with lazy getters
     // User context and env vars are baked in as literals (they're per-request constants)
-    const userJson = config.user ? JSON.stringify(config.user) : 'null';
+    const userJson = config.user ? JSON.stringify(config.user) : "null";
     const envVarsJson = JSON.stringify(config.envVars || {});
-    const netBaseUrl = JSON.stringify(config.workerBaseUrl || config.baseUrl || '');
-    const netWorkerSecret = JSON.stringify(config.workerSecret || '');
+    const netBaseUrl = JSON.stringify(
+      config.workerBaseUrl || config.baseUrl || "",
+    );
+    const netWorkerSecret = JSON.stringify(config.workerSecret || "");
 
     const setupModule = `
 // Setup module — runs before app.js, sets globalThis.ultralight
@@ -108,19 +165,39 @@ globalThis.ultralight = {
   },
   user: ${userJson},
   env: ${envVarsJson},
-  isAuthenticated() { return ${config.user ? 'true' : 'false'}; },
-  requireAuth() { ${config.user ? `return ${userJson};` : 'throw new Error("Authentication required.");'} },
-  store(k, v) { if (!${config.permissions.includes('storage:write')}) return Promise.reject(new Error('storage:write permission not granted.')); const e = globalThis.__rpcEnv; return e.DATA ? e.DATA.store(k, v) : Promise.reject(new Error('Data not available')); },
-  load(k) { if (!${config.permissions.includes('storage:read')}) return Promise.reject(new Error('storage:read permission not granted.')); const e = globalThis.__rpcEnv; return e.DATA ? e.DATA.load(k) : Promise.resolve(null); },
-  remove(k) { if (!${config.permissions.includes('storage:delete')}) return Promise.reject(new Error('storage:delete permission not granted.')); const e = globalThis.__rpcEnv; return e.DATA ? e.DATA.remove(k) : Promise.reject(new Error('Data not available')); },
-  list(p) { if (!${config.permissions.includes('storage:read')}) return Promise.reject(new Error('storage:read permission not granted.')); const e = globalThis.__rpcEnv; return e.DATA ? e.DATA.list(p) : Promise.resolve([]); },
-  query(p, o) { if (!${config.permissions.includes('storage:read')}) return Promise.reject(new Error('storage:read permission not granted.')); const e = globalThis.__rpcEnv; return e.DATA?.query?.(p, o) || Promise.resolve([]); },
-  remember(k, v) { if (!${config.permissions.includes('memory:write')}) return Promise.reject(new Error('memory:write permission not granted.')); const e = globalThis.__rpcEnv; return e.MEMORY ? e.MEMORY.remember(k, v) : Promise.resolve(); },
-  recall(k) { if (!${config.permissions.includes('memory:read')}) return Promise.reject(new Error('memory:read permission not granted.')); const e = globalThis.__rpcEnv; return e.MEMORY ? e.MEMORY.recall(k) : Promise.resolve(null); },
+  isAuthenticated() { return ${config.user ? "true" : "false"}; },
+  requireAuth() { ${
+      config.user
+        ? `return ${userJson};`
+        : 'throw new Error("Authentication required.");'
+    } },
+  store(k, v) { if (!${
+      config.permissions.includes("storage:write")
+    }) return Promise.reject(new Error('storage:write permission not granted.')); const e = globalThis.__rpcEnv; return e.DATA ? e.DATA.store(k, v) : Promise.reject(new Error('Data not available')); },
+  load(k) { if (!${
+      config.permissions.includes("storage:read")
+    }) return Promise.reject(new Error('storage:read permission not granted.')); const e = globalThis.__rpcEnv; return e.DATA ? e.DATA.load(k) : Promise.resolve(null); },
+  remove(k) { if (!${
+      config.permissions.includes("storage:delete")
+    }) return Promise.reject(new Error('storage:delete permission not granted.')); const e = globalThis.__rpcEnv; return e.DATA ? e.DATA.remove(k) : Promise.reject(new Error('Data not available')); },
+  list(p) { if (!${
+      config.permissions.includes("storage:read")
+    }) return Promise.reject(new Error('storage:read permission not granted.')); const e = globalThis.__rpcEnv; return e.DATA ? e.DATA.list(p) : Promise.resolve([]); },
+  query(p, o) { if (!${
+      config.permissions.includes("storage:read")
+    }) return Promise.reject(new Error('storage:read permission not granted.')); const e = globalThis.__rpcEnv; return e.DATA?.query?.(p, o) || Promise.resolve([]); },
+  remember(k, v) { if (!${
+      config.permissions.includes("memory:write")
+    }) return Promise.reject(new Error('memory:write permission not granted.')); const e = globalThis.__rpcEnv; return e.MEMORY ? e.MEMORY.remember(k, v) : Promise.resolve(); },
+  recall(k) { if (!${
+      config.permissions.includes("memory:read")
+    }) return Promise.reject(new Error('memory:read permission not granted.')); const e = globalThis.__rpcEnv; return e.MEMORY ? e.MEMORY.recall(k) : Promise.resolve(null); },
   ai(r) { const e = globalThis.__rpcEnv; return e.AI ? e.AI.call(r) : Promise.resolve({ content: '', error: 'AI not available' }); },
   call() { throw new Error('ultralight.call() not available in sandbox. Use ul.call platform tool.'); },
   // net:connect — high-level protocol methods via internal HTTP (gated by permission)
-  net: ${config.permissions.includes('net:connect') ? `{
+  net: ${
+      config.permissions.includes("net:connect")
+        ? `{
     async imapFetchUnseen(host, port, user, pass, lastUid, businessEmail, processedFlag, limit) {
       var e = globalThis.__rpcEnv;
       var fetchFn = (e && e.SELF) ? e.SELF.fetch.bind(e.SELF) : fetch;
@@ -144,11 +221,13 @@ globalThis.ultralight = {
       return await resp.json();
     },
     connectTls() { throw new Error('Low-level sockets not available. Use ultralight.net.imapFetchUnseen() or .smtpSend().'); },
-  }` : `{
+  }`
+        : `{
     imapFetchUnseen() { throw new Error('net:connect permission required.'); },
     smtpSend() { throw new Error('net:connect permission required.'); },
     connectTls() { throw new Error('net:connect permission required.'); },
-  }`},
+  }`
+    },
 };
 `;
 
@@ -220,39 +299,60 @@ export default {
         },
       });
     } else if (config.d1DataService) {
-      const { getD1DatabaseId } = await import('../services/d1-provisioning.ts');
+      const { getD1DatabaseId } = await import(
+        "../services/d1-provisioning.ts"
+      );
       const dbId = await getD1DatabaseId(config.appId);
       if (dbId && ctx?.exports?.DatabaseBinding) {
         bindings.DB = ctx.exports.DatabaseBinding({
-          props: { databaseId: dbId, appId: config.appId, userId: config.userId },
+          props: {
+            databaseId: dbId,
+            appId: config.appId,
+            userId: config.userId,
+            operationMetering: config.cloudOperationMetering,
+            operationBillingConfig: config.cloudOperationBillingConfig,
+          },
         });
       }
     }
 
-    const hasStorageRead = config.permissions.includes('storage:read');
-    const hasStorageWrite = config.permissions.includes('storage:write');
-    const hasStorageDelete = config.permissions.includes('storage:delete');
-    if ((hasStorageRead || hasStorageWrite || hasStorageDelete) && ctx?.exports?.AppDataBinding) {
+    const hasStorageRead = config.permissions.includes("storage:read");
+    const hasStorageWrite = config.permissions.includes("storage:write");
+    const hasStorageDelete = config.permissions.includes("storage:delete");
+    if (
+      (hasStorageRead || hasStorageWrite || hasStorageDelete) &&
+      ctx?.exports?.AppDataBinding
+    ) {
       bindings.DATA = ctx.exports.AppDataBinding({
-        props: { appId: config.appId, userId: config.userId },
+        props: {
+          appId: config.appId,
+          userId: config.userId,
+          operationMetering: config.cloudOperationMetering,
+          operationBillingConfig: config.cloudOperationBillingConfig,
+        },
       });
     }
 
-    const hasMemory = config.permissions.includes('memory:read') ||
-      config.permissions.includes('memory:write');
+    const hasMemory = config.permissions.includes("memory:read") ||
+      config.permissions.includes("memory:write");
     if (hasMemory && config.memoryService && ctx?.exports?.MemoryBinding) {
       bindings.MEMORY = ctx.exports.MemoryBinding({
-        props: { userId: config.userId },
+        props: {
+          userId: config.userId,
+          operationMetering: config.cloudOperationMetering,
+          operationBillingConfig: config.cloudOperationBillingConfig,
+        },
       });
     }
 
-    if (config.permissions.includes('ai:call') && ctx?.exports?.AIBinding) {
+    if (config.permissions.includes("ai:call") && ctx?.exports?.AIBinding) {
       bindings.AI = ctx.exports.AIBinding({
         props: {
           userId: config.userId,
           apiKey: config.aiRoute?.apiKey || config.userApiKey,
           provider: config.aiRoute?.provider || null,
-          upstreamProvider: config.aiRoute?.upstreamProvider || config.aiRoute?.provider || null,
+          upstreamProvider: config.aiRoute?.upstreamProvider ||
+            config.aiRoute?.provider || null,
           baseUrl: config.aiRoute?.baseUrl || null,
           defaultModel: config.aiRoute?.model || null,
           canonicalModelId: config.aiRoute?.canonicalModelId || null,
@@ -267,20 +367,20 @@ export default {
     // Network: pass SELF binding so Dynamic Worker can call /api/net/* internally
     // (Direct fetch() to Worker URL goes through CDN which blocks it)
     const env = globalThis.__env;
-    if (config.permissions.includes('net:connect') && env?.SELF) {
+    if (config.permissions.includes("net:connect") && env?.SELF) {
       bindings.SELF = env.SELF;
     }
 
     // 5. Create Dynamic Worker
-    const hasOutboundNetwork = config.permissions.includes('net:connect') ||
-      config.permissions.includes('net:fetch');
+    const hasOutboundNetwork = config.permissions.includes("net:connect") ||
+      config.permissions.includes("net:fetch");
     const loadConfig: Parameters<typeof loader.load>[0] = {
-      compatibilityDate: '2026-03-01',
-      mainModule: 'wrapper.js',
+      compatibilityDate: "2026-03-01",
+      mainModule: "wrapper.js",
       modules: {
-        'wrapper.js': wrapperModule,
-        'setup.js': setupModule,
-        'app.js': esmCode,
+        "wrapper.js": wrapperModule,
+        "setup.js": setupModule,
+        "app.js": esmCode,
       },
       env: bindings,
       globalOutbound: null,
@@ -296,7 +396,7 @@ export default {
 
     const entrypoint = worker.getEntrypoint();
     const response = await entrypoint.fetch(
-      new Request('http://internal/execute'),
+      new Request("http://internal/execute"),
       { signal: controller.signal },
     );
     clearTimeout(timeoutId);
@@ -304,7 +404,13 @@ export default {
     const data = (await response.json()) as {
       success: boolean;
       result: unknown;
-      logs: Array<{ time: string; level: 'log' | 'error' | 'warn' | 'info'; message: string }>;
+      logs: Array<
+        {
+          time: string;
+          level: "log" | "error" | "warn" | "info";
+          message: string;
+        }
+      >;
       error?: { type: string; message: string };
     };
 
@@ -318,10 +424,13 @@ export default {
     };
   } catch (err) {
     return {
-      success: false, result: null, logs: [],
-      durationMs: Date.now() - startTime, aiCostLight: 0,
+      success: false,
+      result: null,
+      logs: [],
+      durationMs: Date.now() - startTime,
+      aiCostLight: 0,
       error: {
-        type: err instanceof Error ? err.constructor.name : 'UnknownError',
+        type: err instanceof Error ? err.constructor.name : "UnknownError",
         message: err instanceof Error ? err.message : String(err),
       },
     };

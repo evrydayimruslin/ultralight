@@ -3187,10 +3187,10 @@ export function getLayoutHTML(options: {
                     <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:4px;">Add Light</div>
                     <div style="font-size:12px;color:var(--text-muted);line-height:1.5;">External funding enters through wallet payments or bank transfer. Purchased Light is spend-only platform credit.</div>
                   </div>
-                  <div id="walletCanonicalRateLabel" style="font-size:12px;color:var(--text-muted);white-space:nowrap;">100 Light = $1 platform reference</div>
+                  <div id="walletCanonicalRateLabel" style="font-size:12px;color:var(--text-muted);white-space:nowrap;">100 Light = $1 receipt/payout reference</div>
                 </div>
                 <div id="walletFundingMethods" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:var(--space-3);"></div>
-                <div id="walletFundingPolicy" style="font-size:12px;color:var(--text-muted);line-height:1.5;margin-top:var(--space-3);">Apple Pay and Google Pay fund at 95 Light / $1. Wire transfer funds at 99 Light / $1. 100 Light = $1 is the platform reference.</div>
+                <div id="walletFundingPolicy" style="font-size:12px;color:var(--text-muted);line-height:1.5;margin-top:var(--space-3);">Apple Pay and Google Pay fund at 95 Light / $1. Wire transfer funds at 99 Light / $1. 100 Light = $1 is used for receipts, internal cost reference, and payouts.</div>
                 <label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--text-muted);line-height:1.45;margin-top:var(--space-3);">
                   <input id="walletTermsAccepted" type="checkbox" style="margin-top:2px;">
                   <span id="walletTermsCopy">I agree that purchased Light is spend-only platform credit and is governed by the <a href="/terms" style="color:var(--text-secondary);text-decoration:underline;">Terms</a>.</span>
@@ -3199,6 +3199,9 @@ export function getLayoutHTML(options: {
 
               <div style="background:var(--bg-subtle);border:1px solid var(--border);padding:var(--space-4);font-size:12px;color:var(--text-muted);line-height:1.5;">
                 Light cannot be transferred directly between arbitrary accounts. Creator earnings come from platform-mediated app activity and marketplace sales, and only earned Light is eligible for payout.
+              </div>
+              <div id="walletCloudPolicy" style="background:var(--bg-subtle);border:1px solid var(--border);padding:var(--space-4);font-size:12px;color:var(--text-muted);line-height:1.5;margin-top:var(--space-3);">
+                Cloud usage is metered in cloud units and charged as exact fractional Light. Free calls use app-owner sponsorship for infrastructure when available; otherwise the caller needs Light balance to continue.
               </div>
 
             </div>
@@ -5921,17 +5924,24 @@ export function getLayoutHTML(options: {
       wallet_light_per_usd: 95,
       wire_light_per_usd: 99,
       payout_light_per_usd: 100,
+      platform_fee_rate: 0.15,
+      card_minimum_cents: 2500,
+      wire_minimum_cents: 2500,
+      cloud_unit_light_per_1k: 1,
+      storage_free_bytes: 104857600,
+      storage_light_per_gb_month: 100,
+      publish_deposit_enabled: false,
+      published_hosting_meter_enabled: false,
       min_withdrawal_light: 5000,
-      min_publish_deposit_light: 500,
-      hosting_rate_light_per_mb_hour: 2.25,
-      data_rate_light_per_mb_hour: 0.045,
-      storage_soft_cap_bytes: 104857600,
       payout_policy_copy: 'Payouts are processed on the first business day of each month. Requests must be submitted at least 21 days before that payout date to be included. Purchased Light cannot be cashed out; only creator earnings are eligible for payout.',
       policy_copy: {
         purchasedLight: 'Purchased Light is spend-only platform credit. It cannot be cashed out, redeemed for money, or transferred directly between arbitrary accounts.',
         creatorEarnings: 'Creator earnings come from platform-mediated app activity and marketplace sales. Earned Light can be spent in Ultralight or requested for payout through Stripe Connect.',
         fundingTerms: 'By adding Light, you agree that purchased Light is spend-only platform credit and that authenticated funding transactions are governed by the Terms.',
         payoutTerms: 'By requesting a payout, you confirm that the amount is creator earnings and that payout timing, fees, and eligibility are governed by the Terms.',
+        cloudUsage: 'Cloud usage is metered in cloud units and charged as exact fractional Light at the configured cloud-unit rate.',
+        storagePolicy: 'The first 100MB of combined storage is included. Storage above that is charged at the configured GB-month rate.',
+        freeCallSponsorship: 'Free calls use app-owner sponsorship for infrastructure when available. If the owner has no Light balance, the caller needs Light balance to continue.',
         termsUrl: '/terms'
       }
     };
@@ -5956,16 +5966,20 @@ export function getLayoutHTML(options: {
       return billingConfig.min_withdrawal_light || 5000;
     }
 
-    function getMinPublishDepositLight() {
-      return billingConfig.min_publish_deposit_light || 500;
+    function getPlatformFeeRate() {
+      return typeof billingConfig.platform_fee_rate === 'number' ? billingConfig.platform_fee_rate : 0.15;
     }
 
-    function getHostingRateLightPerMbHour() {
-      return billingConfig.hosting_rate_light_per_mb_hour || 2.25;
+    function getPlatformFeePercentLabel() {
+      return Math.round(getPlatformFeeRate() * 1000) / 10 + '%';
     }
 
-    function getDataRateLightPerMbHour() {
-      return billingConfig.data_rate_light_per_mb_hour || 0.045;
+    function getCardMinimumCents() {
+      return billingConfig.card_minimum_cents || 2500;
+    }
+
+    function getWireMinimumCents() {
+      return billingConfig.wire_minimum_cents || 2500;
     }
 
     function getPolicyCopy() {
@@ -6063,12 +6077,12 @@ export function getLayoutHTML(options: {
       var preview = document.getElementById('walletExpressPreview');
       if (!preview) return;
       var cents = getWalletFundingAmountCents();
-      var minCents = 500;
+      var minCents = getCardMinimumCents();
       var maxCents = 500000;
       var dollars = (cents / 100).toFixed(2);
       var light = Math.round((cents / 100) * getWalletLightPerUsd());
       if (cents < minCents) {
-        preview.textContent = 'Minimum wallet funding amount is $5.00.';
+        preview.textContent = 'Minimum wallet funding amount is ' + formatUsdCents(minCents) + '.';
       } else if (cents > maxCents) {
         preview.textContent = 'Maximum wallet funding amount is $5,000.00.';
       } else {
@@ -6084,11 +6098,11 @@ export function getLayoutHTML(options: {
       var preview = document.getElementById('wireTransferPreview');
       if (!preview) return;
       var cents = getWireFundingAmountCents();
-      var minCents = 500;
+      var minCents = getWireMinimumCents();
       var maxCents = 500000;
       var light = Math.round((cents / 100) * getWireLightPerUsd());
       if (cents < minCents) {
-        preview.textContent = 'Minimum wire funding amount is $5.00.';
+        preview.textContent = 'Minimum wire funding amount is ' + formatUsdCents(minCents) + '.';
       } else if (cents > maxCents) {
         preview.textContent = 'Maximum wire funding amount is $5,000.00.';
       } else {
@@ -6130,7 +6144,7 @@ export function getLayoutHTML(options: {
           '<div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--space-2);align-items:end;margin-bottom:var(--space-2);">' +
             '<div>' +
               '<label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Amount (USD)</label>' +
-              '<input id="walletExpressAmountUsd" type="number" min="5" max="5000" step="1" value="25" oninput="updateWalletFundingPreview()" style="width:100%;padding:7px 9px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">' +
+              '<input id="walletExpressAmountUsd" type="number" min="' + (getCardMinimumCents() / 100) + '" max="5000" step="1" value="' + Math.max(25, getCardMinimumCents() / 100) + '" oninput="updateWalletFundingPreview()" style="width:100%;padding:7px 9px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">' +
             '</div>' +
             '<button id="walletExpressStartBtn" class="btn btn-primary btn-sm" style="border-radius:0;" onclick="startWalletExpressCheckout()">Show Wallet Buttons</button>' +
           '</div>' +
@@ -6147,7 +6161,7 @@ export function getLayoutHTML(options: {
           '<div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--space-2);align-items:end;margin-bottom:var(--space-2);">' +
             '<div>' +
               '<label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Amount (USD)</label>' +
-              '<input id="wireTransferAmountUsd" type="number" min="5" max="5000" step="1" value="500" oninput="updateWireFundingPreview()" style="width:100%;padding:7px 9px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">' +
+              '<input id="wireTransferAmountUsd" type="number" min="' + (getWireMinimumCents() / 100) + '" max="5000" step="1" value="500" oninput="updateWireFundingPreview()" style="width:100%;padding:7px 9px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">' +
             '</div>' +
             '<button id="wireTransferStartBtn" class="btn btn-sm" style="border-radius:0;border:1px solid var(--border);" onclick="startWireTransferFunding()">Get Instructions</button>' +
           '</div>' +
@@ -6230,8 +6244,9 @@ export function getLayoutHTML(options: {
         return;
       }
       var cents = getWireFundingAmountCents();
-      if (cents < 500) {
-        setWireTransferStatus('Minimum wire funding amount is $5.00.', 'error');
+      var minCents = getWireMinimumCents();
+      if (cents < minCents) {
+        setWireTransferStatus('Minimum wire funding amount is ' + formatUsdCents(minCents) + '.', 'error');
         return;
       }
       if (cents > 500000) {
@@ -6283,8 +6298,9 @@ export function getLayoutHTML(options: {
         return;
       }
       var cents = getWalletFundingAmountCents();
-      if (cents < 500) {
-        setWalletExpressStatus('Minimum wallet funding amount is $5.00.', 'error');
+      var minCents = getCardMinimumCents();
+      if (cents < minCents) {
+        setWalletExpressStatus('Minimum wallet funding amount is ' + formatUsdCents(minCents) + '.', 'error');
         return;
       }
       if (cents > 500000) {
@@ -6396,11 +6412,16 @@ export function getLayoutHTML(options: {
       renderWalletFundingMethods();
       var canonicalEl = document.getElementById('walletCanonicalRateLabel');
       if (canonicalEl) {
-        canonicalEl.textContent = getCanonicalLightPerUsd().toLocaleString() + ' Light = $1 platform reference';
+        canonicalEl.textContent = getCanonicalLightPerUsd().toLocaleString() + ' Light = $1 receipt/payout reference';
       }
       var fundingEl = document.getElementById('walletFundingPolicy');
       if (fundingEl) {
-        fundingEl.textContent = 'Apple Pay and Google Pay fund at ' + getWalletLightPerUsd().toLocaleString() + ' Light / $1. Wire transfer funds at ' + getWireLightPerUsd().toLocaleString() + ' Light / $1. ' + getCanonicalLightPerUsd().toLocaleString() + ' Light = $1 is the platform reference.';
+        fundingEl.textContent = 'Apple Pay and Google Pay fund at ' + getWalletLightPerUsd().toLocaleString() + ' Light / $1. Wire transfer funds at ' + getWireLightPerUsd().toLocaleString() + ' Light / $1. ' + getCanonicalLightPerUsd().toLocaleString() + ' Light = $1 is used for receipts, internal cost reference, and payouts.';
+      }
+      var cloudPolicyEl = document.getElementById('walletCloudPolicy');
+      if (cloudPolicyEl) {
+        var copy = getPolicyCopy();
+        cloudPolicyEl.textContent = [copy.cloudUsage, copy.storagePolicy, copy.freeCallSponsorship].filter(Boolean).join(' ');
       }
       var payoutEl = document.getElementById('payoutPolicyCopy');
       if (payoutEl) payoutEl.textContent = billingConfig.payout_policy_copy;
@@ -7005,12 +7026,25 @@ export function getLayoutHTML(options: {
               '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">User</th>' +
               '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Function</th>' +
               '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Receipt</th>' +
+              '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">App</th>' +
+              '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Infra</th>' +
+              '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Cloud</th>' +
               '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Duration</th>' +
               '<th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Time</th>' +
             '</tr></thead><tbody>' +
             logs.map(function(log) {
               var success = log.success !== false;
               var receiptId = log.receipt_id || log.id || '';
+              var receipt = log.receipt || {};
+              var appLight = typeof receipt.app_charge_light === 'number' ? receipt.app_charge_light : (log.call_charge_light || 0);
+              var infraLight = typeof receipt.infra_light === 'number' ? receipt.infra_light : ((log.infra_charge_light || log.cloud_charge_light || 0));
+              var cloudUnits = typeof receipt.cloud_units === 'number' ? receipt.cloud_units : (log.cloud_units || 0);
+              var netLine = receipt.platform_fee_light || receipt.developer_net_light
+                ? 'Fee ' + formatLight(receipt.platform_fee_light || 0) + ' · Net ' + formatLight(receipt.developer_net_light || 0)
+                : '';
+              var infraTitle = receipt.worker_units
+                ? 'Worker ' + (receipt.worker_units.cloud_units || 0) + ' cloud units · R2 ' + ((receipt.r2_ops && receipt.r2_ops.operations) || 0) + ' ops · KV ' + ((receipt.kv_ops && receipt.kv_ops.operations) || 0) + ' ops · D1 reads ' + ((receipt.d1_reads && receipt.d1_reads.rows) || 0) + ' · D1 writes ' + ((receipt.d1_writes && receipt.d1_writes.rows) || 0) + ' · Widget pulls ' + ((receipt.widget_pulls && receipt.widget_pulls.pulls) || 0)
+                : '';
               return '<tr style="border-bottom:1px solid var(--border)">' +
                 '<td style="padding:8px 12px"><div style="width:8px;height:8px;border-radius:50%;background:' + (success ? 'var(--success)' : 'var(--error)') + '"></div></td>' +
                 '<td style="padding:8px 12px;color:var(--text-muted);font-family:var(--font-mono);font-size:11px">' + escapeHtml((log.user_id || '').substring(0, 8)) + '</td>' +
@@ -7018,6 +7052,9 @@ export function getLayoutHTML(options: {
                 '<td style="padding:8px 12px;color:var(--text-muted);font-family:var(--font-mono);font-size:11px;white-space:nowrap">' +
                   (receiptId ? '<code title="' + escapeHtml(receiptId) + '">' + escapeHtml(shortHash(receiptId)) + '</code> <button class="trust-copy-btn" data-receipt-id="' + escapeHtml(receiptId) + '" onclick="copyReceiptId(this)">Copy</button>' : '-') +
                 '</td>' +
+                '<td style="padding:8px 12px;color:var(--text-muted);white-space:nowrap" title="' + escapeHtml(netLine) + '">' + (appLight ? formatLight(appLight) : '-') + '</td>' +
+                '<td style="padding:8px 12px;color:var(--text-muted);white-space:nowrap" title="' + escapeHtml(infraTitle) + '">' + (infraLight ? formatLight(infraLight) : '-') + '</td>' +
+                '<td style="padding:8px 12px;color:var(--text-muted);white-space:nowrap">' + (cloudUnits ? cloudUnits.toLocaleString() : '-') + '</td>' +
                 '<td style="padding:8px 12px;color:var(--text-muted)">' + (log.duration_ms ? log.duration_ms + 'ms' : '-') + '</td>' +
                 '<td style="padding:8px 12px;color:var(--text-muted)">' + relTime(log.created_at) + '</td>' +
               '</tr>';
@@ -7336,7 +7373,7 @@ export function getLayoutHTML(options: {
       var value = Number(amount);
       if (!Number.isFinite(value) || value <= 0) return null;
       var rounded = Math.round(value);
-      var fee = Math.round(rounded * 0.10 * 100) / 100;
+      var fee = Math.round(rounded * getPlatformFeeRate() * 100) / 100;
       return {
         price: rounded,
         fee: fee,
@@ -7355,7 +7392,7 @@ export function getLayoutHTML(options: {
             '<div style="padding:var(--space-3);background:var(--bg-secondary);border:1px solid var(--border);"><div style="font-size:11px;color:var(--text-muted);">Platform fee</div><div style="font-size:16px;font-weight:700;">' + formatLight(math.fee) + '</div></div>' +
             '<div style="padding:var(--space-3);background:var(--bg-secondary);border:1px solid var(--border);"><div style="font-size:11px;color:var(--text-muted);">You receive</div><div style="font-size:16px;font-weight:700;color:var(--success);">' + formatLight(math.payout) + '</div></div>' +
           '</div>'
-        : '<div style="font-size:13px;color:var(--text-muted);margin-top:var(--space-2);">Set an ask price to preview instant-acquisition economics. Offers use the same 10% platform fee when accepted.</div>';
+        : '<div style="font-size:13px;color:var(--text-muted);margin-top:var(--space-2);">Set an ask price to preview instant-acquisition economics. Offers use the configured ' + escapeHtml(getPlatformFeePercentLabel()) + ' platform fee when accepted.</div>';
       return '<div class="section-card" style="margin-top:var(--space-4);">' +
         '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-3);">' +
           '<div>' +
@@ -7391,7 +7428,7 @@ export function getLayoutHTML(options: {
         : '<div style="font-size:12px;color:var(--text-muted);">No ask price set. Acquirers can still place offers if this listing is active.</div>';
       preview.innerHTML = rows + (warnings.length
         ? '<div style="font-size:12px;color:var(--error);margin-top:var(--space-2);">' + escapeHtml(warnings.join(' ')) + '</div>'
-        : '<div style="font-size:12px;color:var(--text-muted);margin-top:var(--space-2);">Accepting a bid uses the same 10% platform fee.</div>');
+        : '<div style="font-size:12px;color:var(--text-muted);margin-top:var(--space-2);">Accepting a bid uses the configured ' + escapeHtml(getPlatformFeePercentLabel()) + ' platform fee.</div>');
     };
 
     function loadOwnerMarketplaceMetrics(appId) {
@@ -9590,7 +9627,7 @@ export function getLayoutHTML(options: {
         var storageTxs = [];
         var generalTxs = [];
         for (var i = 0; i < txs.length; i++) {
-          if (txs[i].category === 'hosting' || txs[i].category === 'data_storage') {
+          if (txs[i].category === 'hosting' || txs[i].category === 'data_storage' || txs[i].category === 'storage_at_rest') {
             storageTxs.push(txs[i]);
           } else {
             generalTxs.push(txs[i]);
@@ -9627,13 +9664,13 @@ export function getLayoutHTML(options: {
             + '<span id="storageToggleArrow" style="font-size:10px;color:var(--text-muted);">\\u25B6</span>'
             + '</div>'
             + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-3);font-size:13px;margin-top:var(--space-3);">'
-            + '<div><div style="color:var(--text-muted);font-size:11px;margin-bottom:2px;">Hourly Rate</div><div style="font-weight:600;">' + formatLight((rate.hosting_light_per_hour || 0)) + '</div></div>'
+            + '<div><div style="color:var(--text-muted);font-size:11px;margin-bottom:2px;">Storage Rate</div><div style="font-weight:600;">' + formatLight((rate.storage_light_per_hour || 0)) + '</div></div>'
             + '<div><div style="color:var(--text-muted);font-size:11px;margin-bottom:2px;">Est. Daily</div><div style="font-weight:600;">' + formatLight(dailyLight) + '</div></div>'
             + '<div><div style="color:var(--text-muted);font-size:11px;margin-bottom:2px;">Est. Monthly</div><div style="font-weight:600;">' + formatLight(monthlyLight) + '</div></div>'
             + '</div>'
             + '<div style="font-size:11px;color:var(--text-muted);margin-top:var(--space-3);">'
-            + (rate.hosting_apps || 0) + ' published app(s) \\u00B7 ' + (rate.hosting_mb || 0).toFixed(2) + ' MB \\u00B7 ' + formatLightRate(rate.hosting_rate_light_per_mb_hour || getHostingRateLightPerMbHour()) + '/MB/hr'
-            + (rate.data_overage_mb > 0 ? ' \\u00B7 ' + rate.data_overage_mb.toFixed(2) + ' MB storage soft-cap overage at ' + formatLightRate(rate.data_rate_light_per_mb_hour || getDataRateLightPerMbHour()) + '/MB/hr' : '')
+            + (rate.storage_combined_mb || 0).toFixed(2) + ' MB used \\u00B7 ' + (rate.storage_free_mb || 100).toFixed(2) + ' MB free \\u00B7 ' + formatLightRate(rate.storage_rate_light_per_gb_month || 0) + '/GB-month'
+            + ((rate.storage_overage_mb || 0) > 0 ? ' \\u00B7 ' + rate.storage_overage_mb.toFixed(2) + ' MB over free tier' : '')
             + '</div>'
             + storageHtml
             + '</div>';

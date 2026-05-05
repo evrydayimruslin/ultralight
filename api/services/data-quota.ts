@@ -1,7 +1,7 @@
 // Data Storage Soft-Cap Service
 // Tracks user-generated data storage (via ultralight.store/batchStore) per user.
-// Combined with storage_used_bytes (app source code) to report a 100MB soft cap.
-// Overage billed at DATA_RATE_LIGHT_PER_MB_PER_HOUR from balance_light.
+// Combined with source bytes and D1 storage to report a 100MB soft cap.
+// Overage is billed by the storage-at-rest reconciliation job.
 
 import { getEnv } from '../lib/env.ts';
 import { COMBINED_FREE_TIER_BYTES } from '../../shared/types/index.ts';
@@ -62,7 +62,8 @@ function unavailableDataQuotaResult(
 /**
  * Read a user's data storage soft-cap status.
  * Combined budget: storage_used_bytes (source code) + data_storage_used_bytes
- * (user data). Writes are always allowed; overage is billed from Light.
+ * (user data) + D1 storage as returned by the quota RPC. Writes are always
+ * allowed; overage is billed from Light by the storage-at-rest meter.
  */
 export async function checkDataQuota(
   userId: string,

@@ -19,7 +19,10 @@ import { getPermissionsForUser } from "./user.ts";
 import type { Tier } from "../../shared/contracts/runtime.ts";
 import { type UserContext } from "../runtime/sandbox.ts";
 import { createR2Service } from "../services/storage.ts";
-import { createRuntimeAIContext, createUnavailableAIService } from "../services/runtime-ai.ts";
+import {
+  createRuntimeAIContext,
+  createUnavailableAIService,
+} from "../services/runtime-ai.ts";
 import { getCodeCache } from "../services/codecache.ts";
 import { getPermissionCache } from "../services/permission-cache.ts";
 import {
@@ -39,9 +42,12 @@ import {
   buildGpuStatusDiagnostics,
 } from "../services/gpu/status.ts";
 import {
-  logExecutionResult,
+  createRuntimeOperationMeteringContext,
+  debitWidgetPullUsage,
+  preflightRuntimeCloudHold,
+  settleAndLogAppExecution,
   settleAndLogGpuExecution,
-  settleCallerAppCharge,
+  settleRuntimeCloudPreflight,
 } from "../services/execution-settlement.ts";
 import { createExecutionReceiptId } from "../services/call-logger.ts";
 import {
@@ -568,7 +574,8 @@ const SDK_TOOLS: MCPTool[] = [
         },
         model: {
           type: "string",
-          description: "Model ID. Light-debit calls may request any OpenRouter-compatible model; BYOK calls use the configured provider model.",
+          description:
+            "Model ID. Light-debit calls may request any OpenRouter-compatible model; BYOK calls use the configured provider model.",
         },
         temperature: {
           type: "number",
@@ -1187,7 +1194,19 @@ async function handleResourcesRead(
       );
     }
     try {
-      const appData = createAppDataService(appId, userId);
+      const appData = createAppDataService(appId, userId, {
+        operationMetering: {
+          payerUserId: userId,
+          callerUserId: userId,
+          ownerUserId: app.owner_id,
+          appId,
+          source: "mcp_resource",
+          metadata: {
+            surface: "mcp_resources_read",
+            uri,
+          },
+        },
+      });
       const keys = await appData.list();
       const contents: MCPResourceContent[] = [{
         uri: uri,
@@ -1221,7 +1240,19 @@ async function handleResourcesRead(
       return jsonRpcErrorResponse(id, INVALID_PARAMS, "Missing key in URI");
     }
     try {
-      const appData = createAppDataService(appId, userId);
+      const appData = createAppDataService(appId, userId, {
+        operationMetering: {
+          payerUserId: userId,
+          callerUserId: userId,
+          ownerUserId: app.owner_id,
+          appId,
+          source: "mcp_resource",
+          metadata: {
+            surface: "mcp_resources_read",
+            uri,
+          },
+        },
+      });
       const value = await appData.load(key);
       if (value === null || value === undefined) {
         return jsonRpcErrorResponse(
@@ -1576,7 +1607,9 @@ async function handleToolsCall(
 
   // Extract agent meta (e.g. _user_query, _session_id) before passing to sandbox
   const { extractCallMeta } = await import("../services/call-logger.ts");
-  const { cleanArgs, userQuery, sessionId } = extractCallMeta(args || {});
+  const { cleanArgs, userQuery, sessionId, widgetPull } = extractCallMeta(
+    args || {},
+  );
 
   // Extract auth token from request for inter-app calls (ultralight.call)
   const authToken = request.headers.get("Authorization")?.slice(7) || undefined;
@@ -1590,7 +1623,7 @@ async function handleToolsCall(
     userId,
     user,
     callerContext,
-    { userQuery, sessionId, authToken },
+    { userQuery, sessionId, authToken, widgetPull },
   );
 }
 
@@ -1615,11 +1648,27 @@ async function executeSDKTool(
   try {
     // Create app data service — use Worker-backed service if configured (native R2, ~10x faster)
     // Wrap with metered service when userId is present to track user data storage.
+    const sdkOperationMetering = {
+      payerUserId: userId,
+      callerUserId: userId,
+      ownerUserId: appOwnerId,
+      appId,
+      functionName: toolName,
+      source: "mcp_sdk",
+      metadata: {
+        surface: "mcp_sdk",
+        tool_name: toolName,
+      },
+    };
     const _workerUrl = getEnv("WORKER_DATA_URL");
     const _workerSecret = getEnv("WORKER_SECRET");
     const _rawAppDataService = (_workerUrl && _workerSecret)
-      ? createWorkerAppDataService(appId, userId, _workerUrl, _workerSecret)
-      : createAppDataService(appId, userId);
+      ? createWorkerAppDataService(appId, userId, _workerUrl, _workerSecret, {
+        operationMetering: sdkOperationMetering,
+      })
+      : createAppDataService(appId, userId, {
+        operationMetering: sdkOperationMetering,
+      });
     const appDataService = userId
       ? createMeteredAppDataService(_rawAppDataService, userId)
       : _rawAppDataService;
@@ -1908,7 +1957,12 @@ async function handleGpuExecution(
   args: Record<string, unknown>,
   userId: string,
   user: UserContext | null,
-  meta?: { userQuery?: string; sessionId?: string; authToken?: string },
+  meta?: {
+    userQuery?: string;
+    sessionId?: string;
+    authToken?: string;
+    widgetPull?: { widgetName?: string; intervalMs?: number; reason?: string };
+  },
 ): Promise<Response> {
   if (app.gpu_status !== "live") {
     return jsonRpcErrorResponse(
@@ -1996,7 +2050,12 @@ async function executeAppFunction(
   userId: string,
   user: UserContext | null,
   callerContext: RequestCallerContext,
-  meta?: { userQuery?: string; sessionId?: string; authToken?: string },
+  meta?: {
+    userQuery?: string;
+    sessionId?: string;
+    authToken?: string;
+    widgetPull?: { widgetName?: string; intervalMs?: number; reason?: string };
+  },
 ): Promise<Response> {
   try {
     // ── GPU Runtime Branch (early return) ──
@@ -2014,16 +2073,6 @@ async function executeAppFunction(
     }
 
     const r2Service = createR2Service();
-    // Use Worker-backed data service if configured (native R2 bindings, ~10x faster)
-    // Wrap with metered service when userId is present to track user data storage.
-    const _wUrl = getEnv("WORKER_DATA_URL");
-    const _wSecret = getEnv("WORKER_SECRET");
-    const _rawAppDataService2 = (_wUrl && _wSecret)
-      ? createWorkerAppDataService(app.id, userId, _wUrl, _wSecret)
-      : createAppDataService(app.id, userId);
-    const appDataService = userId
-      ? createMeteredAppDataService(_rawAppDataService2, userId)
-      : _rawAppDataService2;
 
     // Phase 2C: Run independent setup tasks in parallel
     // - Code fetch (R2, ~50-200ms on cache miss — the bottleneck)
@@ -2135,7 +2184,9 @@ async function executeAppFunction(
         route: null,
         resolvedRoute: null,
         userApiKey: null,
-        aiService: createUnavailableAIService("ai:call permission not granted."),
+        aiService: createUnavailableAIService(
+          "ai:call permission not granted.",
+        ),
       };
 
     // ── Async promotion threshold: if execution exceeds this, return a job envelope ──
@@ -2145,6 +2196,126 @@ async function executeAppFunction(
     const isAiCapable = permissions.includes("ai:call");
     const executionId = crypto.randomUUID();
     const receiptId = createExecutionReceiptId();
+    const widgetPull = meta?.widgetPull;
+    const callMethod = widgetPull ? "widget_pull" : "tools/call";
+    const widgetPullMetadata = widgetPull
+      ? {
+        widget_name: widgetPull.widgetName,
+        widget_interval_ms: widgetPull.intervalMs,
+        widget_pull_reason: widgetPull.reason,
+      }
+      : {};
+    const cloudPreflight = await preflightRuntimeCloudHold({
+      app,
+      userId,
+      functionName,
+      inputArgs: args,
+      receiptId,
+      method: callMethod,
+      timeoutMs,
+      callerAuthState: "authenticated",
+    });
+    if (cloudPreflight.insufficientBalance) {
+      const widgetBalanceMessage = widgetPull
+        ? cloudPreflight.insufficientBalanceCode ===
+            "owner_sponsor_light_required"
+          ? "The app owner needs Light balance before this widget can refresh."
+          : "Light balance is required to refresh this widget."
+        : null;
+      return jsonRpcErrorResponse(
+        id,
+        -32009,
+        widgetBalanceMessage || cloudPreflight.insufficientBalanceMessage ||
+          "Light balance required to call this app.",
+        {
+          type: cloudPreflight.insufficientBalanceCode || "LIGHT_REQUIRED",
+          receipt_id: receiptId,
+          settlement: {
+            ...cloudPreflight.metadata,
+            ...(widgetPull
+              ? {
+                widget_pull: true,
+                ...widgetPullMetadata,
+              }
+              : {}),
+          },
+        },
+      );
+    }
+
+    const widgetPullUsage = widgetPull
+      ? await (async () => {
+        try {
+          return await debitWidgetPullUsage({
+            preflight: cloudPreflight,
+            app,
+            userId,
+            functionName,
+            receiptId,
+            widgetName: widgetPull.widgetName,
+            widgetIntervalMs: widgetPull.intervalMs,
+            widgetPullReason: widgetPull.reason,
+          });
+        } catch (err) {
+          console.error("[PRICING] Widget pull usage debit failed:", err);
+          const ownerSponsored = cloudPreflight.hold?.ownerSponsoredInfra ===
+            true;
+          return jsonRpcErrorResponse(
+            id,
+            -32009,
+            ownerSponsored
+              ? "The app owner needs Light balance before this widget can refresh."
+              : "Light balance is required to refresh this widget.",
+            {
+              type: ownerSponsored
+                ? "owner_sponsor_light_required"
+                : "caller_light_required",
+              receipt_id: receiptId,
+              settlement: {
+                ...cloudPreflight.metadata,
+                widget_pull: true,
+                ...widgetPullMetadata,
+              },
+            },
+          );
+        }
+      })()
+      : null;
+    if (widgetPullUsage instanceof Response) {
+      return widgetPullUsage;
+    }
+
+    const cloudOperationMetering = createRuntimeOperationMeteringContext({
+      preflight: cloudPreflight,
+      app,
+      userId,
+      functionName,
+      receiptId,
+      method: callMethod,
+      metadata: {
+        surface: "mcp_tools_call",
+        ...widgetPullMetadata,
+        widget_pull_event_id: widgetPullUsage?.eventId,
+        widget_pull_cloud_units: widgetPullUsage?.cloudUnits,
+        widget_pull_amount_light: widgetPullUsage?.amountLight,
+      },
+    });
+    // Use Worker-backed data service if configured (native R2 bindings, ~10x faster)
+    // Wrap with metered service when userId is present to track user data storage.
+    const _wUrl = getEnv("WORKER_DATA_URL");
+    const _wSecret = getEnv("WORKER_SECRET");
+    const _rawAppDataService2 = (_wUrl && _wSecret)
+      ? createWorkerAppDataService(app.id, userId, _wUrl, _wSecret, {
+        operationMetering: cloudOperationMetering,
+        billingConfig: cloudPreflight.billingConfig,
+      })
+      : createAppDataService(app.id, userId, {
+        operationMetering: cloudOperationMetering,
+        billingConfig: cloudPreflight.billingConfig,
+      });
+    const appDataService = userId
+      ? createMeteredAppDataService(_rawAppDataService2, userId)
+      : _rawAppDataService2;
 
     const execStart = Date.now();
     const sandboxConfig = {
@@ -2169,6 +2340,8 @@ async function executeAppFunction(
       authToken: meta?.authToken,
       workerSecret: getEnv("WORKER_SECRET") || undefined,
       timeoutMs,
+      cloudOperationMetering,
+      cloudOperationBillingConfig: cloudPreflight.billingConfig,
     };
 
     // Helper: run billing + logging after execution completes (used by both sync and async paths)
@@ -2182,37 +2355,46 @@ async function executeAppFunction(
         aiCostLight: number;
       },
     ) => {
-      const chargeResult = await settleCallerAppCharge({
-        app,
-        userId,
-        functionName,
-        inputArgs: args,
-        successful: result.success,
-      });
-      const callSource = user?.provisional ? "onboarding_template" : undefined;
-      logExecutionResult({
+      const callSource = widgetPull
+        ? "widget_pull"
+        : user?.provisional
+        ? "onboarding_template"
+        : undefined;
+      const cloudSettlement = await settleRuntimeCloudPreflight(
+        cloudPreflight,
+        result.durationMs,
+        {
+          success: result.success,
+          error_message: result.success ? null : String(result.error),
+          ...widgetPullMetadata,
+          widget_pull_event_id: widgetPullUsage?.eventId,
+          widget_pull_cloud_units: widgetPullUsage?.cloudUnits,
+          widget_pull_amount_light: widgetPullUsage?.amountLight,
+        },
+      );
+      const { settlement } = await settleAndLogAppExecution({
         receiptId,
         userId,
-        appId: app.id,
-        appName: app.name || app.slug,
+        user,
+        app,
         functionName,
-        method: "tools/call",
+        method: callMethod,
         success: result.success,
         durationMs: result.durationMs,
         errorMessage: result.success ? undefined : String(result.error),
         source: callSource,
         inputArgs: args,
         outputResult: result.success ? result.result : result.error,
-        userTier: user?.tier,
-        appVersion: app.current_version || undefined,
         aiCostLight: result.aiCostLight || 0,
         sessionId: meta?.sessionId,
         sequenceNumber: nextSequenceNumber(meta?.sessionId),
         userQuery: meta?.userQuery,
-        callChargeLight: chargeResult.chargedLight,
+        callerAuthState: "authenticated",
+        runtimePricingPreflight: cloudPreflight.pricing,
+        runtimeCloudSettlement: cloudSettlement,
       });
 
-      return chargeResult.chargedLight;
+      return settlement;
     };
 
     // Start execution (Dynamic Worker sandbox — avoids `new Function()` restriction on CF Workers)
@@ -2254,7 +2436,7 @@ async function executeAppFunction(
           durationMs: number;
           aiCostLight: number;
         };
-        const callChargeLight = await runPostExecution(result);
+        const settlement = await runPostExecution(result);
 
         // Fire-and-forget: rebuild entity index after successful execution
         if (result.success) {
@@ -2265,7 +2447,20 @@ async function executeAppFunction(
             );
         }
 
-        // Handle insufficient balance for sync path (callChargeLight would be 0 if failed)
+        if (result.success && settlement.insufficientBalance) {
+          return jsonRpcErrorResponse(
+            id,
+            -32009,
+            settlement.insufficientBalanceMessage ||
+              "Light balance required to call this app.",
+            {
+              type: settlement.insufficientBalanceCode || "LIGHT_REQUIRED",
+              receipt_id: receiptId,
+              settlement: settlement.metadata,
+            },
+          );
+        }
+
         if (result.success) {
           // Auto-stamp widget responses with app version for client cache busting
           if (isWidgetAppResponse(result.result)) {
@@ -2292,7 +2487,15 @@ async function executeAppFunction(
         // Attach completion handler — execution continues in background
         // Must use ctx.waitUntil() to keep CF Worker alive after response is sent
         const completionPromise = executionPromise.then(async (result) => {
-          await runPostExecution(result);
+          const settlement = await runPostExecution(result);
+          if (result.success && settlement.insufficientBalance) {
+            await failJob(jobId, {
+              type: settlement.insufficientBalanceCode || "LIGHT_REQUIRED",
+              message: settlement.insufficientBalanceMessage ||
+                "Light balance required to call this app.",
+            }, result.durationMs);
+            return;
+          }
           await completeJob(jobId, {
             success: result.success,
             result: result.success ? result.result : result.error,
@@ -2336,9 +2539,23 @@ async function executeAppFunction(
     } else {
       // Non-AI apps or async limit reached: synchronous execution (original behavior)
       const result = await executionPromise;
-      await runPostExecution(result);
+      const settlement = await runPostExecution(result);
 
       // Fire-and-forget: rebuild entity index after successful execution
+      if (result.success && settlement.insufficientBalance) {
+        return jsonRpcErrorResponse(
+          id,
+          -32009,
+          settlement.insufficientBalanceMessage ||
+            "Light balance required to call this app.",
+          {
+            type: settlement.insufficientBalanceCode || "LIGHT_REQUIRED",
+            receipt_id: receiptId,
+            settlement: settlement.metadata,
+          },
+        );
+      }
+
       if (result.success) {
         import("../services/entity-index.ts")
           .then(({ rebuildEntityIndex }) => rebuildEntityIndex(userId))
@@ -2430,7 +2647,10 @@ function attachExecutionReceipt(result: unknown, receiptId: string): unknown {
 /**
  * Format tool error for MCP response
  */
-function formatToolError(err: unknown, receiptId?: string): MCPToolCallResponse {
+function formatToolError(
+  err: unknown,
+  receiptId?: string,
+): MCPToolCallResponse {
   const message = err instanceof Error
     ? err.message
     : (err as { message?: string })?.message || String(err);

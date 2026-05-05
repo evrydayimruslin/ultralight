@@ -5,8 +5,13 @@
 // This is the security boundary: credentials stay in the parent Worker,
 // the Dynamic Worker only has access to the methods exposed here.
 
-import { WorkerEntrypoint } from 'cloudflare:workers';
-import { getEnv } from '../../lib/env.ts';
+import { WorkerEntrypoint } from "cloudflare:workers";
+import { getEnv } from "../../lib/env.ts";
+import type { BillingConfig } from "../../services/billing-config.ts";
+import {
+  type CloudOperationMeteringContext,
+  debitD1Usage,
+} from "../../services/cloud-usage.ts";
 
 // ============================================
 // TYPES
@@ -16,6 +21,16 @@ interface DatabaseBindingProps {
   databaseId: string;
   appId: string;
   userId: string;
+  operationMetering?: CloudOperationMeteringContext | null;
+  operationBillingConfig?:
+    | Pick<
+      BillingConfig,
+      | "version"
+      | "cloudUnitLightPer1k"
+      | "d1ReadRowsPerCloudUnit"
+      | "d1WriteRowsPerCloudUnit"
+    >
+    | null;
 }
 
 interface D1QueryResult {
@@ -34,32 +49,60 @@ interface D1QueryResult {
 // RPC BINDING
 // ============================================
 
-export class DatabaseBinding extends WorkerEntrypoint<unknown, DatabaseBindingProps> {
+export class DatabaseBinding
+  extends WorkerEntrypoint<unknown, DatabaseBindingProps> {
+  private async meterD1Result(
+    sql: string,
+    meta: D1QueryResult["meta"] | undefined,
+  ): Promise<void> {
+    const metering = this.ctx.props.operationMetering;
+    if (!metering || !meta) {
+      return;
+    }
+
+    await debitD1Usage({
+      ...metering,
+      operation: classifyD1Operation(sql),
+      rowsRead: meta.rows_read ?? 0,
+      rowsWritten: meta.rows_written ?? 0,
+      billingConfig: this.ctx.props.operationBillingConfig ?? undefined,
+      metadata: {
+        ...(metering.metadata ?? {}),
+        binding: "DatabaseBinding",
+        sql_operation: classifyD1Operation(sql),
+      },
+    });
+  }
 
   /**
    * Execute a D1 query via the Cloudflare HTTP API.
    * Credentials (CF_ACCOUNT_ID, CF_API_TOKEN) are read from the parent Worker's env,
    * never exposed to the Dynamic Worker.
    */
-  private async queryD1(sql: string, params: unknown[] = []): Promise<D1QueryResult> {
-    const cfAccountId = getEnv('CF_ACCOUNT_ID');
-    const cfApiToken = getEnv('CF_API_TOKEN');
+  private async queryD1(
+    sql: string,
+    params: unknown[] = [],
+  ): Promise<D1QueryResult> {
+    const cfAccountId = getEnv("CF_ACCOUNT_ID");
+    const cfApiToken = getEnv("CF_API_TOKEN");
     const { databaseId } = this.ctx.props;
 
     if (!cfAccountId || !cfApiToken) {
-      throw new Error('D1 not configured: missing CF_ACCOUNT_ID or CF_API_TOKEN');
+      throw new Error(
+        "D1 not configured: missing CF_ACCOUNT_ID or CF_API_TOKEN",
+      );
     }
 
     const res = await fetch(
       `https://api.cloudflare.com/client/v4/accounts/${cfAccountId}/d1/database/${databaseId}/query`,
       {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Authorization': `Bearer ${cfApiToken}`,
-          'Content-Type': 'application/json',
+          "Authorization": `Bearer ${cfApiToken}`,
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({ sql, params }),
-      }
+      },
     );
 
     if (!res.ok) {
@@ -74,11 +117,24 @@ export class DatabaseBinding extends WorkerEntrypoint<unknown, DatabaseBindingPr
     };
 
     if (!data.success) {
-      const errMsg = data.errors?.[0]?.message || 'Unknown D1 error';
+      const errMsg = data.errors?.[0]?.message || "Unknown D1 error";
       throw new Error(`D1 query error: ${errMsg}`);
     }
 
-    return data.result?.[0] || { success: true, results: [], meta: { changes: 0, last_row_id: 0, duration: 0, rows_read: 0, rows_written: 0 } };
+    const result = data.result?.[0] || {
+      success: true,
+      results: [],
+      meta: {
+        changes: 0,
+        last_row_id: 0,
+        duration: 0,
+        rows_read: 0,
+        rows_written: 0,
+      },
+    };
+
+    await this.meterD1Result(sql, result.meta);
+    return result;
   }
 
   // ── D1DataService interface (matches ultralight.db.*) ──
@@ -125,4 +181,8 @@ export class DatabaseBinding extends WorkerEntrypoint<unknown, DatabaseBindingPr
     }
     return results;
   }
+}
+
+function classifyD1Operation(sql: string): string {
+  return sql.trim().split(/\s+/, 1)[0]?.toLowerCase() || "query";
 }

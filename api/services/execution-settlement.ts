@@ -1,20 +1,32 @@
-import type { UserContext } from '../runtime/sandbox.ts';
-import { getEnv } from '../lib/env.ts';
-import type {
-  App,
-  AppPricingConfig,
-} from '../../shared/types/index.ts';
+import type { UserContext } from "../runtime/sandbox.ts";
+import { getEnv } from "../lib/env.ts";
+import { type BillingConfig, getBillingConfig } from "./billing-config.ts";
+import type { App, AppPricingConfig } from "../../shared/types/index.ts";
 import {
+  formatLight,
   getCallPriceLight,
   getFreeCalls,
   getFreeCallsScope,
   LIGHT_PER_DOLLAR_DESKTOP,
-} from '../../shared/types/index.ts';
-import type { McpCallLogEntry } from './call-logger.ts';
-import { logMcpCall } from './call-logger.ts';
-import type { GpuExecuteResult } from './gpu/executor.ts';
-import { settleGpuExecution } from './gpu/billing.ts';
-import { createSupabaseRestClient } from './platform-clients/supabase-rest.ts';
+} from "../../shared/types/index.ts";
+import type { McpCallLogEntry } from "./call-logger.ts";
+import { logMcpCall } from "./call-logger.ts";
+import type { GpuExecuteResult } from "./gpu/executor.ts";
+import { settleGpuExecution } from "./gpu/billing.ts";
+import { createSupabaseRestClient } from "./platform-clients/supabase-rest.ts";
+import {
+  calcCloudUsageLight,
+  calcOperationCloudUnits,
+  calcWorkerCloudUnits,
+  type CloudOperationMeteringContext,
+  type CloudUsageResource,
+  CloudUsageRpcError,
+  createRuntimeCloudHold,
+  debitCloudUsage,
+  releaseCloudUsageHold,
+  type RuntimeCloudHoldResult,
+  settleRuntimeCloudHold,
+} from "./cloud-usage.ts";
 
 export interface ExecutionTelemetry {
   responseSizeBytes: number;
@@ -34,6 +46,122 @@ export interface SettleCallerAppChargeResult {
   insufficientBalance: boolean;
 }
 
+export interface RuntimeInfraCharge {
+  amountLight: number;
+  units: number;
+  cloudUnits: number;
+  resource: CloudUsageResource;
+  source?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface SettleAppCallParams extends SettleCallerAppChargeParams {
+  receiptId?: string;
+  method?: string;
+  callerAuthState?: "authenticated" | "anonymous";
+  infraCharge?: RuntimeInfraCharge | null;
+  runtimePricingPreflight?: RuntimeAppCallPricingPreflight | null;
+  runtimeCloudSettlement?: RuntimeCloudSettlementForAppCall | null;
+}
+
+export interface AppCallSettlementResult {
+  chargedLight: number;
+  appChargeLight: number;
+  appPriceLight: number;
+  developerRevenueLight: number;
+  platformFeeLight: number;
+  infraChargeLight: number;
+  freeCall: boolean;
+  freeCallCount: number | null;
+  freeCallLimit: number;
+  payerUserId: string;
+  infraPayerUserId: string | null;
+  ownerSponsoredInfra: boolean;
+  transferId?: string;
+  cloudUsageEventId?: string;
+  cloudUsageHoldId?: string;
+  cloudUnits?: number;
+  insufficientBalance: boolean;
+  insufficientBalanceCode?:
+    | "caller_auth_required"
+    | "caller_light_required"
+    | "owner_sponsor_light_required";
+  insufficientBalanceMessage?: string;
+  receiptId?: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface RuntimeAppCallPricingPreflight {
+  appPriceLight: number;
+  appChargeLight: number;
+  freeCall: boolean;
+  freeCallCount: number | null;
+  freeCallLimit: number;
+}
+
+export interface RuntimeCloudSettlementForAppCall {
+  holdId: string;
+  eventId: string;
+  payerUserId: string;
+  ownerSponsoredInfra: boolean;
+  cloudUnits: number;
+  amountLight: number;
+  settledAmountLight: number;
+  releasedAmountLight: number;
+}
+
+export interface PreflightRuntimeCloudHoldParams {
+  app: App;
+  userId: string;
+  functionName: string;
+  inputArgs: Record<string, unknown>;
+  receiptId?: string;
+  method: string;
+  timeoutMs: number;
+  callerAuthState?: "authenticated" | "anonymous";
+}
+
+export interface RuntimeCloudPreflightResult {
+  hold: RuntimeCloudHoldResult | null;
+  pricing: RuntimeAppCallPricingPreflight;
+  billingConfig: BillingConfig;
+  insufficientBalance: boolean;
+  insufficientBalanceCode?: AppCallSettlementResult["insufficientBalanceCode"];
+  insufficientBalanceMessage?: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface RuntimeOperationMeteringContextParams {
+  preflight: RuntimeCloudPreflightResult;
+  app: Pick<App, "id" | "owner_id" | "slug">;
+  userId: string;
+  functionName: string;
+  receiptId?: string;
+  method: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface DebitWidgetPullUsageParams {
+  preflight: RuntimeCloudPreflightResult;
+  app: Pick<App, "id" | "owner_id" | "slug">;
+  userId: string;
+  functionName: string;
+  receiptId?: string;
+  widgetName?: string;
+  widgetIntervalMs?: number;
+  widgetPullReason?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface WidgetPullUsageResult {
+  eventId: string;
+  payerUserId: string;
+  ownerSponsoredInfra: boolean;
+  units: number;
+  cloudUnits: number;
+  amountLight: number;
+}
+
 export interface LogExecutionResultParams {
   receiptId?: string;
   userId: string;
@@ -45,7 +173,7 @@ export interface LogExecutionResultParams {
   durationMs: number;
   outputResult: unknown;
   errorMessage?: string;
-  source?: McpCallLogEntry['source'];
+  source?: McpCallLogEntry["source"];
   inputArgs?: Record<string, unknown>;
   userTier?: string;
   appVersion?: string;
@@ -54,6 +182,20 @@ export interface LogExecutionResultParams {
   sequenceNumber?: number;
   userQuery?: string;
   callChargeLight?: number;
+  appPriceLight?: number;
+  appChargeLight?: number;
+  infraChargeLight?: number;
+  platformFeeLight?: number;
+  developerNetLight?: number;
+  freeCall?: boolean;
+  freeCallCount?: number | null;
+  freeCallLimit?: number;
+  cloudUsageHoldId?: string;
+  cloudUsageEventId?: string;
+  cloudUnits?: number;
+  cloudChargeLight?: number;
+  cloudPayerUserId?: string;
+  cloudOwnerSponsored?: boolean;
   gpuType?: string;
   gpuExitCode?: string;
   gpuDurationMs?: number;
@@ -76,7 +218,30 @@ export interface SettleAndLogGpuExecutionParams {
   sessionId?: string;
   sequenceNumber?: number;
   userQuery?: string;
-  source?: McpCallLogEntry['source'];
+  source?: McpCallLogEntry["source"];
+}
+
+export interface SettleAndLogAppExecutionParams {
+  receiptId?: string;
+  userId: string;
+  user: UserContext | null;
+  app: App;
+  functionName: string;
+  inputArgs: Record<string, unknown>;
+  method: string;
+  success: boolean;
+  durationMs: number;
+  outputResult: unknown;
+  errorMessage?: string;
+  source?: McpCallLogEntry["source"];
+  aiCostLight?: number;
+  sessionId?: string;
+  sequenceNumber?: number;
+  userQuery?: string;
+  infraCharge?: RuntimeInfraCharge | null;
+  callerAuthState?: "authenticated" | "anonymous";
+  runtimePricingPreflight?: RuntimeAppCallPricingPreflight | null;
+  runtimeCloudSettlement?: RuntimeCloudSettlementForAppCall | null;
 }
 
 interface ExecutionSettlementDeps {
@@ -90,108 +255,585 @@ export function buildExecutionTelemetry(
   durationMs: number,
 ): ExecutionTelemetry {
   const serialized = JSON.stringify(outputResult);
-  const responseSizeBytes = new TextEncoder().encode(serialized || '').byteLength;
+  const responseSizeBytes =
+    new TextEncoder().encode(serialized || "").byteLength;
   const requestCost = 0.0000003;
   const cpuCost = durationMs * 0.00000002;
 
   return {
     responseSizeBytes,
-    executionCostEstimateLight: (requestCost + cpuCost) * LIGHT_PER_DOLLAR_DESKTOP,
+    executionCostEstimateLight: (requestCost + cpuCost) *
+      LIGHT_PER_DOLLAR_DESKTOP,
   };
+}
+
+export async function preflightRuntimeCloudHold(
+  params: PreflightRuntimeCloudHoldParams,
+  deps?: ExecutionSettlementDeps,
+): Promise<RuntimeCloudPreflightResult> {
+  const pricingConfig = params.app.pricing_config as AppPricingConfig | null;
+  const appPriceLight = Math.max(
+    getCallPriceLight(pricingConfig, params.functionName),
+    0,
+  );
+  const freeCallLimit =
+    params.userId === params.app.owner_id || appPriceLight <= 0
+      ? 0
+      : Math.max(getFreeCalls(pricingConfig, params.functionName), 0);
+  const scope = getFreeCallsScope(pricingConfig);
+  const counterKey = scope === "app" ? "__app__" : params.functionName;
+  const billingConfig = await getBillingConfig();
+  const basePricing: RuntimeAppCallPricingPreflight = {
+    appPriceLight,
+    appChargeLight: params.userId === params.app.owner_id ? 0 : appPriceLight,
+    freeCall: params.userId !== params.app.owner_id && appPriceLight <= 0,
+    freeCallCount: null,
+    freeCallLimit,
+  };
+
+  if (
+    params.userId !== params.app.owner_id &&
+    appPriceLight > 0 &&
+    params.callerAuthState === "anonymous"
+  ) {
+    return {
+      hold: null,
+      pricing: basePricing,
+      billingConfig,
+      insufficientBalance: true,
+      insufficientBalanceCode: "caller_auth_required",
+      insufficientBalanceMessage:
+        "Authentication is required to call paid apps.",
+      metadata: {
+        app_price_light: appPriceLight,
+        free_call_limit: freeCallLimit,
+      },
+    };
+  }
+
+  try {
+    const hold = await createRuntimeCloudHold({
+      callerUserId: params.userId,
+      ownerUserId: params.app.owner_id,
+      appId: params.app.id,
+      functionName: params.functionName,
+      receiptId: params.receiptId,
+      source: params.method,
+      timeoutMs: params.timeoutMs,
+      appPriceLight,
+      freeCallLimit,
+      freeCallCounterKey: freeCallLimit > 0 ? counterKey : null,
+      expiresAt: new Date(Date.now() + params.timeoutMs + 60_000).toISOString(),
+      billingConfig,
+      metadata: {
+        app_slug: params.app.slug,
+        method: params.method,
+        receipt_id: params.receiptId,
+        function_name: params.functionName,
+        input_args: params.inputArgs,
+        timeout_ms: params.timeoutMs,
+      },
+    }, deps);
+
+    return {
+      hold,
+      pricing: {
+        appPriceLight: hold.appPriceLight,
+        appChargeLight: hold.appChargeLight,
+        freeCall: hold.freeCall,
+        freeCallCount: hold.freeCallCount,
+        freeCallLimit: hold.freeCallLimit,
+      },
+      billingConfig,
+      insufficientBalance: false,
+      metadata: {
+        cloud_usage_hold_id: hold.holdId,
+        cloud_payer_user_id: hold.payerUserId,
+        cloud_owner_sponsored: hold.ownerSponsoredInfra,
+        expected_cloud_units: hold.expectedCloudUnits,
+        expected_amount_light: hold.expectedAmountLight,
+        app_price_light: hold.appPriceLight,
+        app_charge_light: hold.appChargeLight,
+        free_call: hold.freeCall,
+        free_call_count: hold.freeCallCount,
+        free_call_limit: hold.freeCallLimit,
+      },
+    };
+  } catch (err) {
+    const ownerSponsored = params.userId !== params.app.owner_id &&
+      appPriceLight <= 0;
+    const code = ownerSponsored
+      ? "owner_sponsor_light_required"
+      : "caller_light_required";
+    const amountLight = calculateExpectedRuntimeHoldAmount(
+      params.timeoutMs,
+      billingConfig,
+    );
+    if (!(err instanceof CloudUsageRpcError)) {
+      console.error("[PRICING] Runtime cloud hold error:", err);
+    }
+    return {
+      hold: null,
+      pricing: basePricing,
+      billingConfig,
+      insufficientBalance: true,
+      insufficientBalanceCode: code,
+      insufficientBalanceMessage: ownerSponsored
+        ? buildOwnerSponsorLightRequiredMessage(amountLight)
+        : buildCallerLightRequiredMessage(amountLight),
+      metadata: {
+        app_price_light: appPriceLight,
+        app_charge_light: basePricing.appChargeLight,
+        free_call: basePricing.freeCall,
+        free_call_limit: freeCallLimit,
+        timeout_ms: params.timeoutMs,
+        expected_amount_light: amountLight,
+      },
+    };
+  }
+}
+
+export function createRuntimeOperationMeteringContext(
+  params: RuntimeOperationMeteringContextParams,
+): CloudOperationMeteringContext | null {
+  const hold = params.preflight.hold;
+  if (!hold) {
+    return null;
+  }
+
+  return {
+    payerUserId: hold.payerUserId,
+    sponsorUserId: hold.sponsorUserId,
+    callerUserId: params.userId,
+    ownerUserId: params.app.owner_id,
+    appId: params.app.id,
+    functionName: params.functionName,
+    receiptId: params.receiptId,
+    source: params.method,
+    billingConfigVersion: params.preflight.billingConfig.version,
+    metadata: {
+      app_slug: params.app.slug,
+      runtime_cloud_hold_id: hold.holdId,
+      owner_sponsored_infra: hold.ownerSponsoredInfra,
+      ...(params.metadata ?? {}),
+    },
+  };
+}
+
+export async function settleRuntimeCloudPreflight(
+  preflight: RuntimeCloudPreflightResult,
+  durationMs: number,
+  metadata?: Record<string, unknown>,
+  deps?: ExecutionSettlementDeps,
+): Promise<RuntimeCloudSettlementForAppCall | null> {
+  if (!preflight.hold) {
+    return null;
+  }
+
+  const settlement = await settleRuntimeCloudHold({
+    holdId: preflight.hold.holdId,
+    durationMs,
+    billingConfig: preflight.billingConfig,
+    metadata: {
+      ...metadata,
+      expected_cloud_units: preflight.hold.expectedCloudUnits,
+      expected_amount_light: preflight.hold.expectedAmountLight,
+    },
+  }, deps);
+
+  return {
+    holdId: preflight.hold.holdId,
+    eventId: settlement.eventId,
+    payerUserId: preflight.hold.payerUserId,
+    ownerSponsoredInfra: preflight.hold.ownerSponsoredInfra,
+    cloudUnits: settlement.cloudUnits,
+    amountLight: settlement.amountLight,
+    settledAmountLight: settlement.settledAmountLight,
+    releasedAmountLight: settlement.releasedAmountLight,
+  };
+}
+
+export async function debitWidgetPullUsage(
+  params: DebitWidgetPullUsageParams,
+  deps?: ExecutionSettlementDeps,
+): Promise<WidgetPullUsageResult | null> {
+  const hold = params.preflight.hold;
+  if (!hold) return null;
+
+  const units = 1;
+  const billingConfig = params.preflight.billingConfig;
+  const cloudUnits = calcOperationCloudUnits(
+    units,
+    billingConfig.widgetPullsPerCloudUnit,
+  );
+  const amountLight = calcCloudUsageLight(
+    cloudUnits,
+    billingConfig.cloudUnitLightPer1k,
+  );
+
+  try {
+    const event = await debitCloudUsage({
+      payerUserId: hold.payerUserId,
+      sponsorUserId: hold.sponsorUserId,
+      callerUserId: params.userId,
+      ownerUserId: params.app.owner_id,
+      appId: params.app.id,
+      functionName: params.functionName,
+      receiptId: params.receiptId,
+      source: "widget_pull",
+      resource: "widget_pull",
+      units,
+      cloudUnits,
+      amountLight,
+      billingConfigVersion: billingConfig.version,
+      metadata: {
+        app_slug: params.app.slug,
+        method: "widget_pull",
+        receipt_id: params.receiptId,
+        function_name: params.functionName,
+        widget_name: params.widgetName,
+        widget_interval_ms: params.widgetIntervalMs,
+        widget_pull_reason: params.widgetPullReason,
+        widget_pulls_per_cloud_unit: billingConfig.widgetPullsPerCloudUnit,
+        runtime_cloud_hold_id: hold.holdId,
+        owner_sponsored_infra: hold.ownerSponsoredInfra,
+        ...(params.metadata ?? {}),
+      },
+    }, deps);
+
+    return {
+      eventId: event.eventId,
+      payerUserId: hold.payerUserId,
+      ownerSponsoredInfra: hold.ownerSponsoredInfra,
+      units,
+      cloudUnits,
+      amountLight: event.amountDebited,
+    };
+  } catch (err) {
+    try {
+      await releaseCloudUsageHold({
+        holdId: hold.holdId,
+        metadata: {
+          reason: "widget_pull_debit_failed",
+          receipt_id: params.receiptId,
+          widget_name: params.widgetName,
+          widget_pull_reason: params.widgetPullReason,
+        },
+      }, deps);
+    } catch (releaseErr) {
+      console.error(
+        "[PRICING] Failed to release runtime hold after widget pull debit failure:",
+        releaseErr,
+      );
+    }
+    throw err;
+  }
 }
 
 export async function settleCallerAppCharge(
   params: SettleCallerAppChargeParams,
   deps?: ExecutionSettlementDeps,
 ): Promise<SettleCallerAppChargeResult> {
-  const { app, userId, functionName, inputArgs, successful } = params;
-  if (!successful || userId === app.owner_id) {
-    return { chargedLight: 0, insufficientBalance: false };
-  }
+  const settlement = await settleAppCall(params, deps);
+  return {
+    chargedLight: settlement.appChargeLight,
+    insufficientBalance: settlement.insufficientBalance,
+  };
+}
 
+export async function settleAppCall(
+  params: SettleAppCallParams,
+  deps?: ExecutionSettlementDeps,
+): Promise<AppCallSettlementResult> {
+  const {
+    app,
+    userId,
+    functionName,
+    inputArgs,
+    successful,
+    receiptId,
+    method = "tools/call",
+  } = params;
   const pricingConfig = app.pricing_config as AppPricingConfig | null;
-  let chargedLight = getCallPriceLight(pricingConfig, functionName);
-  if (chargedLight <= 0) {
-    return { chargedLight: 0, insufficientBalance: false };
-  }
+  const pricingPreflight = params.runtimePricingPreflight;
+  const appPriceLight = pricingPreflight?.appPriceLight ??
+    Math.max(getCallPriceLight(pricingConfig, functionName), 0);
+  const selfCall = userId === app.owner_id;
+  const freeCallLimit = pricingPreflight?.freeCallLimit ??
+    (appPriceLight > 0
+      ? Math.max(getFreeCalls(pricingConfig, functionName), 0)
+      : 0);
+  let appChargeLight = successful && !selfCall
+    ? (pricingPreflight?.appChargeLight ?? appPriceLight)
+    : 0;
+  let freeCall = pricingPreflight?.freeCall ??
+    (successful && !selfCall && appPriceLight <= 0);
+  let freeCallCount: number | null = pricingPreflight?.freeCallCount ?? null;
+  let developerRevenueLight = 0;
+  let platformFeeLight = 0;
+  let transferId: string | undefined;
+  let cloudUsageEventId: string | undefined;
+
+  const baseMetadata = {
+    app_slug: app.slug,
+    pricing_source: "app_call",
+    method,
+    receipt_id: receiptId,
+    function_name: functionName,
+  };
 
   const fetchFn = deps?.fetchFn ?? fetch;
-  const supabaseUrl = getEnv('SUPABASE_URL');
-  const serviceKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
-  if (!supabaseUrl || !serviceKey) {
-    console.error('[PRICING] Supabase not configured for caller charge settlement');
-    return { chargedLight: 0, insufficientBalance: false };
-  }
-  const supabase = createSupabaseRestClient({ fetchFn });
+  const supabaseConfigured = Boolean(
+    getEnv("SUPABASE_URL") && getEnv("SUPABASE_SERVICE_ROLE_KEY"),
+  );
+  const supabase = supabaseConfigured
+    ? createSupabaseRestClient({ fetchFn })
+    : null;
 
-  const freeCalls = getFreeCalls(pricingConfig, functionName);
-  if (freeCalls > 0) {
+  if (
+    successful &&
+    !selfCall &&
+    appChargeLight > 0 &&
+    params.callerAuthState === "anonymous"
+  ) {
+    return buildInsufficientSettlement(params, {
+      appPriceLight,
+      freeCall,
+      freeCallCount,
+      freeCallLimit,
+      code: "caller_auth_required",
+      message: "Authentication is required to call paid apps.",
+    });
+  }
+
+  if (
+    !pricingPreflight && successful && !selfCall && appChargeLight > 0 &&
+    freeCallLimit > 0 &&
+    supabase
+  ) {
     const scope = getFreeCallsScope(pricingConfig);
-    const counterKey = scope === 'app' ? '__app__' : functionName;
+    const counterKey = scope === "app" ? "__app__" : functionName;
     try {
-      const usageRes = await supabase.rpc('increment_caller_usage', {
+      const usageRes = await supabase.rpc("increment_caller_usage", {
         p_app_id: app.id,
         p_user_id: userId,
         p_counter_key: counterKey,
       });
 
       if (usageRes.ok) {
-        const callCount = parseIncrementCallerUsageCount(await usageRes.json());
-        if (callCount !== null && callCount <= freeCalls) {
-          chargedLight = 0;
+        freeCallCount = parseIncrementCallerUsageCount(await usageRes.json());
+        if (freeCallCount !== null && freeCallCount <= freeCallLimit) {
+          appChargeLight = 0;
+          freeCall = true;
         }
       }
     } catch (usageErr) {
-      console.error('[PRICING] Free calls usage check error:', usageErr);
+      console.error("[PRICING] Free calls usage check error:", usageErr);
     }
   }
 
-  if (chargedLight <= 0) {
-    return { chargedLight: 0, insufficientBalance: false };
+  if (appChargeLight > 0) {
+    if (!supabase) {
+      console.error(
+        "[PRICING] Supabase not configured for caller charge settlement",
+      );
+      return buildBaseSettlement(params, {
+        appPriceLight,
+        appChargeLight: 0,
+        developerRevenueLight: 0,
+        platformFeeLight: 0,
+        freeCall,
+        freeCallCount,
+        freeCallLimit,
+        infraChargeLight: 0,
+        infraPayerUserId: null,
+        ownerSponsoredInfra: false,
+        transferId,
+        cloudUsageEventId,
+      });
+    }
+
+    try {
+      const transferReason = app.hosting_suspended === true
+        ? "tool_call_suspended"
+        : "tool_call";
+      const transferRes = await supabase.rpc("transfer_light", {
+        p_from_user: userId,
+        p_to_user: app.owner_id,
+        p_amount_light: appChargeLight,
+        p_reason: transferReason,
+        p_app_id: app.id,
+        p_function_name: functionName,
+        p_metadata: {
+          ...baseMetadata,
+          input_args: inputArgs,
+        },
+      });
+
+      if (!transferRes.ok) {
+        const body = await transferRes.text();
+        console.error(
+          `[PRICING] Transfer failed for ${userId} -> ${app.owner_id}:`,
+          body,
+        );
+        return buildInsufficientSettlement(params, {
+          appPriceLight,
+          freeCall,
+          freeCallCount,
+          freeCallLimit,
+          code: "caller_light_required",
+          message: buildCallerLightRequiredMessage(appChargeLight),
+        });
+      }
+
+      const rows = await transferRes.json() as Array<{
+        from_new_balance?: number;
+        to_new_balance?: number;
+        platform_fee?: number;
+        transfer_id?: string;
+      }>;
+      if (!rows || rows.length === 0) {
+        return buildInsufficientSettlement(params, {
+          appPriceLight,
+          freeCall,
+          freeCallCount,
+          freeCallLimit,
+          code: "caller_light_required",
+          message: buildCallerLightRequiredMessage(appChargeLight),
+        });
+      }
+
+      platformFeeLight = typeof rows[0].platform_fee === "number"
+        ? rows[0].platform_fee
+        : 0;
+      developerRevenueLight = appChargeLight - platformFeeLight;
+      transferId = typeof rows[0].transfer_id === "string"
+        ? rows[0].transfer_id
+        : undefined;
+
+      if (
+        app.hosting_suspended === true &&
+        Number(rows[0].to_new_balance || 0) > 0
+      ) {
+        supabase.patch(`/rest/v1/users?id=eq.${app.owner_id}`, {
+          hosting_suspended: false,
+        }).catch(() => {});
+        console.log(
+          `[SUSPEND] Auto-unsuspended app ${app.id} — owner balance recovered to ${
+            rows[0].to_new_balance
+          } Light`,
+        );
+      }
+    } catch (chargeErr) {
+      console.error("[PRICING] Charge error:", chargeErr);
+      return buildInsufficientSettlement(params, {
+        appPriceLight,
+        freeCall,
+        freeCallCount,
+        freeCallLimit,
+        code: "caller_light_required",
+        message: buildCallerLightRequiredMessage(appChargeLight),
+      });
+    }
   }
 
-  try {
-    const transferReason = app.hosting_suspended === true ? 'tool_call_suspended' : 'tool_call';
-    const transferRes = await supabase.rpc('transfer_light', {
-      p_from_user: userId,
-      p_to_user: app.owner_id,
-      p_amount_light: chargedLight,
-      p_reason: transferReason,
-      p_app_id: app.id,
-      p_function_name: functionName,
-      p_metadata: {
-        app_slug: app.slug,
-        pricing_source: 'app_call',
-      },
-    });
+  const runtimeCloudSettlement = params.runtimeCloudSettlement;
+  const infraCharge = runtimeCloudSettlement
+    ? null
+    : normalizeInfraCharge(params.infraCharge);
+  let infraPayerUserId = runtimeCloudSettlement?.payerUserId ??
+    (infraCharge ? (appChargeLight > 0 ? userId : app.owner_id) : null);
+  let ownerSponsoredInfra = runtimeCloudSettlement?.ownerSponsoredInfra ??
+    Boolean(
+      infraCharge && infraPayerUserId === app.owner_id &&
+        userId !== app.owner_id,
+    );
+  let infraChargeLight = runtimeCloudSettlement?.settledAmountLight ?? 0;
+  let cloudUsageHoldId = runtimeCloudSettlement?.holdId;
+  let cloudUnits = runtimeCloudSettlement?.cloudUnits;
 
-    if (!transferRes.ok) {
-      console.error(`[PRICING] Transfer failed for ${userId} -> ${app.owner_id}:`, await transferRes.text());
-      return { chargedLight: 0, insufficientBalance: false };
-    }
-
-    const rows = await transferRes.json() as Array<{ from_new_balance: number; to_new_balance: number }>;
-    if (!rows || rows.length === 0) {
-      return { chargedLight: 0, insufficientBalance: true };
-    }
-
-    if (app.hosting_suspended === true && rows[0].to_new_balance > 0) {
-      supabase.patch(`/rest/v1/users?id=eq.${app.owner_id}`, { hosting_suspended: false }).catch(() => {});
-      console.log(`[SUSPEND] Auto-unsuspended app ${app.id} — owner balance recovered to ${rows[0].to_new_balance}¢`);
-    }
-
-    return { chargedLight, insufficientBalance: false };
-  } catch (chargeErr) {
-    console.error('[PRICING] Charge error:', chargeErr);
-    return { chargedLight: 0, insufficientBalance: false };
+  if (runtimeCloudSettlement) {
+    cloudUsageEventId = runtimeCloudSettlement.eventId;
   }
+
+  if (infraCharge && infraPayerUserId) {
+    try {
+      const infraResult = await debitCloudUsage({
+        payerUserId: infraPayerUserId,
+        sponsorUserId: ownerSponsoredInfra ? app.owner_id : null,
+        callerUserId: userId,
+        ownerUserId: app.owner_id,
+        appId: app.id,
+        functionName,
+        receiptId,
+        source: infraCharge.source || method,
+        resource: infraCharge.resource,
+        units: infraCharge.units,
+        cloudUnits: infraCharge.cloudUnits,
+        amountLight: infraCharge.amountLight,
+        metadata: {
+          ...baseMetadata,
+          ...infraCharge.metadata,
+          payer_role: ownerSponsoredInfra ? "owner_sponsor" : "caller",
+        },
+      }, { fetchFn });
+      infraChargeLight = infraResult.amountDebited;
+      cloudUsageEventId = infraResult.eventId;
+      cloudUnits = infraCharge.cloudUnits;
+    } catch (err) {
+      const insufficient = err instanceof CloudUsageRpcError &&
+        /insufficient/i.test(err.message);
+      if (insufficient || ownerSponsoredInfra) {
+        return buildInsufficientSettlement(params, {
+          appPriceLight,
+          appChargeLight,
+          developerRevenueLight,
+          platformFeeLight,
+          infraChargeLight: 0,
+          infraPayerUserId,
+          ownerSponsoredInfra,
+          freeCall,
+          freeCallCount,
+          freeCallLimit,
+          transferId,
+          code: ownerSponsoredInfra
+            ? "owner_sponsor_light_required"
+            : "caller_light_required",
+          message: ownerSponsoredInfra
+            ? buildOwnerSponsorLightRequiredMessage(infraCharge.amountLight)
+            : buildCallerLightRequiredMessage(infraCharge.amountLight),
+        });
+      }
+      console.error("[PRICING] Cloud usage debit error:", err);
+    }
+  }
+
+  return buildBaseSettlement(params, {
+    appPriceLight,
+    appChargeLight,
+    developerRevenueLight,
+    platformFeeLight,
+    infraChargeLight,
+    infraPayerUserId,
+    ownerSponsoredInfra,
+    freeCall,
+    freeCallCount,
+    freeCallLimit,
+    transferId,
+    cloudUsageEventId,
+    cloudUsageHoldId,
+    cloudUnits,
+  });
 }
 
 export function logExecutionResult(
   params: LogExecutionResultParams,
   deps?: ExecutionSettlementDeps,
 ): void {
-  const telemetry = buildExecutionTelemetry(params.outputResult, params.durationMs);
+  const telemetry = buildExecutionTelemetry(
+    params.outputResult,
+    params.durationMs,
+  );
   const logMcpCallFn = deps?.logMcpCallFn ?? logMcpCall;
 
   logMcpCallFn({
@@ -216,6 +858,20 @@ export function logExecutionResult(
     responseSizeBytes: telemetry.responseSizeBytes,
     executionCostEstimateLight: telemetry.executionCostEstimateLight,
     callChargeLight: params.callChargeLight,
+    appPriceLight: params.appPriceLight,
+    appChargeLight: params.appChargeLight,
+    infraChargeLight: params.infraChargeLight,
+    platformFeeLight: params.platformFeeLight,
+    developerNetLight: params.developerNetLight,
+    freeCall: params.freeCall,
+    freeCallCount: params.freeCallCount,
+    freeCallLimit: params.freeCallLimit,
+    cloudUsageHoldId: params.cloudUsageHoldId,
+    cloudUsageEventId: params.cloudUsageEventId,
+    cloudUnits: params.cloudUnits,
+    cloudChargeLight: params.cloudChargeLight,
+    cloudPayerUserId: params.cloudPayerUserId,
+    cloudOwnerSponsored: params.cloudOwnerSponsored,
     gpuType: params.gpuType,
     gpuExitCode: params.gpuExitCode,
     gpuDurationMs: params.gpuDurationMs,
@@ -224,6 +880,75 @@ export function logExecutionResult(
     gpuDeveloperFeeLight: params.gpuDeveloperFeeLight,
     gpuFailurePolicy: params.gpuFailurePolicy,
   });
+}
+
+export async function settleAndLogAppExecution(
+  params: SettleAndLogAppExecutionParams,
+  deps?: ExecutionSettlementDeps,
+): Promise<{
+  settlement: AppCallSettlementResult;
+  chargedLight: number;
+  receiptId?: string;
+}> {
+  const settlement = await settleAppCall({
+    app: params.app,
+    userId: params.userId,
+    functionName: params.functionName,
+    inputArgs: params.inputArgs,
+    successful: params.success,
+    receiptId: params.receiptId,
+    method: params.method,
+    callerAuthState: params.callerAuthState,
+    infraCharge: params.infraCharge,
+    runtimePricingPreflight: params.runtimePricingPreflight,
+    runtimeCloudSettlement: params.runtimeCloudSettlement,
+  }, deps);
+
+  logExecutionResult({
+    userId: params.userId,
+    receiptId: params.receiptId,
+    appId: params.app.id,
+    appName: params.app.name || params.app.slug,
+    functionName: params.functionName,
+    method: params.method,
+    success: params.success && !settlement.insufficientBalance,
+    durationMs: params.durationMs,
+    errorMessage: settlement.insufficientBalance
+      ? settlement.insufficientBalanceMessage
+      : params.errorMessage,
+    source: params.source,
+    inputArgs: params.inputArgs,
+    outputResult: settlement.insufficientBalance
+      ? settlement.metadata
+      : params.outputResult,
+    userTier: params.user?.tier,
+    appVersion: params.app.current_version || undefined,
+    aiCostLight: params.aiCostLight || 0,
+    sessionId: params.sessionId,
+    sequenceNumber: params.sequenceNumber,
+    userQuery: params.userQuery,
+    callChargeLight: settlement.appChargeLight,
+    appPriceLight: settlement.appPriceLight,
+    appChargeLight: settlement.appChargeLight,
+    infraChargeLight: settlement.infraChargeLight,
+    platformFeeLight: settlement.platformFeeLight,
+    developerNetLight: settlement.developerRevenueLight,
+    freeCall: settlement.freeCall,
+    freeCallCount: settlement.freeCallCount,
+    freeCallLimit: settlement.freeCallLimit,
+    cloudUsageHoldId: settlement.cloudUsageHoldId,
+    cloudUsageEventId: settlement.cloudUsageEventId,
+    cloudUnits: settlement.cloudUnits,
+    cloudChargeLight: settlement.infraChargeLight,
+    cloudPayerUserId: settlement.infraPayerUserId || undefined,
+    cloudOwnerSponsored: settlement.ownerSponsoredInfra,
+  }, deps);
+
+  return {
+    settlement,
+    chargedLight: settlement.chargedLight,
+    receiptId: params.receiptId,
+  };
 }
 
 export async function settleAndLogGpuExecution(
@@ -258,10 +983,14 @@ export async function settleAndLogGpuExecution(
     method: params.method,
     success: params.gpuResult.success,
     durationMs: params.durationMs,
-    errorMessage: params.gpuResult.success ? undefined : params.gpuResult.error?.message,
+    errorMessage: params.gpuResult.success
+      ? undefined
+      : params.gpuResult.error?.message,
     source: params.source,
     inputArgs: params.inputArgs,
-    outputResult: params.gpuResult.success ? params.gpuResult.result : params.gpuResult.error,
+    outputResult: params.gpuResult.success
+      ? params.gpuResult.result
+      : params.gpuResult.error,
     userTier: params.user?.tier,
     appVersion: params.app.current_version || undefined,
     sessionId: params.sessionId,
@@ -270,7 +999,8 @@ export async function settleAndLogGpuExecution(
     callChargeLight: chargedLight,
     gpuType: params.gpuResult.gpuType,
     gpuExitCode: params.gpuResult.exitCode,
-    gpuDurationMs: params.gpuResult.billableDurationMs ?? params.gpuResult.durationMs,
+    gpuDurationMs: params.gpuResult.billableDurationMs ??
+      params.gpuResult.durationMs,
     gpuCostLight: params.gpuResult.gpuCostLight,
     gpuPeakVramGb: params.gpuResult.peakVramGb,
     gpuDeveloperFeeLight: settlement?.developerFeeChargedLight || 0,
@@ -280,23 +1010,178 @@ export async function settleAndLogGpuExecution(
   return { settlement, chargedLight, receiptId: params.receiptId };
 }
 
+function normalizeInfraCharge(
+  charge: RuntimeInfraCharge | null | undefined,
+): RuntimeInfraCharge | null {
+  if (!charge || charge.amountLight <= 0) {
+    return null;
+  }
+  return {
+    ...charge,
+    units: Math.max(charge.units, 0),
+    cloudUnits: Math.max(charge.cloudUnits, 0),
+  };
+}
+
+function buildBaseSettlement(
+  params: SettleAppCallParams,
+  values: {
+    appPriceLight: number;
+    appChargeLight: number;
+    developerRevenueLight: number;
+    platformFeeLight: number;
+    infraChargeLight: number;
+    infraPayerUserId: string | null;
+    ownerSponsoredInfra: boolean;
+    freeCall: boolean;
+    freeCallCount: number | null;
+    freeCallLimit: number;
+    transferId?: string;
+    cloudUsageEventId?: string;
+    cloudUsageHoldId?: string;
+    cloudUnits?: number;
+  },
+): AppCallSettlementResult {
+  return {
+    chargedLight: values.appChargeLight + values.infraChargeLight,
+    appChargeLight: values.appChargeLight,
+    appPriceLight: values.appPriceLight,
+    developerRevenueLight: values.developerRevenueLight,
+    platformFeeLight: values.platformFeeLight,
+    infraChargeLight: values.infraChargeLight,
+    freeCall: values.freeCall,
+    freeCallCount: values.freeCallCount,
+    freeCallLimit: values.freeCallLimit,
+    payerUserId: params.userId,
+    infraPayerUserId: values.infraPayerUserId,
+    ownerSponsoredInfra: values.ownerSponsoredInfra,
+    transferId: values.transferId,
+    cloudUsageEventId: values.cloudUsageEventId,
+    cloudUsageHoldId: values.cloudUsageHoldId,
+    cloudUnits: values.cloudUnits,
+    insufficientBalance: false,
+    receiptId: params.receiptId,
+    metadata: {
+      app_price_light: values.appPriceLight,
+      app_charge_light: values.appChargeLight,
+      developer_revenue_light: values.developerRevenueLight,
+      platform_fee_light: values.platformFeeLight,
+      infra_charge_light: values.infraChargeLight,
+      free_call: values.freeCall,
+      free_call_count: values.freeCallCount,
+      free_call_limit: values.freeCallLimit,
+      infra_payer_user_id: values.infraPayerUserId,
+      owner_sponsored_infra: values.ownerSponsoredInfra,
+      transfer_id: values.transferId,
+      cloud_usage_hold_id: values.cloudUsageHoldId,
+      cloud_usage_event_id: values.cloudUsageEventId,
+      cloud_units: values.cloudUnits,
+      receipt_id: params.receiptId,
+    },
+  };
+}
+
+function buildInsufficientSettlement(
+  params: SettleAppCallParams,
+  values: {
+    appPriceLight: number;
+    appChargeLight?: number;
+    developerRevenueLight?: number;
+    platformFeeLight?: number;
+    infraChargeLight?: number;
+    infraPayerUserId?: string | null;
+    ownerSponsoredInfra?: boolean;
+    freeCall: boolean;
+    freeCallCount: number | null;
+    freeCallLimit: number;
+    transferId?: string;
+    cloudUsageEventId?: string;
+    cloudUsageHoldId?: string;
+    cloudUnits?: number;
+    code: NonNullable<AppCallSettlementResult["insufficientBalanceCode"]>;
+    message: string;
+  },
+): AppCallSettlementResult {
+  const base = buildBaseSettlement(params, {
+    appPriceLight: values.appPriceLight,
+    appChargeLight: values.appChargeLight || 0,
+    developerRevenueLight: values.developerRevenueLight || 0,
+    platformFeeLight: values.platformFeeLight || 0,
+    infraChargeLight: values.infraChargeLight || 0,
+    infraPayerUserId: values.infraPayerUserId ?? null,
+    ownerSponsoredInfra: values.ownerSponsoredInfra || false,
+    freeCall: values.freeCall,
+    freeCallCount: values.freeCallCount,
+    freeCallLimit: values.freeCallLimit,
+    transferId: values.transferId,
+    cloudUsageEventId: values.cloudUsageEventId,
+    cloudUsageHoldId: values.cloudUsageHoldId,
+    cloudUnits: values.cloudUnits,
+  });
+  return {
+    ...base,
+    insufficientBalance: true,
+    insufficientBalanceCode: values.code,
+    insufficientBalanceMessage: values.message,
+    metadata: {
+      ...base.metadata,
+      insufficient_balance: true,
+      insufficient_balance_code: values.code,
+      insufficient_balance_message: values.message,
+    },
+  };
+}
+
+function buildCallerLightRequiredMessage(amountLight: number): string {
+  return `Insufficient Light balance. This call requires ${
+    formatLight(amountLight)
+  }. Add Light to your wallet and try again.`;
+}
+
+function buildOwnerSponsorLightRequiredMessage(amountLight: number): string {
+  return `This free call requires ${
+    formatLight(amountLight)
+  } of Light-backed sponsorship. Add Light to your wallet to call this app.`;
+}
+
+function calculateExpectedRuntimeHoldAmount(
+  timeoutMs: number,
+  billingConfig: Pick<
+    BillingConfig,
+    "workerMsPerCloudUnit" | "cloudUnitLightPer1k"
+  >,
+): number {
+  return calcCloudUsageLight(
+    calcWorkerCloudUnits(timeoutMs, billingConfig.workerMsPerCloudUnit),
+    billingConfig.cloudUnitLightPer1k,
+  );
+}
+
 function parseIncrementCallerUsageCount(payload: unknown): number | null {
   if (Array.isArray(payload) && payload.length > 0) {
     return parseIncrementCallerUsageCount(payload[0]);
   }
-  if (payload && typeof payload === 'object') {
-    const candidate = payload as { increment_caller_usage?: unknown; count?: unknown; call_count?: unknown };
-    if (typeof candidate.increment_caller_usage === 'number') {
+  if (payload && typeof payload === "object") {
+    const candidate = payload as {
+      increment_caller_usage?: unknown;
+      count?: unknown;
+      call_count?: unknown;
+      current_count?: unknown;
+    };
+    if (typeof candidate.increment_caller_usage === "number") {
       return candidate.increment_caller_usage;
     }
-    if (typeof candidate.count === 'number') {
+    if (typeof candidate.count === "number") {
       return candidate.count;
     }
-    if (typeof candidate.call_count === 'number') {
+    if (typeof candidate.call_count === "number") {
       return candidate.call_count;
     }
+    if (typeof candidate.current_count === "number") {
+      return candidate.current_count;
+    }
   }
-  if (typeof payload === 'number') {
+  if (typeof payload === "number") {
     return payload;
   }
   return null;

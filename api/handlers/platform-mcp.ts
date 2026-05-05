@@ -18,15 +18,15 @@ import { getPermissionCache } from '../services/permission-cache.ts';
 import {
   type AppPricingConfig,
   type AppRateLimitConfig,
+  COMBINED_FREE_TIER_BYTES,
   formatLight,
-  DATA_RATE_LIGHT_PER_MB_PER_HOUR,
-  HOSTING_RATE_LIGHT_PER_MB_PER_HOUR,
   type FunctionPricing,
   LIGHT_SYMBOL,
   LIGHT_PER_DOLLAR_PAYOUT,
   MIN_WITHDRAWAL_LIGHT,
   type PermissionRow,
   PLATFORM_FEE_RATE,
+  STORAGE_LIGHT_PER_GB_MONTH,
   type Tier,
   type TimeWindow,
 } from '../../shared/types/index.ts';
@@ -39,6 +39,11 @@ import { handleUploadFiles, type UploadFile } from './upload.ts';
 import { validateAndParseSkillsMd } from '../services/docgen.ts';
 import { createEmbeddingService } from '../services/embedding.ts';
 import { getBillingConfig } from '../services/billing-config.ts';
+import {
+  attachCallReceipts,
+  CALL_RECEIPT_LOG_SELECT,
+  type CallReceipt,
+} from '../services/call-receipts.ts';
 import { validateGpuPricingConfig } from '../services/gpu/pricing-config.ts';
 import {
   appendUserMemory,
@@ -183,6 +188,7 @@ interface WalletUserRow {
   stripe_connect_payouts_enabled: boolean | null;
   storage_used_bytes: number | null;
   data_storage_used_bytes: number | null;
+  d1_storage_bytes?: number | null;
   storage_limit_bytes: number | null;
   total_earned_light?: number | null;
 }
@@ -198,9 +204,13 @@ interface WalletTransferRow {
 interface WalletPayoutRow {
   id: string;
   amount_light: number | null;
+  gross_cents?: number | null;
   platform_fee_light: number | null;
+  fee_estimate_cents?: number | null;
   stripe_fee_cents: number | null;
   net_cents: number | null;
+  stripe_transfer_amount_cents?: number | null;
+  stripe_payout_amount_cents?: number | null;
   status: string;
   release_at: string | null;
   scheduled_payout_date?: string | null;
@@ -696,12 +706,31 @@ interface PermissionUpsertRow extends Partial<PermissionConstraintFieldSet> {
 interface AppLogRow {
   id: string;
   user_id: string;
+  app_id?: string | null;
+  app_name?: string | null;
   function_name: string;
   method: string;
   success: boolean;
   duration_ms: number | null;
   error_message: string | null;
   created_at: string;
+  call_charge_light?: number | null;
+  app_price_light?: number | null;
+  app_charge_light?: number | null;
+  infra_charge_light?: number | null;
+  platform_fee_light?: number | null;
+  developer_net_light?: number | null;
+  free_call?: boolean | null;
+  free_call_count?: number | null;
+  free_call_limit?: number | null;
+  cloud_usage_hold_id?: string | null;
+  cloud_usage_event_id?: string | null;
+  cloud_units?: number | null;
+  cloud_charge_light?: number | null;
+  cloud_payer_user_id?: string | null;
+  cloud_owner_sponsored?: boolean | null;
+  receipt_id?: string;
+  receipt?: CallReceipt;
 }
 
 interface ContentLookupRow {
@@ -1969,7 +1998,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     name: 'ul.marketplace',
     description:
       'Acquire and sell Ultralight apps. Place bids, set ask prices, accept offers, view history. ' +
-      'All bids are escrowed from your Light balance. Platform takes 10% on sale. ' +
+      'All bids are escrowed from your Light balance. The configured platform fee is deducted on sale. ' +
       'action="bid": place a bid. action="ask": set/update ask price. action="accept": accept a bid. ' +
       'action="reject": reject a bid. action="cancel": cancel your own bid. action="acquire": instant acquisition. ' +
       'Legacy action="buy_now" remains supported. ' +
@@ -2781,7 +2810,7 @@ function buildInstructions(deskSection: string, libraryHint: string): string {
 
 MCP-first app hosting. TypeScript functions → MCP servers. 10 platform tools + unlimited app tools via ul.call.
 
-**Published hosting: ${formatLight(HOSTING_RATE_LIGHT_PER_MB_PER_HOUR)}/MB/hr from the first byte.** Your app goes viral? Your bill stays tied to published storage size, not traffic, calls, or popularity.
+**Storage at rest: ${formatLight(STORAGE_LIGHT_PER_GB_MONTH)}/GB-month after 100MB free.** Worker, D1, R2, KV, and widget activity is metered separately as exact fractional Light cloud usage.
 
 ${deskSection}
 
@@ -3908,13 +3937,17 @@ async function handleToolsCall(
 
         switch (walletAction) {
           case 'status': {
-            const [userRes, earningsRes] = await Promise.all([
+            const [userRes, earningsRes, contentStorageRes] = await Promise.all([
               fetch(
-                `${wSbUrl}/rest/v1/users?id=eq.${userId}&select=balance_light,escrow_light,deposit_balance_light,earned_balance_light,escrow_deposit_light,escrow_earned_light,stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled,storage_used_bytes,data_storage_used_bytes,storage_limit_bytes,total_earned_light`,
+                `${wSbUrl}/rest/v1/users?id=eq.${userId}&select=balance_light,escrow_light,deposit_balance_light,earned_balance_light,escrow_deposit_light,escrow_earned_light,stripe_connect_account_id,stripe_connect_onboarded,stripe_connect_payouts_enabled,storage_used_bytes,data_storage_used_bytes,d1_storage_bytes,storage_limit_bytes,total_earned_light`,
                 { headers: wHeaders },
               ),
               fetch(
                 `${wSbUrl}/rest/v1/transfers?to_user_id=eq.${userId}&select=amount_light`,
+                { headers: wHeaders },
+              ),
+              fetch(
+                `${wSbUrl}/rest/v1/content?owner_id=eq.${userId}&type=in.(page,memory_md,library_md)&select=type,size`,
                 { headers: wHeaders },
               ),
             ]);
@@ -3935,9 +3968,18 @@ async function handleToolsCall(
             // Storage breakdown
             const sourceBytes = wUserData?.storage_used_bytes || 0;
             const dataBytes = wUserData?.data_storage_used_bytes || 0;
-            const combinedBytes = sourceBytes + dataBytes;
-            const limitBytes = wUserData?.storage_limit_bytes || 104857600;
+            const d1Bytes = wUserData?.d1_storage_bytes || 0;
+            const contentRows = contentStorageRes.ok
+              ? await readJsonArray<{ type?: string | null; size?: number | null }>(contentStorageRes)
+              : [];
+            const contentBytes = contentRows.reduce(
+              (sum: number, row) => sum + (row.size || 0),
+              0,
+            );
+            const combinedBytes = sourceBytes + dataBytes + d1Bytes + contentBytes;
+            const limitBytes = wUserData?.storage_limit_bytes || COMBINED_FREE_TIER_BYTES;
             const toMb = (b: number) => (b / (1024 * 1024)).toFixed(2);
+            const storageOverageBytes = Math.max(0, combinedBytes - limitBytes);
 
             result = {
               balance_light: balance,
@@ -3958,13 +4000,17 @@ async function handleToolsCall(
                 source_code_mb: toMb(sourceBytes) + ' MB',
                 user_data_bytes: dataBytes,
                 user_data_mb: toMb(dataBytes) + ' MB',
+                d1_storage_bytes: d1Bytes,
+                d1_storage_mb: toMb(d1Bytes) + ' MB',
+                content_storage_bytes: contentBytes,
+                content_storage_mb: toMb(contentBytes) + ' MB',
                 combined_bytes: combinedBytes,
                 combined_mb: toMb(combinedBytes) + ' MB',
                 limit_bytes: limitBytes,
                 limit_mb: toMb(limitBytes) + ' MB',
                 used_percent: limitBytes > 0 ? Math.round((combinedBytes / limitBytes) * 100) : 0,
-                overage_bytes: Math.max(0, combinedBytes - limitBytes),
-                overage_rate: `${LIGHT_SYMBOL}${DATA_RATE_LIGHT_PER_MB_PER_HOUR}/MB/hr after the storage soft cap`,
+                overage_bytes: storageOverageBytes,
+                overage_rate: `${LIGHT_SYMBOL}${STORAGE_LIGHT_PER_GB_MONTH}/GB-month after the storage soft cap`,
               },
               connect: {
                 connected: !!wUserData?.stripe_connect_account_id,
@@ -4091,6 +4137,7 @@ async function handleToolsCall(
               light_per_usd_snapshot: estBillingConfig.payoutLightPerUsd,
               billing_config_version: estBillingConfig.version,
               stripe_fee_cents: estimate.stripe_fee_cents,
+              fee_estimate_cents: estimate.fee_estimate_cents,
               stripe_fee_dollars: '$' +
                 (estimate.stripe_fee_cents / 100).toFixed(2),
               net_cents: estimate.net_cents,
@@ -4207,7 +4254,9 @@ async function handleToolsCall(
                 body: JSON.stringify({
                   p_user_id: userId,
                   p_amount_light: wdAmount,
+                  p_gross_cents: wdEstimate.gross_usd_cents,
                   p_stripe_fee_cents: wdEstimate.stripe_fee_cents,
+                  p_fee_estimate_cents: wdEstimate.fee_estimate_cents,
                   p_net_cents: wdEstimate.net_cents,
                   p_light_per_usd_snapshot: wdBillingConfig.payoutLightPerUsd,
                   p_billing_config_version: wdBillingConfig.version,
@@ -4242,8 +4291,10 @@ async function handleToolsCall(
               payout_id: wdPayoutId,
               amount_light: wdAmount,
               amount_display: formatLight(wdAmount),
+              gross_usd_cents: wdEstimate.gross_usd_cents,
               estimated_stripe_fee_dollars: '$' +
                 (wdEstimate.stripe_fee_cents / 100).toFixed(2),
+              fee_pass_through_cents: wdEstimate.fee_estimate_cents,
               estimated_net_dollars: '$' +
                 (wdEstimate.net_cents / 100).toFixed(2),
               light_per_usd_snapshot: wdBillingConfig.payoutLightPerUsd,
@@ -4256,6 +4307,7 @@ async function handleToolsCall(
               request_cutoff_days: wdSchedule.requestCutoffDays,
               terms_url: '/terms',
               message: `Payout request for ${formatLight(wdAmount)} submitted. ` +
+                `Stripe fees are deducted from payout proceeds. ` +
                 `Estimated bank deposit: ~$${(wdEstimate.net_cents / 100).toFixed(2)}. ` +
                 wdBuildPayoutPolicyMessage(wdSchedule),
             };
@@ -4276,7 +4328,14 @@ async function handleToolsCall(
                 platform_fee_light: p.platform_fee_light || 0,
                 stripe_fee_dollars: '$' +
                   (((p.stripe_fee_cents || 0) / 100).toFixed(2)),
+                fee_pass_through_cents: p.fee_estimate_cents ||
+                  p.stripe_fee_cents || 0,
                 net_dollars: '$' + (((p.net_cents || 0) / 100).toFixed(2)),
+                gross_dollars: '$' + (((p.gross_cents || 0) / 100).toFixed(2)),
+                actual_transfer_dollars: '$' +
+                  (((p.stripe_transfer_amount_cents || 0) / 100).toFixed(2)),
+                actual_payout_dollars: '$' +
+                  (((p.stripe_payout_amount_cents || 0) / 100).toFixed(2)),
                 status: p.status,
                 release_at: p.release_at,
                 scheduled_payout_date: p.scheduled_payout_date || null,
@@ -7401,7 +7460,7 @@ async function executeSetVisibility(
   // Map 'published' → 'public' for DB storage (DB uses 'public')
   const dbVisibility = visibility === 'published' ? 'public' : visibility;
 
-  // Gate: publishing requires minimum deposit
+  // Gate: any configured legacy publish balance rule.
   if (dbVisibility !== 'private') {
     const depositErr = await checkPublishDeposit(userId);
     if (depositErr) {
@@ -9150,7 +9209,7 @@ async function executeLogs(
   // Build PostgREST query against mcp_call_logs
   let url =
     `${SUPABASE_URL}/rest/v1/mcp_call_logs?app_id=eq.${app.id}&order=created_at.desc&limit=${limit}`;
-  url += '&select=id,user_id,function_name,method,success,duration_ms,error_message,created_at';
+  url += `&select=${CALL_RECEIPT_LOG_SELECT}`;
 
   // Always scope to allowed users
   url += `&user_id=in.(${allowedUserIds.join(',')})`;
@@ -9202,7 +9261,9 @@ async function executeLogs(
     );
   }
 
-  const rows = await readJsonArray<AppLogRow>(response);
+  const rows = await attachCallReceipts(
+    await readJsonArray<AppLogRow>(response),
+  );
 
   // Resolve user_ids → emails for display
   const userMap = new Map<string, string>();
@@ -9228,6 +9289,8 @@ async function executeLogs(
     duration_ms: r.duration_ms,
     error_message: r.error_message,
     created_at: r.created_at,
+    receipt_id: r.receipt_id,
+    receipt: r.receipt,
   }));
 
   return {

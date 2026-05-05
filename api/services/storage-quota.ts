@@ -51,8 +51,8 @@ function unavailableStorageQuotaResult(
 
 /**
  * Read storage usage before a source code upload.
- * Queries users.storage_used_bytes + data_storage_used_bytes (combined budget)
- * and reports whether the upload crosses the 100MB soft cap. It never blocks
+ * Queries source bytes + user app data + D1 storage (combined budget) and
+ * reports whether the upload crosses the 100MB soft cap. It never blocks
  * product storage; handlers still enforce technical request-size guardrails.
  */
 export async function checkStorageQuota(
@@ -68,9 +68,9 @@ export async function checkStorageQuota(
   }
 
   try {
-    // Query combined storage usage (source code + user data) from users table
+    // Query combined storage usage from users table.
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=storage_used_bytes,data_storage_used_bytes`,
+      `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=storage_used_bytes,data_storage_used_bytes,d1_storage_bytes`,
       {
         headers: {
           'apikey': SUPABASE_SERVICE_ROLE_KEY,
@@ -83,13 +83,14 @@ export async function checkStorageQuota(
       return unavailableStorageQuotaResult(uploadSizeBytes, options, await res.text());
     }
 
-    const rows = await res.json() as Array<{ storage_used_bytes: number | null; data_storage_used_bytes: number | null }>;
+    const rows = await res.json() as Array<{ storage_used_bytes: number | null; data_storage_used_bytes: number | null; d1_storage_bytes?: number | null }>;
     if (!rows || rows.length === 0) {
       return unavailableStorageQuotaResult(uploadSizeBytes, options, 'User row missing during quota check');
     }
     const sourceBytes = rows[0]?.storage_used_bytes ?? 0;
     const dataBytes = rows[0]?.data_storage_used_bytes ?? 0;
-    const combinedUsed = sourceBytes + dataBytes;
+    const d1Bytes = rows[0]?.d1_storage_bytes ?? 0;
+    const combinedUsed = sourceBytes + dataBytes + d1Bytes;
     const projectedBytes = combinedUsed + uploadSizeBytes;
     const remaining = Math.max(0, STORAGE_SOFT_CAP_BYTES - combinedUsed);
     const overSoftCap = projectedBytes > STORAGE_SOFT_CAP_BYTES;

@@ -1,5 +1,6 @@
 import { formatLight, MIN_WITHDRAWAL_LIGHT } from "../../shared/types/index.ts";
 import { getEnv } from "../lib/env.ts";
+import { getBillingConfig } from "./billing-config.ts";
 import {
   normalizeOptionalString,
   readJsonObject,
@@ -254,7 +255,7 @@ export async function assertOwnedSupabaseConfig(
 
 async function validateFundingAmountRequest(
   request: Request,
-  options: { requireTerms?: boolean } = {},
+  options: { requireTerms?: boolean; minimumCents?: number } = {},
 ): Promise<{
   amountCents: number;
   source: "web" | "desktop";
@@ -270,9 +271,12 @@ async function validateFundingAmountRequest(
     body.amount_cents,
     "amount_cents",
   );
-  if (amountCents < 500) {
+  const minimumCents = options.minimumCents ?? 500;
+  if (amountCents < minimumCents) {
     throw new RequestValidationError(
-      "amount_cents must be at least 500 ($5.00 minimum deposit)",
+      `amount_cents must be at least ${minimumCents} ($${
+        (minimumCents / 100).toFixed(2)
+      } minimum deposit)`,
     );
   }
   if (amountCents > MAX_HOSTING_CHECKOUT_CENTS) {
@@ -310,16 +314,20 @@ export async function validateHostingCheckoutRequest(
 export async function validateWalletFundingRequest(
   request: Request,
 ): Promise<ValidatedWalletFundingPayload> {
+  const billingConfig = await getBillingConfig();
   return await validateFundingAmountRequest(request, {
     requireTerms: true,
+    minimumCents: billingConfig.cardMinimumCents,
   }) as ValidatedWalletFundingPayload;
 }
 
 export async function validateWireFundingRequest(
   request: Request,
 ): Promise<ValidatedWireFundingPayload> {
+  const billingConfig = await getBillingConfig();
   return await validateFundingAmountRequest(request, {
     requireTerms: true,
+    minimumCents: billingConfig.wireMinimumCents,
   }) as ValidatedWireFundingPayload;
 }
 

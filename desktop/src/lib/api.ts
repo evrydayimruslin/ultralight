@@ -60,6 +60,16 @@ export interface ApiError {
   resetAt?: string;
 }
 
+export interface WidgetPullCallMetadata {
+  widgetName?: string;
+  intervalMs?: number;
+  reason?: string;
+}
+
+export interface AppMcpToolCallOptions {
+  widgetPull?: WidgetPullCallMetadata | null;
+}
+
 /** Fallback model list when server is unreachable */
 const FALLBACK_MODELS: ModelInfo[] = [
   { id: DEFAULT_INTERPRETER_MODEL, name: 'DeepSeek V4 Flash', provider: 'deepseek' },
@@ -71,6 +81,24 @@ const FALLBACK_MODELS: ModelInfo[] = [
 ];
 
 const apiLogger = createDesktopLogger('api');
+
+function withAppMcpCallMetadata(
+  args: Record<string, unknown>,
+  options?: AppMcpToolCallOptions,
+): Record<string, unknown> {
+  const widgetPull = options?.widgetPull;
+  if (!widgetPull) return args;
+
+  return {
+    ...args,
+    _widget_pull: true,
+    ...(widgetPull.widgetName ? { _widget_name: widgetPull.widgetName } : {}),
+    ...(typeof widgetPull.intervalMs === 'number' && Number.isFinite(widgetPull.intervalMs)
+      ? { _widget_interval_ms: Math.max(0, Math.round(widgetPull.intervalMs)) }
+      : {}),
+    ...(widgetPull.reason ? { _widget_pull_reason: widgetPull.reason } : {}),
+  };
+}
 
 export type InferenceSettings = ChatInferenceOptionsResponse;
 export type InferenceSetupState =
@@ -746,6 +774,7 @@ export async function executeAppMcpTool(
   appUuid: string,
   toolName: string,
   args: Record<string, unknown>,
+  options?: AppMcpToolCallOptions,
 ): Promise<McpToolResult> {
   const res = await fetchFromApi(`/mcp/${appUuid}`, {
     method: 'POST',
@@ -756,7 +785,7 @@ export async function executeAppMcpTool(
       method: 'tools/call',
       params: {
         name: toolName,
-        arguments: args,
+        arguments: withAppMcpCallMetadata(args, options),
       },
     }),
   });

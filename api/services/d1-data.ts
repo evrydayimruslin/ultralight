@@ -3,8 +3,13 @@
 // This is the runtime data layer — called from sandbox.ts for every ultralight.db.* invocation.
 // For provisioning and migrations, see d1-provisioning.ts and d1-migrations.ts.
 
-import { getEnv } from '../lib/env.ts';
-import { provisionD1ForApp } from './d1-provisioning.ts';
+import { getEnv } from "../lib/env.ts";
+import type { BillingConfig } from "./billing-config.ts";
+import {
+  type CloudOperationMeteringContext,
+  debitD1Usage,
+} from "./cloud-usage.ts";
+import { provisionD1ForApp } from "./d1-provisioning.ts";
 
 // ============================================
 // TYPES
@@ -31,16 +36,38 @@ export interface D1DataService {
   run(sql: string, params?: unknown[]): Promise<D1RunResult>;
 
   /** Execute SELECT — returns all matching rows */
-  all<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+  all<T = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[],
+  ): Promise<T[]>;
 
   /** Execute SELECT — returns first row or null */
-  first<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T | null>;
+  first<T = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[],
+  ): Promise<T | null>;
 
   /** Execute raw DDL/multi-statement SQL. Only used during migrations, blocked at runtime. */
   exec(sql: string): Promise<D1ExecResult>;
 
   /** Execute multiple statements atomically (transaction) */
-  batch(statements: Array<{ sql: string; params?: unknown[] }>): Promise<D1RunResult[]>;
+  batch(
+    statements: Array<{ sql: string; params?: unknown[] }>,
+  ): Promise<D1RunResult[]>;
+}
+
+export interface D1DataServiceOptions {
+  operationMetering?: CloudOperationMeteringContext | null;
+  operationBillingConfig?:
+    | Pick<
+      BillingConfig,
+      | "version"
+      | "cloudUnitLightPer1k"
+      | "d1ReadRowsPerCloudUnit"
+      | "d1WriteRowsPerCloudUnit"
+    >
+    | null;
+  fetchFn?: typeof fetch;
 }
 
 // ============================================
@@ -77,9 +104,11 @@ interface CfD1ApiResponse {
 export function createD1DataService(
   appId: string,
   databaseId: string | null,
+  options: D1DataServiceOptions = {},
 ): D1DataService {
-  const cfAccountId = getEnv('CF_ACCOUNT_ID');
-  const cfApiToken = getEnv('CF_API_TOKEN');
+  const cfAccountId = getEnv("CF_ACCOUNT_ID");
+  const cfApiToken = getEnv("CF_API_TOKEN");
+  const fetchFn = options.fetchFn ?? fetch;
 
   // Mutable reference — gets set on first call if null (lazy provisioning)
   let resolvedDbId: string | null = databaseId;
@@ -88,26 +117,55 @@ export function createD1DataService(
     if (resolvedDbId) return resolvedDbId;
 
     const result = await provisionD1ForApp(appId);
-    if (result.status !== 'ready' || !result.databaseId) {
-      throw new Error(`D1 provisioning failed for app ${appId}: ${result.error || 'unknown error'}`);
+    if (result.status !== "ready" || !result.databaseId) {
+      throw new Error(
+        `D1 provisioning failed for app ${appId}: ${
+          result.error || "unknown error"
+        }`,
+      );
     }
     resolvedDbId = result.databaseId;
     return resolvedDbId;
   }
 
-  async function queryD1(sql: string, params: unknown[] = []): Promise<CfD1ApiResponse> {
+  async function meterD1Result(
+    sql: string,
+    meta: CfD1ApiResponse["result"][number]["meta"] | undefined,
+  ): Promise<void> {
+    if (!options.operationMetering || !meta) {
+      return;
+    }
+
+    await debitD1Usage({
+      ...options.operationMetering,
+      operation: classifyD1Operation(sql),
+      rowsRead: meta.rows_read ?? 0,
+      rowsWritten: meta.rows_written ?? 0,
+      billingConfig: options.operationBillingConfig ?? undefined,
+      metadata: {
+        ...(options.operationMetering.metadata ?? {}),
+        service: "D1DataService",
+        sql_operation: classifyD1Operation(sql),
+      },
+    }, { fetchFn });
+  }
+
+  async function queryD1(
+    sql: string,
+    params: unknown[] = [],
+  ): Promise<CfD1ApiResponse> {
     const dbId = await ensureDatabase();
 
-    const res = await fetch(
+    const res = await fetchFn(
       `https://api.cloudflare.com/client/v4/accounts/${cfAccountId}/d1/database/${dbId}/query`,
       {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Authorization': `Bearer ${cfApiToken}`,
-          'Content-Type': 'application/json',
+          "Authorization": `Bearer ${cfApiToken}`,
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({ sql, params }),
-      }
+      },
     );
 
     if (!res.ok) {
@@ -117,10 +175,11 @@ export function createD1DataService(
 
     const data = await res.json() as CfD1ApiResponse;
     if (!data.success) {
-      const errMsg = data.errors?.[0]?.message || 'Unknown D1 error';
+      const errMsg = data.errors?.[0]?.message || "Unknown D1 error";
       throw new Error(`D1 query error: ${errMsg}`);
     }
 
+    await meterD1Result(sql, data.result?.[0]?.meta);
     return data;
   }
 
@@ -140,12 +199,18 @@ export function createD1DataService(
       };
     },
 
-    async all<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
+    async all<T = Record<string, unknown>>(
+      sql: string,
+      params?: unknown[],
+    ): Promise<T[]> {
       const data = await queryD1(sql, params || []);
       return (data.result?.[0]?.results ?? []) as T[];
     },
 
-    async first<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T | null> {
+    async first<T = Record<string, unknown>>(
+      sql: string,
+      params?: unknown[],
+    ): Promise<T | null> {
       const data = await queryD1(sql, params || []);
       const rows = data.result?.[0]?.results ?? [];
       return (rows[0] as T) ?? null;
@@ -155,16 +220,16 @@ export function createD1DataService(
       // exec runs raw multi-statement SQL — used for migrations only
       const dbId = await ensureDatabase();
 
-      const res = await fetch(
+      const res = await fetchFn(
         `https://api.cloudflare.com/client/v4/accounts/${cfAccountId}/d1/database/${dbId}/raw`,
         {
-          method: 'POST',
+          method: "POST",
           headers: {
-            'Authorization': `Bearer ${cfApiToken}`,
-            'Content-Type': 'application/json',
+            "Authorization": `Bearer ${cfApiToken}`,
+            "Content-Type": "application/json",
           },
           body: JSON.stringify({ sql }),
-        }
+        },
       );
 
       if (!res.ok) {
@@ -179,7 +244,9 @@ export function createD1DataService(
       };
     },
 
-    async batch(statements: Array<{ sql: string; params?: unknown[] }>): Promise<D1RunResult[]> {
+    async batch(
+      statements: Array<{ sql: string; params?: unknown[] }>,
+    ): Promise<D1RunResult[]> {
       // Execute statements sequentially via the single-query endpoint.
       // D1 REST API /query expects a single {sql, params} object, not an array.
       // Note: D1 REST API does not support BEGIN/COMMIT transactions.
@@ -203,4 +270,8 @@ export function createD1DataService(
       return results;
     },
   };
+}
+
+function classifyD1Operation(sql: string): string {
+  return sql.trim().split(/\s+/, 1)[0]?.toLowerCase() || "query";
 }

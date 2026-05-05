@@ -111,7 +111,18 @@ export default function HomeView({
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
   const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
   const instructInputRef = useRef<HTMLInputElement>(null);
-  const { sources: widgetSources, metas: widgetMetas, totalBadge: widgetBadge, loading: widgetLoading, getAppHtml, refresh: refreshWidgets } = useWidgetInbox();
+  const {
+    sources: widgetSources,
+    metas: widgetMetas,
+    settings: widgetSettings,
+    totalBadge: widgetBadge,
+    loading: widgetLoading,
+    getAppHtml,
+    refresh: refreshWidgets,
+    refreshWidget,
+    setWidgetPullEnabled,
+    setWidgetPullInterval,
+  } = useWidgetInbox({ active: activeTab === 'admin' });
   const [openWidget, setOpenWidget] = useState<WidgetAppSource | null>(null);
   const [widgetAppHtml, setWidgetAppHtml] = useState<string | null>(null);
   const [widgetOpenLoading, setWidgetOpenLoading] = useState(false);
@@ -142,7 +153,6 @@ export default function HomeView({
     setWidgetAppHtml(null);
     setWidgetOpenError(null);
     setWidgetOpenLoading(false);
-    // Don't trigger full refresh — the 30s poll will update badges naturally
   }, []);
 
   const {
@@ -797,8 +807,14 @@ export default function HomeView({
                 <WidgetHomescreen
                   sources={widgetSources}
                   metas={widgetMetas}
+                  settings={widgetSettings}
                   loading={widgetLoading}
                   onOpenWidget={handleOpenWidget}
+                  onSetWidgetPullEnabled={setWidgetPullEnabled}
+                  onSetWidgetPullInterval={setWidgetPullInterval}
+                  onRefreshWidget={(source) => {
+                    void refreshWidget(source);
+                  }}
                 />
 
                 {/* Agent Activity Log */}

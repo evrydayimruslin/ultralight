@@ -122,13 +122,17 @@ Deno.test("Storage soft caps: projected overages are reported without blocking",
   await runSerial(async () => {
     await withMockedEnvAndFetch(
       async () =>
-        new Response(JSON.stringify([{
-          storage_used_bytes: 104_857_590,
-          data_storage_used_bytes: 20,
-        }]), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
+        new Response(
+          JSON.stringify([{
+            storage_used_bytes: 104_857_560,
+            data_storage_used_bytes: 20,
+            d1_storage_bytes: 20,
+          }]),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
       async () => {
         const result = await checkStorageQuota("user-1", 15, {
           mode: "fail_closed",
@@ -136,6 +140,7 @@ Deno.test("Storage soft caps: projected overages are reported without blocking",
         });
 
         assertEquals(result.allowed, true);
+        assertEquals(result.used_bytes, 104_857_600);
         assertEquals(result.over_soft_cap, true);
         assertEquals(result.reason, undefined);
       },
@@ -150,18 +155,21 @@ Deno.test("Data soft caps: overages and backend failures do not block writes", a
       async () => {
         callCount += 1;
         if (callCount === 1) {
-          return new Response(JSON.stringify([{
-            allowed: false,
-            source_used_bytes: 50,
-            data_used_bytes: 75,
-            combined_used_bytes: 125,
-            limit_bytes: 100,
-            remaining_bytes: 0,
-            has_hosting_balance: false,
-          }]), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          });
+          return new Response(
+            JSON.stringify([{
+              allowed: false,
+              source_used_bytes: 50,
+              data_used_bytes: 75,
+              combined_used_bytes: 125,
+              limit_bytes: 100,
+              remaining_bytes: 0,
+              has_hosting_balance: false,
+            }]),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
         }
 
         return new Response("rpc unavailable", { status: 503 });

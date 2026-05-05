@@ -10,7 +10,10 @@ import type {
 } from "../../shared/types/index.ts";
 import { createAppsService } from "../services/apps.ts";
 import { createAppDataService } from "../services/appdata.ts";
-import { createRuntimeAIContext, createUnavailableAIService } from "../services/runtime-ai.ts";
+import {
+  createRuntimeAIContext,
+  createUnavailableAIService,
+} from "../services/runtime-ai.ts";
 import { executeGpuFunction } from "../services/gpu/executor.ts";
 import { acquireGpuSlot } from "../services/gpu/concurrency.ts";
 import { buildGpuNotReadyMessage } from "../services/gpu/status.ts";
@@ -29,11 +32,15 @@ import {
   callerHasAppAccess,
   callerHasFunctionAccess,
   callerHasRequiredScope,
+  type RequestCallerContext,
   resolveRequestCallerContext,
 } from "../services/request-caller-context.ts";
 import {
-  logExecutionResult,
+  createRuntimeOperationMeteringContext,
+  preflightRuntimeCloudHold,
+  settleAndLogAppExecution,
   settleAndLogGpuExecution,
+  settleRuntimeCloudPreflight,
 } from "../services/execution-settlement.ts";
 import { createExecutionReceiptId } from "../services/call-logger.ts";
 
@@ -57,17 +64,33 @@ export async function handleRun(
       return error("Function name required");
     }
 
-    const caller = await resolveRequestCallerContext(request, {
-      authSourcePolicy: "bearer_only",
-      allowAnonymous: true,
-      invalidAuthPolicy: "ignore",
-    });
+    let caller: RequestCallerContext;
+    try {
+      caller = await resolveRequestCallerContext(request, {
+        authSourcePolicy: "bearer_or_cookie",
+        allowAnonymous: false,
+      });
+    } catch (authErr) {
+      return json(
+        {
+          success: false,
+          result: null,
+          logs: [],
+          duration_ms: 0,
+          error: {
+            type: "AUTH_REQUIRED",
+            message: authErr instanceof Error
+              ? authErr.message
+              : "Authentication required",
+          },
+        } as RunResponse,
+        401,
+      );
+    }
     const { userId, user } = caller;
 
     // Initialize services
     const appsService = createAppsService();
-    // R2-based app data storage - zero config for users
-    const appDataService = createAppDataService(appId);
 
     // Fetch app from database
     const app = await appsService.findById(appId);
@@ -256,7 +279,9 @@ export async function handleRun(
         route: null,
         resolvedRoute: null,
         userApiKey: null,
-        aiService: createUnavailableAIService("ai:call permission not granted."),
+        aiService: createUnavailableAIService(
+          "ai:call permission not granted.",
+        ),
       };
 
     // Execute in sandbox — AI-capable apps get 120s timeout
@@ -266,6 +291,53 @@ export async function handleRun(
     );
     const argsArray = Array.isArray(args) ? args : [args];
     const receiptId = createExecutionReceiptId();
+    const timeoutMs = permissions.includes("ai:call") ? 120_000 : 30_000;
+    const inputArgs =
+      typeof args === "object" && args !== null && !Array.isArray(args)
+        ? args as Record<string, unknown>
+        : { _args: args };
+    const cloudPreflight = await preflightRuntimeCloudHold({
+      app,
+      userId: user?.id || app.owner_id,
+      functionName,
+      inputArgs,
+      receiptId,
+      method: "run",
+      timeoutMs,
+      callerAuthState: caller.authState,
+    });
+    if (cloudPreflight.insufficientBalance) {
+      return json(
+        {
+          success: false,
+          result: null,
+          logs: [],
+          duration_ms: 0,
+          receipt_id: receiptId,
+          error: {
+            type: cloudPreflight.insufficientBalanceCode || "LIGHT_REQUIRED",
+            message: cloudPreflight.insufficientBalanceMessage ||
+              "Light balance required to call this app.",
+            details: cloudPreflight.metadata,
+          },
+        } as RunResponse,
+        402,
+      );
+    }
+    const cloudOperationMetering = createRuntimeOperationMeteringContext({
+      preflight: cloudPreflight,
+      app,
+      userId,
+      functionName,
+      receiptId,
+      method: "run",
+      metadata: { surface: "run" },
+    });
+    // R2-based app data storage - zero config for users
+    const appDataService = createAppDataService(appId, undefined, {
+      operationMetering: cloudOperationMetering,
+      billingConfig: cloudPreflight.billingConfig,
+    });
     const result = await executeInDynamicSandbox(
       {
         appId,
@@ -285,17 +357,27 @@ export async function handleRun(
         },
         envVars,
         supabase: supabaseConfig,
-        timeoutMs: permissions.includes("ai:call") ? 120_000 : 30_000,
+        timeoutMs,
+        cloudOperationMetering,
+        cloudOperationBillingConfig: cloudPreflight.billingConfig,
       },
       functionName,
       argsArray,
     );
 
-    logExecutionResult({
+    const cloudSettlement = await settleRuntimeCloudPreflight(
+      cloudPreflight,
+      result.durationMs,
+      {
+        success: result.success,
+        error_message: result.success ? null : result.error?.message,
+      },
+    );
+    const { settlement } = await settleAndLogAppExecution({
       receiptId,
       userId: user?.id || app.owner_id,
-      appId: app.id,
-      appName: app.name || app.slug,
+      user,
+      app,
       functionName,
       method: "run",
       success: result.success,
@@ -304,13 +386,31 @@ export async function handleRun(
         ? undefined
         : (result.error?.message || "Execution failed"),
       outputResult: result.success ? result.result : result.error,
-      userTier: user?.tier,
-      appVersion: app.current_version || undefined,
       aiCostLight: result.aiCostLight || 0,
-      inputArgs: typeof args === "object" && args !== null && !Array.isArray(args)
-        ? args as Record<string, unknown>
-        : { _args: args },
+      inputArgs,
+      callerAuthState: caller.authState,
+      runtimePricingPreflight: cloudPreflight.pricing,
+      runtimeCloudSettlement: cloudSettlement,
     });
+
+    if (result.success && settlement.insufficientBalance) {
+      return json(
+        {
+          success: false,
+          result: null,
+          logs: result.logs,
+          duration_ms: result.durationMs,
+          receipt_id: receiptId,
+          error: {
+            type: settlement.insufficientBalanceCode || "LIGHT_REQUIRED",
+            message: settlement.insufficientBalanceMessage ||
+              "Light balance required to call this app.",
+            details: settlement.metadata,
+          },
+        } as RunResponse,
+        402,
+      );
+    }
 
     const response: RunResponse = {
       success: result.success,

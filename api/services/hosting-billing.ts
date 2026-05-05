@@ -1,38 +1,70 @@
-// Hosting Billing Service
-// Per-app billing: each published app/page has its own billing clock (hosting_last_billed_at).
-// Charges ✦2.25/MB/hour for each published app/page from the moment it was published.
-// Charges ✦0.045/MB/hour for user data storage exceeding the 100MB soft cap (user-level clock).
-// Both charges debit from the same bucketed spendable Light balance.
-// No free tier for hosting — every published MB costs from the first byte.
-// 100MB soft cap for combined source/user data — overage billed hourly.
-// Users hold a balance_light that drains continuously.
-// Balance → 0 = published content goes offline (hosting_suspended = true).
-// Runs hourly via setInterval (same pattern as subscription-expiry.ts).
+// Storage-at-rest billing service.
+//
+// The exported hosting names are retained because worker startup and older
+// callers still wire the hourly job through this module. The economics are now
+// account-level storage-at-rest: source/app bytes + user app data + D1 storage
+// + content bytes, with one 100MB free allowance and prorated GB-month Light.
 
 import { getEnv } from "../lib/env.ts";
 import {
   COMBINED_FREE_TIER_BYTES,
-  DATA_RATE_LIGHT_PER_MB_PER_HOUR,
-  HOSTING_RATE_LIGHT_PER_MB_PER_HOUR,
+  STORAGE_LIGHT_PER_GB_MONTH,
 } from "../../shared/types/index.ts";
+import { DEFAULT_BILLING_CONFIG, getBillingConfig } from "./billing-config.ts";
+import {
+  type CloudUsageDebitResult,
+  CloudUsageRpcError,
+  debitCloudUsage,
+} from "./cloud-usage.ts";
 import { refreshGpuReliabilityView } from "./gpu/reliability.ts";
 
-const RATE_LIGHT_PER_MB_PER_HOUR = HOSTING_RATE_LIGHT_PER_MB_PER_HOUR;
-const DATA_RATE_LIGHT = DATA_RATE_LIGHT_PER_MB_PER_HOUR;
+const BYTES_PER_MIB = 1024 * 1024;
+const BYTES_PER_GIB = 1024 * BYTES_PER_MIB;
+const STORAGE_BILLING_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+const MIN_BILLING_ELAPSED_MS = 60 * 1000;
+const CONTENT_STORAGE_TYPES = ["page", "memory_md", "library_md"] as const;
 
 interface BillingUser {
   id: string;
-  balance_light: number;
-  hosting_last_billed_at: string;
-  // Data storage metering fields
-  data_storage_used_bytes: number;
-  storage_used_bytes: number;
-  storage_limit_bytes: number;
+  balance_light: number | null;
+  hosting_last_billed_at: string | null;
+  data_storage_used_bytes: number | null;
+  storage_used_bytes: number | null;
+  d1_storage_bytes: number | null;
+  storage_limit_bytes: number | null;
 }
 
-interface UserStorage {
-  app_bytes: number;
-  content_bytes: number;
+interface ContentStorageRow {
+  id: string;
+  type: typeof CONTENT_STORAGE_TYPES[number] | string;
+  size: number | null;
+}
+
+interface ContentOwnerRow {
+  owner_id: string | null;
+}
+
+interface StorageComponents {
+  sourceBytes: number;
+  dataBytes: number;
+  d1Bytes: number;
+  contentBytes: number;
+  combinedBytes: number;
+}
+
+interface ContentStorageSummary {
+  bytes: number;
+  counts: Record<string, number>;
+}
+
+export interface StorageAtRestCharge {
+  combinedBytes: number;
+  freeBytes: number;
+  overageBytes: number;
+  elapsedMs: number;
+  storageGbMonths: number;
+  amountLight: number;
+  storageLightPerGbMonth: number;
 }
 
 export interface BillingResult {
@@ -53,13 +85,67 @@ export interface BillingResult {
   }[];
 }
 
+type DegradeReporter = (message: string, detail?: unknown) => void;
+
+function positiveNumber(value: number, fallback: number): number {
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function bytesOrZero(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+  return Math.trunc(value);
+}
+
+function parseBillingClock(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
+export function calculateStorageAtRestCharge(params: {
+  combinedBytes: number;
+  freeBytes?: number;
+  elapsedMs: number;
+  storageLightPerGbMonth?: number;
+}): StorageAtRestCharge {
+  const combinedBytes = bytesOrZero(params.combinedBytes);
+  const freeBytes = positiveNumber(
+    params.freeBytes ?? DEFAULT_BILLING_CONFIG.storageFreeBytes,
+    COMBINED_FREE_TIER_BYTES,
+  );
+  const elapsedMs = Math.max(0, params.elapsedMs);
+  const storageLightPerGbMonth = positiveNumber(
+    params.storageLightPerGbMonth ??
+      DEFAULT_BILLING_CONFIG.storageLightPerGbMonth,
+    STORAGE_LIGHT_PER_GB_MONTH,
+  );
+  const overageBytes = Math.max(0, combinedBytes - freeBytes);
+  const storageGbMonths = overageBytes === 0 || elapsedMs === 0
+    ? 0
+    : (overageBytes / BYTES_PER_GIB) *
+      (elapsedMs / STORAGE_BILLING_MONTH_MS);
+  const amountLight = storageGbMonths * storageLightPerGbMonth;
+
+  return {
+    combinedBytes,
+    freeBytes,
+    overageBytes,
+    elapsedMs,
+    storageGbMonths,
+    amountLight,
+    storageLightPerGbMonth,
+  };
+}
+
 /**
- * Process hosting billing for all users with published content.
+ * Process account storage-at-rest billing.
  *
- * 1. Query users who have non-zero balance or published content
- * 2. For each user, calculate total storage (apps + pages)
- * 3. Compute cost based on hours since last billed
- * 4. Deduct from balance; suspend if depleted
+ * The old published-size hosting meter is disabled by billing config. This
+ * job debits spendable Light through the cloud-usage ledger for storage bytes
+ * above the free allowance and advances the user-level billing clock whenever
+ * it safely reconciles a period.
  */
 export async function processHostingBilling(): Promise<BillingResult> {
   const SUPABASE_URL = getEnv("SUPABASE_URL");
@@ -74,16 +160,16 @@ export async function processHostingBilling(): Promise<BillingResult> {
     details: [],
   };
 
-  const markDegraded = (message: string, detail?: unknown) => {
+  const markDegraded: DegradeReporter = (message, detail) => {
     result.degraded = true;
     result.errors.push(message);
     if (detail !== undefined) {
-      console.error("[BILLING]", message, detail);
+      console.error("[STORAGE-BILLING]", message, detail);
     }
   };
 
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    markDegraded("Supabase not configured; hosting billing skipped");
+    markDegraded("Supabase not configured; storage billing skipped");
     return result;
   }
 
@@ -98,435 +184,467 @@ export async function processHostingBilling(): Promise<BillingResult> {
   };
 
   try {
-    // 1. Find users who need billing:
-    //    - balance_light > 0 (have balance for publisher hosting), OR
-    //    - data_storage_used_bytes > 0 (have user data that may need overage billing)
+    const billingConfig = await getBillingConfig();
+    if (billingConfig.publishedHostingMeterEnabled) {
+      console.warn(
+        "[STORAGE-BILLING] Legacy published hosting meter is configured on, " +
+          "but PR21 storage-at-rest billing supersedes published-size hosting charges.",
+      );
+    }
+
     const usersRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?or=(balance_light.gt.0,data_storage_used_bytes.gt.0)` +
-        `&select=id,balance_light,hosting_last_billed_at,data_storage_used_bytes,storage_used_bytes,storage_limit_bytes`,
+      `${SUPABASE_URL}/rest/v1/users?or=(balance_light.gt.0,storage_used_bytes.gt.0,data_storage_used_bytes.gt.0,d1_storage_bytes.gt.0)` +
+        `&select=id,balance_light,hosting_last_billed_at,data_storage_used_bytes,storage_used_bytes,d1_storage_bytes,storage_limit_bytes`,
       { headers },
     );
 
     if (!usersRes.ok) {
-      const err = await usersRes.text();
-      markDegraded(`Failed to query users: ${err}`);
+      markDegraded(`Failed to query users: ${await usersRes.text()}`);
       return result;
     }
 
-    const users: BillingUser[] = await usersRes.json();
+    const usersById = new Map<string, BillingUser>();
+    const initialUsers = await usersRes.json() as BillingUser[];
+    for (const user of initialUsers) {
+      usersById.set(user.id, user);
+    }
 
+    const contentOwnerIds = await readContentOwnerIds(
+      SUPABASE_URL,
+      headers,
+      markDegraded,
+    );
+    const missingContentOwnerIds = contentOwnerIds.filter((ownerId) =>
+      !usersById.has(ownerId)
+    );
+    if (missingContentOwnerIds.length > 0) {
+      const contentOwnerUsers = await readUsersByIds(
+        SUPABASE_URL,
+        missingContentOwnerIds,
+        headers,
+        markDegraded,
+      );
+      for (const user of contentOwnerUsers) {
+        usersById.set(user.id, user);
+      }
+    }
+
+    const users = [...usersById.values()];
     if (users.length === 0) {
-      return result; // No billable users
+      return result;
     }
 
     console.log(
-      `[BILLING] Processing ${users.length} user(s) with positive balance`,
+      `[STORAGE-BILLING] Reconciling storage for ${users.length} user(s)`,
     );
 
-    // 2. Process each user
+    const freeBytes = positiveNumber(
+      billingConfig.storageFreeBytes,
+      COMBINED_FREE_TIER_BYTES,
+    );
+    const storageLightPerGbMonth = positiveNumber(
+      billingConfig.storageLightPerGbMonth,
+      STORAGE_LIGHT_PER_GB_MONTH,
+    );
+
     for (const user of users) {
       try {
-        // 2a. Get all published apps with per-app billing clocks
-        const appStorageRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${user.id}&deleted_at=is.null&hosting_suspended=eq.false` +
-            `&visibility=in.(public,unlisted)&select=id,name,storage_bytes,hosting_last_billed_at`,
-          { headers },
-        );
-
-        let totalAppBytes = 0;
-        let publishedAppCount = 0;
-        let hostingCostLight = 0;
-        const appCharges: Array<
-          { id: string; name: string; mb: number; hours: number; light: number }
-        > = [];
         const now = new Date();
-
-        if (appStorageRes.ok) {
-          const apps = await appStorageRes.json() as Array<{
-            id: string;
-            name: string;
-            storage_bytes: number | null;
-            hosting_last_billed_at: string | null;
-          }>;
-          publishedAppCount = apps.length;
-          for (const app of apps) {
-            const bytes = app.storage_bytes || 0;
-            totalAppBytes += bytes;
-            const mb = bytes / (1024 * 1024);
-            // Per-app billing clock — each app bills from its own last_billed_at
-            const lastBilled = app.hosting_last_billed_at
-              ? new Date(app.hosting_last_billed_at)
-              : now;
-            const hours = Math.max(
-              (now.getTime() - lastBilled.getTime()) / (1000 * 60 * 60),
-              0,
-            );
-            if (hours < 1 / 60) continue; // < 1 minute — skip
-            const light = mb * RATE_LIGHT_PER_MB_PER_HOUR * hours;
-            if (light > 0) {
-              hostingCostLight += light;
-              appCharges.push({ id: app.id, name: app.name, mb, hours, light });
-            }
-          }
-        } else {
-          markDegraded(
-            `Failed to query published apps for ${user.id}: ${await appStorageRes
-              .text()}`,
+        const nowIso = now.toISOString();
+        const lastBilled = parseBillingClock(user.hosting_last_billed_at);
+        if (!lastBilled) {
+          await updateUserBillingClock(
+            SUPABASE_URL,
+            user.id,
+            nowIso,
+            writeHeaders,
+            markDegraded,
           );
+          result.usersProcessed++;
+          continue;
         }
 
-        // 2b. Get all published pages with per-page billing clocks
-        const contentStorageRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${user.id}&type=eq.page&hosting_suspended=eq.false` +
-            `&visibility=eq.public&select=id,title,size,hosting_last_billed_at`,
-          { headers },
-        );
-
-        let totalContentBytes = 0;
-        const pageCharges: Array<
-          { id: string; name: string; mb: number; hours: number; light: number }
-        > = [];
-
-        if (contentStorageRes.ok) {
-          const pages = await contentStorageRes.json() as Array<{
-            id: string;
-            title: string;
-            size: number | null;
-            hosting_last_billed_at: string | null;
-          }>;
-          for (const page of pages) {
-            const bytes = page.size || 0;
-            totalContentBytes += bytes;
-            const mb = bytes / (1024 * 1024);
-            const lastBilled = page.hosting_last_billed_at
-              ? new Date(page.hosting_last_billed_at)
-              : now;
-            const hours = Math.max(
-              (now.getTime() - lastBilled.getTime()) / (1000 * 60 * 60),
-              0,
-            );
-            if (hours < 1 / 60) continue;
-            const light = mb * RATE_LIGHT_PER_MB_PER_HOUR * hours;
-            if (light > 0) {
-              hostingCostLight += light;
-              pageCharges.push({
-                id: page.id,
-                name: page.title || "Untitled page",
-                mb,
-                hours,
-                light,
-              });
-            }
-          }
-        } else {
-          markDegraded(
-            `Failed to query published pages for ${user.id}: ${await contentStorageRes
-              .text()}`,
-          );
-        }
-
-        const totalHostingBytes = totalAppBytes + totalContentBytes;
-        const totalMb = totalHostingBytes / (1024 * 1024);
-
-        // 2c. Calculate data storage overage (user-level timing, not per-app)
-        const combinedStorageBytes = (user.storage_used_bytes || 0) +
-          (user.data_storage_used_bytes || 0);
-        const freeBytes = user.storage_limit_bytes || COMBINED_FREE_TIER_BYTES;
-        const overageBytes = Math.max(0, combinedStorageBytes - freeBytes);
-        const dataOverageMb = overageBytes / (1024 * 1024);
-
-        // Data overage uses user-level billing clock
-        const userLastBilled = new Date(user.hosting_last_billed_at);
-        const userHours = Math.max(
-          (now.getTime() - userLastBilled.getTime()) / (1000 * 60 * 60),
+        const elapsedMs = Math.max(
           0,
+          now.getTime() - lastBilled.getTime(),
         );
-        const dataOverageCostLight = (userHours >= 1 / 60 && dataOverageMb > 0)
-          ? dataOverageMb * DATA_RATE_LIGHT * userHours
-          : 0;
-
-        // Skip users with nothing to bill
-        if (hostingCostLight === 0 && dataOverageCostLight === 0) continue;
-
-        const totalCostLight = hostingCostLight + dataOverageCostLight;
-
-        // Round to 2 decimal places (sub-Light precision for fractional rates)
-        const chargedLight = Math.max(
-          Math.round(totalCostLight * 100) / 100,
-          totalCostLight > 0 ? 0.01 : 0,
-        );
-
-        // 2d. Atomic debit via Postgres RPC — prevents race with concurrent webhook credits
-        const debitRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/rpc/debit_light`,
-          {
-            method: "POST",
-            headers: {
-              ...headers,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              p_user_id: user.id,
-              p_amount_light: chargedLight,
-              p_reason: "hosting_billing",
-              p_update_billed_at: true,
-              p_allow_partial: true,
-              p_metadata: {
-                hosting_light: Math.round(hostingCostLight * 100) / 100,
-                data_overage_light: Math.round(dataOverageCostLight * 100) /
-                  100,
-                published_app_count: publishedAppCount,
-                hosting_mb: totalMb,
-                data_overage_mb: dataOverageMb,
-              },
-            }),
-          },
-        );
-
-        if (!debitRes.ok) {
-          const err = await debitRes.text();
-          markDegraded(`Failed to debit balance for ${user.id}: ${err}`);
+        if (elapsedMs < MIN_BILLING_ELAPSED_MS) {
           continue;
         }
 
-        const debitResult = await debitRes.json() as Array<{
-          old_balance: number;
-          new_balance: number;
-          was_depleted: boolean;
-          amount_debited?: number;
-        }>;
+        const contentSummary = await readContentStorageSummary(
+          SUPABASE_URL,
+          user.id,
+          headers,
+          markDegraded,
+        );
+        const components = buildStorageComponents(user, contentSummary.bytes);
+        const charge = calculateStorageAtRestCharge({
+          combinedBytes: components.combinedBytes,
+          freeBytes,
+          elapsedMs,
+          storageLightPerGbMonth,
+        });
 
-        if (!debitResult || debitResult.length === 0) {
-          markDegraded(`Debit RPC returned empty for ${user.id}`);
-          continue;
-        }
-
-        const {
-          new_balance: newBalance,
-          was_depleted: suspended,
-          amount_debited: amountDebited,
-        } = debitResult[0];
-        const actualChargedLight = typeof amountDebited === "number"
-          ? amountDebited
-          : chargedLight;
-        const chargeRatio = chargedLight > 0
-          ? Math.min(1, actualChargedLight / chargedLight)
-          : 1;
-
-        // Update per-app/page billing clocks after successful debit
-        const nowStr = now.toISOString();
-        if (appCharges.length > 0) {
-          const appIds = appCharges.map((a) => a.id).join(",");
-          try {
-            const updateAppsRes = await fetch(
-              `${SUPABASE_URL}/rest/v1/apps?id=in.(${appIds})`,
-              {
-                method: "PATCH",
-                headers: writeHeaders,
-                body: JSON.stringify({ hosting_last_billed_at: nowStr }),
-              },
-            );
-            if (!updateAppsRes.ok) {
-              markDegraded(
-                `Failed to update app billing clocks for ${user.id}: ${await updateAppsRes
-                  .text()}`,
-              );
-            }
-          } catch (clockErr) {
-            markDegraded(
-              `Failed to update app billing clocks for ${user.id}`,
-              clockErr,
-            );
-          }
-        }
-        if (pageCharges.length > 0) {
-          const pageIds = pageCharges.map((p) => p.id).join(",");
-          try {
-            const updatePagesRes = await fetch(
-              `${SUPABASE_URL}/rest/v1/content?id=in.(${pageIds})`,
-              {
-                method: "PATCH",
-                headers: writeHeaders,
-                body: JSON.stringify({ hosting_last_billed_at: nowStr }),
-              },
-            );
-            if (!updatePagesRes.ok) {
-              markDegraded(
-                `Failed to update page billing clocks for ${user.id}: ${await updatePagesRes
-                  .text()}`,
-              );
-            }
-          } catch (clockErr) {
-            markDegraded(
-              `Failed to update page billing clocks for ${user.id}`,
-              clockErr,
-            );
-          }
-        }
-
-        // Log billing transaction(s) — separate line items for hosting vs data overage
-        try {
-          const txRows: Array<Record<string, unknown>> = [];
-          if (hostingCostLight > 0) {
-            txRows.push({
-              user_id: user.id,
-              type: "charge",
-              category: "hosting",
-              description: `Hosting: ${publishedAppCount} app(s), ${
-                totalMb.toFixed(2)
-              } MB`,
-              amount_light: -Math.max(
-                Math.round(hostingCostLight * chargeRatio * 100) / 100,
-                chargeRatio > 0 ? 0.01 : 0,
-              ),
-              balance_after_light: newBalance +
-                (dataOverageCostLight > 0
-                  ? Math.max(Math.round(dataOverageCostLight * 100) / 100, 0.01)
-                  : 0),
-              metadata: {
-                hosting_mb: totalMb,
-                rate: RATE_LIGHT_PER_MB_PER_HOUR,
-                apps: appCharges.map((a) => ({
-                  id: a.id,
-                  name: a.name,
-                  mb: +a.mb.toFixed(4),
-                  hours: +a.hours.toFixed(2),
-                  light: +a.light.toFixed(4),
-                })),
-                pages: pageCharges.length > 0
-                  ? pageCharges.map((p) => ({
-                    id: p.id,
-                    name: p.name,
-                    mb: +p.mb.toFixed(4),
-                    hours: +p.hours.toFixed(2),
-                    light: +p.light.toFixed(4),
-                  }))
-                  : undefined,
-              },
-            });
-          }
-          if (dataOverageCostLight > 0) {
-            txRows.push({
-              user_id: user.id,
-              type: "charge",
-              category: "data_storage",
-              description: `Data storage overage: ${
-                dataOverageMb.toFixed(2)
-              } MB over ${(freeBytes / (1024 * 1024)).toFixed(0)} MB free`,
-              amount_light: -Math.max(
-                Math.round(dataOverageCostLight * chargeRatio * 100) / 100,
-                chargeRatio > 0 ? 0.01 : 0,
-              ),
-              balance_after_light: newBalance,
-              metadata: {
-                overage_mb: dataOverageMb,
-                hours: userHours,
-                rate: DATA_RATE_LIGHT,
-              },
-            });
-          }
-          if (txRows.length > 0) {
-            await fetch(`${SUPABASE_URL}/rest/v1/billing_transactions`, {
-              method: "POST",
-              headers: writeHeaders,
-              body: JSON.stringify(txRows),
-            }).catch(() => {}); // Fire-and-forget — don't break billing if tx log fails
-          }
-        } catch { /* never break billing for logging */ }
-
-        // 2f. If balance depleted, suspend all their published content.
-        // Legacy saved-payment auto top-up is disabled; external money enters
-        // only through wallet funding or wire transfer.
-        if (suspended) {
-          // Suspend apps
-          try {
-            const suspendAppsRes = await fetch(
-              `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${user.id}&deleted_at=is.null&hosting_suspended=eq.false` +
-                `&visibility=in.(public,unlisted)`,
-              {
-                method: "PATCH",
-                headers: writeHeaders,
-                body: JSON.stringify({ hosting_suspended: true }),
-              },
-            );
-            if (!suspendAppsRes.ok) {
-              markDegraded(
-                `Failed to suspend apps for ${user.id}: ${await suspendAppsRes
-                  .text()}`,
-              );
-            }
-          } catch (suspendErr) {
-            markDegraded(`Failed to suspend apps for ${user.id}`, suspendErr);
-          }
-
-          // Suspend pages
-          try {
-            const suspendPagesRes = await fetch(
-              `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${user.id}&type=eq.page&hosting_suspended=eq.false`,
-              {
-                method: "PATCH",
-                headers: writeHeaders,
-                body: JSON.stringify({ hosting_suspended: true }),
-              },
-            );
-            if (!suspendPagesRes.ok) {
-              markDegraded(
-                `Failed to suspend pages for ${user.id}: ${await suspendPagesRes
-                  .text()}`,
-              );
-            }
-          } catch (suspendErr) {
-            markDegraded(`Failed to suspend pages for ${user.id}`, suspendErr);
-          }
-
-          result.usersSuspended++;
-          console.log(
-            `[BILLING] User ${user.id}: SUSPENDED — balance depleted ` +
-              `(hosting: ${totalMb.toFixed(2)} MB, data overage: ${
-                dataOverageMb.toFixed(2)
-              } MB, charged ✦${actualChargedLight.toFixed(2)})`,
+        if (charge.amountLight <= 0) {
+          await updateUserBillingClock(
+            SUPABASE_URL,
+            user.id,
+            nowIso,
+            writeHeaders,
+            markDegraded,
           );
+          result.usersProcessed++;
+          continue;
         }
+
+        const payerBalance = user.balance_light ?? 0;
+        if (payerBalance <= 0) {
+          await suspendPublishedContent(
+            SUPABASE_URL,
+            user.id,
+            writeHeaders,
+            markDegraded,
+          );
+          result.usersSuspended++;
+          result.details.push(
+            detailFor(user.id, components, charge, payerBalance, true, 0),
+          );
+          continue;
+        }
+
+        let debitResult: CloudUsageDebitResult;
+        try {
+          debitResult = await debitCloudUsage({
+            payerUserId: user.id,
+            ownerUserId: user.id,
+            source: "storage_billing",
+            resource: "storage_at_rest",
+            units: charge.overageBytes,
+            cloudUnits: charge.storageGbMonths,
+            amountLight: charge.amountLight,
+            billingConfigVersion: billingConfig.version,
+            metadata: {
+              billing_model: "storage_at_rest_gb_month",
+              elapsed_ms: charge.elapsedMs,
+              free_bytes: charge.freeBytes,
+              combined_storage_bytes: charge.combinedBytes,
+              overage_bytes: charge.overageBytes,
+              storage_gb_months: charge.storageGbMonths,
+              storage_light_per_gb_month: charge.storageLightPerGbMonth,
+              source_storage_bytes: components.sourceBytes,
+              user_data_storage_bytes: components.dataBytes,
+              d1_storage_bytes: components.d1Bytes,
+              content_storage_bytes: components.contentBytes,
+              content_counts: contentSummary.counts,
+              legacy_storage_limit_bytes: user.storage_limit_bytes ?? null,
+              published_hosting_meter_enabled:
+                billingConfig.publishedHostingMeterEnabled,
+            },
+          });
+        } catch (err) {
+          if (isInsufficientLightError(err)) {
+            await suspendPublishedContent(
+              SUPABASE_URL,
+              user.id,
+              writeHeaders,
+              markDegraded,
+            );
+            result.usersSuspended++;
+            result.details.push(
+              detailFor(user.id, components, charge, payerBalance, true, 0),
+            );
+            continue;
+          }
+          throw err;
+        }
+
+        await updateUserBillingClock(
+          SUPABASE_URL,
+          user.id,
+          nowIso,
+          writeHeaders,
+          markDegraded,
+        );
+
+        await logStorageBillingTransaction(
+          SUPABASE_URL,
+          user.id,
+          charge,
+          components,
+          contentSummary.counts,
+          debitResult,
+          billingConfig.version,
+          writeHeaders,
+        );
 
         result.usersProcessed++;
-        result.totalChargedLight += actualChargedLight;
-        const hostingRounded = Math.max(
-          Math.round(hostingCostLight * 100) / 100,
-          hostingCostLight > 0 ? 0.01 : 0,
+        result.totalChargedLight += debitResult.amountDebited;
+        result.details.push(
+          detailFor(
+            user.id,
+            components,
+            charge,
+            debitResult.newBalance,
+            false,
+            debitResult.amountDebited,
+          ),
         );
-        const dataOverageRounded = Math.round(dataOverageCostLight * 100) / 100;
-        result.details.push({
-          userId: user.id,
-          storageMb: totalMb,
-          hostingChargedLight: hostingRounded,
-          dataOverageMb,
-          dataOverageLight: dataOverageRounded,
-          totalChargedLight: actualChargedLight,
-          newBalance,
-          suspended,
-        });
       } catch (userErr) {
         const msg = userErr instanceof Error
           ? userErr.message
           : String(userErr);
-        markDegraded(`Error processing ${user.id}: ${msg}`);
+        markDegraded(`Error processing ${user.id}: ${msg}`, userErr);
       }
     }
 
-    if (result.usersProcessed > 0) {
+    if (result.usersProcessed > 0 || result.usersSuspended > 0) {
       console.log(
-        `[BILLING] Complete: ${result.usersProcessed} user(s) billed, ` +
+        `[STORAGE-BILLING] Complete: ${result.usersProcessed} user(s) reconciled, ` +
           `${result.usersSuspended} suspended, ` +
-          `✦${result.totalChargedLight.toFixed(2)} total charged, ` +
+          `${result.totalChargedLight.toFixed(6)} Light charged, ` +
           `${result.errors.length} error(s)`,
       );
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    markDegraded(`Fatal error: ${msg}`);
+    markDegraded(`Fatal error: ${msg}`, err);
   }
 
   return result;
+}
+
+export const processStorageBilling = processHostingBilling;
+
+function buildStorageComponents(
+  user: BillingUser,
+  contentBytes: number,
+): StorageComponents {
+  const sourceBytes = bytesOrZero(user.storage_used_bytes);
+  const dataBytes = bytesOrZero(user.data_storage_used_bytes);
+  const d1Bytes = bytesOrZero(user.d1_storage_bytes);
+  const normalizedContentBytes = bytesOrZero(contentBytes);
+  return {
+    sourceBytes,
+    dataBytes,
+    d1Bytes,
+    contentBytes: normalizedContentBytes,
+    combinedBytes: sourceBytes + dataBytes + d1Bytes + normalizedContentBytes,
+  };
+}
+
+async function readContentStorageSummary(
+  supabaseUrl: string,
+  userId: string,
+  headers: HeadersInit,
+  markDegraded: DegradeReporter,
+): Promise<ContentStorageSummary> {
+  const res = await fetch(
+    `${supabaseUrl}/rest/v1/content?owner_id=eq.${userId}&type=in.(${
+      CONTENT_STORAGE_TYPES.join(",")
+    })&select=id,type,size`,
+    { headers },
+  );
+  if (!res.ok) {
+    markDegraded(
+      `Failed to query content storage for ${userId}: ${await res.text()}`,
+    );
+    return { bytes: 0, counts: {} };
+  }
+
+  const rows = await res.json() as ContentStorageRow[];
+  const counts: Record<string, number> = {};
+  let bytes = 0;
+  for (const row of rows) {
+    bytes += bytesOrZero(row.size);
+    counts[row.type] = (counts[row.type] ?? 0) + 1;
+  }
+  return { bytes, counts };
+}
+
+async function readContentOwnerIds(
+  supabaseUrl: string,
+  headers: HeadersInit,
+  markDegraded: DegradeReporter,
+): Promise<string[]> {
+  const res = await fetch(
+    `${supabaseUrl}/rest/v1/content?type=in.(${
+      CONTENT_STORAGE_TYPES.join(",")
+    })&size=gt.0&select=owner_id`,
+    { headers },
+  );
+  if (!res.ok) {
+    markDegraded(`Failed to query content storage owners: ${await res.text()}`);
+    return [];
+  }
+
+  const rows = await res.json() as ContentOwnerRow[];
+  const ids = new Set<string>();
+  for (const row of rows) {
+    if (typeof row.owner_id === "string" && row.owner_id.length > 0) {
+      ids.add(row.owner_id);
+    }
+  }
+  return [...ids];
+}
+
+async function readUsersByIds(
+  supabaseUrl: string,
+  userIds: string[],
+  headers: HeadersInit,
+  markDegraded: DegradeReporter,
+): Promise<BillingUser[]> {
+  if (userIds.length === 0) return [];
+  const idList = userIds.join(",");
+  const res = await fetch(
+    `${supabaseUrl}/rest/v1/users?id=in.(${idList})` +
+      `&select=id,balance_light,hosting_last_billed_at,data_storage_used_bytes,storage_used_bytes,d1_storage_bytes,storage_limit_bytes`,
+    { headers },
+  );
+  if (!res.ok) {
+    markDegraded(`Failed to query content owner users: ${await res.text()}`);
+    return [];
+  }
+  return await res.json() as BillingUser[];
+}
+
+async function updateUserBillingClock(
+  supabaseUrl: string,
+  userId: string,
+  nowIso: string,
+  writeHeaders: HeadersInit,
+  markDegraded: DegradeReporter,
+): Promise<void> {
+  const res = await fetch(`${supabaseUrl}/rest/v1/users?id=eq.${userId}`, {
+    method: "PATCH",
+    headers: writeHeaders,
+    body: JSON.stringify({ hosting_last_billed_at: nowIso }),
+  });
+  if (!res.ok) {
+    markDegraded(
+      `Failed to update storage billing clock for ${userId}: ${await res
+        .text()}`,
+    );
+  }
+}
+
+async function suspendPublishedContent(
+  supabaseUrl: string,
+  userId: string,
+  writeHeaders: HeadersInit,
+  markDegraded: DegradeReporter,
+): Promise<void> {
+  try {
+    const suspendAppsRes = await fetch(
+      `${supabaseUrl}/rest/v1/apps?owner_id=eq.${userId}&deleted_at=is.null&hosting_suspended=eq.false` +
+        `&visibility=in.(public,unlisted)`,
+      {
+        method: "PATCH",
+        headers: writeHeaders,
+        body: JSON.stringify({ hosting_suspended: true }),
+      },
+    );
+    if (!suspendAppsRes.ok) {
+      markDegraded(
+        `Failed to suspend apps for ${userId}: ${await suspendAppsRes.text()}`,
+      );
+    }
+  } catch (err) {
+    markDegraded(`Failed to suspend apps for ${userId}`, err);
+  }
+
+  try {
+    const suspendPagesRes = await fetch(
+      `${supabaseUrl}/rest/v1/content?owner_id=eq.${userId}&type=eq.page&hosting_suspended=eq.false`,
+      {
+        method: "PATCH",
+        headers: writeHeaders,
+        body: JSON.stringify({ hosting_suspended: true }),
+      },
+    );
+    if (!suspendPagesRes.ok) {
+      markDegraded(
+        `Failed to suspend pages for ${userId}: ${await suspendPagesRes
+          .text()}`,
+      );
+    }
+  } catch (err) {
+    markDegraded(`Failed to suspend pages for ${userId}`, err);
+  }
+}
+
+async function logStorageBillingTransaction(
+  supabaseUrl: string,
+  userId: string,
+  charge: StorageAtRestCharge,
+  components: StorageComponents,
+  contentCounts: Record<string, number>,
+  debitResult: CloudUsageDebitResult,
+  billingConfigVersion: number,
+  writeHeaders: HeadersInit,
+): Promise<void> {
+  const row = {
+    user_id: userId,
+    type: "charge",
+    category: "storage_at_rest",
+    description:
+      `Storage at rest: ${
+        (charge.overageBytes / BYTES_PER_MIB).toFixed(2)
+      } MB over ` +
+      `${(charge.freeBytes / BYTES_PER_MIB).toFixed(0)} MB free`,
+    amount_cents: 0,
+    balance_after: null,
+    amount_light: -debitResult.amountDebited,
+    balance_after_light: debitResult.newBalance,
+    billing_config_version: billingConfigVersion,
+    metadata: {
+      event_id: debitResult.eventId,
+      billing_model: "storage_at_rest_gb_month",
+      elapsed_ms: charge.elapsedMs,
+      combined_storage_bytes: components.combinedBytes,
+      overage_bytes: charge.overageBytes,
+      storage_gb_months: charge.storageGbMonths,
+      storage_light_per_gb_month: charge.storageLightPerGbMonth,
+      source_storage_bytes: components.sourceBytes,
+      user_data_storage_bytes: components.dataBytes,
+      d1_storage_bytes: components.d1Bytes,
+      content_storage_bytes: components.contentBytes,
+      content_counts: contentCounts,
+    },
+  };
+
+  await fetch(`${supabaseUrl}/rest/v1/billing_transactions`, {
+    method: "POST",
+    headers: writeHeaders,
+    body: JSON.stringify(row),
+  }).catch(() => {});
+}
+
+function isInsufficientLightError(err: unknown): boolean {
+  if (!(err instanceof CloudUsageRpcError)) {
+    return false;
+  }
+  return /insufficient|balance|spendable/i.test(err.message);
+}
+
+function detailFor(
+  userId: string,
+  components: StorageComponents,
+  charge: StorageAtRestCharge,
+  newBalance: number,
+  suspended: boolean,
+  actualChargedLight: number,
+): BillingResult["details"][number] {
+  return {
+    userId,
+    storageMb: components.combinedBytes / BYTES_PER_MIB,
+    hostingChargedLight: 0,
+    dataOverageMb: charge.overageBytes / BYTES_PER_MIB,
+    dataOverageLight: actualChargedLight,
+    totalChargedLight: actualChargedLight,
+    newBalance,
+    suspended,
+  };
 }
 
 /**
@@ -547,7 +665,6 @@ export async function unsuspendContent(
 
   const nowStr = new Date().toISOString();
 
-  // Unsuspend apps and reset per-app billing clocks (don't charge for suspended period)
   const appsRes = await fetch(
     `${SUPABASE_URL}/rest/v1/apps?owner_id=eq.${userId}&hosting_suspended=eq.true&select=id`,
     {
@@ -563,7 +680,6 @@ export async function unsuspendContent(
     ? (await appsRes.json() as Array<{ id: string }>).length
     : 0;
 
-  // Unsuspend pages and reset per-page billing clocks
   const pagesRes = await fetch(
     `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${userId}&type=eq.page&hosting_suspended=eq.true&select=id`,
     {
@@ -581,7 +697,7 @@ export async function unsuspendContent(
 
   if (appsUnsuspended > 0 || pagesUnsuspended > 0) {
     console.log(
-      `[BILLING] Unsuspended ${appsUnsuspended} app(s), ${pagesUnsuspended} page(s) for user ${userId}`,
+      `[STORAGE-BILLING] Unsuspended ${appsUnsuspended} app(s), ${pagesUnsuspended} page(s) for user ${userId}`,
     );
   }
 
@@ -589,35 +705,28 @@ export async function unsuspendContent(
 }
 
 /**
- * Start the hosting billing job.
- * Runs strictly every hour — no startup run, so deploys don't trigger extra charges.
- * Per-app billing clocks ensure no time is lost between intervals.
+ * Start the hourly storage billing job.
  */
 export function startHostingBillingJob(): void {
-  const INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+  const INTERVAL_MS = 60 * 60 * 1000;
 
   console.log(
-    "[BILLING] Starting hosting billing job (hourly, no startup run)",
+    "[STORAGE-BILLING] Starting storage-at-rest billing job (hourly, no startup run)",
   );
 
-  // Run every hour — per-app clocks accumulate naturally, so the first
-  // interval after a deploy just bills for however long since each app's
-  // last_billed_at (up to ~2h if deploy happened right before the old
-  // interval would have fired). No charge is lost, no double-billing.
   setInterval(async () => {
     try {
       const billingResult = await processHostingBilling();
       if (billingResult.degraded || billingResult.errors.length > 0) {
         console.error(
-          "[BILLING] Scheduled run completed in degraded mode:",
+          "[STORAGE-BILLING] Scheduled run completed in degraded mode:",
           billingResult.errors,
         );
       }
     } catch (err) {
-      console.error("[BILLING] Scheduled billing failed:", err);
+      console.error("[STORAGE-BILLING] Scheduled billing failed:", err);
     }
 
-    // Refresh GPU reliability materialized view (fire-and-forget)
     try {
       await refreshGpuReliabilityView();
     } catch (err) {

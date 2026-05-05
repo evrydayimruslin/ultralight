@@ -28,16 +28,29 @@ Deno.test("payments launch QA: public config states closed-loop Light economics"
   assertEquals(config.wallet_light_per_usd, 95);
   assertEquals(config.wire_light_per_usd, 99);
   assertEquals(config.payout_light_per_usd, 100);
-  assertEquals(config.min_publish_deposit_light, 500);
-  assertEquals(config.labels.hosting_rate, "✦2.25/MB/hr");
-  assertEquals(config.labels.data_rate, "✦0.045/MB/hr");
+  assertEquals(config.platform_fee_rate, 0.15);
+  assertEquals(config.card_minimum_cents, 2500);
+  assertEquals(config.wire_minimum_cents, 2500);
+  assertEquals(config.cloud_unit_light_per_1k, 1);
+  assertEquals(config.storage_light_per_gb_month, 100);
+  assertEquals(config.publish_deposit_enabled, false);
+  assertEquals(config.published_hosting_meter_enabled, false);
   assertEquals(config.labels.payout_rate, "100 Light = $1");
+  assertEquals(config.labels.cloud_unit_rate, "✦1 / 1,000 cloud units");
+  assertEquals(
+    config.labels.storage_at_rest,
+    "✦100 / GB-month after 100MB free",
+  );
+  assertEquals(Object.hasOwn(config, "min_publish_deposit_light"), false);
+  assertEquals(Object.hasOwn(config.labels, "hosting_rate"), false);
   assert(
     config.payout_policy_copy.includes("Purchased Light cannot be cashed out"),
   );
   assert(config.policy_copy.purchasedLight.includes("cannot be cashed out"));
   assert(config.policy_copy.purchasedLight.includes("transferred directly"));
   assert(config.policy_copy.creatorEarnings.includes("requested for payout"));
+  assert(config.policy_copy.cloudUsage.includes("cloud units"));
+  assert(config.policy_copy.freeCallSponsorship.includes("caller needs Light"));
 });
 
 Deno.test("payments launch QA: money-in and payout requests require terms hooks", async () => {
@@ -71,6 +84,32 @@ Deno.test("payments launch QA: money-in and payout requests require terms hooks"
       }),
     ),
     { amountLight: 5000, termsAccepted: true },
+  );
+
+  await assertRejects(
+    () =>
+      validateWalletFundingRequest(
+        jsonRequest("/api/user/wallet/express-checkout-intent", {
+          amount_cents: 2499,
+          source: "desktop",
+          terms_accepted: true,
+        }),
+      ),
+    RequestValidationError,
+    "amount_cents must be at least 2500",
+  );
+
+  await assertRejects(
+    () =>
+      validateWireFundingRequest(
+        jsonRequest("/api/user/wallet/wire-transfer-intent", {
+          amount_cents: 2499,
+          source: "web",
+          terms_accepted: true,
+        }),
+      ),
+    RequestValidationError,
+    "amount_cents must be at least 2500",
   );
 
   await assertRejects(

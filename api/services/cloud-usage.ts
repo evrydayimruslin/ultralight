@@ -1,0 +1,729 @@
+import {
+  type BillingConfig,
+  DEFAULT_BILLING_CONFIG,
+} from "./billing-config.ts";
+import { createSupabaseRestClient } from "./platform-clients/supabase-rest.ts";
+
+export type CloudUsageResource =
+  | "worker_execution"
+  | "r2_operation"
+  | "kv_operation"
+  | "d1_read"
+  | "d1_write"
+  | "widget_pull"
+  | "storage_at_rest";
+
+export interface CloudUsageContext {
+  payerUserId: string;
+  source: string;
+  resource: CloudUsageResource;
+  sponsorUserId?: string | null;
+  callerUserId?: string | null;
+  ownerUserId?: string | null;
+  appId?: string | null;
+  functionName?: string | null;
+  receiptId?: string | null;
+  billingConfigVersion?: number | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CloudOperationMeteringContext {
+  payerUserId: string;
+  source: string;
+  sponsorUserId?: string | null;
+  callerUserId?: string | null;
+  ownerUserId?: string | null;
+  appId?: string | null;
+  functionName?: string | null;
+  receiptId?: string | null;
+  billingConfigVersion?: number | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface DebitCloudOperationParams
+  extends CloudOperationMeteringContext {
+  resource: Extract<CloudUsageResource, "r2_operation" | "kv_operation">;
+  operation: string;
+  units?: number;
+  billingConfig?: Pick<
+    BillingConfig,
+    | "version"
+    | "cloudUnitLightPer1k"
+    | "r2OpsPerCloudUnit"
+    | "kvOpsPerCloudUnit"
+  >;
+  metadata?: Record<string, unknown>;
+}
+
+export interface DebitD1UsageParams extends CloudOperationMeteringContext {
+  rowsRead?: number;
+  rowsWritten?: number;
+  operation: string;
+  billingConfig?: Pick<
+    BillingConfig,
+    | "version"
+    | "cloudUnitLightPer1k"
+    | "d1ReadRowsPerCloudUnit"
+    | "d1WriteRowsPerCloudUnit"
+  >;
+  metadata?: Record<string, unknown>;
+}
+
+export interface D1UsageDebitResult {
+  rowsRead: number;
+  rowsWritten: number;
+  readCloudUnits: number;
+  writeCloudUnits: number;
+  amountLight: number;
+  readEventId?: string;
+  writeEventId?: string;
+  events: CloudUsageDebitResult[];
+}
+
+export interface CloudUsageEventParams extends CloudUsageContext {
+  units: number;
+  cloudUnits: number;
+  amountLight: number;
+}
+
+export interface CreateCloudUsageHoldParams extends CloudUsageContext {
+  expectedUnits: number;
+  expectedCloudUnits: number;
+  expectedAmountLight: number;
+  expiresAt?: string | null;
+}
+
+export interface SettleCloudUsageHoldParams {
+  holdId: string;
+  units: number;
+  cloudUnits: number;
+  amountLight: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ReleaseCloudUsageHoldParams {
+  holdId: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CloudUsageDebitResult {
+  eventId: string;
+  oldBalance: number;
+  newBalance: number;
+  amountDebited: number;
+  depositDebited: number;
+  earnedDebited: number;
+}
+
+export interface CloudUsageHoldResult {
+  holdId: string;
+  oldBalance: number;
+  newBalance: number;
+  heldAmountLight: number;
+  heldDepositLight: number;
+  heldEarnedLight: number;
+}
+
+export interface CloudUsageHoldSettlementResult {
+  eventId: string;
+  holdId: string;
+  settledAmountLight: number;
+  releasedAmountLight: number;
+}
+
+export interface CloudUsageHoldReleaseResult {
+  holdId: string;
+  releasedAmountLight: number;
+}
+
+export interface RuntimeCloudHoldParams {
+  callerUserId: string;
+  ownerUserId: string;
+  appId: string;
+  functionName: string;
+  receiptId?: string | null;
+  source: string;
+  timeoutMs: number;
+  appPriceLight: number;
+  freeCallLimit?: number;
+  freeCallCounterKey?: string | null;
+  expiresAt?: string | null;
+  billingConfig?: Pick<
+    BillingConfig,
+    "version" | "workerMsPerCloudUnit" | "cloudUnitLightPer1k"
+  >;
+  metadata?: Record<string, unknown>;
+}
+
+export interface RuntimeCloudHoldResult extends CloudUsageHoldResult {
+  payerUserId: string;
+  sponsorUserId: string | null;
+  appPriceLight: number;
+  appChargeLight: number;
+  freeCall: boolean;
+  freeCallCount: number | null;
+  freeCallLimit: number;
+  expectedUnits: number;
+  expectedCloudUnits: number;
+  expectedAmountLight: number;
+  ownerSponsoredInfra: boolean;
+}
+
+export interface RuntimeCloudHoldSettlementParams {
+  holdId: string;
+  durationMs: number;
+  billingConfig?: Pick<
+    BillingConfig,
+    "workerMsPerCloudUnit" | "cloudUnitLightPer1k"
+  >;
+  metadata?: Record<string, unknown>;
+}
+
+export interface RuntimeCloudHoldSettlementResult
+  extends CloudUsageHoldSettlementResult {
+  units: number;
+  cloudUnits: number;
+  amountLight: number;
+}
+
+interface CloudUsageDeps {
+  fetchFn?: typeof fetch;
+}
+
+type RpcRow = Record<string, unknown>;
+
+export class CloudUsageRpcError extends Error {
+  readonly status: number;
+  readonly rpc: string;
+
+  constructor(rpc: string, status: number, message: string) {
+    super(message);
+    this.name = "CloudUsageRpcError";
+    this.rpc = rpc;
+    this.status = status;
+  }
+}
+
+export function calculateCloudUsageLight(
+  cloudUnits: number,
+  cloudUnitLightPer1k = DEFAULT_BILLING_CONFIG.cloudUnitLightPer1k,
+): number {
+  if (!Number.isFinite(cloudUnits) || cloudUnits < 0) {
+    throw new Error("Cloud units must be a non-negative finite number");
+  }
+  if (!Number.isFinite(cloudUnitLightPer1k) || cloudUnitLightPer1k <= 0) {
+    throw new Error("Cloud unit Light rate must be a positive finite number");
+  }
+
+  return (cloudUnits * cloudUnitLightPer1k) / 1_000;
+}
+
+export const calcCloudUsageLight = calculateCloudUsageLight;
+
+export function calcWorkerCloudUnits(
+  durationMs: number,
+  workerMsPerCloudUnit = DEFAULT_BILLING_CONFIG.workerMsPerCloudUnit,
+): number {
+  if (!Number.isFinite(durationMs) || durationMs < 0) {
+    throw new Error("Worker duration must be a non-negative finite number");
+  }
+  if (!Number.isFinite(workerMsPerCloudUnit) || workerMsPerCloudUnit <= 0) {
+    throw new Error(
+      "Worker cloud unit interval must be a positive finite number",
+    );
+  }
+  return Math.max(1, Math.ceil(durationMs / workerMsPerCloudUnit));
+}
+
+export function calcOperationCloudUnits(
+  units: number,
+  operationsPerCloudUnit: number,
+): number {
+  if (!Number.isFinite(units) || units < 0) {
+    throw new Error(
+      "Cloud operation units must be a non-negative finite number",
+    );
+  }
+  if (
+    !Number.isFinite(operationsPerCloudUnit) ||
+    operationsPerCloudUnit <= 0
+  ) {
+    throw new Error(
+      "Operations per cloud unit must be a positive finite number",
+    );
+  }
+  if (units === 0) {
+    return 0;
+  }
+  return Math.max(1, Math.ceil(units / operationsPerCloudUnit));
+}
+
+export function calcD1ReadCloudUnits(
+  rowsRead: number,
+  rowsPerCloudUnit = DEFAULT_BILLING_CONFIG.d1ReadRowsPerCloudUnit,
+): number {
+  return calcOperationCloudUnits(rowsRead, rowsPerCloudUnit);
+}
+
+export function calcD1WriteCloudUnits(
+  rowsWritten: number,
+  rowsPerCloudUnit = DEFAULT_BILLING_CONFIG.d1WriteRowsPerCloudUnit,
+): number {
+  return calcOperationCloudUnits(rowsWritten, rowsPerCloudUnit);
+}
+
+export async function debitCloudOperation(
+  params: DebitCloudOperationParams,
+  deps?: CloudUsageDeps,
+): Promise<CloudUsageDebitResult | null> {
+  const units = params.units ?? 1;
+  if (units === 0) {
+    return null;
+  }
+
+  const config = params.billingConfig ?? DEFAULT_BILLING_CONFIG;
+  const operationsPerCloudUnit = params.resource === "r2_operation"
+    ? config.r2OpsPerCloudUnit
+    : config.kvOpsPerCloudUnit;
+  const cloudUnits = calcOperationCloudUnits(units, operationsPerCloudUnit);
+  const amountLight = calculateCloudUsageLight(
+    cloudUnits,
+    config.cloudUnitLightPer1k,
+  );
+
+  return await debitCloudUsage({
+    payerUserId: params.payerUserId,
+    sponsorUserId: params.sponsorUserId,
+    callerUserId: params.callerUserId,
+    ownerUserId: params.ownerUserId,
+    appId: params.appId,
+    functionName: params.functionName,
+    receiptId: params.receiptId,
+    source: params.source,
+    resource: params.resource,
+    units,
+    cloudUnits,
+    amountLight,
+    billingConfigVersion: params.billingConfigVersion ?? config.version,
+    metadata: {
+      ...(params.metadata ?? {}),
+      operation: params.operation,
+      operations_per_cloud_unit: operationsPerCloudUnit,
+    },
+  }, deps);
+}
+
+export async function debitD1Usage(
+  params: DebitD1UsageParams,
+  deps?: CloudUsageDeps,
+): Promise<D1UsageDebitResult | null> {
+  const rowsRead = normalizeUsageUnits(params.rowsRead ?? 0, "D1 rows read");
+  const rowsWritten = normalizeUsageUnits(
+    params.rowsWritten ?? 0,
+    "D1 rows written",
+  );
+
+  if (rowsRead === 0 && rowsWritten === 0) {
+    return null;
+  }
+
+  const config = params.billingConfig ?? DEFAULT_BILLING_CONFIG;
+  const readCloudUnits = calcD1ReadCloudUnits(
+    rowsRead,
+    config.d1ReadRowsPerCloudUnit,
+  );
+  const writeCloudUnits = calcD1WriteCloudUnits(
+    rowsWritten,
+    config.d1WriteRowsPerCloudUnit,
+  );
+  const events: CloudUsageDebitResult[] = [];
+  let readEventId: string | undefined;
+  let writeEventId: string | undefined;
+
+  if (readCloudUnits > 0) {
+    const readAmountLight = calculateCloudUsageLight(
+      readCloudUnits,
+      config.cloudUnitLightPer1k,
+    );
+    const readEvent = await debitCloudUsage({
+      payerUserId: params.payerUserId,
+      sponsorUserId: params.sponsorUserId,
+      callerUserId: params.callerUserId,
+      ownerUserId: params.ownerUserId,
+      appId: params.appId,
+      functionName: params.functionName,
+      receiptId: params.receiptId,
+      source: params.source,
+      resource: "d1_read",
+      units: rowsRead,
+      cloudUnits: readCloudUnits,
+      amountLight: readAmountLight,
+      billingConfigVersion: params.billingConfigVersion ?? config.version,
+      metadata: {
+        ...(params.metadata ?? {}),
+        operation: params.operation,
+        rows_per_cloud_unit: config.d1ReadRowsPerCloudUnit,
+      },
+    }, deps);
+    readEventId = readEvent.eventId;
+    events.push(readEvent);
+  }
+
+  if (writeCloudUnits > 0) {
+    const writeAmountLight = calculateCloudUsageLight(
+      writeCloudUnits,
+      config.cloudUnitLightPer1k,
+    );
+    const writeEvent = await debitCloudUsage({
+      payerUserId: params.payerUserId,
+      sponsorUserId: params.sponsorUserId,
+      callerUserId: params.callerUserId,
+      ownerUserId: params.ownerUserId,
+      appId: params.appId,
+      functionName: params.functionName,
+      receiptId: params.receiptId,
+      source: params.source,
+      resource: "d1_write",
+      units: rowsWritten,
+      cloudUnits: writeCloudUnits,
+      amountLight: writeAmountLight,
+      billingConfigVersion: params.billingConfigVersion ?? config.version,
+      metadata: {
+        ...(params.metadata ?? {}),
+        operation: params.operation,
+        rows_per_cloud_unit: config.d1WriteRowsPerCloudUnit,
+      },
+    }, deps);
+    writeEventId = writeEvent.eventId;
+    events.push(writeEvent);
+  }
+
+  return {
+    rowsRead,
+    rowsWritten,
+    readCloudUnits,
+    writeCloudUnits,
+    amountLight: events.reduce((sum, event) => sum + event.amountDebited, 0),
+    readEventId,
+    writeEventId,
+    events,
+  };
+}
+
+export async function createRuntimeCloudHold(
+  params: RuntimeCloudHoldParams,
+  deps?: CloudUsageDeps,
+): Promise<RuntimeCloudHoldResult> {
+  const config = params.billingConfig ?? DEFAULT_BILLING_CONFIG;
+  const expectedUnits = params.timeoutMs;
+  const expectedCloudUnits = calcWorkerCloudUnits(
+    params.timeoutMs,
+    config.workerMsPerCloudUnit,
+  );
+  const expectedAmountLight = calculateCloudUsageLight(
+    expectedCloudUnits,
+    config.cloudUnitLightPer1k,
+  );
+
+  const row = await callCloudUsageRpcRow("create_app_call_runtime_cloud_hold", {
+    p_caller_user_id: params.callerUserId,
+    p_owner_user_id: params.ownerUserId,
+    p_app_id: params.appId,
+    p_function_name: params.functionName,
+    p_receipt_id: params.receiptId ?? null,
+    p_source: params.source,
+    p_expected_units: expectedUnits,
+    p_expected_cloud_units: expectedCloudUnits,
+    p_expected_amount_light: expectedAmountLight,
+    p_app_price_light: params.appPriceLight,
+    p_free_call_limit: params.freeCallLimit ?? 0,
+    p_free_call_counter_key: params.freeCallCounterKey ?? null,
+    p_expires_at: params.expiresAt ?? null,
+    p_billing_config_version: config.version ?? null,
+    p_metadata: params.metadata ?? {},
+  }, deps);
+
+  const payerUserId = requiredString(row.payer_user_id, "payer_user_id");
+  const sponsorUserId = optionalString(row.sponsor_user_id, "sponsor_user_id");
+  return {
+    holdId: requiredString(row.hold_id, "hold_id"),
+    payerUserId,
+    sponsorUserId,
+    appPriceLight: requiredNumber(row.app_price_light, "app_price_light"),
+    appChargeLight: requiredNumber(row.app_charge_light, "app_charge_light"),
+    freeCall: requiredBoolean(row.free_call, "free_call"),
+    freeCallCount: optionalNumber(row.free_call_count, "free_call_count"),
+    freeCallLimit: requiredNumber(row.free_call_limit, "free_call_limit"),
+    oldBalance: requiredNumber(row.old_balance, "old_balance"),
+    newBalance: requiredNumber(row.new_balance, "new_balance"),
+    heldAmountLight: requiredNumber(row.held_amount_light, "held_amount_light"),
+    heldDepositLight: requiredNumber(
+      row.held_deposit_light,
+      "held_deposit_light",
+    ),
+    heldEarnedLight: requiredNumber(row.held_earned_light, "held_earned_light"),
+    expectedUnits,
+    expectedCloudUnits,
+    expectedAmountLight,
+    ownerSponsoredInfra: sponsorUserId !== null &&
+      sponsorUserId === params.ownerUserId,
+  };
+}
+
+export async function settleRuntimeCloudHold(
+  params: RuntimeCloudHoldSettlementParams,
+  deps?: CloudUsageDeps,
+): Promise<RuntimeCloudHoldSettlementResult> {
+  const config = params.billingConfig ?? DEFAULT_BILLING_CONFIG;
+  const units = params.durationMs;
+  const cloudUnits = calcWorkerCloudUnits(
+    params.durationMs,
+    config.workerMsPerCloudUnit,
+  );
+  const amountLight = calculateCloudUsageLight(
+    cloudUnits,
+    config.cloudUnitLightPer1k,
+  );
+  const settlement = await settleCloudUsageHold({
+    holdId: params.holdId,
+    units,
+    cloudUnits,
+    amountLight,
+    metadata: params.metadata,
+  }, deps);
+
+  return {
+    ...settlement,
+    units,
+    cloudUnits,
+    amountLight,
+  };
+}
+
+export async function recordCloudUsageEvent(
+  params: CloudUsageEventParams,
+  deps?: CloudUsageDeps,
+): Promise<string> {
+  const payload = await callCloudUsageRpc(
+    "record_cloud_usage_event",
+    eventBody(params),
+    deps,
+  );
+  if (typeof payload === "string") {
+    return payload;
+  }
+  if (Array.isArray(payload) && typeof payload[0] === "string") {
+    return payload[0];
+  }
+  if (Array.isArray(payload) && payload[0] && typeof payload[0] === "object") {
+    const row = payload[0] as RpcRow;
+    if (typeof row.record_cloud_usage_event === "string") {
+      return row.record_cloud_usage_event;
+    }
+  }
+  throw new Error("record_cloud_usage_event returned no event id");
+}
+
+export async function debitCloudUsage(
+  params: CloudUsageEventParams,
+  deps?: CloudUsageDeps,
+): Promise<CloudUsageDebitResult> {
+  const row = await callCloudUsageRpcRow(
+    "debit_cloud_usage",
+    eventBody(params),
+    deps,
+  );
+  return {
+    eventId: requiredString(row.event_id, "event_id"),
+    oldBalance: requiredNumber(row.old_balance, "old_balance"),
+    newBalance: requiredNumber(row.new_balance, "new_balance"),
+    amountDebited: requiredNumber(row.amount_debited, "amount_debited"),
+    depositDebited: requiredNumber(row.deposit_debited, "deposit_debited"),
+    earnedDebited: requiredNumber(row.earned_debited, "earned_debited"),
+  };
+}
+
+export async function createCloudUsageHold(
+  params: CreateCloudUsageHoldParams,
+  deps?: CloudUsageDeps,
+): Promise<CloudUsageHoldResult> {
+  const row = await callCloudUsageRpcRow(
+    "create_cloud_usage_hold",
+    holdBody(params),
+    deps,
+  );
+  return {
+    holdId: requiredString(row.hold_id, "hold_id"),
+    oldBalance: requiredNumber(row.old_balance, "old_balance"),
+    newBalance: requiredNumber(row.new_balance, "new_balance"),
+    heldAmountLight: requiredNumber(row.held_amount_light, "held_amount_light"),
+    heldDepositLight: requiredNumber(
+      row.held_deposit_light,
+      "held_deposit_light",
+    ),
+    heldEarnedLight: requiredNumber(row.held_earned_light, "held_earned_light"),
+  };
+}
+
+export async function settleCloudUsageHold(
+  params: SettleCloudUsageHoldParams,
+  deps?: CloudUsageDeps,
+): Promise<CloudUsageHoldSettlementResult> {
+  const row = await callCloudUsageRpcRow("settle_cloud_usage_hold", {
+    p_hold_id: params.holdId,
+    p_units: params.units,
+    p_cloud_units: params.cloudUnits,
+    p_amount_light: params.amountLight,
+    p_metadata: params.metadata ?? {},
+  }, deps);
+
+  return {
+    eventId: requiredString(row.event_id, "event_id"),
+    holdId: requiredString(row.hold_id, "hold_id"),
+    settledAmountLight: requiredNumber(
+      row.settled_amount_light,
+      "settled_amount_light",
+    ),
+    releasedAmountLight: requiredNumber(
+      row.released_amount_light,
+      "released_amount_light",
+    ),
+  };
+}
+
+export async function releaseCloudUsageHold(
+  params: ReleaseCloudUsageHoldParams,
+  deps?: CloudUsageDeps,
+): Promise<CloudUsageHoldReleaseResult> {
+  const row = await callCloudUsageRpcRow("release_cloud_usage_hold", {
+    p_hold_id: params.holdId,
+    p_metadata: params.metadata ?? {},
+  }, deps);
+
+  return {
+    holdId: requiredString(row.hold_id, "hold_id"),
+    releasedAmountLight: requiredNumber(
+      row.released_amount_light,
+      "released_amount_light",
+    ),
+  };
+}
+
+function eventBody(params: CloudUsageEventParams): RpcRow {
+  return {
+    ...contextBody(params),
+    p_units: params.units,
+    p_cloud_units: params.cloudUnits,
+    p_amount_light: params.amountLight,
+  };
+}
+
+function holdBody(params: CreateCloudUsageHoldParams): RpcRow {
+  return {
+    ...contextBody(params),
+    p_expected_units: params.expectedUnits,
+    p_expected_cloud_units: params.expectedCloudUnits,
+    p_expected_amount_light: params.expectedAmountLight,
+    p_expires_at: params.expiresAt ?? null,
+  };
+}
+
+function contextBody(params: CloudUsageContext): RpcRow {
+  return {
+    p_payer_user_id: params.payerUserId,
+    p_source: params.source,
+    p_resource: params.resource,
+    p_sponsor_user_id: params.sponsorUserId ?? null,
+    p_caller_user_id: params.callerUserId ?? null,
+    p_owner_user_id: params.ownerUserId ?? null,
+    p_app_id: params.appId ?? null,
+    p_function_name: params.functionName ?? null,
+    p_receipt_id: params.receiptId ?? null,
+    p_billing_config_version: params.billingConfigVersion ?? null,
+    p_metadata: params.metadata ?? {},
+  };
+}
+
+async function callCloudUsageRpcRow(
+  rpc: string,
+  body: RpcRow,
+  deps?: CloudUsageDeps,
+): Promise<RpcRow> {
+  const payload = await callCloudUsageRpc(rpc, body, deps);
+  const row = Array.isArray(payload) ? payload[0] : payload;
+  if (!row || typeof row !== "object") {
+    throw new Error(`${rpc} returned no rows`);
+  }
+  return row as RpcRow;
+}
+
+async function callCloudUsageRpc(
+  rpc: string,
+  body: RpcRow,
+  deps?: CloudUsageDeps,
+): Promise<unknown> {
+  const supabase = createSupabaseRestClient({ fetchFn: deps?.fetchFn });
+  const res = await supabase.rpc(rpc, body);
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new CloudUsageRpcError(
+      rpc,
+      res.status,
+      detail || `${rpc} failed with status ${res.status}`,
+    );
+  }
+
+  const text = await res.text();
+  if (!text) {
+    return null;
+  }
+  return JSON.parse(text);
+}
+
+function requiredString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`Cloud usage RPC response missing ${field}`);
+  }
+  return value;
+}
+
+function requiredNumber(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`Cloud usage RPC response missing ${field}`);
+  }
+  return value;
+}
+
+function normalizeUsageUnits(value: number, label: string): number {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative finite number`);
+  }
+  return Math.ceil(value);
+}
+
+function optionalNumber(value: unknown, field: string): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`Cloud usage RPC response invalid ${field}`);
+  }
+  return value;
+}
+
+function optionalString(value: unknown, field: string): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`Cloud usage RPC response invalid ${field}`);
+  }
+  return value;
+}
+
+function requiredBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`Cloud usage RPC response missing ${field}`);
+  }
+  return value;
+}

@@ -1,9 +1,21 @@
 import type { WidgetMeta } from '../../../shared/contracts/widget.ts';
-import { executeAppMcpTool } from './api';
+import { executeAppMcpTool, type WidgetPullCallMetadata } from './api';
 import { createDesktopLogger } from './logging';
 
 const widgetRuntimeLogger = createDesktopLogger('WidgetRuntime');
 const WIDGET_CACHE_PREFIX = 'widget_app:';
+const WIDGET_PULL_SETTINGS_PREFIX = 'widget_pull_settings:';
+const WIDGET_PULL_SETTINGS_EVENT = 'ul-widget-pull-settings-changed';
+const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+
+export const DEFAULT_WIDGET_PULL_INTERVAL_MS = 5 * 60 * 1000;
+export const WIDGET_PULL_LIGHT_PER_PULL = 0.001;
+export const WIDGET_PULL_INTERVAL_OPTIONS = [
+  { label: '1m', valueMs: 60 * 1000 },
+  { label: '5m', valueMs: DEFAULT_WIDGET_PULL_INTERVAL_MS },
+  { label: '15m', valueMs: 15 * 60 * 1000 },
+  { label: '1h', valueMs: 60 * 60 * 1000 },
+];
 
 export interface WidgetAppSource {
   appUuid: string;
@@ -39,6 +51,18 @@ export interface WidgetHtmlLoadResult {
   payload?: WidgetUiPayload | null;
 }
 
+export interface WidgetPullSettings {
+  enabled: boolean;
+  intervalMs: number;
+  lastPulledAt: number | null;
+  pullCount: number;
+}
+
+export interface WidgetPullCostEstimate {
+  monthlyPulls: number;
+  monthlyLight: number;
+}
+
 function hasLocalStorage(): boolean {
   return typeof globalThis !== 'undefined' && 'localStorage' in globalThis;
 }
@@ -53,6 +77,112 @@ function normalizeAppVersion(appVersion?: string | null): string | null {
   if (typeof appVersion !== 'string') return null;
   const trimmed = appVersion.trim();
   return trimmed || null;
+}
+
+function normalizeWidgetPullInterval(intervalMs: unknown): number {
+  if (typeof intervalMs !== 'number' || !Number.isFinite(intervalMs)) {
+    return DEFAULT_WIDGET_PULL_INTERVAL_MS;
+  }
+  const min = WIDGET_PULL_INTERVAL_OPTIONS[0]?.valueMs ?? DEFAULT_WIDGET_PULL_INTERVAL_MS;
+  return Math.max(min, Math.round(intervalMs));
+}
+
+function normalizeWidgetPullSettings(raw: Partial<WidgetPullSettings> | null | undefined): WidgetPullSettings {
+  return {
+    enabled: raw?.enabled === true,
+    intervalMs: normalizeWidgetPullInterval(raw?.intervalMs),
+    lastPulledAt: typeof raw?.lastPulledAt === 'number' && Number.isFinite(raw.lastPulledAt)
+      ? raw.lastPulledAt
+      : null,
+    pullCount: typeof raw?.pullCount === 'number' && Number.isFinite(raw.pullCount)
+      ? Math.max(0, Math.floor(raw.pullCount))
+      : 0,
+  };
+}
+
+function dispatchWidgetPullSettingsChanged(): void {
+  if (typeof globalThis === 'undefined' || typeof globalThis.dispatchEvent !== 'function') return;
+  if (typeof CustomEvent === 'function') {
+    globalThis.dispatchEvent(new CustomEvent(WIDGET_PULL_SETTINGS_EVENT));
+  } else if (typeof Event === 'function') {
+    globalThis.dispatchEvent(new Event(WIDGET_PULL_SETTINGS_EVENT));
+  }
+}
+
+export function getWidgetSourceKey(
+  source: Pick<WidgetAppSource, 'appUuid' | 'widgetName'>,
+): string {
+  return `${source.appUuid}:${source.widgetName}`;
+}
+
+export function getWidgetPullSettingsStorageKey(
+  source: Pick<WidgetAppSource, 'appUuid' | 'widgetName'>,
+): string {
+  return `${WIDGET_PULL_SETTINGS_PREFIX}${getWidgetSourceKey(source)}`;
+}
+
+export function readWidgetPullSettings(
+  source: Pick<WidgetAppSource, 'appUuid' | 'widgetName'>,
+): WidgetPullSettings {
+  if (!hasLocalStorage()) return normalizeWidgetPullSettings(null);
+
+  try {
+    const raw = globalThis.localStorage.getItem(getWidgetPullSettingsStorageKey(source));
+    if (!raw) return normalizeWidgetPullSettings(null);
+    const parsed = JSON.parse(raw) as Partial<WidgetPullSettings>;
+    return normalizeWidgetPullSettings(parsed);
+  } catch {
+    return normalizeWidgetPullSettings(null);
+  }
+}
+
+export function writeWidgetPullSettings(
+  source: Pick<WidgetAppSource, 'appUuid' | 'widgetName'>,
+  patch: Partial<WidgetPullSettings>,
+): WidgetPullSettings {
+  const next = normalizeWidgetPullSettings({
+    ...readWidgetPullSettings(source),
+    ...patch,
+  });
+
+  if (hasLocalStorage()) {
+    globalThis.localStorage.setItem(
+      getWidgetPullSettingsStorageKey(source),
+      JSON.stringify(next),
+    );
+  }
+  dispatchWidgetPullSettingsChanged();
+  return next;
+}
+
+export function updateWidgetPullStats(
+  source: Pick<WidgetAppSource, 'appUuid' | 'widgetName'>,
+  now = Date.now(),
+): WidgetPullSettings {
+  const settings = readWidgetPullSettings(source);
+  return writeWidgetPullSettings(source, {
+    ...settings,
+    lastPulledAt: now,
+    pullCount: settings.pullCount + 1,
+  });
+}
+
+export function isWidgetPullDue(settings: WidgetPullSettings, now = Date.now()): boolean {
+  if (!settings.enabled) return false;
+  if (!settings.lastPulledAt) return true;
+  return now - settings.lastPulledAt >= settings.intervalMs;
+}
+
+export function estimateWidgetPullCost(settings: Pick<WidgetPullSettings, 'enabled' | 'intervalMs'>): WidgetPullCostEstimate {
+  if (!settings.enabled) {
+    return { monthlyPulls: 0, monthlyLight: 0 };
+  }
+  const intervalMs = normalizeWidgetPullInterval(settings.intervalMs);
+  const monthlyPulls = Math.ceil(MONTH_MS / intervalMs);
+  return {
+    monthlyPulls,
+    monthlyLight: monthlyPulls * WIDGET_PULL_LIGHT_PER_PULL,
+  };
 }
 
 export function getWidgetCacheKey(
@@ -241,12 +371,12 @@ function parseWidgetUiPayload(text: string): WidgetUiPayload | null {
 export async function fetchWidgetUiPayload(
   source: Pick<WidgetAppSource, 'appUuid' | 'appSlug' | 'uiFunction'>,
   executor: typeof executeAppMcpTool = executeAppMcpTool,
+  widgetPull?: WidgetPullCallMetadata | null,
 ): Promise<WidgetUiPayload | null> {
-  const result = await executor(
-    source.appUuid,
-    buildWidgetToolName(source.appSlug, source.uiFunction),
-    {},
-  );
+  const toolName = buildWidgetToolName(source.appSlug, source.uiFunction);
+  const result = widgetPull
+    ? await executor(source.appUuid, toolName, {}, { widgetPull })
+    : await executor(source.appUuid, toolName, {});
   if (result.isError) return null;
   return parseWidgetUiPayload(result.content?.[0]?.text || '');
 }
@@ -254,12 +384,12 @@ export async function fetchWidgetUiPayload(
 export async function fetchWidgetDataPayload(
   source: Pick<WidgetAppSource, 'appUuid' | 'appSlug' | 'dataFunction'>,
   executor: typeof executeAppMcpTool = executeAppMcpTool,
+  widgetPull?: WidgetPullCallMetadata | null,
 ): Promise<WidgetDataPayload | null> {
-  const result = await executor(
-    source.appUuid,
-    buildWidgetToolName(source.appSlug, source.dataFunction),
-    {},
-  );
+  const toolName = buildWidgetToolName(source.appSlug, source.dataFunction);
+  const result = widgetPull
+    ? await executor(source.appUuid, toolName, {}, { widgetPull })
+    : await executor(source.appUuid, toolName, {});
   if (result.isError) return null;
 
   const raw = parseJsonPayload(result.content?.[0]?.text || '', 'data');
@@ -290,6 +420,7 @@ export async function loadWidgetHtml(
   options: {
     bustCache?: boolean;
     executor?: typeof executeAppMcpTool;
+    widgetPull?: WidgetPullCallMetadata | null;
   } = {},
 ): Promise<WidgetHtmlLoadResult | null> {
   if (!options.bustCache) {
@@ -303,7 +434,11 @@ export async function loadWidgetHtml(
     }
   }
 
-  const payload = await fetchWidgetUiPayload(source, options.executor ?? executeAppMcpTool);
+  const payload = await fetchWidgetUiPayload(
+    source,
+    options.executor ?? executeAppMcpTool,
+    options.widgetPull ?? null,
+  );
   if (!payload) return null;
 
   if (payload.appHtml) {
@@ -448,8 +583,14 @@ function buildWidgetBridgeScript(options: {
   token: string | null;
   context?: Record<string, string>;
   inlineResize?: boolean;
+  widgetPull?: WidgetPullCallMetadata | null;
 }): string {
   const context = options.context ?? {};
+  const widgetIntervalMs = typeof options.widgetPull?.intervalMs === 'number' &&
+      Number.isFinite(options.widgetPull.intervalMs)
+    ? Math.max(0, Math.round(options.widgetPull.intervalMs))
+    : null;
+  const widgetPullReason = options.widgetPull?.reason || 'widget_action';
 
   return `<script>
 (function() {
@@ -458,11 +599,22 @@ function buildWidgetBridgeScript(options: {
   var _appUuid = ${JSON.stringify(options.appUuid)};
   var _appSlug = ${JSON.stringify(options.appSlug)};
   var _widgetName = ${JSON.stringify(options.widgetName)};
+  var _widgetIntervalMs = ${JSON.stringify(widgetIntervalMs)};
+  var _widgetPullReason = ${JSON.stringify(widgetPullReason)};
 
   window.ulAction = function(functionName, args) {
     var isPlatform = functionName.indexOf('ultralight.') === 0 || functionName.indexOf('ul.') === 0;
     var toolName = isPlatform ? functionName : (_appSlug ? (_appSlug + '_' + functionName) : functionName);
     var endpoint = isPlatform ? (_apiBase + '/mcp/platform') : (_apiBase + '/mcp/' + _appUuid);
+    var callArgs = args || {};
+    if (!isPlatform) {
+      callArgs = Object.assign({}, callArgs, {
+        _widget_pull: true,
+        _widget_name: _widgetName,
+        _widget_pull_reason: _widgetPullReason
+      });
+      if (_widgetIntervalMs !== null) callArgs._widget_interval_ms = _widgetIntervalMs;
+    }
     return fetch(endpoint, {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + _token, 'Content-Type': 'application/json' },
@@ -470,7 +622,7 @@ function buildWidgetBridgeScript(options: {
         jsonrpc: '2.0',
         id: crypto.randomUUID(),
         method: 'tools/call',
-        params: { name: toolName, arguments: args || {} }
+        params: { name: toolName, arguments: callArgs }
       })
     })
     .then(function(res) { return res.json(); })
@@ -535,6 +687,7 @@ export function buildWidgetSrcDoc(options: {
   token: string | null;
   context?: Record<string, string>;
   inlineResize?: boolean;
+  widgetPull?: WidgetPullCallMetadata | null;
 }): string {
   const bridgeScript = buildWidgetBridgeScript(options);
 

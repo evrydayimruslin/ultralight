@@ -2,7 +2,12 @@
 // R2-based JSON storage for app data - zero config for users
 // Each app gets its own data namespace: apps/{appId}/data/{key}.json
 
-import { createR2Service } from './storage.ts';
+import type { BillingConfig } from "./billing-config.ts";
+import {
+  type CloudOperationMeteringContext,
+  debitCloudOperation,
+} from "./cloud-usage.ts";
+import { createR2Service } from "./storage.ts";
 
 // ============================================
 // DATA CACHE (shared singleton)
@@ -26,11 +31,19 @@ class AppDataCache {
   private _misses = 0;
 
   /** Build cache key from appId + userId + data key */
-  private cacheKey(appId: string, userId: string | undefined, key: string): string {
+  private cacheKey(
+    appId: string,
+    userId: string | undefined,
+    key: string,
+  ): string {
     return userId ? `${appId}:${userId}:${key}` : `${appId}::${key}`;
   }
 
-  get(appId: string, userId: string | undefined, key: string): unknown | undefined {
+  get(
+    appId: string,
+    userId: string | undefined,
+    key: string,
+  ): unknown | undefined {
     const ck = this.cacheKey(appId, userId, key);
     const entry = this.cache.get(ck);
     if (!entry) {
@@ -46,7 +59,12 @@ class AppDataCache {
     return entry.value;
   }
 
-  set(appId: string, userId: string | undefined, key: string, value: unknown): void {
+  set(
+    appId: string,
+    userId: string | undefined,
+    key: string,
+    value: unknown,
+  ): void {
     const ck = this.cacheKey(appId, userId, key);
     // Evict LRU if at capacity
     if (this.cache.size >= DATA_CACHE_MAX && !this.cache.has(ck)) {
@@ -69,8 +87,8 @@ class AppDataCache {
       hits: this._hits,
       misses: this._misses,
       hitRate: this._hits + this._misses > 0
-        ? (this._hits / (this._hits + this._misses) * 100).toFixed(1) + '%'
-        : 'N/A',
+        ? (this._hits / (this._hits + this._misses) * 100).toFixed(1) + "%"
+        : "N/A",
     };
   }
 }
@@ -79,7 +97,7 @@ let _dataCache: AppDataCache | null = null;
 function getDataCache(): AppDataCache {
   if (!_dataCache) {
     _dataCache = new AppDataCache();
-    console.log('[DATA_CACHE] Initialized (max=2000, TTL=30s)');
+    console.log("[DATA_CACHE] Initialized (max=2000, TTL=30s)");
   }
   return _dataCache;
 }
@@ -90,7 +108,7 @@ function getDataCache(): AppDataCache {
 
 export interface QueryOptions {
   filter?: (value: unknown) => boolean;
-  sort?: { field: string; order: 'asc' | 'desc' };
+  sort?: { field: string; order: "asc" | "desc" };
   limit?: number;
   offset?: number;
 }
@@ -115,6 +133,18 @@ export interface AppDataService {
   batchRemove(keys: string[]): Promise<void>;
 }
 
+export interface AppDataServiceOptions {
+  operationMetering?: CloudOperationMeteringContext | null;
+  billingConfig?: Pick<
+    BillingConfig,
+    | "version"
+    | "cloudUnitLightPer1k"
+    | "r2OpsPerCloudUnit"
+    | "kvOpsPerCloudUnit"
+  >;
+  fetchFn?: typeof fetch;
+}
+
 // ============================================
 // IMPLEMENTATION
 // ============================================
@@ -128,8 +158,16 @@ export interface AppDataService {
  *
  * The user-partitioned storage ensures each user's data is isolated within an app.
  */
-export function createAppDataService(appId: string, userId?: string): AppDataService {
-  const r2 = createR2Service();
+export function createAppDataService(
+  appId: string,
+  userId?: string,
+  options: AppDataServiceOptions = {},
+): AppDataService {
+  const r2 = createR2Service({
+    metering: options.operationMetering,
+    billingConfig: options.billingConfig,
+    fetchFn: options.fetchFn,
+  });
   const dataCache = getDataCache();
 
   // Use user-partitioned path if userId is provided
@@ -138,7 +176,9 @@ export function createAppDataService(appId: string, userId?: string): AppDataSer
     : `apps/${appId}/data/`;
 
   // Internal helper to load raw data (includes metadata)
-  async function loadRaw(key: string): Promise<{ key: string; value: unknown; updated_at: string } | null> {
+  async function loadRaw(
+    key: string,
+  ): Promise<{ key: string; value: unknown; updated_at: string } | null> {
     const sanitizedKey = sanitizeKey(key);
     const path = `${dataPrefix}${sanitizedKey}.json`;
 
@@ -179,7 +219,7 @@ export function createAppDataService(appId: string, userId?: string): AppDataSer
       await r2.uploadFile(path, {
         name: `${sanitizedKey}.json`,
         content: new TextEncoder().encode(data),
-        contentType: 'application/json',
+        contentType: "application/json",
       });
 
       // Update cache with new value
@@ -233,11 +273,11 @@ export function createAppDataService(appId: string, userId?: string): AppDataSer
 
         // Extract key names from paths
         return files
-          .filter(f => f.endsWith('.json'))
-          .map(f => {
+          .filter((f) => f.endsWith(".json"))
+          .map((f) => {
             // Remove prefix and .json suffix
-            const withoutPrefix = f.replace(dataPrefix, '');
-            return withoutPrefix.replace('.json', '');
+            const withoutPrefix = f.replace(dataPrefix, "");
+            return withoutPrefix.replace(".json", "");
           });
       } catch {
         return [];
@@ -259,7 +299,10 @@ export function createAppDataService(appId: string, userId?: string): AppDataSer
      *     offset: 0,
      *   });
      */
-    async query(prefix: string, options?: QueryOptions): Promise<QueryResult[]> {
+    async query(
+      prefix: string,
+      options?: QueryOptions,
+    ): Promise<QueryResult[]> {
       // Get all keys matching prefix
       const keys = await this.list(prefix);
 
@@ -282,7 +325,7 @@ export function createAppDataService(appId: string, userId?: string): AppDataSer
               value: data.value,
               updatedAt: data.updated_at,
             };
-          })
+          }),
         );
         rawItems.push(...batchResults);
       }
@@ -292,7 +335,7 @@ export function createAppDataService(appId: string, userId?: string): AppDataSer
 
       // Apply filter if provided
       if (options?.filter) {
-        items = items.filter(item => {
+        items = items.filter((item) => {
           try {
             return options.filter!(item.value);
           } catch {
@@ -310,12 +353,12 @@ export function createAppDataService(appId: string, userId?: string): AppDataSer
 
           // Handle null/undefined
           if (aVal == null && bVal == null) return 0;
-          if (aVal == null) return order === 'asc' ? -1 : 1;
-          if (bVal == null) return order === 'asc' ? 1 : -1;
+          if (aVal == null) return order === "asc" ? -1 : 1;
+          if (bVal == null) return order === "asc" ? 1 : -1;
 
           // Compare values
-          if (aVal < bVal) return order === 'asc' ? -1 : 1;
-          if (aVal > bVal) return order === 'asc' ? 1 : -1;
+          if (aVal < bVal) return order === "asc" ? -1 : 1;
+          if (aVal > bVal) return order === "asc" ? 1 : -1;
           return 0;
         });
       }
@@ -337,14 +380,16 @@ export function createAppDataService(appId: string, userId?: string): AppDataSer
      *     { key: 'tweets/456', value: { content: '...' } },
      *   ]);
      */
-    async batchStore(items: Array<{ key: string; value: unknown }>): Promise<void> {
+    async batchStore(
+      items: Array<{ key: string; value: unknown }>,
+    ): Promise<void> {
       // Process in parallel with concurrency limit
       const BATCH_SIZE = 50;
 
       for (let i = 0; i < items.length; i += BATCH_SIZE) {
         const batch = items.slice(i, i + BATCH_SIZE);
         await Promise.all(
-          batch.map(item => this.store(item.key, item.value))
+          batch.map((item) => this.store(item.key, item.value)),
         );
       }
     },
@@ -355,7 +400,9 @@ export function createAppDataService(appId: string, userId?: string): AppDataSer
      * Example usage:
      *   const items = await ultralight.batchLoad(['tweets/123', 'tweets/456']);
      */
-    async batchLoad(keys: string[]): Promise<Array<{ key: string; value: unknown }>> {
+    async batchLoad(
+      keys: string[],
+    ): Promise<Array<{ key: string; value: unknown }>> {
       // Process in parallel batches
       const BATCH_SIZE = 50;
       const results: Array<{ key: string; value: unknown }> = [];
@@ -366,7 +413,7 @@ export function createAppDataService(appId: string, userId?: string): AppDataSer
           batch.map(async (key) => {
             const value = await this.load(key);
             return { key, value };
-          })
+          }),
         );
         results.push(...batchResults);
       }
@@ -387,7 +434,7 @@ export function createAppDataService(appId: string, userId?: string): AppDataSer
       for (let i = 0; i < keys.length; i += BATCH_SIZE) {
         const batch = keys.slice(i, i + BATCH_SIZE);
         await Promise.all(
-          batch.map(key => this.remove(key))
+          batch.map((key) => this.remove(key)),
         );
       }
     },
@@ -409,28 +456,56 @@ export function createWorkerAppDataService(
   userId: string | undefined,
   workerUrl: string,
   workerSecret: string,
+  options: AppDataServiceOptions = {},
 ): AppDataService {
   const dataCache = getDataCache();
 
-  async function workerFetch(path: string, body: Record<string, unknown>): Promise<unknown> {
+  async function meterWorkerOperation(
+    operation: string,
+    units = 1,
+  ): Promise<void> {
+    if (!options.operationMetering) {
+      return;
+    }
+
+    await debitCloudOperation({
+      ...options.operationMetering,
+      resource: "r2_operation",
+      operation,
+      units,
+      billingConfig: options.billingConfig,
+      metadata: {
+        ...(options.operationMetering.metadata ?? {}),
+        appdata_worker: true,
+      },
+    }, { fetchFn: options.fetchFn });
+  }
+
+  async function workerFetch(
+    path: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
     const response = await fetch(`${workerUrl}/data/${path}`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
-        'X-Worker-Secret': workerSecret,
+        "Content-Type": "application/json",
+        "X-Worker-Secret": workerSecret,
       },
       body: JSON.stringify({ appId: appId, userId: userId, ...body }),
     });
     if (!response.ok) {
       const errText = await response.text().catch(() => response.statusText);
-      throw new Error(`Worker data call failed (${response.status}): ${errText}`);
+      throw new Error(
+        `Worker data call failed (${response.status}): ${errText}`,
+      );
     }
     return response.json();
   }
 
   return {
     async store(key: string, value: unknown): Promise<void> {
-      await workerFetch('store', { key: key, value: value });
+      await meterWorkerOperation("appdata.store");
+      await workerFetch("store", { key: key, value: value });
       // Update cache with new value
       dataCache.set(appId, userId, key, value);
     },
@@ -440,7 +515,10 @@ export function createWorkerAppDataService(
       const cached = dataCache.get(appId, userId, key);
       if (cached !== undefined) return cached;
 
-      const result = await workerFetch('load', { key: key }) as { value: unknown };
+      await meterWorkerOperation("appdata.load");
+      const result = await workerFetch("load", { key: key }) as {
+        value: unknown;
+      };
       const value = result.value ?? null;
 
       // Populate cache
@@ -451,15 +529,22 @@ export function createWorkerAppDataService(
     async remove(key: string): Promise<void> {
       // Invalidate cache
       dataCache.invalidate(appId, userId, key);
-      await workerFetch('remove', { key: key });
+      await meterWorkerOperation("appdata.remove");
+      await workerFetch("remove", { key: key });
     },
 
     async list(prefix?: string): Promise<string[]> {
-      const result = await workerFetch('list', { prefix: prefix }) as { keys: string[] };
+      await meterWorkerOperation("appdata.list");
+      const result = await workerFetch("list", { prefix: prefix }) as {
+        keys: string[];
+      };
       return result.keys ?? [];
     },
 
-    async query(prefix: string, options?: QueryOptions): Promise<QueryResult[]> {
+    async query(
+      prefix: string,
+      options?: QueryOptions,
+    ): Promise<QueryResult[]> {
       // Query involves filtering/sorting which needs the data values.
       // Fetch all keys, batch-load, then filter/sort locally.
       const keys = await this.list(prefix);
@@ -468,16 +553,20 @@ export function createWorkerAppDataService(
       const loaded = await this.batchLoad(keys);
 
       let items: QueryResult[] = loaded
-        .filter(item => item.value !== null)
-        .map(item => ({
+        .filter((item) => item.value !== null)
+        .map((item) => ({
           key: item.key,
           value: item.value,
           updatedAt: undefined,
         }));
 
       if (options?.filter) {
-        items = items.filter(item => {
-          try { return options.filter!(item.value); } catch { return false; }
+        items = items.filter((item) => {
+          try {
+            return options.filter!(item.value);
+          } catch {
+            return false;
+          }
         });
       }
 
@@ -487,10 +576,14 @@ export function createWorkerAppDataService(
           const aVal = getNestedValue(a.value, field);
           const bVal = getNestedValue(b.value, field);
           if (aVal == null && bVal == null) return 0;
-          if (aVal == null) return order === 'asc' ? -1 : 1;
-          if (bVal == null) return order === 'asc' ? 1 : -1;
-          if ((aVal as string | number) < (bVal as string | number)) return order === 'asc' ? -1 : 1;
-          if ((aVal as string | number) > (bVal as string | number)) return order === 'asc' ? 1 : -1;
+          if (aVal == null) return order === "asc" ? -1 : 1;
+          if (bVal == null) return order === "asc" ? 1 : -1;
+          if ((aVal as string | number) < (bVal as string | number)) {
+            return order === "asc" ? -1 : 1;
+          }
+          if ((aVal as string | number) > (bVal as string | number)) {
+            return order === "asc" ? 1 : -1;
+          }
           return 0;
         });
       }
@@ -500,17 +593,26 @@ export function createWorkerAppDataService(
       return items.slice(offset, offset + limit);
     },
 
-    async batchStore(items: Array<{ key: string; value: unknown }>): Promise<void> {
-      await workerFetch('batch-store', { items: items });
+    async batchStore(
+      items: Array<{ key: string; value: unknown }>,
+    ): Promise<void> {
+      await meterWorkerOperation("appdata.batch_store", items.length);
+      await workerFetch("batch-store", { items: items });
     },
 
-    async batchLoad(keys: string[]): Promise<Array<{ key: string; value: unknown }>> {
-      const result = await workerFetch('batch-load', { keys: keys }) as { items: Array<{ key: string; value: unknown }> };
+    async batchLoad(
+      keys: string[],
+    ): Promise<Array<{ key: string; value: unknown }>> {
+      await meterWorkerOperation("appdata.batch_load", keys.length);
+      const result = await workerFetch("batch-load", { keys: keys }) as {
+        items: Array<{ key: string; value: unknown }>;
+      };
       return result.items ?? [];
     },
 
     async batchRemove(keys: string[]): Promise<void> {
-      await workerFetch('batch-remove', { keys: keys });
+      await meterWorkerOperation("appdata.batch_remove", keys.length);
+      await workerFetch("batch-remove", { keys: keys });
     },
   };
 }
@@ -526,10 +628,10 @@ export function createWorkerAppDataService(
 function sanitizeKey(key: string): string {
   // Replace unsafe characters
   return key
-    .replace(/[^a-zA-Z0-9\-_\/]/g, '_')
-    .replace(/\/+/g, '/') // Collapse multiple slashes
-    .replace(/^\//, '') // Remove leading slash
-    .replace(/\/$/, ''); // Remove trailing slash
+    .replace(/[^a-zA-Z0-9\-_\/]/g, "_")
+    .replace(/\/+/g, "/") // Collapse multiple slashes
+    .replace(/^\//, "") // Remove leading slash
+    .replace(/\/$/, ""); // Remove trailing slash
 }
 
 /**
@@ -537,15 +639,15 @@ function sanitizeKey(key: string): string {
  * e.g., getNestedValue({ a: { b: 1 } }, 'a.b') => 1
  */
 function getNestedValue(obj: unknown, path: string): unknown {
-  if (obj == null || typeof obj !== 'object') {
+  if (obj == null || typeof obj !== "object") {
     return undefined;
   }
 
-  const parts = path.split('.');
+  const parts = path.split(".");
   let current: unknown = obj;
 
   for (const part of parts) {
-    if (current == null || typeof current !== 'object') {
+    if (current == null || typeof current !== "object") {
       return undefined;
     }
     current = (current as Record<string, unknown>)[part];

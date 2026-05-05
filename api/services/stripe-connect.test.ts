@@ -1,6 +1,6 @@
 import { assertEquals } from "https://deno.land/std@0.210.0/assert/assert_equals.ts";
 
-import { createPayout, createTransfer } from "./stripe-connect.ts";
+import { createPayout, createTransfer, estimatePayoutFee } from "./stripe-connect.ts";
 
 async function withStripeFetch(
   handler: (input: string | URL | Request, init?: RequestInit) => Response,
@@ -48,6 +48,16 @@ Deno.test("stripe connect: transfer requests include idempotency key and metadat
     assertEquals(result.transfer_id, "tr_123");
     assertEquals(result.amount_cents, 1234);
   });
+});
+
+Deno.test("stripe connect: payout estimate exposes gross fee and net pass-through amounts", () => {
+  const estimate = estimatePayoutFee(5000, false, 100);
+
+  assertEquals(estimate.gross_light, 5000);
+  assertEquals(estimate.gross_usd_cents, 5000);
+  assertEquals(estimate.stripe_fee_cents, 38);
+  assertEquals(estimate.fee_estimate_cents, 38);
+  assertEquals(estimate.net_cents, 4962);
 });
 
 Deno.test("stripe connect: payout requests include connected account and idempotency key", async () => {

@@ -161,7 +161,7 @@ Deno.test("platform request validation: wallet funding reuses deposit bounds", a
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ amount_cents: 499, terms_accepted: true }),
+            body: JSON.stringify({ amount_cents: 2499, terms_accepted: true }),
           },
         ),
       ),
@@ -204,6 +204,25 @@ Deno.test("platform request validation: wire funding reuses deposit bounds", asy
     source: "desktop",
     termsAccepted: true,
   });
+
+  await assertRejects(
+    () =>
+      validateWireFundingRequest(
+        new Request(
+          "https://example.com/api/user/wallet/wire-transfer-intent",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              amount_cents: 2499,
+              terms_accepted: true,
+            }),
+          },
+        ),
+      ),
+    RequestValidationError,
+    "minimum deposit",
+  );
 
   await assertRejects(
     () =>

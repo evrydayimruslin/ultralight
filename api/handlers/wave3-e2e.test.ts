@@ -225,8 +225,9 @@ class Wave3Harness {
     } as typeof globalThis.__env;
     globalThis.__ctx = {
       exports: {
-        AppDataBinding: ({ props }: { props: { appId: string; userId: string } }) =>
-          this.createAppDataBinding(props.appId, props.userId),
+        AppDataBinding: (
+          { props }: { props: { appId: string; userId: string } },
+        ) => this.createAppDataBinding(props.appId, props.userId),
         MemoryBinding: ({ props }: { props: { userId: string } }) =>
           this.createMemoryBinding(props.userId),
         AIBinding: () => ({
@@ -359,7 +360,11 @@ class Wave3Harness {
     getCodeCache().invalidate(row.id);
   }
 
-  private writeSource(storageKey: string, fileName: string, content: string): void {
+  private writeSource(
+    storageKey: string,
+    fileName: string,
+    content: string,
+  ): void {
     this.r2.put(
       `${storageKey}${fileName}`,
       new TextEncoder().encode(content),
@@ -507,9 +512,9 @@ class Wave3Harness {
               const appModule = await import(
                 `data:text/javascript;charset=utf-8,${
                   encodeURIComponent(
-                    `${workerCode.modules["app.js"]}\n// ${
-                      crypto.randomUUID()
-                    }`,
+                    `${
+                      workerCode.modules["app.js"]
+                    }\n// ${crypto.randomUUID()}`,
                   )
                 }`
               );
@@ -519,7 +524,8 @@ class Wave3Harness {
                 !targetFn && appModule.default &&
                 typeof appModule.default === "object"
               ) {
-                targetFn = (appModule.default as Record<string, unknown>)[fnName];
+                targetFn =
+                  (appModule.default as Record<string, unknown>)[fnName];
               }
 
               if (typeof targetFn !== "function") {
@@ -580,7 +586,10 @@ class Wave3Harness {
     return JSON.parse(match[1]) as T;
   }
 
-  private async fetch(input: Request | string | URL, init?: RequestInit): Promise<Response> {
+  private async fetch(
+    input: Request | string | URL,
+    init?: RequestInit,
+  ): Promise<Response> {
     const request = input instanceof Request ? input : new Request(input, init);
     const url = new URL(request.url);
 
@@ -614,7 +623,10 @@ class Wave3Harness {
 
   private async handleSupabase(request: Request, url: URL): Promise<Response> {
     if (url.pathname === "/auth/v1/user") {
-      const token = request.headers.get("Authorization")?.replace("Bearer ", "");
+      const token = request.headers.get("Authorization")?.replace(
+        "Bearer ",
+        "",
+      );
       const user = token ? this.tokens.get(token) : null;
       return user
         ? Response.json(user)
@@ -714,7 +726,54 @@ class Wave3Harness {
       }
       case "/rest/v1/rpc/transfer_balance":
       case "/rest/v1/rpc/transfer_light":
-        return Response.json([{ from_new_balance: 1000, to_new_balance: 1000 }]);
+        return Response.json([{
+          from_new_balance: 1000,
+          to_new_balance: 1000,
+          platform_fee: Number(body.p_amount_light || 0) * 0.15,
+          transfer_id: "wave3-transfer",
+        }]);
+      case "/rest/v1/rpc/create_app_call_runtime_cloud_hold":
+        return Response.json([{
+          hold_id: crypto.randomUUID(),
+          payer_user_id: body.p_caller_user_id === body.p_owner_user_id ||
+              Number(body.p_app_price_light || 0) <= 0
+            ? body.p_owner_user_id
+            : body.p_caller_user_id,
+          sponsor_user_id: body.p_caller_user_id !== body.p_owner_user_id &&
+              Number(body.p_app_price_light || 0) <= 0
+            ? body.p_owner_user_id
+            : null,
+          app_price_light: Number(body.p_app_price_light || 0),
+          app_charge_light: body.p_caller_user_id === body.p_owner_user_id ||
+              Number(body.p_app_price_light || 0) <= 0
+            ? 0
+            : Number(body.p_app_price_light || 0),
+          free_call: body.p_caller_user_id !== body.p_owner_user_id &&
+            Number(body.p_app_price_light || 0) <= 0,
+          free_call_count: null,
+          free_call_limit: Number(body.p_free_call_limit || 0),
+          old_balance: 1000,
+          new_balance: 999,
+          held_amount_light: Number(body.p_expected_amount_light || 0),
+          held_deposit_light: Number(body.p_expected_amount_light || 0),
+          held_earned_light: 0,
+        }]);
+      case "/rest/v1/rpc/settle_cloud_usage_hold":
+        return Response.json([{
+          event_id: crypto.randomUUID(),
+          hold_id: body.p_hold_id,
+          settled_amount_light: Number(body.p_amount_light || 0),
+          released_amount_light: 0,
+        }]);
+      case "/rest/v1/rpc/debit_cloud_usage":
+        return Response.json([{
+          event_id: crypto.randomUUID(),
+          old_balance: 1000,
+          new_balance: 1000 - Number(body.p_amount_light || 0),
+          amount_debited: Number(body.p_amount_light || 0),
+          deposit_debited: Number(body.p_amount_light || 0),
+          earned_debited: 0,
+        }]);
       case "/rest/v1/rpc/increment_caller_usage": {
         const key = `${body.p_app_id}:${body.p_user_id}:${body.p_counter_key}`;
         const next = (this.callerUsage.get(key) || 0) + 1;
@@ -805,7 +864,9 @@ class Wave3Harness {
     }
 
     if (request.method === "POST") {
-      const body = await request.json() as FakePermissionRow | FakePermissionRow[];
+      const body = await request.json() as
+        | FakePermissionRow
+        | FakePermissionRow[];
       const rows = Array.isArray(body) ? body : [body];
       for (const row of rows) {
         this.upsertPermission({ ...row });
@@ -817,7 +878,9 @@ class Wave3Harness {
       const matches = new Set(
         this.applyFilters(this.userAppPermissions, url.searchParams),
       );
-      const remaining = this.userAppPermissions.filter((row) => !matches.has(row));
+      const remaining = this.userAppPermissions.filter((row) =>
+        !matches.has(row)
+      );
       this.userAppPermissions.length = 0;
       this.userAppPermissions.push(...remaining);
       return Response.json([]);
@@ -831,11 +894,15 @@ class Wave3Harness {
     url: URL,
   ): Promise<Response> {
     if (request.method === "GET") {
-      return Response.json(this.applyFilters(this.pendingPermissions, url.searchParams));
+      return Response.json(
+        this.applyFilters(this.pendingPermissions, url.searchParams),
+      );
     }
 
     if (request.method === "POST") {
-      const body = await request.json() as FakePendingPermissionRow | FakePendingPermissionRow[];
+      const body = await request.json() as
+        | FakePendingPermissionRow
+        | FakePendingPermissionRow[];
       const rows = Array.isArray(body) ? body : [body];
       for (const row of rows) {
         this.upsertPendingPermission({
@@ -850,7 +917,9 @@ class Wave3Harness {
       const matches = new Set(
         this.applyFilters(this.pendingPermissions, url.searchParams),
       );
-      const remaining = this.pendingPermissions.filter((row) => !matches.has(row));
+      const remaining = this.pendingPermissions.filter((row) =>
+        !matches.has(row)
+      );
       this.pendingPermissions.length = 0;
       this.pendingPermissions.push(...remaining);
       return Response.json([]);
@@ -864,7 +933,9 @@ class Wave3Harness {
     url: URL,
   ): Promise<Response> {
     if (request.method === "GET") {
-      return Response.json(this.applyFilters(this.userAppSecrets, url.searchParams));
+      return Response.json(
+        this.applyFilters(this.userAppSecrets, url.searchParams),
+      );
     }
 
     if (request.method === "POST") {
@@ -874,7 +945,9 @@ class Wave3Harness {
     }
 
     if (request.method === "DELETE") {
-      const matches = new Set(this.applyFilters(this.userAppSecrets, url.searchParams));
+      const matches = new Set(
+        this.applyFilters(this.userAppSecrets, url.searchParams),
+      );
       const remaining = this.userAppSecrets.filter((row) => !matches.has(row));
       this.userAppSecrets.length = 0;
       this.userAppSecrets.push(...remaining);
@@ -916,13 +989,15 @@ class Wave3Harness {
     let filtered = [...rows];
 
     for (const [key, rawValue] of params.entries()) {
-      if ([
-        "select",
-        "limit",
-        "order",
-        "offset",
-        "on_conflict",
-      ].includes(key)) {
+      if (
+        [
+          "select",
+          "limit",
+          "order",
+          "offset",
+          "on_conflict",
+        ].includes(key)
+      ) {
         continue;
       }
 
@@ -963,7 +1038,10 @@ class Wave3Harness {
 function buildManifest(input: {
   name: string;
   description: string;
-  functions: Record<string, { description: string; parameters?: Record<string, unknown> }>;
+  functions: Record<
+    string,
+    { description: string; parameters?: Record<string, unknown> }
+  >;
   envVars?: Record<string, unknown>;
 }): string {
   return JSON.stringify({
@@ -986,7 +1064,11 @@ function buildManifest(input: {
   });
 }
 
-function rpcRequest(method: string, params?: unknown, id: number | string = 1): JsonRecord {
+function rpcRequest(
+  method: string,
+  params?: unknown,
+  id: number | string = 1,
+): JsonRecord {
   return {
     jsonrpc: "2.0",
     id,
@@ -1009,7 +1091,9 @@ async function parseJson(response: Response): Promise<JsonRecord> {
 
 function expectToolSuccess(payload: JsonRecord): JsonRecord {
   if (payload.error) {
-    throw new Error(`Expected tool success, got ${JSON.stringify(payload.error)}`);
+    throw new Error(
+      `Expected tool success, got ${JSON.stringify(payload.error)}`,
+    );
   }
   const result = payload.result as JsonRecord | undefined;
   assertExists(result);
@@ -1024,7 +1108,9 @@ function expectJsonRpcError(payload: JsonRecord): JsonRecord {
 
 function appToolNames(payload: JsonRecord): string[] {
   const result = payload.result as JsonRecord;
-  const tools = (result.tools as Array<{ name: string }>).map((tool) => tool.name);
+  const tools = (result.tools as Array<{ name: string }>).map((tool) =>
+    tool.name
+  );
   return tools.filter((name) => !name.startsWith("ultralight."));
 }
 
@@ -1167,364 +1253,386 @@ export async function echo(args = {}) {
         envSource,
       );
 
-      await t.step("multi-user MCP sharing resolves a pending invite and enforces function scoping", async () => {
-        const grantResponse = await handlePlatformMcp(
-          new Request("https://wave3.ultralight.test/mcp/platform", {
-            method: "POST",
-            headers: authHeaders(OWNER_TOKEN),
-            body: JSON.stringify(
-              rpcRequest("tools/call", {
-                name: "ul.permissions",
-                arguments: {
-                  app_id: sharedAppId,
-                  action: "grant",
-                  email: COLLAB_EMAIL,
-                  functions: [`${sharedSlug}_search`],
-                },
-              }),
-            ),
-          }),
-        );
-        const grantPayload = await parseJson(grantResponse);
-        const grantResult = expectToolSuccess(grantPayload);
-        assertEquals(grantResult.status, "pending");
-        assertEquals(grantResult.functions_granted, ["search"]);
-
-        const listResponse = await handleMcp(
-          new Request(`https://wave3.ultralight.test/mcp/${sharedAppId}`, {
-            method: "POST",
-            headers: authHeaders(COLLAB_TOKEN),
-            body: JSON.stringify(rpcRequest("tools/list")),
-          }),
-          sharedAppId,
-        );
-        const listPayload = await parseJson(listResponse);
-        assertEquals(
-          appToolNames(listPayload).sort(),
-          [`${sharedSlug}_search`],
-        );
-        assertEquals(
-          harness.pendingPermissions.length,
-          0,
-        );
-        assertEquals(
-          harness.userAppPermissions.map((row) => row.function_name),
-          ["search"],
-        );
-
-        const searchResponse = await handleMcp(
-          new Request(`https://wave3.ultralight.test/mcp/${sharedAppId}`, {
-            method: "POST",
-            headers: authHeaders(COLLAB_TOKEN),
-            body: JSON.stringify(
-              rpcRequest("tools/call", {
-                name: `${sharedSlug}_search`,
-                arguments: { q: "wave3" },
-              }),
-            ),
-          }),
-          sharedAppId,
-        );
-        const searchPayload = await parseJson(searchResponse);
-        const searchResult = expectToolSuccess(searchPayload);
-        assertEquals(searchResult.function, "search");
-        assertEquals(searchResult.caller, COLLAB_EMAIL);
-        assertEquals(searchResult.args, { q: "wave3" });
-
-        const deniedResponse = await handleMcp(
-          new Request(`https://wave3.ultralight.test/mcp/${sharedAppId}`, {
-            method: "POST",
-            headers: authHeaders(COLLAB_TOKEN),
-            body: JSON.stringify(
-              rpcRequest("tools/call", {
-                name: `${sharedSlug}_list`,
-                arguments: {},
-              }),
-            ),
-          }),
-          sharedAppId,
-        );
-        const deniedPayload = await parseJson(deniedResponse);
-        const deniedError = expectJsonRpcError(deniedPayload);
-        assertMatch(
-          String(deniedError.message),
-          /Permission denied: you do not have access to 'list'/,
-        );
-
-        const ownerPermissionList = await handlePlatformMcp(
-          new Request("https://wave3.ultralight.test/mcp/platform", {
-            method: "POST",
-            headers: authHeaders(OWNER_TOKEN),
-            body: JSON.stringify(
-              rpcRequest("tools/call", {
-                name: "ul.permissions",
-                arguments: {
-                  app_id: sharedAppId,
-                  action: "list",
-                },
-              }),
-            ),
-          }),
-        );
-        const permissionPayload = await parseJson(ownerPermissionList);
-        const permissionResult = expectToolSuccess(permissionPayload);
-        const users = permissionResult.users as Array<JsonRecord>;
-        assertEquals(users.length, 1);
-        assertEquals(users[0].email, COLLAB_EMAIL);
-        const grantedFunctions = users[0].functions as Array<JsonRecord>;
-        assertEquals(grantedFunctions.length, 1);
-        assertEquals(grantedFunctions[0].name, "search");
-        assertEquals(
-          (grantedFunctions[0].constraints as JsonRecord | undefined)?.budget_used,
-          0,
-        );
-      });
-
-      await t.step("env vars behave the same across MCP, run, and HTTP", async () => {
-        const missingMcpResponse = await handleMcp(
-          new Request(`https://wave3.ultralight.test/mcp/${envAppId}`, {
-            method: "POST",
-            headers: authHeaders(OWNER_TOKEN),
-            body: JSON.stringify(
-              rpcRequest("tools/call", {
-                name: `${envSlug}_echo`,
-                arguments: { probe: "mcp-before" },
-              }),
-            ),
-          }),
-          envAppId,
-        );
-        const missingMcpPayload = await parseJson(missingMcpResponse);
-        const missingMcpError = expectJsonRpcError(missingMcpPayload);
-        assertMatch(
-          String(missingMcpError.message),
-          /Missing required secrets: USER_SECRET/,
-        );
-
-        const missingRunResponse = await handleRun(
-          new Request(`https://wave3.ultralight.test/run/${envAppId}`, {
-            method: "POST",
-            headers: authHeaders(OWNER_TOKEN),
-            body: JSON.stringify({
-              function: "echo",
-              args: [{ probe: "run-before" }],
+      await t.step(
+        "multi-user MCP sharing resolves a pending invite and enforces function scoping",
+        async () => {
+          const grantResponse = await handlePlatformMcp(
+            new Request("https://wave3.ultralight.test/mcp/platform", {
+              method: "POST",
+              headers: authHeaders(OWNER_TOKEN),
+              body: JSON.stringify(
+                rpcRequest("tools/call", {
+                  name: "ul.permissions",
+                  arguments: {
+                    app_id: sharedAppId,
+                    action: "grant",
+                    email: COLLAB_EMAIL,
+                    functions: [`${sharedSlug}_search`],
+                  },
+                }),
+              ),
             }),
-          }),
-          envAppId,
-        );
-        const missingRunPayload = await parseJson(missingRunResponse);
-        assertEquals(missingRunResponse.status, 400);
-        assertMatch(
-          String(missingRunPayload.error?.message),
-          /Missing required secrets: USER_SECRET/,
-        );
-        assertEquals(
-          missingRunPayload.error?.details?.type,
-          "MISSING_SECRETS",
-        );
+          );
+          const grantPayload = await parseJson(grantResponse);
+          const grantResult = expectToolSuccess(grantPayload);
+          assertEquals(grantResult.status, "pending");
+          assertEquals(grantResult.functions_granted, ["search"]);
 
-        const missingHttpResponse = await handleHttpEndpoint(
-          new Request(`https://wave3.ultralight.test/http/${envAppId}/echo?probe=http-before`, {
-            method: "POST",
-            headers: authHeaders(OWNER_TOKEN),
-          }),
-          envAppId,
-          "/echo",
-        );
-        const missingHttpPayload = await parseJson(missingHttpResponse);
-        assertEquals(missingHttpResponse.status, 400);
-        assertMatch(
-          String(missingHttpPayload.error),
-          /Missing required secrets: USER_SECRET/,
-        );
-
-        const connectResponse = await handlePlatformMcp(
-          new Request("https://wave3.ultralight.test/mcp/platform", {
-            method: "POST",
-            headers: authHeaders(OWNER_TOKEN),
-            body: JSON.stringify(
-              rpcRequest("tools/call", {
-                name: "ul.connect",
-                arguments: {
-                  app_id: envAppId,
-                  secrets: { USER_SECRET: "user-secret-value" },
-                },
-              }),
-            ),
-          }),
-        );
-        const connectPayload = await parseJson(connectResponse);
-        const connectResult = expectToolSuccess(connectPayload);
-        assertEquals(connectResult.fully_connected, true);
-        assertEquals(connectResult.connected_keys, ["USER_SECRET"]);
-
-        const mcpResponse = await handleMcp(
-          new Request(`https://wave3.ultralight.test/mcp/${envAppId}`, {
-            method: "POST",
-            headers: authHeaders(OWNER_TOKEN),
-            body: JSON.stringify(
-              rpcRequest("tools/call", {
-                name: `${envSlug}_echo`,
-                arguments: { probe: "mcp-after" },
-              }),
-            ),
-          }),
-          envAppId,
-        );
-        const mcpPayload = await parseJson(mcpResponse);
-        const mcpResult = expectToolSuccess(mcpPayload);
-        assertEquals(mcpResult.owner, "owner-secret-value");
-        assertEquals(mcpResult.user, "user-secret-value");
-        assertEquals(mcpResult.probe, "mcp-after");
-        assertEquals(mcpResult.caller, OWNER_EMAIL);
-
-        const runResponse = await handleRun(
-          new Request(`https://wave3.ultralight.test/run/${envAppId}`, {
-            method: "POST",
-            headers: authHeaders(OWNER_TOKEN),
-            body: JSON.stringify({
-              function: "echo",
-              args: [{ probe: "run-after" }],
+          const listResponse = await handleMcp(
+            new Request(`https://wave3.ultralight.test/mcp/${sharedAppId}`, {
+              method: "POST",
+              headers: authHeaders(COLLAB_TOKEN),
+              body: JSON.stringify(rpcRequest("tools/list")),
             }),
-          }),
-          envAppId,
-        );
-        const runPayload = await parseJson(runResponse);
-        assertEquals(runPayload.success, true);
-        assertEquals((runPayload.result as JsonRecord).owner, "owner-secret-value");
-        assertEquals((runPayload.result as JsonRecord).user, "user-secret-value");
-        assertEquals((runPayload.result as JsonRecord).probe, "run-after");
+            sharedAppId,
+          );
+          const listPayload = await parseJson(listResponse);
+          assertEquals(
+            appToolNames(listPayload).sort(),
+            [`${sharedSlug}_search`],
+          );
+          assertEquals(
+            harness.pendingPermissions.length,
+            0,
+          );
+          assertEquals(
+            harness.userAppPermissions.map((row) => row.function_name),
+            ["search"],
+          );
 
-        const httpResponse = await handleHttpEndpoint(
-          new Request(`https://wave3.ultralight.test/http/${envAppId}/echo/inspect?probe=http-after`, {
-            method: "POST",
-            headers: authHeaders(OWNER_TOKEN),
-          }),
-          envAppId,
-          "/echo/inspect",
-        );
-        const httpPayload = await parseJson(httpResponse);
-        assertEquals(httpResponse.status, 200);
-        assertEquals(httpPayload.owner, "owner-secret-value");
-        assertEquals(httpPayload.user, "user-secret-value");
-        assertEquals(httpPayload.probe, "http-after");
-        assertEquals(httpPayload.requestPath, "/inspect");
-      });
+          const searchResponse = await handleMcp(
+            new Request(`https://wave3.ultralight.test/mcp/${sharedAppId}`, {
+              method: "POST",
+              headers: authHeaders(COLLAB_TOKEN),
+              body: JSON.stringify(
+                rpcRequest("tools/call", {
+                  name: `${sharedSlug}_search`,
+                  arguments: { q: "wave3" },
+                }),
+              ),
+            }),
+            sharedAppId,
+          );
+          const searchPayload = await parseJson(searchResponse);
+          const searchResult = expectToolSuccess(searchPayload);
+          assertEquals(searchResult.function, "search");
+          assertEquals(searchResult.caller, COLLAB_EMAIL);
+          assertEquals(searchResult.args, { q: "wave3" });
 
-      await t.step("Tool Maker scaffold -> test -> upload -> runtime call holds together", async () => {
-        const scaffoldResponse = await handlePlatformMcp(
-          new Request("https://wave3.ultralight.test/mcp/platform", {
-            method: "POST",
-            headers: authHeaders(OWNER_TOKEN),
-            body: JSON.stringify(
-              rpcRequest("tools/call", {
-                name: "ul.download",
-                arguments: {
-                  name: "Wave 3 Hello",
-                  description: "Golden path scaffold for Wave 3",
-                  storage: "kv",
-                  functions: [{
-                    name: "hello",
-                    description: "Return a scaffold placeholder payload",
-                    parameters: [{
-                      name: "name",
-                      type: "string",
-                      required: false,
-                      description: "Optional greeting target",
+          const deniedResponse = await handleMcp(
+            new Request(`https://wave3.ultralight.test/mcp/${sharedAppId}`, {
+              method: "POST",
+              headers: authHeaders(COLLAB_TOKEN),
+              body: JSON.stringify(
+                rpcRequest("tools/call", {
+                  name: `${sharedSlug}_list`,
+                  arguments: {},
+                }),
+              ),
+            }),
+            sharedAppId,
+          );
+          const deniedPayload = await parseJson(deniedResponse);
+          const deniedError = expectJsonRpcError(deniedPayload);
+          assertMatch(
+            String(deniedError.message),
+            /Permission denied: you do not have access to 'list'/,
+          );
+
+          const ownerPermissionList = await handlePlatformMcp(
+            new Request("https://wave3.ultralight.test/mcp/platform", {
+              method: "POST",
+              headers: authHeaders(OWNER_TOKEN),
+              body: JSON.stringify(
+                rpcRequest("tools/call", {
+                  name: "ul.permissions",
+                  arguments: {
+                    app_id: sharedAppId,
+                    action: "list",
+                  },
+                }),
+              ),
+            }),
+          );
+          const permissionPayload = await parseJson(ownerPermissionList);
+          const permissionResult = expectToolSuccess(permissionPayload);
+          const users = permissionResult.users as Array<JsonRecord>;
+          assertEquals(users.length, 1);
+          assertEquals(users[0].email, COLLAB_EMAIL);
+          const grantedFunctions = users[0].functions as Array<JsonRecord>;
+          assertEquals(grantedFunctions.length, 1);
+          assertEquals(grantedFunctions[0].name, "search");
+          assertEquals(
+            (grantedFunctions[0].constraints as JsonRecord | undefined)
+              ?.budget_used,
+            0,
+          );
+        },
+      );
+
+      await t.step(
+        "env vars behave the same across MCP, run, and HTTP",
+        async () => {
+          const missingMcpResponse = await handleMcp(
+            new Request(`https://wave3.ultralight.test/mcp/${envAppId}`, {
+              method: "POST",
+              headers: authHeaders(OWNER_TOKEN),
+              body: JSON.stringify(
+                rpcRequest("tools/call", {
+                  name: `${envSlug}_echo`,
+                  arguments: { probe: "mcp-before" },
+                }),
+              ),
+            }),
+            envAppId,
+          );
+          const missingMcpPayload = await parseJson(missingMcpResponse);
+          const missingMcpError = expectJsonRpcError(missingMcpPayload);
+          assertMatch(
+            String(missingMcpError.message),
+            /Missing required secrets: USER_SECRET/,
+          );
+
+          const missingRunResponse = await handleRun(
+            new Request(`https://wave3.ultralight.test/run/${envAppId}`, {
+              method: "POST",
+              headers: authHeaders(OWNER_TOKEN),
+              body: JSON.stringify({
+                function: "echo",
+                args: [{ probe: "run-before" }],
+              }),
+            }),
+            envAppId,
+          );
+          const missingRunPayload = await parseJson(missingRunResponse);
+          assertEquals(missingRunResponse.status, 400);
+          assertMatch(
+            String(missingRunPayload.error?.message),
+            /Missing required secrets: USER_SECRET/,
+          );
+          assertEquals(
+            missingRunPayload.error?.details?.type,
+            "MISSING_SECRETS",
+          );
+
+          const missingHttpResponse = await handleHttpEndpoint(
+            new Request(
+              `https://wave3.ultralight.test/http/${envAppId}/echo?probe=http-before`,
+              {
+                method: "POST",
+                headers: authHeaders(OWNER_TOKEN),
+              },
+            ),
+            envAppId,
+            "/echo",
+          );
+          const missingHttpPayload = await parseJson(missingHttpResponse);
+          assertEquals(missingHttpResponse.status, 400);
+          assertMatch(
+            String(missingHttpPayload.error),
+            /Missing required secrets: USER_SECRET/,
+          );
+
+          const connectResponse = await handlePlatformMcp(
+            new Request("https://wave3.ultralight.test/mcp/platform", {
+              method: "POST",
+              headers: authHeaders(OWNER_TOKEN),
+              body: JSON.stringify(
+                rpcRequest("tools/call", {
+                  name: "ul.connect",
+                  arguments: {
+                    app_id: envAppId,
+                    secrets: { USER_SECRET: "user-secret-value" },
+                  },
+                }),
+              ),
+            }),
+          );
+          const connectPayload = await parseJson(connectResponse);
+          const connectResult = expectToolSuccess(connectPayload);
+          assertEquals(connectResult.fully_connected, true);
+          assertEquals(connectResult.connected_keys, ["USER_SECRET"]);
+
+          const mcpResponse = await handleMcp(
+            new Request(`https://wave3.ultralight.test/mcp/${envAppId}`, {
+              method: "POST",
+              headers: authHeaders(OWNER_TOKEN),
+              body: JSON.stringify(
+                rpcRequest("tools/call", {
+                  name: `${envSlug}_echo`,
+                  arguments: { probe: "mcp-after" },
+                }),
+              ),
+            }),
+            envAppId,
+          );
+          const mcpPayload = await parseJson(mcpResponse);
+          const mcpResult = expectToolSuccess(mcpPayload);
+          assertEquals(mcpResult.owner, "owner-secret-value");
+          assertEquals(mcpResult.user, "user-secret-value");
+          assertEquals(mcpResult.probe, "mcp-after");
+          assertEquals(mcpResult.caller, OWNER_EMAIL);
+
+          const runResponse = await handleRun(
+            new Request(`https://wave3.ultralight.test/run/${envAppId}`, {
+              method: "POST",
+              headers: authHeaders(OWNER_TOKEN),
+              body: JSON.stringify({
+                function: "echo",
+                args: [{ probe: "run-after" }],
+              }),
+            }),
+            envAppId,
+          );
+          const runPayload = await parseJson(runResponse);
+          assertEquals(runPayload.success, true);
+          assertEquals(
+            (runPayload.result as JsonRecord).owner,
+            "owner-secret-value",
+          );
+          assertEquals(
+            (runPayload.result as JsonRecord).user,
+            "user-secret-value",
+          );
+          assertEquals((runPayload.result as JsonRecord).probe, "run-after");
+
+          const httpResponse = await handleHttpEndpoint(
+            new Request(
+              `https://wave3.ultralight.test/http/${envAppId}/echo/inspect?probe=http-after`,
+              {
+                method: "POST",
+                headers: authHeaders(OWNER_TOKEN),
+              },
+            ),
+            envAppId,
+            "/echo/inspect",
+          );
+          const httpPayload = await parseJson(httpResponse);
+          assertEquals(httpResponse.status, 200);
+          assertEquals(httpPayload.owner, "owner-secret-value");
+          assertEquals(httpPayload.user, "user-secret-value");
+          assertEquals(httpPayload.probe, "http-after");
+          assertEquals(httpPayload.requestPath, "/inspect");
+        },
+      );
+
+      await t.step(
+        "Tool Maker scaffold -> test -> upload -> runtime call holds together",
+        async () => {
+          const scaffoldResponse = await handlePlatformMcp(
+            new Request("https://wave3.ultralight.test/mcp/platform", {
+              method: "POST",
+              headers: authHeaders(OWNER_TOKEN),
+              body: JSON.stringify(
+                rpcRequest("tools/call", {
+                  name: "ul.download",
+                  arguments: {
+                    name: "Wave 3 Hello",
+                    description: "Golden path scaffold for Wave 3",
+                    storage: "kv",
+                    functions: [{
+                      name: "hello",
+                      description: "Return a scaffold placeholder payload",
+                      parameters: [{
+                        name: "name",
+                        type: "string",
+                        required: false,
+                        description: "Optional greeting target",
+                      }],
                     }],
-                  }],
-                },
-              }),
-            ),
-          }),
-        );
-        const scaffoldPayload = await parseJson(scaffoldResponse);
-        const scaffoldResult = expectToolSuccess(scaffoldPayload);
-        const scaffoldFiles = scaffoldResult.files as Array<{
-          path: string;
-          content: string;
-        }>;
-        assert(scaffoldFiles.some((file) => file.path === "index.ts"));
-        assert(scaffoldFiles.some((file) => file.path === "manifest.json"));
+                  },
+                }),
+              ),
+            }),
+          );
+          const scaffoldPayload = await parseJson(scaffoldResponse);
+          const scaffoldResult = expectToolSuccess(scaffoldPayload);
+          const scaffoldFiles = scaffoldResult.files as Array<{
+            path: string;
+            content: string;
+          }>;
+          assert(scaffoldFiles.some((file) => file.path === "index.ts"));
+          assert(scaffoldFiles.some((file) => file.path === "manifest.json"));
 
-        const testResponse = await handlePlatformMcp(
-          new Request("https://wave3.ultralight.test/mcp/platform", {
-            method: "POST",
-            headers: authHeaders(OWNER_TOKEN),
-            body: JSON.stringify(
-              rpcRequest("tools/call", {
-                name: "ul.test",
-                arguments: {
-                  files: scaffoldFiles,
-                  function_name: "hello",
-                  test_args: { name: "Wave 3" },
-                },
-              }),
-            ),
-          }),
-        );
-        const testPayload = await parseJson(testResponse);
-        const testResult = expectToolSuccess(testPayload);
-        assertEquals(testResult.success, true);
-        assertEquals((testResult.result as JsonRecord).scaffold, true);
-        assertEquals((testResult.result as JsonRecord).function, "hello");
+          const testResponse = await handlePlatformMcp(
+            new Request("https://wave3.ultralight.test/mcp/platform", {
+              method: "POST",
+              headers: authHeaders(OWNER_TOKEN),
+              body: JSON.stringify(
+                rpcRequest("tools/call", {
+                  name: "ul.test",
+                  arguments: {
+                    files: scaffoldFiles,
+                    function_name: "hello",
+                    test_args: { name: "Wave 3" },
+                  },
+                }),
+              ),
+            }),
+          );
+          const testPayload = await parseJson(testResponse);
+          const testResult = expectToolSuccess(testPayload);
+          assertEquals(testResult.success, true);
+          assertEquals((testResult.result as JsonRecord).scaffold, true);
+          assertEquals((testResult.result as JsonRecord).function, "hello");
 
-        const uploadResponse = await handlePlatformMcp(
-          new Request("https://wave3.ultralight.test/mcp/platform", {
-            method: "POST",
-            headers: authHeaders(OWNER_TOKEN),
-            body: JSON.stringify(
-              rpcRequest("tools/call", {
-                name: "ul.upload",
-                arguments: {
-                  name: "Wave 3 Hello",
-                  description: "Golden path scaffold for Wave 3",
-                  visibility: "private",
-                  files: scaffoldFiles,
-                },
-              }),
-            ),
-          }),
-        );
-        const uploadPayload = await parseJson(uploadResponse);
-        const uploadResult = expectToolSuccess(uploadPayload);
-        assertEquals(uploadResult.is_live, true);
-        const uploadedAppId = String(uploadResult.app_id);
-        const uploadedSlug = String(uploadResult.slug);
-        assertExists(harness.codeCache.read(`esm:${uploadedAppId}:latest`));
+          const uploadResponse = await handlePlatformMcp(
+            new Request("https://wave3.ultralight.test/mcp/platform", {
+              method: "POST",
+              headers: authHeaders(OWNER_TOKEN),
+              body: JSON.stringify(
+                rpcRequest("tools/call", {
+                  name: "ul.upload",
+                  arguments: {
+                    name: "Wave 3 Hello",
+                    description: "Golden path scaffold for Wave 3",
+                    visibility: "private",
+                    files: scaffoldFiles,
+                  },
+                }),
+              ),
+            }),
+          );
+          const uploadPayload = await parseJson(uploadResponse);
+          const uploadResult = expectToolSuccess(uploadPayload);
+          assertEquals(uploadResult.is_live, true);
+          const uploadedAppId = String(uploadResult.app_id);
+          const uploadedSlug = String(uploadResult.slug);
+          assertExists(harness.codeCache.read(`esm:${uploadedAppId}:latest`));
 
-        const listResponse = await handleMcp(
-          new Request(`https://wave3.ultralight.test/mcp/${uploadedAppId}`, {
-            method: "POST",
-            headers: authHeaders(OWNER_TOKEN),
-            body: JSON.stringify(rpcRequest("tools/list")),
-          }),
-          uploadedAppId,
-        );
-        const listPayload = await parseJson(listResponse);
-        assert(
-          appToolNames(listPayload).includes(`${uploadedSlug}_hello`),
-        );
+          const listResponse = await handleMcp(
+            new Request(`https://wave3.ultralight.test/mcp/${uploadedAppId}`, {
+              method: "POST",
+              headers: authHeaders(OWNER_TOKEN),
+              body: JSON.stringify(rpcRequest("tools/list")),
+            }),
+            uploadedAppId,
+          );
+          const listPayload = await parseJson(listResponse);
+          assert(
+            appToolNames(listPayload).includes(`${uploadedSlug}_hello`),
+          );
 
-        const callResponse = await handleMcp(
-          new Request(`https://wave3.ultralight.test/mcp/${uploadedAppId}`, {
-            method: "POST",
-            headers: authHeaders(OWNER_TOKEN),
-            body: JSON.stringify(
-              rpcRequest("tools/call", {
-                name: `${uploadedSlug}_hello`,
-                arguments: { name: "Wave 3" },
-              }),
-            ),
-          }),
-          uploadedAppId,
-        );
-        const callPayload = await parseJson(callResponse);
-        const callResult = expectToolSuccess(callPayload);
-        assertEquals(callResult.scaffold, true);
-        assertEquals(callResult.function, "hello");
-        assertEquals(callResult.received, { name: "Wave 3" });
-      });
+          const callResponse = await handleMcp(
+            new Request(`https://wave3.ultralight.test/mcp/${uploadedAppId}`, {
+              method: "POST",
+              headers: authHeaders(OWNER_TOKEN),
+              body: JSON.stringify(
+                rpcRequest("tools/call", {
+                  name: `${uploadedSlug}_hello`,
+                  arguments: { name: "Wave 3" },
+                }),
+              ),
+            }),
+            uploadedAppId,
+          );
+          const callPayload = await parseJson(callResponse);
+          const callResult = expectToolSuccess(callPayload);
+          assertEquals(callResult.scaffold, true);
+          assertEquals(callResult.function, "hello");
+          assertEquals(callResult.received, { name: "Wave 3" });
+        },
+      );
     } finally {
       restore();
     }
