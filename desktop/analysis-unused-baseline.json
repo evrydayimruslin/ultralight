@@ -43,6 +43,24 @@
       ]
     },
     {
+      "file": "src/components/ui/icons.tsx",
+      "files": [
+        "src/components/ui/icons.tsx"
+      ]
+    },
+    {
+      "file": "src/components/ui/Spark.tsx",
+      "files": [
+        "src/components/ui/Spark.tsx"
+      ]
+    },
+    {
+      "file": "src/components/ui/Wordmark.tsx",
+      "files": [
+        "src/components/ui/Wordmark.tsx"
+      ]
+    },
+    {
       "file": "src/components/WidgetCard.tsx",
       "files": [
         "src/components/WidgetCard.tsx"

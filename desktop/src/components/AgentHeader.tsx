@@ -36,11 +36,12 @@ interface AgentHeaderProps {
 function statusDotClass(status: string): string {
   switch (status) {
     case 'running': return 'bg-ul-success';
+    // TODO(token): bg-gray-300 — no exact ul-* equivalent (#d1d5db); kept raw.
     case 'pending': return 'bg-gray-300';
-    case 'completed': return 'bg-blue-400';
+    case 'completed': return 'bg-ul-completed';
     case 'error': return 'bg-ul-error';
     case 'stopped': return 'bg-ul-warning';
-    case 'waiting_for_approval': return 'bg-amber-500';
+    case 'waiting_for_approval': return 'bg-ul-warning';
     default: return 'bg-gray-300';
   }
 }
@@ -157,11 +158,11 @@ export default function AgentHeader({
           {displayAgent && (
             <div className="hidden md:flex items-center gap-1.5">
               {formatModelChip(displayAgent.model) && (
-                <span className="px-2 py-0.5 rounded-full border border-ul-border text-[11px] text-ul-text-muted font-mono">
+                <span className="px-2 py-0.5 rounded-full border border-ul-border text-micro text-ul-text-muted font-mono">
                   {formatModelChip(displayAgent.model)}
                 </span>
               )}
-              <span className="px-2 py-0.5 rounded-full border border-ul-border text-[11px] text-ul-text-muted font-mono">
+              <span className="px-2 py-0.5 rounded-full border border-ul-border text-micro text-ul-text-muted font-mono">
                 {formatExecuteWindowChip(displayAgent.execute_window_seconds)}
               </span>
             </div>

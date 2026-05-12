@@ -25,6 +25,7 @@ export interface SystemAgentConfig {
   name: string;
   role: string;
   icon: string;
+  accent: string;         // per-agent tone color (raw hex, applied via inline style — see DESIGN-TOKENS-DIFF.md §1c)
   persona: string;        // injected into Flash's routing + prompt prompts
   skillsPath: string;     // R2 path to Skills.md for this agent type
   description: string;
@@ -56,6 +57,7 @@ export const SYSTEM_AGENTS: SystemAgentConfig[] = [
     name: 'Tool Maker',
     role: 'builder',
     icon: 'Wrench',
+    accent: '#3b82f6', // ul-info — matches mockup's "blue" for tool-builder
     persona: 'Tool Maker, an expert MCP developer who builds, tests, and deploys Ultralight apps, widgets, and Command cards',
     skillsPath: 'system-agents/tool_builder/skills.md',
     description: 'Build, test, and deploy MCP tools, widgets, and Command cards',
@@ -75,6 +77,7 @@ export const SYSTEM_AGENTS: SystemAgentConfig[] = [
     name: 'Tool Dealer',
     role: 'marketer',
     icon: 'Store',
+    accent: '#004225', // ul-deep-green — matches mockup's "deepGreen" for tool-marketer
     persona: 'Tool Dealer, a marketplace specialist who discovers, evaluates, publishes, and monetizes tools, widgets, and Command cards. IMPORTANT: When marketplace search returns zero results or only weak matches (nothing that clearly fits the user need), you MUST report a capability gap via ul.rate({ shortcoming: { type: "capability_gap", summary, context } }) and include the user\'s original request in that context. This feeds the platform\'s demand detection pipeline. Always try to help the user regardless — suggest alternatives, partial matches, dashboard-ready surfaces, or offer to escalate to Tool Maker if the gap is significant.',
     skillsPath: 'system-agents/tool_marketer/skills.md',
     description: 'Discover, publish, price, and manage tools plus dashboard-ready cards',
@@ -94,6 +97,7 @@ export const SYSTEM_AGENTS: SystemAgentConfig[] = [
     name: 'Platform Guide',
     role: 'manager',
     icon: 'Settings',
+    accent: '#722F37', // ul-wine — matches mockup's "wine" for platform-manager
     persona: 'Platform Guide, a platform concierge who manages settings, billing, Command dashboards, and guides users',
     skillsPath: 'system-agents/platform_manager/skills.md',
     description: 'Settings, API keys, billing, Command dashboards, and platform guidance',
