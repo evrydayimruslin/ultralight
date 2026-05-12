@@ -54,11 +54,12 @@ function formatRelativeTime(timestamp: number): string {
 function statusDot(status: string): string {
   switch (status) {
     case 'running': return 'bg-ul-success';
+    // TODO(token): bg-gray-300 — no exact ul-* equivalent (#d1d5db); kept raw.
     case 'pending': return 'bg-gray-300';
-    case 'completed': return 'bg-blue-400';
+    case 'completed': return 'bg-ul-completed';
     case 'error': return 'bg-ul-error';
     case 'stopped': return 'bg-ul-warning';
-    case 'waiting_for_approval': return 'bg-amber-500';
+    case 'waiting_for_approval': return 'bg-ul-warning';
     default: return 'bg-gray-300';
   }
 }
@@ -179,9 +180,10 @@ const ToolsIcon = <Package {...iconProps} />;
 
 function SystemAgentIcon({ type }: { type: string | null }) {
   switch (type as SystemAgentType) {
-    case 'tool_builder': return <Wrench {...smallIconProps} className="text-blue-500 flex-shrink-0" />;
-    case 'tool_marketer': return <Store {...smallIconProps} className="text-[#004225] flex-shrink-0" />;
-    case 'platform_manager': return <Settings {...smallIconProps} className="text-[#722F37] flex-shrink-0" />;
+    case 'tool_builder': return <Wrench {...smallIconProps} className="text-ul-info flex-shrink-0" />;
+    case 'tool_marketer': return <Store {...smallIconProps} className="text-ul-deep-green flex-shrink-0" />;
+    case 'platform_manager': return <Settings {...smallIconProps} className="text-ul-wine flex-shrink-0" />;
+    // TODO(token): text-gray-400 — no exact ul-* equivalent (#9ca3af); kept raw.
     default: return <Compass {...smallIconProps} className="text-gray-400 flex-shrink-0" />;
   }
 }
@@ -406,7 +408,7 @@ export default function NavSidebar({
   const initial = displayName.charAt(0).toUpperCase();
 
   return (
-    <div className="flex flex-col w-64 h-full border-r border-ul-border bg-gray-50 flex-shrink-0">
+    <div className="flex flex-col w-64 h-full border-r border-ul-border bg-ul-bg-sidebar flex-shrink-0">
       {/* Primary nav */}
       <nav className="px-2 pt-3 flex-shrink-0">
         <NavItem
@@ -520,7 +522,7 @@ export default function NavSidebar({
             timeGroups.map(group => (
               <div key={group.label}>
                 <div className="px-3 py-1">
-                  <span className="text-ul-text" style={{ fontSize: '10px' }}>{group.label}</span>
+                  <span className="text-ul-text text-nano">{group.label}</span>
                 </div>
                 {group.agents.map(agent => (
                   renamingAgentId === agent.id ? (
@@ -676,8 +678,8 @@ export default function NavSidebar({
                     <button
                       key={agent.id}
                       onClick={() => { onSelectAgent(agent.id); setSearchOpen(false); setSearchQuery(''); }}
-                      className={`w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-gray-50 transition-colors
-                        ${activeAgentId === agent.id ? 'bg-gray-50' : ''}`}
+                      className={`w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-ul-bg-sidebar transition-colors
+                        ${activeAgentId === agent.id ? 'bg-ul-bg-sidebar' : ''}`}
                     >
                           <div className="flex-1 min-w-0">
                         <div className="text-sm text-ul-text truncate">{agent.name}</div>

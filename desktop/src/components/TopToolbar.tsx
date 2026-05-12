@@ -33,7 +33,7 @@ export default function TopToolbar() {
   return (
     <div
       data-tauri-drag-region
-      className="flex items-center h-[28px] bg-gray-50 border-b border-ul-border flex-shrink-0"
+      className="flex items-center h-toolbar bg-ul-bg-sidebar border-b border-ul-border flex-shrink-0"
     >
       {/* Traffic light spacer — collapses in fullscreen */}
       {!isFullscreen && <div data-tauri-drag-region className="w-[70px] h-full flex-shrink-0" />}
