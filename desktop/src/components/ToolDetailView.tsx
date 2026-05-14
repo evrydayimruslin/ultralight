@@ -25,9 +25,10 @@
 //     real ask price + bids + revenue + owner admin checklist (when the
 //     viewer is the owner).
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import Glyph, { deriveGlyph, deriveTone } from './ui/Glyph';
+import AcquisitionFlow from './marketplace/AcquisitionFlow';
 import { fetchFromApi, getToken } from '../lib/storage';
 import {
   fetchMarketplaceListing,
@@ -238,9 +239,10 @@ interface SideRailProps {
   details: MarketplaceListingDetails | null;
   loading: boolean;
   isOwner: boolean;
+  onOpenAcquisition: () => void;
 }
 
-function SideRail({ appId: _appId, details, loading, isOwner }: SideRailProps) {
+function SideRail({ appId: _appId, details, loading, isOwner, onOpenAcquisition }: SideRailProps) {
   if (loading && !details) {
     return (
       <aside className="sticky top-6 self-start">
@@ -320,10 +322,10 @@ function SideRail({ appId: _appId, details, loading, isOwner }: SideRailProps) {
           )}
           <button
             type="button"
-            // TODO(scope): wires to AcquisitionFlow modal in Batch 4c.
-            disabled
-            className="bg-transparent text-ul-text-secondary border-none p-0 text-caption font-medium underline cursor-not-allowed opacity-60"
-            title="Bid flow arrives in Batch 4c"
+            onClick={onOpenAcquisition}
+            disabled={isOwner}
+            className="bg-transparent text-ul-text border-none p-0 text-caption font-medium underline cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 hover:text-ul-text-secondary"
+            title={isOwner ? "You're the owner of this tool" : undefined}
           >
             {askExists ? 'See all bids →' : bids.length > 0 ? 'See all bids →' : 'Place a bid →'}
           </button>
@@ -418,6 +420,12 @@ export default function ToolDetailView({ appId, fallbackName }: ToolDetailViewPr
   }, [appId]);
 
   const isOwner = !!(app && currentUserId && app.owner_id === currentUserId);
+  const [acquisitionOpen, setAcquisitionOpen] = useState(false);
+
+  const refetchListing = useCallback(async () => {
+    const fresh = await fetchMarketplaceListing(appId);
+    setListing(fresh);
+  }, [appId]);
 
   const displayName = app?.name || fallbackName || 'Loading…';
   const functions = app?.skills_parsed?.functions ?? [];
@@ -463,9 +471,10 @@ export default function ToolDetailView({ appId, fallbackName }: ToolDetailViewPr
               )}
             </button>
             <button
-              disabled={!app}
-              className="px-5 py-3 bg-ul-bg text-ul-text border border-ul-border rounded-lg text-body font-medium cursor-pointer inline-flex items-center justify-center gap-1.5 hover:bg-ul-bg-hover disabled:opacity-40"
-              title="Acquisition flow arrives in Batch 4c"
+              disabled={!app || isOwner}
+              onClick={() => setAcquisitionOpen(true)}
+              className="px-5 py-3 bg-ul-bg text-ul-text border border-ul-border rounded-lg text-body font-medium cursor-pointer inline-flex items-center justify-center gap-1.5 hover:bg-ul-bg-hover disabled:opacity-40 disabled:cursor-not-allowed"
+              title={isOwner ? "You're the owner of this tool" : undefined}
             >
               <span>Acquire</span>
               <span className="text-ul-text-muted font-mono font-normal text-small">
@@ -533,10 +542,22 @@ export default function ToolDetailView({ appId, fallbackName }: ToolDetailViewPr
               details={listing}
               loading={listingLoading}
               isOwner={isOwner}
+              onOpenAcquisition={() => setAcquisitionOpen(true)}
             />
           </div>
         ) : null}
       </div>
+
+      {acquisitionOpen && app && (
+        <AcquisitionFlow
+          appId={app.id}
+          appName={app.name}
+          currentUserId={currentUserId}
+          initialListing={listing}
+          onClose={() => setAcquisitionOpen(false)}
+          onAcquired={() => { void refetchListing(); }}
+        />
+      )}
     </div>
   );
 }
