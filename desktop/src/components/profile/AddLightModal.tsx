@@ -1,0 +1,453 @@
+// AddLightModal — two-column "Order Summary Split" Add-Light flow.
+//
+// Ports `AddLightSplit` from handoff/mockups/add-light-flows.jsx, with
+// the rates locked to the design's screenshot:
+//
+//   Earnings → Balance  →  100 ✦/$  (internal transfer, instant, 1:1)
+//   Bank wire (ACH)     →   99 ✦/$  (clears in 1–3 business days)
+//   Apple / Google Pay  →   95 ✦/$  (~2s — requires Stripe.js wallet UI)
+//
+// All three methods hit real BE today:
+//   - convertEarningsToBalance → /api/user/earnings/convert-to-balance
+//   - createWireTransferIntent → /api/user/wallet/wire-transfer-intent
+//   - createWalletExpressIntent → /api/user/wallet/express-checkout-intent
+//
+// The Apple/Google Pay flow creates a real PaymentIntent on the BE but
+// completing the wallet payment requires Stripe.js Elements, which
+// isn't loaded today. The modal surfaces the PaymentIntent details +
+// a clear pointer at the follow-up (DESIGN-FOLLOWUPS B15). Earnings +
+// Wire flows are end-to-end functional.
+
+import { useEffect, useMemo, useState } from 'react';
+import { X } from 'lucide-react';
+import {
+  convertEarningsToBalance,
+  createWalletExpressIntent,
+  createWireTransferIntent,
+  type UserEarnings,
+  type UserHosting,
+} from '../../lib/api';
+
+interface AddLightModalProps {
+  hosting: UserHosting | null;
+  earnings: UserEarnings | null;
+  onClose: () => void;
+  /** Called after a successful conversion / payment intent. Parent should
+   *  refetch hosting + transactions + earnings. */
+  onSuccess?: () => void;
+}
+
+type Method = 'earnings' | 'wire' | 'wallet';
+
+interface MethodOption {
+  id: Method;
+  title: string;
+  subtitle: string;
+  badge: string;
+  rate: number; // ✦ per $1 USD
+  rateLabel: string;
+}
+
+// Per the mockup spec + screenshot.
+const METHODS: MethodOption[] = [
+  {
+    id: 'earnings',
+    title: 'Transfer from Earnings',
+    subtitle: 'Ultralight-only · 1:1, no fees',
+    badge: 'INSTANT',
+    rate: 100,
+    rateLabel: '✦100 per $1',
+  },
+  {
+    id: 'wire',
+    title: 'Bank wire (ACH)',
+    subtitle: 'Clears in 1–3 business days',
+    badge: '1–3D',
+    rate: 99,
+    rateLabel: '✦99 per $1',
+  },
+  {
+    id: 'wallet',
+    title: 'Apple Pay or Google Pay',
+    subtitle: 'Charged to your default wallet',
+    badge: '~2S',
+    rate: 95,
+    rateLabel: '✦95 per $1',
+  },
+];
+
+const PRESET_USD = [10, 25, 100, 500];
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+function formatUSD(cents: number): string {
+  return (cents / 100).toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatLight(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  return n.toLocaleString();
+}
+
+// ── Modal shell ──────────────────────────────────────────────────────
+
+function ModalShell({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-6 py-10 animate-fade-in"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-ul-bg rounded-xl shadow-xl border border-ul-border w-full max-w-3xl max-h-[88vh] flex flex-col overflow-hidden animate-fade-up">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ── AddLightModal ────────────────────────────────────────────────────
+
+export default function AddLightModal({ hosting, earnings, onClose, onSuccess }: AddLightModalProps) {
+  const [amountUsd, setAmountUsd] = useState<number>(50);
+  const [method, setMethod] = useState<Method>('wallet');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<null | {
+    kind: 'earnings' | 'wire' | 'wallet';
+    light: number;
+    wireInstructions?: Record<string, unknown> | null;
+    paymentIntentId?: string;
+  }>(null);
+
+  const methodOption = METHODS.find((m) => m.id === method)!;
+  const amountCents = Math.max(0, Math.round(amountUsd * 100));
+  const lightReceived = useMemo(
+    () => Math.round((amountCents / 100) * methodOption.rate),
+    [amountCents, methodOption.rate],
+  );
+
+  // Earnings cap — can't transfer more than available earnings (1:1).
+  const earningsAvailableLight = earnings?.withdrawable_light ?? 0;
+  const earningsAvailableUsd = earningsAvailableLight / 100; // 1:1 at 100 ✦/$
+  const earningsCapExceeded = method === 'earnings' && lightReceived > earningsAvailableLight;
+
+  const ctaLabel = (() => {
+    if (submitting) return 'Processing…';
+    if (method === 'earnings') return `Transfer ✦${formatLight(lightReceived)}`;
+    if (method === 'wire') return `Continue to wire instructions`;
+    return `Pay ${formatUSD(amountCents)}`;
+  })();
+
+  const onSubmit = async () => {
+    if (submitting || amountCents <= 0 || earningsCapExceeded) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      if (method === 'earnings') {
+        const result = await convertEarningsToBalance({
+          amountLight: lightReceived,
+          termsAccepted: true,
+        });
+        if (!result.ok) {
+          setError(result.errorMessage || 'Conversion failed.');
+          return;
+        }
+        setSuccess({ kind: 'earnings', light: result.converted_light ?? lightReceived });
+        onSuccess?.();
+        return;
+      }
+      if (method === 'wire') {
+        const result = await createWireTransferIntent({
+          amountCents,
+          termsAccepted: true,
+        });
+        if (!result.ok) {
+          setError(result.errorMessage || 'Failed to start wire transfer.');
+          return;
+        }
+        setSuccess({
+          kind: 'wire',
+          light: result.light_amount ?? lightReceived,
+          wireInstructions: result.bank_transfer_instructions ?? null,
+          paymentIntentId: result.payment_intent_id,
+        });
+        onSuccess?.();
+        return;
+      }
+      // wallet (Apple/Google Pay)
+      const result = await createWalletExpressIntent({
+        amountCents,
+        termsAccepted: true,
+      });
+      if (!result.ok) {
+        setError(result.errorMessage || 'Failed to start wallet checkout.');
+        return;
+      }
+      setSuccess({
+        kind: 'wallet',
+        light: result.light_amount ?? lightReceived,
+        paymentIntentId: result.payment_intent_id,
+      });
+      onSuccess?.();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Success state — clean confirmation
+  if (success) {
+    return (
+      <ModalShell onClose={onClose}>
+        <SuccessView
+          state={success}
+          method={methodOption}
+          onClose={onClose}
+        />
+      </ModalShell>
+    );
+  }
+
+  // Main two-column form
+  return (
+    <ModalShell onClose={onClose}>
+      <button
+        type="button"
+        onClick={onClose}
+        className="absolute top-4 right-4 w-8 h-8 rounded-full text-ul-text-muted hover:bg-ul-bg-hover flex items-center justify-center cursor-pointer z-10"
+        title="Close"
+      >
+        <X className="w-4 h-4" strokeWidth={1.5} />
+      </button>
+      <div className="flex-1 overflow-y-auto grid grid-cols-[1.4fr_1fr]">
+        {/* LEFT — amount + chips + method picker */}
+        <div className="p-6 border-r border-ul-border">
+          <div className="text-h3 font-bold tracking-tight text-ul-text mb-1">
+            Add Light to Balance
+          </div>
+          <div className="text-caption text-ul-text-secondary leading-relaxed mb-5">
+            Enter what you'll pay; we'll show how much Light you receive at your method's rate.
+          </div>
+
+          {/* Amount input */}
+          <div className="mb-3">
+            <label className="text-micro font-mono text-ul-text-muted uppercase tracking-widest block mb-2">
+              You pay
+            </label>
+            <div className="flex items-center gap-2 border border-ul-border rounded-md px-3.5 py-2.5 bg-ul-bg">
+              <span className="text-h3 font-mono font-medium">$</span>
+              <input
+                type="number"
+                value={amountUsd}
+                onChange={(e) => setAmountUsd(Math.max(0, Number(e.target.value) || 0))}
+                min={1}
+                step={1}
+                className="flex-1 border-none outline-none text-h3 font-mono font-bold tabular-nums bg-transparent"
+              />
+              <span className="text-caption text-ul-text-muted font-mono">USD</span>
+            </div>
+          </div>
+
+          {/* Preset chips */}
+          <div className="flex gap-1.5 mb-5">
+            {PRESET_USD.map((amt) => (
+              <button
+                key={amt}
+                type="button"
+                onClick={() => setAmountUsd(amt)}
+                className={`px-2.5 py-1 rounded-sm text-caption font-medium border transition-colors ${
+                  amountUsd === amt
+                    ? 'border-ul-text bg-ul-bg-active text-ul-text'
+                    : 'border-ul-border bg-ul-bg text-ul-text-secondary hover:bg-ul-bg-hover'
+                }`}
+              >
+                ${amt}
+              </button>
+            ))}
+          </div>
+
+          {/* Method picker */}
+          <div className="text-micro font-mono text-ul-text-muted uppercase tracking-widest mb-2">
+            Pay with
+          </div>
+          <div className="flex flex-col gap-2">
+            {METHODS.map((m) => {
+              const selected = m.id === method;
+              const disabled = m.id === 'earnings' && earningsAvailableLight === 0;
+              return (
+                <label
+                  key={m.id}
+                  className={`flex items-center gap-3 px-3.5 py-2.5 border rounded-md cursor-pointer transition-colors ${
+                    selected ? 'border-ul-text bg-ul-bg-active' : 'border-ul-border bg-ul-bg hover:bg-ul-bg-hover'
+                  } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  <input
+                    type="radio"
+                    name="method"
+                    checked={selected}
+                    onChange={() => !disabled && setMethod(m.id)}
+                    disabled={disabled}
+                    className="cursor-pointer"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <span className="text-caption font-semibold text-ul-text">{m.title}</span>
+                      <span className="text-nano font-mono uppercase tracking-widest text-ul-text-muted bg-ul-bg-active px-1 py-px rounded-xs">
+                        {m.badge}
+                      </span>
+                    </div>
+                    <div className="text-nano text-ul-text-secondary">
+                      {m.id === 'earnings'
+                        ? `Available ✦${formatLight(earningsAvailableLight)} · Ultralight-only · 1:1, no fees`
+                        : m.subtitle + ' · ' + m.rateLabel}
+                    </div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* RIGHT — order summary */}
+        <div className="p-6 bg-ul-bg-raised flex flex-col">
+          <div className="text-micro font-mono text-ul-text-muted uppercase tracking-widest mb-2.5">
+            Order summary
+          </div>
+          <div className="flex items-baseline justify-between mb-2">
+            <div className="text-body font-semibold">You pay</div>
+            <div className="font-mono text-body tabular-nums">{formatUSD(amountCents)}</div>
+          </div>
+          <div className="flex items-baseline justify-between mb-3 text-caption">
+            <div className="text-ul-text-muted">Rate · {methodOption.title}</div>
+            <div className="font-mono text-ul-text-muted tabular-nums">+{methodOption.rate} per $1</div>
+          </div>
+          <div className="border-t border-ul-border my-2" />
+          <div className="flex items-baseline justify-between mb-5">
+            <div className="text-body font-semibold">You receive</div>
+            <div className="font-mono text-h3 font-bold tabular-nums text-ul-text">
+              ✦ {formatLight(lightReceived)}
+            </div>
+          </div>
+
+          {earningsCapExceeded && (
+            <div className="mb-3 px-3 py-2 border border-ul-error/30 bg-ul-error-soft rounded-md text-caption text-ul-error">
+              Insufficient earnings · max ${earningsAvailableUsd.toFixed(2)}
+            </div>
+          )}
+
+          {error && (
+            <div className="mb-3 px-3 py-2 border border-ul-error/30 bg-ul-error-soft rounded-md text-caption text-ul-error">
+              {error}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={onSubmit}
+            disabled={submitting || amountCents <= 0 || earningsCapExceeded}
+            className="bg-ul-text text-white border-none px-4 py-3 rounded-md text-body font-medium cursor-pointer hover:bg-ul-accent-hover disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {ctaLabel}
+          </button>
+          <div className="text-nano font-mono text-ul-text-muted mt-3 uppercase tracking-widest flex items-center gap-1.5">
+            <span aria-hidden="true">🔒</span> Secure checkout · Powered by Stripe
+          </div>
+          <div className="text-nano text-ul-text-muted mt-3 leading-relaxed">
+            No sales tax. Tax is collected only when Light is spent on individual tools.
+          </div>
+
+          {/* Current balance summary, helpful context */}
+          {hosting?.balance_light !== undefined && (
+            <div className="mt-auto pt-4 border-t border-ul-border text-nano font-mono text-ul-text-muted">
+              Current balance ✦{formatLight(hosting.balance_light)}
+            </div>
+          )}
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+// ── Success view ─────────────────────────────────────────────────────
+
+function SuccessView({
+  state,
+  method,
+  onClose,
+}: {
+  state: { kind: 'earnings' | 'wire' | 'wallet'; light: number; wireInstructions?: Record<string, unknown> | null; paymentIntentId?: string };
+  method: MethodOption;
+  onClose: () => void;
+}) {
+  const isEarnings = state.kind === 'earnings';
+  const isWire = state.kind === 'wire';
+  const isWallet = state.kind === 'wallet';
+  return (
+    <div className="p-8">
+      <div className="text-h2 font-bold tracking-tight text-ul-text mb-2">
+        {isEarnings
+          ? `Transferred ✦${formatLight(state.light)}`
+          : isWire
+            ? 'Wire transfer ready'
+            : 'Almost there'}
+      </div>
+      <div className="text-small text-ul-text-secondary leading-relaxed mb-5 max-w-prose">
+        {isEarnings && (
+          <>Your earnings have been moved into your spendable Light balance. 1:1, no fees.</>
+        )}
+        {isWire && (
+          <>
+            Your purchase of <strong className="font-mono">✦{formatLight(state.light)}</strong> is
+            reserved. Complete the wire from your bank using the instructions below. Light credits
+            on receipt — usually 1–3 business days.
+          </>
+        )}
+        {isWallet && (
+          <>
+            Your PaymentIntent for <strong className="font-mono">✦{formatLight(state.light)}</strong>{' '}
+            is created on Stripe. Completing wallet payment from the desktop requires the Stripe.js
+            wallet UI, which is shipping in a focused follow-up batch. For now you can complete the
+            payment via the web app, or pick <strong>Bank wire</strong> instead.
+          </>
+        )}
+      </div>
+
+      {isWire && state.wireInstructions && (
+        <div className="bg-ul-bg-raised border border-ul-border rounded-md p-4 mb-5 font-mono text-caption">
+          <div className="text-micro text-ul-text-muted uppercase tracking-widest mb-2">
+            Wire instructions
+          </div>
+          <pre className="whitespace-pre-wrap break-words m-0">
+            {JSON.stringify(state.wireInstructions, null, 2)}
+          </pre>
+        </div>
+      )}
+
+      {state.paymentIntentId && (
+        <div className="text-nano font-mono text-ul-text-muted mb-5">
+          PaymentIntent: {state.paymentIntentId}
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={onClose}
+          className="bg-ul-text text-white border-none px-4 py-2.5 rounded-md text-caption font-medium cursor-pointer hover:bg-ul-accent-hover"
+        >
+          Done
+        </button>
+        <div className="text-nano text-ul-text-muted self-center ml-2">
+          via {method.title} · {method.rateLabel}
+        </div>
+      </div>
+    </div>
+  );
+}

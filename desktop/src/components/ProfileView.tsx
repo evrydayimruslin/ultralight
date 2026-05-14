@@ -19,7 +19,7 @@
 // Add Light button is wired to a no-op until Batch 5b ships the modal.
 // onOpenAddLight prop lets App.tsx provide the real handler when ready.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   fetchUserProfile,
   fetchUserHosting,
@@ -32,10 +32,9 @@ import {
   type UserEarnings,
   type ConnectStatus,
 } from '../lib/api';
+import AddLightModal from './profile/AddLightModal';
 
 interface ProfileViewProps {
-  /** Open the Add Light modal. Wired in Batch 5b. */
-  onOpenAddLight?: () => void;
   /** Open the Connect-onboard flow. Wired in Batch 5c. */
   onOpenPayoutOnboard?: () => void;
 }
@@ -452,7 +451,7 @@ function SettingsTab({ profile }: { profile: UserProfile | null }) {
 
 // ── ProfileView ──────────────────────────────────────────────────────
 
-export default function ProfileView({ onOpenAddLight, onOpenPayoutOnboard }: ProfileViewProps) {
+export default function ProfileView({ onOpenPayoutOnboard }: ProfileViewProps) {
   const [tab, setTab] = useState<Tab>('balance');
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [hosting, setHosting] = useState<UserHosting | null>(null);
@@ -461,26 +460,28 @@ export default function ProfileView({ onOpenAddLight, onOpenPayoutOnboard }: Pro
   const [connect, setConnect] = useState<ConnectStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [addLightOpen, setAddLightOpen] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    Promise.all([
+  const reload = useCallback(async () => {
+    const [p, h, t, e, c] = await Promise.all([
       fetchUserProfile(),
       fetchUserHosting(),
       fetchUserTransactions({ limit: 50 }),
       fetchUserEarnings('30d'),
       fetchConnectStatus(),
-    ])
-      .then(([p, h, t, e, c]) => {
-        if (cancelled) return;
-        setProfile(p);
-        setHosting(h);
-        setTransactions(t?.transactions ?? []);
-        setEarnings(e);
-        setConnect(c);
-      })
+    ]);
+    setProfile(p);
+    setHosting(h);
+    setTransactions(t?.transactions ?? []);
+    setEarnings(e);
+    setConnect(c);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    reload()
       .catch((err: Error) => {
         if (cancelled) return;
         setError(err.message);
@@ -489,7 +490,7 @@ export default function ProfileView({ onOpenAddLight, onOpenPayoutOnboard }: Pro
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, []);
+  }, [reload]);
 
   const displayName = profile?.display_name ||
     profile?.email?.split('@')[0] ||
@@ -555,7 +556,7 @@ export default function ProfileView({ onOpenAddLight, onOpenPayoutOnboard }: Pro
             <BalanceTab
               hosting={hosting}
               transactions={transactions}
-              onOpenAddLight={onOpenAddLight}
+              onOpenAddLight={() => setAddLightOpen(true)}
             />
           )}
           {tab === 'earnings' && (
@@ -567,6 +568,15 @@ export default function ProfileView({ onOpenAddLight, onOpenPayoutOnboard }: Pro
           )}
           {tab === 'settings' && <SettingsTab profile={profile} />}
         </>
+      )}
+
+      {addLightOpen && (
+        <AddLightModal
+          hosting={hosting}
+          earnings={earnings}
+          onClose={() => setAddLightOpen(false)}
+          onSuccess={() => { void reload(); }}
+        />
       )}
     </div>
   );

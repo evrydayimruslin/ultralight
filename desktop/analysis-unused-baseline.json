@@ -223,6 +223,7 @@
         "AppMcpToolCallOptions",
         "CommandDashboardMetadataInput",
         "CommandDashboardSummary",
+        "ConvertEarningsResult",
         "InferenceModelOption",
         "InferenceProviderChoice",
         "InstantAcquireResult",
@@ -233,7 +234,9 @@
         "SetAskPriceResult",
         "StoredCommandDashboardLayout",
         "TaskContext",
-        "UserTransactionsResponse"
+        "UserTransactionsResponse",
+        "WalletExpressIntentResult",
+        "WireTransferIntentResult"
       ]
     },
     {
