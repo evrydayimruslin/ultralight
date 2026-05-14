@@ -6,13 +6,7 @@ import type { KanbanCard } from '../hooks/useKanban';
 import { loadTemplates, loadBaseContext, type AgentTemplate, type ContextFile } from '../lib/templates';
 import { suggestContext, type KnowledgeSuggestion } from '../lib/suggestions';
 import { getAutoApproveLight } from '../lib/storage';
-
-function formatLight(amount: number): string {
-  const abs = Math.abs(amount);
-  if (abs >= 1e6) return '✦' + (abs / 1e6).toFixed(2) + 'M';
-  if (abs >= 5000) return '✦' + (abs / 1000).toFixed(1) + 'K';
-  return '✦' + (abs % 1 === 0 ? String(abs) : abs.toFixed(2));
-}
+import { formatLightCompact as formatLight } from '../lib/format';
 
 // ── Types ──
 

@@ -5,9 +5,11 @@
 // releases on the configured monthly schedule. The modal surfaces the
 // estimated arrival + fee breakdown returned by the BE.
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { X } from 'lucide-react';
 import { requestPayoutWithdrawal, type ConnectStatus } from '../../lib/api';
+import { formatLightWhole as formatLight } from '../../lib/format';
+import Modal from '../ui/Modal';
 
 interface WithdrawModalProps {
   connect: ConnectStatus | null;
@@ -16,10 +18,6 @@ interface WithdrawModalProps {
   onSuccess?: () => void;
 }
 
-function formatLight(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  return n.toLocaleString();
-}
 
 export default function WithdrawModal({
   connect,
@@ -35,12 +33,6 @@ export default function WithdrawModal({
     estimatedArrival?: string;
     scheduledDate?: string;
   }>(null);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
   const validAmount = amount > 0 && amount <= withdrawableLight;
 
@@ -67,11 +59,7 @@ export default function WithdrawModal({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-6 py-10 animate-fade-in"
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div className="bg-ul-bg rounded-xl shadow-xl border border-ul-border w-full max-w-md flex flex-col overflow-hidden animate-fade-up">
+    <Modal onClose={onClose} surface="plain" radius="xl" maxWidth="md" maxHeight="auto">
         <button
           type="button"
           onClick={onClose}
@@ -184,7 +172,6 @@ export default function WithdrawModal({
             </div>
           </div>
         )}
-      </div>
-    </div>
+    </Modal>
   );
 }

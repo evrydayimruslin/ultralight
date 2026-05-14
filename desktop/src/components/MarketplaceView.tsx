@@ -27,6 +27,7 @@ import {
 } from '../lib/api';
 import Glyph, { deriveGlyph, deriveTone } from './ui/Glyph';
 import Spark from './ui/Spark';
+import { formatLightPrecise as formatLight, formatAuthorHandle } from '../lib/format';
 
 interface MarketplaceViewProps {
   onOpenTool: (appId: string, appName: string) => void;
@@ -41,13 +42,6 @@ function formatCount(n: number | undefined): string {
   return String(n);
 }
 
-function formatLight(n: number | undefined | null): string {
-  if (n === undefined || n === null) return '—';
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  if (Number.isInteger(n)) return String(n);
-  return n.toFixed(3);
-}
 
 function formatRelativeDays(iso: string | undefined): string {
   if (!iso) return '';
@@ -100,7 +94,7 @@ function FeaturedHero({ result, onOpen }: { result: MarketplaceResult; onOpen: (
             <span className="inline-flex items-center gap-1.5">
               <AuthorMark result={result} size={18} />
               {/* TODO(data): author display name not in marketplace response (B10). */}
-              <span className="font-mono">@{(result.slug ?? '').split('-')[0] || 'author'}</span>
+              <span className="font-mono">@{formatAuthorHandle(result, { truncateAtDash: true })}</span>
             </span>
             <span className="text-ul-text-muted">·</span>
             <span className="font-mono">{formatCount(result.runs_30d)} runs/30d</span>
@@ -212,7 +206,7 @@ function TrendingCard({ result, onOpen }: { result: MarketplaceResult; onOpen: (
           <div className="text-body font-semibold truncate">{result.name}</div>
           {/* TODO(data): author display name (B10). */}
           <div className="text-nano text-ul-text-muted font-mono truncate">
-            @{(result.slug ?? '').split('-')[0] || 'author'}
+            @{formatAuthorHandle(result, { truncateAtDash: true })}
           </div>
         </div>
       </div>
@@ -305,19 +299,28 @@ export default function MarketplaceView({ onOpenTool }: MarketplaceViewProps) {
     return () => { cancelled = true; };
   }, []);
 
-  // Search effect (debounced)
+  // Search effect (debounced + cancelable). The AbortController kills the
+  // outgoing fetch when the user keeps typing, so an earlier slow request
+  // can't race past a newer one and clobber the rendered results.
   useEffect(() => {
     if (!query.trim()) {
       setSearch(null);
       return;
     }
-    let cancelled = false;
+    const controller = new AbortController();
     const handle = setTimeout(() => {
-      searchMarketplace(query)
-        .then((r) => { if (!cancelled) setSearch(r); })
-        .catch(() => { if (!cancelled) setSearch(null); });
+      searchMarketplace(query, { signal: controller.signal })
+        .then((r) => { if (!controller.signal.aborted) setSearch(r); })
+        .catch((err) => {
+          if (controller.signal.aborted) return;
+          if (err && (err as Error).name === 'AbortError') return;
+          setSearch(null);
+        });
     }, 200);
-    return () => { cancelled = true; clearTimeout(handle); };
+    return () => {
+      controller.abort();
+      clearTimeout(handle);
+    };
   }, [query]);
 
   // Derive a flat top-10 from all browse sections by runs_30d

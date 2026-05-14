@@ -4,13 +4,7 @@
 import { useState, useEffect } from 'react';
 import { getAutoApproveLight, setAutoApproveLight } from '../lib/storage';
 import { fetchBalance } from '../lib/api';
-
-function formatLight(amount: number): string {
-  const abs = Math.abs(amount);
-  if (abs >= 1e6) return '✦' + (abs / 1e6).toFixed(2) + 'M';
-  if (abs >= 5000) return '✦' + (abs / 1000).toFixed(1) + 'K';
-  return '✦' + (abs % 1 === 0 ? String(abs) : abs.toFixed(2));
-}
+import { formatLightCompact as formatLight } from '../lib/format';
 
 export default function SpendingSettings() {
   const [threshold, setThreshold] = useState(getAutoApproveLight());

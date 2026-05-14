@@ -42,6 +42,7 @@ import {
 } from '../lib/api';
 import AddLightModal from './profile/AddLightModal';
 import WithdrawModal from './profile/WithdrawModal';
+import { formatLightPrecise as formatLight } from '../lib/format';
 
 // Open an external URL. Tauri's webview routes target=_blank through the
 // host's default browser, so this works without the shell plugin (which
@@ -55,14 +56,6 @@ type ProfileViewProps = Record<string, never>;
 type Tab = 'balance' | 'earnings' | 'settings';
 
 // ── Helpers ──────────────────────────────────────────────────────────
-
-function formatLight(n: number | undefined | null, decimals = 3): string {
-  if (n === undefined || n === null) return '—';
-  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (Math.abs(n) >= 1_000 && decimals === 0) return `${(n / 1_000).toFixed(1)}k`;
-  if (Number.isInteger(n)) return n.toLocaleString();
-  return n.toFixed(decimals);
-}
 
 function splitLightForHero(n: number | undefined): { whole: string; fraction: string } {
   if (n === undefined || n === null) return { whole: '—', fraction: '' };

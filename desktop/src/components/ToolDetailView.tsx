@@ -31,6 +31,7 @@ import { Check, X as XIcon } from 'lucide-react';
 import Glyph, { deriveGlyph, deriveTone } from './ui/Glyph';
 import AcquisitionFlow from './marketplace/AcquisitionFlow';
 import { fetchFromApi, getToken } from '../lib/storage';
+import { formatLightPrecise as formatLight, formatAuthorHandle } from '../lib/format';
 import {
   fetchMarketplaceListing,
   setAskPrice,
@@ -196,13 +197,6 @@ function CapabilityPill({ cap }: { cap: PermissionDeclaration }) {
 
 // ── Side rail helpers ─────────────────────────────────────────────────
 
-function formatLight(n: number | undefined | null): string {
-  if (n === undefined || n === null) return '—';
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  if (Number.isInteger(n)) return String(n);
-  return n.toFixed(3);
-}
 
 function formatRelativeHours(iso: string | undefined): string {
   if (!iso) return '';
@@ -645,7 +639,7 @@ export default function ToolDetailView({ appId, fallbackName }: ToolDetailViewPr
                 {/* Author handle: BE doesn't expose a display name today (B7/B14).
                     Render the app slug as a stable, non-identifying handle until
                     /api/user/.../public exposes display_name + profile_slug. */}
-                {app ? <>by {app.slug ? `@${app.slug}` : 'owner'} · {category}</> : <>&nbsp;</>}
+                {app ? <>by @{formatAuthorHandle(app, { fallback: 'owner' })} · {category}</> : <>&nbsp;</>}
               </div>
             </div>
           </div>

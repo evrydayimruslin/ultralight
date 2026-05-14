@@ -18,8 +18,9 @@
 // a clear pointer at the follow-up (DESIGN-FOLLOWUPS B15). Earnings +
 // Wire flows are end-to-end functional.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { X } from 'lucide-react';
+import Modal from '../ui/Modal';
 import {
   convertEarningsToBalance,
   createWalletExpressIntent,
@@ -27,6 +28,7 @@ import {
   type UserEarnings,
   type UserHosting,
 } from '../../lib/api';
+import { formatLightWhole as formatLight } from '../../lib/format';
 
 interface AddLightModalProps {
   hosting: UserHosting | null;
@@ -88,30 +90,6 @@ function formatUSD(cents: number): string {
   });
 }
 
-function formatLight(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  return n.toLocaleString();
-}
-
-// ── Modal shell ──────────────────────────────────────────────────────
-
-function ModalShell({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-  return (
-    <div
-      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-6 py-10 animate-fade-in"
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div className="bg-ul-bg rounded-xl shadow-xl border border-ul-border w-full max-w-3xl max-h-[88vh] flex flex-col overflow-hidden animate-fade-up">
-        {children}
-      </div>
-    </div>
-  );
-}
 
 // ── AddLightModal ────────────────────────────────────────────────────
 
@@ -205,19 +183,19 @@ export default function AddLightModal({ hosting, earnings, onClose, onSuccess }:
   // Success state — clean confirmation
   if (success) {
     return (
-      <ModalShell onClose={onClose}>
+      <Modal onClose={onClose} surface="plain" radius="xl" maxWidth="3xl" maxHeight="tall">
         <SuccessView
           state={success}
           method={methodOption}
           onClose={onClose}
         />
-      </ModalShell>
+      </Modal>
     );
   }
 
   // Main two-column form
   return (
-    <ModalShell onClose={onClose}>
+    <Modal onClose={onClose} surface="plain" radius="xl" maxWidth="3xl" maxHeight="tall">
       <button
         type="button"
         onClick={onClose}
@@ -371,7 +349,49 @@ export default function AddLightModal({ hosting, earnings, onClose, onSuccess }:
           )}
         </div>
       </div>
-    </ModalShell>
+    </Modal>
+  );
+}
+
+// ── Wire instructions ────────────────────────────────────────────────
+
+// Whitelisted view over the BE-returned bank_transfer_instructions blob.
+// The response type permits `[k: string]: unknown` extras, so a raw
+// JSON.stringify could leak internal/test-only fields the BE didn't intend
+// for the user. We render only the fields we know are safe to display,
+// with human labels.
+const WIRE_FIELDS: Array<{ key: string; label: string }> = [
+  { key: 'bank_name',      label: 'Bank name' },
+  { key: 'account_number', label: 'Account number' },
+  { key: 'routing_number', label: 'Routing number' },
+  { key: 'swift_code',     label: 'SWIFT code' },
+  { key: 'reference',      label: 'Reference (required)' },
+];
+
+function WireInstructionsTable({ instructions }: { instructions: Record<string, unknown> }) {
+  const rows = WIRE_FIELDS
+    .map((f) => ({ ...f, value: instructions[f.key] }))
+    .filter((r) => typeof r.value === 'string' && r.value.length > 0);
+  if (rows.length === 0) {
+    return (
+      <div className="text-caption text-ul-text-muted font-mono">
+        Bank details unavailable — contact support.
+      </div>
+    );
+  }
+  return (
+    <dl className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-1.5 m-0">
+      {rows.map((r) => (
+        <div key={r.key} className="contents">
+          <dt className="text-nano font-mono text-ul-text-muted uppercase tracking-wider self-center">
+            {r.label}
+          </dt>
+          <dd className="text-caption font-mono text-ul-text m-0 break-all">
+            {String(r.value)}
+          </dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
@@ -420,13 +440,11 @@ function SuccessView({
       </div>
 
       {isWire && state.wireInstructions && (
-        <div className="bg-ul-bg-raised border border-ul-border rounded-md p-4 mb-5 font-mono text-caption">
-          <div className="text-micro text-ul-text-muted uppercase tracking-widest mb-2">
+        <div className="bg-ul-bg-raised border border-ul-border rounded-md p-4 mb-5 text-caption">
+          <div className="text-micro font-mono text-ul-text-muted uppercase tracking-widest mb-2">
             Wire instructions
           </div>
-          <pre className="whitespace-pre-wrap break-words m-0">
-            {JSON.stringify(state.wireInstructions, null, 2)}
-          </pre>
+          <WireInstructionsTable instructions={state.wireInstructions} />
         </div>
       )}
 
