@@ -27,6 +27,8 @@ import {
   type MarketplaceBid,
 } from '../../lib/api';
 import Glyph, { deriveGlyph, deriveTone } from '../ui/Glyph';
+import Modal from '../ui/Modal';
+import { formatLightPrecise as formatLight } from '../../lib/format';
 
 interface AcquisitionFlowProps {
   appId: string;
@@ -47,13 +49,6 @@ type Outcome = 'bid-placed' | 'instant-bought';
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
-function formatLight(n: number | undefined | null): string {
-  if (n === undefined || n === null) return '—';
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  if (Number.isInteger(n)) return String(n);
-  return n.toFixed(3);
-}
 
 function hoursAgo(iso?: string): string {
   if (!iso) return '';
@@ -70,25 +65,6 @@ function isYourBid(bid: MarketplaceBid, userId: string | null): boolean {
 }
 
 // ── Modal chrome ──────────────────────────────────────────────────────
-
-function ModalShell({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  return (
-    <div
-      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-6 py-10 animate-fade-in"
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div className="bg-ul-warm-paper rounded-xl shadow-xl border border-ul-border w-full max-w-3xl max-h-[88vh] flex flex-col overflow-hidden animate-fade-up">
-        {children}
-      </div>
-    </div>
-  );
-}
 
 function ModalCloseButton({ onClose }: { onClose: () => void }) {
   return (
@@ -598,7 +574,7 @@ export default function AcquisitionFlow({
   };
 
   return (
-    <ModalShell onClose={onClose}>
+    <Modal onClose={onClose} surface="paper" radius="xl" maxWidth="3xl" maxHeight="tall">
       <ModalCloseButton onClose={onClose} />
       {step === 'review' && (
         <ReviewStep
@@ -632,6 +608,6 @@ export default function AcquisitionFlow({
           onDone={onClose}
         />
       )}
-    </ModalShell>
+    </Modal>
   );
 }

@@ -7,10 +7,11 @@
 // shipped this batch — gallery preview imagery would require app-supplied
 // thumbnails (DESIGN-FOLLOWUPS B7).
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Search, X } from 'lucide-react';
 import type { FunctionIndex } from '../../lib/api';
 import Glyph, { deriveGlyph, deriveTone } from '../ui/Glyph';
+import Modal from '../ui/Modal';
 
 export interface PickedCard {
   appId: string;
@@ -51,15 +52,6 @@ export default function WidgetPickerModal({
 }: WidgetPickerModalProps) {
   const [query, setQuery] = useState('');
 
-  // Close on Escape
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   // Flatten widgets[].cards[] into pickable rows
   const rows = useMemo<PickerRow[]>(() => {
     const out: PickerRow[] = [];
@@ -83,13 +75,7 @@ export default function WidgetPickerModal({
   }, [rows, query]);
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-6 py-10 animate-fade-in"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div className="bg-ul-bg rounded-lg shadow-xl border border-ul-border w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden animate-fade-up">
+    <Modal onClose={onClose} surface="plain" radius="lg" maxWidth="2xl" maxHeight="standard">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-ul-border">
           <div>
@@ -192,8 +178,7 @@ export default function WidgetPickerModal({
             </div>
           )}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 

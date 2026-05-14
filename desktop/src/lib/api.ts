@@ -23,6 +23,7 @@ import { type ChatStreamEvent, parseSSEStream } from "./sse";
 import type { ToolUsed } from "../types/executionPlan";
 import type { AmbientSuggestion } from "../types/ambientSuggestion";
 import { createDesktopLogger } from "./logging";
+import { formatLightCompact as formatLight } from "./format";
 
 // ── Types ──
 
@@ -980,6 +981,8 @@ export async function searchMarketplace(query: string, options?: {
   type?: 'all' | 'apps' | 'skills';
   runtime?: 'all' | 'gpu' | 'deno';
   limit?: number;
+  /** Cancel in-flight fetches when a newer query supersedes this one. */
+  signal?: AbortSignal;
 }): Promise<MarketplaceSearchResponse | null> {
   const params = new URLSearchParams({ q: query });
   if (options?.type) params.set('type', options.type);
@@ -990,7 +993,10 @@ export async function searchMarketplace(query: string, options?: {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetchFromApi(`/api/discover/marketplace?${params.toString()}`, { headers });
+  const res = await fetchFromApi(`/api/discover/marketplace?${params.toString()}`, {
+    headers,
+    signal: options?.signal,
+  });
   if (!res.ok) return null;
   const data = await res.json() as MarketplaceResponse;
   return data.mode === 'search' ? data : null;
@@ -2185,13 +2191,6 @@ export async function syncSystemAgentStates(
 }
 
 // ── Helpers ──
-
-function formatLight(amount: number): string {
-  const abs = Math.abs(amount);
-  if (abs >= 1e6) return "✦" + (abs / 1e6).toFixed(2) + "M";
-  if (abs >= 5000) return "✦" + (abs / 1000).toFixed(1) + "K";
-  return "✦" + (abs % 1 === 0 ? String(abs) : abs.toFixed(2));
-}
 
 function formatApiError(err: ApiError, status: number): string {
   // Include server detail if available
