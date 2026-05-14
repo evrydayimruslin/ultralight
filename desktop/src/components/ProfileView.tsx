@@ -26,18 +26,31 @@ import {
   fetchUserTransactions,
   fetchUserEarnings,
   fetchConnectStatus,
+  fetchPayoutHistory,
+  fetchBillingAddress,
+  startConnectOnboard,
+  toggleAutoAddEarnings,
+  updateUserProfile,
+  updateBillingAddress,
   type UserProfile,
   type UserHosting,
   type BillingTransaction,
   type UserEarnings,
   type ConnectStatus,
+  type PayoutRow,
+  type BillingAddress,
 } from '../lib/api';
 import AddLightModal from './profile/AddLightModal';
+import WithdrawModal from './profile/WithdrawModal';
 
-interface ProfileViewProps {
-  /** Open the Connect-onboard flow. Wired in Batch 5c. */
-  onOpenPayoutOnboard?: () => void;
+// Open an external URL. Tauri's webview routes target=_blank through the
+// host's default browser, so this works without the shell plugin (which
+// would be a new dependency).
+function openExternal(url: string): void {
+  window.open(url, '_blank', 'noopener,noreferrer');
 }
+
+type ProfileViewProps = Record<string, never>;
 
 type Tab = 'balance' | 'earnings' | 'settings';
 
@@ -314,16 +327,24 @@ function BalanceTab({
   );
 }
 
-// ── Earnings tab (partial — full payout flow in 5c) ─────────────────
+// ── Earnings tab ────────────────────────────────────────────────────
 
 function EarningsTab({
   earnings,
   connect,
-  onOpenPayoutOnboard,
+  payouts,
+  onWithdraw,
+  onConnectBank,
+  onToggleAutoAdd,
+  autoAddSaving,
 }: {
   earnings: UserEarnings | null;
   connect: ConnectStatus | null;
-  onOpenPayoutOnboard?: () => void;
+  payouts: PayoutRow[];
+  onWithdraw: () => void;
+  onConnectBank: () => void;
+  onToggleAutoAdd: (next: boolean) => Promise<void>;
+  autoAddSaving: boolean;
 }) {
   const stats = [
     { label: 'Lifetime', value: earnings?.total_earned_light ?? 0 },
@@ -334,6 +355,8 @@ function EarningsTab({
     { label: 'Withdrawn', value: earnings?.total_withdrawn_light ?? 0 },
     { label: 'Withdrawable', value: earnings?.withdrawable_light ?? 0, accent: 'success' as const },
   ];
+  const withdrawable = earnings?.withdrawable_light ?? 0;
+  const autoAdd = earnings?.auto_add_earnings_to_balance ?? false;
 
   return (
     <div className="px-8 py-7">
@@ -356,7 +379,7 @@ function EarningsTab({
       </div>
 
       {/* Bank payouts banner */}
-      <div className="bg-ul-bg-raised border border-ul-border rounded-md px-5 py-4 flex items-center justify-between mb-5">
+      <div className="bg-ul-bg-raised border border-ul-border rounded-md px-5 py-4 flex items-center justify-between mb-3">
         <div>
           <div className="flex items-center gap-2.5">
             <div className="text-body font-semibold">Bank payouts</div>
@@ -376,20 +399,93 @@ function EarningsTab({
           </div>
           <div className="text-caption text-ul-text-secondary mt-1">
             {connect?.payouts_enabled
-              ? `Bank ready. ✦${formatLight(connect.withdrawable_earnings_light, 0)} withdrawable.`
+              ? `Bank ready. ✦${formatLight(connect.withdrawable_earnings_light ?? withdrawable, 0)} withdrawable.`
               : 'Connect a bank to withdraw earnings. Deposits stay in-app.'}
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onOpenPayoutOnboard}
-          disabled={!onOpenPayoutOnboard}
-          className="bg-ul-text text-white border-none px-3.5 py-2 rounded-md text-caption font-medium cursor-pointer hover:bg-ul-accent-hover disabled:opacity-60 disabled:cursor-not-allowed"
-          title={onOpenPayoutOnboard ? undefined : 'Payout flow arrives in Batch 5c'}
-        >
-          {connect?.payouts_enabled ? 'Manage' : connect?.onboarded ? 'Resume' : 'Connect bank'}
-        </button>
+        <div className="flex gap-2">
+          {connect?.payouts_enabled && withdrawable > 0 && (
+            <button
+              type="button"
+              onClick={onWithdraw}
+              className="bg-ul-text text-white border-none px-3.5 py-2 rounded-md text-caption font-medium cursor-pointer hover:bg-ul-accent-hover"
+            >
+              Withdraw
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onConnectBank}
+            className={`px-3.5 py-2 rounded-md text-caption font-medium cursor-pointer ${
+              connect?.payouts_enabled
+                ? 'bg-ul-bg text-ul-text border border-ul-border hover:bg-ul-bg-hover'
+                : 'bg-ul-text text-white border-none hover:bg-ul-accent-hover'
+            }`}
+          >
+            {connect?.payouts_enabled ? 'Manage' : connect?.onboarded ? 'Resume' : 'Connect bank'}
+          </button>
+        </div>
       </div>
+
+      {/* Auto-add earnings toggle */}
+      <div className="bg-ul-bg-raised border border-ul-border rounded-md px-5 py-4 flex items-center justify-between mb-5">
+        <div>
+          <div className="text-body font-semibold">Auto-convert earnings to balance</div>
+          <div className="text-caption text-ul-text-secondary mt-1">
+            When on, every new tool earning is added to your spendable balance instantly at 1:1.
+          </div>
+        </div>
+        <label className={`relative inline-flex items-center cursor-pointer ${autoAddSaving ? 'opacity-60' : ''}`}>
+          <input
+            type="checkbox"
+            checked={autoAdd}
+            disabled={autoAddSaving}
+            onChange={(e) => { void onToggleAutoAdd(e.target.checked); }}
+            className="sr-only peer"
+          />
+          <div className="w-11 h-6 bg-ul-border peer-checked:bg-ul-success-strong rounded-full transition-colors after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-5" />
+        </label>
+      </div>
+
+      {/* Payout history */}
+      {payouts.length > 0 && (
+        <>
+          <div className="text-micro font-mono text-ul-text-muted uppercase tracking-widest mb-1.5">
+            Payout history
+          </div>
+          <div className="mb-5">
+            {payouts.slice(0, 5).map((p) => (
+              <div
+                key={p.id}
+                className="grid grid-cols-[100px_minmax(0,1fr)_90px_90px] gap-3 items-center px-2 py-3 border-b border-ul-border last:border-b-0 text-caption"
+              >
+                <div className="font-mono text-micro text-ul-text-muted">
+                  {new Date(p.created_at).toLocaleDateString()}
+                </div>
+                <div className="font-mono text-micro text-ul-text-secondary truncate">
+                  {p.stripe_payout_id ? `→ ${p.stripe_payout_id.slice(0, 16)}…` : '—'}
+                </div>
+                <div className="text-right">
+                  <span
+                    className={`text-nano font-mono uppercase tracking-widest px-1.5 py-0.5 rounded-xs ${
+                      p.status === 'paid'
+                        ? 'text-ul-success-strong bg-ul-success-soft'
+                        : p.status === 'failed' || p.status === 'cancelled'
+                          ? 'text-ul-error bg-ul-error-soft'
+                          : 'text-ul-text-muted bg-ul-bg-active'
+                    }`}
+                  >
+                    {p.status}
+                  </span>
+                </div>
+                <div className="text-right font-mono text-caption font-medium tabular-nums">
+                  ✦{formatLight(p.amount_light, 0)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* Earning apps list */}
       <div className="text-micro font-mono text-ul-text-muted uppercase tracking-widest mb-1.5">
@@ -423,59 +519,315 @@ function EarningsTab({
   );
 }
 
-// ── Settings tab (stub for 5c) ───────────────────────────────────────
+// ── Settings tab ─────────────────────────────────────────────────────
 
-function SettingsTab({ profile }: { profile: UserProfile | null }) {
+function SettingsTab({
+  profile,
+  billingAddress,
+  onProfileSaved,
+  onBillingSaved,
+}: {
+  profile: UserProfile | null;
+  billingAddress: BillingAddress | null;
+  onProfileSaved: () => Promise<void>;
+  onBillingSaved: () => Promise<void>;
+}) {
+  // Display name + country (PATCH /api/user)
+  const [displayName, setDisplayName] = useState<string>(profile?.display_name ?? '');
+  const [country, setCountry] = useState<string>(profile?.country ?? '');
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileMsg, setProfileMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  // Billing address (PUT /api/user/billing-address)
+  const [addr, setAddr] = useState<BillingAddress>(billingAddress ?? {});
+  const [addrSaving, setAddrSaving] = useState(false);
+  const [addrMsg, setAddrMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  // Keep local form state in sync when parent re-fetches profile/billing.
+  useEffect(() => {
+    if (profile) {
+      setDisplayName(profile.display_name ?? '');
+      setCountry(profile.country ?? '');
+    }
+  }, [profile]);
+  useEffect(() => {
+    if (billingAddress) setAddr(billingAddress);
+  }, [billingAddress]);
+
+  const onSaveProfile = async () => {
+    setProfileSaving(true);
+    setProfileMsg(null);
+    const res = await updateUserProfile({
+      display_name: displayName.trim() || undefined,
+      country: country.trim() || undefined,
+    });
+    if (!res.ok) {
+      setProfileMsg({ kind: 'err', text: res.errorMessage || 'Save failed.' });
+    } else {
+      setProfileMsg({ kind: 'ok', text: 'Saved.' });
+      await onProfileSaved();
+    }
+    setProfileSaving(false);
+  };
+
+  const onSaveAddr = async () => {
+    setAddrSaving(true);
+    setAddrMsg(null);
+    const res = await updateBillingAddress(addr);
+    if (!res.ok) {
+      setAddrMsg({ kind: 'err', text: res.errorMessage || 'Save failed.' });
+    } else {
+      setAddrMsg({ kind: 'ok', text: 'Saved.' });
+      await onBillingSaved();
+    }
+    setAddrSaving(false);
+  };
+
   return (
-    <div className="px-8 py-7">
-      <div className="text-caption text-ul-text-secondary leading-relaxed max-w-prose">
-        Settings (API key, BYOK provider, billing address, country, featured app) arrive in
-        Batch 5c. Profile data loaded:
+    <div className="px-8 py-7 max-w-3xl">
+      {/* Profile section */}
+      <SettingsSection title="Profile">
+        <SettingsField label="Email">
+          <div className="text-caption text-ul-text-secondary font-mono">{profile?.email ?? '—'}</div>
+        </SettingsField>
+        <SettingsField label="Display name">
+          <input
+            type="text"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder="Your name"
+            className="w-full px-3 py-2 border border-ul-border rounded-md text-small bg-ul-bg outline-none focus:border-ul-text"
+          />
+        </SettingsField>
+        <SettingsField label="Country (ISO 2-letter)">
+          <input
+            type="text"
+            value={country}
+            onChange={(e) => setCountry(e.target.value.toUpperCase().slice(0, 2))}
+            placeholder="US"
+            maxLength={2}
+            className="w-32 px-3 py-2 border border-ul-border rounded-md text-small font-mono uppercase tracking-widest bg-ul-bg outline-none focus:border-ul-text"
+          />
+        </SettingsField>
+        <SettingsField label="Tier" hint="Managed by the platform">
+          <span className="text-caption font-mono text-ul-text-secondary uppercase tracking-widest bg-ul-bg-active px-2 py-1 rounded-xs">
+            {profile?.tier ?? '—'}
+          </span>
+        </SettingsField>
+        <SettingsField label="Profile slug" hint="Auto-generated from display name">
+          <span className="text-caption font-mono text-ul-text-muted">@{profile?.profile_slug ?? '—'}</span>
+        </SettingsField>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => void onSaveProfile()}
+            disabled={profileSaving}
+            className="bg-ul-text text-white border-none px-3.5 py-2 rounded-md text-caption font-medium cursor-pointer hover:bg-ul-accent-hover disabled:opacity-60"
+          >
+            {profileSaving ? 'Saving…' : 'Save profile'}
+          </button>
+          {profileMsg && (
+            <span className={`text-caption ${profileMsg.kind === 'ok' ? 'text-ul-success-strong' : 'text-ul-error'}`}>
+              {profileMsg.text}
+            </span>
+          )}
+        </div>
+      </SettingsSection>
+
+      {/* Billing address */}
+      <SettingsSection title="Billing address" hint="Used for tax location + Stripe customer metadata">
+        <SettingsField label="Name">
+          <input
+            type="text"
+            value={addr.name ?? ''}
+            onChange={(e) => setAddr({ ...addr, name: e.target.value })}
+            className="w-full px-3 py-2 border border-ul-border rounded-md text-small bg-ul-bg outline-none focus:border-ul-text"
+          />
+        </SettingsField>
+        <SettingsField label="Line 1">
+          <input
+            type="text"
+            value={addr.line1 ?? ''}
+            onChange={(e) => setAddr({ ...addr, line1: e.target.value })}
+            className="w-full px-3 py-2 border border-ul-border rounded-md text-small bg-ul-bg outline-none focus:border-ul-text"
+          />
+        </SettingsField>
+        <SettingsField label="Line 2">
+          <input
+            type="text"
+            value={addr.line2 ?? ''}
+            onChange={(e) => setAddr({ ...addr, line2: e.target.value })}
+            className="w-full px-3 py-2 border border-ul-border rounded-md text-small bg-ul-bg outline-none focus:border-ul-text"
+          />
+        </SettingsField>
+        <div className="grid grid-cols-3 gap-3 mb-2">
+          <div>
+            <div className="text-nano font-mono text-ul-text-muted uppercase tracking-widest mb-1">City</div>
+            <input
+              type="text"
+              value={addr.city ?? ''}
+              onChange={(e) => setAddr({ ...addr, city: e.target.value })}
+              className="w-full px-3 py-2 border border-ul-border rounded-md text-small bg-ul-bg outline-none focus:border-ul-text"
+            />
+          </div>
+          <div>
+            <div className="text-nano font-mono text-ul-text-muted uppercase tracking-widest mb-1">State</div>
+            <input
+              type="text"
+              value={addr.state ?? ''}
+              onChange={(e) => setAddr({ ...addr, state: e.target.value })}
+              className="w-full px-3 py-2 border border-ul-border rounded-md text-small bg-ul-bg outline-none focus:border-ul-text"
+            />
+          </div>
+          <div>
+            <div className="text-nano font-mono text-ul-text-muted uppercase tracking-widest mb-1">Postal code</div>
+            <input
+              type="text"
+              value={addr.postal_code ?? ''}
+              onChange={(e) => setAddr({ ...addr, postal_code: e.target.value })}
+              className="w-full px-3 py-2 border border-ul-border rounded-md text-small bg-ul-bg outline-none focus:border-ul-text"
+            />
+          </div>
+        </div>
+        <SettingsField label="Country (ISO 2-letter)">
+          <input
+            type="text"
+            value={addr.country ?? ''}
+            onChange={(e) => setAddr({ ...addr, country: e.target.value.toUpperCase().slice(0, 2) })}
+            placeholder="US"
+            maxLength={2}
+            className="w-32 px-3 py-2 border border-ul-border rounded-md text-small font-mono uppercase tracking-widest bg-ul-bg outline-none focus:border-ul-text"
+          />
+        </SettingsField>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => void onSaveAddr()}
+            disabled={addrSaving}
+            className="bg-ul-text text-white border-none px-3.5 py-2 rounded-md text-caption font-medium cursor-pointer hover:bg-ul-accent-hover disabled:opacity-60"
+          >
+            {addrSaving ? 'Saving…' : 'Save billing address'}
+          </button>
+          {addrMsg && (
+            <span className={`text-caption ${addrMsg.kind === 'ok' ? 'text-ul-success-strong' : 'text-ul-error'}`}>
+              {addrMsg.text}
+            </span>
+          )}
+        </div>
+      </SettingsSection>
+
+      {/* BYOK status (read-only — full editor flagged as B16) */}
+      <SettingsSection title="BYOK provider" hint="Bring-your-own-key inference routing">
+        <div className="text-caption text-ul-text-secondary leading-relaxed mb-3">
+          {profile?.byok_enabled
+            ? `Active provider: ${profile.byok_provider ?? '—'}.`
+            : 'No BYOK provider configured. Without a key, inference routes through Ultralight\'s Light meter.'}
+        </div>
+        <div className="text-nano font-mono text-ul-text-muted uppercase tracking-widest">
+          Provider key management ships in a focused follow-up (DESIGN-FOLLOWUPS B16).
+        </div>
+      </SettingsSection>
+    </div>
+  );
+}
+
+function SettingsSection({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="mb-8 last:mb-0">
+      <div className="text-micro font-mono text-ul-text-muted uppercase tracking-widest mb-1.5">
+        {title}
       </div>
-      <pre className="mt-3 p-3 bg-ul-bg-raised border border-ul-border rounded-md text-nano font-mono text-ul-text-muted overflow-x-auto">
-        {JSON.stringify(
-          {
-            email: profile?.email,
-            display_name: profile?.display_name,
-            tier: profile?.tier,
-            country: profile?.country,
-            profile_slug: profile?.profile_slug,
-          },
-          null,
-          2,
-        )}
-      </pre>
+      {hint && <div className="text-nano text-ul-text-muted mb-3">{hint}</div>}
+      <div className="bg-ul-bg-raised border border-ul-border rounded-md p-4 space-y-3">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function SettingsField({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-1">
+        <div className="text-nano font-mono text-ul-text-muted uppercase tracking-widest">{label}</div>
+        {hint && <div className="text-nano text-ul-text-muted">{hint}</div>}
+      </div>
+      {children}
     </div>
   );
 }
 
 // ── ProfileView ──────────────────────────────────────────────────────
 
-export default function ProfileView({ onOpenPayoutOnboard }: ProfileViewProps) {
+export default function ProfileView(_props: ProfileViewProps) {
   const [tab, setTab] = useState<Tab>('balance');
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [hosting, setHosting] = useState<UserHosting | null>(null);
   const [transactions, setTransactions] = useState<BillingTransaction[]>([]);
   const [earnings, setEarnings] = useState<UserEarnings | null>(null);
   const [connect, setConnect] = useState<ConnectStatus | null>(null);
+  const [payouts, setPayouts] = useState<PayoutRow[]>([]);
+  const [billingAddress, setBillingAddress] = useState<BillingAddress | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [addLightOpen, setAddLightOpen] = useState(false);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [autoAddSaving, setAutoAddSaving] = useState(false);
 
   const reload = useCallback(async () => {
-    const [p, h, t, e, c] = await Promise.all([
+    const [p, h, t, e, c, py, ba] = await Promise.all([
       fetchUserProfile(),
       fetchUserHosting(),
       fetchUserTransactions({ limit: 50 }),
       fetchUserEarnings('30d'),
       fetchConnectStatus(),
+      fetchPayoutHistory(20),
+      fetchBillingAddress(),
     ]);
     setProfile(p);
     setHosting(h);
     setTransactions(t?.transactions ?? []);
     setEarnings(e);
     setConnect(c);
+    setPayouts(py);
+    setBillingAddress(ba);
   }, []);
+
+  // Open Stripe Connect onboarding. The BE returns a one-time URL; we
+  // open it in the user's default browser. After Stripe redirects back,
+  // the next visit / focus triggers reload() which refreshes /connect/status.
+  const onConnectBank = useCallback(async () => {
+    const country = profile?.country || 'US';
+    const result = await startConnectOnboard({ country });
+    if (!result.ok || !result.onboarding_url) {
+      setError(result.errorMessage || 'Could not start onboarding.');
+      return;
+    }
+    openExternal(result.onboarding_url);
+  }, [profile?.country]);
+
+  const onToggleAutoAdd = useCallback(async (enabled: boolean) => {
+    setAutoAddSaving(true);
+    const result = await toggleAutoAddEarnings(enabled);
+    if (result.ok) await reload();
+    setAutoAddSaving(false);
+  }, [reload]);
 
   useEffect(() => {
     let cancelled = false;
@@ -563,10 +915,21 @@ export default function ProfileView({ onOpenPayoutOnboard }: ProfileViewProps) {
             <EarningsTab
               earnings={earnings}
               connect={connect}
-              onOpenPayoutOnboard={onOpenPayoutOnboard}
+              payouts={payouts}
+              onWithdraw={() => setWithdrawOpen(true)}
+              onConnectBank={() => { void onConnectBank(); }}
+              onToggleAutoAdd={onToggleAutoAdd}
+              autoAddSaving={autoAddSaving}
             />
           )}
-          {tab === 'settings' && <SettingsTab profile={profile} />}
+          {tab === 'settings' && (
+            <SettingsTab
+              profile={profile}
+              billingAddress={billingAddress}
+              onProfileSaved={reload}
+              onBillingSaved={reload}
+            />
+          )}
         </>
       )}
 
@@ -575,6 +938,15 @@ export default function ProfileView({ onOpenPayoutOnboard }: ProfileViewProps) {
           hosting={hosting}
           earnings={earnings}
           onClose={() => setAddLightOpen(false)}
+          onSuccess={() => { void reload(); }}
+        />
+      )}
+
+      {withdrawOpen && (
+        <WithdrawModal
+          connect={connect}
+          withdrawableLight={earnings?.withdrawable_light ?? 0}
+          onClose={() => setWithdrawOpen(false)}
           onSuccess={() => { void reload(); }}
         />
       )}

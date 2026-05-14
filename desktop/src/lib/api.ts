@@ -1537,6 +1537,186 @@ export async function convertEarningsToBalance(input: {
   return { ok: true, ...data };
 }
 
+// ── Payouts (Stripe Connect onboarding + withdraw + history) ──
+
+export interface ConnectOnboardResult {
+  ok: boolean;
+  onboarding_url?: string;
+  account_id?: string;
+  errorMessage?: string;
+}
+
+/** POST /api/user/connect/onboard — creates / resumes Stripe Connect
+ *  Express onboarding. The FE opens onboarding_url in the user's
+ *  browser; Stripe redirects back to the platform after completion. */
+export async function startConnectOnboard(input: { country?: string }): Promise<ConnectOnboardResult> {
+  const token = getToken();
+  if (!token) return { ok: false, errorMessage: 'Not signed in' };
+  const res = await fetchFromApi('/api/user/connect/onboard', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ country: input.country }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    return { ok: false, errorMessage: text || `Failed (${res.status})` };
+  }
+  const data = await res.json() as Omit<ConnectOnboardResult, 'ok' | 'errorMessage'>;
+  return { ok: true, ...data };
+}
+
+export interface PayoutWithdrawResult {
+  ok: boolean;
+  success?: boolean;
+  payout_id?: string;
+  estimated_arrival?: string;
+  fee_breakdown?: Record<string, number>;
+  payout_schedule?: { release_at?: string; scheduled_date?: string };
+  errorMessage?: string;
+}
+
+/** POST /api/user/connect/withdraw — request a payout in ✦Light to the
+ *  seller's connected bank. Creates a `payouts` row with status='held';
+ *  background processor releases on the configured schedule. */
+export async function requestPayoutWithdrawal(input: {
+  amountLight: number;
+  termsAccepted: boolean;
+}): Promise<PayoutWithdrawResult> {
+  const token = getToken();
+  if (!token) return { ok: false, errorMessage: 'Not signed in' };
+  const res = await fetchFromApi('/api/user/connect/withdraw', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      amount_light: input.amountLight,
+      terms_accepted: input.termsAccepted,
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    return { ok: false, errorMessage: text || `Failed (${res.status})` };
+  }
+  const data = await res.json() as Omit<PayoutWithdrawResult, 'ok' | 'errorMessage'>;
+  return { ok: true, ...data };
+}
+
+export interface PayoutRow {
+  id: string;
+  amount_light: number;
+  status: 'held' | 'releasing' | 'paid' | 'failed' | 'cancelled' | string;
+  created_at: string;
+  release_at?: string | null;
+  stripe_transfer_id?: string | null;
+  stripe_payout_id?: string | null;
+  stripe_fee_cents?: number | null;
+  net_cents?: number | null;
+}
+
+/** GET /api/user/connect/payouts — historical payout list. */
+export async function fetchPayoutHistory(limit = 20): Promise<PayoutRow[]> {
+  const token = getToken();
+  if (!token) return [];
+  const res = await fetchFromApi(`/api/user/connect/payouts?limit=${limit}`, {
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+  if (!res.ok) return [];
+  const data = await res.json() as { payouts?: PayoutRow[] } | PayoutRow[];
+  if (Array.isArray(data)) return data;
+  return data.payouts ?? [];
+}
+
+/** PATCH /api/user/earnings/auto-add — toggle auto-conversion of future
+ *  earnings into spendable balance. */
+export async function toggleAutoAddEarnings(enabled: boolean): Promise<{ ok: boolean; errorMessage?: string }> {
+  const token = getToken();
+  if (!token) return { ok: false, errorMessage: 'Not signed in' };
+  const res = await fetchFromApi('/api/user/earnings/auto-add', {
+    method: 'PATCH',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    return { ok: false, errorMessage: text || `Failed (${res.status})` };
+  }
+  return { ok: true };
+}
+
+// ── Profile + billing address mutations (Settings tab) ──
+
+export interface UpdateUserProfileInput {
+  display_name?: string;
+  country?: string;
+  featured_app_id?: string | null;
+}
+
+/** PATCH /api/user — update display name / country / featured app. */
+export async function updateUserProfile(input: UpdateUserProfileInput): Promise<{ ok: boolean; profile?: UserProfile; errorMessage?: string }> {
+  const token = getToken();
+  if (!token) return { ok: false, errorMessage: 'Not signed in' };
+  const res = await fetchFromApi('/api/user', {
+    method: 'PATCH',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    return { ok: false, errorMessage: text || `Failed (${res.status})` };
+  }
+  const data = await res.json() as UserProfile;
+  return { ok: true, profile: data };
+}
+
+export interface BillingAddress {
+  name?: string | null;
+  line1?: string | null;
+  line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+  source?: string;
+  version?: number;
+}
+
+export async function fetchBillingAddress(): Promise<BillingAddress | null> {
+  const token = getToken();
+  if (!token) return null;
+  const res = await fetchFromApi('/api/user/billing-address', {
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+  if (!res.ok) return null;
+  const data = await res.json() as { billing_address?: BillingAddress } | BillingAddress;
+  if (data && typeof data === 'object' && 'billing_address' in data && data.billing_address) {
+    return data.billing_address;
+  }
+  return data as BillingAddress;
+}
+
+export async function updateBillingAddress(input: BillingAddress): Promise<{ ok: boolean; errorMessage?: string }> {
+  const token = getToken();
+  if (!token) return { ok: false, errorMessage: 'Not signed in' };
+  // BE expects camelCase per the audit (name, line1, line2, city, state, postalCode, country).
+  const res = await fetchFromApi('/api/user/billing-address', {
+    method: 'PUT',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: input.name,
+      line1: input.line1,
+      line2: input.line2,
+      city: input.city,
+      state: input.state,
+      postalCode: input.postal_code,
+      country: input.country,
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    return { ok: false, errorMessage: text || `Failed (${res.status})` };
+  }
+  return { ok: true };
+}
+
 // ── Task Context (per-request entity + function resolution) ──
 
 export interface TaskContext {
