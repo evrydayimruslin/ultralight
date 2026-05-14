@@ -1409,6 +1409,134 @@ export async function fetchConnectStatus(): Promise<ConnectStatus | null> {
   return await res.json() as ConnectStatus;
 }
 
+// ── Add Light (wallet purchases + earnings transfer) ──
+
+export interface WalletExpressIntentResult {
+  ok: boolean;
+  publishable_key?: string;
+  client_secret?: string;
+  payment_intent_id?: string;
+  stripe_customer_id?: string;
+  amount_cents?: number;
+  light_amount?: number;
+  wallet_light_per_usd?: number;
+  billing_config_version?: number;
+  errorStatus?: number;
+  errorMessage?: string;
+}
+
+/** POST /api/user/wallet/express-checkout-intent — creates a Stripe
+ *  PaymentIntent for an Apple/Google Pay wallet checkout. The caller
+ *  then completes the payment via Stripe.js (loaded separately). */
+export async function createWalletExpressIntent(input: {
+  amountCents: number;
+  source?: 'web' | 'desktop';
+  termsAccepted: boolean;
+}): Promise<WalletExpressIntentResult> {
+  const token = getToken();
+  if (!token) return { ok: false, errorMessage: 'Not signed in' };
+  const res = await fetchFromApi('/api/user/wallet/express-checkout-intent', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      amount_cents: input.amountCents,
+      source: input.source ?? 'desktop',
+      terms_accepted: input.termsAccepted,
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    return { ok: false, errorStatus: res.status, errorMessage: text || `Failed (${res.status})` };
+  }
+  const data = await res.json() as Omit<WalletExpressIntentResult, 'ok' | 'errorStatus' | 'errorMessage'>;
+  return { ok: true, ...data };
+}
+
+export interface WireTransferIntentResult {
+  ok: boolean;
+  payment_intent_id?: string;
+  client_secret?: string;
+  amount_cents?: number;
+  light_amount?: number;
+  wire_light_per_usd?: number;
+  bank_transfer_instructions?: {
+    bank_name?: string;
+    account_number?: string;
+    routing_number?: string;
+    swift_code?: string;
+    reference?: string;
+    [k: string]: unknown;
+  };
+  errorStatus?: number;
+  errorMessage?: string;
+}
+
+/** POST /api/user/wallet/wire-transfer-intent — initiates a manual ACH
+ *  wire transfer purchase. Response includes wire-transfer instructions
+ *  the FE displays for the user to complete from their bank. */
+export async function createWireTransferIntent(input: {
+  amountCents: number;
+  source?: 'web' | 'desktop';
+  termsAccepted: boolean;
+}): Promise<WireTransferIntentResult> {
+  const token = getToken();
+  if (!token) return { ok: false, errorMessage: 'Not signed in' };
+  const res = await fetchFromApi('/api/user/wallet/wire-transfer-intent', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      amount_cents: input.amountCents,
+      source: input.source ?? 'desktop',
+      terms_accepted: input.termsAccepted,
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    return { ok: false, errorStatus: res.status, errorMessage: text || `Failed (${res.status})` };
+  }
+  const data = await res.json() as Omit<WireTransferIntentResult, 'ok' | 'errorStatus' | 'errorMessage'>;
+  return { ok: true, ...data };
+}
+
+export interface ConvertEarningsResult {
+  ok: boolean;
+  success?: boolean;
+  conversion_id?: string;
+  converted_light?: number;
+  balance_light?: number;
+  deposit_balance_light?: number;
+  earned_balance_light?: number;
+  errorStatus?: number;
+  errorMessage?: string;
+}
+
+/** POST /api/user/earnings/convert-to-balance — moves earned Light into
+ *  spendable balance. 1:1, no fees. Pass `convertAll: true` to move
+ *  everything, or `amountLight` for a specific amount. */
+export async function convertEarningsToBalance(input: {
+  amountLight?: number;
+  convertAll?: boolean;
+  termsAccepted: boolean;
+}): Promise<ConvertEarningsResult> {
+  const token = getToken();
+  if (!token) return { ok: false, errorMessage: 'Not signed in' };
+  const res = await fetchFromApi('/api/user/earnings/convert-to-balance', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      amount_light: input.amountLight,
+      convert_all: input.convertAll,
+      terms_accepted: input.termsAccepted,
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    return { ok: false, errorStatus: res.status, errorMessage: text || `Failed (${res.status})` };
+  }
+  const data = await res.json() as Omit<ConvertEarningsResult, 'ok' | 'errorStatus' | 'errorMessage'>;
+  return { ok: true, ...data };
+}
+
 // ── Task Context (per-request entity + function resolution) ──
 
 export interface TaskContext {
