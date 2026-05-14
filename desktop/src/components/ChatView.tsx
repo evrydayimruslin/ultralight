@@ -1486,6 +1486,7 @@ export default function ChatView({
 
       {/* Input */}
       <ChatInput
+        agents={agents}
         onSend={sendMessage}
         isLoading={isActive}
         onStop={() => {
