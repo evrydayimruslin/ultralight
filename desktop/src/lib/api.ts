@@ -1069,6 +1069,88 @@ export async function fetchMarketplaceListing(appId: string): Promise<Marketplac
   return await res.json() as MarketplaceListingDetails;
 }
 
+export interface PlaceBidResult {
+  ok: boolean;
+  bid_id?: string;
+  amount_light?: number;
+  errorMessage?: string;
+  errorStatus?: number;
+}
+
+/** POST /api/marketplace/bid — escrows the bid amount and creates an active bid.
+ *  Returns ok=false with errorStatus + errorMessage on failure (e.g. 402 insufficient,
+ *  409 already-active-bid). Cancel via cancelBid() to release escrow. */
+export async function placeBid(input: {
+  appId: string;
+  amountLight: number;
+  message?: string;
+  expiresInHours?: number;
+}): Promise<PlaceBidResult> {
+  const token = getToken();
+  if (!token) return { ok: false, errorMessage: 'Not signed in' };
+  const res = await fetchFromApi('/api/marketplace/bid', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      app_id: input.appId,
+      amount_light: input.amountLight,
+      message: input.message,
+      expires_in_hours: input.expiresInHours,
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    return { ok: false, errorStatus: res.status, errorMessage: text || `Failed (${res.status})` };
+  }
+  const data = await res.json() as { bid_id?: string; amount_light?: number };
+  return { ok: true, bid_id: data.bid_id, amount_light: data.amount_light };
+}
+
+/** POST /api/marketplace/cancel — bidder withdraws their own active bid, refunds escrow. */
+export async function cancelBid(bidId: string): Promise<{ ok: boolean; errorMessage?: string }> {
+  const token = getToken();
+  if (!token) return { ok: false, errorMessage: 'Not signed in' };
+  const res = await fetchFromApi('/api/marketplace/cancel', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bid_id: bidId }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    return { ok: false, errorMessage: text || `Failed (${res.status})` };
+  }
+  return { ok: true };
+}
+
+export interface InstantAcquireResult {
+  ok: boolean;
+  sale_id?: string;
+  app_id?: string;
+  sale_price_light?: number;
+  platform_fee_light?: number;
+  seller_payout_light?: number;
+  errorStatus?: number;
+  errorMessage?: string;
+}
+
+/** POST /api/marketplace/acquire — atomic instant-buy at the ask price.
+ *  Only allowed when listing.instant_buy === true. */
+export async function instantAcquire(appId: string): Promise<InstantAcquireResult> {
+  const token = getToken();
+  if (!token) return { ok: false, errorMessage: 'Not signed in' };
+  const res = await fetchFromApi('/api/marketplace/acquire', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ app_id: appId }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    return { ok: false, errorStatus: res.status, errorMessage: text || `Failed (${res.status})` };
+  }
+  const data = await res.json() as Omit<InstantAcquireResult, 'ok' | 'errorStatus' | 'errorMessage'>;
+  return { ok: true, ...data };
+}
+
 export interface NewlyAcquiredEntry {
   receipt_id: string;
   sale_id: string;

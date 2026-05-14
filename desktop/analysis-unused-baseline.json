@@ -224,9 +224,11 @@
         "CommandDashboardSummary",
         "InferenceModelOption",
         "InferenceProviderChoice",
+        "InstantAcquireResult",
         "MarketplaceResponse",
         "McpToolResult",
         "OrchestrateEvent",
+        "PlaceBidResult",
         "StoredCommandDashboardLayout",
         "TaskContext"
       ]
