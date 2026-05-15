@@ -63,22 +63,32 @@ export function formatLightWhole(n: number): string {
 
 /**
  * The display handle for an app's author. Order of preference:
- *   1. An explicit `author_handle` from the BE (not yet shipped — tracked
- *      as DESIGN-FOLLOWUPS B).
- *   2. The app's `slug` (Marketplace surfaces truncate at the first dash
+ *   1. `author_display_name` from the BE marketplace enrichment (B10).
+ *   2. Legacy `author_handle` (older BE shape some surfaces still expect).
+ *   3. The app's `slug` (Marketplace surfaces truncate at the first dash
  *      to drop the auto-generated suffix; ToolDetailView shows the full
  *      slug because it has the screen real estate).
- *   3. A caller-provided fallback (e.g. `"author"` or `"owner"`).
+ *   4. A caller-provided fallback (e.g. `"author"` or `"owner"`).
  *
  * Returns the handle WITHOUT the `@` prefix so callers can compose:
  *   `<span>@{formatAuthorHandle(app)}</span>`.
  */
 export function formatAuthorHandle(
-  app: { author_handle?: string | null; slug?: string | null } | null | undefined,
+  app:
+    | {
+        author_display_name?: string | null;
+        author_handle?: string | null;
+        slug?: string | null;
+      }
+    | null
+    | undefined,
   options: { truncateAtDash?: boolean; fallback?: string } = {},
 ): string {
   const { truncateAtDash = false, fallback = 'author' } = options;
   if (!app) return fallback;
+  if (app.author_display_name && app.author_display_name.length > 0) {
+    return app.author_display_name;
+  }
   if (app.author_handle && app.author_handle.length > 0) return app.author_handle;
   if (app.slug && app.slug.length > 0) {
     return truncateAtDash ? app.slug.split('-')[0] || fallback : app.slug;

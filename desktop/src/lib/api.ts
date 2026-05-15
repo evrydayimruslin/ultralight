@@ -935,6 +935,17 @@ export interface MarketplaceResult {
   tags?: string[];
   final_score?: number;
   similarity?: number;
+  // ── B10 enrichment (optional; renders only when present) ──
+  /** Daily run counts for the last 7 days, oldest first. Used for sparklines. */
+  sparkline?: number[];
+  /** Percent change vs the prior 7d (0.18 = +18%, -0.05 = -5%). */
+  growth_7d?: number;
+  /** Median request latency in milliseconds (overlaps with B5 source). */
+  latency_p50_ms?: number;
+  /** Per-function average cost in Light from the manifest pricing config. */
+  price_per_call_light?: number;
+  /** Owner's display name; FE falls back to slug-prefix via formatAuthorHandle. */
+  author_display_name?: string;
 }
 
 export interface MarketplaceSection {
@@ -1296,6 +1307,75 @@ export async function fetchNewlyAcquired(limit = 10): Promise<NewlyAcquiredEntry
   return Array.isArray(data) ? data : (data.results ?? []);
 }
 
+// ── Acquisition handoff banners (G1 + G2) ──
+//
+// Two feeds for the post-acceptance moments: sales the current user
+// closed as the seller (G1 SellerLibraryBanner), and acquisitions they
+// completed as the buyer (G2 BuyerLibraryBanner). Both wrap the same
+// BE row shape — the difference is which side made the move and which
+// dismissed-at column is checked.
+//
+// FE returns an empty list on any non-200 response, so banners simply
+// don't render during the BE-deploy gap. No flash, no error UI.
+
+export interface HandoffBannerItem {
+  sale_id: string;
+  app_id: string;
+  app_name: string;
+  app_slug: string;
+  /** For G1 (seller side): the buyer's display handle. */
+  buyer_handle?: string;
+  /** For G2 (buyer side): the prior owner's display handle. */
+  prior_owner_handle?: string;
+  sale_price_light: number;
+  /** ISO timestamp. `acquired_at` on the buyer feed, `sold_at` on the
+   *  seller feed — BE may use either field name; FE prefers acquired_at
+   *  when present, falls back to sold_at. */
+  acquired_at?: string;
+  sold_at?: string;
+  path: 'accepted' | 'instant';
+}
+
+export async function fetchRecentlySold(): Promise<HandoffBannerItem[]> {
+  const token = getToken();
+  if (!token) return [];
+  const res = await fetchFromApi('/api/marketplace/recently-sold', {
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+  if (!res.ok) return [];
+  const data = await res.json() as { items?: HandoffBannerItem[] } | HandoffBannerItem[];
+  return Array.isArray(data) ? data : (data.items ?? []);
+}
+
+export async function fetchRecentlyAcquired(): Promise<HandoffBannerItem[]> {
+  const token = getToken();
+  if (!token) return [];
+  const res = await fetchFromApi('/api/marketplace/recently-acquired', {
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+  if (!res.ok) return [];
+  const data = await res.json() as { items?: HandoffBannerItem[] } | HandoffBannerItem[];
+  return Array.isArray(data) ? data : (data.items ?? []);
+}
+
+export async function dismissHandoffBanner(input: {
+  saleId: string;
+  side: 'seller' | 'buyer';
+}): Promise<{ ok: boolean; errorMessage?: string }> {
+  const token = getToken();
+  if (!token) return { ok: false, errorMessage: 'Not signed in' };
+  const res = await fetchFromApi('/api/marketplace/handoff-banner-dismiss', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sale_id: input.saleId, side: input.side }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    return { ok: false, errorMessage: text || `Failed (${res.status})` };
+  }
+  return { ok: true };
+}
+
 // ── Profile + Light balance + transactions + earnings ──
 //
 // All endpoints under /api/user/* return shapes that match the BE today
@@ -1314,6 +1394,12 @@ export interface UserProfile {
   byok_enabled?: boolean;
   byok_provider?: string | null;
   created_at?: string;
+  /** B14 rollup — exact counts of apps owned + apps acquired by this user.
+   *  Optional so FE keeps falling back to the noisy proxies until BE deploys. */
+  stats?: {
+    published_app_count: number;
+    acquired_app_count: number;
+  };
 }
 
 export async function fetchUserProfile(): Promise<UserProfile | null> {

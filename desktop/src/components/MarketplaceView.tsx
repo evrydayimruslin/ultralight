@@ -27,6 +27,7 @@ import {
 } from '../lib/api';
 import Glyph, { deriveGlyph, deriveTone } from './ui/Glyph';
 import Spark from './ui/Spark';
+import Sparkline from './marketplace/Sparkline';
 import { formatLightPrecise as formatLight, formatAuthorHandle } from '../lib/format';
 
 interface MarketplaceViewProps {
@@ -90,10 +91,9 @@ function FeaturedHero({ result, onOpen }: { result: MarketplaceResult; onOpen: (
               {result.description}
             </div>
           )}
-          <div className="flex items-center gap-4 text-caption text-ul-text-secondary">
+          <div className="flex items-center gap-4 text-caption text-ul-text-secondary flex-wrap">
             <span className="inline-flex items-center gap-1.5">
               <AuthorMark result={result} size={18} />
-              {/* TODO(data): author display name not in marketplace response (B10). */}
               <span className="font-mono">@{formatAuthorHandle(result, { truncateAtDash: true })}</span>
             </span>
             <span className="text-ul-text-muted">·</span>
@@ -102,6 +102,36 @@ function FeaturedHero({ result, onOpen }: { result: MarketplaceResult; onOpen: (
               <>
                 <span className="text-ul-text-muted">·</span>
                 <span className="font-mono">♥ {formatCount(result.likes)}</span>
+              </>
+            )}
+            {/* B10 — per-call price + sparkline-with-growth, rendered
+                inline with the existing metadata strip when present. */}
+            {result.price_per_call_light !== undefined && result.price_per_call_light !== null && (
+              <>
+                <span className="text-ul-text-muted">·</span>
+                <span className="font-mono text-ul-text">
+                  ✦{formatLight(result.price_per_call_light)}/call
+                </span>
+              </>
+            )}
+            {result.sparkline && result.sparkline.length >= 2 && (
+              <>
+                <span className="text-ul-text-muted">·</span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="text-ul-text-muted">
+                    <Sparkline values={result.sparkline} width={48} height={14} />
+                  </span>
+                  {result.growth_7d !== undefined && (
+                    <span
+                      className={`font-mono text-nano ${
+                        result.growth_7d >= 0 ? 'text-ul-success-strong' : 'text-ul-error'
+                      }`}
+                    >
+                      {result.growth_7d >= 0 ? '+' : ''}
+                      {Math.round(result.growth_7d * 100)}%
+                    </span>
+                  )}
+                </span>
               </>
             )}
           </div>
@@ -145,9 +175,25 @@ function BillboardRow({ result, rank, onOpen }: { result: MarketplaceResult; ran
           </div>
         )}
       </div>
-      <div className="text-right text-caption text-ul-text-muted font-mono">
-        {/* TODO(data): per-tool growth7d / sparkline not in marketplace response (B10). */}
-        {listing?.active_bid_count !== undefined && listing.active_bid_count > 0 ? (
+      <div className="text-right text-caption text-ul-text-muted font-mono flex items-center justify-end gap-2">
+        {/* B10 — sparkline + growth when BE ships them, otherwise fall back
+            to active bid count or a placeholder. Renders in priority order
+            so the visible signal is always the most product-relevant one. */}
+        {result.sparkline && result.sparkline.length >= 2 ? (
+          <>
+            <span className="text-ul-text-muted">
+              <Sparkline values={result.sparkline} width={48} height={14} />
+            </span>
+            {result.growth_7d !== undefined && (
+              <span
+                className={result.growth_7d >= 0 ? 'text-ul-success-strong' : 'text-ul-error'}
+              >
+                {result.growth_7d >= 0 ? '+' : ''}
+                {Math.round(result.growth_7d * 100)}%
+              </span>
+            )}
+          </>
+        ) : listing?.active_bid_count !== undefined && listing.active_bid_count > 0 ? (
           <span className="text-ul-info">{listing.active_bid_count} bids</span>
         ) : (
           <span>—</span>
@@ -217,12 +263,22 @@ function TrendingCard({ result, onOpen }: { result: MarketplaceResult; onOpen: (
       )}
       <div className="flex items-center justify-between gap-2 text-nano font-mono text-ul-text-muted">
         <span>{formatCount(result.runs_30d)} runs</span>
-        {listing?.ask_price_light !== undefined && listing.ask_price_light !== null ? (
+        {/* B10 — prefer per-call price (mockup's primary metric); fall
+            back to the listing ask when per-call isn't reported. */}
+        {result.price_per_call_light !== undefined && result.price_per_call_light !== null ? (
+          <span className="text-ul-text">✦{formatLight(result.price_per_call_light)}/call</span>
+        ) : listing?.ask_price_light !== undefined && listing.ask_price_light !== null ? (
           <span className="text-ul-text">✦{formatLight(listing.ask_price_light)}</span>
         ) : (
           <span>—</span>
         )}
       </div>
+      {/* Optional sparkline tail when B10 data is present. */}
+      {result.sparkline && result.sparkline.length >= 2 && (
+        <div className="mt-2 text-ul-text-muted">
+          <Sparkline values={result.sparkline} width={56} height={14} />
+        </div>
+      )}
     </div>
   );
 }
