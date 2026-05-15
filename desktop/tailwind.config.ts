@@ -18,6 +18,7 @@ export default {
           text: '#0a0a0a',
           'text-secondary': '#555555',
           'text-muted': '#999999',
+          'text-muted-strong': '#888888',     // +premium (Batch 7 C2) — between muted (#999) and secondary (#555); for captions, secondary labels, model chips, time-delta stamps
 
           // ── BACKGROUND ──
           bg: '#ffffff',
@@ -34,7 +35,7 @@ export default {
 
           // ── ACCENT (monochrome brand) ──
           accent: '#0a0a0a',
-          'accent-hover': '#333333',
+          'accent-hover': '#262626',          // updated for Batch 7 C1 — OKLCH-tuned ~10% darker; same hue
           'accent-soft': 'rgba(0,0,0,0.06)',
 
           // ── SEMANTIC ──
@@ -44,10 +45,13 @@ export default {
           'success-hover': '#16a34a',          // +premium — success button :hover
           error: '#ef4444',
           'error-soft': 'rgba(239,68,68,0.08)',
+          'error-hover': '#d63838',            // +premium (Batch 7 C1) — :hover pair for error base
           warning: '#f59e0b',
           'warning-soft': 'rgba(245,158,11,0.08)',
+          'warning-hover': '#d18708',          // +premium (Batch 7 C1) — :hover pair for warning base
           info: '#3b82f6',                     // +premium — promote from CSS var
           'info-soft': 'rgba(59,130,246,0.10)',// +premium
+          'info-hover': '#2563eb',             // +premium (Batch 7 C1) — :hover pair for info base
           completed: '#60a5fa',                // +premium — tool-call "completed" indicator
 
           // ── DEEP ACCENTS (system agents) ──
