@@ -487,8 +487,7 @@ export default function ChatInput({
                         setPopover('tools');
                       }
                     }}
-                    // TODO(token): text-[#777] (composer mute) — close to text-ul-text-secondary but not exact; kept raw.
-                    className={`inline-flex items-center gap-1.5 h-7 px-3 rounded-full text-caption font-medium transition-colors text-[#777] ${
+                    className={`inline-flex items-center gap-1.5 h-7 px-3 rounded-full text-caption font-medium transition-colors text-ul-text-muted-strong ${
                       popover === 'tools' || toolDealerPanelOpen ? 'bg-ul-accent-soft' : 'bg-transparent hover:bg-ul-bg-hover'
                     }`}
                   >
@@ -526,8 +525,7 @@ export default function ChatInput({
                   <button
                     ref={flashBtnRef}
                     onClick={() => setPopover(p => p === 'flash' ? null : 'flash')}
-                    // TODO(token): text-[#888] (composer mute) — close to text-ul-text-muted; kept raw to match mockup exactly.
-                    className={`inline-flex items-center gap-1.5 h-7 pl-2.5 pr-2 rounded-l-full text-micro transition-colors text-[#888] ${
+                    className={`inline-flex items-center gap-1.5 h-7 pl-2.5 pr-2 rounded-l-full text-micro transition-colors text-ul-text-muted-strong ${
                       popover === 'flash' ? 'bg-ul-accent-soft' : 'bg-transparent hover:bg-ul-bg-hover'
                     }`}
                     title="Flash model"
@@ -551,8 +549,7 @@ export default function ChatInput({
                   <button
                     ref={heavyBtnRef}
                     onClick={() => setPopover(p => p === 'heavy' ? null : 'heavy')}
-                    // TODO(token): text-[#888] — see above.
-                    className={`inline-flex items-center gap-1.5 h-7 pl-2 pr-2.5 rounded-r-full text-micro transition-colors text-[#888] ${
+                    className={`inline-flex items-center gap-1.5 h-7 pl-2 pr-2.5 rounded-r-full text-micro transition-colors text-ul-text-muted-strong ${
                       popover === 'heavy' ? 'bg-ul-accent-soft' : 'bg-transparent hover:bg-ul-bg-hover'
                     }`}
                     title="Heavy model"

@@ -1424,7 +1424,7 @@ export default function AgentConfigPanel({
         <div className='pt-1'>
           <button
             onClick={() => onNavigateToAgent(agent.id)}
-            className='text-caption px-3 py-1 rounded bg-gray-800 text-white hover:bg-gray-700 transition-colors'
+            className='text-caption px-3 py-1 rounded bg-ul-accent text-white hover:bg-ul-accent-hover transition-colors'
           >
             Open Chat
           </button>
