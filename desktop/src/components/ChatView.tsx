@@ -339,6 +339,18 @@ export default function ChatView({
     captureSource: 'chat_view',
   });
 
+  // Whether the pending permission request maps to a tool call already in
+  // the message stream. If so, the matching ToolCallCard surfaces the grant
+  // buttons inline (A7) and we suppress the modal overlay below.
+  const hasInlinePermissionCard = useMemo(() => {
+    if (!pendingRequest) return false;
+    return messages.some(
+      m =>
+        m.role === 'assistant' &&
+        m.tool_calls?.some(tc => tc.function.name === pendingRequest.toolName),
+    );
+  }, [pendingRequest, messages]);
+
   const contextWindow = getContextWindow(getModel());
 
   // Ref for stable closure access to current messages
@@ -1375,6 +1387,10 @@ export default function ChatView({
           );
           if (provisioned && onNavigateToAgent) onNavigateToAgent(provisioned.id);
         }}
+        pendingPermission={pendingRequest}
+        onAllowPermission={allow}
+        onAlwaysAllowPermission={alwaysAllow}
+        onDenyPermission={deny}
       />
 
       {/* Queued messages indicator */}
@@ -1521,8 +1537,11 @@ export default function ChatView({
         }}
       />
 
-      {/* Permission modal overlay */}
-      {pendingRequest && (
+      {/* Permission modal overlay — A7 routes tool-call permission asks to
+          an inline card, so the modal only renders when there's no visible
+          tool-call card matching the request (e.g. a permission check that
+          fires before any AccumulatedToolCall enters the message stream). */}
+      {pendingRequest && !hasInlinePermissionCard && (
         <PermissionModal
           request={pendingRequest}
           onAllow={allow}
