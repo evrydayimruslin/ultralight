@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Message } from '../hooks/useChat';
 import type { SystemAgentConfig } from '../lib/systemAgents';
+import type { PermissionRequest } from '../hooks/usePermissions';
 import MessageBubble from './MessageBubble';
 import ConstellationHero from './ui/ConstellationHero';
 
@@ -15,9 +16,24 @@ interface MessageListProps {
   onStarterClick?: (prompt: string) => void;
   /** Fired from the generic-empty constellation hero — navigates to that system agent's chat. */
   onPickSystemAgent?: (agent: SystemAgentConfig) => void;
+  /** Pending runner permission request — surfaced inline on matching tool-call cards (A7). */
+  pendingPermission?: PermissionRequest | null;
+  onAllowPermission?: () => void;
+  onAlwaysAllowPermission?: () => void;
+  onDenyPermission?: () => void;
 }
 
-export default function MessageList({ messages, isLoading, systemAgent, onStarterClick, onPickSystemAgent }: MessageListProps) {
+export default function MessageList({
+  messages,
+  isLoading,
+  systemAgent,
+  onStarterClick,
+  onPickSystemAgent,
+  pendingPermission,
+  onAllowPermission,
+  onAlwaysAllowPermission,
+  onDenyPermission,
+}: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const userScrolled = useRef(false);
@@ -119,6 +135,10 @@ export default function MessageList({ messages, isLoading, systemAgent, onStarte
             toolResults={toolResults}
             toolsExecuting={isLoading}
             isNew={newIds.has(msg.id)}
+            pendingPermission={pendingPermission}
+            onAllowPermission={onAllowPermission}
+            onAlwaysAllowPermission={onAlwaysAllowPermission}
+            onDenyPermission={onDenyPermission}
           />
         ))}
 

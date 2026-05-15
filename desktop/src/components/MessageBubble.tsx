@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Message } from '../hooks/useChat';
+import type { PermissionRequest } from '../hooks/usePermissions';
 import ToolCallCard from './ToolCallCard';
 import InChatWidget from './InChatWidget';
 import DiscoverWidget from './DiscoverWidget';
@@ -21,6 +22,14 @@ interface MessageBubbleProps {
   toolsExecuting?: boolean;
   /** True for messages appended after first paint — drives msg-rise animation */
   isNew?: boolean;
+  /** When the runner is waiting on a permission grant, this carries the
+   *  request. Tool-call cards whose tool name matches surface inline
+   *  Allow/Always allow/Deny buttons (A7). Otherwise the modal fallback
+   *  upstream handles it. */
+  pendingPermission?: PermissionRequest | null;
+  onAllowPermission?: () => void;
+  onAlwaysAllowPermission?: () => void;
+  onDenyPermission?: () => void;
 }
 
 const inlineWidgetLogger = createDesktopLogger('InlineWidget');
@@ -174,7 +183,16 @@ function InlineWidget({ widgetName, appId }: InlineWidgetProps) {
 
 // ── MessageBubble ──
 
-export default function MessageBubble({ message, toolResults, toolsExecuting, isNew }: MessageBubbleProps) {
+export default function MessageBubble({
+  message,
+  toolResults,
+  toolsExecuting,
+  isNew,
+  pendingPermission,
+  onAllowPermission,
+  onAlwaysAllowPermission,
+  onDenyPermission,
+}: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isTool = message.role === 'tool';
   const isAssistant = message.role === 'assistant';
@@ -223,6 +241,10 @@ export default function MessageBubble({ message, toolResults, toolsExecuting, is
                   result={isErrorLike ? undefined : raw}
                   error={isErrorLike ? raw : undefined}
                   executing={toolsExecuting && !toolResults?.has(tc.id)}
+                  pendingPermission={pendingPermission}
+                  onAllowPermission={onAllowPermission}
+                  onAlwaysAllowPermission={onAlwaysAllowPermission}
+                  onDenyPermission={onDenyPermission}
                 />
               );
             })}
