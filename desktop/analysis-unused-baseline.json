@@ -238,6 +238,7 @@
       ],
       "exports": [
         "clearInferencePreference",
+        "getOnboardingCompletedAt",
         "setModel"
       ],
       "file": "src/lib/storage.ts"

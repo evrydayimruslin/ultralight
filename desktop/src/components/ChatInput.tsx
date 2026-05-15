@@ -64,6 +64,12 @@ interface ChatInputProps {
   /** Open the per-agent custom-instructions surface. Wired from ChatView
    *  for the A4 ＋ menu's second row. When unset, the row is hidden. */
   onEditCustomInstructions?: () => void;
+  /** Seed the composer with a pre-typed draft on first mount. Used by the
+   *  onboarding wizard (E3) to pre-fill the user's step-3 tour-end prompt
+   *  so the next keystroke turns intent into a real message. Only read
+   *  once — the lazy initial state ignores later changes so the user's
+   *  typing isn't clobbered. */
+  initialDraft?: string;
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -112,8 +118,9 @@ export default function ChatInput({
   onCloseToolDealerPanel,
   queuedCount = 0,
   onEditCustomInstructions,
+  initialDraft,
 }: ChatInputProps) {
-  const [value, setValue] = useState('');
+  const [value, setValue] = useState(() => initialDraft ?? '');
   const [files, setFiles] = useState<ChatFile[]>([]);
   const [send, setSend] = useState<SendState>('idle');
   const [focused, setFocused] = useState(false);
@@ -342,14 +349,13 @@ export default function ChatInput({
             {files.map((f, i) => (
               <div
                 key={`${f.name}-${i}`}
-                // TODO(token): bg-gray-100, text-gray-600, text-gray-400 — no exact ul-* equivalents; kept raw.
-                className="flex items-center gap-1.5 px-2 py-1 bg-gray-100 rounded-md text-xs text-gray-600 max-w-[200px]"
+                className="flex items-center gap-1.5 px-2 py-1 bg-ul-bg-hover rounded-md text-xs text-ul-text-secondary max-w-[200px]"
               >
                 <span className="truncate">{f.name}</span>
-                <span className="text-gray-400 flex-shrink-0">{formatSize(f.size)}</span>
+                <span className="text-ul-text-muted flex-shrink-0">{formatSize(f.size)}</span>
                 <button
                   onClick={() => removeFile(i)}
-                  className="text-gray-400 hover:text-gray-600 flex-shrink-0 ml-0.5"
+                  className="text-ul-text-muted hover:text-ul-text-secondary flex-shrink-0 ml-0.5"
                   title="Remove"
                 >
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -474,8 +480,7 @@ export default function ChatInput({
                 onBlur={() => setFocused(false)}
                 placeholder={isQueueing ? 'Queue a follow-up…' : 'Message...'}
                 rows={1}
-                // TODO(token): placeholder:text-gray-500 — no exact ul-* equivalent.
-                className="flex-1 resize-none border-none px-0 text-small text-ul-text bg-transparent outline-none placeholder:text-gray-500 selectable"
+                className="flex-1 resize-none border-none px-0 text-small text-ul-text bg-transparent outline-none placeholder:text-ul-text-muted selectable"
                 style={{ paddingTop: '6px', paddingBottom: '6px', lineHeight: '20px' }}
                 disabled={inputDisabled}
               />

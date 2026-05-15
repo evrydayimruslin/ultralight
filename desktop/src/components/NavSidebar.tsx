@@ -185,8 +185,7 @@ function SystemAgentIcon({ type }: { type: string | null }) {
     case 'tool_builder': return <Wrench {...smallIconProps} className="text-ul-info flex-shrink-0" />;
     case 'tool_marketer': return <Store {...smallIconProps} className="text-ul-deep-green flex-shrink-0" />;
     case 'platform_manager': return <Settings {...smallIconProps} className="text-ul-wine flex-shrink-0" />;
-    // TODO(token): text-gray-400 — no exact ul-* equivalent (#9ca3af); kept raw.
-    default: return <Compass {...smallIconProps} className="text-gray-400 flex-shrink-0" />;
+    default: return <Compass {...smallIconProps} className="text-ul-text-muted flex-shrink-0" />;
   }
 }
 
@@ -581,7 +580,7 @@ export default function NavSidebar({
             <button
               onClick={() => { setProfileMenuOpen(false); onNavigateToProfile(); }}
               onContextMenu={e => handleProfileItemContextMenu(e, { kind: 'profile' })}
-              className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100 flex items-center gap-2.5"
+              className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-ul-bg-hover flex items-center gap-2.5"
             >
               <User {...iconProps} />
               Profile
@@ -589,7 +588,7 @@ export default function NavSidebar({
             <button
               onClick={() => { setProfileMenuOpen(false); onNavigateToWallet(); }}
               onContextMenu={e => handleProfileItemContextMenu(e, { kind: 'wallet' })}
-              className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100 flex items-center gap-2.5"
+              className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-ul-bg-hover flex items-center gap-2.5"
             >
               <Wallet {...iconProps} />
               Wallet
@@ -597,7 +596,7 @@ export default function NavSidebar({
             <button
               onClick={() => { setProfileMenuOpen(false); onNavigateToSettings(); }}
               onContextMenu={e => handleProfileItemContextMenu(e, { kind: 'settings' })}
-              className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100 flex items-center gap-2.5"
+              className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-ul-bg-hover flex items-center gap-2.5"
             >
               <Settings {...iconProps} />
               Settings
@@ -607,7 +606,7 @@ export default function NavSidebar({
                 <div className="border-t border-ul-border my-1" />
                 <button
                   onClick={() => { setProfileMenuOpen(false); onShowTutorial(); }}
-                  className="w-full text-left px-3 py-1.5 text-small text-ul-text-secondary hover:bg-gray-100 flex items-center gap-2.5"
+                  className="w-full text-left px-3 py-1.5 text-small text-ul-text-secondary hover:bg-ul-bg-hover flex items-center gap-2.5"
                 >
                   <HelpCircle {...iconProps} />
                   Tutorial
@@ -720,21 +719,21 @@ export default function NavSidebar({
             {isAgentRunning(contextMenu.agentId) && (
               <button
                 onClick={handleStopFromMenu}
-                className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100"
+                className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-ul-bg-hover"
               >
                 Stop
               </button>
             )}
             <button
               onClick={handleNewSessionFromMenu}
-              className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100"
+              className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-ul-bg-hover"
             >
               New Session
             </button>
             {onOpenInNewWindow && (
               <button
                 onClick={handleOpenInNewWindowFromMenu}
-                className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100"
+                className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-ul-bg-hover"
               >
                 Open in New Window ↗
               </button>
@@ -742,7 +741,7 @@ export default function NavSidebar({
             {isCanonical && onNewSystemAgentSession && (
               <button
                 onClick={handleNewSystemSessionInWindow}
-                className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100"
+                className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-ul-bg-hover"
               >
                 New Session in Window ↗
               </button>
@@ -750,7 +749,7 @@ export default function NavSidebar({
             {!isCanonical && (
               <button
                 onClick={handleRenameFromMenu}
-                className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100"
+                className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-ul-bg-hover"
               >
                 Rename
               </button>
@@ -758,7 +757,7 @@ export default function NavSidebar({
             {!isCanonical && (
               <button
                 onClick={handleDeleteFromMenu}
-                className={`w-full text-left px-3 py-1.5 text-small hover:bg-gray-100
+                className={`w-full text-left px-3 py-1.5 text-small hover:bg-ul-bg-hover
                   ${confirmDelete === contextMenu.agentId ? 'text-ul-error font-medium' : 'text-ul-text'}
                 `}
               >
@@ -778,7 +777,7 @@ export default function NavSidebar({
         >
           <button
             onClick={handleNavOpenInNewWindow}
-            className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-gray-100"
+            className="w-full text-left px-3 py-1.5 text-small text-ul-text hover:bg-ul-bg-hover"
           >
             Open in New Window ↗
           </button>
