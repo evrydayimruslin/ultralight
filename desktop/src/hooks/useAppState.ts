@@ -7,7 +7,7 @@ import { useState, useCallback, useRef } from 'react';
 export type AppView =
   | { kind: 'home' }
   | { kind: 'agent'; agentId: string; initialMessage?: string }
-  | { kind: 'new-chat' }
+  | { kind: 'new-chat'; initialMessage?: string }
   | { kind: 'library' }
   | { kind: 'marketplace' }
   | { kind: 'tool-detail'; appId: string; appName?: string }
@@ -19,7 +19,7 @@ export interface UseAppStateReturn {
   view: AppView;
   navigateHome: () => void;
   navigateToAgent: (agentId: string, initialMessage?: string) => void;
-  navigateToNewChat: () => void;
+  navigateToNewChat: (initialMessage?: string) => void;
   navigateToLibrary: () => void;
   navigateToMarketplace: () => void;
   navigateToToolDetail: (appId: string, appName?: string) => void;
@@ -122,7 +122,10 @@ export function useAppState(): UseAppStateReturn {
 
   const navigateHome = useCallback(() => navigate({ kind: 'home' }), [navigate]);
   const navigateToAgent = useCallback((agentId: string, initialMessage?: string) => navigate({ kind: 'agent', agentId, initialMessage }), [navigate]);
-  const navigateToNewChat = useCallback(() => navigate({ kind: 'new-chat' }), [navigate]);
+  const navigateToNewChat = useCallback(
+    (initialMessage?: string) => navigate({ kind: 'new-chat', initialMessage }),
+    [navigate],
+  );
   const navigateToLibrary = useCallback(() => navigate({ kind: 'library' }), [navigate]);
   const navigateToMarketplace = useCallback(() => navigate({ kind: 'marketplace' }), [navigate]);
   const navigateToToolDetail = useCallback((appId: string, appName?: string) => navigate({ kind: 'tool-detail', appId, appName }), [navigate]);

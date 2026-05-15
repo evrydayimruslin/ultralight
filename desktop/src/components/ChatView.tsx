@@ -1393,16 +1393,18 @@ export default function ChatView({
         onDenyPermission={deny}
       />
 
-      {/* Queued messages indicator */}
+      {/* Queued messages indicator — uses the warning token family so it
+          collapses onto the same amber the composer queue-send button
+          uses (A2). Folds the addendum's D row for #fef3c7 banner fill. */}
       {queuedMessages.length > 0 && (
-        <div className="px-4 py-2 bg-amber-50 border-t border-amber-200">
+        <div className="px-4 py-2 bg-ul-warning-soft border-t border-ul-warning/20">
           <div className="max-w-narrow mx-auto">
-            <p className="text-caption font-medium text-amber-700 mb-1">
+            <p className="text-caption font-medium text-ul-warning-hover mb-1">
               Queued ({queuedMessages.length})
             </p>
             {queuedMessages.map((msg, i) => (
               <div key={i} className="flex items-center justify-between gap-2 py-1">
-                <p className="text-caption text-amber-600 truncate flex-1">
+                <p className="text-caption text-ul-warning-hover truncate flex-1">
                   {msg.length > 80 ? msg.slice(0, 80) + '...' : msg}
                 </p>
                 <button
@@ -1411,7 +1413,7 @@ export default function ChatView({
                       agentRunner.dequeueMessage(activeAgent.id, i);
                     }
                   }}
-                  className="text-amber-400 hover:text-amber-600 flex-shrink-0"
+                  className="text-ul-warning hover:text-ul-warning-hover flex-shrink-0"
                   title="Remove from queue"
                 >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1425,17 +1427,19 @@ export default function ChatView({
       )}
 
 
-      {/* Needs-folder banner */}
+      {/* Needs-folder banner — warning-soft + warning-hover collapses onto
+          the same token family as the queued banner and the composer
+          queue-send (A2). */}
       {showNeedsFolderBanner && (
-        <div className="px-4 py-2 border-t border-amber-200 bg-amber-50">
+        <div className="px-4 py-2 border-t border-ul-warning/20 bg-ul-warning-soft">
           <div className="max-w-narrow mx-auto flex items-center gap-3">
-            <svg className="w-4.5 h-4.5 text-amber-600 flex-shrink-0" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg className="w-4.5 h-4.5 text-ul-warning-hover flex-shrink-0" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
             </svg>
-            <span className="flex-1 text-small text-amber-900">A project folder is needed to write and read files</span>
+            <span className="flex-1 text-small text-ul-warm-ink">A project folder is needed to write and read files</span>
             <button
               onClick={handleBannerSelectFolder}
-              className="px-3 py-1 text-caption font-medium rounded-md border border-amber-600 text-amber-700 bg-white hover:bg-amber-600 hover:text-white transition-colors flex-shrink-0"
+              className="px-3 py-1 text-caption font-medium rounded-md border border-ul-warning-hover text-ul-warning-hover bg-white hover:bg-ul-warning-hover hover:text-white transition-colors flex-shrink-0"
             >
               Select Folder
             </button>
@@ -1444,10 +1448,10 @@ export default function ChatView({
       )}
 
       {inferenceNotice && (
-        <div className="fixed bottom-5 right-5 z-40 w-[min(420px,calc(100vw-2rem))] border border-amber-200 bg-white shadow-[0_18px_48px_rgba(0,0,0,0.14)]">
+        <div className="fixed bottom-5 right-5 z-40 w-[min(420px,calc(100vw-2rem))] border border-ul-warning/30 bg-white shadow-[0_18px_48px_rgba(0,0,0,0.14)]">
           <div className="flex items-start gap-3 p-3">
-            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center border border-amber-200 bg-amber-50">
-              <svg className="h-4 w-4 text-amber-600" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center border border-ul-warning/30 bg-ul-warning-soft">
+              <svg className="h-4 w-4 text-ul-warning-hover" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="10" />
                 <line x1="12" y1="8" x2="12" y2="12" />
                 <line x1="12" y1="16" x2="12.01" y2="16" />
@@ -1461,7 +1465,7 @@ export default function ChatView({
                 </div>
                 <button
                   onClick={() => setInferenceNotice(null)}
-                  className="text-gray-400 hover:text-gray-600"
+                  className="text-ul-text-muted hover:text-ul-text-secondary"
                   title="Dismiss"
                 >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1473,7 +1477,7 @@ export default function ChatView({
                 {inferenceNotice.secondaryAction && (
                   <button
                     onClick={() => handleInferenceNoticeAction(inferenceNotice.secondaryAction!.action)}
-                    className="px-3 py-1 text-caption font-medium border border-gray-200 text-gray-600 bg-white hover:border-gray-300 transition-colors"
+                    className="px-3 py-1 text-caption font-medium border border-ul-border text-ul-text-secondary bg-white hover:border-ul-border-strong transition-colors"
                   >
                     {inferenceNotice.secondaryAction.label}
                   </button>
@@ -1505,9 +1509,12 @@ export default function ChatView({
         </div>
       )}
 
-      {/* Input */}
+      {/* Input — `initialDraft` is only meaningful on first mount of a
+          new-chat ChatView (the wizard's E3 seeded prompt). It's ignored
+          for active agents, which surface initialMessage via auto-send. */}
       <ChatInput
         agents={agents}
+        initialDraft={!activeAgent ? initialMessage : undefined}
         onSend={sendMessage}
         isLoading={isActive}
         onStop={() => {

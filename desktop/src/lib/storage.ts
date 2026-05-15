@@ -378,12 +378,29 @@ export function setAutoApproveLight(light: number): void {
   localStorage.setItem(STORAGE_KEYS.autoApproveLight, String(light));
 }
 
+// Onboarding completion is stored as an ISO timestamp string rather than
+// just '1'. Reading code falls back to the legacy boolean form so users
+// who completed onboarding in earlier builds aren't re-prompted.
+//
+// Per DESIGN-FOLLOWUPS E1/E2: localStorage is the right home until/unless
+// the BE grows an onboarding_completed_at column on the user profile.
+// The timestamp is the foothold for E2 — a future "returning user but
+// long-time-no-see" variant can compare it to a freshness window.
+
 export function isOnboardingComplete(): boolean {
-  return localStorage.getItem(STORAGE_KEYS.onboardingComplete) === '1';
+  const raw = localStorage.getItem(STORAGE_KEYS.onboardingComplete);
+  return raw !== null && raw !== '';
 }
 
 export function setOnboardingComplete(): void {
-  localStorage.setItem(STORAGE_KEYS.onboardingComplete, '1');
+  localStorage.setItem(STORAGE_KEYS.onboardingComplete, new Date().toISOString());
+}
+
+export function getOnboardingCompletedAt(): Date | null {
+  const raw = localStorage.getItem(STORAGE_KEYS.onboardingComplete);
+  if (!raw || raw === '1') return null; // legacy boolean form — no timestamp on record
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 export function resetOnboarding(): void {

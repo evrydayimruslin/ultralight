@@ -192,15 +192,15 @@ export default function App() {
     }
   }, []);
 
-  // Onboarding's step 3 composer can hand off a draft prompt; we route to a
-  // new chat now and surface seeding through the chat composer as a follow-up
-  // (see handoff/DESIGN-FOLLOWUPS.md E3). Visual-only for batch 6a.
-  const handleOnboardingComplete = useCallback((navigateTo?: 'chat' | 'tools', _draftPrompt?: string) => {
+  // Onboarding's step 3 composer hands off a draft prompt; the new chat
+  // mounts with the draft pre-seeded as its initialMessage so the user's
+  // first message ends the tour and starts the work in one motion. (E3)
+  const handleOnboardingComplete = useCallback((navigateTo?: 'chat' | 'tools', draftPrompt?: string) => {
     setOnboardingComplete();
     setShowOnboarding(false);
     setOnboardingHighlight('none');
     if (navigateTo === 'tools') navigateToLibrary();
-    else if (navigateTo === 'chat') navigateToNewChat();
+    else if (navigateTo === 'chat') navigateToNewChat(draftPrompt);
   }, [navigateToLibrary, navigateToNewChat]);
 
   const handleShowTutorial = useCallback(() => {
@@ -532,11 +532,15 @@ export default function App() {
               </div>
             )}
 
-            {/* New-chat view — uses key to force fresh instance */}
+            {/* New-chat view — uses key to force fresh instance. The
+                onboarding wizard can seed an initialMessage via
+                navigateToNewChat(draftPrompt) so the user's first
+                composer keystroke ends the tour (E3). */}
             {view.kind === 'new-chat' && (
               <div style={paneStyle(true)}>
                 <ChatView
                   key={`new-chat-${newChatKey}`}
+                  initialMessage={view.initialMessage}
                   onNavigateHome={navigateHome}
                   onNavigateToAgent={navigateToAgent}
                 />
