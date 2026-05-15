@@ -856,16 +856,20 @@ export default function ProfileView(_props: ProfileViewProps) {
   const initial = displayName.charAt(0).toUpperCase();
 
   // Sub-line stats: "active since <date> · N published · M acquired".
-  // "Published / acquired" counts aren't on the profile response today —
-  // computed from earnings.by_app (published) and noted as placeholder
-  // for acquired. Flagged in DESIGN-FOLLOWUPS B14.
+  // Prefer the B14 rollup (`profile.stats.*`) when present — that's the
+  // exact count joined from apps.owner_id / sales.buyer_id. Falls back to
+  // the noisy proxy (apps that have any earnings) when the field is
+  // absent, so the visual works during the BE deploy gap.
   const joined = profile?.created_at
     ? new Date(profile.created_at).toLocaleDateString(undefined, {
         month: 'short',
         year: 'numeric',
       })
     : '—';
-  const publishedCount = earnings?.by_app.length ?? 0;
+  const publishedCount = profile?.stats?.published_app_count
+    ?? earnings?.by_app.length
+    ?? 0;
+  const acquiredCount = profile?.stats?.acquired_app_count ?? 0;
 
   return (
     <div className="bg-ul-bg h-full overflow-auto">
@@ -880,7 +884,7 @@ export default function ProfileView(_props: ProfileViewProps) {
               {displayName}
             </div>
             <div className="text-caption text-ul-text-secondary font-mono mt-0.5">
-              active since {joined.toLowerCase()} · {publishedCount} published · 0 acquired
+              active since {joined.toLowerCase()} · {publishedCount} published · {acquiredCount} acquired
             </div>
           </div>
         </div>

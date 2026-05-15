@@ -19,11 +19,18 @@
 //   - Sort dropdown: static UI only.
 //   - Kind filter dropdown: static UI only.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 import Glyph, { deriveGlyph, deriveTone } from './ui/Glyph';
 import Spark from './ui/Spark';
 import { fetchFromApi, getToken } from '../lib/storage';
+import {
+  fetchRecentlySold,
+  fetchRecentlyAcquired,
+  type HandoffBannerItem,
+} from '../lib/api';
+import SellerLibraryBanner from './marketplace/SellerLibraryBanner';
+import BuyerLibraryBanner from './marketplace/BuyerLibraryBanner';
 
 // ── Row shape (FE-internal; tolerant of varying BE response keys) ─────
 
@@ -263,6 +270,11 @@ export default function LibraryView({ onOpenTool }: LibraryViewProps = {}) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  // G1 / G2 handoff banners — feeds light up after PR 33's BE work
+  // deploys; today both endpoints return empty arrays and the banners
+  // simply don't render.
+  const [soldBanners, setSoldBanners] = useState<HandoffBannerItem[]>([]);
+  const [acquiredBanners, setAcquiredBanners] = useState<HandoffBannerItem[]>([]);
 
   // Load current user id for owner classification
   useEffect(() => {
@@ -274,6 +286,30 @@ export default function LibraryView({ onOpenTool }: LibraryViewProps = {}) {
         if (data?.id) setCurrentUserId(data.id);
       })
       .catch(() => {});
+  }, []);
+
+  // Handoff banners (G1 + G2) — fired once on mount. Endpoints return
+  // empty arrays today; banners light up when BE deploys.
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([fetchRecentlySold(), fetchRecentlyAcquired()])
+      .then(([sold, acquired]) => {
+        if (cancelled) return;
+        setSoldBanners(sold);
+        setAcquiredBanners(acquired);
+      })
+      .catch(() => { /* soft fail — banners are supplementary */ });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleSoldDismissed = useCallback((saleId: string) => {
+    setSoldBanners((prev) => prev.filter((b) => b.sale_id !== saleId));
+  }, []);
+
+  const handleAcquiredDismissed = useCallback((saleId: string) => {
+    setAcquiredBanners((prev) => prev.filter((b) => b.sale_id !== saleId));
   }, []);
 
   // Fetch library on mount + when search query stabilizes
@@ -382,6 +418,29 @@ export default function LibraryView({ onOpenTool }: LibraryViewProps = {}) {
           <div className="text-right">Last</div>
         </div>
       </div>
+
+      {/* Handoff banners — pinned above the library sections so users
+          see them before scanning their installed tools. Both feeds are
+          empty until BE deploys; banners render nothing in that case. */}
+      {tab === 'Library' && (acquiredBanners.length > 0 || soldBanners.length > 0) && (
+        <div className="px-[18px] pt-3">
+          {acquiredBanners.map((item) => (
+            <BuyerLibraryBanner
+              key={item.sale_id}
+              item={item}
+              onDismissed={handleAcquiredDismissed}
+              onOpenAdmin={(appId) => onOpenTool?.(appId, item.app_name)}
+            />
+          ))}
+          {soldBanners.map((item) => (
+            <SellerLibraryBanner
+              key={item.sale_id}
+              item={item}
+              onDismissed={handleSoldDismissed}
+            />
+          ))}
+        </div>
+      )}
 
       {/* Body */}
       {tab === 'Library' && (
