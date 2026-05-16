@@ -56,6 +56,8 @@ interface ToolDetailViewProps {
   onOpenAuthor?: (handle: string) => void;
 }
 
+const GPU_SUPPORT_ENABLED = import.meta.env.VITE_UL_GPU_SUPPORT_ENABLED === 'true';
+
 // ── Fetch ─────────────────────────────────────────────────────────────
 
 async function fetchApp(appId: string): Promise<App | null> {
@@ -1001,7 +1003,8 @@ export default function ToolDetailView({ appId, fallbackName, onOpenAuthor }: To
 
   const displayName = app?.name || fallbackName || 'Loading…';
   const functions = app?.skills_parsed?.functions ?? [];
-  const permissions = app?.declared_permissions ?? app?.skills_parsed?.permissions ?? [];
+  const permissions = (app?.declared_permissions ?? app?.skills_parsed?.permissions ?? [])
+    .filter((permission) => GPU_SUPPORT_ENABLED || !permission.permission.startsWith('gpu:'));
   const tagline = app?.description || app?.skills_parsed?.description || '';
   const category = app?.category || 'tool';
   const slug = app?.slug || appId;

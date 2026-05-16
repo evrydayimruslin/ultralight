@@ -52,6 +52,11 @@ import {
   recordUploadStorage,
 } from '../services/storage-quota.ts';
 import { validateGpuPricingConfig } from '../services/gpu/pricing-config.ts';
+import {
+  getGpuSupportDisabledMessage,
+  isGpuSupportEnabled,
+  sanitizeGpuTrustCard,
+} from '../services/gpu/feature-flag.ts';
 import { getEnv } from '../lib/env.ts';
 import { withSensitiveRouteRateLimit } from '../services/sensitive-route-rate-limit.ts';
 import { RequestValidationError } from '../services/request-validation.ts';
@@ -91,8 +96,12 @@ const callLogLogger = createServerLogger('CALL-LOG');
 function withOwnerTrustCard<T extends App>(app: T): T & { trust_card: ReturnType<typeof buildAppTrustCard> } {
   return {
     ...app,
-    trust_card: buildAppTrustCard(app),
+    trust_card: sanitizeGpuTrustCard(buildAppTrustCard(app)),
   };
+}
+
+function shouldHideGpuApp(app: { runtime?: string | null }): boolean {
+  return app.runtime === 'gpu' && !isGpuSupportEnabled();
 }
 
 type EmbeddingUser = Awaited<ReturnType<typeof authenticate>> & {
@@ -1395,7 +1404,7 @@ function getFnCount(app: { manifest: unknown; skills_parsed: unknown; exports: s
   }, {
     allowLegacySkills: true,
     allowLegacyExports: true,
-    allowGpuExports: true,
+    allowGpuExports: isGpuSupportEnabled(),
   }).functions.length;
 }
 
@@ -1424,7 +1433,7 @@ async function handleGetAppInstructions(request: Request, appId: string): Promis
     }, {
       allowLegacySkills: true,
       allowLegacyExports: true,
-      allowGpuExports: true,
+      allowGpuExports: isGpuSupportEnabled(),
     });
 
     for (const fn of contractResolution.functions) {
@@ -1513,6 +1522,13 @@ async function handleGetApp(request: Request, appId: string): Promise<Response> 
         const ownerApp = await appsService.findById(appId);
         if (!ownerApp) return error('App not found', 404);
         return json(withOwnerTrustCard(ownerApp));
+      }
+
+      if (!isGpuSupportEnabled()) {
+        const servingApp = await appsService.findPublicServingById(appId);
+        if (servingApp && shouldHideGpuApp(servingApp)) {
+          return error('App not found', 404);
+        }
       }
 
       return json(publicApp);
@@ -1792,6 +1808,9 @@ async function handleUpdateApp(request: Request, appId: string): Promise<Respons
       }
 
       if ('gpu_pricing_config' in filteredUpdates) {
+        if (!isGpuSupportEnabled()) {
+          return error(getGpuSupportDisabledMessage('GPU pricing'), 403);
+        }
         if (app.runtime !== 'gpu') {
           return error('gpu_pricing_config can only be set on GPU apps', 400);
         }

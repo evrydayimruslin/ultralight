@@ -99,6 +99,7 @@ import {
   upsertCurrentBillingAddress,
   type UserBillingAddressProfile,
 } from "../services/billing-addresses.ts";
+import { isGpuSupportEnabled } from "../services/gpu/feature-flag.ts";
 
 const stripeLogger = createServerLogger("STRIPE");
 const userLogger = createServerLogger("USER");
@@ -125,6 +126,7 @@ interface PublicProfileFeaturedAppRow {
   id: string;
   name: string;
   slug: string;
+  runtime?: string | null;
 }
 
 interface PublicProfileAcquisitionRow {
@@ -891,7 +893,7 @@ export async function handleUser(request: Request): Promise<Response> {
           }),
           fetch(
             `${sbUrl}/rest/v1/apps?owner_id=eq.${profile.id}&visibility=eq.public&deleted_at=is.null` +
-              `&select=id,name,slug,description,runs_30d,current_version,first_published_at` +
+              `&select=id,name,slug,description,runs_30d,current_version,first_published_at,runtime` +
               `&order=runs_30d.desc&limit=50`,
             { headers },
           ),
@@ -902,7 +904,7 @@ export async function handleUser(request: Request): Promise<Response> {
           ),
           profile.featured_app_id
             ? fetch(
-              `${sbUrl}/rest/v1/apps?id=eq.${profile.featured_app_id}&select=id,name,slug`,
+              `${sbUrl}/rest/v1/apps?id=eq.${profile.featured_app_id}&select=id,name,slug,runtime`,
               { headers },
             )
             : Promise.resolve(null),
@@ -926,15 +928,19 @@ export async function handleUser(request: Request): Promise<Response> {
           runs_30d: number;
           current_version: string;
           first_published_at: string | null;
+          runtime?: string | null;
         }>(publishedRes)
         : [];
+      const visiblePublished = isGpuSupportEnabled()
+        ? published
+        : published.filter((app) => app.runtime !== "gpu");
       const acquisitionsRaw = acquisitionsRes.ok
         ? await readJsonRows<PublicProfileAcquisitionRow>(acquisitionsRes)
         : [];
       let featuredApp = null;
       if (featuredRes && featuredRes.ok) {
         const fa = await readJsonRows<PublicProfileFeaturedAppRow>(featuredRes);
-        if (fa.length) {
+        if (fa.length && (isGpuSupportEnabled() || fa[0].runtime !== "gpu")) {
           featuredApp = { id: fa[0].id, name: fa[0].name, slug: fa[0].slug };
         }
       }
@@ -958,7 +964,7 @@ export async function handleUser(request: Request): Promise<Response> {
         created_at: profile.created_at,
         stats,
         featured_app: featuredApp,
-        published,
+        published: visiblePublished,
         acquisitions,
       });
     } catch (err) {
@@ -1378,16 +1384,19 @@ export async function handleUser(request: Request): Promise<Response> {
           const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
             getSupabaseEnv();
           const appRes = await fetch(
-            `${sbUrl}/rest/v1/apps?id=eq.${featured_app_id}&owner_id=eq.${userId}&deleted_at=is.null&select=id`,
+            `${sbUrl}/rest/v1/apps?id=eq.${featured_app_id}&owner_id=eq.${userId}&deleted_at=is.null&select=id,runtime`,
             {
               headers: { "apikey": sbKey, "Authorization": `Bearer ${sbKey}` },
             },
           );
           const ownedApps = appRes.ok
-            ? await readJsonRows<{ id: string }>(appRes)
+            ? await readJsonRows<{ id: string; runtime?: string | null }>(appRes)
             : [];
           if (!appRes.ok || ownedApps.length === 0) {
             return error("Featured app must be an app you own", 400);
+          }
+          if (!isGpuSupportEnabled() && ownedApps[0].runtime === "gpu") {
+            return error("GPU apps cannot be featured while GPU support is disabled", 400);
           }
         }
         updates.featured_app_id = featured_app_id;
