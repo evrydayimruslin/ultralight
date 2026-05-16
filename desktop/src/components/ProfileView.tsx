@@ -9,9 +9,10 @@
 //   - Identity strip: avatar + display name + sub-line ("active since X ·
 //     N published · M acquired") · tabs top-right (BALANCE / EARNINGS /
 //     SETTINGS — no Activity, no Edit Profile, per refinement notes)
-//   - BALANCE tab: hero (✦ balance + Add Light) | 7-day bar chart with
-//     daily totals · recent activity table (DATE / TIME / SOURCE / MEMO
-//     / AMOUNT)
+//   - BALANCE tab: full-width hero (✦ balance + Add Light) · UsageChart
+//     (B12 — 7d/30d/90d/1y time-series with per-app stacks + legend +
+//     per-app table) · recent activity table (DATE / TIME / SOURCE /
+//     MEMO / AMOUNT)
 //   - EARNINGS tab: 4-stat grid + bank-payouts CTA + published-tools
 //     list. Full payout / Connect-onboard flow lands in Batch 5c.
 //   - SETTINGS tab: stub for 5c (API key, BYOK, billing address).
@@ -43,6 +44,7 @@ import {
 import AddLightModal from './profile/AddLightModal';
 import WithdrawModal from './profile/WithdrawModal';
 import BYOKEditor from './profile/BYOKEditor';
+import UsageChart from './profile/UsageChart';
 import { formatLightPrecise as formatLight } from '../lib/format';
 
 // Open an external URL. Tauri's webview routes target=_blank through the
@@ -104,70 +106,6 @@ function humanizeCategory(category: string | undefined): string {
     case 'payout': return 'payout';
     default: return category.replace(/_/g, ' ');
   }
-}
-
-function bucketDailySums(transactions: BillingTransaction[]): { dailyTotals: number[]; labels: string[] } {
-  // Today and 6 prior days. Each day's total is the absolute sum of
-  // amount_light debits + credits. Positive = credit, negative = debit; here
-  // we want gross "money moved" per day so we use abs.
-  const days: { date: Date; total: number }[] = [];
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - i);
-    days.push({ date: d, total: 0 });
-  }
-  for (const tx of transactions) {
-    if (!tx.created_at || tx.amount_light === undefined) continue;
-    const d = new Date(tx.created_at);
-    if (!Number.isFinite(d.getTime())) continue;
-    d.setHours(0, 0, 0, 0);
-    const day = days.find((x) => x.date.getTime() === d.getTime());
-    if (!day) continue;
-    day.total += Math.abs(tx.amount_light);
-  }
-  return {
-    dailyTotals: days.map((d) => d.total),
-    labels: days.map((d) => d.date.toLocaleDateString(undefined, { weekday: 'narrow' })),
-  };
-}
-
-// ── Bar chart ────────────────────────────────────────────────────────
-
-function SevenDayBars({ totals, labels }: { totals: number[]; labels: string[] }) {
-  const max = Math.max(...totals, 0.001);
-  return (
-    <div>
-      <div className="text-nano font-mono text-ul-text-muted uppercase tracking-widest mb-2">
-        Last 7 days
-      </div>
-      <div className="flex items-end gap-2 h-[100px] mb-1">
-        {totals.map((v, i) => {
-          const heightPct = max > 0 ? (v / max) * 100 : 0;
-          const isLast = i === totals.length - 1;
-          return (
-            <div key={i} className="flex-1 flex flex-col items-center justify-end gap-1">
-              <div className="text-nano font-mono text-ul-text-muted tabular-nums">
-                {v > 0 ? v.toFixed(3) : ''}
-              </div>
-              <div
-                className={`w-full rounded-xs transition-all ${
-                  isLast ? 'bg-ul-text' : 'bg-ul-bg-active'
-                }`}
-                style={{ height: `${Math.max(heightPct, 2)}%` }}
-              />
-            </div>
-          );
-        })}
-      </div>
-      <div className="flex justify-between text-nano font-mono text-ul-text-muted">
-        {labels.map((l, i) => (
-          <span key={i} className="flex-1 text-center">{l}</span>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 // ── Activity rows ────────────────────────────────────────────────────
@@ -256,54 +194,49 @@ function BalanceTab({
   transactions: BillingTransaction[];
   onOpenAddLight?: () => void;
 }) {
-  const { dailyTotals, labels } = useMemo(
-    () => bucketDailySums(transactions),
-    [transactions],
-  );
   const balance = hosting?.balance_light ?? 0;
   const { whole, fraction } = splitLightForHero(balance);
 
   return (
     <div className="px-8 py-7">
-      <div className="grid grid-cols-[1.4fr_1fr] gap-3.5 mb-3.5">
-        {/* Hero balance card */}
-        <div className="bg-ul-bg-raised border border-ul-border rounded-card px-6 py-5">
-          <div className="text-nano font-mono text-ul-text-muted uppercase tracking-widest">
-            Available
-          </div>
-          <div className="text-display text-ul-text leading-none tracking-tighter flex items-baseline gap-1 mt-1">
-            <span className="font-medium">✦</span>
-            <span>{whole}</span>
-            <span className="text-h2 text-ul-text-muted font-medium">{fraction}</span>
-          </div>
-          <div className="text-caption text-ul-text-secondary mt-1.5">
-            spendable. Earnings withdraw separately.
-          </div>
-          <div className="flex gap-2 mt-4">
-            <button
-              type="button"
-              onClick={onOpenAddLight}
-              disabled={!onOpenAddLight}
-              className="bg-ul-text text-white border-none px-3.5 py-2 rounded-md text-caption font-medium cursor-pointer hover:bg-ul-accent-hover disabled:opacity-60 disabled:cursor-not-allowed"
-              title={onOpenAddLight ? undefined : 'Add Light flow arrives in Batch 5b'}
-            >
-              + Add Light
-            </button>
-            {hosting?.auto_topup_threshold_light !== undefined &&
-              hosting.auto_topup_threshold_light !== null && (
-                <button
-                  type="button"
-                  className="bg-transparent text-ul-text border border-ul-border px-3.5 py-2 rounded-md text-caption font-medium cursor-pointer hover:bg-ul-bg-hover"
-                >
-                  Auto top-up · ✦{formatLight(hosting.auto_topup_threshold_light, 0)}
-                </button>
-              )}
-          </div>
+      {/* Hero balance card — full-width per B12 (chart now owns its own row). */}
+      <div className="bg-ul-bg-raised border border-ul-border rounded-card px-6 py-5 mb-3.5">
+        <div className="text-nano font-mono text-ul-text-muted uppercase tracking-widest">
+          Available
         </div>
-        {/* 7-day chart card */}
-        <div className="bg-ul-bg border border-ul-border rounded-card px-6 py-5 flex flex-col justify-between">
-          <SevenDayBars totals={dailyTotals} labels={labels} />
+        <div className="text-display text-ul-text leading-none tracking-tighter flex items-baseline gap-1 mt-1">
+          <span className="font-medium">✦</span>
+          <span>{whole}</span>
+          <span className="text-h2 text-ul-text-muted font-medium">{fraction}</span>
         </div>
+        <div className="text-caption text-ul-text-secondary mt-1.5">
+          spendable. Earnings withdraw separately.
+        </div>
+        <div className="flex gap-2 mt-4">
+          <button
+            type="button"
+            onClick={onOpenAddLight}
+            disabled={!onOpenAddLight}
+            className="bg-ul-text text-white border-none px-3.5 py-2 rounded-md text-caption font-medium cursor-pointer hover:bg-ul-accent-hover disabled:opacity-60 disabled:cursor-not-allowed"
+            title={onOpenAddLight ? undefined : 'Add Light flow arrives in Batch 5b'}
+          >
+            + Add Light
+          </button>
+          {hosting?.auto_topup_threshold_light !== undefined &&
+            hosting.auto_topup_threshold_light !== null && (
+              <button
+                type="button"
+                className="bg-transparent text-ul-text border border-ul-border px-3.5 py-2 rounded-md text-caption font-medium cursor-pointer hover:bg-ul-bg-hover"
+              >
+                Auto top-up · ✦{formatLight(hosting.auto_topup_threshold_light, 0)}
+              </button>
+            )}
+        </div>
+      </div>
+
+      {/* Usage chart (B12) — full-width, owns its own range / legend / table. */}
+      <div className="mb-3.5">
+        <UsageChart />
       </div>
 
       {/* Recent activity */}

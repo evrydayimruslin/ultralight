@@ -1307,6 +1307,69 @@ export async function fetchNewlyAcquired(limit = 10): Promise<NewlyAcquiredEntry
   return Array.isArray(data) ? data : (data.results ?? []);
 }
 
+// ── Usage time-series (B12) ──
+//
+// `GET /api/usage?range=7d|30d|90d|1y&groupBy=app` returns server-side
+// aggregated usage broken down per app. Replaces the legacy 7-day
+// client-side strip in Profile → Balance (which summed the last 50
+// transactions and lied as soon as usage activity grew dense).
+//
+// Buckets:
+//   7d  → daily         (7 buckets,  labels: M T W T F S S)
+//   30d → daily         (30 buckets, labels: every-4th-day numeric)
+//   90d → weekly        (13 buckets, labels: W1 … W13)
+//   1y  → monthly       (12 buckets, labels: Jun … May)
+//
+// BE aggregates the heavier ranges (90d, 1y) so payload stays small.
+// FE-first with graceful fallback: returns null on non-200 and
+// UsageChart renders an empty-state message ("No usage in the last
+// {range}.") while keeping the range selector usable, so the user
+// can retry once BE rolls out.
+
+export type UsageRange = '7d' | '30d' | '90d' | '1y';
+
+export interface UsageBucket {
+  /** X-axis label, pre-formatted by the BE to match the range type. */
+  label: string;
+  /** Per-app spend totals (✦) keyed by app_id. */
+  values: Record<string, number>;
+}
+
+export interface UsageAppInfo {
+  id: string;
+  name: string;
+  tone?: string;   // hex — data, not a design token
+  glyph?: string;  // 1-3 char monogram
+}
+
+export interface UsageSeriesResponse {
+  range: UsageRange;
+  buckets: UsageBucket[];
+  totals: {
+    spend: number;
+    avgPerDay: number;
+    priorSpend: number;
+    /** Percent change vs the same-length prior window (18 = +18%). */
+    deltaPct: number;
+  };
+  apps: UsageAppInfo[];
+}
+
+export async function fetchUsageSeries(
+  range: UsageRange,
+  options: { groupBy?: 'app' | 'category' } = {},
+): Promise<UsageSeriesResponse | null> {
+  const token = getToken();
+  if (!token) return null;
+  const params = new URLSearchParams({ range });
+  if (options.groupBy) params.set('groupBy', options.groupBy);
+  const res = await fetchFromApi(`/api/usage?${params.toString()}`, {
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+  if (!res.ok) return null;
+  return await res.json() as UsageSeriesResponse;
+}
+
 // ── Library install / uninstall (B11) ──
 //
 // `POST /api/user/library/install` and `…/uninstall` toggle the
