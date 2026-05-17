@@ -6,62 +6,83 @@
 // handles the tool-use loop. This endpoint is a billing/auth proxy that
 // streams tokens and captures usage for post-stream cost deduction.
 
-import { authenticate } from './auth.ts';
-import { error, json } from './response.ts';
-import { checkRateLimit } from '../services/ratelimit.ts';
-import { calculateCostLight, checkChatBalance, deductChatCost } from '../services/chat-billing.ts';
-import { getOrCreateOpenRouterKey } from '../services/openrouter-keys.ts';
-import { fetchInferenceChatCompletion } from '../services/inference-client.ts';
-import { InferenceRouteError, resolveInferenceRoute } from '../services/inference-route.ts';
-import { buildInferenceOptions } from '../services/inference-options.ts';
-import type { SystemAgentContext } from '../services/flash-broker.ts';
+import { authenticate } from "./auth.ts";
+import { error, json } from "./response.ts";
+import { checkRateLimit } from "../services/ratelimit.ts";
+import {
+  calculateCostLight,
+  checkChatBalance,
+  deductChatCost,
+} from "../services/chat-billing.ts";
+import { getOrCreateOpenRouterKey } from "../services/openrouter-keys.ts";
+import { fetchInferenceChatCompletion } from "../services/inference-client.ts";
+import {
+  InferenceRouteError,
+  resolveInferenceRoute,
+} from "../services/inference-route.ts";
+import { buildInferenceOptions } from "../services/inference-options.ts";
+import type { SystemAgentContext } from "../services/flash-broker.ts";
 import {
   CHAT_MIN_BALANCE_LIGHT,
   type ChatStreamRequest,
   type ChatUsage,
   type InferenceRoutePreference,
   type ToolInvocationTelemetryRequest,
-} from '../../shared/contracts/ai.ts';
-import { createServerLogger } from '../services/logging.ts';
-import { isValidModelId } from '../services/model-validation.ts';
+} from "../../shared/contracts/ai.ts";
+import { createServerLogger } from "../services/logging.ts";
+import { isValidModelId } from "../services/model-validation.ts";
 import {
   createChatStreamCaptureSession,
   createOrchestrateCaptureSession,
   scheduleCaptureTask,
-} from '../services/chat-capture.ts';
+} from "../services/chat-capture.ts";
 import {
   createLlmInvocationTelemetrySession,
   recordToolInvocationTelemetry,
-} from '../services/invocation-telemetry.ts';
+} from "../services/invocation-telemetry.ts";
 
-const chatLogger = createServerLogger('CHAT');
-const TOOL_TELEMETRY_STATUSES = new Set(['success', 'error', 'aborted', 'timeout']);
+const chatLogger = createServerLogger("CHAT");
+const TOOL_TELEMETRY_STATUSES = new Set([
+  "success",
+  "error",
+  "aborted",
+  "timeout",
+]);
 
 async function enforceChatGuards(
   userId: string,
   resource: string,
   options: { requireBalance?: boolean } = {},
 ): Promise<{ balance: number | null } | Response> {
-  const rateResult = await checkRateLimit(userId, 'chat:stream', undefined, undefined, {
-    mode: 'fail_closed',
-    resource,
-  });
+  const rateResult = await checkRateLimit(
+    userId,
+    "chat:stream",
+    undefined,
+    undefined,
+    {
+      mode: "fail_closed",
+      resource,
+    },
+  );
   if (!rateResult.allowed) {
-    if (rateResult.reason === 'service_unavailable') {
+    if (rateResult.reason === "service_unavailable") {
       return json({
         error:
-          'Chat is temporarily unavailable while usage controls recover. Please try again shortly.',
+          "Chat is temporarily unavailable while usage controls recover. Please try again shortly.",
       }, 503);
     }
 
     return json(
-      { error: 'Rate limit exceeded', resetAt: rateResult.resetAt.toISOString() },
+      {
+        error: "Rate limit exceeded",
+        resetAt: rateResult.resetAt.toISOString(),
+      },
       429,
     );
   }
 
   if (options.requireBalance === false) {
-    chatLogger.info('Skipped chat balance gate for non-Light inference route', {
+    chatLogger.info("Skipped chat balance gate for non-Light inference route", {
       user_id: userId,
       resource,
     });
@@ -70,7 +91,7 @@ async function enforceChatGuards(
 
   try {
     const balance = await checkChatBalance(userId);
-    chatLogger.info('Checked chat balance', {
+    chatLogger.info("Checked chat balance", {
       user_id: userId,
       balance_light: balance,
       minimum_light: CHAT_MIN_BALANCE_LIGHT,
@@ -79,22 +100,23 @@ async function enforceChatGuards(
 
     if (balance < CHAT_MIN_BALANCE_LIGHT) {
       return json({
-        error: 'Insufficient balance',
+        error: "Insufficient balance",
         balance_light: balance,
         minimum_light: CHAT_MIN_BALANCE_LIGHT,
-        topup_url: '/wallet',
+        topup_url: "/wallet",
       }, 402);
     }
 
     return { balance };
   } catch (err) {
-    chatLogger.error('Balance check unavailable; blocking chat request', {
+    chatLogger.error("Balance check unavailable; blocking chat request", {
       user_id: userId,
       resource,
       error: err,
     });
     return json({
-      error: 'Billing service temporarily unavailable. Please try again shortly.',
+      error:
+        "Billing service temporarily unavailable. Please try again shortly.",
     }, 503);
   }
 }
@@ -105,34 +127,35 @@ async function enforceChatGuards(
 
 export async function handleChatStream(request: Request): Promise<Response> {
   // ── 1. Auth ──
-  const authHeader = request.headers.get('Authorization');
-  chatLogger.info('Chat auth attempt', {
+  const authHeader = request.headers.get("Authorization");
+  chatLogger.info("Chat auth attempt", {
     authorization_present: !!authHeader,
   });
 
   let user: { id: string; email: string; tier: string; provisional?: boolean };
   try {
     user = await authenticate(request);
-    chatLogger.info('Chat auth succeeded', {
+    chatLogger.info("Chat auth succeeded", {
       user_id: user.id,
       tier: user.tier,
       provisional: !!user.provisional,
     });
   } catch (err) {
-    chatLogger.warn('Chat auth failed', {
+    chatLogger.warn("Chat auth failed", {
       error: err,
     });
     return json({
-      error: 'Unauthorized',
-      detail: err instanceof Error ? err.message : 'Auth failed',
+      error: "Unauthorized",
+      detail: err instanceof Error ? err.message : "Auth failed",
     }, 401);
   }
 
   // Block provisional users (no balance, no billing)
   if (user.provisional) {
-    chatLogger.info('Blocked provisional user from chat', { user_id: user.id });
+    chatLogger.info("Blocked provisional user from chat", { user_id: user.id });
     return json({
-      error: 'Chat requires a full account. Sign in at ultralight-api.rgn4jz429m.workers.dev',
+      error:
+        "Chat requires a full account. Sign in at ultralight-api.rgn4jz429m.workers.dev",
     }, 403);
   }
 
@@ -140,28 +163,29 @@ export async function handleChatStream(request: Request): Promise<Response> {
   let body: ChatStreamRequest;
   try {
     body = await request.json() as ChatStreamRequest;
-    chatLogger.info('Parsed chat request body', {
+    chatLogger.info("Parsed chat request body", {
       user_id: user.id,
       model: body.model,
       message_count: body.messages?.length ?? 0,
       tool_count: body.tools?.length || 0,
     });
   } catch (parseErr) {
-    chatLogger.warn('Chat JSON parse failed', { error: parseErr });
-    return error('Invalid JSON body', 400);
+    chatLogger.warn("Chat JSON parse failed", { error: parseErr });
+    return error("Invalid JSON body", 400);
   }
 
-  if (!body.model || typeof body.model !== 'string') {
-    chatLogger.warn('Chat request missing model field', { user_id: user.id });
-    return error('model is required', 400);
+  if (!body.model || typeof body.model !== "string") {
+    chatLogger.warn("Chat request missing model field", { user_id: user.id });
+    return error("model is required", 400);
   }
   if (!isValidModelId(body.model)) {
-    chatLogger.warn('Chat request used invalid model id format', {
+    chatLogger.warn("Chat request used invalid model id format", {
       user_id: user.id,
       model: body.model,
     });
     return json({
-      error: `Invalid model ID format: ${body.model}. Expected a provider-native model ID`,
+      error:
+        `Invalid model ID format: ${body.model}. Expected a provider-native model ID`,
     }, 400);
   }
   if (body.inference?.model && !isValidModelId(body.inference.model)) {
@@ -171,10 +195,12 @@ export async function handleChatStream(request: Request): Promise<Response> {
     }, 400);
   }
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
-    return error('messages array is required and must not be empty', 400);
+    return error("messages array is required and must not be empty", 400);
   }
   for (const msg of body.messages) {
-    if (!msg.role || !['system', 'user', 'assistant', 'tool'].includes(msg.role)) {
+    if (
+      !msg.role || !["system", "user", "assistant", "tool"].includes(msg.role)
+    ) {
       return error(`Invalid message role: ${msg.role}`, 400);
     }
   }
@@ -188,7 +214,7 @@ export async function handleChatStream(request: Request): Promise<Response> {
       requestedModel: body.model,
       selection: body.inference,
     });
-    chatLogger.info('Resolved chat inference route', {
+    chatLogger.info("Resolved chat inference route", {
       user_id: user.id,
       provider: route.provider,
       upstream_provider: route.upstreamProvider,
@@ -200,27 +226,29 @@ export async function handleChatStream(request: Request): Promise<Response> {
       debit_light: route.shouldDebitLight,
     });
   } catch (err) {
-    chatLogger.error('Failed to resolve chat inference route', {
+    chatLogger.error("Failed to resolve chat inference route", {
       user_id: user.id,
       error: err,
     });
 
     if (err instanceof InferenceRouteError) {
       return json({
-        error: 'Chat service unavailable',
+        error: "Chat service unavailable",
         code: err.code,
         detail: err.message,
       }, err.status);
     }
 
     return json({
-      error: 'Chat service unavailable',
-      detail: err instanceof Error ? err.message : 'Inference route resolution failed',
+      error: "Chat service unavailable",
+      detail: err instanceof Error
+        ? err.message
+        : "Inference route resolution failed",
     }, 503);
   }
 
   // ── 4. Rate limit + conditional balance gate ──
-  const guardResult = await enforceChatGuards(user.id, 'chat stream', {
+  const guardResult = await enforceChatGuards(user.id, "chat stream", {
     requireBalance: route.shouldRequireBalance,
   });
   if (guardResult instanceof Response) {
@@ -229,8 +257,9 @@ export async function handleChatStream(request: Request): Promise<Response> {
 
   const captureTraceId = body.trace?.traceId || crypto.randomUUID();
   const captureConversationId = body.trace?.conversationId || captureTraceId;
-  const captureAssistantMessageId = body.trace?.messageId || crypto.randomUUID();
-  const captureSource = body.trace?.source || 'chat_stream';
+  const captureAssistantMessageId = body.trace?.messageId ||
+    crypto.randomUUID();
+  const captureSource = body.trace?.source || "chat_stream";
   const captureSession = createChatStreamCaptureSession({
     userId: user.id,
     userEmail: user.email,
@@ -269,7 +298,7 @@ export async function handleChatStream(request: Request): Promise<Response> {
     traceId: captureTraceId,
     conversationId: captureConversationId,
     source: captureSource,
-    phase: 'chat_stream',
+    phase: "chat_stream",
     provider: route.provider,
     requestedModel: body.model,
     resolvedModel: route.model,
@@ -291,7 +320,7 @@ export async function handleChatStream(request: Request): Promise<Response> {
   });
   llmTelemetry?.start();
 
-  chatLogger.info('Forwarding chat request to AI provider', {
+  chatLogger.info("Forwarding chat request to AI provider", {
     user_id: user.id,
     provider: route.provider,
     upstream_provider: route.upstreamProvider,
@@ -303,34 +332,37 @@ export async function handleChatStream(request: Request): Promise<Response> {
   let providerRes: Response;
   try {
     providerRes = await fetchInferenceChatCompletion(route, providerBody, {
-      title: 'Ultralight Chat',
+      title: "Ultralight Chat",
     });
-    chatLogger.info('AI provider responded to chat request', {
+    chatLogger.info("AI provider responded to chat request", {
       user_id: user.id,
       provider: route.provider,
       model: route.model,
       status: providerRes.status,
     });
   } catch (err) {
-    chatLogger.error('AI provider fetch failed', {
+    chatLogger.error("AI provider fetch failed", {
       user_id: user.id,
       provider: route.provider,
       model: route.model,
       error: err,
     });
-    captureSession?.observeError(err instanceof Error ? err.message : 'fetch failed', {
-      phase: 'provider_fetch',
-      provider: route.provider,
-      model: route.model,
-    });
+    captureSession?.observeError(
+      err instanceof Error ? err.message : "fetch failed",
+      {
+        phase: "provider_fetch",
+        provider: route.provider,
+        model: route.model,
+      },
+    );
     if (captureSession) {
-      scheduleCaptureTask(captureSession.finish('provider_fetch_error'));
+      scheduleCaptureTask(captureSession.finish("provider_fetch_error"));
     }
     if (llmTelemetry) {
       scheduleCaptureTask(llmTelemetry.finish({
-        status: 'error',
-        errorType: 'provider_fetch',
-        errorMessage: err instanceof Error ? err.message : 'fetch failed',
+        status: "error",
+        errorType: "provider_fetch",
+        errorMessage: err instanceof Error ? err.message : "fetch failed",
         metadata: {
           provider: route.provider,
           model: route.model,
@@ -338,18 +370,20 @@ export async function handleChatStream(request: Request): Promise<Response> {
       }));
     }
     return json({
-      error: 'Upstream service unavailable',
-      detail: err instanceof Error ? err.message : 'fetch failed',
+      error: "Upstream service unavailable",
+      detail: err instanceof Error ? err.message : "fetch failed",
     }, 502);
   }
 
   // Handle non-streaming error from provider
   if (!providerRes.ok) {
-    let errMsg = 'Upstream error';
+    let errMsg = "Upstream error";
     try {
-      const errBody = await providerRes.json() as { error?: { message?: string } };
+      const errBody = await providerRes.json() as {
+        error?: { message?: string };
+      };
       errMsg = errBody?.error?.message || errMsg;
-      chatLogger.warn('AI provider returned an error response', {
+      chatLogger.warn("AI provider returned an error response", {
         user_id: user.id,
         provider: route.provider,
         model: route.model,
@@ -358,18 +392,18 @@ export async function handleChatStream(request: Request): Promise<Response> {
       });
     } catch { /* use default */ }
     captureSession?.observeError(errMsg, {
-      phase: 'provider_response',
+      phase: "provider_response",
       provider: route.provider,
       model: route.model,
       status: providerRes.status,
     });
     if (captureSession) {
-      scheduleCaptureTask(captureSession.finish('provider_error'));
+      scheduleCaptureTask(captureSession.finish("provider_error"));
     }
     if (llmTelemetry) {
       scheduleCaptureTask(llmTelemetry.finish({
-        status: 'error',
-        errorType: 'provider_response',
+        status: "error",
+        errorType: "provider_response",
         errorMessage: errMsg,
         metadata: {
           provider: route.provider,
@@ -379,32 +413,35 @@ export async function handleChatStream(request: Request): Promise<Response> {
       }));
     }
     return json(
-      { error: errMsg, detail: `${route.provider} returned ${providerRes.status}` },
+      {
+        error: errMsg,
+        detail: `${route.provider} returned ${providerRes.status}`,
+      },
       providerRes.status >= 500 ? 502 : providerRes.status,
     );
   }
 
   if (!providerRes.body) {
-    captureSession?.observeError('No response body from upstream', {
-      phase: 'provider_response',
+    captureSession?.observeError("No response body from upstream", {
+      phase: "provider_response",
       provider: route.provider,
       model: route.model,
     });
     if (captureSession) {
-      scheduleCaptureTask(captureSession.finish('provider_empty_body'));
+      scheduleCaptureTask(captureSession.finish("provider_empty_body"));
     }
     if (llmTelemetry) {
       scheduleCaptureTask(llmTelemetry.finish({
-        status: 'error',
-        errorType: 'provider_empty_body',
-        errorMessage: 'No response body from upstream',
+        status: "error",
+        errorType: "provider_empty_body",
+        errorMessage: "No response body from upstream",
         metadata: {
           provider: route.provider,
           model: route.model,
         },
       }));
     }
-    return error('No response body from upstream', 502);
+    return error("No response body from upstream", 502);
   }
 
   // ── 6. Create pass-through transform that captures usage ──
@@ -417,12 +454,12 @@ export async function handleChatStream(request: Request): Promise<Response> {
   const provider = route.provider;
   const shouldDebitLight = route.shouldDebitLight;
   const decoder = new TextDecoder();
-  let sseBuffer = '';
+  let sseBuffer = "";
 
   function processProviderSseLine(line: string): void {
-    if (!line.startsWith('data: ')) return;
+    if (!line.startsWith("data: ")) return;
     const data = line.slice(6).trim();
-    if (!data || data === '[DONE]') return;
+    if (!data || data === "[DONE]") return;
     try {
       const parsed = JSON.parse(data) as {
         usage?: {
@@ -441,7 +478,8 @@ export async function handleChatStream(request: Request): Promise<Response> {
         capturedUsage = {
           prompt_tokens: promptTokens,
           completion_tokens: completionTokens,
-          total_tokens: parsed.usage.total_tokens || promptTokens + completionTokens,
+          total_tokens: parsed.usage.total_tokens ||
+            promptTokens + completionTokens,
           prompt_cache_hit_tokens: parsed.usage.prompt_cache_hit_tokens,
           prompt_cache_miss_tokens: parsed.usage.prompt_cache_miss_tokens,
         };
@@ -449,8 +487,9 @@ export async function handleChatStream(request: Request): Promise<Response> {
           capturedTotalCost = parsed.usage.total_cost;
         }
       }
-      const finishReason = (parsed as { choices?: Array<{ finish_reason?: string | null }> })
-        .choices?.[0]?.finish_reason;
+      const finishReason =
+        (parsed as { choices?: Array<{ finish_reason?: string | null }> })
+          .choices?.[0]?.finish_reason;
       if (finishReason) {
         capturedFinishReason = finishReason;
       }
@@ -461,13 +500,16 @@ export async function handleChatStream(request: Request): Promise<Response> {
 
   function processProviderSseText(text: string, final = false): void {
     sseBuffer += text;
-    const lines = sseBuffer.split('\n');
-    sseBuffer = final ? '' : lines.pop() || '';
+    const lines = sseBuffer.split("\n");
+    sseBuffer = final ? "" : lines.pop() || "";
     for (const line of lines) processProviderSseLine(line);
   }
 
   const transformStream = new TransformStream<Uint8Array, Uint8Array>({
-    transform(chunk: Uint8Array, controller: TransformStreamDefaultController<Uint8Array>) {
+    transform(
+      chunk: Uint8Array,
+      controller: TransformStreamDefaultController<Uint8Array>,
+    ) {
       // Pass chunk through immediately (zero added latency)
       controller.enqueue(chunk);
 
@@ -505,7 +547,7 @@ export async function handleChatStream(request: Request): Promise<Response> {
           { billingSource: route.billingSource },
         )
           .then((result) => {
-            chatLogger.info('Post-stream chat billing succeeded', {
+            chatLogger.info("Post-stream chat billing succeeded", {
               user_id: userId,
               model: billingModel,
               upstream_model: model,
@@ -519,14 +561,14 @@ export async function handleChatStream(request: Request): Promise<Response> {
             });
           })
           .catch((err) => {
-            chatLogger.error('Post-stream chat billing failed', {
+            chatLogger.error("Post-stream chat billing failed", {
               user_id: userId,
               model,
               error: err,
             });
           });
       } else if (capturedUsage && capturedUsage.total_tokens > 0) {
-        chatLogger.info('Skipped post-stream Light debit for BYOK chat route', {
+        chatLogger.info("Skipped post-stream Light debit for BYOK chat route", {
           user_id: userId,
           provider,
           model,
@@ -535,17 +577,17 @@ export async function handleChatStream(request: Request): Promise<Response> {
           total_tokens: capturedUsage.total_tokens,
         });
       } else {
-        chatLogger.warn('No usage captured for completed chat stream', {
+        chatLogger.warn("No usage captured for completed chat stream", {
           user_id: userId,
           model,
         });
       }
       if (captureSession) {
-        scheduleCaptureTask(captureSession.finish('stream_flush'));
+        scheduleCaptureTask(captureSession.finish("stream_flush"));
       }
       if (llmTelemetry) {
         scheduleCaptureTask(llmTelemetry.finish({
-          status: 'success',
+          status: "success",
           finishReason: capturedFinishReason,
           usage: capturedUsage
             ? {
@@ -554,9 +596,14 @@ export async function handleChatStream(request: Request): Promise<Response> {
             }
             : {},
           costLight: capturedUsage
-            ? calculateCostLight(capturedUsage, billingModel, capturedTotalCost, {
-              billingSource: route.billingSource,
-            })
+            ? calculateCostLight(
+              capturedUsage,
+              billingModel,
+              capturedTotalCost,
+              {
+                billingSource: route.billingSource,
+              },
+            )
             : null,
           metadata: {
             provider,
@@ -574,23 +621,26 @@ export async function handleChatStream(request: Request): Promise<Response> {
 
   // Pipe provider response through the transform (runs in background)
   providerRes.body.pipeTo(transformStream.writable).catch((err) => {
-    chatLogger.error('Chat stream pipe failed', {
+    chatLogger.error("Chat stream pipe failed", {
       user_id: userId,
       model,
       error: err,
     });
-    captureSession?.observeError(err instanceof Error ? err.message : String(err), {
-      phase: 'stream_pipe',
-      provider,
-      model,
-    });
+    captureSession?.observeError(
+      err instanceof Error ? err.message : String(err),
+      {
+        phase: "stream_pipe",
+        provider,
+        model,
+      },
+    );
     if (captureSession) {
-      scheduleCaptureTask(captureSession.finish('pipe_error'));
+      scheduleCaptureTask(captureSession.finish("pipe_error"));
     }
     if (llmTelemetry) {
       scheduleCaptureTask(llmTelemetry.finish({
-        status: 'error',
-        errorType: 'stream_pipe',
+        status: "error",
+        errorType: "stream_pipe",
         errorMessage: err instanceof Error ? err.message : String(err),
         usage: capturedUsage
           ? {
@@ -611,10 +661,10 @@ export async function handleChatStream(request: Request): Promise<Response> {
   return new Response(transformStream.readable, {
     status: 200,
     headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no', // Prevent DigitalOcean/nginx buffering
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no", // Prevent DigitalOcean/nginx buffering
     },
   });
 }
@@ -630,28 +680,29 @@ export async function handleChatModels(request: Request): Promise<Response> {
     const user = await authenticate(request);
     userId = user.id;
   } catch {
-    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'anonymous';
+    const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      "anonymous";
     userId = ip;
   }
 
-  const rateResult = await checkRateLimit(userId, 'chat:models');
+  const rateResult = await checkRateLimit(userId, "chat:models");
   if (!rateResult.allowed) {
-    return json({ error: 'Rate limit exceeded' }, 429);
+    return json({ error: "Rate limit exceeded" }, 429);
   }
 
   // Suggested models — not an allowlist, just popular options for the UI
   const suggested = [
-    'deepseek/deepseek-v4-flash',
-    'deepseek/deepseek-v4-pro',
-    'google/gemini-3.1-flash-lite-preview:nitro',
-    'openai/gpt-4o',
-    'google/gemini-2.5-pro-preview-05-06',
-    'deepseek/deepseek-chat',
-    'meta-llama/llama-3.1-405b-instruct',
-    'qwen/qwen3-235b-a22b',
+    "deepseek/deepseek-v4-flash",
+    "deepseek/deepseek-v4-pro",
+    "google/gemini-3.1-flash-lite-preview:nitro",
+    "openai/gpt-4o",
+    "google/gemini-2.5-pro-preview-05-06",
+    "deepseek/deepseek-chat",
+    "meta-llama/llama-3.1-405b-instruct",
+    "qwen/qwen3-235b-a22b",
   ];
   const models = suggested.map((id) => {
-    const [provider, name] = id.split('/');
+    const [provider, name] = id.split("/");
     return { id, name, provider };
   });
 
@@ -662,36 +713,43 @@ export async function handleChatModels(request: Request): Promise<Response> {
 // GET /chat/inference-options — User-specific inference options
 // ============================================
 
-export async function handleChatInferenceOptions(request: Request): Promise<Response> {
+export async function handleChatInferenceOptions(
+  request: Request,
+): Promise<Response> {
   let user: { id: string; email: string; provisional?: boolean };
   try {
     user = await authenticate(request);
   } catch (err) {
     return json({
-      error: 'Unauthorized',
-      detail: err instanceof Error ? err.message : 'Auth failed',
+      error: "Unauthorized",
+      detail: err instanceof Error ? err.message : "Auth failed",
     }, 401);
   }
 
   if (user.provisional) {
-    return json({ error: 'A full account is required for inference options.' }, 403);
+    return json(
+      { error: "A full account is required for inference options." },
+      403,
+    );
   }
 
-  const rateResult = await checkRateLimit(user.id, 'chat:models');
+  const rateResult = await checkRateLimit(user.id, "chat:models");
   if (!rateResult.allowed) {
-    return json({ error: 'Rate limit exceeded' }, 429);
+    return json({ error: "Rate limit exceeded" }, 429);
   }
 
   try {
     return json(await buildInferenceOptions({ userId: user.id }));
   } catch (err) {
-    chatLogger.error('Failed to build inference options', {
+    chatLogger.error("Failed to build inference options", {
       user_id: user.id,
       error: err,
     });
     return json({
-      error: 'Inference options unavailable',
-      detail: err instanceof Error ? err.message : 'Failed to load inference options',
+      error: "Inference options unavailable",
+      detail: err instanceof Error
+        ? err.message
+        : "Failed to load inference options",
     }, 500);
   }
 }
@@ -706,16 +764,18 @@ export async function handleChatInferenceOptions(request: Request): Promise<Resp
  * Cached in R2, rebuilt on app upload/version change.
  */
 export async function handleFunctionIndex(request: Request): Promise<Response> {
-  const { authenticate } = await import('./auth.ts');
+  const { authenticate } = await import("./auth.ts");
   const user = await authenticate(request);
   if (!user) {
-    return new Response(JSON.stringify({ error: 'Authentication required' }), {
+    return new Response(JSON.stringify({ error: "Authentication required" }), {
       status: 401,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { "Content-Type": "application/json" },
     });
   }
 
-  const { getFunctionIndex, rebuildFunctionIndex } = await import('../services/function-index.ts');
+  const { getFunctionIndex, rebuildFunctionIndex } = await import(
+    "../services/function-index.ts"
+  );
 
   // Try to read cached index
   let index = await getFunctionIndex(user.id);
@@ -725,11 +785,11 @@ export async function handleFunctionIndex(request: Request): Promise<Response> {
     try {
       index = await rebuildFunctionIndex(user.id);
     } catch (err) {
-      chatLogger.error('Failed to build function index on demand', {
+      chatLogger.error("Failed to build function index on demand", {
         user_id: user.id,
         error: err,
       });
-      return json({ functions: {}, widgets: [], types: '', updatedAt: null });
+      return json({ functions: {}, widgets: [], types: "", updatedAt: null });
     }
   }
 
@@ -752,8 +812,8 @@ export async function handleChatContext(request: Request): Promise<Response> {
     user = await authenticate(request);
   } catch (err) {
     return json({
-      error: 'Unauthorized',
-      detail: err instanceof Error ? err.message : 'Auth failed',
+      error: "Unauthorized",
+      detail: err instanceof Error ? err.message : "Auth failed",
     }, 401);
   }
 
@@ -762,20 +822,20 @@ export async function handleChatContext(request: Request): Promise<Response> {
   try {
     body = await request.json() as { prompt: string };
   } catch {
-    return error('Invalid JSON body', 400);
+    return error("Invalid JSON body", 400);
   }
 
-  if (!body.prompt || typeof body.prompt !== 'string') {
-    return error('prompt is required', 400);
+  if (!body.prompt || typeof body.prompt !== "string") {
+    return error("prompt is required", 400);
   }
 
   // Resolve context
   try {
-    const { resolveContext } = await import('../services/context-resolver.ts');
+    const { resolveContext } = await import("../services/context-resolver.ts");
     const context = await resolveContext(body.prompt, user.id, user.email);
     return json(context);
   } catch (err) {
-    chatLogger.error('Chat context resolution failed', {
+    chatLogger.error("Chat context resolution failed", {
       user_id: user.id,
       error: err,
     });
@@ -783,7 +843,7 @@ export async function handleChatContext(request: Request): Promise<Response> {
       entities: [],
       functions: [],
       conventions: [],
-      promptBlock: '',
+      promptBlock: "",
     });
   }
 }
@@ -796,39 +856,41 @@ export async function handleChatContext(request: Request): Promise<Response> {
  * Records local desktop tool execution telemetry. Tool execution happens on
  * the client, so this endpoint receives the full args/result after the call.
  */
-export async function handleToolInvocationTelemetry(request: Request): Promise<Response> {
+export async function handleToolInvocationTelemetry(
+  request: Request,
+): Promise<Response> {
   let user: { id: string; email: string; tier: string; provisional?: boolean };
   try {
     user = await authenticate(request);
   } catch (err) {
     return json({
-      error: 'Unauthorized',
-      detail: err instanceof Error ? err.message : 'Auth failed',
+      error: "Unauthorized",
+      detail: err instanceof Error ? err.message : "Auth failed",
     }, 401);
   }
 
   if (user.provisional) {
-    return json({ error: 'Telemetry requires a full account.' }, 403);
+    return json({ error: "Telemetry requires a full account." }, 403);
   }
 
   let body: ToolInvocationTelemetryRequest;
   try {
     body = await request.json() as ToolInvocationTelemetryRequest;
   } catch {
-    return error('Invalid JSON body', 400);
+    return error("Invalid JSON body", 400);
   }
 
-  if (!body.invocationId || typeof body.invocationId !== 'string') {
-    return error('invocationId is required', 400);
+  if (!body.invocationId || typeof body.invocationId !== "string") {
+    return error("invocationId is required", 400);
   }
-  if (!body.source || typeof body.source !== 'string') {
-    return error('source is required', 400);
+  if (!body.source || typeof body.source !== "string") {
+    return error("source is required", 400);
   }
-  if (!body.toolName || typeof body.toolName !== 'string') {
-    return error('toolName is required', 400);
+  if (!body.toolName || typeof body.toolName !== "string") {
+    return error("toolName is required", 400);
   }
   if (!TOOL_TELEMETRY_STATUSES.has(body.status)) {
-    return error('status must be success, error, aborted, or timeout', 400);
+    return error("status must be success, error, aborted, or timeout", 400);
   }
 
   await recordToolInvocationTelemetry({
@@ -844,6 +906,9 @@ export async function handleToolInvocationTelemetry(request: Request): Promise<R
     appId: body.appId,
     mcpId: body.mcpId,
     functionName: body.functionName,
+    receiptId: body.receiptId,
+    routineId: body.routineId,
+    routineRunId: body.routineRunId,
     schemaSnapshot: body.schemaSnapshot,
     args: body.args,
     result: body.result,
@@ -875,28 +940,28 @@ export async function handleProvisionKey(request: Request): Promise<Response> {
     user = await authenticate(request);
   } catch (err) {
     return json({
-      error: 'Unauthorized',
-      detail: err instanceof Error ? err.message : 'Auth failed',
+      error: "Unauthorized",
+      detail: err instanceof Error ? err.message : "Auth failed",
     }, 401);
   }
 
   if (user.provisional) {
-    return json({ error: 'Full account required' }, 403);
+    return json({ error: "Full account required" }, 403);
   }
 
   // Get or create key
   try {
     await getOrCreateOpenRouterKey(user.id, user.email);
-    chatLogger.info('Provisioned OpenRouter key', { user_id: user.id });
+    chatLogger.info("Provisioned OpenRouter key", { user_id: user.id });
     return json({ ok: true, provisioned: true });
   } catch (err) {
-    chatLogger.error('Key provisioning failed', {
+    chatLogger.error("Key provisioning failed", {
       user_id: user.id,
       error: err,
     });
     return json({
       ok: false,
-      error: err instanceof Error ? err.message : 'Key provisioning failed',
+      error: err instanceof Error ? err.message : "Key provisioning failed",
     }, 500);
   }
 }
@@ -917,13 +982,13 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
     user = await authenticate(request);
   } catch (err) {
     return json({
-      error: 'Unauthorized',
-      detail: err instanceof Error ? err.message : 'Auth failed',
+      error: "Unauthorized",
+      detail: err instanceof Error ? err.message : "Auth failed",
     }, 401);
   }
 
   if (user.provisional) {
-    return json({ error: 'Orchestration requires a full account.' }, 403);
+    return json({ error: "Orchestration requires a full account." }, 403);
   }
 
   // ── 2. Parse request body ──
@@ -934,22 +999,27 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
     interpreterModel?: string;
     heavyModel?: string;
     inference?: InferenceRoutePreference;
-    scope?: Record<string, { access: 'all' | 'functions' | 'data'; functions?: string[] }>;
+    scope?: Record<
+      string,
+      { access: "all" | "functions" | "data"; functions?: string[] }
+    >;
     systemAgentContext?: SystemAgentContext;
     projectContext?: string;
     conversationId?: string;
     userMessageId?: string;
     assistantMessageId?: string;
-    files?: Array<{ name: string; size: number; mimeType: string; content: string }>;
+    files?: Array<
+      { name: string; size: number; mimeType: string; content: string }
+    >;
   };
   try {
     body = await request.json() as typeof body;
   } catch {
-    return error('Invalid JSON body', 400);
+    return error("Invalid JSON body", 400);
   }
 
-  if (!body.message || typeof body.message !== 'string') {
-    return error('message is required', 400);
+  if (!body.message || typeof body.message !== "string") {
+    return error("message is required", 400);
   }
   if (body.inference?.model && !isValidModelId(body.inference.model)) {
     return json({
@@ -966,7 +1036,7 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
       userEmail: user.email,
       selection: body.inference,
     });
-    chatLogger.info('Resolved orchestration inference route', {
+    chatLogger.info("Resolved orchestration inference route", {
       user_id: user.id,
       provider: route.provider,
       upstream_provider: route.upstreamProvider,
@@ -978,27 +1048,29 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
       debit_light: route.shouldDebitLight,
     });
   } catch (err) {
-    chatLogger.error('Failed to resolve orchestration inference route', {
+    chatLogger.error("Failed to resolve orchestration inference route", {
       user_id: user.id,
       error: err,
     });
 
     if (err instanceof InferenceRouteError) {
       return json({
-        error: 'Orchestration service unavailable',
+        error: "Orchestration service unavailable",
         code: err.code,
         detail: err.message,
       }, err.status);
     }
 
     return json({
-      error: 'Orchestration service unavailable',
-      detail: err instanceof Error ? err.message : 'Inference route resolution failed',
+      error: "Orchestration service unavailable",
+      detail: err instanceof Error
+        ? err.message
+        : "Inference route resolution failed",
     }, 503);
   }
 
   // ── 4. Rate limit + conditional balance gate ──
-  const guardResult = await enforceChatGuards(user.id, 'chat orchestration', {
+  const guardResult = await enforceChatGuards(user.id, "chat orchestration", {
     requireBalance: route.shouldRequireBalance,
   });
   if (guardResult instanceof Response) {
@@ -1006,7 +1078,7 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
   }
 
   // ── 5. Stream orchestration events as SSE ──
-  const { orchestrate } = await import('../services/orchestrator.ts');
+  const { orchestrate } = await import("../services/orchestrator.ts");
   const captureConversationId = body.conversationId || crypto.randomUUID();
   const captureTraceId = crypto.randomUUID();
   const captureSession = createOrchestrateCaptureSession({
@@ -1052,7 +1124,7 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
               telemetry: {
                 traceId: captureTraceId,
                 conversationId: captureConversationId,
-                source: 'orchestrate',
+                source: "orchestrate",
               },
             },
           )
@@ -1062,34 +1134,40 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
           controller.enqueue(encoder.encode(sseData));
 
           // Close stream on done or error
-          if (event.type === 'done') {
+          if (event.type === "done") {
             if (captureSession) {
-              scheduleCaptureTask(captureSession.finish('done'));
+              scheduleCaptureTask(captureSession.finish("done"));
             }
             controller.close();
             return;
           }
         }
         // Safety close if generator ends without 'done'
-        const doneEvent = { type: 'done' as const };
+        const doneEvent = { type: "done" as const };
         captureSession?.observeEvent(doneEvent);
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(doneEvent)}\n\n`));
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify(doneEvent)}\n\n`),
+        );
         if (captureSession) {
-          scheduleCaptureTask(captureSession.finish('generator_end'));
+          scheduleCaptureTask(captureSession.finish("generator_end"));
         }
         controller.close();
       } catch (err) {
         const errEvent = {
-          type: 'error',
+          type: "error",
           message: err instanceof Error ? err.message : String(err),
         };
         captureSession?.observeEvent(errEvent);
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(errEvent)}\n\n`));
-        const doneEvent = { type: 'done' as const };
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify(errEvent)}\n\n`),
+        );
+        const doneEvent = { type: "done" as const };
         captureSession?.observeEvent(doneEvent);
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(doneEvent)}\n\n`));
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify(doneEvent)}\n\n`),
+        );
         if (captureSession) {
-          scheduleCaptureTask(captureSession.finish('handler_error'));
+          scheduleCaptureTask(captureSession.finish("handler_error"));
         }
         controller.close();
       }
@@ -1099,10 +1177,10 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
   return new Response(stream, {
     status: 200,
     headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no',
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
     },
   });
 }
@@ -1111,18 +1189,21 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
 // POST /chat/plan/:id/confirm — resume pending execution
 // ============================================
 
-export async function handlePlanConfirm(request: Request, planId: string): Promise<Response> {
+export async function handlePlanConfirm(
+  request: Request,
+  planId: string,
+): Promise<Response> {
   let user: { id: string; email: string; tier: string; provisional?: boolean };
   try {
     user = await authenticate(request);
   } catch (err) {
     return json({
-      error: 'Unauthorized',
-      detail: err instanceof Error ? err.message : 'Auth failed',
+      error: "Unauthorized",
+      detail: err instanceof Error ? err.message : "Auth failed",
     }, 401);
   }
 
-  const { confirmExecutionPlanGate } = await import('../services/plan-gate.ts');
+  const { confirmExecutionPlanGate } = await import("../services/plan-gate.ts");
   const result = await confirmExecutionPlanGate(planId, user.id);
   if (!result.ok) {
     return json({ error: result.message }, result.status);
@@ -1135,18 +1216,21 @@ export async function handlePlanConfirm(request: Request, planId: string): Promi
 // POST /chat/plan/:id/cancel — cancel pending execution
 // ============================================
 
-export async function handlePlanCancel(request: Request, planId: string): Promise<Response> {
+export async function handlePlanCancel(
+  request: Request,
+  planId: string,
+): Promise<Response> {
   let user: { id: string; email: string; tier: string; provisional?: boolean };
   try {
     user = await authenticate(request);
   } catch (err) {
     return json({
-      error: 'Unauthorized',
-      detail: err instanceof Error ? err.message : 'Auth failed',
+      error: "Unauthorized",
+      detail: err instanceof Error ? err.message : "Auth failed",
     }, 401);
   }
 
-  const { cancelExecutionPlanGate } = await import('../services/plan-gate.ts');
+  const { cancelExecutionPlanGate } = await import("../services/plan-gate.ts");
   const result = await cancelExecutionPlanGate(planId, user.id);
   if (!result.ok) {
     return json({ error: result.message }, result.status);

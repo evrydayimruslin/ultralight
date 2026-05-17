@@ -1781,6 +1781,31 @@ function buildCatalog(
     }
   }
 
+  if (fnIndex.routines?.length > 0) {
+    sections.push('\n## Routine Templates\nInstalled ongoing-work templates that can become durable routines:');
+    for (const routine of fnIndex.routines.slice(0, 24)) {
+      const schedule = routine.defaultSchedule
+        ? ` default_schedule=${
+          typeof routine.defaultSchedule === 'string'
+            ? routine.defaultSchedule
+            : JSON.stringify(routine.defaultSchedule)
+        }`
+        : '';
+      const capabilities = routine.capabilities?.length
+        ? ` capabilities=${
+          routine.capabilities.map((capability) =>
+            `${capability.app}:${capability.functions.join('|')}:${capability.access || 'read'}`
+          ).join(',')
+        }`
+        : '';
+      sections.push(
+        `- ${routine.appSlug}/${routine.id} (${routine.label}) handler=${routine.handler}${schedule}${capabilities} — ${
+          routine.description || 'Routine template'
+        }`,
+      );
+    }
+  }
+
   // System Agents section — allows Flash to recommend delegations
   if (systemAgentStates && systemAgentStates.length > 0) {
     sections.push('\n## System Agents\nSpecialized agents you can delegate tasks to:');

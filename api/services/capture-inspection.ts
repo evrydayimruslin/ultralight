@@ -1,5 +1,5 @@
-import { getEnv } from '../lib/env.ts';
-import { createServerLogger } from './logging.ts';
+import { getEnv } from "../lib/env.ts";
+import { createServerLogger } from "./logging.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -155,6 +155,9 @@ export interface ToolInvocationRow {
   app_id: string | null;
   mcp_id: string | null;
   function_name: string | null;
+  receipt_id: string | null;
+  routine_id: string | null;
+  routine_run_id: string | null;
   schema_snapshot: JsonRecord;
   args_preview: JsonRecord;
   args_artifact_id: string | null;
@@ -258,22 +261,27 @@ export interface CaptureIntegrityReport {
   }>;
 }
 
-const captureInspectionLogger = createServerLogger('CAPTURE-INSPECTION');
+const captureInspectionLogger = createServerLogger("CAPTURE-INSPECTION");
 
 function dbHeaders(prefer?: string): Record<string, string> {
-  const key = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+  const key = getEnv("SUPABASE_SERVICE_ROLE_KEY");
   return {
-    'apikey': key,
-    'Authorization': `Bearer ${key}`,
-    ...(prefer ? { 'Prefer': prefer } : {}),
+    "apikey": key,
+    "Authorization": `Bearer ${key}`,
+    ...(prefer ? { "Prefer": prefer } : {}),
   };
 }
 
-function supabaseUrl(resource: string, params: Record<string, string | number | undefined>): string {
-  const base = getEnv('SUPABASE_URL');
+function supabaseUrl(
+  resource: string,
+  params: Record<string, string | number | undefined>,
+): string {
+  const base = getEnv("SUPABASE_URL");
   const url = new URL(`${base}/rest/v1/${resource}`);
   for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== '') url.searchParams.set(key, String(value));
+    if (value !== undefined && value !== "") {
+      url.searchParams.set(key, String(value));
+    }
   }
   return url.toString();
 }
@@ -286,7 +294,9 @@ async function getRows<T>(
     headers: dbHeaders(),
   });
   if (!response.ok) {
-    throw new Error(`Failed to read ${resource}: ${response.status} ${await response.text()}`);
+    throw new Error(
+      `Failed to read ${resource}: ${response.status} ${await response.text()}`,
+    );
   }
   return await response.json() as T[];
 }
@@ -297,30 +307,43 @@ async function getCount(
 ): Promise<number> {
   const response = await fetch(supabaseUrl(resource, params), {
     headers: {
-      ...dbHeaders('count=exact'),
-      'Range-Unit': 'items',
-      'Range': '0-0',
+      ...dbHeaders("count=exact"),
+      "Range-Unit": "items",
+      "Range": "0-0",
     },
   });
   if (!response.ok) return 0;
-  const range = response.headers.get('content-range') || '';
-  const total = range.split('/')[1];
+  const range = response.headers.get("content-range") || "";
+  const total = range.split("/")[1];
   const parsed = total ? Number(total) : NaN;
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function clampLimit(limit: number | undefined, fallback: number, max: number): number {
+function clampLimit(
+  limit: number | undefined,
+  fallback: number,
+  max: number,
+): number {
   if (!Number.isFinite(limit) || !limit || limit <= 0) return fallback;
   return Math.min(Math.floor(limit), max);
 }
 
-function applyThreadFilters(filters: CaptureInspectionFilters): Record<string, string | number | undefined> {
+function applyThreadFilters(
+  filters: CaptureInspectionFilters,
+): Record<string, string | number | undefined> {
   const params = {
-    conversation_id: filters.conversationId ? `eq.${filters.conversationId}` : undefined,
+    conversation_id: filters.conversationId
+      ? `eq.${filters.conversationId}`
+      : undefined,
     anon_user_id: filters.anonUserId ? `eq.${filters.anonUserId}` : undefined,
     source: filters.source ? `eq.${filters.source}` : undefined,
   };
-  return applyTimeRange(params, 'last_captured_at', filters.since, filters.until);
+  return applyTimeRange(
+    params,
+    "last_captured_at",
+    filters.since,
+    filters.until,
+  );
 }
 
 function tableFilterParams(
@@ -328,7 +351,9 @@ function tableFilterParams(
   timeColumn: string,
 ): Record<string, string | number | undefined> {
   const params: Record<string, string | number | undefined> = {
-    conversation_id: filters.conversationId ? `eq.${filters.conversationId}` : undefined,
+    conversation_id: filters.conversationId
+      ? `eq.${filters.conversationId}`
+      : undefined,
     anon_user_id: filters.anonUserId ? `eq.${filters.anonUserId}` : undefined,
     source: filters.source ? `eq.${filters.source}` : undefined,
   };
@@ -339,19 +364,23 @@ function linkFilterParams(
   filters: CaptureInspectionFilters,
 ): Record<string, string | number | undefined> {
   const params: Record<string, string | number | undefined> = {
-    conversation_id: filters.conversationId ? `eq.${filters.conversationId}` : undefined,
+    conversation_id: filters.conversationId
+      ? `eq.${filters.conversationId}`
+      : undefined,
   };
-  return applyTimeRange(params, 'created_at', filters.since, filters.until);
+  return applyTimeRange(params, "created_at", filters.since, filters.until);
 }
 
 function eventFilterParams(
   filters: CaptureInspectionFilters,
 ): Record<string, string | number | undefined> {
   const params: Record<string, string | number | undefined> = {
-    conversation_id: filters.conversationId ? `eq.${filters.conversationId}` : undefined,
+    conversation_id: filters.conversationId
+      ? `eq.${filters.conversationId}`
+      : undefined,
     anon_user_id: filters.anonUserId ? `eq.${filters.anonUserId}` : undefined,
   };
-  return applyTimeRange(params, 'created_at', filters.since, filters.until);
+  return applyTimeRange(params, "created_at", filters.since, filters.until);
 }
 
 function applyTimeRange(
@@ -373,30 +402,42 @@ function applyTimeRange(
 
 function inFilter(values: string[]): string | undefined {
   if (values.length === 0) return undefined;
-  return `in.(${values.join(',')})`;
+  return `in.(${values.join(",")})`;
 }
 
-function increment(map: Record<string, number>, key: string | null | undefined, amount = 1): void {
-  const resolved = key || 'unknown';
+function increment(
+  map: Record<string, number>,
+  key: string | null | undefined,
+  amount = 1,
+): void {
+  const resolved = key || "unknown";
   map[resolved] = (map[resolved] || 0) + amount;
 }
 
 function numberFrom(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-function topEntries(map: Record<string, number>, limit = 20): Array<{ key: string; count: number }> {
+function topEntries(
+  map: Record<string, number>,
+  limit = 20,
+): Array<{ key: string; count: number }> {
   return Object.entries(map)
     .map(([key, count]) => ({ key, count }))
     .sort((a, b) => b.count - a.count)
     .slice(0, limit);
 }
 
-const LLM_INVOCATION_SELECT = 'id,invocation_id,trace_id,conversation_id,anon_user_id,source,phase,provider,requested_model,resolved_model,billing_mode,key_source,request_params,context_snapshot_id,context_sha256,context_bytes,context_message_count,tool_schema_count,started_at,completed_at,duration_ms,status,finish_reason,usage,cost_light,error_type,error_message,metadata';
-const LLM_CONTEXT_SNAPSHOT_SELECT = 'id,invocation_id,trace_id,conversation_id,anon_user_id,source,snapshot_type,message_count,tool_schema_count,artifact_id,sha256,size_bytes,text_preview,metadata,created_at';
-const TOOL_INVOCATION_SELECT = 'id,invocation_id,trace_id,conversation_id,parent_llm_invocation_id,anon_user_id,source,tool_call_id,tool_name,tool_kind,app_id,mcp_id,function_name,schema_snapshot,args_preview,args_artifact_id,args_sha256,args_bytes,result_preview,result_artifact_id,result_sha256,result_bytes,started_at,completed_at,duration_ms,status,error_type,error_message,metadata';
-const EXECUTION_FAILURE_SELECT = 'id,failure_id,trace_id,conversation_id,invocation_id,anon_user_id,source,phase,failure_type,severity,message,retryable,aborted_by,metadata,created_at';
-const TRAINING_ANNOTATION_SELECT = 'id,target_type,target_id,conversation_id,message_id,llm_invocation_id,tool_invocation_id,artifact_id,annotation_type,label,confidence,payload,taxonomy_version,classifier_model,classifier_version,status,reviewed_by,reviewed_at,metadata,created_at';
+const LLM_INVOCATION_SELECT =
+  "id,invocation_id,trace_id,conversation_id,anon_user_id,source,phase,provider,requested_model,resolved_model,billing_mode,key_source,request_params,context_snapshot_id,context_sha256,context_bytes,context_message_count,tool_schema_count,started_at,completed_at,duration_ms,status,finish_reason,usage,cost_light,error_type,error_message,metadata";
+const LLM_CONTEXT_SNAPSHOT_SELECT =
+  "id,invocation_id,trace_id,conversation_id,anon_user_id,source,snapshot_type,message_count,tool_schema_count,artifact_id,sha256,size_bytes,text_preview,metadata,created_at";
+const TOOL_INVOCATION_SELECT =
+  "id,invocation_id,trace_id,conversation_id,parent_llm_invocation_id,anon_user_id,source,tool_call_id,tool_name,tool_kind,app_id,mcp_id,function_name,receipt_id,routine_id,routine_run_id,schema_snapshot,args_preview,args_artifact_id,args_sha256,args_bytes,result_preview,result_artifact_id,result_sha256,result_bytes,started_at,completed_at,duration_ms,status,error_type,error_message,metadata";
+const EXECUTION_FAILURE_SELECT =
+  "id,failure_id,trace_id,conversation_id,invocation_id,anon_user_id,source,phase,failure_type,severity,message,retryable,aborted_by,metadata,created_at";
+const TRAINING_ANNOTATION_SELECT =
+  "id,target_type,target_id,conversation_id,message_id,llm_invocation_id,tool_invocation_id,artifact_id,annotation_type,label,confidence,payload,taxonomy_version,classifier_model,classifier_version,status,reviewed_by,reviewed_at,metadata,created_at";
 
 export async function getCaptureOverview(
   filters: CaptureInspectionFilters = {},
@@ -422,78 +463,82 @@ export async function getCaptureOverview(
     recentToolInvocations,
     recentExecutionFailures,
   ] = await Promise.all([
-    getCount('chat_threads', {
+    getCount("chat_threads", {
       ...threadParams,
-      select: 'conversation_id',
+      select: "conversation_id",
     }),
-    getCount('chat_messages', {
-      ...tableFilterParams(filters, 'captured_at'),
-      select: 'message_id',
+    getCount("chat_messages", {
+      ...tableFilterParams(filters, "captured_at"),
+      select: "message_id",
     }),
-    getCount('chat_events', {
+    getCount("chat_events", {
       ...eventFilterParams(filters),
-      select: 'id',
+      select: "id",
     }),
-    getCount('capture_artifacts', {
-      ...tableFilterParams(filters, 'created_at'),
-      select: 'id',
+    getCount("capture_artifacts", {
+      ...tableFilterParams(filters, "created_at"),
+      select: "id",
     }),
-    getCount('capture_artifact_links', {
+    getCount("capture_artifact_links", {
       ...linkFilterParams(filters),
-      select: 'id',
+      select: "id",
     }),
-    getCount('llm_invocations', {
-      ...tableFilterParams(filters, 'started_at'),
-      select: 'id',
+    getCount("llm_invocations", {
+      ...tableFilterParams(filters, "started_at"),
+      select: "id",
     }),
-    getCount('tool_invocations', {
-      ...tableFilterParams(filters, 'started_at'),
-      select: 'id',
+    getCount("tool_invocations", {
+      ...tableFilterParams(filters, "started_at"),
+      select: "id",
     }),
-    getCount('execution_failures', {
-      ...tableFilterParams(filters, 'created_at'),
-      select: 'id',
+    getCount("execution_failures", {
+      ...tableFilterParams(filters, "created_at"),
+      select: "id",
     }),
-    getRows<CaptureThreadRow>('chat_threads', {
+    getRows<CaptureThreadRow>("chat_threads", {
       ...threadParams,
-      select: 'conversation_id,anon_user_id,source,capture_region,trace_id,model_route,scope,metadata,created_at,updated_at,first_captured_at,last_captured_at',
-      order: 'last_captured_at.desc',
+      select:
+        "conversation_id,anon_user_id,source,capture_region,trace_id,model_route,scope,metadata,created_at,updated_at,first_captured_at,last_captured_at",
+      order: "last_captured_at.desc",
       limit,
     }),
-    getRows<CaptureMessageRow>('chat_messages', {
-      ...tableFilterParams(filters, 'captured_at'),
-      select: 'message_id,conversation_id,anon_user_id,role,content,content_sha256,content_bytes,sort_order,model,usage,cost_light,source,metadata,created_at,captured_at',
-      order: 'captured_at.desc',
+    getRows<CaptureMessageRow>("chat_messages", {
+      ...tableFilterParams(filters, "captured_at"),
+      select:
+        "message_id,conversation_id,anon_user_id,role,content,content_sha256,content_bytes,sort_order,model,usage,cost_light,source,metadata,created_at,captured_at",
+      order: "captured_at.desc",
       limit,
     }),
-    getRows<CaptureEventRow>('chat_events', {
+    getRows<CaptureEventRow>("chat_events", {
       ...eventFilterParams(filters),
-      select: 'id,trace_id,conversation_id,message_id,anon_user_id,event_type,event_sequence,payload,payload_sha256,created_at',
-      order: 'created_at.desc',
+      select:
+        "id,trace_id,conversation_id,message_id,anon_user_id,event_type,event_sequence,payload,payload_sha256,created_at",
+      order: "created_at.desc",
       limit,
     }),
-    getRows<CaptureArtifactRow>('capture_artifacts', {
-      ...tableFilterParams(filters, 'created_at'),
-      select: 'id,idempotency_key,anon_user_id,conversation_id,message_id,event_id,source,sha256,storage_key,storage_region,mime_type,original_filename,size_bytes,text_preview,parser_status,sensitivity_class,training_eligibility,metadata,created_at',
-      order: 'created_at.desc',
+    getRows<CaptureArtifactRow>("capture_artifacts", {
+      ...tableFilterParams(filters, "created_at"),
+      select:
+        "id,idempotency_key,anon_user_id,conversation_id,message_id,event_id,source,sha256,storage_key,storage_region,mime_type,original_filename,size_bytes,text_preview,parser_status,sensitivity_class,training_eligibility,metadata,created_at",
+      order: "created_at.desc",
       limit,
     }),
-    getRows<LlmInvocationRow>('llm_invocations', {
-      ...tableFilterParams(filters, 'started_at'),
+    getRows<LlmInvocationRow>("llm_invocations", {
+      ...tableFilterParams(filters, "started_at"),
       select: LLM_INVOCATION_SELECT,
-      order: 'started_at.desc',
+      order: "started_at.desc",
       limit,
     }),
-    getRows<ToolInvocationRow>('tool_invocations', {
-      ...tableFilterParams(filters, 'started_at'),
+    getRows<ToolInvocationRow>("tool_invocations", {
+      ...tableFilterParams(filters, "started_at"),
       select: TOOL_INVOCATION_SELECT,
-      order: 'started_at.desc',
+      order: "started_at.desc",
       limit,
     }),
-    getRows<ExecutionFailureRow>('execution_failures', {
-      ...tableFilterParams(filters, 'created_at'),
+    getRows<ExecutionFailureRow>("execution_failures", {
+      ...tableFilterParams(filters, "created_at"),
       select: EXECUTION_FAILURE_SELECT,
-      order: 'created_at.desc',
+      order: "created_at.desc",
       limit,
     }),
   ]);
@@ -520,10 +565,13 @@ export async function getCaptureOverview(
     increment(modelCounts, message.model);
     totalContentBytes += message.content_bytes || 0;
     totalTokens += numberFrom(message.usage?.total_tokens);
-    totalCost += numberFrom(message.usage?.total_cost) + numberFrom(message.cost_light);
+    totalCost += numberFrom(message.usage?.total_cost) +
+      numberFrom(message.cost_light);
   }
   for (const event of recentEvents) increment(eventCounts, event.event_type);
-  for (const artifact of recentArtifacts) increment(artifactSourceCounts, artifact.source);
+  for (const artifact of recentArtifacts) {
+    increment(artifactSourceCounts, artifact.source);
+  }
   for (const invocation of recentLlmInvocations) {
     increment(llmStatusCounts, invocation.status);
     increment(llmProviderCounts, invocation.provider);
@@ -534,14 +582,29 @@ export async function getCaptureOverview(
     increment(toolStatusCounts, invocation.status);
     totalToolDuration += invocation.duration_ms || 0;
   }
-  for (const failure of recentExecutionFailures) increment(failureTypeCounts, failure.failure_type);
+  for (const failure of recentExecutionFailures) {
+    increment(failureTypeCounts, failure.failure_type);
+  }
 
-  const integrity = buildIntegrityReport(recentThreads, recentMessages, recentEvents);
+  const integrity = buildIntegrityReport(
+    recentThreads,
+    recentMessages,
+    recentEvents,
+  );
 
   await recordCaptureAccess({
-    action: 'overview',
+    action: "overview",
     filters,
-    counts: { threadCount, messageCount, eventCount, artifactCount, linkCount, llmInvocationCount, toolInvocationCount, executionFailureCount },
+    counts: {
+      threadCount,
+      messageCount,
+      eventCount,
+      artifactCount,
+      linkCount,
+      llmInvocationCount,
+      toolInvocationCount,
+      executionFailureCount,
+    },
   });
 
   return {
@@ -600,7 +663,7 @@ export async function inspectCaptureConversation(
 ): Promise<CaptureExportBundle> {
   const bundle = await buildCaptureExport({ conversationId, limit: 1 });
   await recordCaptureAccess({
-    action: 'inspect_conversation',
+    action: "inspect_conversation",
     conversationId,
     counts: bundle.export_meta,
   });
@@ -611,10 +674,11 @@ export async function buildCaptureExport(
   filters: CaptureInspectionFilters,
 ): Promise<CaptureExportBundle> {
   const limit = clampLimit(filters.limit, 100, 1000);
-  const threads = await getRows<CaptureThreadRow>('chat_threads', {
+  const threads = await getRows<CaptureThreadRow>("chat_threads", {
     ...applyThreadFilters(filters),
-    select: 'conversation_id,anon_user_id,source,capture_region,trace_id,model_route,scope,metadata,created_at,updated_at,first_captured_at,last_captured_at',
-    order: 'last_captured_at.desc',
+    select:
+      "conversation_id,anon_user_id,source,capture_region,trace_id,model_route,scope,metadata,created_at,updated_at,first_captured_at,last_captured_at",
+    order: "last_captured_at.desc",
     limit,
   });
 
@@ -648,7 +712,7 @@ export async function buildCaptureExport(
       integrity: buildIntegrityReport([], [], []),
     };
     await recordCaptureAccess({
-      action: 'export',
+      action: "export",
       filters,
       counts: emptyBundle.export_meta,
     });
@@ -669,68 +733,80 @@ export async function buildCaptureExport(
     executionFailures,
     trainingAnnotations,
   ] = await Promise.all([
-    getRows<CaptureMessageRow>('chat_messages', {
+    getRows<CaptureMessageRow>("chat_messages", {
       conversation_id: conversationFilter,
-      select: 'message_id,conversation_id,anon_user_id,role,content,content_sha256,content_bytes,sort_order,model,usage,cost_light,source,metadata,created_at,captured_at',
-      order: 'conversation_id.asc,sort_order.asc,captured_at.asc',
+      select:
+        "message_id,conversation_id,anon_user_id,role,content,content_sha256,content_bytes,sort_order,model,usage,cost_light,source,metadata,created_at,captured_at",
+      order: "conversation_id.asc,sort_order.asc,captured_at.asc",
       limit: filters.conversationId ? 10000 : Math.min(limit * 200, 20000),
     }),
-    getRows<CaptureEventRow>('chat_events', {
+    getRows<CaptureEventRow>("chat_events", {
       conversation_id: conversationFilter,
-      select: 'id,trace_id,conversation_id,message_id,anon_user_id,event_type,event_sequence,payload,payload_sha256,created_at',
-      order: 'conversation_id.asc,event_sequence.asc',
+      select:
+        "id,trace_id,conversation_id,message_id,anon_user_id,event_type,event_sequence,payload,payload_sha256,created_at",
+      order: "conversation_id.asc,event_sequence.asc",
       limit: filters.conversationId ? 10000 : Math.min(limit * 300, 30000),
     }),
-    getRows<CaptureArtifactLinkRow>('capture_artifact_links', {
+    getRows<CaptureArtifactLinkRow>("capture_artifact_links", {
       conversation_id: conversationFilter,
-      select: 'id,idempotency_key,artifact_id,conversation_id,message_id,event_id,relationship,metadata,created_at',
-      order: 'created_at.asc',
+      select:
+        "id,idempotency_key,artifact_id,conversation_id,message_id,event_id,relationship,metadata,created_at",
+      order: "created_at.asc",
       limit: filters.conversationId ? 10000 : Math.min(limit * 100, 10000),
     }),
-    getRows<LlmInvocationRow>('llm_invocations', {
+    getRows<LlmInvocationRow>("llm_invocations", {
       conversation_id: conversationFilter,
       select: LLM_INVOCATION_SELECT,
-      order: 'conversation_id.asc,started_at.asc',
+      order: "conversation_id.asc,started_at.asc",
       limit: filters.conversationId ? 10000 : Math.min(limit * 100, 10000),
     }),
-    getRows<LlmContextSnapshotRow>('llm_context_snapshots', {
+    getRows<LlmContextSnapshotRow>("llm_context_snapshots", {
       conversation_id: conversationFilter,
       select: LLM_CONTEXT_SNAPSHOT_SELECT,
-      order: 'conversation_id.asc,created_at.asc',
+      order: "conversation_id.asc,created_at.asc",
       limit: filters.conversationId ? 10000 : Math.min(limit * 100, 10000),
     }),
-    getRows<ToolInvocationRow>('tool_invocations', {
+    getRows<ToolInvocationRow>("tool_invocations", {
       conversation_id: conversationFilter,
       select: TOOL_INVOCATION_SELECT,
-      order: 'conversation_id.asc,started_at.asc',
+      order: "conversation_id.asc,started_at.asc",
       limit: filters.conversationId ? 10000 : Math.min(limit * 100, 10000),
     }),
-    getRows<ExecutionFailureRow>('execution_failures', {
+    getRows<ExecutionFailureRow>("execution_failures", {
       conversation_id: conversationFilter,
       select: EXECUTION_FAILURE_SELECT,
-      order: 'conversation_id.asc,created_at.asc',
+      order: "conversation_id.asc,created_at.asc",
       limit: filters.conversationId ? 10000 : Math.min(limit * 100, 10000),
     }),
-    getRows<TrainingAnnotationRow>('training_annotations', {
+    getRows<TrainingAnnotationRow>("training_annotations", {
       conversation_id: conversationFilter,
       select: TRAINING_ANNOTATION_SELECT,
-      order: 'conversation_id.asc,created_at.asc',
+      order: "conversation_id.asc,created_at.asc",
       limit: filters.conversationId ? 10000 : Math.min(limit * 100, 10000),
     }),
   ]);
 
-  const artifactIds = [...new Set([
-    ...artifactLinks.map((link) => link.artifact_id),
-    ...llmContextSnapshots.map((snapshot) => snapshot.artifact_id).filter((id): id is string => !!id),
-    ...toolInvocations.map((invocation) => invocation.args_artifact_id).filter((id): id is string => !!id),
-    ...toolInvocations.map((invocation) => invocation.result_artifact_id).filter((id): id is string => !!id),
-    ...trainingAnnotations.map((annotation) => annotation.artifact_id).filter((id): id is string => !!id),
-  ])];
+  const artifactIds = [
+    ...new Set([
+      ...artifactLinks.map((link) => link.artifact_id),
+      ...llmContextSnapshots.map((snapshot) => snapshot.artifact_id).filter((
+        id,
+      ): id is string => !!id),
+      ...toolInvocations.map((invocation) => invocation.args_artifact_id)
+        .filter((id): id is string => !!id),
+      ...toolInvocations.map((invocation) => invocation.result_artifact_id)
+        .filter((id): id is string => !!id),
+      ...trainingAnnotations.map((annotation) => annotation.artifact_id).filter(
+        (id): id is string => !!id,
+      ),
+    ]),
+  ];
   const artifacts = artifactIds.length > 0
-    ? await getRows<CaptureArtifactRow>('capture_artifacts', {
+    ? await getRows<CaptureArtifactRow>("capture_artifacts", {
       id: inFilter(artifactIds),
-      select: 'id,idempotency_key,anon_user_id,conversation_id,message_id,event_id,source,sha256,storage_key,storage_region,mime_type,original_filename,size_bytes,text_preview,parser_status,sensitivity_class,training_eligibility,metadata,created_at',
-      order: 'created_at.asc',
+      select:
+        "id,idempotency_key,anon_user_id,conversation_id,message_id,event_id,source,sha256,storage_key,storage_region,mime_type,original_filename,size_bytes,text_preview,parser_status,sensitivity_class,training_eligibility,metadata,created_at",
+      order: "created_at.asc",
       limit: artifactIds.length,
     })
     : [];
@@ -764,7 +840,7 @@ export async function buildCaptureExport(
   };
 
   await recordCaptureAccess({
-    action: 'export',
+    action: "export",
     filters,
     counts: bundle.export_meta,
   });
@@ -774,20 +850,44 @@ export async function buildCaptureExport(
 
 export function captureExportToJsonl(bundle: CaptureExportBundle): string {
   const lines: string[] = [
-    JSON.stringify({ type: 'export_meta', data: bundle.export_meta }),
-    JSON.stringify({ type: 'integrity', data: bundle.integrity }),
+    JSON.stringify({ type: "export_meta", data: bundle.export_meta }),
+    JSON.stringify({ type: "integrity", data: bundle.integrity }),
   ];
-  for (const thread of bundle.threads) lines.push(JSON.stringify({ type: 'thread', data: thread }));
-  for (const message of bundle.messages) lines.push(JSON.stringify({ type: 'message', data: message }));
-  for (const event of bundle.events) lines.push(JSON.stringify({ type: 'event', data: event }));
-  for (const link of bundle.artifact_links) lines.push(JSON.stringify({ type: 'artifact_link', data: link }));
-  for (const artifact of bundle.artifacts) lines.push(JSON.stringify({ type: 'artifact', data: artifact }));
-  for (const invocation of bundle.llm_invocations) lines.push(JSON.stringify({ type: 'llm_invocation', data: invocation }));
-  for (const snapshot of bundle.llm_context_snapshots) lines.push(JSON.stringify({ type: 'llm_context_snapshot', data: snapshot }));
-  for (const invocation of bundle.tool_invocations) lines.push(JSON.stringify({ type: 'tool_invocation', data: invocation }));
-  for (const failure of bundle.execution_failures) lines.push(JSON.stringify({ type: 'execution_failure', data: failure }));
-  for (const annotation of bundle.training_annotations) lines.push(JSON.stringify({ type: 'training_annotation', data: annotation }));
-  return `${lines.join('\n')}\n`;
+  for (const thread of bundle.threads) {
+    lines.push(JSON.stringify({ type: "thread", data: thread }));
+  }
+  for (const message of bundle.messages) {
+    lines.push(JSON.stringify({ type: "message", data: message }));
+  }
+  for (const event of bundle.events) {
+    lines.push(JSON.stringify({ type: "event", data: event }));
+  }
+  for (const link of bundle.artifact_links) {
+    lines.push(JSON.stringify({ type: "artifact_link", data: link }));
+  }
+  for (const artifact of bundle.artifacts) {
+    lines.push(JSON.stringify({ type: "artifact", data: artifact }));
+  }
+  for (const invocation of bundle.llm_invocations) {
+    lines.push(JSON.stringify({ type: "llm_invocation", data: invocation }));
+  }
+  for (const snapshot of bundle.llm_context_snapshots) {
+    lines.push(
+      JSON.stringify({ type: "llm_context_snapshot", data: snapshot }),
+    );
+  }
+  for (const invocation of bundle.tool_invocations) {
+    lines.push(JSON.stringify({ type: "tool_invocation", data: invocation }));
+  }
+  for (const failure of bundle.execution_failures) {
+    lines.push(JSON.stringify({ type: "execution_failure", data: failure }));
+  }
+  for (const annotation of bundle.training_annotations) {
+    lines.push(
+      JSON.stringify({ type: "training_annotation", data: annotation }),
+    );
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function buildIntegrityReport(
@@ -802,7 +902,9 @@ function buildIntegrityReport(
   const inlineFallback: string[] = [];
 
   const sortedMessages = [...messages].sort((a, b) => {
-    const conversationCompare = a.conversation_id.localeCompare(b.conversation_id);
+    const conversationCompare = a.conversation_id.localeCompare(
+      b.conversation_id,
+    );
     if (conversationCompare !== 0) return conversationCompare;
     const sortA = a.sort_order ?? Number.MAX_SAFE_INTEGER;
     const sortB = b.sort_order ?? Number.MAX_SAFE_INTEGER;
@@ -816,11 +918,13 @@ function buildIntegrityReport(
 
   for (const message of sortedMessages) {
     if (!message.content_sha256) missingHash.push(message.message_id);
-    if (message.metadata?.content_storage === 'inline_fallback') inlineFallback.push(message.message_id);
-    if (message.role === 'user') {
+    if (message.metadata?.content_storage === "inline_fallback") {
+      inlineFallback.push(message.message_id);
+    }
+    if (message.role === "user") {
       conversationHasUser.set(message.conversation_id, true);
     }
-    if (message.role === 'assistant') {
+    if (message.role === "assistant") {
       if (!conversationHasUser.get(message.conversation_id)) {
         assistantWithoutUser.push(message.message_id);
       }
@@ -830,16 +934,18 @@ function buildIntegrityReport(
     }
   }
 
-  const eventErrors: CaptureIntegrityReport['event_errors'] = [];
+  const eventErrors: CaptureIntegrityReport["event_errors"] = [];
   let eventArtifactSpills = 0;
   for (const event of events) {
     if (event.payload?._spilled_to_artifact === true) eventArtifactSpills++;
-    if (event.event_type.endsWith('error') || event.event_type === 'error') {
+    if (event.event_type.endsWith("error") || event.event_type === "error") {
       eventErrors.push({
         event_id: event.id,
         conversation_id: event.conversation_id,
         message_id: event.message_id,
-        message: typeof event.payload?.message === 'string' ? event.payload.message : null,
+        message: typeof event.payload?.message === "string"
+          ? event.payload.message
+          : null,
         phase: event.payload?.phase ?? null,
         created_at: event.created_at,
       });
@@ -857,24 +963,26 @@ function buildIntegrityReport(
 }
 
 async function recordCaptureAccess(metadata: JsonRecord): Promise<void> {
-  const action = typeof metadata.action === 'string' ? metadata.action : 'unknown';
+  const action = typeof metadata.action === "string"
+    ? metadata.action
+    : "unknown";
   try {
-    await fetch(supabaseUrl('capture_access_audit', {}), {
-      method: 'POST',
+    await fetch(supabaseUrl("capture_access_audit", {}), {
+      method: "POST",
       headers: {
-        ...dbHeaders('return=minimal'),
-        'Content-Type': 'application/json',
+        ...dbHeaders("return=minimal"),
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        actor_service: 'admin_capture_api',
+        actor_service: "admin_capture_api",
         action,
-        table_name: 'capture_export',
-        reason: 'capture inspection/export',
+        table_name: "capture_export",
+        reason: "capture inspection/export",
         metadata,
       }),
     });
   } catch (err) {
-    captureInspectionLogger.warn('Failed to write capture access audit', {
+    captureInspectionLogger.warn("Failed to write capture access audit", {
       action,
       error: err,
     });

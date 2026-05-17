@@ -7,6 +7,7 @@ import {
   resolveStoredManifestCoverage,
   upsertManifestUploadFile,
 } from "./app-manifest-generation.ts";
+import { buildJsonSchemaDescriptors } from "./codemode-tools.ts";
 import { parseTypeScript } from "./parser.ts";
 import { validateManifest } from "../../shared/contracts/manifest.ts";
 
@@ -174,4 +175,113 @@ Deno.test("manifest validation: command cards are native, fixed-size, and read-o
     invalid.errors.some((error) => error.path.endsWith(".access")),
     true,
   );
+});
+
+Deno.test("manifest validation: routine templates declare schedules, config, and capabilities", () => {
+  const valid = validateManifest({
+    name: "Routine Composer",
+    version: "1.0.0",
+    type: "mcp",
+    entry: { functions: "index.ts" },
+    functions: {
+      poll_email_followups: { description: "Poll inbox and draft follow-ups" },
+    },
+    routines: [{
+      id: "sales_followup_loop",
+      label: "Sales follow-up loop",
+      description: "Polls email and composes reviewable follow-up drafts.",
+      handler: "poll_email_followups",
+      default_schedule: { every_minutes: 5 },
+      config_schema: {
+        mailbox: { type: "string", required: true },
+        max_emails: { type: "number", default: 20 },
+      },
+      default_config: { max_emails: 20 },
+      capabilities: [{
+        app: "email-drafter",
+        functions: ["draft_reply"],
+        access: "write",
+        purpose: "Create response drafts for review",
+      }],
+      budget_defaults: {
+        max_light_per_run: 25,
+        max_light_per_day: 500,
+        max_calls_per_run: 10,
+      },
+      approval_policy: {
+        require_user_approval: true,
+        require_paid_capability_approval: true,
+        require_external_side_effect_approval: true,
+      },
+      surfaces: {
+        widgets: ["email_ops"],
+        command_cards: [{ widget_id: "email_ops", card_id: "pending_drafts" }],
+      },
+    }],
+  });
+
+  assertEquals(valid.valid, true);
+  assertEquals(valid.errors, []);
+
+  const invalid = validateManifest({
+    name: "Bad Routine",
+    version: "1.0.0",
+    type: "mcp",
+    entry: { functions: "index.ts" },
+    routines: [{
+      id: "bad routine",
+      label: "",
+      handler: "not-a-function",
+      default_schedule: { every_minutes: 0 },
+      capabilities: [{
+        app: "",
+        functions: [],
+        access: "admin",
+      }],
+      budget_defaults: { max_light_per_day: -1 },
+      approval_policy: { require_user_approval: "yes" },
+    }],
+  });
+
+  assertEquals(invalid.valid, false);
+  assertEquals(invalid.errors.some((error) => error.path.endsWith(".id")), true);
+  assertEquals(invalid.errors.some((error) => error.path.endsWith(".handler")), true);
+  assertEquals(
+    invalid.errors.some((error) => error.path.endsWith(".default_schedule.every_minutes")),
+    true,
+  );
+  assertEquals(invalid.errors.some((error) => error.path.endsWith(".access")), true);
+  assertEquals(
+    invalid.errors.some((error) => error.path.endsWith(".budget_defaults.max_light_per_day")),
+    true,
+  );
+});
+
+Deno.test("codemode descriptors: indexes routine templates alongside widgets", () => {
+  const descriptors = buildJsonSchemaDescriptors([{
+    id: "app-compose",
+    name: "Routine Composer",
+    slug: "routine-composer",
+    manifest: {
+      functions: {
+        poll_email_followups: { description: "Poll inbox and draft follow-ups" },
+      },
+      routines: [{
+        id: "sales_followup_loop",
+        label: "Sales follow-up loop",
+        handler: "poll_email_followups",
+        default_schedule: "*/5 * * * *",
+        capabilities: [{
+          app: "email-drafter",
+          functions: ["draft_reply"],
+          access: "write",
+        }],
+      }],
+    },
+  }]);
+
+  assertEquals(descriptors.routines.length, 1);
+  assertEquals(descriptors.routines[0].id, "sales_followup_loop");
+  assertEquals(descriptors.routines[0].appId, "app-compose");
+  assertEquals(descriptors.routines[0].capabilities?.[0]?.access, "write");
 });

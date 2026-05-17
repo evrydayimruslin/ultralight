@@ -5,6 +5,7 @@ import {
   extractRequestAccessToken,
   hasScope,
   type AuthenticatedRequestUser,
+  type RequestAuthSource,
   type RequestTokenSourcePolicy,
 } from './request-auth.ts';
 import { createUserService, type UserProfile } from './user.ts';
@@ -13,6 +14,7 @@ export const ANONYMOUS_USER_ID = '00000000-0000-0000-0000-000000000000';
 
 export interface RequestCallerContext {
   authState: 'authenticated' | 'anonymous';
+  authSource?: RequestAuthSource;
   authUser: AuthenticatedRequestUser | null;
   authToken?: string;
   authError?: Error;
@@ -23,6 +25,7 @@ export interface RequestCallerContext {
   tokenAppIds: string[] | null;
   tokenFunctionNames: string[] | null;
   scopes?: string[];
+  routineActor?: AuthenticatedRequestUser['routineActor'];
 }
 
 interface ResolveRequestCallerContextOptions {
@@ -45,6 +48,7 @@ function buildAnonymousContext(
 ): RequestCallerContext {
   return {
     authState: 'anonymous',
+    authSource: undefined,
     authUser: null,
     authToken,
     authError,
@@ -55,6 +59,7 @@ function buildAnonymousContext(
     tokenAppIds: null,
     tokenFunctionNames: null,
     scopes: undefined,
+    routineActor: undefined,
   };
 }
 
@@ -105,6 +110,7 @@ export async function resolveRequestCallerContext(
 
     return {
       authState: 'authenticated',
+      authSource: authUser.authSource,
       authUser,
       authToken,
       userId: authUser.id,
@@ -121,6 +127,7 @@ export async function resolveRequestCallerContext(
       tokenAppIds: authUser.tokenAppIds || null,
       tokenFunctionNames: authUser.tokenFunctionNames || null,
       scopes: authUser.scopes,
+      routineActor: authUser.routineActor,
     };
   } catch (err) {
     if (allowAnonymous && invalidAuthPolicy === 'ignore') {
@@ -165,4 +172,10 @@ export function callerUsesApiToken(
   caller: Pick<RequestCallerContext, 'authToken' | 'authState'>,
 ): boolean {
   return caller.authState === 'authenticated' && !!caller.authToken && isApiToken(caller.authToken);
+}
+
+export function callerUsesRoutineActorToken(
+  caller: Pick<RequestCallerContext, 'authSource' | 'authState'>,
+): boolean {
+  return caller.authState === 'authenticated' && caller.authSource === 'routine_actor';
 }

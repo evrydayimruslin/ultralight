@@ -9,7 +9,11 @@ import type {
   RunResponse,
 } from "../../shared/types/index.ts";
 import { createAppsService } from "../services/apps.ts";
-import { createAppDataService } from "../services/appdata.ts";
+import {
+  createAppDataService,
+  createWorkerAppDataService,
+} from "../services/appdata.ts";
+import { createMeteredAppDataService } from "../services/appdata-metered.ts";
 import {
   createRuntimeAIContext,
   createUnavailableAIService,
@@ -28,6 +32,7 @@ import {
   fetchAppEntryCode,
   resolveAppRuntimeEnvVars,
   resolveAppSupabaseConfig,
+  resolveRuntimeAppCallDependencies,
   resolveStrictManifestPermissions,
   SupabaseConfigMigrationRequiredError,
 } from "../services/app-runtime-resources.ts";
@@ -39,6 +44,7 @@ import {
   type RequestCallerContext,
   resolveRequestCallerContext,
 } from "../services/request-caller-context.ts";
+import { routineTraceContextFromCaller } from "../services/routine-trace.ts";
 import {
   createRuntimeOperationMeteringContext,
   preflightRuntimeCloudHold,
@@ -47,6 +53,11 @@ import {
   settleRuntimeCloudPreflight,
 } from "../services/execution-settlement.ts";
 import { createExecutionReceiptId } from "../services/call-logger.ts";
+import {
+  createMemoryService,
+  type MemoryService as MemoryServiceImpl,
+} from "../services/memory.ts";
+import { getEnv } from "../lib/env.ts";
 
 function toLogEntries(lines: string[]): LogEntry[] {
   return lines.map((message) => ({
@@ -54,6 +65,32 @@ function toLogEntries(lines: string[]): LogEntry[] {
     level: "log",
     message,
   }));
+}
+
+let memoryService: MemoryServiceImpl | null | undefined;
+
+function getRuntimeMemoryService(): MemoryServiceImpl | null {
+  if (memoryService !== undefined) return memoryService;
+  try {
+    memoryService = createMemoryService();
+  } catch (err) {
+    console.error("[RUN] Failed to create memory service:", err);
+    memoryService = null;
+  }
+  return memoryService;
+}
+
+function createRuntimeMemoryAdapter(userId: string, appId: string) {
+  const service = getRuntimeMemoryService();
+  if (!service) return null;
+  return {
+    remember: async (key: string, value: unknown) => {
+      await service.remember(userId, `app:${appId}`, key, value);
+    },
+    recall: async (key: string) => {
+      return await service.recall(userId, `app:${appId}`, key);
+    },
+  };
 }
 
 export async function handleRun(
@@ -92,6 +129,7 @@ export async function handleRun(
       );
     }
     const { userId, user } = caller;
+    const routineContext = routineTraceContextFromCaller(caller);
 
     // Initialize services
     const appsService = createAppsService();
@@ -214,6 +252,7 @@ export async function handleRun(
           method: "run",
           gpuResult,
           durationMs: gpuDurationMs,
+          routineContext,
         });
         if (settlement?.insufficientBalance) {
           return json(
@@ -318,13 +357,14 @@ export async function handleRun(
         : { _args: args };
     const cloudPreflight = await preflightRuntimeCloudHold({
       app,
-      userId: user?.id || app.owner_id,
+      userId,
       functionName,
       inputArgs,
       receiptId,
       method: "run",
       timeoutMs,
       callerAuthState: caller.authState,
+      routineContext,
     });
     if (cloudPreflight.insufficientBalance) {
       return json(
@@ -352,15 +392,39 @@ export async function handleRun(
       receiptId,
       method: "run",
       metadata: { surface: "run" },
+      routineContext,
     });
-    // R2-based app data storage - zero config for users
-    const appDataService = createAppDataService(appId, undefined, {
-      operationMetering: cloudOperationMetering,
-      billingConfig: cloudPreflight.billingConfig,
-    });
+    const workerDataUrl = getEnv("WORKER_DATA_URL");
+    const workerSecret = getEnv("WORKER_SECRET");
+    const rawAppDataService = workerDataUrl && workerSecret
+      ? createWorkerAppDataService(
+        app.id,
+        userId,
+        workerDataUrl,
+        workerSecret,
+        {
+          operationMetering: cloudOperationMetering,
+          billingConfig: cloudPreflight.billingConfig,
+        },
+      )
+      : createAppDataService(app.id, userId, {
+        operationMetering: cloudOperationMetering,
+        billingConfig: cloudPreflight.billingConfig,
+      });
+    const appDataService = createMeteredAppDataService(
+      rawAppDataService,
+      userId,
+    );
+    const baseUrl = getEnv("BASE_URL") || undefined;
+    const appCallDependencies = resolveRuntimeAppCallDependencies(app, caller);
+    const memoryAdapter = permissions.includes("memory:read") ||
+        permissions.includes("memory:write")
+      ? createRuntimeMemoryAdapter(userId, app.id)
+      : null;
+
     const result = await executeInDynamicSandbox(
       {
-        appId,
+        appId: app.id,
         userId,
         ownerId: app.owner_id,
         executionId: crypto.randomUUID(),
@@ -371,12 +435,16 @@ export async function handleRun(
         user,
         appDataService,
         d1DataService,
-        memoryService: null,
+        memoryService: memoryAdapter,
         aiService: runtimeAI.aiService as {
           call: (request: AIRequest, apiKey: string) => Promise<AIResponse>;
         },
         envVars,
         supabase: supabaseConfig,
+        baseUrl,
+        authToken: caller.authToken,
+        appCallDependencies,
+        workerSecret: workerSecret || undefined,
         timeoutMs,
         cloudOperationMetering,
         cloudOperationBillingConfig: cloudPreflight.billingConfig,
@@ -391,11 +459,18 @@ export async function handleRun(
       {
         success: result.success,
         error_message: result.success ? null : result.error?.message,
+        ...(routineContext
+          ? {
+            routine_id: routineContext.routineId,
+            routine_run_id: routineContext.routineRunId,
+            trace_id: routineContext.traceId ?? null,
+          }
+          : {}),
       },
     );
     const { settlement } = await settleAndLogAppExecution({
       receiptId,
-      userId: user?.id || app.owner_id,
+      userId,
       user,
       app,
       functionName,
@@ -411,6 +486,7 @@ export async function handleRun(
       callerAuthState: caller.authState,
       runtimePricingPreflight: cloudPreflight.pricing,
       runtimeCloudSettlement: cloudSettlement,
+      routineContext,
     });
 
     if (result.success && settlement.insufficientBalance) {

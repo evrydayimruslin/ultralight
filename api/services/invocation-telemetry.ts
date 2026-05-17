@@ -1,16 +1,20 @@
-import { getEnv } from '../lib/env.ts';
-import type { ChatMessage, ChatTool, InferenceBillingMode } from '../../shared/contracts/ai.ts';
+import { getEnv } from "../lib/env.ts";
+import type {
+  ChatMessage,
+  ChatTool,
+  InferenceBillingMode,
+} from "../../shared/contracts/ai.ts";
 import {
   getAnalyticsIdentity,
   isExplicitlyDisabled,
   sha256Text,
   utf8ByteLength,
-} from './analytics-identity.ts';
-import { storeTextArtifact } from './artifact-store.ts';
-import { createServerLogger } from './logging.ts';
+} from "./analytics-identity.ts";
+import { storeTextArtifact } from "./artifact-store.ts";
+import { createServerLogger } from "./logging.ts";
 
 type JsonRecord = Record<string, unknown>;
-type InvocationStatus = 'started' | 'success' | 'error' | 'aborted' | 'timeout';
+type InvocationStatus = "started" | "success" | "error" | "aborted" | "timeout";
 
 export interface LlmInvocationTelemetryInit {
   userId: string;
@@ -26,7 +30,16 @@ export interface LlmInvocationTelemetryInit {
   billingMode?: InferenceBillingMode;
   keySource?: string;
   requestParams?: JsonRecord;
-  messages: ChatMessage[] | Array<{ role: string; content: unknown; tool_call_id?: string; tool_calls?: unknown[] }>;
+  messages:
+    | ChatMessage[]
+    | Array<
+      {
+        role: string;
+        content: unknown;
+        tool_call_id?: string;
+        tool_calls?: unknown[];
+      }
+    >;
   tools?: ChatTool[] | object[];
   startedAt?: string;
   metadata?: JsonRecord;
@@ -60,6 +73,9 @@ export interface ToolInvocationTelemetryInput {
   appId?: string;
   mcpId?: string;
   functionName?: string;
+  receiptId?: string;
+  routineId?: string;
+  routineRunId?: string;
   schemaSnapshot?: unknown;
   args?: unknown;
   result?: unknown;
@@ -82,7 +98,7 @@ export interface ExecutionFailureInput {
   source: string;
   phase: string;
   failureType: string;
-  severity?: 'info' | 'warn' | 'error' | 'critical';
+  severity?: "info" | "warn" | "error" | "critical";
   message?: string | null;
   retryable?: boolean | null;
   abortedBy?: string | null;
@@ -96,14 +112,14 @@ interface ArtifactSnapshot {
   preview: unknown;
 }
 
-const telemetryLogger = createServerLogger('INVOCATION-TELEMETRY');
+const telemetryLogger = createServerLogger("INVOCATION-TELEMETRY");
 
 function telemetryEnabled(): boolean {
-  return !isExplicitlyDisabled(getEnv('CHAT_CAPTURE_ENABLED'));
+  return !isExplicitlyDisabled(getEnv("CHAT_CAPTURE_ENABLED"));
 }
 
 function supabaseReady(): boolean {
-  return !!getEnv('SUPABASE_URL') && !!getEnv('SUPABASE_SERVICE_ROLE_KEY');
+  return !!getEnv("SUPABASE_URL") && !!getEnv("SUPABASE_SERVICE_ROLE_KEY");
 }
 
 function asUuid(value?: string): string | null {
@@ -114,13 +130,13 @@ function asUuid(value?: string): string | null {
     : null;
 }
 
-function dbHeaders(prefer = 'return=minimal'): Record<string, string> {
-  const key = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+function dbHeaders(prefer = "return=minimal"): Record<string, string> {
+  const key = getEnv("SUPABASE_SERVICE_ROLE_KEY");
   return {
-    'apikey': key,
-    'Authorization': `Bearer ${key}`,
-    'Content-Type': 'application/json',
-    'Prefer': prefer,
+    "apikey": key,
+    "Authorization": `Bearer ${key}`,
+    "Content-Type": "application/json",
+    "Prefer": prefer,
   };
 }
 
@@ -129,19 +145,21 @@ async function postRows(
   rows: unknown,
   opts: { prefer?: string; onConflict?: string } = {},
 ): Promise<unknown[]> {
-  const url = new URL(`${getEnv('SUPABASE_URL')}/rest/v1/${table}`);
-  if (opts.onConflict) url.searchParams.set('on_conflict', opts.onConflict);
+  const url = new URL(`${getEnv("SUPABASE_URL")}/rest/v1/${table}`);
+  if (opts.onConflict) url.searchParams.set("on_conflict", opts.onConflict);
 
   const response = await fetch(url.toString(), {
-    method: 'POST',
+    method: "POST",
     headers: dbHeaders(opts.prefer),
     body: JSON.stringify(rows),
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to insert ${table}: ${response.status} ${await response.text()}`);
+    throw new Error(
+      `Failed to insert ${table}: ${response.status} ${await response.text()}`,
+    );
   }
-  if ((opts.prefer || '').includes('return=representation')) {
+  if ((opts.prefer || "").includes("return=representation")) {
     return await response.json().catch(() => []) as unknown[];
   }
   return [];
@@ -152,14 +170,19 @@ async function patchRows(
   filter: string,
   update: unknown,
 ): Promise<void> {
-  const response = await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/${table}?${filter}`, {
-    method: 'PATCH',
-    headers: dbHeaders('return=minimal'),
-    body: JSON.stringify(update),
-  });
+  const response = await fetch(
+    `${getEnv("SUPABASE_URL")}/rest/v1/${table}?${filter}`,
+    {
+      method: "PATCH",
+      headers: dbHeaders("return=minimal"),
+      body: JSON.stringify(update),
+    },
+  );
 
   if (!response.ok) {
-    throw new Error(`Failed to update ${table}: ${response.status} ${await response.text()}`);
+    throw new Error(
+      `Failed to update ${table}: ${response.status} ${await response.text()}`,
+    );
   }
 }
 
@@ -168,15 +191,15 @@ async function analyticsIdentityFor(userId: string): Promise<{
   pepperVersion: string;
 }> {
   const identity = await getAnalyticsIdentity(userId);
-  await postRows('capture_subjects', {
+  await postRows("capture_subjects", {
     anon_user_id: identity.anonUserId,
     user_id: userId,
     pepper_version: identity.pepperVersion,
     last_seen_at: new Date().toISOString(),
     metadata: {},
   }, {
-    prefer: 'return=minimal,resolution=merge-duplicates',
-    onConflict: 'anon_user_id',
+    prefer: "return=minimal,resolution=merge-duplicates",
+    onConflict: "anon_user_id",
   });
   return identity;
 }
@@ -226,7 +249,7 @@ async function storeJsonSnapshot(input: {
     relationship: input.relationship,
     text,
     originalFilename: input.filename,
-    mimeType: 'application/json; charset=utf-8',
+    mimeType: "application/json; charset=utf-8",
     metadata: {
       ...(input.metadata || {}),
       conversation_id: input.conversationId || null,
@@ -234,7 +257,7 @@ async function storeJsonSnapshot(input: {
       bytes,
     },
   }).catch((err) => {
-    telemetryLogger.warn('Failed to store invocation telemetry artifact', {
+    telemetryLogger.warn("Failed to store invocation telemetry artifact", {
       source: input.source,
       relationship: input.relationship,
       error: err,
@@ -253,7 +276,7 @@ async function storeJsonSnapshot(input: {
 export class LlmInvocationTelemetrySession {
   private readonly init: LlmInvocationTelemetryInit;
   private started: Promise<void> | null = null;
-  private anonUserId = '';
+  private anonUserId = "";
   private startTime = 0;
   private finished = false;
 
@@ -266,7 +289,7 @@ export class LlmInvocationTelemetrySession {
     if (!this.started) {
       this.startTime = Date.now();
       this.started = this.startInner().catch((err) => {
-        telemetryLogger.warn('Failed to start LLM invocation telemetry', {
+        telemetryLogger.warn("Failed to start LLM invocation telemetry", {
           invocation_id: this.init.invocationId,
           source: this.init.source,
           phase: this.init.phase,
@@ -287,7 +310,7 @@ export class LlmInvocationTelemetrySession {
     const durationMs = this.startTime > 0 ? Date.now() - this.startTime : null;
     try {
       await patchRows(
-        'llm_invocations',
+        "llm_invocations",
         `invocation_id=eq.${encodeURIComponent(this.init.invocationId)}`,
         {
           completed_at: completedAt,
@@ -307,7 +330,7 @@ export class LlmInvocationTelemetrySession {
 
       if (input.responseSnapshot) {
         await this.storeResponseSnapshot(input).catch((err) => {
-          telemetryLogger.warn('Failed to store LLM response snapshot', {
+          telemetryLogger.warn("Failed to store LLM response snapshot", {
             invocation_id: this.init.invocationId,
             source: this.init.source,
             phase: this.init.phase,
@@ -316,7 +339,7 @@ export class LlmInvocationTelemetrySession {
         });
       }
 
-      if (input.status !== 'success') {
+      if (input.status !== "success") {
         await recordExecutionFailure({
           userId: this.init.userId,
           anonUserId: this.anonUserId,
@@ -331,16 +354,18 @@ export class LlmInvocationTelemetrySession {
         });
       }
     } catch (err) {
-      telemetryLogger.warn('Failed to finish LLM invocation telemetry', {
+      telemetryLogger.warn("Failed to finish LLM invocation telemetry", {
         invocation_id: this.init.invocationId,
         error: err,
       });
     }
   }
 
-  private async storeResponseSnapshot(input: LlmInvocationFinishInput): Promise<void> {
+  private async storeResponseSnapshot(
+    input: LlmInvocationFinishInput,
+  ): Promise<void> {
     if (!input.responseSnapshot) return;
-    const snapshotType = input.responseSnapshot.snapshotType || 'llm_response';
+    const snapshotType = input.responseSnapshot.snapshotType || "llm_response";
     const responseValue = {
       status: input.status,
       finish_reason: input.finishReason || null,
@@ -353,10 +378,11 @@ export class LlmInvocationTelemetrySession {
     const snapshot = await storeJsonSnapshot({
       anonUserId: this.anonUserId,
       conversationId: this.init.conversationId,
-      source: 'llm_response_snapshot',
-      relationship: 'llm_response_snapshot',
+      source: "llm_response_snapshot",
+      relationship: "llm_response_snapshot",
       value: responseValue,
-      filename: `${this.init.source}-${this.init.phase}-${this.init.invocationId}-response.json`,
+      filename:
+        `${this.init.source}-${this.init.phase}-${this.init.invocationId}-response.json`,
       metadata: {
         invocation_id: this.init.invocationId,
         trace_id: this.init.traceId,
@@ -368,7 +394,7 @@ export class LlmInvocationTelemetrySession {
       },
     });
 
-    await postRows('llm_context_snapshots', {
+    await postRows("llm_context_snapshots", {
       invocation_id: this.init.invocationId,
       trace_id: asUuid(this.init.traceId),
       conversation_id: this.init.conversationId || null,
@@ -404,7 +430,7 @@ export class LlmInvocationTelemetrySession {
     const contextSha256 = await sha256Text(contextText);
     const contextBytes = utf8ByteLength(contextText);
 
-    await postRows('llm_invocations', {
+    await postRows("llm_invocations", {
       invocation_id: this.init.invocationId,
       trace_id: asUuid(this.init.traceId),
       conversation_id: this.init.conversationId || null,
@@ -422,23 +448,24 @@ export class LlmInvocationTelemetrySession {
       context_message_count: this.init.messages.length,
       tool_schema_count: this.init.tools?.length || 0,
       started_at: startedAt,
-      status: 'started',
+      status: "started",
       metadata: {
         user_email_present: !!this.init.userEmail,
         ...(this.init.metadata || {}),
       },
     }, {
-      prefer: 'return=minimal,resolution=merge-duplicates',
-      onConflict: 'invocation_id',
+      prefer: "return=minimal,resolution=merge-duplicates",
+      onConflict: "invocation_id",
     });
 
     const snapshot = await storeJsonSnapshot({
       anonUserId: this.anonUserId,
       conversationId: this.init.conversationId,
-      source: 'llm_context_snapshot',
-      relationship: 'llm_context_snapshot',
+      source: "llm_context_snapshot",
+      relationship: "llm_context_snapshot",
       value: contextValue,
-      filename: `${this.init.source}-${this.init.phase}-${this.init.invocationId}.json`,
+      filename:
+        `${this.init.source}-${this.init.phase}-${this.init.invocationId}.json`,
       metadata: {
         invocation_id: this.init.invocationId,
         trace_id: this.init.traceId,
@@ -447,13 +474,13 @@ export class LlmInvocationTelemetrySession {
       },
     });
 
-    const rows = await postRows('llm_context_snapshots', {
+    const rows = await postRows("llm_context_snapshots", {
       invocation_id: this.init.invocationId,
       trace_id: asUuid(this.init.traceId),
       conversation_id: this.init.conversationId || null,
       anon_user_id: this.anonUserId,
       source: this.init.source,
-      snapshot_type: 'llm_request',
+      snapshot_type: "llm_request",
       message_count: this.init.messages.length,
       tool_schema_count: this.init.tools?.length || 0,
       artifact_id: snapshot.artifactId,
@@ -466,13 +493,13 @@ export class LlmInvocationTelemetrySession {
         phase: this.init.phase,
       },
     }, {
-      prefer: 'return=representation',
+      prefer: "return=representation",
     }) as Array<{ id?: string }>;
 
     const snapshotId = rows[0]?.id;
     if (snapshotId) {
       await patchRows(
-        'llm_invocations',
+        "llm_invocations",
         `invocation_id=eq.${encodeURIComponent(this.init.invocationId)}`,
         { context_snapshot_id: snapshotId },
       );
@@ -497,8 +524,8 @@ export async function recordToolInvocationTelemetry(
     const argsSnapshot = await storeJsonSnapshot({
       anonUserId: identity.anonUserId,
       conversationId: input.conversationId,
-      source: 'tool_args',
-      relationship: 'tool_args',
+      source: "tool_args",
+      relationship: "tool_args",
       value: input.args ?? {},
       filename: `${input.toolName}-${input.invocationId}-args.json`,
       metadata: {
@@ -510,8 +537,8 @@ export async function recordToolInvocationTelemetry(
     const resultSnapshot = await storeJsonSnapshot({
       anonUserId: identity.anonUserId,
       conversationId: input.conversationId,
-      source: 'tool_result',
-      relationship: 'tool_result',
+      source: "tool_result",
+      relationship: "tool_result",
       value: input.result ?? null,
       filename: `${input.toolName}-${input.invocationId}-result.json`,
       metadata: {
@@ -522,7 +549,7 @@ export async function recordToolInvocationTelemetry(
       },
     });
 
-    await postRows('tool_invocations', {
+    await postRows("tool_invocations", {
       invocation_id: input.invocationId,
       trace_id: asUuid(input.traceId),
       conversation_id: input.conversationId || null,
@@ -531,10 +558,13 @@ export async function recordToolInvocationTelemetry(
       source: input.source,
       tool_call_id: input.toolCallId || null,
       tool_name: input.toolName,
-      tool_kind: input.toolKind || 'function',
+      tool_kind: input.toolKind || "function",
       app_id: input.appId || null,
       mcp_id: input.mcpId || null,
       function_name: input.functionName || input.toolName,
+      receipt_id: input.receiptId || null,
+      routine_id: input.routineId || null,
+      routine_run_id: input.routineRunId || null,
       schema_snapshot: safeJson(input.schemaSnapshot || {}),
       args_preview: argsSnapshot.preview,
       args_artifact_id: argsSnapshot.artifactId,
@@ -552,11 +582,11 @@ export async function recordToolInvocationTelemetry(
       error_message: input.errorMessage || null,
       metadata: safeJson(input.metadata || {}),
     }, {
-      prefer: 'return=minimal,resolution=merge-duplicates',
-      onConflict: 'invocation_id',
+      prefer: "return=minimal,resolution=merge-duplicates",
+      onConflict: "invocation_id",
     });
 
-    if (input.status !== 'success') {
+    if (input.status !== "success") {
       await recordExecutionFailure({
         userId: input.userId,
         anonUserId: identity.anonUserId,
@@ -564,18 +594,21 @@ export async function recordToolInvocationTelemetry(
         conversationId: input.conversationId,
         invocationId: input.invocationId,
         source: input.source,
-        phase: 'tool_invocation',
+        phase: "tool_invocation",
         failureType: input.errorType || input.status,
         message: input.errorMessage || null,
         metadata: {
           tool_name: input.toolName,
           tool_call_id: input.toolCallId || null,
+          receipt_id: input.receiptId || null,
+          routine_id: input.routineId || null,
+          routine_run_id: input.routineRunId || null,
           ...(input.metadata || {}),
         },
       });
     }
   } catch (err) {
-    telemetryLogger.warn('Failed to record tool invocation telemetry', {
+    telemetryLogger.warn("Failed to record tool invocation telemetry", {
       invocation_id: input.invocationId,
       tool_name: input.toolName,
       error: err,
@@ -583,16 +616,18 @@ export async function recordToolInvocationTelemetry(
   }
 }
 
-export async function recordExecutionFailure(input: ExecutionFailureInput): Promise<void> {
+export async function recordExecutionFailure(
+  input: ExecutionFailureInput,
+): Promise<void> {
   if (!telemetryEnabled() || !supabaseReady()) return;
 
   try {
-    let anonUserId = input.anonUserId || '';
+    let anonUserId = input.anonUserId || "";
     if (!anonUserId && input.userId) {
       anonUserId = (await analyticsIdentityFor(input.userId)).anonUserId;
     }
 
-    await postRows('execution_failures', {
+    await postRows("execution_failures", {
       failure_id: input.failureId || crypto.randomUUID(),
       trace_id: asUuid(input.traceId),
       conversation_id: input.conversationId || null,
@@ -601,17 +636,17 @@ export async function recordExecutionFailure(input: ExecutionFailureInput): Prom
       source: input.source,
       phase: input.phase,
       failure_type: input.failureType,
-      severity: input.severity || 'error',
+      severity: input.severity || "error",
       message: input.message || null,
       retryable: input.retryable ?? null,
       aborted_by: input.abortedBy || null,
       metadata: safeJson(input.metadata || {}),
     }, {
-      prefer: 'return=minimal,resolution=ignore-duplicates',
-      onConflict: 'failure_id',
+      prefer: "return=minimal,resolution=ignore-duplicates",
+      onConflict: "failure_id",
     });
   } catch (err) {
-    telemetryLogger.warn('Failed to record execution failure telemetry', {
+    telemetryLogger.warn("Failed to record execution failure telemetry", {
       failure_type: input.failureType,
       source: input.source,
       phase: input.phase,

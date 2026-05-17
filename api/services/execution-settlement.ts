@@ -27,6 +27,11 @@ import {
   type RuntimeCloudHoldResult,
   settleRuntimeCloudHold,
 } from "./cloud-usage.ts";
+import { recordRoutineCallContribution } from "./routine-rollups.ts";
+import {
+  type RoutineTraceContext,
+  routineTraceMetadata,
+} from "./routine-trace.ts";
 
 export interface ExecutionTelemetry {
   responseSizeBytes: number;
@@ -62,6 +67,7 @@ export interface SettleAppCallParams extends SettleCallerAppChargeParams {
   infraCharge?: RuntimeInfraCharge | null;
   runtimePricingPreflight?: RuntimeAppCallPricingPreflight | null;
   runtimeCloudSettlement?: RuntimeCloudSettlementForAppCall | null;
+  routineContext?: RoutineTraceContext | null;
 }
 
 export interface AppCallSettlementResult {
@@ -121,6 +127,7 @@ export interface PreflightRuntimeCloudHoldParams {
   method: string;
   timeoutMs: number;
   callerAuthState?: "authenticated" | "anonymous";
+  routineContext?: RoutineTraceContext | null;
 }
 
 export interface RuntimeCloudPreflightResult {
@@ -141,6 +148,7 @@ export interface RuntimeOperationMeteringContextParams {
   receiptId?: string;
   method: string;
   metadata?: Record<string, unknown>;
+  routineContext?: RoutineTraceContext | null;
 }
 
 export interface DebitWidgetPullUsageParams {
@@ -153,6 +161,7 @@ export interface DebitWidgetPullUsageParams {
   widgetIntervalMs?: number;
   widgetPullReason?: string;
   metadata?: Record<string, unknown>;
+  routineContext?: RoutineTraceContext | null;
 }
 
 export interface WidgetPullUsageResult {
@@ -198,6 +207,8 @@ export interface LogExecutionResultParams {
   cloudChargeLight?: number;
   cloudPayerUserId?: string;
   cloudOwnerSponsored?: boolean;
+  routineContext?: RoutineTraceContext | null;
+  toolInvocationId?: string;
   gpuType?: string;
   gpuExitCode?: string;
   gpuDurationMs?: number;
@@ -221,6 +232,7 @@ export interface SettleAndLogGpuExecutionParams {
   sequenceNumber?: number;
   userQuery?: string;
   source?: McpCallLogEntry["source"];
+  routineContext?: RoutineTraceContext | null;
 }
 
 export interface SettleAndLogAppExecutionParams {
@@ -244,6 +256,7 @@ export interface SettleAndLogAppExecutionParams {
   callerAuthState?: "authenticated" | "anonymous";
   runtimePricingPreflight?: RuntimeAppCallPricingPreflight | null;
   runtimeCloudSettlement?: RuntimeCloudSettlementForAppCall | null;
+  routineContext?: RoutineTraceContext | null;
 }
 
 interface ExecutionSettlementDeps {
@@ -267,6 +280,25 @@ export function buildExecutionTelemetry(
     executionCostEstimateLight: (requestCost + cpuCost) *
       LIGHT_PER_DOLLAR_DESKTOP,
   };
+}
+
+function errorPayload(message?: string): Record<string, unknown> | null {
+  return message ? { message } : null;
+}
+
+function safePreview(value: unknown, maxChars = 2000): Record<string, unknown> {
+  try {
+    const text = typeof value === "string" ? value : JSON.stringify(value);
+    if (text.length <= maxChars) {
+      return typeof value === "object" && value !== null &&
+          !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : { value };
+    }
+    return { truncated: true, text: text.slice(0, maxChars) };
+  } catch {
+    return { value_type: typeof value };
+  }
 }
 
 export async function preflightRuntimeCloudHold(
@@ -328,6 +360,7 @@ export async function preflightRuntimeCloudHold(
       expiresAt: new Date(Date.now() + params.timeoutMs + 60_000).toISOString(),
       billingConfig,
       metadata: {
+        ...routineTraceMetadata(params.routineContext),
         app_slug: params.app.slug,
         method: params.method,
         receipt_id: params.receiptId,
@@ -424,6 +457,7 @@ export function createRuntimeOperationMeteringContext(
     source: params.method,
     billingConfigVersion: params.preflight.billingConfig.version,
     metadata: {
+      ...routineTraceMetadata(params.routineContext),
       app_slug: params.app.slug,
       runtime_cloud_hold_id: hold.holdId,
       owner_sponsored_infra: hold.ownerSponsoredInfra,
@@ -501,6 +535,7 @@ export async function debitWidgetPullUsage(
       amountLight,
       billingConfigVersion: billingConfig.version,
       metadata: {
+        ...routineTraceMetadata(params.routineContext),
         app_slug: params.app.slug,
         method: "widget_pull",
         receipt_id: params.receiptId,
@@ -590,6 +625,7 @@ export async function settleAppCall(
   let cloudUsageEventId: string | undefined;
 
   const baseMetadata = {
+    ...routineTraceMetadata(params.routineContext),
     app_slug: app.slug,
     pricing_source: "app_call",
     method,
@@ -895,6 +931,10 @@ export function logExecutionResult(
     cloudChargeLight: params.cloudChargeLight,
     cloudPayerUserId: params.cloudPayerUserId,
     cloudOwnerSponsored: params.cloudOwnerSponsored,
+    routineId: params.routineContext?.routineId,
+    routineRunId: params.routineContext?.routineRunId,
+    traceId: params.routineContext?.traceId,
+    toolInvocationId: params.toolInvocationId,
     gpuType: params.gpuType,
     gpuExitCode: params.gpuExitCode,
     gpuDurationMs: params.gpuDurationMs,
@@ -912,6 +952,7 @@ export async function settleAndLogAppExecution(
   settlement: AppCallSettlementResult;
   chargedLight: number;
   receiptId?: string;
+  routineStep?: { step_id: string; step_index: number; total_light: number };
 }> {
   const settlement = await settleAppCall({
     app: params.app,
@@ -925,7 +966,52 @@ export async function settleAndLogAppExecution(
     infraCharge: params.infraCharge,
     runtimePricingPreflight: params.runtimePricingPreflight,
     runtimeCloudSettlement: params.runtimeCloudSettlement,
+    routineContext: params.routineContext,
   }, deps);
+
+  const routineCostLight = params.receiptId
+    ? settlement.appChargeLight
+    : settlement.chargedLight;
+  const routineContribution = params.routineContext
+    ? recordRoutineCallContribution({
+      userId: params.userId,
+      routine: params.routineContext,
+      appId: params.app.id,
+      appRef: params.app.slug,
+      functionName: params.functionName,
+      receiptId: params.receiptId,
+      status: params.success && !settlement.insufficientBalance
+        ? "succeeded"
+        : "failed",
+      durationMs: params.durationMs,
+      costLight: routineCostLight,
+      argsPreview: safePreview(params.inputArgs),
+      resultPreview: safePreview(
+        settlement.insufficientBalance
+          ? settlement.metadata
+          : params.outputResult,
+      ),
+      error: errorPayload(
+        settlement.insufficientBalance
+          ? settlement.insufficientBalanceMessage
+          : params.errorMessage,
+      ),
+      metadata: {
+        method: params.method,
+        app_slug: params.app.slug,
+        cloud_usage_hold_id: settlement.cloudUsageHoldId ?? null,
+        cloud_usage_event_id: settlement.cloudUsageEventId ?? null,
+        transfer_id: settlement.transferId ?? null,
+        app_charge_light: settlement.appChargeLight,
+        infra_charge_light: settlement.infraChargeLight,
+        developer_revenue_light: settlement.developerRevenueLight,
+        platform_fee_light: settlement.platformFeeLight,
+      },
+    }, deps).catch((err) => {
+      console.error("[ROUTINE] Failed to record routine contribution:", err);
+      return null;
+    })
+    : null;
 
   logExecutionResult({
     userId: params.userId,
@@ -965,12 +1051,16 @@ export async function settleAndLogAppExecution(
     cloudChargeLight: settlement.infraChargeLight,
     cloudPayerUserId: settlement.infraPayerUserId || undefined,
     cloudOwnerSponsored: settlement.ownerSponsoredInfra,
+    routineContext: params.routineContext,
   }, deps);
+
+  const routineStep = routineContribution ? await routineContribution : null;
 
   return {
     settlement,
     chargedLight: settlement.chargedLight,
     receiptId: params.receiptId,
+    ...(routineStep ? { routineStep } : {}),
   };
 }
 
@@ -981,6 +1071,7 @@ export async function settleAndLogGpuExecution(
   settlement: Awaited<ReturnType<typeof settleGpuExecution>> | null;
   chargedLight: number;
   receiptId?: string;
+  routineStep?: { step_id: string; step_index: number; total_light: number };
 }> {
   const settleGpuExecutionFn = deps?.settleGpuExecutionFn ?? settleGpuExecution;
   let settlement: Awaited<ReturnType<typeof settleGpuExecution>> | null = null;
@@ -996,6 +1087,41 @@ export async function settleAndLogGpuExecution(
     );
     chargedLight = settlement.chargedLight;
   }
+
+  const routineContribution = params.routineContext
+    ? recordRoutineCallContribution({
+      userId: params.userId,
+      routine: params.routineContext,
+      appId: params.app.id,
+      appRef: params.app.slug,
+      functionName: params.functionName,
+      receiptId: params.receiptId,
+      status: params.gpuResult.success ? "succeeded" : "failed",
+      durationMs: params.durationMs,
+      costLight: chargedLight,
+      argsPreview: safePreview(params.inputArgs),
+      resultPreview: safePreview(
+        params.gpuResult.success
+          ? params.gpuResult.result
+          : params.gpuResult.error,
+      ),
+      error: errorPayload(params.gpuResult.error?.message),
+      metadata: {
+        method: params.method,
+        app_slug: params.app.slug,
+        gpu_type: params.gpuResult.gpuType,
+        gpu_exit_code: params.gpuResult.exitCode,
+        gpu_cost_light: params.gpuResult.gpuCostLight,
+        gpu_developer_fee_light: settlement?.developerFeeChargedLight ?? 0,
+      },
+    }, deps).catch((err) => {
+      console.error(
+        "[ROUTINE] Failed to record GPU routine contribution:",
+        err,
+      );
+      return null;
+    })
+    : null;
 
   logExecutionResult({
     userId: params.userId,
@@ -1028,9 +1154,16 @@ export async function settleAndLogGpuExecution(
     gpuPeakVramGb: params.gpuResult.peakVramGb,
     gpuDeveloperFeeLight: settlement?.developerFeeChargedLight || 0,
     gpuFailurePolicy: settlement?.failurePolicy,
+    routineContext: params.routineContext,
   }, deps);
 
-  return { settlement, chargedLight, receiptId: params.receiptId };
+  const routineStep = routineContribution ? await routineContribution : null;
+  return {
+    settlement,
+    chargedLight,
+    receiptId: params.receiptId,
+    ...(routineStep ? { routineStep } : {}),
+  };
 }
 
 function normalizeInfraCharge(
@@ -1087,6 +1220,7 @@ function buildBaseSettlement(
     insufficientBalance: false,
     receiptId: params.receiptId,
     metadata: {
+      ...routineTraceMetadata(params.routineContext),
       app_price_light: values.appPriceLight,
       app_charge_light: values.appChargeLight,
       developer_revenue_light: values.developerRevenueLight,

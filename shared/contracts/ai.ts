@@ -2,15 +2,15 @@ import type {
   ActiveBYOKProvider,
   BYOKModel,
   BYOKProviderCapabilities,
-} from '../types/index.ts';
+} from "../types/index.ts";
 
 export interface AITextPart {
-  type: 'text';
+  type: "text";
   text: string;
 }
 
 export interface AIFilePart {
-  type: 'file';
+  type: "file";
   data: string;
   filename?: string;
 }
@@ -18,9 +18,9 @@ export interface AIFilePart {
 export type AIContentPart = AITextPart | AIFilePart;
 
 export interface AIMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: "system" | "user" | "assistant";
   content: string | AIContentPart[];
-  cache_control?: { type: 'ephemeral' };
+  cache_control?: { type: "ephemeral" };
 }
 
 export interface AITool {
@@ -71,7 +71,7 @@ export interface ChatTraceContext {
 }
 
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool';
+  role: "system" | "user" | "assistant" | "tool";
   content: string | null;
   tool_calls?: ChatToolCall[];
   tool_call_id?: string;
@@ -79,7 +79,7 @@ export interface ChatMessage {
 }
 
 export interface ChatTool {
-  type: 'function';
+  type: "function";
   function: {
     name: string;
     description?: string;
@@ -89,7 +89,7 @@ export interface ChatTool {
 
 export interface ChatToolCall {
   id: string;
-  type: 'function';
+  type: "function";
   function: {
     name: string;
     arguments: string;
@@ -122,19 +122,22 @@ export interface ToolInvocationTelemetryRequest {
   appId?: string;
   mcpId?: string;
   functionName?: string;
+  receiptId?: string;
+  routineId?: string;
+  routineRunId?: string;
   schemaSnapshot?: unknown;
   args?: unknown;
   result?: unknown;
   startedAt?: string;
   completedAt?: string;
   durationMs?: number;
-  status: 'success' | 'error' | 'aborted' | 'timeout';
+  status: "success" | "error" | "aborted" | "timeout";
   errorType?: string;
   errorMessage?: string;
   metadata?: Record<string, unknown>;
 }
 
-export type InferenceBillingMode = 'light' | 'byok';
+export type InferenceBillingMode = "light" | "byok";
 
 export interface InferenceRoutePreference {
   billingMode?: InferenceBillingMode;
@@ -146,7 +149,7 @@ export interface ChatInferenceProviderOption {
   id: ActiveBYOKProvider;
   name: string;
   description: string;
-  protocol: 'openai-compatible';
+  protocol: "openai-compatible";
   baseUrl: string;
   defaultModel: string;
   models: BYOKModel[];
@@ -161,7 +164,7 @@ export interface ChatInferenceProviderOption {
 }
 
 export interface ChatInferenceLightOption {
-  provider: 'openrouter';
+  provider: "openrouter";
   defaultModel: string;
   models: BYOKModel[];
   balanceLight: number | null;

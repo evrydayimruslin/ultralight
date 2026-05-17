@@ -26,6 +26,10 @@ export const CALL_RECEIPT_LOG_SELECT = [
   "cloud_charge_light",
   "cloud_payer_user_id",
   "cloud_owner_sponsored",
+  "routine_id",
+  "routine_run_id",
+  "trace_id",
+  "tool_invocation_id",
   "buyer_billing_address_id",
   "buyer_billing_address_version",
   "tax_status",
@@ -87,6 +91,10 @@ export interface CallReceiptLogRow {
   cloud_charge_light?: number | null;
   cloud_payer_user_id?: string | null;
   cloud_owner_sponsored?: boolean | null;
+  routine_id?: string | null;
+  routine_run_id?: string | null;
+  trace_id?: string | null;
+  tool_invocation_id?: string | null;
   buyer_billing_address_id?: string | null;
   buyer_billing_address_version?: number | null;
   tax_status?: string | null;
@@ -172,6 +180,10 @@ export interface CallReceipt {
   cloud_payer_user_id: string | null;
   owner_sponsored_infra: boolean;
   caller_infra_fallback: boolean;
+  routine_id: string | null;
+  routine_run_id: string | null;
+  trace_id: string | null;
+  tool_invocation_id: string | null;
 }
 
 const RECEIPT_RESOURCES: ReceiptResource[] = [
@@ -310,6 +322,10 @@ export function buildCallReceipt(
     cloud_payer_user_id: log.cloud_payer_user_id ?? null,
     owner_sponsored_infra: log.cloud_owner_sponsored === true,
     caller_infra_fallback: callerInfraFallback,
+    routine_id: log.routine_id ?? null,
+    routine_run_id: log.routine_run_id ?? null,
+    trace_id: log.trace_id ?? null,
+    tool_invocation_id: log.tool_invocation_id ?? null,
   };
 }
 

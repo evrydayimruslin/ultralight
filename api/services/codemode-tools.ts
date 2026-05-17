@@ -6,6 +6,15 @@
 
 import type { ManifestFunction, ManifestParameter } from '../../shared/contracts/manifest.ts';
 import type {
+  RoutineApprovalPolicy,
+  RoutineBudgetDefaults,
+  RoutineCapabilityDeclaration,
+  RoutineConfigSchema,
+  RoutineDeclaration,
+  RoutineScheduleDeclaration,
+  RoutineSurfaceBindings,
+} from '../../shared/contracts/routine.ts';
+import type {
   CommandCardDeclaration,
   WidgetDeclaration,
   WidgetDependencyDeclaration,
@@ -29,6 +38,7 @@ export interface AppForCodemode {
   manifest: {
     functions?: Record<string, ManifestFunction>;
     widgets?: WidgetDeclaration[];
+    routines?: RoutineDeclaration[];
   };
 }
 
@@ -63,6 +73,23 @@ export interface WidgetIndexEntry {
   dataFunction: string;
   dependencies?: WidgetDependencyDeclaration[];
   cards: WidgetCardIndexEntry[];
+}
+
+export interface RoutineIndexEntry {
+  id: string;
+  label: string;
+  description?: string;
+  appId: string;
+  appSlug: string;
+  appName: string;
+  handler: string;
+  defaultSchedule?: RoutineScheduleDeclaration;
+  configSchema?: RoutineConfigSchema;
+  defaultConfig?: Record<string, unknown>;
+  capabilities?: RoutineCapabilityDeclaration[];
+  budgetDefaults?: RoutineBudgetDefaults;
+  approvalPolicy?: RoutineApprovalPolicy;
+  surfaces?: RoutineSurfaceBindings;
 }
 
 interface RpcToolCallEnvelope {
@@ -148,6 +175,34 @@ export function buildWidgetIndexForApp(app: AppForCodemode): WidgetIndexEntry[] 
   }
 
   return widgets;
+}
+
+export function buildRoutineIndexForApp(app: AppForCodemode): RoutineIndexEntry[] {
+  const routines: RoutineIndexEntry[] = [];
+
+  for (const routine of app.manifest.routines || []) {
+    if (!routine?.id || !routine.label || !routine.handler) continue;
+    routines.push({
+      id: routine.id,
+      label: routine.label,
+      ...(routine.description ? { description: routine.description } : {}),
+      appId: app.id,
+      appSlug: app.slug,
+      appName: app.name,
+      handler: routine.handler,
+      ...(routine.default_schedule !== undefined
+        ? { defaultSchedule: routine.default_schedule }
+        : {}),
+      ...(routine.config_schema ? { configSchema: routine.config_schema } : {}),
+      ...(routine.default_config ? { defaultConfig: routine.default_config } : {}),
+      ...(routine.capabilities?.length ? { capabilities: routine.capabilities } : {}),
+      ...(routine.budget_defaults ? { budgetDefaults: routine.budget_defaults } : {}),
+      ...(routine.approval_policy ? { approvalPolicy: routine.approval_policy } : {}),
+      ...(routine.surfaces ? { surfaces: routine.surfaces } : {}),
+    });
+  }
+
+  return routines;
 }
 
 // ── Tool Name Sanitization ──
@@ -260,10 +315,12 @@ export function buildJsonSchemaDescriptors(apps: AppForCodemode[]): {
   descriptors: Record<string, JsonSchemaToolDescriptor>;
   toolMap: Record<string, ToolMapping>;
   widgets: WidgetIndexEntry[];
+  routines: RoutineIndexEntry[];
 } {
   const descriptors: Record<string, JsonSchemaToolDescriptor> = {};
   const toolMap: Record<string, ToolMapping> = {};
   const widgets: WidgetIndexEntry[] = [];
+  const routines: RoutineIndexEntry[] = [];
 
   for (const app of apps) {
     if (!app.manifest) continue;
@@ -296,6 +353,7 @@ export function buildJsonSchemaDescriptors(apps: AppForCodemode[]): {
     }
 
     widgets.push(...buildWidgetIndexForApp(app));
+    routines.push(...buildRoutineIndexForApp(app));
   }
 
   // Add discovery tools
@@ -320,7 +378,7 @@ export function buildJsonSchemaDescriptors(apps: AppForCodemode[]): {
     },
   };
 
-  return { descriptors, toolMap, widgets };
+  return { descriptors, toolMap, widgets, routines };
 }
 
 // ── Generate TypeScript Types ──

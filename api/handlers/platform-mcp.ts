@@ -1,7 +1,7 @@
 // Platform MCP Handler — v4
 // Implements JSON-RPC 2.0 for the ul.* tool namespace
 // Endpoint: POST /mcp/platform
-// 18 tools: discover, command, download, test, upload, set, memory, permissions, connect,
+// 19 tools: discover, command, routine, download, test, upload, set, memory, permissions, connect,
 // connections, logs, rate, call, job, auth.link, marketplace, codemode, wallet
 // + 27 backward-compat aliases for pre-consolidation tool names
 
@@ -108,6 +108,7 @@ import { buildCorsHeaders } from '../services/cors.ts';
 import { buildSharedPageEntryUrl } from '../services/page-share-session.ts';
 import {
   type AppForCodemode,
+  buildRoutineIndexForApp,
   buildWidgetIndexForApp,
   type ToolMapping,
   type WidgetIndexEntry,
@@ -126,6 +127,10 @@ import {
   getCommandDashboardLayout,
   listCommandDashboardLayouts,
 } from '../services/command-dashboard.ts';
+import {
+  executeRoutinePlatformAction,
+  RoutinePlatformError,
+} from '../services/routine-platform.ts';
 import type { PublicDiscoveryApp } from '../services/public-apps.ts';
 import type { GpuPricingDisplay } from '../services/gpu/pricing-display.ts';
 import type { GpuReliabilityStats } from '../services/gpu/reliability.ts';
@@ -1483,7 +1488,145 @@ const PLATFORM_TOOLS: MCPTool[] = [
     },
   },
 
-  // ── 3. ul.download ──────────────────────────
+  // ── 3. ul.routine ──────────────────────────
+  {
+    name: 'ul.routine',
+    description:
+      'Create and manage persistent cloud routines from MCP-published templates. ' +
+      'Use action="templates" to discover routine templates, "plan" to preview schedule/config/capabilities, ' +
+      '"create" to save a user-owned routine, "list"/"get"/"update"/"pause"/"resume"/"delete" to manage it, and "run_now" to queue a manual run.',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: [
+            'templates',
+            'plan',
+            'create',
+            'list',
+            'get',
+            'update',
+            'pause',
+            'resume',
+            'delete',
+            'run_now',
+          ],
+          description: 'Routine operation.',
+        },
+        app_id: {
+          type: 'string',
+          description:
+            'Composer app ID or slug. Required when template_id is ambiguous; optional for templates search.',
+        },
+        template_id: {
+          type: 'string',
+          description:
+            'Routine template ID, appSlug/templateId, or appId/templateId. Required for plan/create.',
+        },
+        routine_id: {
+          type: 'string',
+          description: 'Routine instance ID. Required for get/update/pause/resume/delete/run_now.',
+        },
+        query: {
+          type: 'string',
+          description: 'Search routine templates by app, label, description, or capability.',
+        },
+        name: { type: 'string', description: 'Routine instance name.' },
+        description: {
+          type: 'string',
+          description: 'Routine instance description.',
+        },
+        intent: {
+          type: 'string',
+          description: 'Natural-language business outcome this routine owns.',
+        },
+        schedule: {
+          description:
+            'Cron string or interval object, e.g. { every_minutes: 5 }. For plan/create/update.',
+        },
+        config: {
+          type: 'object',
+          description: 'Routine configuration arguments merged over template defaults.',
+          additionalProperties: true,
+        },
+        budget_policy: {
+          type: 'object',
+          description:
+            'Light budget policy, e.g. { max_light_per_run, max_light_per_day, max_calls_per_run }.',
+          additionalProperties: true,
+        },
+        approval_policy: {
+          type: 'object',
+          description: 'Approval guardrails for side effects and paid capabilities.',
+          additionalProperties: true,
+        },
+        capabilities: {
+          type: 'array',
+          description:
+            'Optional full capability override. Each item supports app_ref/app, function_name/functions, access, required, purpose.',
+          items: { type: 'object', additionalProperties: true },
+        },
+        extra_capabilities: {
+          type: 'array',
+          description: 'Additional approved/downstream capabilities beyond the template default.',
+          items: { type: 'object', additionalProperties: true },
+        },
+        approve_capabilities: {
+          type: 'boolean',
+          description:
+            'Set true after user approval to mark requested routine capabilities approved for durable execution.',
+        },
+        dashboard_bindings: {
+          type: 'array',
+          description: 'Optional Command dashboard widget/card bindings for this routine.',
+          items: { type: 'object', additionalProperties: true },
+        },
+        activate: {
+          type: 'boolean',
+          description:
+            'For create: resume immediately after creation. Requires approve_capabilities=true when capabilities exist.',
+        },
+        status: {
+          type: 'string',
+          enum: ['active', 'paused', 'disabled', 'deleted', 'error'],
+          description: 'Filter list or set status during update.',
+        },
+        next_run_at: {
+          type: 'string',
+          description: 'ISO timestamp for the next scheduled run.',
+        },
+        max_concurrency: {
+          type: 'number',
+          description: 'Maximum concurrent runs for this routine.',
+        },
+        run_config: {
+          type: 'object',
+          description: 'Manual run override config for run_now.',
+          additionalProperties: true,
+        },
+        metadata: {
+          type: 'object',
+          description: 'Routine or run metadata.',
+          additionalProperties: true,
+        },
+        trace_id: {
+          type: 'string',
+          description: 'Trace ID to attach to created routine or queued run.',
+        },
+        limit: { type: 'number', description: 'Max templates/routines to return.' },
+      },
+      required: ['action'],
+    },
+  },
+
+  // ── 4. ul.download ──────────────────────────
   {
     name: 'ul.download',
     description: 'With app_id: download app source code. ' +
@@ -2626,7 +2769,7 @@ function buildPlatformDocs(): string {
 - For apps listed above: call directly. First call per session auto-includes full context (schemas, storage keys, usage patterns).
 - For unknown/unlisted apps: call \`ul.discover({ scope: "inspect", app_id })\` first.
 
-## Platform Tools (18)
+## Platform Tools (19)
 
 ### ul.call({ app_id, function_name, args? })
 Execute any app's function through this single platform connection.
@@ -2655,6 +2798,15 @@ Natural-language Command dashboard primitive.
 - \`action: "save"\` — Persist a confirmed \`layout\` or prior \`blueprint\` to the user's server-synced dashboards.
 - \`action: "list"\` / \`"get"\` — Inspect saved dashboards.
 - Setup flow: inventory/search → blueprint → explain/confirm → save. If no matching cards exist, search with \`ul.discover(..., surfaces:["command_card"])\`; if still missing, ask Tool Maker to build or extend a widget/card MCP.
+
+### ul.routine({ action, ... })
+Persistent cloud routines for ongoing delegated work.
+- \`action: "templates"\` — Discover MCP-published routine templates. Optional \`query\`, \`app_id\`, \`limit\`.
+- \`action: "plan"\` — Preview schedule, config, capability approvals, Light budgets, and Command surfaces before saving.
+- \`action: "create"\` — Save a user-owned routine from a template. Pass \`approve_capabilities: true\` after user approval to approve durable downstream MCP calls.
+- \`action: "list"\` / \`"get"\` / \`"update"\` — Inspect and edit routine instances.
+- \`action: "pause"\` / \`"resume"\` / \`"delete"\` — Control ongoing work.
+- \`action: "run_now"\` — Queue a manual run. Durable execution is claimed by the backend routine executor.
 
 ### ul.upload({ files, name?, description?, visibility?, app_id?, type? })
 Deploy TypeScript/Python app or publish markdown page.
@@ -3071,7 +3223,7 @@ function buildInstructions(deskSection: string, libraryHint: string): string {
 
   return `# Ultralight Platform
 
-MCP-first app hosting. TypeScript functions → MCP servers. 10 platform tools + unlimited app tools via ul.call.
+MCP-first app hosting. TypeScript functions → MCP servers. Platform tools + unlimited app tools via ul.call.
 
 **Storage at rest: ${
     formatLight(STORAGE_LIGHT_PER_GB_MONTH)
@@ -3417,7 +3569,12 @@ async function handleToolsCall(
         break;
       }
 
-      // ── 3. ul.download (+ scaffold when no app_id) ──────────────
+      // ── 3. ul.routine ──────────────
+      case 'ul.routine':
+        result = await executeRoutinePlatformAction(userId, toolArgs);
+        break;
+
+      // ── 4. ul.download (+ scaffold when no app_id) ──────────────
       case 'ul.download': {
         if (toolArgs.app_id) {
           result = await executeDownload(userId, toolArgs);
@@ -5151,6 +5308,9 @@ async function handleToolsCall(
     });
 
     if (err instanceof ToolError) {
+      return jsonRpcErrorResponse(id, err.code, err.message, err.data);
+    }
+    if (err instanceof RoutinePlatformError) {
       return jsonRpcErrorResponse(id, err.code, err.message, err.data);
     }
     return jsonRpcResponse(id, formatToolError(err));
@@ -10704,6 +10864,18 @@ async function executeDiscoverInspect(
       },
     })
     : [];
+  const routines = manifest
+    ? buildRoutineIndexForApp({
+      id: app.id,
+      name: app.name,
+      slug: app.slug,
+      manifest: {
+        functions: manifest.functions,
+        widgets: manifest.widgets,
+        routines: manifest.routines,
+      },
+    })
+    : [];
 
   // Also include exports list as fallback if manifest is sparse
   const exportedFunctions = app.exports || [];
@@ -10996,6 +11168,7 @@ async function executeDiscoverInspect(
     trust_card: trustCard,
     functions: functions,
     widgets,
+    routines,
     exported_functions: exportedFunctions,
     storage: {
       backend: storageBackend,
@@ -13310,7 +13483,7 @@ export function handleSkills(request: Request): Response {
 Endpoint: \`POST /mcp/platform\`
 Protocol: JSON-RPC 2.0
 Namespace: \`ul.*\`
-10 tools + MCP Resources + 27 backward-compat aliases
+19 tools + MCP Resources + 27 backward-compat aliases
 
 ${buildPlatformDocs()}`;
 

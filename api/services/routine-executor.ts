@@ -1,0 +1,970 @@
+import { getEnv } from "../lib/env.ts";
+import type { RoutineBudgetDefaults } from "../../shared/contracts/routine.ts";
+import {
+  createRoutineActorTokenForRun,
+  type RoutineActorUserInput,
+} from "./routine-auth.ts";
+import {
+  getRoutine,
+  type NormalizedRoutineSchedule,
+  recordRoutineRunStep,
+  type RoutineCapabilityRow,
+  type RoutineRunRow,
+  type RoutineRunStatus,
+  type StoredRoutine,
+} from "./routines.ts";
+
+const ROUTINE_SELECT =
+  "id,user_id,composer_app_id,composer_app_slug,template_id,template_version,name,description,intent,handler_function,status,schedule,config,budget_policy,approval_policy,max_concurrency,next_run_at,last_run_at,last_success_at,last_error_at,failure_count,created_by_trace_id,metadata,created_at,updated_at,deleted_at,lease_id,lease_expires_at";
+const RUN_SELECT =
+  "id,routine_id,user_id,status,trigger,trace_id,started_at,completed_at,duration_ms,total_light,summary,error,run_config,metadata,created_at,lease_id,lease_expires_at,attempt_count,max_attempts,next_attempt_at";
+const USER_SELECT = "id,email,tier,provisional";
+
+const DEFAULT_LIMIT = 10;
+const DEFAULT_LEASE_MS = 10 * 60 * 1000;
+const DEFAULT_MAX_ATTEMPTS = 3;
+const DEFAULT_RETRY_DELAY_SECONDS = 60;
+const MAX_RETRY_DELAY_SECONDS = 15 * 60;
+const MIN_INTERVAL_SECONDS = 60;
+
+export interface RoutineExecutorOptions {
+  now?: Date;
+  clock?: () => Date;
+  limit?: number;
+  leaseMs?: number;
+  baseUrl?: string;
+  fetchFn?: typeof fetch;
+}
+
+export interface RoutineExecutorSummary {
+  checked_at: string;
+  claimed_scheduled: number;
+  claimed_queued: number;
+  executed: number;
+  succeeded: number;
+  failed: number;
+  retried: number;
+  skipped: number;
+  errors: Array<{ run_id?: string; routine_id?: string; error: string }>;
+}
+
+interface ExecutorRoutineRow {
+  id: string;
+  user_id: string;
+  composer_app_id: string | null;
+  composer_app_slug: string | null;
+  template_id: string;
+  template_version: string | null;
+  name: string;
+  description: string | null;
+  intent: string | null;
+  handler_function: string;
+  status: string;
+  schedule: NormalizedRoutineSchedule;
+  config: Record<string, unknown>;
+  budget_policy: RoutineBudgetDefaults;
+  approval_policy: Record<string, unknown>;
+  max_concurrency: number;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  last_success_at: string | null;
+  last_error_at: string | null;
+  failure_count: number;
+  created_by_trace_id: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  lease_id: string | null;
+  lease_expires_at: string | null;
+}
+
+interface ExecutorRunRow extends RoutineRunRow {
+  lease_id: string | null;
+  lease_expires_at: string | null;
+  attempt_count: number;
+  max_attempts: number;
+  next_attempt_at: string | null;
+}
+
+interface ExecutorUserRow {
+  id: string;
+  email: string;
+  tier: string | null;
+  provisional: boolean | null;
+}
+
+interface RetryPolicy {
+  maxAttempts: number;
+  baseDelaySeconds: number;
+  maxDelaySeconds: number;
+}
+
+interface ClaimedRun {
+  run: ExecutorRunRow;
+  routine?: StoredRoutine;
+  source: "scheduled" | "queued";
+}
+
+function serviceHeaders(
+  prefer = "return=representation",
+): Record<string, string> {
+  const key = getEnv("SUPABASE_SERVICE_ROLE_KEY");
+  return {
+    "apikey": key,
+    "Authorization": `Bearer ${key}`,
+    "Content-Type": "application/json",
+    "Prefer": prefer,
+  };
+}
+
+function restUrl(path: string, params: Record<string, string>): string {
+  const url = new URL(`${getEnv("SUPABASE_URL")}/rest/v1/${path}`);
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.set(key, value);
+  }
+  return url.toString();
+}
+
+async function readRows<T>(res: Response, label: string): Promise<T[]> {
+  if (!res.ok) {
+    const message = await res.text().catch(() => res.statusText);
+    throw new Error(`${label} (${res.status}): ${message}`);
+  }
+  const value = await res.json();
+  return Array.isArray(value) ? value as T[] : [];
+}
+
+async function fetchRows<T>(
+  table: string,
+  params: Record<string, string>,
+  label: string,
+): Promise<T[]> {
+  return await readRows<T>(
+    await fetch(restUrl(table, params), { headers: serviceHeaders() }),
+    label,
+  );
+}
+
+async function patchRows<T>(
+  table: string,
+  params: Record<string, string>,
+  payload: Record<string, unknown>,
+  label: string,
+): Promise<T[]> {
+  return await readRows<T>(
+    await fetch(restUrl(table, params), {
+      method: "PATCH",
+      headers: serviceHeaders(),
+      body: JSON.stringify(payload),
+    }),
+    label,
+  );
+}
+
+async function insertRows<T>(
+  table: string,
+  params: Record<string, string>,
+  payload: Record<string, unknown>,
+  label: string,
+): Promise<T[]> {
+  return await readRows<T>(
+    await fetch(restUrl(table, params), {
+      method: "POST",
+      headers: serviceHeaders(),
+      body: JSON.stringify(payload),
+    }),
+    label,
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function positiveInteger(
+  value: unknown,
+  fallback: number,
+  max: number,
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.max(1, Math.min(max, Math.floor(value)));
+}
+
+function iso(date: Date): string {
+  return date.toISOString();
+}
+
+function addMs(date: Date, ms: number): Date {
+  return new Date(date.getTime() + ms);
+}
+
+function leaseAndDueFilter(dueColumn: string, now: Date): string {
+  const stamp = iso(now);
+  return `(or(lease_expires_at.is.null,lease_expires_at.lt.${stamp}),or(${dueColumn}.is.null,${dueColumn}.lte.${stamp}))`;
+}
+
+function nextMinuteAfter(date: Date): Date {
+  const next = new Date(date.getTime());
+  next.setUTCSeconds(0, 0);
+  next.setUTCMinutes(next.getUTCMinutes() + 1);
+  return next;
+}
+
+function parseCronField(field: string, min: number, max: number): number[] {
+  const values: number[] = [];
+  for (const segment of field.split(",")) {
+    if (segment === "*") {
+      for (let value = min; value <= max; value++) values.push(value);
+    } else if (segment.startsWith("*/")) {
+      const step = Number.parseInt(segment.slice(2), 10);
+      if (!Number.isFinite(step) || step <= 0) throw new Error("bad step");
+      for (let value = min; value <= max; value += step) values.push(value);
+    } else if (segment.includes("-")) {
+      const [start, end] = segment.split("-").map((part) =>
+        Number.parseInt(part, 10)
+      );
+      if (!Number.isFinite(start) || !Number.isFinite(end)) {
+        throw new Error("bad range");
+      }
+      for (let value = start; value <= end; value++) values.push(value);
+    } else {
+      const value = Number.parseInt(segment, 10);
+      if (!Number.isFinite(value)) throw new Error("bad value");
+      values.push(value);
+    }
+  }
+  return [...new Set(values.filter((value) => value >= min && value <= max))]
+    .sort((a, b) => a - b);
+}
+
+function cronMatches(expression: string, date: Date): boolean {
+  const parts = expression.trim().split(/\s+/);
+  if (parts.length !== 5) return false;
+  try {
+    const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
+    return parseCronField(minute, 0, 59).includes(date.getUTCMinutes()) &&
+      parseCronField(hour, 0, 23).includes(date.getUTCHours()) &&
+      parseCronField(dayOfMonth, 1, 31).includes(date.getUTCDate()) &&
+      parseCronField(month, 1, 12).includes(date.getUTCMonth() + 1) &&
+      parseCronField(dayOfWeek, 0, 6).includes(date.getUTCDay());
+  } catch {
+    return false;
+  }
+}
+
+export function computeNextRoutineRunAt(
+  schedule: NormalizedRoutineSchedule,
+  from: Date,
+): Date | null {
+  if (!isRecord(schedule)) return null;
+
+  if (schedule.type === "interval") {
+    const seconds = typeof schedule.every_seconds === "number"
+      ? schedule.every_seconds
+      : typeof schedule.every_minutes === "number"
+      ? schedule.every_minutes * 60
+      : 5 * 60;
+    const guardedSeconds = Math.max(MIN_INTERVAL_SECONDS, Math.floor(seconds));
+    return addMs(from, guardedSeconds * 1000);
+  }
+
+  if (schedule.type === "cron" && typeof schedule.cron === "string") {
+    let candidate = nextMinuteAfter(from);
+    const maxMinutes = 366 * 24 * 60;
+    for (let i = 0; i < maxMinutes; i++) {
+      if (cronMatches(schedule.cron, candidate)) return candidate;
+      candidate = addMs(candidate, 60 * 1000);
+    }
+  }
+
+  return null;
+}
+
+function sanitizePreview(
+  value: unknown,
+  maxChars = 2000,
+): Record<string, unknown> {
+  try {
+    const text = typeof value === "string" ? value : JSON.stringify(value);
+    if (text.length <= maxChars) return { value };
+    return { truncated: true, text: text.slice(0, maxChars) };
+  } catch {
+    return { value_type: typeof value };
+  }
+}
+
+function unwrapMcpToolResult(value: unknown): unknown {
+  if (!isRecord(value)) return value;
+  const content = value.content;
+  if (!Array.isArray(content)) return value;
+  const textBlock = content.find((entry) =>
+    isRecord(entry) && entry.type === "text" && typeof entry.text === "string"
+  ) as { text?: string } | undefined;
+  if (!textBlock?.text) return value;
+  try {
+    return JSON.parse(textBlock.text);
+  } catch {
+    return textBlock.text;
+  }
+}
+
+function errorPayload(error: unknown): Record<string, unknown> {
+  return {
+    message: error instanceof Error ? error.message : String(error),
+    name: error instanceof Error ? error.name : "Error",
+  };
+}
+
+function retryPolicyFrom(
+  routine: StoredRoutine | ExecutorRoutineRow,
+  run?: ExecutorRunRow,
+): RetryPolicy {
+  const raw = [
+    run?.metadata,
+    routine.metadata,
+    routine.config,
+  ].find((source) => isRecord(source?.retry_policy))
+    ?.retry_policy;
+  const retry = isRecord(raw) ? raw : {};
+  const maxAttempts = positiveInteger(
+    retry.max_attempts ?? run?.max_attempts,
+    run?.max_attempts || DEFAULT_MAX_ATTEMPTS,
+    10,
+  );
+  const baseDelaySeconds = positiveInteger(
+    retry.base_delay_seconds,
+    DEFAULT_RETRY_DELAY_SECONDS,
+    MAX_RETRY_DELAY_SECONDS,
+  );
+  const maxDelaySeconds = positiveInteger(
+    retry.max_delay_seconds,
+    MAX_RETRY_DELAY_SECONDS,
+    60 * 60,
+  );
+  return { maxAttempts, baseDelaySeconds, maxDelaySeconds };
+}
+
+function nextRetryAt(
+  now: Date,
+  attemptCount: number,
+  policy: RetryPolicy,
+): Date {
+  const exponent = Math.max(0, attemptCount - 1);
+  const delaySeconds = Math.min(
+    policy.maxDelaySeconds,
+    policy.baseDelaySeconds * 2 ** exponent,
+  );
+  return addMs(now, delaySeconds * 1000);
+}
+
+async function activeRunCount(routineId: string): Promise<number> {
+  const rows = await fetchRows<{ id: string }>(
+    "routine_runs",
+    {
+      routine_id: `eq.${routineId}`,
+      status: "in.(queued,running)",
+      select: "id",
+      limit: "100",
+    },
+    "Failed to count active routine runs",
+  );
+  return rows.length;
+}
+
+async function claimRoutine(
+  routine: ExecutorRoutineRow,
+  now: Date,
+  leaseMs: number,
+): Promise<ExecutorRoutineRow | null> {
+  const leaseId = crypto.randomUUID();
+  const [claimed] = await patchRows<ExecutorRoutineRow>(
+    "user_routines",
+    {
+      id: `eq.${routine.id}`,
+      status: "eq.active",
+      and: leaseAndDueFilter("next_run_at", now),
+      select: ROUTINE_SELECT,
+    },
+    {
+      lease_id: leaseId,
+      lease_expires_at: iso(addMs(now, leaseMs)),
+      updated_at: iso(now),
+    },
+    "Failed to claim routine",
+  );
+  return claimed ?? null;
+}
+
+async function releaseRoutineLease(
+  routineId: string,
+  now: Date,
+  updates: Record<string, unknown> = {},
+): Promise<void> {
+  await patchRows<ExecutorRoutineRow>(
+    "user_routines",
+    {
+      id: `eq.${routineId}`,
+      select: ROUTINE_SELECT,
+    },
+    {
+      ...updates,
+      lease_id: null,
+      lease_expires_at: null,
+      updated_at: iso(now),
+    },
+    "Failed to release routine lease",
+  );
+}
+
+async function insertScheduledRun(
+  routine: ExecutorRoutineRow,
+  now: Date,
+  leaseMs: number,
+): Promise<ExecutorRunRow> {
+  const policy = retryPolicyFrom(routine);
+  const [run] = await insertRows<ExecutorRunRow>(
+    "routine_runs",
+    { select: RUN_SELECT },
+    {
+      routine_id: routine.id,
+      user_id: routine.user_id,
+      status: "running",
+      trigger: "scheduled",
+      trace_id: crypto.randomUUID(),
+      started_at: iso(now),
+      run_config: {},
+      metadata: {
+        source: "routine_executor",
+        routine_lease_id: routine.lease_id,
+      },
+      lease_id: crypto.randomUUID(),
+      lease_expires_at: iso(addMs(now, leaseMs)),
+      attempt_count: 1,
+      max_attempts: policy.maxAttempts,
+    },
+    "Failed to create scheduled routine run",
+  );
+  if (!run) throw new Error("Scheduled routine run insert returned no row");
+  return run;
+}
+
+async function dueRoutineCandidates(
+  now: Date,
+  limit: number,
+): Promise<ExecutorRoutineRow[]> {
+  return await fetchRows<ExecutorRoutineRow>(
+    "user_routines",
+    {
+      status: "eq.active",
+      deleted_at: "is.null",
+      or: `(next_run_at.is.null,next_run_at.lte.${iso(now)})`,
+      select: ROUTINE_SELECT,
+      order: "next_run_at.asc.nullsfirst",
+      limit: String(limit),
+    },
+    "Failed to load due routines",
+  );
+}
+
+async function claimScheduledRuns(
+  now: Date,
+  limit: number,
+  leaseMs: number,
+): Promise<ClaimedRun[]> {
+  const claimedRuns: ClaimedRun[] = [];
+  const candidates = await dueRoutineCandidates(now, limit);
+
+  for (const candidate of candidates) {
+    if (claimedRuns.length >= limit) break;
+    const activeCount = await activeRunCount(candidate.id);
+    if (activeCount >= candidate.max_concurrency) continue;
+
+    const claimedRoutine = await claimRoutine(candidate, now, leaseMs);
+    if (!claimedRoutine) continue;
+
+    try {
+      const run = await insertScheduledRun(claimedRoutine, now, leaseMs);
+      const nextRunAt = computeNextRoutineRunAt(claimedRoutine.schedule, now);
+      await releaseRoutineLease(claimedRoutine.id, now, {
+        next_run_at: nextRunAt ? iso(nextRunAt) : null,
+        last_run_at: iso(now),
+      });
+      claimedRuns.push({ run, source: "scheduled" });
+    } catch (err) {
+      await releaseRoutineLease(claimedRoutine.id, now, {
+        last_error_at: iso(now),
+        failure_count: claimedRoutine.failure_count + 1,
+      }).catch(() => {});
+      throw err;
+    }
+  }
+
+  return claimedRuns;
+}
+
+async function queuedRunCandidates(
+  now: Date,
+  limit: number,
+): Promise<ExecutorRunRow[]> {
+  return await fetchRows<ExecutorRunRow>(
+    "routine_runs",
+    {
+      status: "eq.queued",
+      or: `(next_attempt_at.is.null,next_attempt_at.lte.${iso(now)})`,
+      select: RUN_SELECT,
+      order: "created_at.asc",
+      limit: String(limit),
+    },
+    "Failed to load queued routine runs",
+  );
+}
+
+async function claimQueuedRun(
+  run: ExecutorRunRow,
+  now: Date,
+  leaseMs: number,
+): Promise<ExecutorRunRow | null> {
+  if (run.attempt_count >= run.max_attempts) {
+    await finishRun(run, "failed", now, {
+      summary: "Routine run exhausted retry attempts before claim.",
+      error: { message: "retry attempts exhausted" },
+    });
+    return null;
+  }
+
+  const [claimed] = await patchRows<ExecutorRunRow>(
+    "routine_runs",
+    {
+      id: `eq.${run.id}`,
+      status: "eq.queued",
+      attempt_count: `eq.${run.attempt_count}`,
+      and: leaseAndDueFilter("next_attempt_at", now),
+      select: RUN_SELECT,
+    },
+    {
+      status: "running",
+      started_at: run.started_at ?? iso(now),
+      lease_id: crypto.randomUUID(),
+      lease_expires_at: iso(addMs(now, leaseMs)),
+      attempt_count: run.attempt_count + 1,
+      next_attempt_at: null,
+    },
+    "Failed to claim queued routine run",
+  );
+  return claimed ?? null;
+}
+
+async function claimQueuedRuns(
+  now: Date,
+  limit: number,
+  leaseMs: number,
+): Promise<ClaimedRun[]> {
+  const claimedRuns: ClaimedRun[] = [];
+  const candidates = await queuedRunCandidates(now, limit);
+
+  for (const candidate of candidates) {
+    if (claimedRuns.length >= limit) break;
+    const claimed = await claimQueuedRun(candidate, now, leaseMs);
+    if (claimed) claimedRuns.push({ run: claimed, source: "queued" });
+  }
+
+  return claimedRuns;
+}
+
+async function loadUser(userId: string): Promise<RoutineActorUserInput> {
+  const [user] = await fetchRows<ExecutorUserRow>(
+    "users",
+    {
+      id: `eq.${userId}`,
+      select: USER_SELECT,
+      limit: "1",
+    },
+    "Failed to load routine actor user",
+  );
+  if (!user?.id || !user.email) {
+    throw new Error(`Routine user not found: ${userId}`);
+  }
+  return {
+    id: user.id,
+    email: user.email,
+    tier: user.tier || "free",
+    provisional: user.provisional === true,
+  };
+}
+
+function routineCapabilitiesForActor(
+  capabilities: RoutineCapabilityRow[],
+): Array<{
+  app_id?: string | null;
+  app_ref?: string | null;
+  function_name?: string | null;
+  access?: "read" | "write" | null;
+  approved?: boolean | null;
+  required?: boolean | null;
+  constraints?: Record<string, unknown> | null;
+  pricing_snapshot?: Record<string, unknown> | null;
+  metadata?: Record<string, unknown> | null;
+}> {
+  return capabilities.map((capability) => ({
+    app_id: capability.app_id,
+    app_ref: capability.app_ref,
+    function_name: capability.function_name,
+    access: capability.access,
+    approved: capability.approved,
+    required: capability.required,
+    constraints: capability.constraints,
+    pricing_snapshot: capability.pricing_snapshot,
+    metadata: capability.metadata,
+  }));
+}
+
+function buildRoutineArgs(
+  routine: StoredRoutine,
+  run: ExecutorRunRow,
+): Record<string, unknown> {
+  return {
+    ...(routine.config || {}),
+    ...(run.run_config || {}),
+    _routine: {
+      routine_id: routine.id,
+      routine_run_id: run.id,
+      trace_id: run.trace_id,
+      trigger: run.trigger,
+      attempt: run.attempt_count,
+      scheduled_at: run.created_at,
+    },
+  };
+}
+
+async function invokeRoutineHandler(
+  routine: StoredRoutine,
+  run: ExecutorRunRow,
+  options: Required<Pick<RoutineExecutorOptions, "baseUrl" | "fetchFn">>,
+): Promise<unknown> {
+  const composerAppId = routine.composer_app_id || routine.composer_app_slug;
+  if (!composerAppId) {
+    throw new Error("Routine has no composer app to invoke");
+  }
+
+  const user = await loadUser(routine.user_id);
+  const actor = await createRoutineActorTokenForRun({
+    user,
+    routine: {
+      id: routine.id,
+      composer_app_id: routine.composer_app_id,
+      composer_app_slug: routine.composer_app_slug,
+      handler_function: routine.handler_function,
+      budget_policy: routine.budget_policy,
+      capabilities: routineCapabilitiesForActor(routine.capabilities),
+    },
+    run: { id: run.id, trace_id: run.trace_id },
+    tokenId: `routine-run-${run.id}-attempt-${run.attempt_count}`,
+  });
+
+  const response = await options.fetchFn(
+    `${options.baseUrl.replace(/\/$/u, "")}/mcp/${composerAppId}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${actor.token}`,
+        "X-Ultralight-Routine-Id": routine.id,
+        "X-Ultralight-Routine-Run-Id": run.id,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: run.id,
+        method: "tools/call",
+        params: {
+          name: routine.handler_function,
+          arguments: buildRoutineArgs(routine, run),
+        },
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => response.statusText);
+    throw new Error(`Routine MCP call failed (${response.status}): ${text}`);
+  }
+
+  const rpc = await response.json() as {
+    result?: unknown;
+    error?: { message?: string; code?: number };
+  };
+  if (rpc.error) {
+    throw new Error(
+      rpc.error.message || `Routine MCP error ${rpc.error.code ?? ""}`.trim(),
+    );
+  }
+
+  const result = unwrapMcpToolResult(rpc.result);
+  if (isRecord(result) && result._async === true) {
+    throw new Error("Routine handlers must complete synchronously");
+  }
+  return result;
+}
+
+async function patchRun(
+  runId: string,
+  payload: Record<string, unknown>,
+): Promise<ExecutorRunRow | null> {
+  const [run] = await patchRows<ExecutorRunRow>(
+    "routine_runs",
+    { id: `eq.${runId}`, select: RUN_SELECT },
+    payload,
+    "Failed to update routine run",
+  );
+  return run ?? null;
+}
+
+async function finishRun(
+  run: Pick<ExecutorRunRow, "id" | "user_id">,
+  status: RoutineRunStatus,
+  now: Date,
+  updates: {
+    summary?: string | null;
+    error?: Record<string, unknown> | null;
+    totalLight?: number;
+  } = {},
+): Promise<void> {
+  await patchRun(run.id, {
+    status,
+    completed_at: ["succeeded", "failed", "cancelled", "skipped"].includes(
+        status,
+      )
+      ? iso(now)
+      : null,
+    lease_id: null,
+    lease_expires_at: null,
+    ...(updates.summary !== undefined ? { summary: updates.summary } : {}),
+    ...(updates.error !== undefined ? { error: updates.error } : {}),
+    ...(updates.totalLight !== undefined
+      ? { total_light: updates.totalLight }
+      : {}),
+  });
+}
+
+async function markRunForRetry(
+  run: ExecutorRunRow,
+  routine: StoredRoutine,
+  now: Date,
+  error: unknown,
+): Promise<void> {
+  const policy = retryPolicyFrom(routine, run);
+  await patchRun(run.id, {
+    status: "queued",
+    error: errorPayload(error),
+    next_attempt_at: iso(nextRetryAt(now, run.attempt_count, policy)),
+    lease_id: null,
+    lease_expires_at: null,
+    metadata: {
+      ...(run.metadata || {}),
+      last_attempt_failed_at: iso(now),
+      retry_policy: {
+        max_attempts: policy.maxAttempts,
+        base_delay_seconds: policy.baseDelaySeconds,
+        max_delay_seconds: policy.maxDelaySeconds,
+      },
+    },
+  });
+}
+
+async function updateRoutineAfterRun(
+  routine: StoredRoutine,
+  now: Date,
+  success: boolean,
+): Promise<void> {
+  await patchRows<ExecutorRoutineRow>(
+    "user_routines",
+    { id: `eq.${routine.id}`, select: ROUTINE_SELECT },
+    success
+      ? {
+        last_run_at: iso(now),
+        last_success_at: iso(now),
+        failure_count: 0,
+        updated_at: iso(now),
+      }
+      : {
+        last_run_at: iso(now),
+        last_error_at: iso(now),
+        failure_count: (routine.failure_count || 0) + 1,
+        updated_at: iso(now),
+      },
+    "Failed to update routine after run",
+  );
+}
+
+async function recordRootStep(
+  routine: StoredRoutine,
+  run: ExecutorRunRow,
+  status: "succeeded" | "failed",
+  startedAt: Date,
+  completedAt: Date,
+  args: Record<string, unknown>,
+  result: unknown,
+  error?: unknown,
+): Promise<void> {
+  await recordRoutineRunStep({
+    runId: run.id,
+    routineId: routine.id,
+    userId: routine.user_id,
+    stepIndex: 0,
+    appId: routine.composer_app_id,
+    appRef: routine.composer_app_slug,
+    functionName: routine.handler_function,
+    status,
+    durationMs: completedAt.getTime() - startedAt.getTime(),
+    argsPreview: sanitizePreview(args),
+    resultPreview: status === "succeeded" ? sanitizePreview(result) : {},
+    error: status === "failed" ? errorPayload(error) : null,
+    metadata: { source: "routine_executor.root_handler" },
+  }).catch(() => {});
+}
+
+async function executeClaimedRun(
+  claimed: ClaimedRun,
+  options: Required<Pick<RoutineExecutorOptions, "baseUrl" | "fetchFn">>,
+  now: Date,
+  clock: () => Date,
+): Promise<"succeeded" | "failed" | "retried" | "skipped"> {
+  const run = claimed.run;
+  const routine = claimed.routine ??
+    await getRoutine(run.user_id, run.routine_id);
+  if (!routine) {
+    await finishRun(run, "failed", now, {
+      error: { message: `Routine ${run.routine_id} not found` },
+    });
+    return "failed";
+  }
+
+  if (routine.status === "deleted" || routine.status === "disabled") {
+    await finishRun(run, "skipped", now, {
+      summary: `Routine is ${routine.status}`,
+    });
+    return "skipped";
+  }
+
+  const startedAt = now;
+  const args = buildRoutineArgs(routine, run);
+  try {
+    const result = await invokeRoutineHandler(routine, run, options);
+    const completedAt = clock();
+    await recordRootStep(
+      routine,
+      run,
+      "succeeded",
+      startedAt,
+      completedAt,
+      args,
+      result,
+    );
+    await finishRun(run, "succeeded", completedAt, {
+      summary: "Routine handler completed successfully.",
+    });
+    await updateRoutineAfterRun(routine, completedAt, true);
+    return "succeeded";
+  } catch (err) {
+    const completedAt = clock();
+    await recordRootStep(
+      routine,
+      run,
+      "failed",
+      startedAt,
+      completedAt,
+      args,
+      null,
+      err,
+    );
+    const policy = retryPolicyFrom(routine, run);
+    if (run.attempt_count < policy.maxAttempts) {
+      await markRunForRetry(run, routine, completedAt, err);
+      await updateRoutineAfterRun(routine, completedAt, false).catch(() => {});
+      return "retried";
+    }
+
+    await finishRun(run, "failed", completedAt, {
+      error: errorPayload(err),
+      summary: "Routine handler failed.",
+    });
+    await updateRoutineAfterRun(routine, completedAt, false).catch(() => {});
+    return "failed";
+  }
+}
+
+export async function runRoutineExecutorCycle(
+  options: RoutineExecutorOptions = {},
+): Promise<RoutineExecutorSummary> {
+  const now = options.now ?? new Date();
+  const limit = positiveInteger(options.limit, DEFAULT_LIMIT, 50);
+  const leaseMs = positiveInteger(
+    options.leaseMs,
+    DEFAULT_LEASE_MS,
+    60 * 60 * 1000,
+  );
+  const baseUrl = options.baseUrl || getEnv("BASE_URL") ||
+    "https://ultralight-api.rgn4jz429m.workers.dev";
+  const fetchFn = options.fetchFn || fetch;
+  const clock = options.clock || (() => new Date());
+
+  const summary: RoutineExecutorSummary = {
+    checked_at: iso(now),
+    claimed_scheduled: 0,
+    claimed_queued: 0,
+    executed: 0,
+    succeeded: 0,
+    failed: 0,
+    retried: 0,
+    skipped: 0,
+    errors: [],
+  };
+
+  const scheduled = await claimScheduledRuns(now, limit, leaseMs).catch(
+    (err) => {
+      summary.errors.push({
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [] as ClaimedRun[];
+    },
+  );
+  summary.claimed_scheduled = scheduled.length;
+
+  const remaining = Math.max(0, limit - scheduled.length);
+  const queued = remaining > 0
+    ? await claimQueuedRuns(now, remaining, leaseMs).catch((err) => {
+      summary.errors.push({
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [] as ClaimedRun[];
+    })
+    : [];
+  summary.claimed_queued = queued.length;
+
+  for (const claimed of [...scheduled, ...queued]) {
+    try {
+      const result = await executeClaimedRun(
+        claimed,
+        { baseUrl, fetchFn },
+        now,
+        clock,
+      );
+      summary.executed += 1;
+      if (result === "succeeded") summary.succeeded += 1;
+      if (result === "failed") summary.failed += 1;
+      if (result === "retried") summary.retried += 1;
+      if (result === "skipped") summary.skipped += 1;
+    } catch (err) {
+      summary.failed += 1;
+      summary.errors.push({
+        run_id: claimed.run.id,
+        routine_id: claimed.run.routine_id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return summary;
+}

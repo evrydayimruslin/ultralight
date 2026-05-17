@@ -1,9 +1,11 @@
 import { assertEquals } from "https://deno.land/std@0.210.0/assert/assert_equals.ts";
 
 import {
+  authenticateRequest,
   type PendingPermissionRow,
   resolvePendingPermissionRows,
 } from "./request-auth.ts";
+import { createRoutineActorToken } from "./routine-auth.ts";
 
 Deno.test("request auth: resolvePendingPermissionRows normalizes legacy prefixed function names", () => {
   const pendingRows: PendingPermissionRow[] = [
@@ -60,4 +62,85 @@ Deno.test("request auth: resolvePendingPermissionRows normalizes legacy prefixed
       },
     ],
   );
+});
+
+Deno.test("request auth: accepts scoped routine actor bearer tokens", async () => {
+  const globalWithEnv = globalThis as typeof globalThis & {
+    __env?: Record<string, unknown>;
+  };
+  const previousEnv = globalWithEnv.__env;
+  globalWithEnv.__env = {
+    ...previousEnv,
+    ROUTINE_ACTOR_TOKEN_SECRET: "routine-actor-test-secret",
+  };
+
+  try {
+    const { token } = await createRoutineActorToken(
+      {
+        user: {
+          id: "user-1",
+          email: "manager@example.com",
+          tier: "pro",
+        },
+        routine: {
+          id: "routine-1",
+          composerAppSlug: "email-ops",
+          handlerFunction: "draft_followups",
+        },
+        routineRunId: "run-1",
+        traceId: "trace-1",
+        tokenId: "token-1",
+        capabilities: [
+          {
+            app_id: "crm-app-id",
+            app_ref: "crm",
+            function_name: "log_lead",
+            access: "write",
+            approved: true,
+          },
+        ],
+      },
+      {
+        secret: "routine-actor-test-secret",
+      },
+    );
+
+    const authUser = await authenticateRequest(
+      new Request("https://api.example.test/mcp/email-ops", {
+        headers: { "Authorization": `Bearer ${token}` },
+      }),
+      "bearer_only",
+    );
+
+    assertEquals(authUser.authSource, "routine_actor");
+    assertEquals(authUser.id, "user-1");
+    assertEquals(authUser.email, "manager@example.com");
+    assertEquals(authUser.tier, "pro");
+    assertEquals(authUser.tokenId, "token-1");
+    assertEquals(authUser.tokenAppIds, ["crm", "crm-app-id", "email-ops"]);
+    assertEquals(authUser.tokenFunctionNames, [
+      "draft_followups",
+      "log_lead",
+    ]);
+    assertEquals(authUser.scopes, ["apps:call"]);
+    assertEquals(authUser.routineActor, {
+      tokenId: "token-1",
+      routineId: "routine-1",
+      routineRunId: "run-1",
+      traceId: "trace-1",
+      composerAppSlug: "email-ops",
+      handlerFunction: "draft_followups",
+      capabilities: [
+        {
+          app_id: "crm-app-id",
+          app_ref: "crm",
+          function_name: "log_lead",
+          access: "write",
+          required: true,
+        },
+      ],
+    });
+  } finally {
+    globalWithEnv.__env = previousEnv;
+  }
 });

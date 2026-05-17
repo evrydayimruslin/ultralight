@@ -160,7 +160,7 @@ function __ulAllowsAppCall(targetAppId, functionName) {
   if (!target || !fnName) return false;
   var dependencies = ${callDependenciesJson};
   return dependencies.some(function(dep) {
-    if (!dep || dep.access && dep.access !== 'read') return false;
+    if (!dep || dep.access && dep.access !== 'read' && dep.access !== 'write') return false;
     if (typeof dep.app !== 'string' || dep.app.trim() !== target) return false;
     if (!Array.isArray(dep.functions)) return false;
     return dep.functions.some(function(fn) { return typeof fn === 'string' && fn.trim() === fnName; });
@@ -218,7 +218,7 @@ globalThis.ultralight = {
   async call(targetAppId, functionName, callArgs) {
     if (!targetAppId || !functionName) throw new Error('target app id and function name are required');
     if (!__ulAllowsAppCall(targetAppId, functionName)) {
-      throw new Error('app:call permission or a matching read dependency is required');
+      throw new Error('app:call permission or a matching dependency is required');
     }
     var authToken = ${callAuthToken};
     var baseUrl = ${callBaseUrl};

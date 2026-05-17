@@ -79,7 +79,7 @@ export interface RuntimeConfig {
 export interface RuntimeAppCallDependency {
   app: string;
   functions: string[];
-  access?: "read";
+  access?: "read" | "write";
 }
 
 export interface RuntimeAIRoute {
@@ -114,7 +114,11 @@ function appCallAllowedByDependency(
   if (!normalizedTarget || !normalizedFunction) return false;
 
   return (dependencies || []).some((dependency) => {
-    if (dependency.access !== undefined && dependency.access !== "read") {
+    if (
+      dependency.access !== undefined &&
+      dependency.access !== "read" &&
+      dependency.access !== "write"
+    ) {
       return false;
     }
     if (dependency.app.trim() !== normalizedTarget) return false;
@@ -2072,7 +2076,7 @@ export async function executeInSandbox(
         );
         if (!hasBroadCallPermission && !hasDeclaredDependency) {
           throw new Error(
-            "app:call permission or a matching read dependency is required",
+            "app:call permission or a matching dependency is required",
           );
         }
         if (!config.baseUrl || !config.authToken) {

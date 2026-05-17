@@ -109,6 +109,11 @@ Deno.test("settleAndLogAppExecution settles app pricing across run/http style ca
   await withMockedEnv(async () => {
     let logged: Record<string, unknown> | null = null;
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const routineContext = {
+      routineId: "00000000-0000-4000-8000-000000000101",
+      routineRunId: "00000000-0000-4000-8000-000000000102",
+      traceId: "00000000-0000-4000-8000-000000000103",
+    };
     const result = await settleAndLogAppExecution({
       receiptId: "receipt-run-1",
       app: createTestApp({ default_price_light: 10 }),
@@ -127,6 +132,7 @@ Deno.test("settleAndLogAppExecution settles app pricing across run/http style ca
       durationMs: 120,
       outputResult: { ok: true },
       callerAuthState: "authenticated",
+      routineContext,
     }, {
       fetchFn: async (input, init) => {
         const url = String(input);
@@ -139,12 +145,42 @@ Deno.test("settleAndLogAppExecution settles app pricing across run/http style ca
           assertEquals(body.p_to_user, "owner_123");
           assertEquals(body.p_amount_light, 10);
           assertEquals(body.p_function_name, "search");
+          assertEquals(
+            (body.p_metadata as Record<string, unknown>).routine_id,
+            routineContext.routineId,
+          );
           return new Response(
             JSON.stringify([{
               from_new_balance: 90,
               to_new_balance: 8.5,
               platform_fee: 1.5,
               transfer_id: "transfer-run-1",
+            }]),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+        }
+        if (url.includes("/rpc/record_routine_call_contribution")) {
+          assertEquals(body.p_routine_id, routineContext.routineId);
+          assertEquals(body.p_routine_run_id, routineContext.routineRunId);
+          assertEquals(body.p_user_id, "user_run");
+          assertEquals(body.p_app_id, "app_123");
+          assertEquals(body.p_app_ref, "test-app");
+          assertEquals(body.p_function_name, "search");
+          assertEquals(body.p_receipt_id, "receipt-run-1");
+          assertEquals(body.p_status, "succeeded");
+          assertEquals(body.p_cost_light, 10);
+          assertEquals(
+            (body.p_metadata as Record<string, unknown>).trace_id,
+            routineContext.traceId,
+          );
+          return new Response(
+            JSON.stringify([{
+              step_id: "00000000-0000-4000-8000-000000000104",
+              step_index: 0,
+              total_light: 10,
             }]),
             {
               status: 200,
@@ -163,7 +199,9 @@ Deno.test("settleAndLogAppExecution settles app pricing across run/http style ca
     assertEquals(result.settlement.platformFeeLight, 1.5);
     assertEquals(result.settlement.developerRevenueLight, 8.5);
     assertEquals(result.settlement.insufficientBalance, false);
-    assertEquals(calls.length, 1);
+    assertEquals(result.routineStep?.step_index, 0);
+    assertEquals(result.routineStep?.total_light, 10);
+    assertEquals(calls.length, 2);
     assert(logged !== null);
     const loggedEntry = logged as Record<string, unknown>;
     assertEquals(loggedEntry.method, "run");
@@ -174,6 +212,9 @@ Deno.test("settleAndLogAppExecution settles app pricing across run/http style ca
     assertEquals(loggedEntry.platformFeeLight, 1.5);
     assertEquals(loggedEntry.developerNetLight, 8.5);
     assertEquals(loggedEntry.freeCall, false);
+    assertEquals(loggedEntry.routineId, routineContext.routineId);
+    assertEquals(loggedEntry.routineRunId, routineContext.routineRunId);
+    assertEquals(loggedEntry.traceId, routineContext.traceId);
   });
 });
 
@@ -356,6 +397,11 @@ Deno.test("debitWidgetPullUsage records one widget pull cloud unit with runtime 
       widgetName: "email_inbox",
       widgetIntervalMs: 300_000,
       widgetPullReason: "scheduled",
+      routineContext: {
+        routineId: "00000000-0000-4000-8000-000000000201",
+        routineRunId: "00000000-0000-4000-8000-000000000202",
+        traceId: "00000000-0000-4000-8000-000000000203",
+      },
     }, {
       fetchFn: async (input, init) => {
         const url = String(input);
@@ -403,6 +449,18 @@ Deno.test("debitWidgetPullUsage records one widget pull cloud unit with runtime 
     assertEquals(metadata.widget_interval_ms, 300_000);
     assertEquals(metadata.widget_pull_reason, "scheduled");
     assertEquals(metadata.runtime_cloud_hold_id, "hold_widget_1");
+    assertEquals(
+      metadata.routine_id,
+      "00000000-0000-4000-8000-000000000201",
+    );
+    assertEquals(
+      metadata.routine_run_id,
+      "00000000-0000-4000-8000-000000000202",
+    );
+    assertEquals(
+      metadata.trace_id,
+      "00000000-0000-4000-8000-000000000203",
+    );
   });
 });
 

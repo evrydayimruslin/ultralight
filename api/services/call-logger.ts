@@ -66,6 +66,10 @@ export interface McpCallLogEntry {
   cloudChargeLight?: number;
   cloudPayerUserId?: string;
   cloudOwnerSponsored?: boolean;
+  routineId?: string;
+  routineRunId?: string;
+  traceId?: string;
+  toolInvocationId?: string;
   // GPU metering fields — populated for gpu runtime calls
   gpuType?: string;
   gpuExitCode?: string;
@@ -169,6 +173,10 @@ async function _insertLog(entry: McpCallLogEntry): Promise<void> {
         cloud_charge_light: entry.cloudChargeLight ?? null,
         cloud_payer_user_id: entry.cloudPayerUserId ?? null,
         cloud_owner_sponsored: entry.cloudOwnerSponsored ?? false,
+        routine_id: entry.routineId ?? null,
+        routine_run_id: entry.routineRunId ?? null,
+        trace_id: entry.traceId ?? null,
+        tool_invocation_id: entry.toolInvocationId ?? null,
         // GPU metering
         gpu_type: entry.gpuType ?? null,
         gpu_exit_code: entry.gpuExitCode ?? null,

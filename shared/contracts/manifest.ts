@@ -1,6 +1,11 @@
 import type { EnvSchemaEntry } from './env.ts';
 import { validateEnvVarKey } from './env.ts';
 import type { MCPJsonSchema, MCPTool, MCPToolAnnotations } from './mcp.ts';
+import type {
+  RoutineBudgetDefaults,
+  RoutineCapabilityDeclaration,
+  RoutineDeclaration,
+} from './routine.ts';
 import type { WidgetDeclaration } from './widget.ts';
 
 export interface AppManifest {
@@ -16,6 +21,7 @@ export interface AppManifest {
   functions?: Record<string, ManifestFunction>;
   permissions?: string[];
   widgets?: WidgetDeclaration[];
+  routines?: RoutineDeclaration[];
   env?: Record<string, ManifestEnvVar>;
   env_vars?: Record<string, ManifestEnvVar>;
   http?: ManifestHttpConfig;
@@ -686,6 +692,9 @@ function validateManifestHttp(
   }
 }
 
+const ROUTINE_ID_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
+const ROUTINE_HANDLER_RE = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/;
+
 function validateWidgetDependencies(
   value: unknown,
   path: string,
@@ -878,6 +887,328 @@ function validateManifestWidgets(
   });
 }
 
+function validateRoutineSchedule(
+  value: unknown,
+  path: string,
+  errors: ManifestValidationError[],
+): void {
+  if (value === undefined) return;
+  if (typeof value === 'string') {
+    if (!value.trim()) {
+      errors.push({ path, message: 'default_schedule must not be empty' });
+    }
+    return;
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    errors.push({
+      path,
+      message: 'default_schedule must be a cron string or schedule object',
+    });
+    return;
+  }
+
+  const schedule = value as Record<string, unknown>;
+  if (
+    schedule.type !== undefined &&
+    schedule.type !== 'interval' &&
+    schedule.type !== 'cron'
+  ) {
+    errors.push({
+      path: `${path}.type`,
+      message: 'type must be "interval" or "cron"',
+    });
+  }
+
+  if (schedule.cron !== undefined && typeof schedule.cron !== 'string') {
+    errors.push({ path: `${path}.cron`, message: 'cron must be a string' });
+  } else if (typeof schedule.cron === 'string' && !schedule.cron.trim()) {
+    errors.push({ path: `${path}.cron`, message: 'cron must not be empty' });
+  }
+
+  for (const key of ['every_seconds', 'every_minutes']) {
+    const intervalValue = schedule[key];
+    if (intervalValue === undefined) continue;
+    if (
+      typeof intervalValue !== 'number' ||
+      !Number.isFinite(intervalValue) ||
+      intervalValue <= 0
+    ) {
+      errors.push({
+        path: `${path}.${key}`,
+        message: `${key} must be a positive number`,
+      });
+    }
+  }
+
+  const hasInterval = schedule.every_seconds !== undefined || schedule.every_minutes !== undefined;
+  const hasCron = typeof schedule.cron === 'string' && !!schedule.cron.trim();
+  if (!hasInterval && !hasCron) {
+    errors.push({
+      path,
+      message: 'schedule object must define cron, every_seconds, or every_minutes',
+    });
+  }
+
+  if (schedule.timezone !== undefined && typeof schedule.timezone !== 'string') {
+    errors.push({ path: `${path}.timezone`, message: 'timezone must be a string' });
+  }
+}
+
+function validateRoutineCapabilities(
+  value: unknown,
+  path: string,
+  errors: ManifestValidationError[],
+): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    errors.push({ path, message: 'capabilities must be an array' });
+    return;
+  }
+
+  value.forEach((capability, index) => {
+    const capPath = `${path}.${index}`;
+    if (!capability || typeof capability !== 'object' || Array.isArray(capability)) {
+      errors.push({ path: capPath, message: 'capability must be an object' });
+      return;
+    }
+
+    const cap = capability as RoutineCapabilityDeclaration & Record<string, unknown>;
+    if (typeof cap.app !== 'string' || !cap.app.trim()) {
+      errors.push({ path: `${capPath}.app`, message: 'app is required and must be a string' });
+    }
+    if (
+      !Array.isArray(cap.functions) ||
+      cap.functions.length === 0 ||
+      cap.functions.some((fn) => typeof fn !== 'string' || !fn.trim())
+    ) {
+      errors.push({
+        path: `${capPath}.functions`,
+        message: 'functions must be a non-empty array of strings',
+      });
+    }
+    if (cap.access !== undefined && cap.access !== 'read' && cap.access !== 'write') {
+      errors.push({
+        path: `${capPath}.access`,
+        message: 'access must be "read" or "write"',
+      });
+    }
+    if (cap.required !== undefined && typeof cap.required !== 'boolean') {
+      errors.push({ path: `${capPath}.required`, message: 'required must be a boolean' });
+    }
+    if (cap.purpose !== undefined && typeof cap.purpose !== 'string') {
+      errors.push({ path: `${capPath}.purpose`, message: 'purpose must be a string' });
+    }
+  });
+}
+
+function validateRoutineBudgetDefaults(
+  value: unknown,
+  path: string,
+  errors: ManifestValidationError[],
+): void {
+  if (value === undefined) return;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    errors.push({ path, message: 'budget_defaults must be an object' });
+    return;
+  }
+
+  const budget = value as RoutineBudgetDefaults & Record<string, unknown>;
+  for (
+    const key of [
+      'max_light_per_run',
+      'max_light_per_day',
+      'max_light_per_month',
+      'max_calls_per_run',
+    ]
+  ) {
+    const budgetValue = budget[key];
+    if (budgetValue === undefined) continue;
+    if (
+      typeof budgetValue !== 'number' ||
+      !Number.isFinite(budgetValue) ||
+      budgetValue < 0
+    ) {
+      errors.push({
+        path: `${path}.${key}`,
+        message: `${key} must be a non-negative number`,
+      });
+    }
+  }
+}
+
+function validateRoutineApprovalPolicy(
+  value: unknown,
+  path: string,
+  errors: ManifestValidationError[],
+): void {
+  if (value === undefined) return;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    errors.push({ path, message: 'approval_policy must be an object' });
+    return;
+  }
+
+  const policy = value as Record<string, unknown>;
+  for (
+    const key of [
+      'require_user_approval',
+      'require_paid_capability_approval',
+      'require_external_side_effect_approval',
+    ]
+  ) {
+    if (policy[key] !== undefined && typeof policy[key] !== 'boolean') {
+      errors.push({ path: `${path}.${key}`, message: `${key} must be a boolean` });
+    }
+  }
+}
+
+function validateRoutineSurfaces(
+  value: unknown,
+  path: string,
+  errors: ManifestValidationError[],
+): void {
+  if (value === undefined) return;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    errors.push({ path, message: 'surfaces must be an object' });
+    return;
+  }
+
+  const surfaces = value as Record<string, unknown>;
+  if (surfaces.widgets !== undefined) {
+    if (
+      !Array.isArray(surfaces.widgets) ||
+      surfaces.widgets.some((widget) => typeof widget !== 'string' || !widget.trim())
+    ) {
+      errors.push({
+        path: `${path}.widgets`,
+        message: 'widgets must be an array of strings',
+      });
+    }
+  }
+  if (surfaces.command_cards !== undefined) {
+    if (!Array.isArray(surfaces.command_cards)) {
+      errors.push({ path: `${path}.command_cards`, message: 'command_cards must be an array' });
+    } else {
+      surfaces.command_cards.forEach((card, index) => {
+        const cardPath = `${path}.command_cards.${index}`;
+        if (!card || typeof card !== 'object' || Array.isArray(card)) {
+          errors.push({ path: cardPath, message: 'command card binding must be an object' });
+          return;
+        }
+        const binding = card as Record<string, unknown>;
+        if (typeof binding.widget_id !== 'string' || !binding.widget_id.trim()) {
+          errors.push({
+            path: `${cardPath}.widget_id`,
+            message: 'widget_id is required and must be a string',
+          });
+        }
+        if (typeof binding.card_id !== 'string' || !binding.card_id.trim()) {
+          errors.push({
+            path: `${cardPath}.card_id`,
+            message: 'card_id is required and must be a string',
+          });
+        }
+      });
+    }
+  }
+  if (surfaces.dashboard_key !== undefined && typeof surfaces.dashboard_key !== 'string') {
+    errors.push({ path: `${path}.dashboard_key`, message: 'dashboard_key must be a string' });
+  }
+}
+
+function validateManifestRoutines(
+  value: unknown,
+  functions: Record<string, unknown>,
+  errors: ManifestValidationError[],
+  warnings: string[],
+): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    errors.push({ path: 'routines', message: 'routines must be an array' });
+    return;
+  }
+
+  const seenRoutineIds = new Set<string>();
+  value.forEach((routine, index) => {
+    const routinePath = `routines.${index}`;
+    if (!routine || typeof routine !== 'object' || Array.isArray(routine)) {
+      errors.push({ path: routinePath, message: 'routine declaration must be an object' });
+      return;
+    }
+
+    const r = routine as Record<string, unknown>;
+    const routineId = typeof r.id === 'string' ? r.id.trim() : '';
+    if (!routineId) {
+      errors.push({ path: `${routinePath}.id`, message: 'id is required and must be a string' });
+    } else if (!ROUTINE_ID_RE.test(routineId)) {
+      errors.push({
+        path: `${routinePath}.id`,
+        message:
+          'id must start with a letter and contain only letters, numbers, hyphens, or underscores',
+      });
+    } else if (seenRoutineIds.has(routineId)) {
+      errors.push({ path: `${routinePath}.id`, message: `duplicate routine id "${routineId}"` });
+    } else {
+      seenRoutineIds.add(routineId);
+    }
+
+    if (typeof r.label !== 'string' || !r.label.trim()) {
+      errors.push({
+        path: `${routinePath}.label`,
+        message: 'label is required and must be a string',
+      });
+    }
+
+    if (r.description !== undefined && typeof r.description !== 'string') {
+      errors.push({ path: `${routinePath}.description`, message: 'description must be a string' });
+    }
+
+    const handler = typeof r.handler === 'string' ? r.handler.trim() : '';
+    if (!handler) {
+      errors.push({
+        path: `${routinePath}.handler`,
+        message: 'handler is required and must be a string',
+      });
+    } else if (!ROUTINE_HANDLER_RE.test(handler)) {
+      errors.push({
+        path: `${routinePath}.handler`,
+        message: 'handler must be a valid exported function name',
+      });
+    } else if (Object.keys(functions).length > 0 && !functions[handler]) {
+      warnings.push(`Routine "${routineId || index}" references missing handler "${handler}".`);
+    }
+
+    validateRoutineSchedule(r.default_schedule, `${routinePath}.default_schedule`, errors);
+    if (r.config_schema !== undefined) {
+      if (
+        typeof r.config_schema !== 'object' ||
+        r.config_schema === null ||
+        Array.isArray(r.config_schema)
+      ) {
+        errors.push({
+          path: `${routinePath}.config_schema`,
+          message: 'config_schema must be an object',
+        });
+      } else {
+        r.config_schema = normalizeManifestParameters(r.config_schema);
+      }
+    }
+    if (
+      r.default_config !== undefined &&
+      (typeof r.default_config !== 'object' || r.default_config === null ||
+        Array.isArray(r.default_config))
+    ) {
+      errors.push({
+        path: `${routinePath}.default_config`,
+        message: 'default_config must be an object',
+      });
+    }
+    validateRoutineCapabilities(r.capabilities, `${routinePath}.capabilities`, errors);
+    validateRoutineBudgetDefaults(r.budget_defaults, `${routinePath}.budget_defaults`, errors);
+    validateRoutineApprovalPolicy(r.approval_policy, `${routinePath}.approval_policy`, errors);
+    validateRoutineSurfaces(r.surfaces, `${routinePath}.surfaces`, errors);
+  });
+}
+
 export function validateManifest(input: unknown): ManifestValidationResult {
   const errors: ManifestValidationError[] = [];
   const warnings: string[] = [];
@@ -971,6 +1302,7 @@ export function validateManifest(input: unknown): ManifestValidationResult {
       : {};
   validateManifestWidgets(manifest.widgets, functionsForWidgetValidation, errors, warnings);
   validateManifestHttp(manifest.http, functionsForWidgetValidation, errors);
+  validateManifestRoutines(manifest.routines, functionsForWidgetValidation, errors, warnings);
 
   const rawEnvVars = {
     ...((manifest.env && typeof manifest.env === 'object' && !Array.isArray(manifest.env))

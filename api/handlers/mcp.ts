@@ -67,8 +67,8 @@ import {
   fetchAppEntryCode,
   resolveAppRuntimeEnvVars,
   resolveAppSupabaseConfig,
+  resolveRuntimeAppCallDependencies,
   resolveStrictManifestPermissions,
-  resolveWidgetAppCallDependencies,
   SupabaseConfigMigrationRequiredError,
 } from "../services/app-runtime-resources.ts";
 import {
@@ -78,6 +78,10 @@ import {
   type RequestCallerContext,
   resolveRequestCallerContext,
 } from "../services/request-caller-context.ts";
+import {
+  type RoutineTraceContext,
+  routineTraceContextFromCaller,
+} from "../services/routine-trace.ts";
 import type {
   MCPContent,
   MCPJsonSchema,
@@ -1645,7 +1649,13 @@ async function handleToolsCall(
     userId,
     user,
     callerContext,
-    { userQuery, sessionId, authToken, widgetPull },
+    {
+      userQuery,
+      sessionId,
+      authToken,
+      widgetPull,
+      routineContext: routineTraceContextFromCaller(callerContext),
+    },
   );
 }
 
@@ -1984,6 +1994,7 @@ async function handleGpuExecution(
     sessionId?: string;
     authToken?: string;
     widgetPull?: { widgetName?: string; intervalMs?: number; reason?: string };
+    routineContext?: RoutineTraceContext;
   },
 ): Promise<Response> {
   if (!isGpuSupportEnabled()) {
@@ -2047,6 +2058,7 @@ async function handleGpuExecution(
       sequenceNumber: nextSequenceNumber(meta?.sessionId),
       userQuery: meta?.userQuery,
       source: gpuCallSource,
+      routineContext: meta?.routineContext,
     });
 
     if (gpuSettlement?.insufficientBalance) {
@@ -2086,6 +2098,7 @@ async function executeAppFunction(
     sessionId?: string;
     authToken?: string;
     widgetPull?: { widgetName?: string; intervalMs?: number; reason?: string };
+    routineContext?: RoutineTraceContext;
   },
 ): Promise<Response> {
   try {
@@ -2208,7 +2221,10 @@ async function executeAppFunction(
 
     // AI-capable apps get a longer timeout (120s) since AI calls are inherently slow
     const permissions = resolveStrictManifestPermissions(app).permissions;
-    const appCallDependencies = resolveWidgetAppCallDependencies(app);
+    const appCallDependencies = resolveRuntimeAppCallDependencies(
+      app,
+      callerContext,
+    );
     const timeoutMs = permissions.includes("ai:call") ? 120_000 : 30_000;
     const runtimeAI = permissions.includes("ai:call")
       ? await createRuntimeAIContext(user)
@@ -2246,6 +2262,7 @@ async function executeAppFunction(
       method: callMethod,
       timeoutMs,
       callerAuthState: "authenticated",
+      routineContext: meta?.routineContext,
     });
     if (cloudPreflight.insufficientBalance) {
       const widgetBalanceMessage = widgetPull
@@ -2287,6 +2304,7 @@ async function executeAppFunction(
             widgetName: widgetPull.widgetName,
             widgetIntervalMs: widgetPull.intervalMs,
             widgetPullReason: widgetPull.reason,
+            routineContext: meta?.routineContext,
           });
         } catch (err) {
           console.error("[PRICING] Widget pull usage debit failed:", err);
@@ -2331,6 +2349,7 @@ async function executeAppFunction(
         widget_pull_cloud_units: widgetPullUsage?.cloudUnits,
         widget_pull_amount_light: widgetPullUsage?.amountLight,
       },
+      routineContext: meta?.routineContext,
     });
     // Use Worker-backed data service if configured (native R2 bindings, ~10x faster)
     // Wrap with metered service when userId is present to track user data storage.
@@ -2403,6 +2422,13 @@ async function executeAppFunction(
           widget_pull_event_id: widgetPullUsage?.eventId,
           widget_pull_cloud_units: widgetPullUsage?.cloudUnits,
           widget_pull_amount_light: widgetPullUsage?.amountLight,
+          ...(meta?.routineContext
+            ? {
+              routine_id: meta.routineContext.routineId,
+              routine_run_id: meta.routineContext.routineRunId,
+              trace_id: meta.routineContext.traceId ?? null,
+            }
+            : {}),
         },
       );
       const { settlement } = await settleAndLogAppExecution({
@@ -2425,6 +2451,7 @@ async function executeAppFunction(
         callerAuthState: "authenticated",
         runtimePricingPreflight: cloudPreflight.pricing,
         runtimeCloudSettlement: cloudSettlement,
+        routineContext: meta?.routineContext,
       });
 
       return settlement;

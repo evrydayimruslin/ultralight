@@ -235,6 +235,64 @@ read-only dependencies on the source apps. Use `ul.command({ action: "inventory"
 to see available cards and `ul.command({ action: "blueprint", prompt: "..." })`
 to check how the card will fit a saved dashboard.
 
+### Routine Templates
+
+MCPs can declare routine templates for ongoing work that the platform will own
+durably once the user creates a routine instance. A routine template names this
+MCP's handler function, default schedule/configuration, downstream MCP
+capabilities it expects to call, default Light budgets, and optional Command
+surfaces for monitoring.
+
+Routine templates are not cron jobs inside the MCP. The MCP developer defines
+the package; Ultralight later handles the scheduler, user approval, auth actor,
+budgets, traces, and receipts.
+
+```json
+{
+  "routines": [
+    {
+      "id": "sales_followup_loop",
+      "label": "Sales follow-up loop",
+      "description": "Polls email and prepares reviewable follow-up drafts.",
+      "handler": "poll_email_followups",
+      "default_schedule": { "every_minutes": 5 },
+      "config_schema": {
+        "mailbox": { "type": "string", "required": true },
+        "max_emails": { "type": "number", "default": 20 }
+      },
+      "default_config": { "max_emails": 20 },
+      "capabilities": [
+        {
+          "app": "email-drafter",
+          "functions": ["draft_reply"],
+          "access": "write",
+          "purpose": "Create response drafts for user review"
+        },
+        {
+          "app": "crm",
+          "functions": ["log_followup"],
+          "access": "write"
+        }
+      ],
+      "budget_defaults": {
+        "max_light_per_run": 25,
+        "max_light_per_day": 500,
+        "max_calls_per_run": 10
+      },
+      "approval_policy": {
+        "require_user_approval": true,
+        "require_paid_capability_approval": true,
+        "require_external_side_effect_approval": true
+      },
+      "surfaces": {
+        "widgets": ["email_ops"],
+        "command_cards": [{ "widget_id": "email_ops", "card_id": "pending_drafts" }]
+      }
+    }
+  ]
+}
+```
+
 ## Function Implementation
 
 ```js

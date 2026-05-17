@@ -4,7 +4,11 @@
 import { json } from "./response.ts";
 import type { UserContext } from "../runtime/sandbox.ts";
 import { createAppsService } from "../services/apps.ts";
-import { createAppDataService } from "../services/appdata.ts";
+import {
+  createAppDataService,
+  createWorkerAppDataService,
+} from "../services/appdata.ts";
+import { createMeteredAppDataService } from "../services/appdata-metered.ts";
 import {
   createRuntimeAIContext,
   createUnavailableAIService,
@@ -41,6 +45,7 @@ import {
   fetchAppEntryCode,
   resolveAppRuntimeEnvVars,
   resolveAppSupabaseConfig,
+  resolveRuntimeAppCallDependencies,
   resolveStrictManifestPermissions,
   SupabaseConfigMigrationRequiredError,
 } from "../services/app-runtime-resources.ts";
@@ -73,6 +78,38 @@ import {
   sanitizeHttpRequestForLogs,
 } from "../services/http-telemetry.ts";
 import { createUserService, type UserProfile } from "../services/user.ts";
+import { routineTraceContextFromCaller } from "../services/routine-trace.ts";
+import {
+  createMemoryService,
+  type MemoryService as MemoryServiceImpl,
+} from "../services/memory.ts";
+import { getEnv } from "../lib/env.ts";
+
+let memoryService: MemoryServiceImpl | null | undefined;
+
+function getRuntimeMemoryService(): MemoryServiceImpl | null {
+  if (memoryService !== undefined) return memoryService;
+  try {
+    memoryService = createMemoryService();
+  } catch (err) {
+    console.error("[HTTP] Failed to create memory service:", err);
+    memoryService = null;
+  }
+  return memoryService;
+}
+
+function createRuntimeMemoryAdapter(userId: string, appId: string) {
+  const service = getRuntimeMemoryService();
+  if (!service) return null;
+  return {
+    remember: async (key: string, value: unknown) => {
+      await service.remember(userId, `app:${appId}`, key, value);
+    },
+    recall: async (key: string) => {
+      return await service.recall(userId, `app:${appId}`, key);
+    },
+  };
+}
 
 /**
  * Handle HTTP endpoint requests to apps
@@ -227,6 +264,7 @@ export async function handleHttpEndpoint(
       );
     }
     const { user } = caller;
+    const routineContext = routineTraceContextFromCaller(caller);
     auditAuthState = caller.authState;
     const httpRuntime = resolveHttpRuntimeCallContext(
       routePolicy,
@@ -447,6 +485,7 @@ export async function handleHttpEndpoint(
           method: "http",
           gpuResult,
           durationMs: gpuDurationMs,
+          routineContext,
         });
 
         if (settlement?.insufficientBalance) {
@@ -569,6 +608,7 @@ export async function handleHttpEndpoint(
       method: "http",
       timeoutMs,
       callerAuthState: caller.authState,
+      routineContext,
     });
     if (cloudPreflight.insufficientBalance) {
       return finalize(
@@ -599,16 +639,39 @@ export async function handleHttpEndpoint(
       receiptId,
       method: "http",
       metadata: { surface: "http" },
+      routineContext,
     });
-    // Create app data service for the authenticated caller.
-    const appDataService = createAppDataService(
-      appId,
-      httpRuntime.appDataUserId,
-      {
+    const workerDataUrl = getEnv("WORKER_DATA_URL");
+    const workerSecret = getEnv("WORKER_SECRET");
+    const rawAppDataService = workerDataUrl && workerSecret
+      ? createWorkerAppDataService(
+        app.id,
+        httpRuntime.appDataUserId,
+        workerDataUrl,
+        workerSecret,
+        {
+          operationMetering: cloudOperationMetering,
+          billingConfig: cloudPreflight.billingConfig,
+        },
+      )
+      : createAppDataService(app.id, httpRuntime.appDataUserId, {
         operationMetering: cloudOperationMetering,
         billingConfig: cloudPreflight.billingConfig,
-      },
-    );
+      });
+    const appDataService = httpRuntime.appDataUserId
+      ? createMeteredAppDataService(
+        rawAppDataService,
+        httpRuntime.appDataUserId,
+      )
+      : rawAppDataService;
+    const baseUrl = getEnv("BASE_URL") || undefined;
+    const appCallDependencies = resolveRuntimeAppCallDependencies(app, caller);
+    const memoryAdapter =
+      caller.authState === "authenticated" &&
+        (httpPermissions.includes("memory:read") ||
+          httpPermissions.includes("memory:write"))
+        ? createRuntimeMemoryAdapter(caller.userId, app.id)
+        : null;
     const result = await executeInDynamicSandbox(
       {
         appId: app.id,
@@ -622,7 +685,7 @@ export async function handleHttpEndpoint(
         user,
         appDataService,
         d1DataService,
-        memoryService: null,
+        memoryService: memoryAdapter,
         aiService: runtimeAI.aiService as {
           call: (
             request: import("../../shared/types/index.ts").AIRequest,
@@ -631,6 +694,10 @@ export async function handleHttpEndpoint(
         },
         envVars,
         supabase: supabaseConfig,
+        baseUrl,
+        authToken: caller.authToken,
+        appCallDependencies,
+        workerSecret: workerSecret || undefined,
         timeoutMs,
         cloudOperationMetering,
         cloudOperationBillingConfig: cloudPreflight.billingConfig,
@@ -646,6 +713,13 @@ export async function handleHttpEndpoint(
       {
         success: result.success,
         error_message: result.success ? null : result.error?.message,
+        ...(routineContext
+          ? {
+            routine_id: routineContext.routineId,
+            routine_run_id: routineContext.routineRunId,
+            trace_id: routineContext.traceId ?? null,
+          }
+          : {}),
       },
     );
 
@@ -667,6 +741,7 @@ export async function handleHttpEndpoint(
       callerAuthState: caller.authState,
       runtimePricingPreflight: cloudPreflight.pricing,
       runtimeCloudSettlement: cloudSettlement,
+      routineContext,
     });
 
     if (result.success && settlement.insufficientBalance) {

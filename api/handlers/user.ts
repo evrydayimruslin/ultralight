@@ -1274,6 +1274,114 @@ export async function handleUser(request: Request): Promise<Response> {
   }
 
   // ============================================
+  // GET/PATCH/POST /api/user/routines - Command routine monitoring
+  // ============================================
+  if (path === "/api/user/routines" && method === "GET") {
+    try {
+      const { listRoutineMonitor } = await import(
+        "../services/routine-monitoring.ts"
+      );
+      const rawLimit = url.searchParams.get("limit");
+      const status = url.searchParams.get("status") || undefined;
+      return json(
+        await listRoutineMonitor(userId, {
+          status,
+          limit: rawLimit ? Number(rawLimit) : undefined,
+        }),
+      );
+    } catch (err) {
+      userLogger.error("Failed to load routine monitor", {
+        user_id: userId,
+        error: err,
+      });
+      return error(
+        err instanceof Error ? err.message : "Failed to load routines",
+        400,
+      );
+    }
+  }
+
+  if (
+    path.startsWith("/api/user/routines/") && path.endsWith("/run") &&
+    method === "POST"
+  ) {
+    try {
+      const routineId = decodeURIComponent(
+        path.slice("/api/user/routines/".length, -"/run".length),
+      );
+      if (!routineId || routineId.includes("/")) {
+        return error("routine_id is required", 400);
+      }
+      const { queueRoutineMonitorRun } = await import(
+        "../services/routine-monitoring.ts"
+      );
+      return json(await queueRoutineMonitorRun(userId, routineId));
+    } catch (err) {
+      userLogger.error("Failed to queue routine run", {
+        user_id: userId,
+        error: err,
+      });
+      return error(
+        err instanceof Error ? err.message : "Failed to queue routine",
+        400,
+      );
+    }
+  }
+
+  if (path.startsWith("/api/user/routines/") && method === "GET") {
+    try {
+      const routineId = decodeURIComponent(
+        path.slice("/api/user/routines/".length),
+      );
+      if (!routineId || routineId.includes("/")) {
+        return error("routine_id is required", 400);
+      }
+      const { getRoutineMonitorDetail } = await import(
+        "../services/routine-monitoring.ts"
+      );
+      const detail = await getRoutineMonitorDetail(userId, routineId);
+      if (!detail) return error("Routine not found", 404);
+      return json(detail);
+    } catch (err) {
+      userLogger.error("Failed to load routine detail", {
+        user_id: userId,
+        error: err,
+      });
+      return error(
+        err instanceof Error ? err.message : "Failed to load routine",
+        400,
+      );
+    }
+  }
+
+  if (path.startsWith("/api/user/routines/") && method === "PATCH") {
+    try {
+      const routineId = decodeURIComponent(
+        path.slice("/api/user/routines/".length),
+      );
+      if (!routineId || routineId.includes("/")) {
+        return error("routine_id is required", 400);
+      }
+      const body = await readJsonBody<{ action?: unknown; status?: unknown }>(
+        request,
+      );
+      const { updateRoutineMonitorStatus } = await import(
+        "../services/routine-monitoring.ts"
+      );
+      return json(await updateRoutineMonitorStatus(userId, routineId, body));
+    } catch (err) {
+      userLogger.error("Failed to update routine monitor status", {
+        user_id: userId,
+        error: err,
+      });
+      return error(
+        err instanceof Error ? err.message : "Failed to update routine",
+        400,
+      );
+    }
+  }
+
+  // ============================================
   // GET /api/user - Get user profile
   //
   // Augments the hot-path `userService.getUser` payload with two

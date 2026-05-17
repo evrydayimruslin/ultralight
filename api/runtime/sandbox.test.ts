@@ -1043,7 +1043,45 @@ Deno.test("sandbox: app call rejects undeclared dependency without app:call", as
 
   const result = await executeInSandbox(config, "blockedDependency", [{}]);
   assertEquals(result.success, false);
-  assert(result.error?.message.includes("matching read dependency"));
+  assert(result.error?.message.includes("matching dependency"));
+});
+
+Deno.test("sandbox: app call can use a declared write dependency", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "call-1",
+        result: {
+          content: [{ type: "text", text: JSON.stringify({ ok: true }) }],
+        },
+      }),
+      { headers: { "Content-Type": "application/json" } },
+    )) as typeof fetch;
+
+  try {
+    const config = makeConfig({
+      permissions: [],
+      baseUrl: "https://api.example.test",
+      authToken: "token-123",
+      appCallDependencies: [
+        { app: "target-app", functions: ["writeSummary"], access: "write" },
+      ],
+      code: iife(`
+        async function writeDependency() {
+          return await ultralight.call('target-app', 'writeSummary', { value: 1 });
+        }
+        return { writeDependency: writeDependency };
+      `),
+    });
+
+    const result = await executeInSandbox(config, "writeDependency", [{}]);
+    assertEquals(result.success, true);
+    assertEquals(result.result, { ok: true });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 // ============================================

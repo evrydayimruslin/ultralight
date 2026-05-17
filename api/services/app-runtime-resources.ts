@@ -513,12 +513,72 @@ export interface StrictRuntimePermissionResolution {
 export interface RuntimeAppCallDependency {
   app: string;
   functions: string[];
-  access: "read";
+  access: "read" | "write";
+}
+
+type RuntimeDependencyAccess = RuntimeAppCallDependency["access"];
+type RuntimeDependencyMap = Map<string, Map<string, RuntimeDependencyAccess>>;
+
+interface RoutineActorCapabilityLike {
+  app_id?: string | null;
+  app_ref?: string | null;
+  function_name?: string | null;
+  access?: RuntimeDependencyAccess | null;
+}
+
+interface RuntimeCallerLike {
+  routineActor?: {
+    capabilities?: RoutineActorCapabilityLike[];
+  };
+}
+
+function addRuntimeAppCallDependency(
+  byApp: RuntimeDependencyMap,
+  app: string,
+  functionName: string,
+  access: RuntimeDependencyAccess,
+): void {
+  const appKey = app.trim();
+  const fn = functionName.trim();
+  if (!appKey || !fn) return;
+
+  const existingFunctions = byApp.get(appKey) ?? new Map();
+  const existingAccess = existingFunctions.get(fn);
+  existingFunctions.set(
+    fn,
+    existingAccess === "write" || access === "write" ? "write" : "read",
+  );
+  byApp.set(appKey, existingFunctions);
+}
+
+function flattenRuntimeAppCallDependencies(
+  byApp: RuntimeDependencyMap,
+): RuntimeAppCallDependency[] {
+  const dependencies: RuntimeAppCallDependency[] = [];
+  const sortedApps = Array.from(byApp.keys()).sort((a, b) =>
+    a.localeCompare(b)
+  );
+
+  for (const app of sortedApps) {
+    const functionsByAccess = byApp.get(app);
+    if (!functionsByAccess) continue;
+
+    for (const access of ["read", "write"] as const) {
+      const functions = Array.from(functionsByAccess.entries())
+        .filter(([, fnAccess]) => fnAccess === access)
+        .map(([fn]) => fn)
+        .sort((a, b) => a.localeCompare(b));
+      if (functions.length === 0) continue;
+      dependencies.push({ app, functions, access });
+    }
+  }
+
+  return dependencies;
 }
 
 function collectWidgetAppCallDependencies(
   dependencies: unknown,
-  byApp: Map<string, Set<string>>,
+  byApp: RuntimeDependencyMap,
 ): void {
   if (!Array.isArray(dependencies)) return;
 
@@ -536,29 +596,29 @@ function collectWidgetAppCallDependencies(
       .map((fn) => fn.trim());
     if (functions.length === 0) continue;
 
-    const existing = byApp.get(app) ?? new Set<string>();
-    for (const fn of functions) existing.add(fn);
-    byApp.set(app, existing);
+    for (const fn of functions) {
+      addRuntimeAppCallDependency(byApp, app, fn, "read");
+    }
   }
 }
 
-export function resolveWidgetAppCallDependencies(
+function collectManifestWidgetAppCallDependencies(
   app: Pick<RuntimeApp, "manifest">,
-): RuntimeAppCallDependency[] {
+  byApp: RuntimeDependencyMap,
+): void {
   let parsed: unknown;
   try {
     parsed = typeof app.manifest === "string"
       ? JSON.parse(app.manifest)
       : app.manifest;
   } catch {
-    return [];
+    return;
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
 
   const manifest = parsed as { widgets?: unknown };
-  if (!Array.isArray(manifest.widgets)) return [];
+  if (!Array.isArray(manifest.widgets)) return;
 
-  const byApp = new Map<string, Set<string>>();
   for (const widget of manifest.widgets) {
     if (!widget || typeof widget !== "object" || Array.isArray(widget)) {
       continue;
@@ -575,12 +635,53 @@ export function resolveWidgetAppCallDependencies(
       }
     }
   }
+}
 
-  return Array.from(byApp.entries(), ([appId, functions]) => ({
-    app: appId,
-    functions: Array.from(functions).sort(),
-    access: "read" as const,
-  })).sort((a, b) => a.app.localeCompare(b.app));
+export function resolveWidgetAppCallDependencies(
+  app: Pick<RuntimeApp, "manifest">,
+): RuntimeAppCallDependency[] {
+  const byApp: RuntimeDependencyMap = new Map();
+  collectManifestWidgetAppCallDependencies(app, byApp);
+  return flattenRuntimeAppCallDependencies(byApp);
+}
+
+function collectRoutineActorAppCallDependencies(
+  caller: RuntimeCallerLike | undefined,
+  byApp: RuntimeDependencyMap,
+): void {
+  const capabilities = caller?.routineActor?.capabilities;
+  if (!Array.isArray(capabilities)) return;
+
+  for (const capability of capabilities) {
+    const functionName = typeof capability.function_name === "string"
+      ? capability.function_name.trim()
+      : "";
+    if (!functionName) continue;
+
+    const access = capability.access === "write" ? "write" : "read";
+    for (const app of [capability.app_id, capability.app_ref]) {
+      if (typeof app !== "string" || !app.trim()) continue;
+      addRuntimeAppCallDependency(byApp, app, functionName, access);
+    }
+  }
+}
+
+export function resolveRoutineActorAppCallDependencies(
+  caller: RuntimeCallerLike | undefined,
+): RuntimeAppCallDependency[] {
+  const byApp: RuntimeDependencyMap = new Map();
+  collectRoutineActorAppCallDependencies(caller, byApp);
+  return flattenRuntimeAppCallDependencies(byApp);
+}
+
+export function resolveRuntimeAppCallDependencies(
+  app: Pick<RuntimeApp, "manifest">,
+  caller?: RuntimeCallerLike,
+): RuntimeAppCallDependency[] {
+  const byApp: RuntimeDependencyMap = new Map();
+  collectManifestWidgetAppCallDependencies(app, byApp);
+  collectRoutineActorAppCallDependencies(caller, byApp);
+  return flattenRuntimeAppCallDependencies(byApp);
 }
 
 export function resolveStrictManifestPermissions(

@@ -879,6 +879,150 @@ export async function saveCommandDashboardLayout(
   return await res.json() as StoredCommandDashboardLayout;
 }
 
+export type RoutineMonitorHealth =
+  | "active"
+  | "paused"
+  | "running"
+  | "needs_approval"
+  | "error";
+
+export type RoutineMonitorStatus =
+  | "active"
+  | "paused"
+  | "disabled"
+  | "deleted"
+  | "error";
+
+export interface RoutineRunSummary {
+  id: string;
+  routine_id: string;
+  status: string;
+  trigger: string;
+  trace_id: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_ms: number | null;
+  total_light: number;
+  summary: string | null;
+  error: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface RoutineMonitorAction {
+  id: "pause" | "resume" | "run_now";
+  label: string;
+  method: "PATCH" | "POST";
+  endpoint: string;
+  body?: Record<string, unknown>;
+}
+
+export interface RoutineMonitorItem {
+  id: string;
+  user_id: string;
+  composer_app_id: string | null;
+  composer_app_slug: string | null;
+  template_id: string;
+  template_version: string | null;
+  name: string;
+  description: string | null;
+  intent: string | null;
+  handler_function: string;
+  status: RoutineMonitorStatus;
+  schedule: Record<string, unknown>;
+  config: Record<string, unknown>;
+  budget_policy: Record<string, unknown>;
+  approval_policy: Record<string, unknown>;
+  max_concurrency: number;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  last_success_at: string | null;
+  last_error_at: string | null;
+  failure_count: number;
+  created_at: string;
+  updated_at: string;
+  health: RoutineMonitorHealth;
+  approved_capability_count: number;
+  pending_capability_count: number;
+  capability_count: number;
+  last_run: RoutineRunSummary | null;
+  recent_runs: RoutineRunSummary[];
+  failures_24h: number;
+  spend_light_24h: number;
+  spend_light_30d: number;
+  actions: RoutineMonitorAction[];
+}
+
+export interface RoutineMonitorSummary {
+  total: number;
+  active: number;
+  paused: number;
+  error: number;
+  pending_approvals: number;
+  failures_24h: number;
+  spend_light_24h: number;
+  spend_light_30d: number;
+  next_run_at: string | null;
+  last_run_at: string | null;
+}
+
+export interface RoutineMonitorResponse {
+  summary: RoutineMonitorSummary;
+  routines: RoutineMonitorItem[];
+  cards: Record<string, unknown>;
+  generated_at: string;
+}
+
+export async function fetchRoutineMonitor(): Promise<
+  RoutineMonitorResponse | null
+> {
+  const token = getToken();
+  if (!token) return null;
+  const res = await fetchFromApi("/api/user/routines", {
+    headers: { "Authorization": `Bearer ${token}` },
+  });
+  if (!res.ok) return null;
+  return await res.json() as RoutineMonitorResponse;
+}
+
+export async function updateRoutineMonitorStatus(
+  routineId: string,
+  action: "pause" | "resume",
+): Promise<RoutineMonitorItem | null> {
+  const token = getToken();
+  if (!token) return null;
+  const res = await fetchFromApi(
+    `/api/user/routines/${encodeURIComponent(routineId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ action }),
+    },
+  );
+  if (!res.ok) return null;
+  const data = await res.json() as { routine?: RoutineMonitorItem };
+  return data.routine ?? null;
+}
+
+export async function runRoutineNow(
+  routineId: string,
+): Promise<RoutineRunSummary | null> {
+  const token = getToken();
+  if (!token) return null;
+  const res = await fetchFromApi(
+    `/api/user/routines/${encodeURIComponent(routineId)}/run`,
+    {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${token}` },
+    },
+  );
+  if (!res.ok) return null;
+  const data = await res.json() as { run?: RoutineRunSummary };
+  return data.run ?? null;
+}
+
 // ── Marketplace ──
 //
 // Wraps the /api/discover/marketplace browse + search endpoints and

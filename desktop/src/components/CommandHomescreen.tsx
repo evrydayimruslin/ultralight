@@ -28,14 +28,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchCommandDashboardLayout,
   fetchCommandWidgets,
+  fetchRoutineMonitor,
+  runRoutineNow,
   saveCommandDashboardLayout,
   type CommandDashboardLayout,
   type FunctionIndex,
+  type RoutineMonitorItem,
+  type RoutineMonitorResponse,
+  updateRoutineMonitorStatus,
 } from '../lib/api';
 import { openWidgetWindow } from '../lib/multiWindow';
 import { fetchWidgetDataPayload } from '../lib/widgetRuntime';
 import Glyph, { deriveGlyph, deriveTone } from './ui/Glyph';
 import WidgetPickerModal, { type PickedCard, buildKey } from './dashboard/WidgetPickerModal';
+import RoutineMonitorPanel from './RoutineMonitorPanel';
 
 // ── Types (FE-internal) ───────────────────────────────────────────────
 
@@ -342,6 +348,9 @@ export default function CommandHomescreen() {
   // Per-instance card data, keyed by instance_id
   const [cardData, setCardData] = useState<Record<string, unknown>>({});
   const [cardLoading, setCardLoading] = useState<Record<string, boolean>>({});
+  const [routineMonitor, setRoutineMonitor] = useState<RoutineMonitorResponse | null>(null);
+  const [routineLoading, setRoutineLoading] = useState(false);
+  const [routineError, setRoutineError] = useState<string | null>(null);
   // Track which instance ids we've already started a fetch for. Ref (not
   // state) so the dispatch loop doesn't read stale cardData/cardLoading
   // closures when tiles change quickly (e.g. after a layout edit).
@@ -375,6 +384,51 @@ export default function CommandHomescreen() {
       });
     return () => { cancelled = true; };
   }, []);
+
+  const refreshRoutineMonitor = useCallback(async () => {
+    setRoutineLoading(true);
+    setRoutineError(null);
+    try {
+      const monitor = await fetchRoutineMonitor();
+      setRoutineMonitor(monitor);
+    } catch (err) {
+      setRoutineError(err instanceof Error ? err.message : 'Failed to load routines');
+    } finally {
+      setRoutineLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshRoutineMonitor();
+  }, [refreshRoutineMonitor]);
+
+  const replaceRoutine = useCallback((routine: RoutineMonitorItem | null) => {
+    if (!routine) return;
+    setRoutineMonitor((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        routines: current.routines.map((item) => item.id === routine.id ? routine : item),
+      };
+    });
+  }, []);
+
+  const handlePauseRoutine = useCallback(async (routineId: string) => {
+    const routine = await updateRoutineMonitorStatus(routineId, 'pause');
+    replaceRoutine(routine);
+    void refreshRoutineMonitor();
+  }, [refreshRoutineMonitor, replaceRoutine]);
+
+  const handleResumeRoutine = useCallback(async (routineId: string) => {
+    const routine = await updateRoutineMonitorStatus(routineId, 'resume');
+    replaceRoutine(routine);
+    void refreshRoutineMonitor();
+  }, [refreshRoutineMonitor, replaceRoutine]);
+
+  const handleRunRoutineNow = useCallback(async (routineId: string) => {
+    await runRoutineNow(routineId);
+    void refreshRoutineMonitor();
+  }, [refreshRoutineMonitor]);
 
   // Resolve each card instance against the widget index. Drops orphans
   // (instances whose widget or card was removed from the manifest).
@@ -629,6 +683,18 @@ export default function CommandHomescreen() {
             ＋ Widget
           </button>
         </div>
+      </div>
+
+      <div className="px-[22px] pt-2">
+        <RoutineMonitorPanel
+          monitor={routineMonitor}
+          loading={routineLoading}
+          error={routineError}
+          onRefresh={refreshRoutineMonitor}
+          onPause={handlePauseRoutine}
+          onResume={handleResumeRoutine}
+          onRunNow={handleRunRoutineNow}
+        />
       </div>
 
       {/* Body */}

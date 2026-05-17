@@ -10,6 +10,7 @@ import {
   resolveAppRuntimeEnvVars,
   resolveAppSupabaseConfig,
   resolveManifestPermissions,
+  resolveRuntimeAppCallDependencies,
   resolveStrictManifestPermissions,
   resolveWidgetAppCallDependencies,
   SupabaseConfigMigrationRequiredError,
@@ -442,6 +443,60 @@ Deno.test("app runtime resources: widget dependencies become read-only app call 
   });
 
   assertEquals(dependencies, [
+    {
+      app: "email-ops",
+      functions: ["getDraft", "listDrafts"],
+      access: "read",
+    },
+  ]);
+});
+
+Deno.test("app runtime resources: runtime dependencies include routine actor capability grants", () => {
+  const dependencies = resolveRuntimeAppCallDependencies(
+    {
+      manifest: JSON.stringify({
+        widgets: [
+          {
+            id: "overview",
+            label: "Overview",
+            dependencies: [
+              { app: "email-ops", functions: ["listDrafts"] },
+            ],
+          },
+        ],
+      }),
+    },
+    {
+      routineActor: {
+        capabilities: [
+          {
+            app_id: "crm-app-id",
+            app_ref: "crm",
+            function_name: "logLead",
+            access: "write",
+          },
+          {
+            app_id: null,
+            app_ref: "email-ops",
+            function_name: "getDraft",
+            access: "read",
+          },
+        ],
+      },
+    },
+  );
+
+  assertEquals(dependencies, [
+    {
+      app: "crm",
+      functions: ["logLead"],
+      access: "write",
+    },
+    {
+      app: "crm-app-id",
+      functions: ["logLead"],
+      access: "write",
+    },
     {
       app: "email-ops",
       functions: ["getDraft", "listDrafts"],

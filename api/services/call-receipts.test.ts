@@ -12,6 +12,10 @@ Deno.test("call receipts: combines app economics with cloud usage resource break
       developer_net_light: 17,
       cloud_payer_user_id: "caller-123",
       cloud_owner_sponsored: false,
+      routine_id: "00000000-0000-4000-8000-000000000301",
+      routine_run_id: "00000000-0000-4000-8000-000000000302",
+      trace_id: "00000000-0000-4000-8000-000000000303",
+      tool_invocation_id: "00000000-0000-4000-8000-000000000304",
     },
     [
       {
@@ -61,6 +65,16 @@ Deno.test("call receipts: combines app economics with cloud usage resource break
     "event-d1-read",
   ]);
   assertEquals(receipt.caller_infra_fallback, false);
+  assertEquals(receipt.routine_id, "00000000-0000-4000-8000-000000000301");
+  assertEquals(
+    receipt.routine_run_id,
+    "00000000-0000-4000-8000-000000000302",
+  );
+  assertEquals(receipt.trace_id, "00000000-0000-4000-8000-000000000303");
+  assertEquals(
+    receipt.tool_invocation_id,
+    "00000000-0000-4000-8000-000000000304",
+  );
 });
 
 Deno.test("call receipts: marks caller-funded infra fallback for free calls", () => {

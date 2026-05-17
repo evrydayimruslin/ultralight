@@ -12,6 +12,7 @@ import { processGpuBuilds } from '../services/gpu/benchmark.ts';
 import { runD1BillingCycle } from '../services/d1-billing.ts';
 import { cleanupStaleJobs } from '../services/async-jobs.ts';
 import { checkAndRunJobs as checkUserCronJobs } from '../services/cron.ts';
+import { runRoutineExecutorCycle } from '../services/routine-executor.ts';
 import { getEnv } from '../lib/env.ts';
 import { applyCorsHeaders, buildCorsPreflightResponse } from '../services/cors.ts';
 import { createServerLogger } from '../services/logging.ts';
@@ -202,12 +203,19 @@ async function runMinuteJobs(): Promise<void> {
     cleanupStaleJobs(),
     processNullEmbeddings(),
     processGpuBuilds(),
-    checkUserCronJobs(baseUrl),  // user-facing cron scheduler
+    checkUserCronJobs(baseUrl), // user-facing cron scheduler
+    runRoutineExecutorCycle({ baseUrl }), // platform-owned durable routines
   ]);
 
   for (const [i, result] of results.entries()) {
     if (result.status === 'rejected') {
-      const names = ['asyncJobCleanup', 'embeddingProcessor', 'gpuBuildProcessor', 'userCronScheduler'];
+      const names = [
+        'asyncJobCleanup',
+        'embeddingProcessor',
+        'gpuBuildProcessor',
+        'userCronScheduler',
+        'routineExecutor',
+      ];
       cronLogger.error('Minute cron job failed', {
         job: names[i],
         error: result.reason,

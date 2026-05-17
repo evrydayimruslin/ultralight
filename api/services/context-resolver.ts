@@ -324,6 +324,30 @@ function buildCatalog(fnIndex: FunctionIndex, entityIndex: EntityIndex | null): 
     }
   }
 
+  // Routine templates
+  if (fnIndex.routines?.length > 0) {
+    sections.push('\n### Routine Templates');
+    for (const routine of fnIndex.routines) {
+      const schedule = routine.defaultSchedule
+        ? ` default=${
+          typeof routine.defaultSchedule === 'string'
+            ? routine.defaultSchedule
+            : JSON.stringify(routine.defaultSchedule)
+        }`
+        : '';
+      const capabilities = routine.capabilities?.length
+        ? ` capabilities=${
+          routine.capabilities.map((cap) =>
+            `${cap.app}:${cap.functions.join('|')}:${cap.access || 'read'}`
+          ).join(',')
+        }`
+        : '';
+      sections.push(
+        `- {{routine:${routine.id}:${routine.appId}}} — ${routine.label}; handler=${routine.handler}${schedule}${capabilities}`,
+      );
+    }
+  }
+
   return sections.join('\n');
 }
 

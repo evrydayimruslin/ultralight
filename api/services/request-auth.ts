@@ -2,10 +2,16 @@ import { getEnv } from "../lib/env.ts";
 import { getAuthAccessTokenFromRequest } from "./auth-cookies.ts";
 import { toRawMcpFunctionName } from "./mcp-function-names.ts";
 import { logLegacyPermissionNameCompatibility } from "./permission-name-telemetry.ts";
+import {
+  isRoutineActorToken,
+  type RoutineActorTokenClaims,
+  verifyRoutineActorToken,
+} from "./routine-auth.ts";
 import { getUserTier } from "./tier-enforcement.ts";
 import { getUserFromToken, isApiToken } from "./tokens.ts";
 
 export type RequestTokenSourcePolicy = "bearer_only" | "bearer_or_cookie";
+export type RequestAuthSource = "supabase" | "api_token" | "routine_actor";
 
 export interface VerifiedSupabaseUser {
   id: string;
@@ -17,11 +23,23 @@ export interface AuthenticatedRequestUser {
   id: string;
   email: string;
   tier: string;
+  authSource?: RequestAuthSource;
   provisional?: boolean;
   tokenId?: string;
   tokenAppIds?: string[] | null;
   tokenFunctionNames?: string[] | null;
   scopes?: string[];
+  routineActor?: {
+    tokenId: string;
+    routineId: string;
+    routineRunId: string;
+    traceId?: string;
+    composerAppId?: string;
+    composerAppSlug?: string;
+    handlerFunction?: string;
+    budgetPolicy?: RoutineActorTokenClaims["budget_policy"];
+    capabilities: RoutineActorTokenClaims["capabilities"];
+  };
   user_metadata?: Record<string, string>;
 }
 
@@ -119,6 +137,45 @@ export async function authenticateRequest(
     throw new Error("Missing or invalid authorization header");
   }
 
+  if (isRoutineActorToken(token)) {
+    const verified = await verifyRoutineActorToken(token);
+    if (!verified) {
+      throw new Error("Invalid or expired routine actor token");
+    }
+
+    const { claims } = verified;
+    return {
+      id: claims.user_id,
+      email: claims.user_email,
+      tier: claims.user_tier || "free",
+      authSource: "routine_actor",
+      provisional: claims.provisional,
+      tokenId: claims.jti,
+      tokenAppIds: claims.app_ids,
+      tokenFunctionNames: claims.function_names,
+      scopes: claims.scopes,
+      routineActor: {
+        tokenId: claims.jti,
+        routineId: claims.routine_id,
+        routineRunId: claims.routine_run_id,
+        ...(claims.trace_id ? { traceId: claims.trace_id } : {}),
+        ...(claims.composer_app_id
+          ? { composerAppId: claims.composer_app_id }
+          : {}),
+        ...(claims.composer_app_slug
+          ? { composerAppSlug: claims.composer_app_slug }
+          : {}),
+        ...(claims.handler_function
+          ? { handlerFunction: claims.handler_function }
+          : {}),
+        ...(claims.budget_policy
+          ? { budgetPolicy: claims.budget_policy }
+          : {}),
+        capabilities: claims.capabilities,
+      },
+    };
+  }
+
   if (isApiToken(token)) {
     const clientIp =
       request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
@@ -130,7 +187,7 @@ export async function authenticateRequest(
       throw new Error("Invalid or expired API token");
     }
 
-    return user;
+    return { ...user, authSource: "api_token" };
   }
 
   const user = await verifySupabaseAccessToken(token);
@@ -151,6 +208,7 @@ export async function authenticateRequest(
     id: user.id,
     email: user.email,
     tier: resolvedTier,
+    authSource: "supabase",
     user_metadata: user.user_metadata,
   };
 }
