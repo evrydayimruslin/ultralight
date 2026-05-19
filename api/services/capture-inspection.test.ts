@@ -271,6 +271,92 @@ Deno.test('capture inspection: exports conversation bundle and integrity metadat
       }]);
     }
 
+    if (path.endsWith('/capability_intents')) {
+      return jsonRows([{
+        id: '00000000-0000-4000-8000-000000000070',
+        user_id: '00000000-0000-4000-8000-000000000071',
+        anon_user_id: 'anon-1',
+        conversation_id: 'conv-1',
+        trace_id: '00000000-0000-4000-8000-000000000001',
+        message_id: 'msg-user',
+        source: 'flash_broker',
+        intent_type: 'ambient_tool_suggestion',
+        intent_summary: 'Need a CRM helper',
+        query_text: 'Find a CRM helper',
+        query_sha256: 'query-hash',
+        metadata: {},
+        created_at: '2026-04-29T12:00:01Z',
+      }]);
+    }
+
+    if (path.endsWith('/capability_suggestion_sets')) {
+      return jsonRows([{
+        id: '00000000-0000-4000-8000-000000000080',
+        intent_id: '00000000-0000-4000-8000-000000000070',
+        user_id: '00000000-0000-4000-8000-000000000071',
+        anon_user_id: 'anon-1',
+        conversation_id: 'conv-1',
+        trace_id: '00000000-0000-4000-8000-000000000001',
+        message_id: 'msg-user',
+        source: 'flash_broker',
+        retrieval_source: 'ambient_marketplace_embedding',
+        query_text: 'Find a CRM helper',
+        query_sha256: 'query-hash',
+        candidate_count: 1,
+        suggestion_count: 1,
+        top_similarity: 0.82,
+        min_similarity: 0.82,
+        weak_match: false,
+        no_match: false,
+        metadata: {},
+        created_at: '2026-04-29T12:00:01Z',
+      }]);
+    }
+
+    if (path.endsWith('/capability_suggestions')) {
+      return jsonRows([{
+        id: '00000000-0000-4000-8000-000000000090',
+        suggestion_set_id: '00000000-0000-4000-8000-000000000080',
+        intent_id: '00000000-0000-4000-8000-000000000070',
+        user_id: '00000000-0000-4000-8000-000000000071',
+        anon_user_id: 'anon-1',
+        conversation_id: 'conv-1',
+        trace_id: '00000000-0000-4000-8000-000000000001',
+        message_id: 'msg-user',
+        app_id: '00000000-0000-4000-8000-000000000091',
+        app_slug: 'crm-helper',
+        app_name: 'CRM Helper',
+        app_type: 'app',
+        suggestion_source: 'marketplace',
+        rank: 1,
+        similarity: 0.82,
+        key_functions: ['create_follow_up'],
+        metadata: {},
+        created_at: '2026-04-29T12:00:01Z',
+      }]);
+    }
+
+    if (path.endsWith('/capability_suggestion_events')) {
+      return jsonRows([{
+        id: '00000000-0000-4000-8000-000000000092',
+        event_type: 'accepted',
+        intent_id: '00000000-0000-4000-8000-000000000070',
+        suggestion_set_id: '00000000-0000-4000-8000-000000000080',
+        suggestion_id: '00000000-0000-4000-8000-000000000090',
+        user_id: '00000000-0000-4000-8000-000000000071',
+        anon_user_id: 'anon-1',
+        conversation_id: 'conv-1',
+        trace_id: '00000000-0000-4000-8000-000000000001',
+        message_id: 'msg-user',
+        app_id: '00000000-0000-4000-8000-000000000091',
+        app_slug: 'crm-helper',
+        event_source: 'composer_popover',
+        library_installed: true,
+        metadata: {},
+        created_at: '2026-04-29T12:00:02Z',
+      }]);
+    }
+
     return Promise.resolve(new Response('not found', { status: 404 }));
   }) as typeof fetch;
 
@@ -284,6 +370,10 @@ Deno.test('capture inspection: exports conversation bundle and integrity metadat
     assertEquals(bundle.export_meta.llm_invocation_count, 1);
     assertEquals(bundle.export_meta.tool_invocation_count, 1);
     assertEquals(bundle.export_meta.training_annotation_count, 1);
+    assertEquals(bundle.export_meta.capability_intent_count, 1);
+    assertEquals(bundle.export_meta.capability_suggestion_set_count, 1);
+    assertEquals(bundle.export_meta.capability_suggestion_count, 1);
+    assertEquals(bundle.export_meta.capability_suggestion_event_count, 1);
     assertEquals(bundle.integrity.empty_assistant_messages, []);
 
     const jsonl = captureExportToJsonl(bundle);
@@ -292,6 +382,7 @@ Deno.test('capture inspection: exports conversation bundle and integrity metadat
     assert(jsonl.includes('"type":"llm_invocation"'));
     assert(jsonl.includes('"type":"tool_invocation"'));
     assert(jsonl.includes('"type":"training_annotation"'));
+    assert(jsonl.includes('"type":"capability_suggestion_event"'));
   } finally {
     globalThis.fetch = previousFetch;
     globalThis.__env = previousEnv;

@@ -37,6 +37,13 @@ export interface AmbientSuggestion {
   description: string;
   icon_url?: string | null;
   similarity?: number;
+  intent_id?: string;
+  suggestion_set_id?: string;
+  suggestion_id?: string;
+  rank?: number;
+  conversation_id?: string;
+  message_id?: string;
+  trace_id?: string;
   source: 'library' | 'shared' | 'marketplace';
   type: 'app' | 'skill';
   connected: boolean;

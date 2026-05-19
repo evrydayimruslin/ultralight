@@ -31,6 +31,11 @@ import { buildJsonSchemaDescriptors, type AppForCodemode } from './codemode-tool
 import { buildAppTrustCard, type TrustCard } from './trust.ts';
 import { createLlmInvocationTelemetrySession } from './invocation-telemetry.ts';
 import {
+  recordCapabilityGapShortcoming,
+  recordCapabilitySuggestionSet,
+  type CapabilitySuggestionSetRecord,
+} from './capability-suggestion-telemetry.ts';
+import {
   buildAnalyzeOutputLabels,
   buildExecutionConfirmationOutputLabels,
   buildFlashInvocationMetadata,
@@ -132,6 +137,8 @@ export type FlashEvent =
   | { type: 'analyzing'; text: string }
   | {
     type: 'ambient_suggestions';
+    intent_id?: string;
+    suggestion_set_id?: string;
     suggestions: Array<{
       id: string;
       slug: string;
@@ -139,6 +146,10 @@ export type FlashEvent =
       description: string;
       icon_url: string | null;
       similarity: number;
+      intent_id?: string;
+      suggestion_set_id?: string;
+      suggestion_id?: string;
+      rank?: number;
       source: 'marketplace';
       type: 'app';
       connected: false;
@@ -164,6 +175,7 @@ const DEFAULT_FLASH_MODEL = ULTRALIGHT_DEEPSEEK_V4_FLASH_MODEL;
 const DEFAULT_HEAVY_MODEL = ULTRALIGHT_DEEPSEEK_V4_PRO_MODEL;
 const DEFAULT_HEAVY_FLASH = ULTRALIGHT_DEEPSEEK_V4_FLASH_MODEL;
 const DEFAULT_HEAVY_SONNET = ULTRALIGHT_DEEPSEEK_V4_PRO_MODEL;
+const AMBIENT_WEAK_MATCH_THRESHOLD = 0.72;
 
 // ── Flash System Prompts ──
 
@@ -345,6 +357,47 @@ function countFunctionConventions(functions: FunctionIndex['functions']): number
   return Object.values(functions).reduce((total, fn) => total + (fn.conventions?.length || 0), 0);
 }
 
+function buildAmbientSuggestionQueryText(
+  message: string,
+  conversationSummary: string,
+): string {
+  return [message, conversationSummary].filter(Boolean).join('\n\n').slice(0, 4000);
+}
+
+function summarizeAmbientIntent(message: string, fallback?: string): string {
+  const raw = (fallback || message || '').replace(/\s+/g, ' ').trim();
+  if (!raw) return 'Ambient capability suggestion';
+  return raw.length > 500 ? raw.slice(0, 500) : raw;
+}
+
+function topCandidateSimilarity(candidates: MarketplaceCandidate[]): number | null {
+  const values = candidates
+    .map((candidate) => candidate.similarity)
+    .filter((value) => Number.isFinite(value));
+  return values.length > 0 ? Math.max(...values) : null;
+}
+
+function hasToolMarketerDelegation(
+  delegations: Array<{ agentType: string; task: string; originalPrompt: string }>,
+): boolean {
+  return delegations.some((delegation) => delegation.agentType === 'tool_marketer');
+}
+
+function firstToolMarketerTask(
+  delegations: Array<{ agentType: string; task: string; originalPrompt: string }>,
+): string | undefined {
+  return delegations.find((delegation) => delegation.agentType === 'tool_marketer')?.task;
+}
+
+function buildCapabilityGapSummary(message: string, task?: string): string {
+  const taskText = task
+    ?.replace(/^User needs?\s*/i, '')
+    .replace(/\.\s*Search marketplace.*$/i, '')
+    .replace(/\.\s*Help them.*$/i, '')
+    .trim();
+  return summarizeAmbientIntent(message, taskText || task);
+}
+
 export interface PureSystemAgentDelegationInput {
   mode?: unknown;
   relevantApps?: unknown;
@@ -421,6 +474,7 @@ export async function* runFlashBroker(
   systemAgentContext?: SystemAgentContext,
   projectContext?: string,
   conversationId?: string,
+  userMessageId?: string,
   files?: ChatFileAttachment[],
   inferenceRoute?: ResolvedInferenceRoute,
   telemetry?: FlashBrokerTelemetryContext,
@@ -551,7 +605,8 @@ export async function* runFlashBroker(
     .filter(Boolean)
     .join('\n\n')
     .slice(0, 2000);
-  const marketplaceCandidates = scope && Object.keys(scope).length > 0
+  const hasActiveScope = !!scope && Object.keys(scope).length > 0;
+  const marketplaceCandidates = hasActiveScope
     ? []
     : await retrieveMarketplaceCandidates(
       message,
@@ -559,17 +614,65 @@ export async function* runFlashBroker(
       userId,
       fnIndex,
     );
+  const ambientQueryText = buildAmbientSuggestionQueryText(message, conversationSummary);
+  const ambientTopSimilarity = topCandidateSimilarity(marketplaceCandidates);
+  const ambientWeakMatch =
+    ambientTopSimilarity !== null && ambientTopSimilarity < AMBIENT_WEAK_MATCH_THRESHOLD;
+  let ambientSuggestionTelemetry: CapabilitySuggestionSetRecord | null = null;
+
+  if (marketplaceCandidates.length > 0) {
+    ambientSuggestionTelemetry = await recordCapabilitySuggestionSet({
+      userId,
+      conversationId,
+      traceId: flashTelemetry?.traceId,
+      messageId: userMessageId,
+      source: 'flash_broker',
+      intentSummary: summarizeAmbientIntent(message),
+      queryText: ambientQueryText,
+      retrievalSource: 'ambient_marketplace_embedding',
+      candidateCount: marketplaceCandidates.length,
+      weakMatch: ambientWeakMatch,
+      suggestions: marketplaceCandidates.map((candidate, index) => ({
+        appId: candidate.app.id,
+        appSlug: candidate.app.slug,
+        appName: candidate.app.name,
+        appType: candidate.app.app_type || 'app',
+        suggestionSource: 'marketplace',
+        rank: index + 1,
+        similarity: candidate.similarity,
+        keyFunctions: candidate.keyFunctions,
+        metadata: {
+          runtime: candidate.app.runtime || null,
+          visibility: candidate.app.visibility || null,
+          current_version: candidate.app.current_version || null,
+          download_access: candidate.app.download_access || null,
+        },
+      })),
+      metadata: {
+        top_similarity: ambientTopSimilarity,
+        weak_match_threshold: AMBIENT_WEAK_MATCH_THRESHOLD,
+        orchestration_source: flashTelemetry?.source || null,
+        conversation_summary_present: !!conversationSummary,
+      },
+    });
+  }
 
   if (marketplaceCandidates.length > 0) {
     yield {
       type: 'ambient_suggestions',
-      suggestions: marketplaceCandidates.map((candidate) => ({
+      intent_id: ambientSuggestionTelemetry?.intentId,
+      suggestion_set_id: ambientSuggestionTelemetry?.suggestionSetId,
+      suggestions: marketplaceCandidates.map((candidate, index) => ({
         id: candidate.app.id,
         slug: candidate.app.slug,
         name: candidate.app.name,
         description: candidate.app.description || '',
         icon_url: candidate.app.icon_url,
         similarity: candidate.similarity,
+        intent_id: ambientSuggestionTelemetry?.intentId,
+        suggestion_set_id: ambientSuggestionTelemetry?.suggestionSetId,
+        suggestion_id: ambientSuggestionTelemetry?.suggestions[index]?.suggestionId,
+        rank: index + 1,
         source: 'marketplace' as const,
         type: 'app' as const,
         connected: false as const,
@@ -637,6 +740,63 @@ export async function* runFlashBroker(
     (analyzeResult.systemAgentDelegations || [])
       .filter((d: any) => d.agentType && d.task)
       .map((d: any) => ({ agentType: d.agentType, task: d.task, originalPrompt: message }));
+
+  if (!hasActiveScope && hasToolMarketerDelegation(systemAgentDelegations)) {
+    const gapTask = firstToolMarketerTask(systemAgentDelegations);
+    if (marketplaceCandidates.length === 0) {
+      const gapTelemetry = await recordCapabilitySuggestionSet({
+        userId,
+        conversationId,
+        traceId: flashTelemetry?.traceId,
+        messageId: userMessageId,
+        source: 'flash_broker',
+        intentSummary: buildCapabilityGapSummary(message, gapTask),
+        queryText: ambientQueryText,
+        retrievalSource: 'ambient_marketplace_embedding',
+        candidateCount: 0,
+        noMatch: true,
+        suggestions: [],
+        metadata: {
+          delegation_task: gapTask || null,
+          mode,
+          reason: 'tool_marketer_delegation_no_marketplace_match',
+          orchestration_source: flashTelemetry?.source || null,
+          conversation_summary_present: !!conversationSummary,
+        },
+      });
+      await recordCapabilityGapShortcoming({
+        userId,
+        sessionId: conversationId,
+        summary: buildCapabilityGapSummary(message, gapTask),
+        context: {
+          reason: 'no_match',
+          conversation_id: conversationId || null,
+          trace_id: flashTelemetry?.traceId || null,
+          message_id: userMessageId || null,
+          intent_id: gapTelemetry.intentId,
+          suggestion_set_id: gapTelemetry.suggestionSetId,
+          delegation_task: gapTask || null,
+        },
+      });
+    } else if (ambientWeakMatch && ambientSuggestionTelemetry) {
+      await recordCapabilityGapShortcoming({
+        userId,
+        sessionId: conversationId,
+        summary: buildCapabilityGapSummary(message, gapTask),
+        context: {
+          reason: 'weak_match',
+          conversation_id: conversationId || null,
+          trace_id: flashTelemetry?.traceId || null,
+          message_id: userMessageId || null,
+          intent_id: ambientSuggestionTelemetry.intentId,
+          suggestion_set_id: ambientSuggestionTelemetry.suggestionSetId,
+          delegation_task: gapTask || null,
+          top_similarity: ambientTopSimilarity,
+          weak_match_threshold: AMBIENT_WEAK_MATCH_THRESHOLD,
+        },
+      });
+    }
+  }
 
   // Capture conversation search query (for cross-session context retrieval)
   const conversationSearch: string | undefined = analyzeResult.conversationSearch || undefined;

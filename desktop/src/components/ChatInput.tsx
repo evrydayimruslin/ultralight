@@ -58,6 +58,12 @@ interface ChatInputProps {
   onOpenToolDealerPanel?: () => void;
   /** Close the in-chat ambient panel. */
   onCloseToolDealerPanel?: () => void;
+  /** Mark the popover suggestions as viewed without opening the full panel. */
+  onViewToolSuggestions?: () => void;
+  /** Accept one ambient suggestion into the active chat/library. */
+  onAcceptToolSuggestion?: (suggestion: AmbientSuggestion) => void;
+  /** Dismiss one ambient suggestion. */
+  onDismissToolSuggestion?: (suggestion: AmbientSuggestion) => void;
   /** Number of messages waiting in the runner queue. Drives the queue-mode
    *  meta strip below the composer (A2). */
   queuedCount?: number;
@@ -116,6 +122,9 @@ export default function ChatInput({
   toolDealerPanelOpen = false,
   onOpenToolDealerPanel,
   onCloseToolDealerPanel,
+  onViewToolSuggestions,
+  onAcceptToolSuggestion,
+  onDismissToolSuggestion,
   queuedCount = 0,
   onEditCustomInstructions,
   initialDraft,
@@ -557,6 +566,7 @@ export default function ChatInput({
                       } else if (toolDealerPanelOpen) {
                         onCloseToolDealerPanel?.();
                       } else {
+                        onViewToolSuggestions?.();
                         setPopover('tools');
                       }
                     }}
@@ -588,6 +598,11 @@ export default function ChatInput({
                     anchorRef={toolsBtnRef}
                     suggestions={ambientSuggestions}
                     onOpenPanel={onOpenToolDealerPanel}
+                    onAcceptSuggestion={(suggestion) => {
+                      onAcceptToolSuggestion?.(suggestion);
+                      setPopover(null);
+                    }}
+                    onDismissSuggestion={onDismissToolSuggestion}
                   />
                 </div>
               </div>

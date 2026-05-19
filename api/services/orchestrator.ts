@@ -42,6 +42,8 @@ export type OrchestrateEvent =
   | { type: 'flash_status'; text: string }
   | {
     type: 'ambient_suggestions';
+    intent_id?: string;
+    suggestion_set_id?: string;
     suggestions: Array<{
       id: string;
       slug: string;
@@ -49,6 +51,10 @@ export type OrchestrateEvent =
       description: string;
       icon_url: string | null;
       similarity: number;
+      intent_id?: string;
+      suggestion_set_id?: string;
+      suggestion_id?: string;
+      rank?: number;
       source: 'marketplace';
       type: 'app';
       connected: false;
@@ -114,6 +120,8 @@ export interface OrchestrateRequest {
   projectContext?: string;
   /** Conversation ID for rolling summary persistence */
   conversationId?: string;
+  /** User message ID for telemetry joins */
+  userMessageId?: string;
   /** Attached files from the chat input */
   files?: ChatFileAttachment[];
 }
@@ -139,7 +147,7 @@ export async function* orchestrate(
   userEmail: string,
   options: OrchestrateOptions = {},
 ): AsyncGenerator<OrchestrateEvent> {
-  const { message, conversationHistory, interpreterModel, heavyModel, scope, systemAgentStates, systemAgentContext, projectContext, conversationId, files } = request;
+  const { message, conversationHistory, interpreterModel, heavyModel, scope, systemAgentStates, systemAgentContext, projectContext, conversationId, userMessageId, files } = request;
 
   let inferenceRoute: ResolvedInferenceRoute;
   try {
@@ -166,6 +174,7 @@ export async function* orchestrate(
       systemAgentContext,
       projectContext,
       conversationId,
+      userMessageId,
       files,
       inferenceRoute,
       options.telemetry,
@@ -178,7 +187,12 @@ export async function* orchestrate(
           yield { type: 'flash_status', text: event.text || 'Analyzing your request...' };
           break;
         case 'ambient_suggestions':
-          yield { type: 'ambient_suggestions', suggestions: event.suggestions || [] };
+          yield {
+            type: 'ambient_suggestions',
+            intent_id: event.intent_id,
+            suggestion_set_id: event.suggestion_set_id,
+            suggestions: event.suggestions || [],
+          };
           break;
         case 'searching':
           yield { type: 'flash_search', query: event.query || '', apps: event.apps || [] };

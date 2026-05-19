@@ -6,6 +6,7 @@
 
 import type { AmbientSuggestion } from '../../types/ambientSuggestion';
 import Popover from './Popover';
+import { X } from 'lucide-react';
 
 interface ToolSelectionPopoverProps {
   open: boolean;
@@ -14,6 +15,8 @@ interface ToolSelectionPopoverProps {
   suggestions: AmbientSuggestion[];
   /** Fires "Open in chat" — expands the in-chat ambient panel. */
   onOpenPanel?: () => void;
+  onAcceptSuggestion?: (suggestion: AmbientSuggestion) => void;
+  onDismissSuggestion?: (suggestion: AmbientSuggestion) => void;
 }
 
 function SectionLabel({ label, accent, count }: { label: string; accent?: string; count?: number }) {
@@ -79,6 +82,8 @@ export default function ToolSelectionPopover({
   anchorRef,
   suggestions,
   onOpenPanel,
+  onAcceptSuggestion,
+  onDismissSuggestion,
 }: ToolSelectionPopoverProps) {
   const connected = suggestions.filter((s) => s.connected);
   const ambient = suggestions.filter((s) => !s.connected);
@@ -143,12 +148,31 @@ export default function ToolSelectionPopover({
             title={s.name}
             hint={s.description}
             right={
-              <button
-                onMouseDown={(e) => e.stopPropagation()}
-                className="text-nano font-mono text-ul-deep-green bg-ul-deep-green/10 px-1.5 py-0.5 rounded-xs border-none cursor-pointer"
-              >
-                + Add
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onAcceptSuggestion?.(s);
+                  }}
+                  className="text-nano font-mono text-ul-deep-green bg-ul-deep-green/10 px-1.5 py-0.5 rounded-xs border-none cursor-pointer hover:bg-ul-deep-green/15"
+                  title="Add to chat and library"
+                >
+                  + Add
+                </button>
+                <button
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onDismissSuggestion?.(s);
+                  }}
+                  className="flex h-5 w-5 items-center justify-center rounded-sm border-none bg-transparent text-ul-text-muted hover:bg-ul-bg-hover hover:text-ul-text"
+                  title="Dismiss suggestion"
+                  aria-label={`Dismiss ${s.name}`}
+                >
+                  <X className="h-3 w-3" strokeWidth={1.6} />
+                </button>
+              </div>
             }
           />
         ))

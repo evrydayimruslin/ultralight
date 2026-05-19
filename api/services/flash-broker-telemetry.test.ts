@@ -255,6 +255,7 @@ Deno.test("flash broker routing: pure system-agent delegations avoid Stage 2 and
         undefined,
         "conversation-1",
         undefined,
+        undefined,
         makeRoute(),
       )
     ) {

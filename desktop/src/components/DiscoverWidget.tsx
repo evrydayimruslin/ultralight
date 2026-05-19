@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { X } from 'lucide-react';
 import { fetchFromApi, getToken } from '../lib/storage';
 import type {
   AmbientMarketplaceSummary,
@@ -16,6 +17,8 @@ export type DiscoverWidgetMode =
 interface DiscoverWidgetProps {
   mode: DiscoverWidgetMode;
   onInjectScope: (apps: Array<{ id: string; slug: string; name: string; access: string }>) => void;
+  onAcceptSuggestions?: (suggestions: AmbientSuggestion[]) => void;
+  onDismissSuggestion?: (suggestion: AmbientSuggestion) => void;
 }
 
 function asTrustCard(value: unknown): AmbientTrustCard | undefined {
@@ -132,7 +135,12 @@ async function searchDiscoverResults(query: string): Promise<DiscoverResult[]> {
   return unified;
 }
 
-export default function DiscoverWidget({ mode, onInjectScope }: DiscoverWidgetProps) {
+export default function DiscoverWidget({
+  mode,
+  onInjectScope,
+  onAcceptSuggestions,
+  onDismissSuggestion,
+}: DiscoverWidgetProps) {
   const inlineQuery = mode.kind === 'inline' ? mode.query || '' : '';
   const ambientSeed = mode.kind === 'ambient' ? mode.suggestions : [];
   const [query, setQuery] = useState(inlineQuery);
@@ -195,8 +203,23 @@ export default function DiscoverWidget({ mode, onInjectScope }: DiscoverWidgetPr
       .map((result) => ({ id: result.id, slug: result.slug, name: result.name, access: 'all' }));
     if (apps.length === 0) return;
 
+    if (mode.kind === 'ambient') {
+      onAcceptSuggestions?.(
+        results.filter((result) => selected.has(result.id) && result.type === 'app'),
+      );
+    }
     onInjectScope(apps);
     setAdded(true);
+  };
+
+  const dismissAmbientSuggestion = (result: DiscoverResult) => {
+    onDismissSuggestion?.(result);
+    setResults((prev) => prev.filter((entry) => entry.id !== result.id));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.delete(result.id);
+      return next;
+    });
   };
 
   const renderTrustSummary = (result: DiscoverResult) => {
@@ -367,6 +390,29 @@ export default function DiscoverWidget({ mode, onInjectScope }: DiscoverWidgetPr
                   </p>
                   {renderTrustSummary(result)}
                 </div>
+
+                {mode.kind === 'ambient' && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      dismissAmbientSuggestion(result);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter' && e.key !== ' ') return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      dismissAmbientSuggestion(result);
+                    }}
+                    className="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded border border-transparent text-ul-text-muted hover:border-ul-border hover:bg-white hover:text-ul-text"
+                    aria-label={`Dismiss ${result.name}`}
+                    title="Dismiss suggestion"
+                  >
+                    <X className="h-3.5 w-3.5" strokeWidth={1.6} />
+                  </span>
+                )}
               </div>
             </button>
           ))}

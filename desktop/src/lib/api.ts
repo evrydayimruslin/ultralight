@@ -1592,6 +1592,72 @@ export async function uninstallLibraryApp(appId: string): Promise<{ ok: boolean;
   return { ok: true };
 }
 
+export type CapabilitySuggestionEventType =
+  | 'viewed'
+  | 'accepted'
+  | 'dismissed'
+  | 'installed'
+  | 'used'
+  | 'failed';
+
+export interface CapabilitySuggestionEventInput {
+  eventType: CapabilitySuggestionEventType;
+  intentId?: string;
+  suggestionSetId?: string;
+  suggestionId?: string;
+  conversationId?: string;
+  traceId?: string;
+  messageId?: string;
+  appId?: string;
+  appSlug?: string;
+  eventSource?: string;
+  installOnAccept?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+export async function recordCapabilitySuggestionEvent(
+  input: CapabilitySuggestionEventInput,
+): Promise<{ ok: boolean; eventId?: string; libraryInstalled?: boolean; errorMessage?: string }> {
+  try {
+    const res = await fetchFromApi('/chat/capability-suggestion-event', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        event_type: input.eventType,
+        intent_id: input.intentId,
+        suggestion_set_id: input.suggestionSetId,
+        suggestion_id: input.suggestionId,
+        conversation_id: input.conversationId,
+        trace_id: input.traceId,
+        message_id: input.messageId,
+        app_id: input.appId,
+        app_slug: input.appSlug,
+        event_source: input.eventSource || 'desktop',
+        install_on_accept: input.installOnAccept,
+        metadata: input.metadata,
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      return { ok: false, errorMessage: text || `Failed (${res.status})` };
+    }
+    const data = await res.json().catch(() => ({})) as {
+      event_id?: string;
+      library_installed?: boolean;
+    };
+    return {
+      ok: true,
+      eventId: data.event_id,
+      libraryInstalled: data.library_installed,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      errorMessage: err instanceof Error ? err.message : 'Suggestion telemetry failed',
+    };
+  }
+}
+
 // ── Author profile (B7) ──
 //
 // `GET /api/author/:handle` returns the public author page payload
@@ -2465,6 +2531,8 @@ export interface OrchestrateEvent {
   resetAt?: string;
   query?: string;
   apps?: string[];
+  intent_id?: string;
+  suggestion_set_id?: string;
   suggestions?: AmbientSuggestion[];
   entity?: string;
   detail?: string;

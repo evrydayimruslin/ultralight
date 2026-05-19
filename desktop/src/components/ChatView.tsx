@@ -51,6 +51,7 @@ import { agentRunner } from '../lib/agentRunner';
 import { dispatchAmbientSuggestions, useAmbientSuggestions } from '../hooks/useAmbientSuggestions';
 import { createDesktopLogger } from '../lib/logging';
 import { openViewWindow } from '../lib/multiWindow';
+import type { AmbientSuggestion } from '../types/ambientSuggestion';
 
 /** Map flash broker's model suggestion to a real OpenRouter model ID */
 function resolveModelFromBroker(suggestion?: string): string | undefined {
@@ -143,6 +144,8 @@ export default function ChatView({
     suggestions: ambientSuggestions,
     hasNew: ambientHasNew,
     markViewed: markAmbientViewed,
+    dismissSuggestion: dismissAmbientSuggestion,
+    acceptSuggestion: acceptAmbientSuggestion,
   } = useAmbientSuggestions();
 
   // Per-conversation project directory (persisted to agent DB record)
@@ -624,7 +627,13 @@ export default function ChatView({
       switch (event.type) {
         case 'ambient_suggestions':
           if (event.suggestions?.length) {
-            dispatchAmbientSuggestions(event.suggestions);
+            dispatchAmbientSuggestions(event.suggestions.map((suggestion) => ({
+              ...suggestion,
+              intent_id: suggestion.intent_id || event.intent_id,
+              suggestion_set_id: suggestion.suggestion_set_id || event.suggestion_set_id,
+              conversation_id: resolvedConversationId,
+              message_id: userMsg.id,
+            })));
           }
           break;
         // Flash phase — show subtle status hints
@@ -1282,6 +1291,32 @@ export default function ChatView({
     return () => window.removeEventListener('ul-inject-scope', handler);
   }, [activeAgent, handleUpdateAgent]);
 
+  const injectAmbientSuggestionScope = useCallback((suggestions: AmbientSuggestion[]) => {
+    const apps = suggestions
+      .filter((suggestion) => suggestion.type === 'app')
+      .map((suggestion) => ({
+        id: suggestion.id,
+        slug: suggestion.slug,
+        name: suggestion.name,
+        access: 'all',
+      }));
+    if (apps.length === 0) return;
+
+    window.dispatchEvent(new CustomEvent('ul-inject-scope', { detail: { apps } }));
+  }, []);
+
+  const handleAcceptAmbientSuggestion = useCallback((suggestion: AmbientSuggestion, surface = 'composer') => {
+    acceptAmbientSuggestion(suggestion, surface);
+    injectAmbientSuggestionScope([suggestion]);
+    setAmbientOpen(false);
+  }, [acceptAmbientSuggestion, injectAmbientSuggestionScope]);
+
+  const handleAcceptAmbientSuggestions = useCallback((suggestions: AmbientSuggestion[], surface = 'ambient_panel') => {
+    for (const suggestion of suggestions) {
+      acceptAmbientSuggestion(suggestion, surface);
+    }
+  }, [acceptAmbientSuggestion]);
+
   // Handle project directory changes — update local state + persist to DB
   const handleProjectDirChange = useCallback(async (dir: string) => {
     setConversationProjectDir(dir);
@@ -1499,6 +1534,12 @@ export default function ChatView({
           <div className="max-w-narrow mx-auto">
             <DiscoverWidget
               mode={{ kind: 'ambient', suggestions: ambientSuggestions }}
+              onAcceptSuggestions={(suggestions) => {
+                handleAcceptAmbientSuggestions(suggestions, 'ambient_panel');
+              }}
+              onDismissSuggestion={(suggestion) => {
+                dismissAmbientSuggestion(suggestion, 'ambient_panel');
+              }}
               onInjectScope={(apps) => {
                 window.dispatchEvent(new CustomEvent('ul-inject-scope', { detail: { apps } }));
                 setAmbientOpen(false);
@@ -1531,10 +1572,13 @@ export default function ChatView({
         ambientHasNew={ambientHasNew}
         toolDealerPanelOpen={ambientOpen}
         onOpenToolDealerPanel={() => {
-          markAmbientViewed();
+          markAmbientViewed('ambient_panel');
           setAmbientOpen(true);
         }}
         onCloseToolDealerPanel={() => setAmbientOpen(false)}
+        onViewToolSuggestions={() => markAmbientViewed('composer_popover')}
+        onAcceptToolSuggestion={(suggestion) => handleAcceptAmbientSuggestion(suggestion, 'composer_popover')}
+        onDismissToolSuggestion={(suggestion) => dismissAmbientSuggestion(suggestion, 'composer_popover')}
         queuedCount={queuedMessages.length}
         onEditCustomInstructions={() => {
           // AgentHeader listens for this event and expands the config panel

@@ -25,6 +25,7 @@ import { handleAdmin } from './admin.ts';
 import { handleDeveloper } from './developer.ts';
 import {
   handleChatContext,
+  handleCapabilitySuggestionEventTelemetry,
   handleChatInferenceOptions,
   handleChatModels,
   handleChatStream,
@@ -718,6 +719,11 @@ export function createApp() {
       // Tool invocation telemetry — desktop local tool calls send full args/results here.
       if (path === '/chat/tool-invocation' && method === 'POST') {
         return handleToolInvocationTelemetry(request);
+      }
+
+      // Ambient capability suggestion telemetry — shown/viewed/accepted/dismissed lifecycle.
+      if (path === '/chat/capability-suggestion-event' && method === 'POST') {
+        return handleCapabilitySuggestionEventTelemetry(request);
       }
 
       // Server-side orchestration — Flash broker + heavy model + recipe execution

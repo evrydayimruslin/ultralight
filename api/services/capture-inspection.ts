@@ -217,6 +217,84 @@ export interface TrainingAnnotationRow {
   created_at: string;
 }
 
+export interface CapabilityIntentRow {
+  id: string;
+  user_id: string | null;
+  anon_user_id: string | null;
+  conversation_id: string | null;
+  trace_id: string | null;
+  message_id: string | null;
+  source: string;
+  intent_type: string;
+  intent_summary: string | null;
+  query_text: string | null;
+  query_sha256: string | null;
+  metadata: JsonRecord;
+  created_at: string;
+}
+
+export interface CapabilitySuggestionSetRow {
+  id: string;
+  intent_id: string | null;
+  user_id: string | null;
+  anon_user_id: string | null;
+  conversation_id: string | null;
+  trace_id: string | null;
+  message_id: string | null;
+  source: string;
+  retrieval_source: string;
+  query_text: string | null;
+  query_sha256: string | null;
+  candidate_count: number;
+  suggestion_count: number;
+  top_similarity: number | null;
+  min_similarity: number | null;
+  weak_match: boolean;
+  no_match: boolean;
+  metadata: JsonRecord;
+  created_at: string;
+}
+
+export interface CapabilitySuggestionRow {
+  id: string;
+  suggestion_set_id: string | null;
+  intent_id: string | null;
+  user_id: string | null;
+  anon_user_id: string | null;
+  conversation_id: string | null;
+  trace_id: string | null;
+  message_id: string | null;
+  app_id: string | null;
+  app_slug: string | null;
+  app_name: string | null;
+  app_type: string;
+  suggestion_source: string;
+  rank: number | null;
+  similarity: number | null;
+  key_functions: unknown[];
+  metadata: JsonRecord;
+  created_at: string;
+}
+
+export interface CapabilitySuggestionEventRow {
+  id: string;
+  event_type: string;
+  intent_id: string | null;
+  suggestion_set_id: string | null;
+  suggestion_id: string | null;
+  user_id: string | null;
+  anon_user_id: string | null;
+  conversation_id: string | null;
+  trace_id: string | null;
+  message_id: string | null;
+  app_id: string | null;
+  app_slug: string | null;
+  event_source: string;
+  library_installed: boolean;
+  metadata: JsonRecord;
+  created_at: string;
+}
+
 export interface CaptureExportBundle {
   export_meta: {
     generated_at: string;
@@ -231,6 +309,10 @@ export interface CaptureExportBundle {
     tool_invocation_count: number;
     execution_failure_count: number;
     training_annotation_count: number;
+    capability_intent_count: number;
+    capability_suggestion_set_count: number;
+    capability_suggestion_count: number;
+    capability_suggestion_event_count: number;
   };
   threads: CaptureThreadRow[];
   messages: CaptureMessageRow[];
@@ -242,6 +324,10 @@ export interface CaptureExportBundle {
   tool_invocations: ToolInvocationRow[];
   execution_failures: ExecutionFailureRow[];
   training_annotations: TrainingAnnotationRow[];
+  capability_intents: CapabilityIntentRow[];
+  capability_suggestion_sets: CapabilitySuggestionSetRow[];
+  capability_suggestions: CapabilitySuggestionRow[];
+  capability_suggestion_events: CapabilitySuggestionEventRow[];
   integrity: CaptureIntegrityReport;
 }
 
@@ -438,6 +524,14 @@ const EXECUTION_FAILURE_SELECT =
   "id,failure_id,trace_id,conversation_id,invocation_id,anon_user_id,source,phase,failure_type,severity,message,retryable,aborted_by,metadata,created_at";
 const TRAINING_ANNOTATION_SELECT =
   "id,target_type,target_id,conversation_id,message_id,llm_invocation_id,tool_invocation_id,artifact_id,annotation_type,label,confidence,payload,taxonomy_version,classifier_model,classifier_version,status,reviewed_by,reviewed_at,metadata,created_at";
+const CAPABILITY_INTENT_SELECT =
+  "id,user_id,anon_user_id,conversation_id,trace_id,message_id,source,intent_type,intent_summary,query_text,query_sha256,metadata,created_at";
+const CAPABILITY_SUGGESTION_SET_SELECT =
+  "id,intent_id,user_id,anon_user_id,conversation_id,trace_id,message_id,source,retrieval_source,query_text,query_sha256,candidate_count,suggestion_count,top_similarity,min_similarity,weak_match,no_match,metadata,created_at";
+const CAPABILITY_SUGGESTION_SELECT =
+  "id,suggestion_set_id,intent_id,user_id,anon_user_id,conversation_id,trace_id,message_id,app_id,app_slug,app_name,app_type,suggestion_source,rank,similarity,key_functions,metadata,created_at";
+const CAPABILITY_SUGGESTION_EVENT_SELECT =
+  "id,event_type,intent_id,suggestion_set_id,suggestion_id,user_id,anon_user_id,conversation_id,trace_id,message_id,app_id,app_slug,event_source,library_installed,metadata,created_at";
 
 export async function getCaptureOverview(
   filters: CaptureInspectionFilters = {},
@@ -455,6 +549,10 @@ export async function getCaptureOverview(
     llmInvocationCount,
     toolInvocationCount,
     executionFailureCount,
+    capabilityIntentCount,
+    capabilitySuggestionSetCount,
+    capabilitySuggestionCount,
+    capabilitySuggestionEventCount,
     recentThreads,
     recentMessages,
     recentEvents,
@@ -462,6 +560,7 @@ export async function getCaptureOverview(
     recentLlmInvocations,
     recentToolInvocations,
     recentExecutionFailures,
+    recentCapabilitySuggestionEvents,
   ] = await Promise.all([
     getCount("chat_threads", {
       ...threadParams,
@@ -492,6 +591,22 @@ export async function getCaptureOverview(
       select: "id",
     }),
     getCount("execution_failures", {
+      ...tableFilterParams(filters, "created_at"),
+      select: "id",
+    }),
+    getCount("capability_intents", {
+      ...tableFilterParams(filters, "created_at"),
+      select: "id",
+    }),
+    getCount("capability_suggestion_sets", {
+      ...tableFilterParams(filters, "created_at"),
+      select: "id",
+    }),
+    getCount("capability_suggestions", {
+      ...tableFilterParams(filters, "created_at"),
+      select: "id",
+    }),
+    getCount("capability_suggestion_events", {
       ...tableFilterParams(filters, "created_at"),
       select: "id",
     }),
@@ -541,6 +656,12 @@ export async function getCaptureOverview(
       order: "created_at.desc",
       limit,
     }),
+    getRows<CapabilitySuggestionEventRow>("capability_suggestion_events", {
+      ...tableFilterParams(filters, "created_at"),
+      select: CAPABILITY_SUGGESTION_EVENT_SELECT,
+      order: "created_at.desc",
+      limit,
+    }),
   ]);
 
   const sourceCounts: Record<string, number> = {};
@@ -553,6 +674,7 @@ export async function getCaptureOverview(
   const toolNameCounts: Record<string, number> = {};
   const toolStatusCounts: Record<string, number> = {};
   const failureTypeCounts: Record<string, number> = {};
+  const capabilitySuggestionEventCounts: Record<string, number> = {};
   let totalTokens = 0;
   let totalCost = 0;
   let totalContentBytes = 0;
@@ -585,6 +707,9 @@ export async function getCaptureOverview(
   for (const failure of recentExecutionFailures) {
     increment(failureTypeCounts, failure.failure_type);
   }
+  for (const event of recentCapabilitySuggestionEvents) {
+    increment(capabilitySuggestionEventCounts, event.event_type);
+  }
 
   const integrity = buildIntegrityReport(
     recentThreads,
@@ -604,6 +729,10 @@ export async function getCaptureOverview(
       llmInvocationCount,
       toolInvocationCount,
       executionFailureCount,
+      capabilityIntentCount,
+      capabilitySuggestionSetCount,
+      capabilitySuggestionCount,
+      capabilitySuggestionEventCount,
     },
   });
 
@@ -621,6 +750,10 @@ export async function getCaptureOverview(
       llm_invocations: llmInvocationCount,
       tool_invocations: toolInvocationCount,
       execution_failures: executionFailureCount,
+      capability_intents: capabilityIntentCount,
+      capability_suggestion_sets: capabilitySuggestionSetCount,
+      capability_suggestions: capabilitySuggestionCount,
+      capability_suggestion_events: capabilitySuggestionEventCount,
       sampled_threads: recentThreads.length,
       sampled_messages: recentMessages.length,
       sampled_events: recentEvents.length,
@@ -628,6 +761,7 @@ export async function getCaptureOverview(
       sampled_llm_invocations: recentLlmInvocations.length,
       sampled_tool_invocations: recentToolInvocations.length,
       sampled_execution_failures: recentExecutionFailures.length,
+      sampled_capability_suggestion_events: recentCapabilitySuggestionEvents.length,
       total_content_bytes_sampled: totalContentBytes,
       total_tokens_sampled: totalTokens,
       total_cost_sampled: totalCost,
@@ -644,6 +778,7 @@ export async function getCaptureOverview(
     by_tool_name: topEntries(toolNameCounts),
     by_tool_status: topEntries(toolStatusCounts),
     by_failure_type: topEntries(failureTypeCounts),
+    by_capability_suggestion_event_type: topEntries(capabilitySuggestionEventCounts),
     integrity,
     recent_threads: recentThreads.slice(0, 50).map((thread) => ({
       conversation_id: thread.conversation_id,
@@ -698,6 +833,10 @@ export async function buildCaptureExport(
         tool_invocation_count: 0,
         execution_failure_count: 0,
         training_annotation_count: 0,
+        capability_intent_count: 0,
+        capability_suggestion_set_count: 0,
+        capability_suggestion_count: 0,
+        capability_suggestion_event_count: 0,
       },
       threads: [],
       messages: [],
@@ -709,6 +848,10 @@ export async function buildCaptureExport(
       tool_invocations: [],
       execution_failures: [],
       training_annotations: [],
+      capability_intents: [],
+      capability_suggestion_sets: [],
+      capability_suggestions: [],
+      capability_suggestion_events: [],
       integrity: buildIntegrityReport([], [], []),
     };
     await recordCaptureAccess({
@@ -732,6 +875,10 @@ export async function buildCaptureExport(
     toolInvocations,
     executionFailures,
     trainingAnnotations,
+    capabilityIntents,
+    capabilitySuggestionSets,
+    capabilitySuggestions,
+    capabilitySuggestionEvents,
   ] = await Promise.all([
     getRows<CaptureMessageRow>("chat_messages", {
       conversation_id: conversationFilter,
@@ -784,6 +931,30 @@ export async function buildCaptureExport(
       order: "conversation_id.asc,created_at.asc",
       limit: filters.conversationId ? 10000 : Math.min(limit * 100, 10000),
     }),
+    getRows<CapabilityIntentRow>("capability_intents", {
+      conversation_id: conversationFilter,
+      select: CAPABILITY_INTENT_SELECT,
+      order: "conversation_id.asc,created_at.asc",
+      limit: filters.conversationId ? 10000 : Math.min(limit * 100, 10000),
+    }),
+    getRows<CapabilitySuggestionSetRow>("capability_suggestion_sets", {
+      conversation_id: conversationFilter,
+      select: CAPABILITY_SUGGESTION_SET_SELECT,
+      order: "conversation_id.asc,created_at.asc",
+      limit: filters.conversationId ? 10000 : Math.min(limit * 100, 10000),
+    }),
+    getRows<CapabilitySuggestionRow>("capability_suggestions", {
+      conversation_id: conversationFilter,
+      select: CAPABILITY_SUGGESTION_SELECT,
+      order: "conversation_id.asc,rank.asc,created_at.asc",
+      limit: filters.conversationId ? 10000 : Math.min(limit * 100, 10000),
+    }),
+    getRows<CapabilitySuggestionEventRow>("capability_suggestion_events", {
+      conversation_id: conversationFilter,
+      select: CAPABILITY_SUGGESTION_EVENT_SELECT,
+      order: "conversation_id.asc,created_at.asc",
+      limit: filters.conversationId ? 10000 : Math.min(limit * 200, 20000),
+    }),
   ]);
 
   const artifactIds = [
@@ -825,6 +996,10 @@ export async function buildCaptureExport(
       tool_invocation_count: toolInvocations.length,
       execution_failure_count: executionFailures.length,
       training_annotation_count: trainingAnnotations.length,
+      capability_intent_count: capabilityIntents.length,
+      capability_suggestion_set_count: capabilitySuggestionSets.length,
+      capability_suggestion_count: capabilitySuggestions.length,
+      capability_suggestion_event_count: capabilitySuggestionEvents.length,
     },
     threads,
     messages,
@@ -836,6 +1011,10 @@ export async function buildCaptureExport(
     tool_invocations: toolInvocations,
     execution_failures: executionFailures,
     training_annotations: trainingAnnotations,
+    capability_intents: capabilityIntents,
+    capability_suggestion_sets: capabilitySuggestionSets,
+    capability_suggestions: capabilitySuggestions,
+    capability_suggestion_events: capabilitySuggestionEvents,
     integrity: buildIntegrityReport(threads, messages, events),
   };
 
@@ -885,6 +1064,24 @@ export function captureExportToJsonl(bundle: CaptureExportBundle): string {
   for (const annotation of bundle.training_annotations) {
     lines.push(
       JSON.stringify({ type: "training_annotation", data: annotation }),
+    );
+  }
+  for (const intent of bundle.capability_intents) {
+    lines.push(JSON.stringify({ type: "capability_intent", data: intent }));
+  }
+  for (const set of bundle.capability_suggestion_sets) {
+    lines.push(
+      JSON.stringify({ type: "capability_suggestion_set", data: set }),
+    );
+  }
+  for (const suggestion of bundle.capability_suggestions) {
+    lines.push(
+      JSON.stringify({ type: "capability_suggestion", data: suggestion }),
+    );
+  }
+  for (const event of bundle.capability_suggestion_events) {
+    lines.push(
+      JSON.stringify({ type: "capability_suggestion_event", data: event }),
     );
   }
   return `${lines.join("\n")}\n`;

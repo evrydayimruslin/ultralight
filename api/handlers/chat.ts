@@ -40,6 +40,9 @@ import {
   createLlmInvocationTelemetrySession,
   recordToolInvocationTelemetry,
 } from "../services/invocation-telemetry.ts";
+import { recordCapabilitySuggestionEvent } from "../services/capability-suggestion-telemetry.ts";
+import { validateCapabilitySuggestionEventRequest } from "../services/capability-suggestion-validation.ts";
+import { RequestValidationError } from "../services/request-validation.ts";
 
 const chatLogger = createServerLogger("CHAT");
 const TOOL_TELEMETRY_STATUSES = new Set([
@@ -925,6 +928,64 @@ export async function handleToolInvocationTelemetry(
 }
 
 // ============================================
+// POST /chat/capability-suggestion-event — Ambient suggestion telemetry
+// ============================================
+
+/**
+ * Records client-side lifecycle events for ambient capability suggestions.
+ * Accepting a suggestion also saves the suggested app to the user's library.
+ */
+export async function handleCapabilitySuggestionEventTelemetry(
+  request: Request,
+): Promise<Response> {
+  let user: { id: string; email: string; tier: string; provisional?: boolean };
+  try {
+    user = await authenticate(request);
+  } catch (err) {
+    return json({
+      error: "Unauthorized",
+      detail: err instanceof Error ? err.message : "Auth failed",
+    }, 401);
+  }
+
+  if (user.provisional) {
+    return json({ error: "Telemetry requires a full account." }, 403);
+  }
+
+  let body: Awaited<ReturnType<typeof validateCapabilitySuggestionEventRequest>>;
+  try {
+    body = await validateCapabilitySuggestionEventRequest(request);
+  } catch (err) {
+    if (err instanceof RequestValidationError) {
+      return error(err.message, err.status);
+    }
+    return error("Invalid request body", 400);
+  }
+
+  const result = await recordCapabilitySuggestionEvent({
+    userId: user.id,
+    eventType: body.eventType,
+    intentId: body.intentId,
+    suggestionSetId: body.suggestionSetId,
+    suggestionId: body.suggestionId,
+    conversationId: body.conversationId,
+    traceId: body.traceId,
+    messageId: body.messageId,
+    appId: body.appId,
+    appSlug: body.appSlug,
+    eventSource: body.eventSource,
+    installOnAccept: body.installOnAccept,
+    metadata: body.metadata,
+  });
+
+  return json({
+    success: true,
+    event_id: result.eventId,
+    library_installed: result.libraryInstalled,
+  });
+}
+
+// ============================================
 // POST /chat/provision-key — Pre-provision OpenRouter key
 // ============================================
 
@@ -1081,12 +1142,14 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
   const { orchestrate } = await import("../services/orchestrator.ts");
   const captureConversationId = body.conversationId || crypto.randomUUID();
   const captureTraceId = crypto.randomUUID();
+  const captureUserMessageId = body.userMessageId || crypto.randomUUID();
+  const captureAssistantMessageId = body.assistantMessageId || crypto.randomUUID();
   const captureSession = createOrchestrateCaptureSession({
     userId: user.id,
     userEmail: user.email,
     conversationId: captureConversationId,
-    userMessageId: body.userMessageId || crypto.randomUUID(),
-    assistantMessageId: body.assistantMessageId || crypto.randomUUID(),
+    userMessageId: captureUserMessageId,
+    assistantMessageId: captureAssistantMessageId,
     traceId: captureTraceId,
     message: body.message,
     conversationHistory: body.conversationHistory,
@@ -1115,6 +1178,7 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
               systemAgentContext: body.systemAgentContext,
               projectContext: body.projectContext,
               conversationId: captureConversationId,
+              userMessageId: captureUserMessageId,
               files: body.files,
             },
             user.id,
